@@ -14,6 +14,12 @@ if(NOT imgui_POPULATED)
     FetchContent_Populate(imgui)
 endif()
 
+FetchContent_Declare(json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+)
+FetchContent_MakeAvailable(json)
+
 add_library(imgui STATIC
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_draw.cpp
@@ -67,6 +73,19 @@ add_executable(sculptsp
     src/render/ReferenceImage.cpp
     src/render/RenderTarget.cpp
     src/render/RenderSettings.cpp
+    # files
+    src/files/FileManager.cpp
+    src/files/ImportSGL.cpp
+    src/files/ExportSGL.cpp
+    src/files/ImportOBJ.cpp
+    src/files/ExportOBJ.cpp
+    src/files/ImportSTL.cpp
+    src/files/ExportSTL.cpp
+    src/files/ImportPLY.cpp
+    src/files/ExportPLY.cpp
+    src/files/ImportGLTF.cpp
+    src/files/ExportGLTF.cpp
+    src/files/MeshUtils.cpp
     # editing
     src/editing/SculptManager.cpp
     src/editing/CameraController.cpp
@@ -85,7 +104,7 @@ else()
     include_directories(${SDL2_INCLUDE_DIRS})
 endif()
 
-target_link_libraries(sculptsp PRIVATE imgui ${EGL_LIBRARY} ${GLES_LIBRARY} glm)
+target_link_libraries(sculptsp PRIVATE imgui ${EGL_LIBRARY} ${GLES_LIBRARY} glm nlohmann_json::nlohmann_json)
 target_compile_options(sculptsp PRIVATE -O3 -g)
 
 if(MINGW)

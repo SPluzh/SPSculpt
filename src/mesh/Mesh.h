@@ -36,6 +36,15 @@ public:
     int nbFaces = 0;
     bool isDirty = true;
 
+    // SGL/OBJ migration properties
+    bool visibleV1 = true;
+    bool visibleV2 = true;
+    glm::vec3 center{0.0f};
+    float scale = 1.0f;
+    std::vector<float>    texCoords;     // nbTexCoords * 2
+    std::vector<uint32_t> facesTexCoord;  // nbFaces * 4
+    bool hasUV = false;
+
     Mesh() = default;
     ~Mesh() = default;
 
@@ -64,16 +73,45 @@ public:
     unsigned int textureId = 0;
     void setTextureId(unsigned int id) { textureId = id; }
     void setShaderType(int type) { shaderType = type; }
+    int getShaderType() const { return shaderType; }
     void setMatcap(int idx) { matcapIdx = idx; }
     int getMatcap() const { return matcapIdx; }
     void setAlbedo(float r, float g, float b) { albedo[0] = r; albedo[1] = g; albedo[2] = b; }
     void setRoughness(float r) { roughness = r; }
     void setMetallic(float m) { metallic = m; }
     void setAlpha(float a) { alpha = a; }
+    float getOpacity() const { return alpha; }
     void setShowWireframe(bool show) { showWireframe = show; }
+    bool getShowWireframe() const { return showWireframe; }
     void setFlatShading(bool flat) { flatShading = flat; }
+    bool getFlatShading() const { return flatShading; }
     float curvature = 0.0f;
     void setCurvature(float c) { curvature = c; }
+
+    bool isVisible(int viewport) const { return viewport == 0 ? visibleV1 : visibleV2; }
+    void setVisible(bool visible, int viewport) { if (viewport == 0) visibleV1 = visible; else visibleV2 = visible; }
+    glm::vec3 getCenter() const { return center; }
+    void setCenter(const glm::vec3& c) { center = c; }
+    float getScale() const { return scale; }
+    void setScale(float s) { scale = s; }
+    bool getHasUV() const { return hasUV; }
+    void setHasUV(bool h) { hasUV = h; }
+    int getNbTexCoords() const { return texCoords.size() / 2; }
+    int getNbVertices() const { return nbVerts; }
+    int getNbFaces() const { return nbFaces; }
+
+    const std::vector<float>& getVertices() const { return verts; }
+    std::vector<float>& getVertices() { return verts; }
+    const std::vector<float>& getColors() const { return colors; }
+    std::vector<float>& getColors() { return colors; }
+    const std::vector<float>& getMaterials() const { return materials; }
+    std::vector<float>& getMaterials() { return materials; }
+    const std::vector<uint32_t>& getFaces() const { return faces; }
+    std::vector<uint32_t>& getFaces() { return faces; }
+    const std::vector<float>& getTexCoords() const { return texCoords; }
+    std::vector<float>& getTexCoords() { return texCoords; }
+    const std::vector<uint32_t>& getFacesTexCoord() const { return facesTexCoord; }
+    std::vector<uint32_t>& getFacesTexCoord() { return facesTexCoord; }
 
     glm::mat4 matrix = glm::mat4(1.0f);
     glm::mat4 editMatrix = glm::mat4(1.0f);
@@ -87,12 +125,16 @@ public:
             std::memcpy(&matrix, m.data(), 16 * sizeof(float));
         }
     }
+    void setMatrix(const glm::mat4& m) {
+        matrix = m;
+    }
     void setEditMatrix(const std::vector<float>& m) {
         if (m.size() == 16) {
             std::memcpy(&editMatrix, m.data(), 16 * sizeof(float));
         }
     }
 
+    void initTexCoordsDataFromOBJData(const std::vector<float>& uvAr, const std::vector<uint32_t>& uvfArOrig);
     void updateMatrices(const Camera& camera);
     void computeBbox(float* outBbox) const;
 };

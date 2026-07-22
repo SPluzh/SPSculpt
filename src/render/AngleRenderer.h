@@ -60,6 +60,8 @@ public:
     bool getShowContour() const { return m_showContour; }
     void setShowGrid(bool show) { m_showGrid = show; }
     bool getShowGrid() const { return m_showGrid; }
+    void setShowSymmetryLine(bool show) { m_showSymmetryLine = show; }
+    bool getShowSymmetryLine() const { return m_showSymmetryLine; }
     void setContourColor(const glm::vec4& color) { m_contourColor = color; }
     glm::vec4 getContourColor() const { return m_contourColor; }
     void setSplitMode(bool split) { m_splitMode = split; }

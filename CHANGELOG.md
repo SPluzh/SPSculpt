@@ -3,6 +3,9 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.0.0]
+- **Files**: Added native C++ support for importing and exporting all major 3D file formats, including SGL (native scene format), OBJ, STL, PLY, and GLTF/GLB.
+- **Files**: Integrated JSON parsing library for native GLTF file loading and scene structure traversal.
+- **UI**: Added a new "Import & Export" panel to manage loading/saving models, alongside new options in the main File menu.
 - **Core**: Refactored the core sculpting engine and manager to enforce native C++ pointer type-safety, completely eliminating unsafe typecasting and legacy pointer formats.
 - **Tools**: Added full native support for the remaining Group B brushes, including Masking, Painting, Twist, and Local Scale tools, and integrated them into the user interface and hotkey systems.
 - **Input**: Implemented hardware tablet input support on Windows, allowing automatic detection and pressure-sensitive brush scaling for pens and styluses with seamless fallback to normal mouse input.

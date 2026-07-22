@@ -1,6 +1,7 @@
 #include "gui/GuiManager.h"
 #include "render/AngleRenderer.h"
 #include "render/RenderSettings.h"
+#include "files/FileManager.h"
 #include <imgui.h>
 #include <imgui_impl_sdl2.h>
 #include <imgui_impl_opengl3.h>
@@ -208,6 +209,13 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 scene.loadDefaultSphere();
             }
             ImGui::Separator();
+            if (ImGui::MenuItem("Import File...")) {
+                m_showFilesPanel = true;
+            }
+            if (ImGui::MenuItem("Export File...")) {
+                m_showFilesPanel = true;
+            }
+            ImGui::Separator();
             if (ImGui::MenuItem("Save Render Settings")) {
                 RenderSettings::save("render_settings.cfg", renderer, scene);
             }
@@ -221,6 +229,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGui::MenuItem("Sculpting Settings", nullptr, &m_showSculptingPanel);
             ImGui::MenuItem("Scene Outliner", nullptr, &m_showScenePanel);
             ImGui::MenuItem("Topology & Remesh", nullptr, &m_showTopologyPanel);
+            ImGui::MenuItem("Import & Export", nullptr, &m_showFilesPanel);
             ImGui::MenuItem("Camera & Viewport", nullptr, &m_showCameraPanel);
             ImGui::MenuItem("Rendering Quality", nullptr, &m_showRenderingPanel);
             ImGui::MenuItem("Reference Images", nullptr, &m_showReferenceImagesPanel);
@@ -586,6 +595,31 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
                 ImGui::PopID();
             }
+        }
+
+        ImGui::End();
+    }
+
+    // 7.5. Import & Export Panel
+    if (m_showFilesPanel) {
+        ImGui::SetNextWindowPos({740, 260}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize({300, 200}, ImGuiCond_FirstUseEver);
+        ImGui::Begin("Import & Export", &m_showFilesPanel, ImGuiWindowFlags_AlwaysAutoResize);
+
+        ImGui::InputText("Import Path", m_importPath, sizeof(m_importPath));
+        if (ImGui::Button("Import##file", ImVec2(-1, 0))) {
+            auto newMeshes = FileManager::importFiles(m_importPath, &scene, &renderer);
+            for (auto* mesh : newMeshes) {
+                scene.addMesh(mesh);
+            }
+            scene.pushHistoryState();
+        }
+        
+        ImGui::Separator();
+
+        ImGui::InputText("Export Path", m_exportPath, sizeof(m_exportPath));
+        if (ImGui::Button("Export##file", ImVec2(-1, 0))) {
+            FileManager::exportMeshes(m_exportPath, scene.getMeshes(), &scene, &renderer);
         }
 
         ImGui::End();
