@@ -143,6 +143,7 @@ static const char* getBrushNameLocal(BrushType brush) {
         case BRUSH_DAMSTANDARD: return "Dam Standard";
         case BRUSH_SQUAREBRUSH: return "Square Brush";
         case BRUSH_VISIBILITY: return "Visibility";
+        case BRUSH_MASK_GRADIENT_BLUR: return "Mask Gradient Blur";
     }
     return "Unknown";
 }
@@ -264,10 +265,10 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         
         const char* tools[] = { 
             "Flatten", "Smooth", "Inflate", "Pinch", "Crease", "V-Tool", "Move", "Drag", "Elastic", 
-            "Mask", "Paint", "Twist", "Local Scale", "Clay", "Clay Buildup", "Dam Standard", "Square Brush", "Visibility"
+            "Mask", "Paint", "Twist", "Local Scale", "Clay", "Clay Buildup", "Dam Standard", "Square Brush", "Visibility", "Mask Gradient Blur"
         };
         BrushType current = sculpt.getBrush();
-        for (int i = 0; i < 18; i++) {
+        for (int i = 0; i < 19; i++) {
             bool selected = (current == (BrushType)i);
             if (selected) {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_HeaderActive]);
@@ -346,7 +347,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                  brushType == BRUSH_ELASTIC || brushType == BRUSH_CLAY || 
                                  brushType == BRUSH_CLAYBUILDUP || 
                                  brushType == BRUSH_SQUAREBRUSH || brushType == BRUSH_PAINT || 
-                                 brushType == BRUSH_MASK);
+                                 brushType == BRUSH_MASK || brushType == BRUSH_MASK_GRADIENT_BLUR);
 
         if (hasSpecialParams) {
             if (ImGui::CollapsingHeader("Tool Specific Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -406,6 +407,25 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     ImGui::SliderInt("Iterations", &settings.maskSharpenBlurIterations, 1, 50);
                     ImGui::SliderFloat("Sharpen Factor", &settings.maskSharpenFactor, 0.1f, 5.0f, "%.2f");
                     ImGui::SliderFloat("Extract Thickness", &settings.maskExtractThickness, -0.5f, 0.5f, "%.2f");
+                }
+                else if (brushType == BRUSH_MASK_GRADIENT_BLUR) {
+                    Mesh* selectedMesh = scene.getSelected();
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.44f, 0.70f, 1.00f));
+                    if (ImGui::Button("Reset Gradient Line", ImVec2(-1, 26))) {
+                        sculpt.setGradActive(false);
+                    }
+                    if (ImGui::Button("Clear Mask", ImVec2(120, 26))) {
+                        sculpt.clearMask(selectedMesh);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Invert Mask", ImVec2(120, 26))) {
+                        sculpt.invertMask(selectedMesh);
+                    }
+                    ImGui::PopStyleColor();
+
+                    ImGui::Separator();
+                    ImGui::SliderInt("Blur Iterations", &settings.maskSharpenBlurIterations, 1, 100);
+                    ImGui::Checkbox("Blur Masked Only", &settings.blurMaskedOnly);
                 }
             }
         }
@@ -993,6 +1013,46 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         ImGui::End();
         
         ImGui::PopStyleColor(2);
+    }
+
+    if (sculpt.getBrush() == BRUSH_MASK_GRADIENT_BLUR && sculpt.getGradActive()) {
+        ImDrawList* drawList = ImGui::GetForegroundDrawList();
+        ImVec2 pA = ImVec2(sculpt.getGradPointA().x, sculpt.getGradPointA().y);
+        ImVec2 pB = ImVec2(sculpt.getGradPointB().x, sculpt.getGradPointB().y);
+
+        float dx = pB.x - pA.x;
+        float dy = pB.y - pA.y;
+        float len = std::sqrt(dx * dx + dy * dy);
+        if (len > 0.0f) {
+            float step = 10.0f;
+            int numSteps = (int)(len / step);
+            float ux = dx / len;
+            float uy = dy / len;
+            for (int i = 0; i < numSteps; ++i) {
+                float tStart = i * step;
+                float tEnd = tStart + 5.0f;
+                if (tEnd > len) tEnd = len;
+                drawList->AddLine(
+                    ImVec2(pA.x + ux * tStart, pA.y + uy * tStart),
+                    ImVec2(pA.x + ux * tEnd, pA.y + uy * tEnd),
+                    IM_COL32(0, 229, 255, 255),
+                    2.0f
+                );
+            }
+        }
+
+        ImVec2 mousePos = ImGui::GetMousePos();
+        float distA = std::sqrt((mousePos.x - pA.x) * (mousePos.x - pA.x) + (mousePos.y - pA.y) * (mousePos.y - pA.y));
+        float distB = std::sqrt((mousePos.x - pB.x) * (mousePos.x - pB.x) + (mousePos.y - pB.y) * (mousePos.y - pB.y));
+
+        float radA = (distA < 20.0f) ? 12.0f : 8.0f;
+        float radB = (distB < 20.0f) ? 12.0f : 8.0f;
+
+        drawList->AddCircleFilled(pA, radA, IM_COL32(255, 255, 255, 255));
+        drawList->AddCircle(pA, radA, IM_COL32(0, 229, 255, 255), 0, 2.0f);
+
+        drawList->AddCircleFilled(pB, radB, IM_COL32(0, 229, 255, 255));
+        drawList->AddCircle(pB, radB, IM_COL32(255, 255, 255, 255), 0, 2.0f);
     }
 
     ImGui::Render();

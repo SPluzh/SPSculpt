@@ -3,7 +3,9 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.1.0]
-- **Tools**: Hides the circular brush cursor and center point entirely when the Visibility tool is active.
+- **Tools**: Added interactive Mask Gradient Blur tool featuring screen-space dashed guides and interactive draggable handle controls.
+- **Input**: Fixed camera controls sticking/freezing when using camera shortcuts (Alt + Left Click, Right Click, Middle Click) while the Mask Gradient Blur tool is active.
+- **Tools**: Hides the circular brush cursor and center point entirely when the Visibility tool or Mask Gradient Blur tool is active.
 - **Input**: Automatically switches the active brush to the Visibility tool when the `Ctrl + Shift` modifier combination is held.
 - **Renderer**: Implemented custom lasso overlay colors to match the legacy JavaScript application: green (`#00E676`) for positive selection, red (`#FF3333`) for negative selection (`Ctrl + Shift + Alt`), cyan (`#00E5FF`) for mask lasso, and white (`#FFFFFF`) for negative mask lasso.
 - **Renderer**: Added a transparent fill (15% opacity) and a stippled/dashed border to the selection and mask lasso loops.

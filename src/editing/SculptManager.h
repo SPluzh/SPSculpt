@@ -39,12 +39,13 @@ struct BrushSettings {
     int maskSharpenBlurIterations = 4;
     float maskSharpenFactor = 1.0f;
     float maskExtractThickness = 0.05f;
+    bool blurMaskedOnly = false;
 };
 
 class SculptManager {
 private:
     BrushType m_currentBrush = BRUSH_FLATTEN;
-    BrushSettings m_brushSettings[18];
+    BrushSettings m_brushSettings[19];
 
     CameraController m_cameraController;
     bool m_isSculpting = false;
@@ -96,9 +97,13 @@ public:
     BrushType getBrush() const { return m_currentBrush; }
     void setBrush(BrushType brush) { 
         m_currentBrush = brush; 
+        m_gradActivePoint = '\0';
+        m_gradIsDrawing = false;
     }
     void setTool(BrushType brush) { 
         m_currentBrush = brush; 
+        m_gradActivePoint = '\0';
+        m_gradIsDrawing = false;
     }
 
     float getBrushRadius() const { return getCurrentSettings().radius; }
@@ -157,6 +162,14 @@ public:
     void blurMask(Mesh* mesh);
     void sharpenMask(Mesh* mesh);
 
+    bool getGradActive() const { return m_gradActive; }
+    void setGradActive(bool val) { m_gradActive = val; }
+    glm::vec2 getGradPointA() const { return m_gradPointA; }
+    glm::vec2 getGradPointB() const { return m_gradPointB; }
+    void setGradPointA(glm::vec2 p) { m_gradPointA = p; }
+    void setGradPointB(glm::vec2 p) { m_gradPointB = p; }
+    bool isGradDrawing() const { return m_gradIsDrawing; }
+
 private:
     float m_stylusPressure = 1.0f;
     bool m_usingStylus = false;
@@ -176,6 +189,18 @@ private:
     bool m_firstStrokeFrame = false;
     glm::vec3 m_cachedAreaNormal{0.0f};
     glm::vec3 m_cachedAreaCenter{0.0f};
+
+    // Gradient mask state variables
+    glm::vec2 m_gradPointA{0.0f};
+    glm::vec2 m_gradPointB{0.0f};
+    bool m_gradActive = false;
+    char m_gradActivePoint = '\0'; // 'A' (masked), 'B' (unmasked), or '\0'
+    bool m_gradIsDrawing = false;
+
+    // Buffers for mask blurring (Laplacian Blur)
+    std::vector<float> m_origMasks;
+    std::vector<float> m_blurredMasks;
+    std::vector<uint32_t> m_gradActiveVerts;
 };
 
 

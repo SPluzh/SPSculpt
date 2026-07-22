@@ -52,7 +52,7 @@ void BrushCursor::update(int mouseX, int mouseY,
                           bool hasActiveStrokeHit,
                           const glm::vec3& activeStrokeHitPt,
                           const glm::vec3& activeStrokeHitNormal) {
-    if (brushType == BRUSH_VISIBILITY) {
+    if (brushType == BRUSH_VISIBILITY || brushType == BRUSH_MASK_GRADIENT_BLUR) {
         m_state.visible = false;
         return;
     }

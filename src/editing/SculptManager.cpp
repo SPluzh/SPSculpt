@@ -143,7 +143,7 @@ static void filterCullingVertices(
 
 SculptManager::SculptManager() {
     // Initialise all brushes with baseline defaults
-    for (int i = 0; i < 18; ++i) {
+    for (int i = 0; i < 19; ++i) {
         m_brushSettings[i].radius = 50.0f;
         m_brushSettings[i].intensity = 0.5f;
         m_brushSettings[i].focalShift = 0.0f;
@@ -227,6 +227,9 @@ SculptManager::SculptManager() {
     m_brushSettings[BRUSH_SQUAREBRUSH].culling = false;
 
     m_brushSettings[BRUSH_VISIBILITY].culling = false;
+
+    m_brushSettings[BRUSH_MASK_GRADIENT_BLUR].maskSharpenBlurIterations = 40;
+    m_brushSettings[BRUSH_MASK_GRADIENT_BLUR].culling = false;
 }
 
 void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, float mouseX, float mouseY, float currentPressure) {
@@ -798,6 +801,89 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 return;
             }
 
+            if (m_currentBrush == BRUSH_MASK_GRADIENT_BLUR && mesh) {
+                if (mod & KMOD_ALT) {
+                    m_cameraController.handleEvent(event, camera);
+                    return;
+                }
+                glm::vec2 mousePos((float)mouseX, (float)mouseY);
+                bool interactPoint = false;
+                if (m_gradActive) {
+                    float distA = glm::distance(mousePos, m_gradPointA);
+                    float distB = glm::distance(mousePos, m_gradPointB);
+                    if (distA < 20.0f) {
+                        m_gradActivePoint = 'A';
+                        interactPoint = true;
+                    } else if (distB < 20.0f) {
+                        m_gradActivePoint = 'B';
+                        interactPoint = true;
+                    }
+                }
+
+                if (interactPoint) {
+                    scene.pushHistoryState();
+                    m_gradIsDrawing = false;
+                } else {
+                    scene.pushHistoryState();
+                    m_gradPointA = mousePos;
+                    m_gradPointB = mousePos;
+                    m_gradActivePoint = 'B';
+                    m_gradIsDrawing = true;
+                    m_gradActive = true;
+                }
+
+                int nbVerts = mesh->nbVerts;
+                m_origMasks.resize(nbVerts);
+                std::vector<float> tempMasks(nbVerts);
+                for (int i = 0; i < nbVerts; ++i) {
+                    m_origMasks[i] = mesh->materials[i * 3 + 2];
+                    tempMasks[i] = mesh->materials[i * 3 + 2];
+                }
+
+                std::vector<uint32_t> iVerts;
+                iVerts.reserve(nbVerts);
+                for (int i = 0; i < nbVerts; ++i) {
+                    if (tempMasks[i] < 1.0f) {
+                        iVerts.push_back(i);
+                    }
+                }
+
+                if (!iVerts.empty()) {
+                    int iterations = getCurrentSettings().maskSharpenBlurIterations;
+                    std::vector<uint8_t> visited(nbVerts, 0);
+                    for (uint32_t v : iVerts) visited[v] = 1;
+                    std::vector<uint32_t> queue = iVerts;
+                    size_t head = 0;
+                    for (int step = 0; step < iterations; ++step) {
+                        size_t size = queue.size();
+                        while (head < size) {
+                            uint32_t id = queue[head++];
+                            uint32_t start = mesh->vrvStartCount[id * 2];
+                            uint32_t count = mesh->vrvStartCount[id * 2 + 1];
+                            for (uint32_t j = start; j < start + count; ++j) {
+                                uint32_t neighbor = mesh->vertRingVert[j];
+                                if (!visited[neighbor]) {
+                                    visited[neighbor] = 1;
+                                    queue.push_back(neighbor);
+                                }
+                            }
+                        }
+                    }
+                    iVerts = queue;
+                    ::blurMask(
+                        iVerts.data(), (int)iVerts.size(),
+                        mesh->vrvStartCount.data(),
+                        mesh->vertRingVert.data(),
+                        mesh->vertOnEdge.data(),
+                        iterations,
+                        tempMasks.data()
+                    );
+                }
+                m_blurredMasks = tempMasks;
+                m_gradActiveVerts = iVerts;
+                return;
+            }
+
             // Perform picking intersection test to see if we hit the mesh
             bool hitMesh = false;
             float minT = std::numeric_limits<float>::infinity();
@@ -901,6 +987,70 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             }
         }
     } else if (event.type == SDL_MOUSEBUTTONUP) {
+        if (m_currentBrush == BRUSH_MASK_GRADIENT_BLUR && mesh && event.button.button == SDL_BUTTON_LEFT) {
+            if (m_gradIsDrawing) {
+                float dist = glm::distance(m_gradPointA, m_gradPointB);
+                if (dist < 5.0f) {
+                    m_gradPointA = glm::vec2(m_mouseDownX - 75.0f, (float)m_mouseDownY);
+                    m_gradPointB = glm::vec2(m_mouseDownX + 75.0f, (float)m_mouseDownY);
+
+                    glm::mat4 mvp = camera.getProjMatrix() * camera.getViewMatrix() * mesh->matrix;
+                    float width = (float)camera.getWidth();
+                    float height = (float)camera.getHeight();
+                    float localToScreen[16] = {0.0f};
+
+                    localToScreen[0] = (mvp[0][0] + mvp[0][3]) * 0.5f * width;
+                    localToScreen[4] = (mvp[1][0] + mvp[1][3]) * 0.5f * width;
+                    localToScreen[8] = (mvp[2][0] + mvp[2][3]) * 0.5f * width;
+                    localToScreen[12] = (mvp[3][0] + mvp[3][3]) * 0.5f * width;
+
+                    localToScreen[1] = (mvp[0][1] + mvp[0][3]) * 0.5f * height;
+                    localToScreen[5] = (mvp[1][1] + mvp[1][3]) * 0.5f * height;
+                    localToScreen[9] = (mvp[2][1] + mvp[2][3]) * 0.5f * height;
+                    localToScreen[13] = (mvp[3][1] + mvp[3][3]) * 0.5f * height;
+
+                    localToScreen[3] = mvp[0][3];
+                    localToScreen[7] = mvp[1][3];
+                    localToScreen[11] = mvp[2][3];
+                    localToScreen[15] = mvp[3][3];
+
+                    float ptPlaneX = 0.0f, ptPlaneY = 0.0f, ptPlaneZ = 0.0f;
+                    float nPlaneX = (m_symAxis == 0) ? 1.0f : 0.0f;
+                    float nPlaneY = (m_symAxis == 1) ? 1.0f : 0.0f;
+                    float nPlaneZ = (m_symAxis == 2) ? 1.0f : 0.0f;
+
+                    ::applyGradientMask(
+                        mesh->verts.data(),
+                        mesh->materials.data(),
+                        m_gradActiveVerts.data(),
+                        (int)m_gradActiveVerts.size(),
+                        m_origMasks.data(),
+                        m_blurredMasks.data(),
+                        localToScreen,
+                        height,
+                        m_gradPointA.x, m_gradPointA.y,
+                        m_gradPointB.x, m_gradPointB.y,
+                        m_useSym,
+                        ptPlaneX, ptPlaneY, ptPlaneZ,
+                        nPlaneX, nPlaneY, nPlaneZ,
+                        getCurrentSettings().blurMaskedOnly,
+                        mesh->nbVerts
+                    );
+
+                    mesh->isVertexDirty = true;
+                    mesh->dirtyVertMin = 0;
+                    mesh->dirtyVertMax = mesh->nbVerts - 1;
+                    mesh->isDirty = true;
+                }
+                m_gradIsDrawing = false;
+                m_gradActivePoint = '\0';
+                return;
+            } else if (m_gradActivePoint != '\0') {
+                m_gradActivePoint = '\0';
+                return;
+            }
+        }
+
         if (m_isLassoActive) {
             m_isLassoActive = false;
             if (m_lassoPoints.size() >= 3 && mesh) {
@@ -1169,6 +1319,64 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
         m_prevMouseX = mouseX;
         m_prevMouseY = mouseY;
 
+        if (m_currentBrush == BRUSH_MASK_GRADIENT_BLUR && mesh && m_gradActive && m_gradActivePoint != '\0') {
+            glm::vec2 mousePos((float)mouseX, (float)mouseY);
+            if (m_gradActivePoint == 'A') {
+                m_gradPointA = mousePos;
+            } else if (m_gradActivePoint == 'B') {
+                m_gradPointB = mousePos;
+            }
+
+            glm::mat4 mvp = camera.getProjMatrix() * camera.getViewMatrix() * mesh->matrix;
+            float width = (float)camera.getWidth();
+            float height = (float)camera.getHeight();
+            float localToScreen[16] = {0.0f};
+
+            localToScreen[0] = (mvp[0][0] + mvp[0][3]) * 0.5f * width;
+            localToScreen[4] = (mvp[1][0] + mvp[1][3]) * 0.5f * width;
+            localToScreen[8] = (mvp[2][0] + mvp[2][3]) * 0.5f * width;
+            localToScreen[12] = (mvp[3][0] + mvp[3][3]) * 0.5f * width;
+
+            localToScreen[1] = (mvp[0][1] + mvp[0][3]) * 0.5f * height;
+            localToScreen[5] = (mvp[1][1] + mvp[1][3]) * 0.5f * height;
+            localToScreen[9] = (mvp[2][1] + mvp[2][3]) * 0.5f * height;
+            localToScreen[13] = (mvp[3][1] + mvp[3][3]) * 0.5f * height;
+
+            localToScreen[3] = mvp[0][3];
+            localToScreen[7] = mvp[1][3];
+            localToScreen[11] = mvp[2][3];
+            localToScreen[15] = mvp[3][3];
+
+            float ptPlaneX = 0.0f, ptPlaneY = 0.0f, ptPlaneZ = 0.0f;
+            float nPlaneX = (m_symAxis == 0) ? 1.0f : 0.0f;
+            float nPlaneY = (m_symAxis == 1) ? 1.0f : 0.0f;
+            float nPlaneZ = (m_symAxis == 2) ? 1.0f : 0.0f;
+
+            ::applyGradientMask(
+                mesh->verts.data(),
+                mesh->materials.data(),
+                m_gradActiveVerts.data(),
+                (int)m_gradActiveVerts.size(),
+                m_origMasks.data(),
+                m_blurredMasks.data(),
+                localToScreen,
+                height,
+                m_gradPointA.x, m_gradPointA.y,
+                m_gradPointB.x, m_gradPointB.y,
+                m_useSym,
+                ptPlaneX, ptPlaneY, ptPlaneZ,
+                nPlaneX, nPlaneY, nPlaneZ,
+                getCurrentSettings().blurMaskedOnly,
+                mesh->nbVerts
+            );
+
+            mesh->isVertexDirty = true;
+            mesh->dirtyVertMin = 0;
+            mesh->dirtyVertMax = mesh->nbVerts - 1;
+            mesh->isDirty = true;
+            return;
+        }
+
         if (m_isLassoActive) {
             if (m_lassoPoints.empty() || m_lassoPoints.back() != glm::vec2((float)mouseX, (float)mouseY)) {
                 m_lassoPoints.push_back(glm::vec2((float)mouseX, (float)mouseY));
@@ -1299,7 +1507,7 @@ bool SculptManager::saveSettings(const std::string& filepath) {
         return false;
     }
 
-    for (int i = 0; i < 18; ++i) {
+    for (int i = 0; i < 19; ++i) {
         out << "[Brush_" << i << "]\n";
         out << "radius=" << m_brushSettings[i].radius << "\n";
         out << "intensity=" << m_brushSettings[i].intensity << "\n";
@@ -1324,7 +1532,8 @@ bool SculptManager::saveSettings(const std::string& filepath) {
         out << "writeMetalness=" << (m_brushSettings[i].writeMetalness ? "true" : "false") << "\n";
         out << "maskSharpenBlurIterations=" << m_brushSettings[i].maskSharpenBlurIterations << "\n";
         out << "maskSharpenFactor=" << m_brushSettings[i].maskSharpenFactor << "\n";
-        out << "maskExtractThickness=" << m_brushSettings[i].maskExtractThickness << "\n\n";
+        out << "maskExtractThickness=" << m_brushSettings[i].maskExtractThickness << "\n";
+        out << "blurMaskedOnly=" << (m_brushSettings[i].blurMaskedOnly ? "true" : "false") << "\n\n";
     }
 
     std::cout << "Successfully saved brush settings to: " << filepath << std::endl;
@@ -1361,7 +1570,7 @@ bool SculptManager::loadSettings(const std::string& filepath) {
         }
     }
 
-    for (int i = 0; i < 18; ++i) {
+    for (int i = 0; i < 19; ++i) {
         std::string sectionName = "Brush_" + std::to_string(i);
         auto itSection = sections.find(sectionName);
         if (itSection != sections.end()) {
@@ -1416,6 +1625,7 @@ bool SculptManager::loadSettings(const std::string& filepath) {
             getParam("maskSharpenBlurIterations", m_brushSettings[i].maskSharpenBlurIterations, [](const std::string& s) { return safe_stoi(s, 4); });
             getParam("maskSharpenFactor", m_brushSettings[i].maskSharpenFactor, [](const std::string& s) { return safe_stof(s, 1.0f); });
             getParam("maskExtractThickness", m_brushSettings[i].maskExtractThickness, [](const std::string& s) { return safe_stof(s, 0.05f); });
+            getBoolParam("blurMaskedOnly", m_brushSettings[i].blurMaskedOnly);
         }
     }
 
