@@ -198,6 +198,7 @@ SculptManager::SculptManager() {
     m_brushSettings[BRUSH_ELASTIC].elasticity = 0.5f;
 
     m_brushSettings[BRUSH_MASK].intensity = 1.0f;
+    m_brushSettings[BRUSH_MASK].negative = true;
     m_brushSettings[BRUSH_MASK].culling = true;
 
     m_brushSettings[BRUSH_PAINT].hardness = 0.7f;
