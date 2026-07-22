@@ -75,6 +75,7 @@ HistoryState Scene::saveCurrentState() const {
         ms.alpha = m->alpha;
         ms.showWireframe = m->showWireframe;
         ms.flatShading = m->flatShading;
+        ms.matrix = m->matrix;
         
         hs.meshes.push_back(ms);
     }
@@ -109,6 +110,7 @@ void Scene::restoreState(const HistoryState& hs) {
         m->alpha = ms.alpha;
         m->showWireframe = ms.showWireframe;
         m->flatShading = ms.flatShading;
+        m->matrix = ms.matrix;
 
         m->postInit();
         m_meshes.push_back(m);

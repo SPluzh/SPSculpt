@@ -5,6 +5,7 @@
 #include <imgui.h>
 #include <imgui_impl_sdl2.h>
 #include <imgui_impl_opengl3.h>
+#include <ImGuizmo.h>
 #include <vector>
 #include <string>
 #include <iostream>
@@ -144,6 +145,9 @@ static const char* getBrushNameLocal(BrushType brush) {
         case BRUSH_SQUAREBRUSH: return "Square Brush";
         case BRUSH_VISIBILITY: return "Visibility";
         case BRUSH_MASK_GRADIENT_BLUR: return "Mask Gradient Blur";
+        case BRUSH_MEASURE:  return "Measure";
+        case BRUSH_DIVIDER:  return "Divider";
+        case BRUSH_TRANSFORM: return "Transform";
     }
     return "Unknown";
 }
@@ -265,10 +269,11 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         
         const char* tools[] = { 
             "Flatten", "Smooth", "Inflate", "Pinch", "Crease", "V-Tool", "Move", "Drag", "Elastic", 
-            "Mask", "Paint", "Twist", "Local Scale", "Clay", "Clay Buildup", "Dam Standard", "Square Brush", "Visibility", "Mask Gradient Blur"
+            "Mask", "Paint", "Twist", "Local Scale", "Clay", "Clay Buildup", "Dam Standard", "Square Brush", "Visibility", "Mask Gradient Blur",
+            "Measure", "Divider", "Transform"
         };
         BrushType current = sculpt.getBrush();
-        for (int i = 0; i < 19; i++) {
+        for (int i = 0; i < 22; i++) {
             bool selected = (current == (BrushType)i);
             if (selected) {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_HeaderActive]);
@@ -347,7 +352,9 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                  brushType == BRUSH_ELASTIC || brushType == BRUSH_CLAY || 
                                  brushType == BRUSH_CLAYBUILDUP || 
                                  brushType == BRUSH_SQUAREBRUSH || brushType == BRUSH_PAINT || 
-                                 brushType == BRUSH_MASK || brushType == BRUSH_MASK_GRADIENT_BLUR);
+                                 brushType == BRUSH_MASK || brushType == BRUSH_MASK_GRADIENT_BLUR ||
+                                 brushType == BRUSH_MEASURE || brushType == BRUSH_DIVIDER ||
+                                 brushType == BRUSH_TRANSFORM);
 
         if (hasSpecialParams) {
             if (ImGui::CollapsingHeader("Tool Specific Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -426,6 +433,43 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     ImGui::Separator();
                     ImGui::SliderInt("Blur Iterations", &settings.maskSharpenBlurIterations, 1, 100);
                     ImGui::Checkbox("Blur Masked Only", &settings.blurMaskedOnly);
+                }
+                else if (brushType == BRUSH_MEASURE) {
+                    bool useDist = sculpt.getMeasureUseDistanceThickness();
+                    if (ImGui::Checkbox("Use Perspective Thickness", &useDist)) {
+                        sculpt.setMeasureUseDistanceThickness(useDist);
+                    }
+                    if (ImGui::Button("Clear Measurements", ImVec2(-1, 26))) {
+                        sculpt.clearMeasurements();
+                    }
+                }
+                else if (brushType == BRUSH_DIVIDER) {
+                    int divs = sculpt.getDividerDivisions();
+                    if (ImGui::SliderInt("Divisions", &divs, 2, 6)) {
+                        sculpt.setDividerDivisions(divs);
+                    }
+                    bool useDist = sculpt.getMeasureUseDistanceThickness();
+                    if (ImGui::Checkbox("Use Perspective Thickness", &useDist)) {
+                        sculpt.setMeasureUseDistanceThickness(useDist);
+                    }
+                    if (ImGui::Button("Clear Dividers", ImVec2(-1, 26))) {
+                        sculpt.clearMeasurements();
+                    }
+                }
+                else if (brushType == BRUSH_TRANSFORM) {
+                    ImGui::Text("Gizmo Controls:");
+                    ImGui::BulletText("W - Translate");
+                    ImGui::BulletText("E - Rotate");
+                    ImGui::BulletText("R - Scale");
+                    
+                    if (ImGui::Button("Reset Matrix", ImVec2(-1, 26))) {
+                        Mesh* selectedMesh = scene.getSelected();
+                        if (selectedMesh) {
+                            scene.pushHistoryState();
+                            selectedMesh->matrix = glm::mat4(1.0f);
+                            selectedMesh->isDirty = true;
+                        }
+                    }
                 }
             }
         }
@@ -1053,6 +1097,253 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
         drawList->AddCircleFilled(pB, radB, IM_COL32(0, 229, 255, 255));
         drawList->AddCircle(pB, radB, IM_COL32(255, 255, 255, 255), 0, 2.0f);
+    }
+
+    // 10. Measure / Divider Overlays
+    if (sculpt.getBrush() == BRUSH_MEASURE || sculpt.getBrush() == BRUSH_DIVIDER) {
+        sculpt.validateSegments(scene);
+        ImDrawList* drawList = ImGui::GetForegroundDrawList();
+        const Camera& camera = scene.getCamera();
+        bool useDistanceThickness = sculpt.getMeasureUseDistanceThickness();
+
+        auto getPixelsPerUnit = [](const glm::vec3& worldPos, const Camera& camera) -> float {
+            glm::mat4 view = camera.getViewMatrix();
+            glm::vec3 right(view[0][0], view[1][0], view[2][0]);
+            glm::vec3 offsetPos = worldPos + right * 1.0f;
+            glm::vec3 screenPos = camera.project(worldPos);
+            glm::vec3 screenOffsetPos = camera.project(offsetPos);
+            return glm::length(glm::vec2(screenPos.x - screenOffsetPos.x, screenPos.y - screenOffsetPos.y));
+        };
+
+        auto drawEndpointShape = [](ImDrawList* drawList, ImVec2 center, float r, MeasurementAnchor::Type type, ImU32 fillColor, ImU32 strokeColor, float strokeWidth) {
+            if (type == MeasurementAnchor::VERTEX) {
+                drawList->AddCircleFilled(center, r, fillColor);
+                drawList->AddCircle(center, r, strokeColor, 0, strokeWidth);
+            } else {
+                ImVec2 pts[4] = {
+                    ImVec2(center.x, center.y - r),
+                    ImVec2(center.x + r, center.y),
+                    ImVec2(center.x, center.y + r),
+                    ImVec2(center.x - r, center.y)
+                };
+                drawList->AddConvexPolyFilled(pts, 4, fillColor);
+                drawList->AddPolyline(pts, 4, strokeColor, ImDrawFlags_Closed, strokeWidth);
+            }
+        };
+
+        const MeasurementSegment* hoveredSeg = sculpt.getHoveredSegment();
+        std::string hoveredKey = sculpt.getHoveredVertexKey();
+
+        bool isDivider = (sculpt.getBrush() == BRUSH_DIVIDER);
+        int divisions = sculpt.getDividerDivisions();
+
+        // Find reference length for Measure
+        float referenceLength = 0.0f;
+        const auto& segments = isDivider ? sculpt.getDividerSegments() : sculpt.getMeasureSegments();
+        if (!isDivider) {
+            for (const auto& s : segments) {
+                if (s.isReference) {
+                    glm::vec3 worldA = SculptManager::getAnchorWorldPos(s.vertA);
+                    glm::vec3 worldB = SculptManager::getAnchorWorldPos(s.vertB);
+                    referenceLength = glm::distance(worldA, worldB);
+                    break;
+                }
+            }
+        }
+
+        auto drawSeg = [&](const MeasurementSegment& seg, bool isReference, bool isPreview) {
+            glm::vec3 worldA = SculptManager::getAnchorWorldPos(seg.vertA);
+            glm::vec3 worldB = SculptManager::getAnchorWorldPos(seg.vertB);
+
+            glm::vec3 screenA = camera.project(worldA);
+            glm::vec3 screenB = camera.project(worldB);
+            ImVec2 posA(screenA.x, screenA.y);
+            ImVec2 posB(screenB.x, screenB.y);
+
+            float worldDist = glm::distance(worldA, worldB);
+
+            bool isHoveredA = (&seg == hoveredSeg && hoveredKey == "vertA");
+            bool isHoveredB = (&seg == hoveredSeg && hoveredKey == "vertB");
+
+            ImU32 color = isReference ? IM_COL32(255, 255, 255, 255) : IM_COL32(176, 190, 197, 255);
+            if (isPreview) {
+                color = isReference ? IM_COL32(255, 255, 255, 150) : IM_COL32(176, 190, 197, 150);
+            }
+
+            float strokeWidth = isReference ? 1.5f : 1.0f;
+            float rA = isReference ? 5.0f : 4.0f;
+            float rB = isReference ? 5.0f : 4.0f;
+            float rDiv = 3.5f;
+
+            if (useDistanceThickness) {
+                glm::vec3 worldMid = (worldA + worldB) * 0.5f;
+                float ppuMid = getPixelsPerUnit(worldMid, camera);
+                strokeWidth = (isReference ? 0.11f : 0.075f) * ppuMid;
+                strokeWidth = glm::clamp(strokeWidth, 0.25f, 5.0f);
+
+                float ppuA = getPixelsPerUnit(worldA, camera);
+                rA = (isReference ? 0.35f : 0.28f) * ppuA;
+                rA = glm::clamp(rA, 1.0f, 15.0f);
+
+                float ppuB = getPixelsPerUnit(worldB, camera);
+                rB = (isReference ? 0.35f : 0.28f) * ppuB;
+                rB = glm::clamp(rB, 1.0f, 15.0f);
+
+                rDiv = 0.2f * ppuMid;
+                rDiv = glm::clamp(rDiv, 0.8f, 10.0f);
+            }
+
+            if (isHoveredA) rA = std::max(8.0f, rA * 1.6f);
+            if (isHoveredB) rB = std::max(8.0f, rB * 1.6f);
+
+            // 1. Line
+            if (isPreview) {
+                ImVec2 d = ImVec2(posB.x - posA.x, posB.y - posA.y);
+                float len = std::sqrt(d.x * d.x + d.y * d.y);
+                if (len > 0.0f) {
+                    float step = 10.0f;
+                    int numSteps = (int)(len / step);
+                    float ux = d.x / len;
+                    float uy = d.y / len;
+                    for (int i = 0; i < numSteps; ++i) {
+                        float tStart = i * step;
+                        float tEnd = tStart + 5.0f;
+                        if (tEnd > len) tEnd = len;
+                        drawList->AddLine(
+                            ImVec2(posA.x + ux * tStart, posA.y + uy * tStart),
+                            ImVec2(posA.x + ux * tEnd, posA.y + uy * tEnd),
+                            color,
+                            strokeWidth
+                        );
+                    }
+                }
+            } else {
+                drawList->AddLine(posA, posB, color, strokeWidth);
+            }
+
+            // 2. Division marks or ticks
+            if (isDivider) {
+                if (divisions >= 2 && divisions <= 6) {
+                    for (int k = 1; k < divisions; ++k) {
+                        float t = (float)k / (float)divisions;
+                        glm::vec3 divWorld = glm::mix(worldA, worldB, t);
+                        glm::vec3 divScreen = camera.project(divWorld);
+                        ImVec2 divPos(divScreen.x, divScreen.y);
+                        ImU32 fillCol = isPreview ? IM_COL32(255, 255, 255, 102) : IM_COL32(255, 255, 255, 255);
+                        ImU32 strokeCol = isPreview ? IM_COL32(26, 26, 26, 102) : IM_COL32(26, 26, 26, 255);
+                        drawList->AddCircleFilled(divPos, rDiv, fillCol);
+                        drawList->AddCircle(divPos, rDiv, strokeCol, 0, 1.0f);
+                    }
+                }
+            } else {
+                if (!isReference && referenceLength > 0.0f) {
+                    int nTicks = (int)std::floor((worldDist - 1e-5f) / referenceLength);
+                    for (int k = 1; k <= nTicks; ++k) {
+                        float t = (k * referenceLength) / worldDist;
+                        glm::vec3 tickWorld = glm::mix(worldA, worldB, t);
+                        glm::vec3 tickScreen = camera.project(tickWorld);
+                        ImVec2 tickPos(tickScreen.x, tickScreen.y);
+                        drawList->AddCircleFilled(tickPos, 2.5f, IM_COL32(255, 255, 255, 255));
+                        drawList->AddCircle(tickPos, 2.5f, color, 0, 1.0f);
+                    }
+                }
+            }
+
+            // 3. Endpoint shapes
+            ImU32 strokeA = isHoveredA ? IM_COL32(0, 229, 255, 255) : IM_COL32(26, 26, 26, 255);
+            float swA = isHoveredA ? 2.5f : 1.2f;
+            drawEndpointShape(drawList, posA, rA, seg.vertA.type, color, strokeA, swA);
+
+            ImU32 strokeB = isHoveredB ? IM_COL32(0, 229, 255, 255) : IM_COL32(26, 26, 26, 255);
+            float swB = isHoveredB ? 2.5f : 1.2f;
+            drawEndpointShape(drawList, posB, rB, seg.vertB.type, color, strokeB, swB);
+
+            // 4. Text Label (Measure tool only)
+            if (!isDivider) {
+                char label[32];
+                if (isReference) {
+                    strcpy(label, "1.00x");
+                } else {
+                    if (referenceLength > 0.0f) {
+                        sprintf(label, "%.2fx", worldDist / referenceLength);
+                    } else {
+                        sprintf(label, "%.2f", worldDist);
+                    }
+                }
+
+                ImVec2 labelSize = ImGui::CalcTextSize(label);
+                float textWidth = labelSize.x + 12.0f;
+                float textHeight = labelSize.y + 6.0f;
+
+                ImVec2 midPos((posA.x + posB.x) * 0.5f, (posA.y + posB.y) * 0.5f - 10.0f);
+                ImVec2 minRect(midPos.x - textWidth * 0.5f, midPos.y - textHeight * 0.5f);
+                ImVec2 maxRect(midPos.x + textWidth * 0.5f, midPos.y + textHeight * 0.5f);
+
+                drawList->AddRectFilled(minRect, maxRect, IM_COL32(20, 20, 20, 217), 4.0f);
+                drawList->AddRect(minRect, maxRect, color, 4.0f, 0, 1.0f);
+
+                ImVec2 textPos(midPos.x - labelSize.x * 0.5f, midPos.y - labelSize.y * 0.5f);
+                drawList->AddText(textPos, IM_COL32(255, 255, 255, 255), label);
+            }
+        };
+
+        // Draw completed segments
+        for (const auto& s : segments) {
+            drawSeg(s, !isDivider && s.isReference, false);
+        }
+
+        // Draw pending/preview
+        if (sculpt.hasPending()) {
+            MeasurementSegment pendingSeg;
+            pendingSeg.vertA = sculpt.getPendingAnchorA();
+            pendingSeg.vertB = sculpt.getPendingAnchorB();
+            bool isPendingRef = true;
+            if (!isDivider) {
+                bool hasRef = false;
+                for (const auto& s : segments) {
+                    if (s.isReference) { hasRef = true; break; }
+                }
+                isPendingRef = !hasRef;
+            }
+            drawSeg(pendingSeg, isPendingRef, true);
+        }
+    }
+
+    // 11. Transform Gizmo (ImGuizmo)
+    if (sculpt.getBrush() == BRUSH_TRANSFORM) {
+        Mesh* selectedMesh = scene.getSelected();
+        const Camera& camera = scene.getCamera();
+        if (selectedMesh) {
+            ImGuizmo::BeginFrame();
+            ImGuizmo::SetOrthographic(camera.isOrthographic());
+            ImGuizmo::SetDrawlist(ImGui::GetForegroundDrawList());
+            ImGuizmo::SetRect(0.0f, 0.0f, (float)camera.getWidth(), (float)camera.getHeight());
+
+            glm::mat4 view = camera.getViewMatrix();
+            glm::mat4 proj = camera.getProjMatrix();
+            glm::mat4 matrix = selectedMesh->matrix;
+
+            static ImGuizmo::OPERATION currentOperation = ImGuizmo::TRANSLATE;
+            if (ImGui::IsKeyPressed(ImGuiKey_W)) currentOperation = ImGuizmo::TRANSLATE;
+            if (ImGui::IsKeyPressed(ImGuiKey_E)) currentOperation = ImGuizmo::ROTATE;
+            if (ImGui::IsKeyPressed(ImGuiKey_R)) currentOperation = ImGuizmo::SCALE;
+
+            // Draw and manipulate gizmo
+            if (ImGuizmo::Manipulate(
+                glm::value_ptr(view), glm::value_ptr(proj),
+                currentOperation, ImGuizmo::LOCAL, glm::value_ptr(matrix)
+            )) {
+                static bool wasUsingGizmo = false;
+                bool isUsingGizmo = ImGuizmo::IsUsing();
+                if (isUsingGizmo && !wasUsingGizmo) {
+                    scene.pushHistoryState();
+                }
+                wasUsingGizmo = isUsingGizmo;
+
+                selectedMesh->matrix = matrix;
+                selectedMesh->isDirty = true;
+            }
+        }
     }
 
     ImGui::Render();

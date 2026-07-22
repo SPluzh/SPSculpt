@@ -289,19 +289,11 @@ Ray Camera::getRay(float mouseX, float mouseY) const {
 }
 
 glm::vec3 Camera::unproject(float mouseX, float mouseY, float z) const {
-    Ray ray = getRay(mouseX, mouseY);
-    if (m_projectionType == CameraEnums::Projection::PERSPECTIVE) {
-        float nearVal = std::max(0.001f, m_near);
-        float farVal = std::max(nearVal + 1.0f, m_far);
-        float dist = nearVal + z * (farVal - nearVal);
-        return ray.origin + ray.dir * dist;
-    } else {
-        float h = m_height > 0 ? (float)m_height : 1.0f;
-        glm::mat4 invW2S = glm::inverse(computeWorldToScreenMatrix());
-        glm::vec4 screenPos(mouseX, h - mouseY, z, 1.0f);
-        glm::vec4 worldPos = invW2S * screenPos;
-        return glm::vec3(worldPos) / worldPos.w;
-    }
+    float h = m_height > 0 ? (float)m_height : 1.0f;
+    glm::mat4 invW2S = glm::inverse(computeWorldToScreenMatrix());
+    glm::vec4 screenPos(mouseX, h - mouseY, z, 1.0f);
+    glm::vec4 worldPos = invW2S * screenPos;
+    return glm::vec3(worldPos) / worldPos.w;
 }
 
 glm::vec3 Camera::project(const glm::vec3& worldPos) const {

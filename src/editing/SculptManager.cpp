@@ -143,7 +143,7 @@ static void filterCullingVertices(
 
 SculptManager::SculptManager() {
     // Initialise all brushes with baseline defaults
-    for (int i = 0; i < 19; ++i) {
+    for (int i = 0; i < 22; ++i) {
         m_brushSettings[i].radius = 50.0f;
         m_brushSettings[i].intensity = 0.5f;
         m_brushSettings[i].focalShift = 0.0f;
@@ -230,6 +230,10 @@ SculptManager::SculptManager() {
 
     m_brushSettings[BRUSH_MASK_GRADIENT_BLUR].maskSharpenBlurIterations = 40;
     m_brushSettings[BRUSH_MASK_GRADIENT_BLUR].culling = false;
+
+    m_brushSettings[BRUSH_MEASURE].culling = false;
+    m_brushSettings[BRUSH_DIVIDER].culling = false;
+    m_brushSettings[BRUSH_TRANSFORM].culling = false;
 }
 
 void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, float mouseX, float mouseY, float currentPressure) {
@@ -767,6 +771,142 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     m_firstStrokeFrame = false;
 }
 
+glm::vec3 SculptManager::getAnchorWorldPos(const MeasurementAnchor& anchor) {
+    if (anchor.type == MeasurementAnchor::VERTEX) {
+        Mesh* mesh = anchor.mesh;
+        uint32_t vertIdx = anchor.vertIdx;
+        glm::vec3 localPos(
+            mesh->verts[vertIdx * 3],
+            mesh->verts[vertIdx * 3 + 1],
+            mesh->verts[vertIdx * 3 + 2]
+        );
+        return glm::vec3(mesh->matrix * glm::vec4(localPos, 1.0f));
+    } else {
+        return anchor.worldPos;
+    }
+}
+
+MeasurementAnchor SculptManager::pickAnchor(float mouseX, float mouseY, Scene& scene, const glm::vec3* referenceWorldPos) {
+    Mesh* mesh = scene.getSelected();
+    Camera& camera = scene.getCamera();
+
+    if (mesh) {
+        Ray ray = camera.getRay(mouseX, mouseY);
+        glm::mat4 invMatrix = glm::inverse(mesh->matrix);
+        glm::vec3 localRayOrigin = glm::vec3(invMatrix * glm::vec4(ray.origin, 1.0f));
+        glm::vec3 localRayDir = glm::normalize(glm::vec3(invMatrix * glm::vec4(ray.dir, 0.0f)));
+
+        std::vector<uint32_t> candidateFaces = mesh->octree.collectIntersectRay(
+            localRayOrigin.x, localRayOrigin.y, localRayOrigin.z,
+            localRayDir.x, localRayDir.y, localRayDir.z
+        );
+
+        float minT = std::numeric_limits<float>::infinity();
+        uint32_t intersectFaceId = 0xffffffff;
+
+        for (uint32_t faceId : candidateFaces) {
+            if (faceId >= (uint32_t)mesh->nbFaces) continue;
+            uint32_t v0Id = mesh->faces[faceId * 4];
+            uint32_t v1Id = mesh->faces[faceId * 4 + 1];
+            uint32_t v2Id = mesh->faces[faceId * 4 + 2];
+            uint32_t v3Id = mesh->faces[faceId * 4 + 3];
+
+            if (!mesh->vertVisible[v0Id] || !mesh->vertVisible[v1Id] || !mesh->vertVisible[v2Id] || (v3Id != 0xffffffff && !mesh->vertVisible[v3Id])) {
+                continue;
+            }
+
+            glm::vec3 v0(mesh->verts[v0Id * 3], mesh->verts[v0Id * 3 + 1], mesh->verts[v0Id * 3 + 2]);
+            glm::vec3 v1(mesh->verts[v1Id * 3], mesh->verts[v1Id * 3 + 1], mesh->verts[v1Id * 3 + 2]);
+            glm::vec3 v2(mesh->verts[v2Id * 3], mesh->verts[v2Id * 3 + 1], mesh->verts[v2Id * 3 + 2]);
+
+            float t;
+            if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v1, v2, t)) {
+                if (t < minT) {
+                    minT = t;
+                    intersectFaceId = faceId;
+                }
+            }
+
+            if (v3Id != 0xffffffff) {
+                glm::vec3 v3(mesh->verts[v3Id * 3], mesh->verts[v3Id * 3 + 1], mesh->verts[v3Id * 3 + 2]);
+                if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v2, v3, t)) {
+                    if (t < minT) {
+                        minT = t;
+                        intersectFaceId = faceId;
+                    }
+                }
+            }
+        }
+
+        if (intersectFaceId != 0xffffffff) {
+            glm::vec3 inter = localRayOrigin + minT * localRayDir;
+            float bestDist2 = std::numeric_limits<float>::infinity();
+            uint32_t closestVert = 0xffffffff;
+
+            uint32_t faceVerts[4] = {
+                mesh->faces[intersectFaceId * 4],
+                mesh->faces[intersectFaceId * 4 + 1],
+                mesh->faces[intersectFaceId * 4 + 2],
+                mesh->faces[intersectFaceId * 4 + 3]
+            };
+
+            for (int k = 0; k < 4; ++k) {
+                uint32_t vid = faceVerts[k];
+                if (vid == 0xffffffff) break;
+                glm::vec3 v(mesh->verts[vid * 3], mesh->verts[vid * 3 + 1], mesh->verts[vid * 3 + 2]);
+                float dist2 = glm::dot(v - inter, v - inter);
+                if (dist2 < bestDist2) {
+                    bestDist2 = dist2;
+                    closestVert = vid;
+                }
+            }
+
+            if (closestVert != 0xffffffff) {
+                MeasurementAnchor anchor;
+                anchor.type = MeasurementAnchor::VERTEX;
+                anchor.mesh = mesh;
+                anchor.vertIdx = closestVert;
+                glm::vec3 localPos(mesh->verts[closestVert * 3], mesh->verts[closestVert * 3 + 1], mesh->verts[closestVert * 3 + 2]);
+                anchor.worldPos = glm::vec3(mesh->matrix * glm::vec4(localPos, 1.0f));
+                return anchor;
+            }
+        }
+    }
+
+    Ray ray = camera.getRay(mouseX, mouseY);
+    float depth = 0.5f;
+    if (referenceWorldPos) {
+        glm::vec3 screenPivot = camera.project(*referenceWorldPos);
+        depth = screenPivot.z;
+    } else {
+        glm::vec3 screenPivot = camera.project(camera.getPivot());
+        depth = screenPivot.z;
+    }
+    glm::vec3 worldPos = camera.unproject(mouseX, mouseY, depth);
+
+    MeasurementAnchor anchor;
+    anchor.type = MeasurementAnchor::FREE;
+    anchor.worldPos = worldPos;
+    return anchor;
+}
+
+void SculptManager::validateSegments(Scene& scene) {
+    const auto& meshes = scene.getMeshes();
+    auto validate = [&](std::vector<MeasurementSegment>& segments) {
+        segments.erase(std::remove_if(segments.begin(), segments.end(), [&](const MeasurementSegment& seg) {
+            if (seg.vertA.type == MeasurementAnchor::VERTEX) {
+                if (std::find(meshes.begin(), meshes.end(), seg.vertA.mesh) == meshes.end()) return true;
+            }
+            if (seg.vertB.type == MeasurementAnchor::VERTEX) {
+                if (std::find(meshes.begin(), meshes.end(), seg.vertB.mesh) == meshes.end()) return true;
+            }
+            return false;
+        }), segments.end());
+    };
+    validate(m_measureSegments);
+    validate(m_dividerSegments);
+}
+
 void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
     Mesh* mesh = scene.getSelected();
     Camera& camera = scene.getCamera();
@@ -789,6 +929,63 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
         // Left button:
         if (event.button.button == SDL_BUTTON_LEFT) {
             SDL_Keymod mod = SDL_GetModState();
+
+            if (m_currentBrush == BRUSH_MEASURE || m_currentBrush == BRUSH_DIVIDER) {
+                if (mod & KMOD_ALT) {
+                    m_cameraController.handleEvent(event, camera);
+                    return;
+                }
+
+                float mouseX = (float)event.button.x;
+                float mouseY = (float)event.button.y;
+                float threshold = 15.0f;
+
+                auto& segments = (m_currentBrush == BRUSH_MEASURE) ? m_measureSegments : m_dividerSegments;
+
+                m_draggedSegment = nullptr;
+                m_draggedVertexKey = "";
+
+                // Check for dragging existing segment endpoint
+                for (auto& seg : segments) {
+                    glm::vec3 worldA = getAnchorWorldPos(seg.vertA);
+                    glm::vec3 worldB = getAnchorWorldPos(seg.vertB);
+                    glm::vec3 screenA = camera.project(worldA);
+                    glm::vec3 screenB = camera.project(worldB);
+
+                    float distA = glm::distance(glm::vec2(mouseX, mouseY), glm::vec2(screenA.x, screenA.y));
+                    float distB = glm::distance(glm::vec2(mouseX, mouseY), glm::vec2(screenB.x, screenB.y));
+
+                    if (distA < threshold && distA <= distB) {
+                        m_draggedSegment = &seg;
+                        m_draggedVertexKey = "vertA";
+                        scene.pushHistoryState();
+                        return;
+                    }
+                    if (distB < threshold) {
+                        m_draggedSegment = &seg;
+                        m_draggedVertexKey = "vertB";
+                        scene.pushHistoryState();
+                        return;
+                    }
+                }
+
+                // If not dragging, start a new segment
+                MeasurementAnchor anchor = pickAnchor(mouseX, mouseY, scene, nullptr);
+                m_pendingAnchorA = anchor;
+                m_pendingAnchorB = anchor;
+                m_hasPending = true;
+                scene.pushHistoryState();
+                return;
+            }
+
+            if (m_currentBrush == BRUSH_TRANSFORM) {
+                if (mod & KMOD_ALT) {
+                    m_cameraController.handleEvent(event, camera);
+                    return;
+                }
+                return;
+            }
+
             bool isVisibilityTool = (m_currentBrush == BRUSH_VISIBILITY);
             bool isLassoMode = (mod & KMOD_CTRL) && (mod & KMOD_SHIFT);
 
@@ -987,6 +1184,65 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             }
         }
     } else if (event.type == SDL_MOUSEBUTTONUP) {
+        if ((m_currentBrush == BRUSH_MEASURE || m_currentBrush == BRUSH_DIVIDER) && event.button.button == SDL_BUTTON_LEFT) {
+            float mouseX = (float)event.button.x;
+            float mouseY = (float)event.button.y;
+
+            auto& segments = (m_currentBrush == BRUSH_MEASURE) ? m_measureSegments : m_dividerSegments;
+
+            if (m_draggedSegment) {
+                glm::vec3 posA = getAnchorWorldPos(m_draggedSegment->vertA);
+                glm::vec3 posB = getAnchorWorldPos(m_draggedSegment->vertB);
+                if (glm::distance(posA, posB) < 1e-4f) {
+                    segments.erase(std::remove_if(segments.begin(), segments.end(),
+                        [&](const MeasurementSegment& seg) { return &seg == m_draggedSegment; }),
+                        segments.end());
+                }
+                m_draggedSegment = nullptr;
+                m_draggedVertexKey = "";
+
+                if (m_currentBrush == BRUSH_MEASURE) {
+                    bool hasReference = false;
+                    for (const auto& seg : segments) {
+                        if (seg.isReference) { hasReference = true; break; }
+                    }
+                    if (!hasReference && !segments.empty()) {
+                        segments[0].isReference = true;
+                    }
+                }
+                return;
+            }
+
+            if (m_hasPending) {
+                glm::vec3 posA = getAnchorWorldPos(m_pendingAnchorA);
+                glm::vec3 posB = getAnchorWorldPos(m_pendingAnchorB);
+                if (glm::distance(posA, posB) > 1e-4f) {
+                    MeasurementSegment newSeg;
+                    newSeg.vertA = m_pendingAnchorA;
+                    newSeg.vertB = m_pendingAnchorB;
+                    newSeg.isReference = false;
+
+                    if (m_currentBrush == BRUSH_MEASURE) {
+                        bool hasReference = false;
+                        for (const auto& seg : segments) {
+                            if (seg.isReference) { hasReference = true; break; }
+                        }
+                        newSeg.isReference = !hasReference;
+                    }
+
+                    segments.push_back(newSeg);
+                }
+                m_hasPending = false;
+                return;
+            }
+            return;
+        }
+
+        if (m_currentBrush == BRUSH_TRANSFORM) {
+            m_cameraController.handleEvent(event, camera);
+            return;
+        }
+
         if (m_currentBrush == BRUSH_MASK_GRADIENT_BLUR && mesh && event.button.button == SDL_BUTTON_LEFT) {
             if (m_gradIsDrawing) {
                 float dist = glm::distance(m_gradPointA, m_gradPointB);
@@ -1319,6 +1575,67 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
         m_prevMouseX = mouseX;
         m_prevMouseY = mouseY;
 
+        if (m_currentBrush == BRUSH_MEASURE || m_currentBrush == BRUSH_DIVIDER) {
+            float threshold = 15.0f;
+            auto& segments = (m_currentBrush == BRUSH_MEASURE) ? m_measureSegments : m_dividerSegments;
+
+            if (m_draggedSegment) {
+                std::string otherKey = (m_draggedVertexKey == "vertA") ? "vertB" : "vertA";
+                glm::vec3 refPos = getAnchorWorldPos(otherKey == "vertA" ? m_draggedSegment->vertA : m_draggedSegment->vertB);
+                MeasurementAnchor anchor = pickAnchor((float)mouseX, (float)mouseY, scene, &refPos);
+                if (m_draggedVertexKey == "vertA") {
+                    m_draggedSegment->vertA = anchor;
+                } else {
+                    m_draggedSegment->vertB = anchor;
+                }
+                return;
+            }
+
+            if (m_hasPending) {
+                glm::vec3 refPos = getAnchorWorldPos(m_pendingAnchorA);
+                MeasurementAnchor anchor = pickAnchor((float)mouseX, (float)mouseY, scene, &refPos);
+                m_pendingAnchorB = anchor;
+                return;
+            }
+
+            // Hover scanning
+            m_hoveredSegment = nullptr;
+            m_hoveredVertexKey = "";
+
+            for (auto& seg : segments) {
+                glm::vec3 worldA = getAnchorWorldPos(seg.vertA);
+                glm::vec3 worldB = getAnchorWorldPos(seg.vertB);
+                glm::vec3 screenA = camera.project(worldA);
+                glm::vec3 screenB = camera.project(worldB);
+
+                float distA = glm::distance(glm::vec2(mouseX, mouseY), glm::vec2(screenA.x, screenA.y));
+                float distB = glm::distance(glm::vec2(mouseX, mouseY), glm::vec2(screenB.x, screenB.y));
+
+                if (distA < threshold && distA <= distB) {
+                    m_hoveredSegment = &seg;
+                    m_hoveredVertexKey = "vertA";
+                    break;
+                }
+                if (distB < threshold) {
+                    m_hoveredSegment = &seg;
+                    m_hoveredVertexKey = "vertB";
+                    break;
+                }
+            }
+
+            if (m_cameraController.isDragging()) {
+                m_cameraController.handleEvent(event, camera);
+            }
+            return;
+        }
+
+        if (m_currentBrush == BRUSH_TRANSFORM) {
+            if (m_cameraController.isDragging()) {
+                m_cameraController.handleEvent(event, camera);
+            }
+            return;
+        }
+
         if (m_currentBrush == BRUSH_MASK_GRADIENT_BLUR && mesh && m_gradActive && m_gradActivePoint != '\0') {
             glm::vec2 mousePos((float)mouseX, (float)mouseY);
             if (m_gradActivePoint == 'A') {
@@ -1507,7 +1824,7 @@ bool SculptManager::saveSettings(const std::string& filepath) {
         return false;
     }
 
-    for (int i = 0; i < 19; ++i) {
+    for (int i = 0; i < 22; ++i) {
         out << "[Brush_" << i << "]\n";
         out << "radius=" << m_brushSettings[i].radius << "\n";
         out << "intensity=" << m_brushSettings[i].intensity << "\n";
@@ -1535,6 +1852,10 @@ bool SculptManager::saveSettings(const std::string& filepath) {
         out << "maskExtractThickness=" << m_brushSettings[i].maskExtractThickness << "\n";
         out << "blurMaskedOnly=" << (m_brushSettings[i].blurMaskedOnly ? "true" : "false") << "\n\n";
     }
+
+    out << "[General]\n";
+    out << "dividerDivisions=" << m_dividerDivisions << "\n";
+    out << "measureUseDistanceThickness=" << (m_measureUseDistanceThickness ? "true" : "false") << "\n\n";
 
     std::cout << "Successfully saved brush settings to: " << filepath << std::endl;
     return true;
@@ -1570,7 +1891,7 @@ bool SculptManager::loadSettings(const std::string& filepath) {
         }
     }
 
-    for (int i = 0; i < 19; ++i) {
+    for (int i = 0; i < 22; ++i) {
         std::string sectionName = "Brush_" + std::to_string(i);
         auto itSection = sections.find(sectionName);
         if (itSection != sections.end()) {
@@ -1626,6 +1947,19 @@ bool SculptManager::loadSettings(const std::string& filepath) {
             getParam("maskSharpenFactor", m_brushSettings[i].maskSharpenFactor, [](const std::string& s) { return safe_stof(s, 1.0f); });
             getParam("maskExtractThickness", m_brushSettings[i].maskExtractThickness, [](const std::string& s) { return safe_stof(s, 0.05f); });
             getBoolParam("blurMaskedOnly", m_brushSettings[i].blurMaskedOnly);
+        }
+    }
+
+    auto itGeneral = sections.find("General");
+    if (itGeneral != sections.end()) {
+        const auto& params = itGeneral->second;
+        auto it = params.find("dividerDivisions");
+        if (it != params.end()) {
+            m_dividerDivisions = std::stoi(it->second);
+        }
+        it = params.find("measureUseDistanceThickness");
+        if (it != params.end()) {
+            m_measureUseDistanceThickness = (it->second == "true" || it->second == "1");
         }
     }
 

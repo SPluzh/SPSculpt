@@ -42,10 +42,23 @@ struct BrushSettings {
     bool blurMaskedOnly = false;
 };
 
+struct MeasurementAnchor {
+    enum Type { VERTEX, FREE } type = FREE;
+    Mesh* mesh = nullptr;
+    uint32_t vertIdx = 0;       // Если привязано к вершине
+    glm::vec3 worldPos{0.0f};   // Координаты в мировом пространстве
+};
+
+struct MeasurementSegment {
+    MeasurementAnchor vertA;
+    MeasurementAnchor vertB;
+    bool isReference = false;   // Для Measure: является ли отрезок эталоном
+};
+
 class SculptManager {
 private:
     BrushType m_currentBrush = BRUSH_FLATTEN;
-    BrushSettings m_brushSettings[19];
+    BrushSettings m_brushSettings[22];
 
     CameraController m_cameraController;
     bool m_isSculpting = false;
@@ -170,6 +183,44 @@ public:
     void setGradPointB(glm::vec2 p) { m_gradPointB = p; }
     bool isGradDrawing() const { return m_gradIsDrawing; }
 
+    const std::vector<MeasurementSegment>& getMeasureSegments() const { return m_measureSegments; }
+    std::vector<MeasurementSegment>& getMeasureSegments() { return m_measureSegments; }
+
+    const std::vector<MeasurementSegment>& getDividerSegments() const { return m_dividerSegments; }
+    std::vector<MeasurementSegment>& getDividerSegments() { return m_dividerSegments; }
+
+    const MeasurementAnchor& getPendingAnchorA() const { return m_pendingAnchorA; }
+    MeasurementAnchor& getPendingAnchorA() { return m_pendingAnchorA; }
+
+    const MeasurementAnchor& getPendingAnchorB() const { return m_pendingAnchorB; }
+    MeasurementAnchor& getPendingAnchorB() { return m_pendingAnchorB; }
+
+    bool hasPending() const { return m_hasPending; }
+    void setHasPending(bool val) { m_hasPending = val; }
+
+    int getDividerDivisions() const { return m_dividerDivisions; }
+    void setDividerDivisions(int val) { m_dividerDivisions = val; }
+
+    bool getMeasureUseDistanceThickness() const { return m_measureUseDistanceThickness; }
+    void setMeasureUseDistanceThickness(bool val) { m_measureUseDistanceThickness = val; }
+
+    void clearMeasurements() {
+        m_measureSegments.clear();
+        m_dividerSegments.clear();
+        m_hasPending = false;
+        m_draggedSegment = nullptr;
+        m_hoveredSegment = nullptr;
+    }
+
+    const MeasurementSegment* getHoveredSegment() const { return m_hoveredSegment; }
+    std::string getHoveredVertexKey() const { return m_hoveredVertexKey; }
+    const MeasurementSegment* getDraggedSegment() const { return m_draggedSegment; }
+    std::string getDraggedVertexKey() const { return m_draggedVertexKey; }
+
+    static glm::vec3 getAnchorWorldPos(const MeasurementAnchor& anchor);
+    MeasurementAnchor pickAnchor(float mouseX, float mouseY, Scene& scene, const glm::vec3* referenceWorldPos);
+    void validateSegments(Scene& scene);
+
 private:
     float m_stylusPressure = 1.0f;
     bool m_usingStylus = false;
@@ -201,6 +252,22 @@ private:
     std::vector<float> m_origMasks;
     std::vector<float> m_blurredMasks;
     std::vector<uint32_t> m_gradActiveVerts;
+
+    // Measurement & Divider states
+    std::vector<MeasurementSegment> m_measureSegments;
+    std::vector<MeasurementSegment> m_dividerSegments;
+
+    MeasurementAnchor m_pendingAnchorA;
+    MeasurementAnchor m_pendingAnchorB;
+    bool m_hasPending = false;
+
+    MeasurementSegment* m_draggedSegment = nullptr;
+    std::string m_draggedVertexKey = ""; // "vertA" или "vertB"
+    MeasurementSegment* m_hoveredSegment = nullptr;
+    std::string m_hoveredVertexKey = "";
+
+    int m_dividerDivisions = 3; // От 2 до 6
+    bool m_measureUseDistanceThickness = true;
 };
 
 

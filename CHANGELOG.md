@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.0]
+- **Tools**: Added interactive Measure and Divider tools featuring screen-space overlay lines, dynamic hover feedback, custom ticks/subdivisions, and rounded semi-transparent text badges showing distance or relative scale reference.
+- **Tools**: Integrated mesh Transform Tool with interactive 3D local transform gizmos (translation, rotation, scaling) using ImGuizmo, with full Hotkey support (W, E, R).
+- **Core**: Added mesh matrix serialization to save/restore mesh transforms within the history stack for undo/redo support.
+- **Settings**: Serialized divider divisions and measure perspective settings to the general section of `brush_settings.cfg`.
+- **Camera**: Fixed a major perspective depth unprojection bug where clicking outside the mesh (`FREE` anchors) caused points to fly away to extreme distances due to linear z-depth interpolation in `Camera::unproject`. Now correctly uses the inverted viewport-view-projection matrix for exact, linear screen-to-world mapping.
+
 ## [1.1.0]
 - **Tools**: Added interactive Mask Gradient Blur tool featuring screen-space dashed guides and interactive draggable handle controls.
 - **Input**: Fixed camera controls sticking/freezing when using camera shortcuts (Alt + Left Click, Right Click, Middle Click) while the Mask Gradient Blur tool is active.
