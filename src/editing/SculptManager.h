@@ -60,6 +60,9 @@ private:
     int m_lastStrokeX = 0;
     int m_lastStrokeY = 0;
 
+    int m_mouseDownX = 0;
+    int m_mouseDownY = 0;
+
     BrushCursor m_cursor;
     bool m_useSym = false;
     int m_symAxis = 0; // 0=X, 1=Y, 2=Z
@@ -151,6 +154,7 @@ private:
     bool m_isLassoActive = false;
     std::vector<glm::vec2> m_lassoPoints;
     bool m_lassoAlt = false;
+    bool m_isMaskLasso = false;
 
     // Cache buffers for fast dirty faces lookup
     std::vector<uint32_t> m_tagFlags;

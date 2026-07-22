@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.0.0]
+- **Tools**: Fixed masking brush and lasso selection tool behavior to dynamically toggle between brush-based masking (dragging on mesh) and lasso selection (dragging from empty space/background with Ctrl held), matching the legacy JavaScript workflow.
+- **Tools**: Added support for masking lasso click actions (invert mask when clicking on background, blur/sharpen mask when clicking on mesh), matching parity with the legacy version.
 - **Settings**: Added automatic saving and loading of all brush parameters per brush type to `brush_settings.cfg`.
 - **UI**: Added a fully dynamic and interactive Sculpting Settings panel showing custom parameters for each tool, including sliders for spacing and hardness, and toggles for backface culling and topological constraints.
 - **UI**: Added interactive Masking buttons (Clear, Invert, Blur, and Sharpen) to the masking tool settings panel.

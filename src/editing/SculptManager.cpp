@@ -767,6 +767,8 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
         m_prevMouseX = mouseX;
         m_prevMouseY = mouseY;
+        m_mouseDownX = mouseX;
+        m_mouseDownY = mouseY;
 
         // Middle button and Right button are always camera controls
         if (event.button.button == SDL_BUTTON_MIDDLE || event.button.button == SDL_BUTTON_RIGHT) {
@@ -782,69 +784,81 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
             if (isVisibilityTool || isLassoMode) {
                 m_isLassoActive = true;
+                m_isMaskLasso = false;
                 m_lassoPoints.clear();
                 m_lassoPoints.push_back(glm::vec2((float)mouseX, (float)mouseY));
                 m_lassoAlt = (mod & KMOD_ALT) != 0;
                 return;
             }
 
-            if (!mesh) {
-                if (mod & KMOD_ALT) {
-                    m_cameraController.startDrag(CameraController::DragMode::Orbit, mouseX, mouseY, camera);
-                }
-                return;
-            }
-
-            // Cast ray using Camera
-            Ray ray = camera.getRay((float)mouseX, (float)mouseY);
-            glm::mat4 invMatrix = glm::inverse(mesh->matrix);
-            glm::vec3 localRayOrigin = glm::vec3(invMatrix * glm::vec4(ray.origin, 1.0f));
-            glm::vec3 localRayDir = glm::normalize(glm::vec3(invMatrix * glm::vec4(ray.dir, 0.0f)));
-
-            // Find intersection using Octree candidate faces in local space
-            std::vector<uint32_t> candidateFaces = mesh->octree.collectIntersectRay(
-                localRayOrigin.x, localRayOrigin.y, localRayOrigin.z,
-                localRayDir.x, localRayDir.y, localRayDir.z
-            );
-
+            // Perform picking intersection test to see if we hit the mesh
+            bool hitMesh = false;
             float minT = std::numeric_limits<float>::infinity();
             uint32_t intersectFaceId = 0xffffffff;
+            glm::vec3 localRayOrigin{0.0f};
+            glm::vec3 localRayDir{0.0f};
 
-            for (uint32_t faceId : candidateFaces) {
-                if (faceId >= (uint32_t)mesh->nbFaces) continue;
-                uint32_t v0Id = mesh->faces[faceId * 4];
-                uint32_t v1Id = mesh->faces[faceId * 4 + 1];
-                uint32_t v2Id = mesh->faces[faceId * 4 + 2];
-                uint32_t v3Id = mesh->faces[faceId * 4 + 3];
+            if (mesh) {
+                Ray ray = camera.getRay((float)mouseX, (float)mouseY);
+                glm::mat4 invMatrix = glm::inverse(mesh->matrix);
+                localRayOrigin = glm::vec3(invMatrix * glm::vec4(ray.origin, 1.0f));
+                localRayDir = glm::normalize(glm::vec3(invMatrix * glm::vec4(ray.dir, 0.0f)));
 
-                if (!mesh->vertVisible[v0Id] || !mesh->vertVisible[v1Id] || !mesh->vertVisible[v2Id] || (v3Id != 0xffffffff && !mesh->vertVisible[v3Id])) {
-                    continue;
-                }
+                std::vector<uint32_t> candidateFaces = mesh->octree.collectIntersectRay(
+                    localRayOrigin.x, localRayOrigin.y, localRayOrigin.z,
+                    localRayDir.x, localRayDir.y, localRayDir.z
+                );
 
-                glm::vec3 v0(mesh->verts[v0Id * 3], mesh->verts[v0Id * 3 + 1], mesh->verts[v0Id * 3 + 2]);
-                glm::vec3 v1(mesh->verts[v1Id * 3], mesh->verts[v1Id * 3 + 1], mesh->verts[v1Id * 3 + 2]);
-                glm::vec3 v2(mesh->verts[v2Id * 3], mesh->verts[v2Id * 3 + 1], mesh->verts[v2Id * 3 + 2]);
+                for (uint32_t faceId : candidateFaces) {
+                    if (faceId >= (uint32_t)mesh->nbFaces) continue;
+                    uint32_t v0Id = mesh->faces[faceId * 4];
+                    uint32_t v1Id = mesh->faces[faceId * 4 + 1];
+                    uint32_t v2Id = mesh->faces[faceId * 4 + 2];
+                    uint32_t v3Id = mesh->faces[faceId * 4 + 3];
 
-                float t;
-                if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v1, v2, t)) {
-                    if (t < minT) {
-                        minT = t;
-                        intersectFaceId = faceId;
+                    if (!mesh->vertVisible[v0Id] || !mesh->vertVisible[v1Id] || !mesh->vertVisible[v2Id] || (v3Id != 0xffffffff && !mesh->vertVisible[v3Id])) {
+                        continue;
                     }
-                }
 
-                if (v3Id != 0xffffffff) {
-                    glm::vec3 v3(mesh->verts[v3Id * 3], mesh->verts[v3Id * 3 + 1], mesh->verts[v3Id * 3 + 2]);
-                    if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v2, v3, t)) {
+                    glm::vec3 v0(mesh->verts[v0Id * 3], mesh->verts[v0Id * 3 + 1], mesh->verts[v0Id * 3 + 2]);
+                    glm::vec3 v1(mesh->verts[v1Id * 3], mesh->verts[v1Id * 3 + 1], mesh->verts[v1Id * 3 + 2]);
+                    glm::vec3 v2(mesh->verts[v2Id * 3], mesh->verts[v2Id * 3 + 1], mesh->verts[v2Id * 3 + 2]);
+
+                    float t;
+                    if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v1, v2, t)) {
                         if (t < minT) {
                             minT = t;
                             intersectFaceId = faceId;
                         }
                     }
+
+                    if (v3Id != 0xffffffff) {
+                        glm::vec3 v3(mesh->verts[v3Id * 3], mesh->verts[v3Id * 3 + 1], mesh->verts[v3Id * 3 + 2]);
+                        if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v2, v3, t)) {
+                            if (t < minT) {
+                                minT = t;
+                                intersectFaceId = faceId;
+                            }
+                        }
+                    }
+                }
+                if (intersectFaceId != 0xffffffff) {
+                    hitMesh = true;
                 }
             }
 
-            if (intersectFaceId != 0xffffffff) {
+            // Dynamic tool activation:
+            // If Ctrl is held and click starts on empty space (no mesh intersection), trigger Masking Lasso
+            if ((mod & KMOD_CTRL) && !hitMesh) {
+                m_isLassoActive = true;
+                m_isMaskLasso = true;
+                m_lassoPoints.clear();
+                m_lassoPoints.push_back(glm::vec2((float)mouseX, (float)mouseY));
+                m_lassoAlt = (mod & KMOD_ALT) != 0;
+                return;
+            }
+
+            if (hitMesh) {
                 scene.pushHistoryState();
                 m_isSculpting = true;
                 m_firstStrokeFrame = true;
@@ -883,32 +897,58 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             m_isLassoActive = false;
             if (m_lassoPoints.size() >= 3 && mesh) {
                 std::vector<uint32_t> selectedVertices = getVerticesInLasso(mesh, camera);
-                if (!selectedVertices.empty()) {
+                if (m_isMaskLasso) {
                     scene.pushHistoryState();
-                    bool hideUnselected = !m_lassoAlt;
-                    if (hideUnselected) {
-                        std::fill(mesh->vertVisible.begin(), mesh->vertVisible.end(), 0);
+                    if (!selectedVertices.empty()) {
+                        float maskVal = m_lassoAlt ? 1.0f : 0.0f;
+                        float* materials = mesh->materials.data();
                         for (uint32_t vid : selectedVertices) {
-                            mesh->vertVisible[vid] = 1;
+                            materials[vid * 3 + 2] = maskVal;
                         }
+                        mesh->isVertexDirty = true;
+                        mesh->dirtyVertMin = 0;
+                        mesh->dirtyVertMax = mesh->nbVerts - 1;
                     } else {
-                        for (uint32_t vid : selectedVertices) {
-                            mesh->vertVisible[vid] = 0;
-                        }
+                        clearMask(mesh);
                     }
                     mesh->isDirty = true;
+                } else {
+                    if (!selectedVertices.empty()) {
+                        scene.pushHistoryState();
+                        bool hideUnselected = !m_lassoAlt;
+                        if (hideUnselected) {
+                            std::fill(mesh->vertVisible.begin(), mesh->vertVisible.end(), 0);
+                            for (uint32_t vid : selectedVertices) {
+                                mesh->vertVisible[vid] = 1;
+                            }
+                        } else {
+                            for (uint32_t vid : selectedVertices) {
+                                mesh->vertVisible[vid] = 0;
+                            }
+                        }
+                        mesh->isDirty = true;
+                    }
                 }
             } else if (m_lassoPoints.size() < 3) {
-                Ray ray = camera.getRay((float)m_prevMouseX, (float)m_prevMouseY);
-                bool hitAny = false;
+                // Click action
+                Ray ray = camera.getRay((float)event.button.x, (float)event.button.y);
+                bool hitMesh = false;
+                uint32_t closestVert = 0xffffffff;
+                float bestMask = 1.0f;
+
                 if (mesh) {
                     glm::mat4 invMatrix = glm::inverse(mesh->matrix);
                     glm::vec3 localRayOrigin = glm::vec3(invMatrix * glm::vec4(ray.origin, 1.0f));
                     glm::vec3 localRayDir = glm::normalize(glm::vec3(invMatrix * glm::vec4(ray.dir, 0.0f)));
+
                     std::vector<uint32_t> candidateFaces = mesh->octree.collectIntersectRay(
                         localRayOrigin.x, localRayOrigin.y, localRayOrigin.z,
                         localRayDir.x, localRayDir.y, localRayDir.z
                     );
+
+                    float minT = std::numeric_limits<float>::infinity();
+                    uint32_t intersectFaceId = 0xffffffff;
+
                     for (uint32_t faceId : candidateFaces) {
                         if (faceId >= (uint32_t)mesh->nbFaces) continue;
                         uint32_t v0Id = mesh->faces[faceId * 4];
@@ -923,30 +963,190 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                         glm::vec3 v0(mesh->verts[v0Id * 3], mesh->verts[v0Id * 3 + 1], mesh->verts[v0Id * 3 + 2]);
                         glm::vec3 v1(mesh->verts[v1Id * 3], mesh->verts[v1Id * 3 + 1], mesh->verts[v1Id * 3 + 2]);
                         glm::vec3 v2(mesh->verts[v2Id * 3], mesh->verts[v2Id * 3 + 1], mesh->verts[v2Id * 3 + 2]);
+
                         float t;
                         if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v1, v2, t)) {
-                            hitAny = true;
-                            break;
+                            if (t < minT) {
+                                minT = t;
+                                intersectFaceId = faceId;
+                            }
                         }
+
                         if (v3Id != 0xffffffff) {
                             glm::vec3 v3(mesh->verts[v3Id * 3], mesh->verts[v3Id * 3 + 1], mesh->verts[v3Id * 3 + 2]);
                             if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v2, v3, t)) {
-                                hitAny = true;
-                                break;
+                                if (t < minT) {
+                                    minT = t;
+                                    intersectFaceId = faceId;
+                                }
+                            }
+                        }
+                    }
+
+                    if (intersectFaceId != 0xffffffff) {
+                        hitMesh = true;
+                        glm::vec3 inter = localRayOrigin + minT * localRayDir;
+                        float bestDist2 = std::numeric_limits<float>::infinity();
+
+                        uint32_t faceVerts[4] = {
+                            mesh->faces[intersectFaceId * 4],
+                            mesh->faces[intersectFaceId * 4 + 1],
+                            mesh->faces[intersectFaceId * 4 + 2],
+                            mesh->faces[intersectFaceId * 4 + 3]
+                        };
+
+                        for (int k = 0; k < 4; ++k) {
+                            uint32_t vid = faceVerts[k];
+                            if (vid == 0xffffffff) break;
+                            glm::vec3 v(mesh->verts[vid * 3], mesh->verts[vid * 3 + 1], mesh->verts[vid * 3 + 2]);
+                            float dist2 = glm::dot(v - inter, v - inter);
+                            if (dist2 < bestDist2) {
+                                bestDist2 = dist2;
+                                closestVert = vid;
+                                bestMask = mesh->materials[vid * 3 + 2];
                             }
                         }
                     }
                 }
-                if (!hitAny && mesh) {
-                    scene.pushHistoryState();
-                    std::fill(mesh->vertVisible.begin(), mesh->vertVisible.end(), 1);
-                    mesh->isDirty = true;
+
+                if (m_isMaskLasso) {
+                    if (!hitMesh && mesh) {
+                        scene.pushHistoryState();
+                        invertMask(mesh);
+                    } else if (hitMesh && mesh) {
+                        SDL_Keymod mod = SDL_GetModState();
+                        bool ctrlKey = (mod & KMOD_CTRL) != 0;
+                        bool altKey = (mod & KMOD_ALT) != 0;
+
+                        scene.pushHistoryState();
+                        if (bestMask < 1.0f) {
+                            if (ctrlKey && altKey) {
+                                sharpenMask(mesh);
+                            } else {
+                                blurMask(mesh);
+                            }
+                        } else {
+                            sharpenMask(mesh);
+                        }
+                    }
+                } else {
+                    if (!hitMesh && mesh) {
+                        scene.pushHistoryState();
+                        std::fill(mesh->vertVisible.begin(), mesh->vertVisible.end(), 1);
+                        mesh->isDirty = true;
+                    }
                 }
             }
             m_lassoPoints.clear();
+            m_isMaskLasso = false;
             return;
         }
-        m_isSculpting = false;
+
+        if (m_isSculpting) {
+            m_isSculpting = false;
+            int dragDistX = std::abs(event.button.x - m_mouseDownX);
+            int dragDistY = std::abs(event.button.y - m_mouseDownY);
+            bool wasClick = (dragDistX <= 3 && dragDistY <= 3);
+
+            if (wasClick && m_currentBrush == BRUSH_MASK && mesh) {
+                // Undo the tiny stroke we started on mouse down
+                scene.undo();
+
+                // Compute click action on the mesh at click coordinate
+                Ray ray = camera.getRay((float)event.button.x, (float)event.button.y);
+                bool hitMesh = false;
+                uint32_t closestVert = 0xffffffff;
+                float bestMask = 1.0f;
+
+                glm::mat4 invMatrix = glm::inverse(mesh->matrix);
+                glm::vec3 localRayOrigin = glm::vec3(invMatrix * glm::vec4(ray.origin, 1.0f));
+                glm::vec3 localRayDir = glm::normalize(glm::vec3(invMatrix * glm::vec4(ray.dir, 0.0f)));
+
+                std::vector<uint32_t> candidateFaces = mesh->octree.collectIntersectRay(
+                    localRayOrigin.x, localRayOrigin.y, localRayOrigin.z,
+                    localRayDir.x, localRayDir.y, localRayDir.z
+                );
+
+                float minT = std::numeric_limits<float>::infinity();
+                uint32_t intersectFaceId = 0xffffffff;
+
+                for (uint32_t faceId : candidateFaces) {
+                    if (faceId >= (uint32_t)mesh->nbFaces) continue;
+                    uint32_t v0Id = mesh->faces[faceId * 4];
+                    uint32_t v1Id = mesh->faces[faceId * 4 + 1];
+                    uint32_t v2Id = mesh->faces[faceId * 4 + 2];
+                    uint32_t v3Id = mesh->faces[faceId * 4 + 3];
+
+                    if (!mesh->vertVisible[v0Id] || !mesh->vertVisible[v1Id] || !mesh->vertVisible[v2Id] || (v3Id != 0xffffffff && !mesh->vertVisible[v3Id])) {
+                        continue;
+                    }
+
+                    glm::vec3 v0(mesh->verts[v0Id * 3], mesh->verts[v0Id * 3 + 1], mesh->verts[v0Id * 3 + 2]);
+                    glm::vec3 v1(mesh->verts[v1Id * 3], mesh->verts[v1Id * 3 + 1], mesh->verts[v1Id * 3 + 2]);
+                    glm::vec3 v2(mesh->verts[v2Id * 3], mesh->verts[v2Id * 3 + 1], mesh->verts[v2Id * 3 + 2]);
+
+                    float t;
+                    if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v1, v2, t)) {
+                        if (t < minT) {
+                            minT = t;
+                            intersectFaceId = faceId;
+                        }
+                    }
+
+                    if (v3Id != 0xffffffff) {
+                        glm::vec3 v3(mesh->verts[v3Id * 3], mesh->verts[v3Id * 3 + 1], mesh->verts[v3Id * 3 + 2]);
+                        if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v2, v3, t)) {
+                            if (t < minT) {
+                                minT = t;
+                                intersectFaceId = faceId;
+                            }
+                        }
+                    }
+                }
+
+                if (intersectFaceId != 0xffffffff) {
+                    hitMesh = true;
+                    glm::vec3 inter = localRayOrigin + minT * localRayDir;
+                    float bestDist2 = std::numeric_limits<float>::infinity();
+
+                    uint32_t faceVerts[4] = {
+                        mesh->faces[intersectFaceId * 4],
+                        mesh->faces[intersectFaceId * 4 + 1],
+                        mesh->faces[intersectFaceId * 4 + 2],
+                        mesh->faces[intersectFaceId * 4 + 3]
+                    };
+
+                    for (int k = 0; k < 4; ++k) {
+                        uint32_t vid = faceVerts[k];
+                        if (vid == 0xffffffff) break;
+                        glm::vec3 v(mesh->verts[vid * 3], mesh->verts[vid * 3 + 1], mesh->verts[vid * 3 + 2]);
+                        float dist2 = glm::dot(v - inter, v - inter);
+                        if (dist2 < bestDist2) {
+                            bestDist2 = dist2;
+                            closestVert = vid;
+                            bestMask = mesh->materials[vid * 3 + 2];
+                        }
+                    }
+                }
+
+                if (hitMesh) {
+                    SDL_Keymod mod = SDL_GetModState();
+                    bool ctrlKey = (mod & KMOD_CTRL) != 0;
+                    bool altKey = (mod & KMOD_ALT) != 0;
+
+                    scene.pushHistoryState();
+                    if (bestMask < 1.0f) {
+                        if (ctrlKey && altKey) {
+                            sharpenMask(mesh);
+                        } else {
+                            blurMask(mesh);
+                        }
+                    } else {
+                        sharpenMask(mesh);
+                    }
+                }
+            }
+        }
         m_cameraController.handleEvent(event, camera);
     } else if (event.type == SDL_MOUSEWHEEL) {
         m_cameraController.handleEvent(event, camera);
