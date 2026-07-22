@@ -789,7 +789,9 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             }
 
             if (!mesh) {
-                m_cameraController.startDrag(CameraController::DragMode::Orbit, mouseX, mouseY, camera);
+                if (mod & KMOD_ALT) {
+                    m_cameraController.startDrag(CameraController::DragMode::Orbit, mouseX, mouseY, camera);
+                }
                 return;
             }
 
@@ -871,7 +873,9 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 // Execute first stroke frame immediately
                 executeStroke(scene, mesh, camera, (float)mouseX, (float)mouseY, currentPressure);
             } else {
-                m_cameraController.startDrag(CameraController::DragMode::Orbit, mouseX, mouseY, camera);
+                if (mod & KMOD_ALT) {
+                    m_cameraController.startDrag(CameraController::DragMode::Orbit, mouseX, mouseY, camera);
+                }
             }
         }
     } else if (event.type == SDL_MOUSEBUTTONUP) {
