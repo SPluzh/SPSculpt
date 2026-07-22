@@ -1220,10 +1220,12 @@ void SculptManager::processFrame(Scene& scene) {
     if (m_cameraController.isDragging()) {
         m_cursor.hide();
     } else {
-        // Resolve dynamic brush modifier swap (Shift->Smooth, Ctrl->Mask)
+        // Resolve dynamic brush modifier swap (Shift->Smooth, Ctrl->Mask, Ctrl+Shift->Visibility)
         BrushType activeBrush = m_currentBrush;
         SDL_Keymod mod = SDL_GetModState();
-        if (mod & KMOD_SHIFT) {
+        if ((mod & KMOD_CTRL) && (mod & KMOD_SHIFT)) {
+            activeBrush = BRUSH_VISIBILITY;
+        } else if (mod & KMOD_SHIFT) {
             activeBrush = BRUSH_SMOOTH;
         } else if (mod & KMOD_CTRL) {
             activeBrush = BRUSH_MASK;

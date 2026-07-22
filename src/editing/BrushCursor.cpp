@@ -52,6 +52,10 @@ void BrushCursor::update(int mouseX, int mouseY,
                           bool hasActiveStrokeHit,
                           const glm::vec3& activeStrokeHitPt,
                           const glm::vec3& activeStrokeHitNormal) {
+    if (brushType == BRUSH_VISIBILITY) {
+        m_state.visible = false;
+        return;
+    }
     Mesh* mesh = scene.getSelected();
     const Camera& camera = scene.getCamera();
 

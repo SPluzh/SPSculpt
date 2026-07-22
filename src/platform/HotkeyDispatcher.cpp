@@ -83,16 +83,20 @@ void HotkeyDispatcher::updateModifiers(const SDL_Event& event, SculptManager& sc
             if (!m_shiftActive) {
                 if (!m_ctrlActive) {
                     m_prevBrush = sculpt.getBrush();
+                    sculpt.setBrush(BRUSH_SMOOTH);
+                } else {
+                    sculpt.setBrush(BRUSH_VISIBILITY);
                 }
-                sculpt.setBrush(BRUSH_SMOOTH);
                 m_shiftActive = true;
             }
         } else if (event.key.keysym.sym == SDLK_LCTRL || event.key.keysym.sym == SDLK_RCTRL) {
             if (!m_ctrlActive) {
                 if (!m_shiftActive) {
                     m_prevBrush = sculpt.getBrush();
+                    sculpt.setBrush(BRUSH_MASK);
+                } else {
+                    sculpt.setBrush(BRUSH_VISIBILITY);
                 }
-                sculpt.setBrush(BRUSH_MASK);
                 m_ctrlActive = true;
             }
         }

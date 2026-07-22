@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0]
+- **Tools**: Hides the circular brush cursor and center point entirely when the Visibility tool is active.
+- **Input**: Automatically switches the active brush to the Visibility tool when the `Ctrl + Shift` modifier combination is held.
+- **Renderer**: Implemented custom lasso overlay colors to match the legacy JavaScript application: green (`#00E676`) for positive selection, red (`#FF3333`) for negative selection (`Ctrl + Shift + Alt`), cyan (`#00E5FF`) for mask lasso, and white (`#FFFFFF`) for negative mask lasso.
+- **Renderer**: Added a transparent fill (15% opacity) and a stippled/dashed border to the selection and mask lasso loops.
+
 ## [1.0.0]
 - **Performance**: Eliminated sculpting cursor latency by polling raw mouse positions directly before rendering and rendering the cursor dot in screen-space.
 - **Input**: Added OS-level system mouse cursor hiding when actively sculpting to prevent distracting cursor duplication and improve tactile precision.

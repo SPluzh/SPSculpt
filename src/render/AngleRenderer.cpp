@@ -406,9 +406,17 @@ bool AngleRenderer::init(int width, int height) {
     std::string selFrag = R"(#version 300 es
         precision highp float;
         uniform vec3 uColor;
+        uniform float uAlpha;
+        uniform bool uDashed;
         out vec4 fragColor;
         void main() {
-            fragColor = vec4(uColor, 1.0);
+            if (uDashed) {
+                float val = gl_FragCoord.x + gl_FragCoord.y;
+                if (mod(val, 8.0) > 4.0) {
+                    discard;
+                }
+            }
+            fragColor = vec4(uColor, uAlpha);
         }
     )";
     GLuint vsSel = compileShader(GL_VERTEX_SHADER, selVert);
@@ -1609,6 +1617,11 @@ void AngleRenderer::drawSelectionCursor() {
     GLint locMVP = glGetUniformLocation(m_selectionProgram, "uMVP");
     GLint locPos = glGetAttribLocation(m_selectionProgram, "aVertex");
     
+    GLint locAlpha = glGetUniformLocation(m_selectionProgram, "uAlpha");
+    GLint locDashed = glGetUniformLocation(m_selectionProgram, "uDashed");
+    if (locAlpha != -1) glUniform1f(locAlpha, 1.0f);
+    if (locDashed != -1) glUniform1i(locDashed, 0);
+    
     glUniform3fv(locColor, 1, &m_cursorColor[0]);
     
     glBindVertexArray(m_selectionVao);
@@ -1644,10 +1657,11 @@ void AngleRenderer::drawSelectionCursor() {
     glBindVertexArray(0);
 }
 
-void AngleRenderer::setLassoParameters(bool active, const std::vector<glm::vec2>& points, bool altMode) {
+void AngleRenderer::setLassoParameters(bool active, const std::vector<glm::vec2>& points, bool altMode, bool isMaskLasso) {
     m_lassoActive = active;
     m_lassoPoints = points;
     m_lassoAlt = altMode;
+    m_isMaskLasso = isMaskLasso;
 }
 
 void AngleRenderer::drawLasso() {
@@ -1676,15 +1690,38 @@ void AngleRenderer::drawLasso() {
     glUseProgram(m_selectionProgram);
     GLint locColor = glGetUniformLocation(m_selectionProgram, "uColor");
     GLint locMVP = glGetUniformLocation(m_selectionProgram, "uMVP");
+    GLint locAlpha = glGetUniformLocation(m_selectionProgram, "uAlpha");
+    GLint locDashed = glGetUniformLocation(m_selectionProgram, "uDashed");
 
-    // Red for Alt/subtraction (negative), blue/cyan for standard (positive) selection
-    glm::vec3 lassoColor = m_lassoAlt ? glm::vec3(0.9f, 0.1f, 0.1f) : glm::vec3(0.1f, 0.8f, 0.9f);
+    // Colors matching JS project
+    glm::vec3 lassoColor;
+    if (!m_isMaskLasso) { // Visibility lasso
+        if (m_lassoAlt) {
+            lassoColor = glm::vec3(1.0f, 0.2f, 0.2f); // #FF3333
+        } else {
+            lassoColor = glm::vec3(0.0f, 0.902f, 0.463f); // #00E676
+        }
+    } else { // Mask lasso
+        if (m_lassoAlt) {
+            lassoColor = glm::vec3(1.0f, 1.0f, 1.0f); // #FFFFFF
+        } else {
+            lassoColor = glm::vec3(0.0f, 0.898f, 1.0f); // #00E5FF
+        }
+    }
+
     glUniform3fv(locColor, 1, &lassoColor[0]);
 
     glm::mat4 identityMVP(1.0f);
     glUniformMatrix4fv(locMVP, 1, GL_FALSE, &identityMVP[0][0]);
 
-    // Draw contour outline as GL_LINE_LOOP
+    // 1. Draw fill (opacity 0.15, not dashed)
+    if (locAlpha != -1) glUniform1f(locAlpha, 0.15f);
+    if (locDashed != -1) glUniform1i(locDashed, 0);
+    glDrawArrays(GL_TRIANGLE_FAN, 0, (GLsizei)m_lassoPoints.size());
+
+    // 2. Draw border/stroke (dashed, opacity 1.0)
+    if (locAlpha != -1) glUniform1f(locAlpha, 1.0f);
+    if (locDashed != -1) glUniform1i(locDashed, 1);
     glDrawArrays(GL_LINE_LOOP, 0, (GLsizei)m_lassoPoints.size());
 
     glDisable(GL_BLEND);
@@ -1918,6 +1955,11 @@ void AngleRenderer::drawGrid(const Scene& scene, const Camera& camera) {
 
     glUseProgram(m_selectionProgram);
     
+    GLint locAlpha = glGetUniformLocation(m_selectionProgram, "uAlpha");
+    GLint locDashed = glGetUniformLocation(m_selectionProgram, "uDashed");
+    if (locAlpha != -1) glUniform1f(locAlpha, 1.0f);
+    if (locDashed != -1) glUniform1i(locDashed, 0);
+
     glm::vec3 gridColor(0.4f, 0.4f, 0.4f);
     glUniform3fv(glGetUniformLocation(m_selectionProgram, "uColor"), 1, &gridColor[0]);
 

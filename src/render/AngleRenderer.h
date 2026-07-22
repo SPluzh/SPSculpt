@@ -118,7 +118,7 @@ public:
         uintptr_t cursorColorPtr
     );
 
-    void setLassoParameters(bool active, const std::vector<glm::vec2>& points, bool altMode);
+    void setLassoParameters(bool active, const std::vector<glm::vec2>& points, bool altMode, bool isMaskLasso);
 
     // Shader compilation helpers
     GLuint compileShader(GLenum type, const std::string& source);
@@ -179,6 +179,7 @@ private:
     bool m_lassoActive = false;
     std::vector<glm::vec2> m_lassoPoints;
     bool m_lassoAlt = false;
+    bool m_isMaskLasso = false;
     GLuint m_lassoVao = 0;
     GLuint m_lassoVbo = 0;
 

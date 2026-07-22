@@ -148,6 +148,7 @@ public:
     bool isLassoActive() const { return m_isLassoActive; }
     const std::vector<glm::vec2>& getLassoPoints() const { return m_lassoPoints; }
     bool getLassoAlt() const { return m_lassoAlt; }
+    bool isMaskLasso() const { return m_isMaskLasso; }
 
     std::vector<uint32_t> getVerticesInLasso(Mesh* mesh, const Camera& camera);
 

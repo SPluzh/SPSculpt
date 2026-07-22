@@ -360,7 +360,7 @@ int main(int argc, char* argv[]) {
 
         sculpt.processFrame(scene);
         sculpt.getCursor().applyToRenderer(renderer);
-        renderer.setLassoParameters(sculpt.isLassoActive(), sculpt.getLassoPoints(), sculpt.getLassoAlt());
+        renderer.setLassoParameters(sculpt.isLassoActive(), sculpt.getLassoPoints(), sculpt.getLassoAlt(), sculpt.isMaskLasso());
         renderer.render(scene);
         gui.render(sculpt, scene, renderer, window);
 
