@@ -277,8 +277,12 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         }
     }
 
-    if (intersectFaceId == 0xffffffff) return;
+    if (intersectFaceId == 0xffffffff) {
+        m_currentIntersectionValid = false;
+        return;
+    }
 
+    m_currentIntersectionValid = true;
     m_currentIntersection = localRayOrigin + minT * localRayDir;
     m_currentIntersectionNormal = glm::vec3(
         mesh->faceNormals[intersectFaceId * 3],
@@ -864,6 +868,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             if (hitMesh) {
                 scene.pushHistoryState();
                 m_isSculpting = true;
+                m_currentIntersectionValid = true;
                 m_firstStrokeFrame = true;
                 m_initialIntersection = localRayOrigin + minT * localRayDir;
                 m_initialIntersectionNormal = glm::vec3(
@@ -1047,6 +1052,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
         if (m_isSculpting) {
             m_isSculpting = false;
+            m_currentIntersectionValid = false;
             int dragDistX = std::abs(event.button.x - m_mouseDownX);
             int dragDistY = std::abs(event.button.y - m_mouseDownY);
             bool wasClick = (dragDistX <= 3 && dragDistY <= 3);
@@ -1224,14 +1230,14 @@ void SculptManager::processFrame(Scene& scene) {
         }
 
         m_cursor.update(
-            m_prevMouseX, m_prevMouseY,
+            m_rawMouseX, m_rawMouseY,
             scene,
             getBrushRadius(),
             m_useSym,
             m_symAxis,
             m_isSculpting,
             activeBrush,
-            m_isSculpting,
+            m_isSculpting && m_currentIntersectionValid,
             m_currentIntersection,
             m_currentIntersectionNormal
         );

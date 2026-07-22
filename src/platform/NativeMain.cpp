@@ -271,6 +271,8 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
+    SDL_GL_SetSwapInterval(1);
+
     // Initialize the renderer
     AngleRenderer renderer;
     if (!renderer.init(width, height)) {
@@ -341,6 +343,21 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        // Hide or show system cursor during active sculpting
+        bool sculptingNow = sculpt.isSculpting();
+        ImGuiIO& io = ImGui::GetIO();
+        if (sculptingNow) {
+            io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+            SDL_ShowCursor(SDL_DISABLE);
+        } else {
+            io.ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
+        }
+
+        // Poll raw mouse position right before rendering to eliminate input lag
+        int rawMouseX, rawMouseY;
+        SDL_GetMouseState(&rawMouseX, &rawMouseY);
+        sculpt.setRawMousePos(rawMouseX, rawMouseY);
+
         sculpt.processFrame(scene);
         sculpt.getCursor().applyToRenderer(renderer);
         renderer.setLassoParameters(sculpt.isLassoActive(), sculpt.getLassoPoints(), sculpt.getLassoAlt());
@@ -348,7 +365,6 @@ int main(int argc, char* argv[]) {
         gui.render(sculpt, scene, renderer, window);
 
         SDL_GL_SwapWindow(window);
-        SDL_Delay(8); // limit to ~120fps
     }
 
     // Auto-save render and shading settings on exit

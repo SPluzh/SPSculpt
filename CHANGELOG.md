@@ -3,6 +3,9 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.0.0]
+- **Performance**: Eliminated sculpting cursor latency by polling raw mouse positions directly before rendering and rendering the cursor dot in screen-space.
+- **Input**: Added OS-level system mouse cursor hiding when actively sculpting to prevent distracting cursor duplication and improve tactile precision.
+- **Performance**: Switched frame rate regulation from a fixed delay to vertical synchronization (VSync).
 - **Input**: Added temporary masking brush activation (switches to Mask tool when holding down the `Ctrl` key and restores the previous brush when released), matching parity with the legacy version.
 - **Tools**: Fixed masking brush and lasso selection tool behavior to dynamically toggle between brush-based masking (dragging on mesh) and lasso selection (dragging from empty space/background with Ctrl held), matching the legacy JavaScript workflow.
 - **Tools**: Added support for masking lasso click actions (invert mask when clicking on background, blur/sharpen mask when clicking on mesh), matching parity with the legacy version.

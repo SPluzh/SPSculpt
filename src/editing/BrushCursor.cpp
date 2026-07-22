@@ -231,6 +231,16 @@ void BrushCursor::update(int mouseX, int mouseY,
         m_state.dotMVP = orthoProj * glm::scale(trans, glm::vec3(2.5f, 2.5f, 1.0f));
         m_state.symMVPs.clear();
     }
+
+    if (isSculpting) {
+        // Dot always renders in screen-space at the latest mouse coordinates
+        float w = camera.getWidth()  * 0.5f;
+        float h = camera.getHeight() * 0.5f;
+        glm::mat4 orthoProj = glm::ortho(-w, w, -h, h, -10.0f, 10.0f);
+        glm::mat4 trans = glm::translate(glm::mat4(1.0f),
+            glm::vec3(-w + (float)mouseX, h - (float)mouseY, 0.0f));
+        m_state.dotMVP = orthoProj * glm::scale(trans, glm::vec3(3.5f, 3.5f, 1.0f));
+    }
 }
 
 void BrushCursor::applyToRenderer(AngleRenderer& renderer) const {

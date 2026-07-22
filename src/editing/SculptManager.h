@@ -48,6 +48,10 @@ private:
 
     CameraController m_cameraController;
     bool m_isSculpting = false;
+    bool m_cursorHidden = false;
+    bool m_currentIntersectionValid = false;
+    int m_rawMouseX = 0;
+    int m_rawMouseY = 0;
 
     glm::vec3 m_initialIntersection{0.0f};
     glm::vec3 m_initialIntersectionNormal{0.0f};
@@ -77,6 +81,12 @@ public:
 
     bool saveSettings(const std::string& filepath);
     bool loadSettings(const std::string& filepath);
+
+    bool isSculpting() const { return m_isSculpting; }
+    void setRawMousePos(int x, int y) {
+        m_rawMouseX = x;
+        m_rawMouseY = y;
+    }
 
     BrushSettings& getCurrentSettings() { return m_brushSettings[m_currentBrush]; }
     const BrushSettings& getCurrentSettings() const { return m_brushSettings[m_currentBrush]; }
