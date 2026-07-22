@@ -199,6 +199,9 @@ void GuiManager::init(SDL_Window* window, SDL_GLContext glContext) {
     style.Colors[ImGuiCol_SliderGrabActive] = tealAccentHover;
     style.Colors[ImGuiCol_TitleBg] = ImVec4(0.06f, 0.07f, 0.08f, 1.00f);
     style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.08f, 0.09f, 0.10f, 1.00f);
+    style.Colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.08f, 0.09f, 0.10f, 0.60f);
+    style.Colors[ImGuiCol_PlotHistogram] = tealAccent;
+    style.Colors[ImGuiCol_PlotHistogramHovered] = tealAccentHover;
 
     ImGui_ImplSDL2_InitForOpenGL(window, glContext);
     ImGui_ImplOpenGL3_Init(nullptr);
@@ -218,6 +221,14 @@ void GuiManager::shutdown() {
 
 void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer, SDL_Window* window) {
     if (!m_imguiInitialized) return;
+
+    if (m_remeshAsync.state == RemeshState::Done) {
+        applyRemeshResult(scene, m_remeshAsync.result);
+        m_remeshAsync.result = RemeshResult(); // Free memory
+        m_remeshAsync.state = RemeshState::Idle;
+    } else if (m_remeshAsync.state == RemeshState::Error) {
+        m_remeshAsync.state = RemeshState::Idle;
+    }
 
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplSDL2_NewFrame();
@@ -1435,81 +1446,149 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         }
     }
 
+    drawRemeshProgressModal();
+
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
 
 void GuiManager::performRemesh(Scene& scene) {
+    if (m_remeshAsync.state == RemeshState::Running) {
+        return;
+    }
+
     Mesh* selectedMesh = scene.getSelected();
-    if (selectedMesh) {
-        scene.pushHistoryState();
+    if (!selectedMesh) return;
 
-        // 1. Triangulate the current mesh faces
-        std::vector<uint32_t> triangles = MeshUtils::triangulate(*selectedMesh);
+    scene.pushHistoryState();
 
-        // 2. Compute bounding box
-        float bbox[6];
-        selectedMesh->computeBbox(bbox);
+    // Snapshot mesh data for worker thread
+    auto verts = selectedMesh->verts;
+    auto faces = MeshUtils::triangulate(*selectedMesh);
+    auto colors = selectedMesh->colors;
+    auto materials = selectedMesh->materials;
+    int nbVerts = selectedMesh->nbVerts;
+    float bbox[6];
+    selectedMesh->computeBbox(bbox);
+    float resolution = (float)m_remeshResolution;
+    
+    float uniformColor[3] = { selectedMesh->albedo[0], selectedMesh->albedo[1], selectedMesh->albedo[2] };
+    float uniformMaterial[3] = { selectedMesh->roughness, selectedMesh->metallic, 1.0f };
 
-        // 3. Prepare color/material uniforms
-        float uniformColor[3] = { selectedMesh->albedo[0], selectedMesh->albedo[1], selectedMesh->albedo[2] };
-        float uniformMaterial[3] = { selectedMesh->roughness, selectedMesh->metallic, 1.0f };
+    m_remeshAsync.state = RemeshState::Running;
+    m_remeshAsync.stage = 0;
+    m_remeshAsync.progress = 0;
 
-        bool hasColors = !selectedMesh->colors.empty();
-        bool hasMaterials = !selectedMesh->materials.empty();
+    std::thread([this,
+        verts = std::move(verts),
+        faces = std::move(faces),
+        colors = std::move(colors),
+        materials = std::move(materials),
+        nbVerts,
+        bboxArr = std::array<float,6>{bbox[0],bbox[1],bbox[2],bbox[3],bbox[4],bbox[5]},
+        resolution,
+        uniColorArr = std::array<float,3>{uniformColor[0], uniformColor[1], uniformColor[2]},
+        uniMatArr = std::array<float,3>{uniformMaterial[0], uniformMaterial[1], uniformMaterial[2]}
+    ]() mutable
+    {
+        try {
+            bool hasColors = !colors.empty();
+            bool hasMaterials = !materials.empty();
+            auto result = doRemesh(
+                verts.data(), nbVerts,
+                faces.data(), faces.size() / 3,
+                hasColors ? colors.data() : nullptr,
+                hasMaterials ? materials.data() : nullptr,
+                bboxArr.data(),
+                resolution,
+                false, // block
+                false, // smooth
+                false, // manifold (Marching Cubes) -> false uses Surface Nets (quads)
+                uniColorArr.data(),
+                uniMatArr.data(),
+                hasColors,
+                hasMaterials,
+                [this](int stage, int pct) {
+                    m_remeshAsync.stage = stage;
+                    m_remeshAsync.progress = pct;
+                }
+            );
+            m_remeshAsync.result = std::move(result);
+            m_remeshAsync.state = RemeshState::Done;
+        } catch (...) {
+            m_remeshAsync.state = RemeshState::Error;
+        }
+    }).detach();
+}
 
-        // 4. Call doRemesh
-        RemeshResult r = doRemesh(
-            selectedMesh->verts.data(), selectedMesh->nbVerts,
-            triangles.data(), triangles.size() / 3,
-            hasColors ? selectedMesh->colors.data() : nullptr,
-            hasMaterials ? selectedMesh->materials.data() : nullptr,
-            bbox,
-            static_cast<float>(m_remeshResolution),
-            false, // block
-            false, // smooth
-            false, // manifold (Marching Cubes) -> false uses Surface Nets (quads)
-            uniformColor,
-            uniformMaterial,
-            hasColors,
-            hasMaterials
-        );
+void GuiManager::applyRemeshResult(Scene& scene, const RemeshResult& r) {
+    Mesh* selectedMesh = scene.getSelected();
+    if (!selectedMesh) return;
 
-        // 5. Update mesh data
-        selectedMesh->verts = r.vertices;
-        selectedMesh->faces = r.faces;
-        selectedMesh->colors = r.colors;
-        selectedMesh->materials = r.materials;
-        selectedMesh->nbVerts = r.vertices.size() / 3;
-        selectedMesh->nbFaces = r.faces.size() / 4;
+    selectedMesh->verts = r.vertices;
+    selectedMesh->faces = r.faces;
+    selectedMesh->colors = r.colors;
+    selectedMesh->materials = r.materials;
+    selectedMesh->nbVerts = r.vertices.size() / 3;
+    selectedMesh->nbFaces = r.faces.size() / 4;
 
-        // 6. Recompute topology
-        std::vector<uint32_t> vrvStartCount;
-        std::vector<uint32_t> vertRingVert;
-        std::vector<uint32_t> vrfStartCount;
-        std::vector<uint32_t> vertRingFace;
-        std::vector<uint8_t> vertOnEdge;
-        computeTopology(
-            selectedMesh->nbVerts,
-            selectedMesh->faces.data(),
-            selectedMesh->nbFaces,
-            vrfStartCount,
-            vertRingFace,
-            vrvStartCount,
-            vertRingVert,
-            vertOnEdge
-        );
+    std::vector<uint32_t> vrvStartCount;
+    std::vector<uint32_t> vertRingVert;
+    std::vector<uint32_t> vrfStartCount;
+    std::vector<uint32_t> vertRingFace;
+    std::vector<uint8_t> vertOnEdge;
+    computeTopology(
+        selectedMesh->nbVerts,
+        selectedMesh->faces.data(),
+        selectedMesh->nbFaces,
+        vrfStartCount,
+        vertRingFace,
+        vrvStartCount,
+        vertRingVert,
+        vertOnEdge
+    );
 
-        selectedMesh->vrfStartCount = vrfStartCount;
-        selectedMesh->vertRingFace = vertRingFace;
-        selectedMesh->vrvStartCount = vrvStartCount;
-        selectedMesh->vertRingVert = vertRingVert;
-        selectedMesh->vertOnEdge = vertOnEdge;
+    selectedMesh->vrfStartCount = vrfStartCount;
+    selectedMesh->vertRingFace = vertRingFace;
+    selectedMesh->vrvStartCount = vrvStartCount;
+    selectedMesh->vertRingVert = vertRingVert;
+    selectedMesh->vertOnEdge = vertOnEdge;
 
-        // 7. Post-init (updates normals, proxy, octree)
-        selectedMesh->postInit();
+    selectedMesh->postInit();
+    selectedMesh->isDirty = true;
+}
 
-        // 8. Mark GPU buffers dirty for upload
-        selectedMesh->isDirty = true;
+void GuiManager::drawRemeshProgressModal() {
+    if (m_remeshAsync.state != RemeshState::Running) {
+        return;
+    }
+
+    ImGui::OpenPopup("Remeshing...");
+
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(300, 120));
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar;
+
+    if (ImGui::BeginPopupModal("Remeshing...", nullptr, flags)) {
+        int stage = m_remeshAsync.stage.load();
+        int progress = m_remeshAsync.progress.load();
+
+        const char* label = "Unknown Stage";
+        if (stage == 0) label = "Voxelizing geometry...";
+        else if (stage == 1) label = "Flood-filling interior...";
+        else if (stage == 2) label = "Reconstructing surface...";
+
+        ImGui::Text("%s", label);
+        ImGui::Separator();
+        
+        float progressFloat = (float)progress / 100.0f;
+        char buf[32];
+        sprintf(buf, "%d%%", progress);
+        ImGui::ProgressBar(progressFloat, ImVec2(-1.0f, 26.0f), buf);
+
+        ImGui::EndPopup();
     }
 }
+

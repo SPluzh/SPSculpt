@@ -2,12 +2,28 @@
 #include <SDL2/SDL.h>
 #include <deque>
 #include <chrono>
+#include <thread>
+#include <atomic>
+#include <mutex>
+#include <array>
 #include "editing/SculptManager.h"
 #include "scene/Scene.h"
+#include "sculpt/Remesh.h"
 
 class AngleRenderer;
 
 class GuiManager {
+public:
+    enum class RemeshState { Idle, Running, Done, Error };
+
+    struct RemeshProgress {
+        std::atomic<RemeshState> state { RemeshState::Idle };
+        std::atomic<int>  stage     { 0 };   // 0=voxelize, 1=floodfill, 2=reconstruct
+        std::atomic<int>  progress  { 0 };   // 0–100
+        RemeshResult      result;            // written by worker, read by main after Done
+        std::thread       worker;
+    };
+
 private:
     bool m_showToolbar = true;
     bool m_showSculptingPanel = true;
@@ -38,6 +54,8 @@ private:
     char m_importPath[256] = "model.obj";
     char m_exportPath[256] = "output.obj";
     char m_refImagePath[256] = "";
+
+    RemeshProgress m_remeshAsync;
 
 public:
     GuiManager();
@@ -76,6 +94,9 @@ public:
     void setRemeshResolution(int val) { m_remeshResolution = val; }
 
     void performRemesh(Scene& scene);
+    void applyRemeshResult(Scene& scene, const RemeshResult& r);
+    void drawRemeshProgressModal();
+    bool isRemeshRunning() const { return m_remeshAsync.state == RemeshState::Running; }
 
     // Context popup request
     bool m_openContextPopup = false;

@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <string>
 #include <cstdio>
+#include <functional>
 
 // Bounding box mapping and structures
 struct VoxelGrid {
@@ -14,8 +15,8 @@ struct VoxelGrid {
     float maxCoord[3];
     std::vector<uint8_t> crossedEdges;
     std::vector<float> distanceField;
-    std::unordered_map<int, uint32_t> colorField;      // sparse map of packed colors
-    std::unordered_map<int, uint32_t> materialField;   // sparse map of packed materials
+    std::vector<uint32_t> colorField;      // packed colors
+    std::vector<uint32_t> materialField;   // packed materials
     float uniformColor[3];
     float uniformMaterial[3];
     bool hasColorField = false;
@@ -25,6 +26,7 @@ struct VoxelGrid {
 // ---------------------------------------------------------
 // Geometry Utilities
 // ---------------------------------------------------------
+
 
 static double distance2PointTriangleEdges(
     const double point[3],
@@ -249,7 +251,8 @@ static void voxelize(
     const uint32_t* tris, int nbTris,
     const float* colors,
     const float* materials,
-    VoxelGrid& voxels
+    VoxelGrid& voxels,
+    std::function<void(int stage, int progress)> onProgress = nullptr
 ) {
     int rx = voxels.dims[0];
     int ry = voxels.dims[1];
@@ -275,6 +278,10 @@ static void voxelize(
     double inv3 = 1.0 / 3.0;
 
     for (int iTri = 0; iTri < nbTris; ++iTri) {
+        if (onProgress && (iTri % 1000 == 0)) {
+            int pct = (iTri * 100) / nbTris;
+            onProgress(0, pct);
+        }
         int idTri = iTri * 3;
         uint32_t iv1 = tris[idTri] * 3;
         uint32_t iv2 = tris[idTri + 1] * 3;
@@ -339,12 +346,12 @@ static void voxelize(
 
                     double point[3] = { x, y, z };
                     double closest[4];
-                    double newDist = distance2PointTriangleEdges(point, triEdge1, triEdge2, v1, a00, a01, a11, closest);
-                    newDist = std::sqrt(newDist);
+                    double newDistSq = distance2PointTriangleEdges(point, triEdge1, triEdge2, v1, a00, a01, a11, closest);
+                    float curDist = voxels.distanceField[n];
+                    double curDistSq = (double)curDist * (double)curDist;
 
-                    if (newDist < voxels.distanceField[n]) {
-                        voxels.distanceField[n] = (float)newDist;
-                        int n3 = n * 3;
+                    if (newDistSq < curDistSq) {
+                        voxels.distanceField[n] = (float)std::sqrt(newDistSq);
                         if (voxels.hasColorField) {
                             uint8_t r = (uint8_t)(c1[0] * 255.0f + 0.5f);
                             uint8_t g = (uint8_t)(c1[1] * 255.0f + 0.5f);
@@ -359,7 +366,7 @@ static void voxelize(
                         }
                     }
 
-                    if (newDist > step)
+                    if (newDistSq > step * step)
                         continue;
 
                     for (int it = 0; it < 3; ++it) {
@@ -395,7 +402,7 @@ static void voxelize(
     printf("[C++ voxelize] Finished voxelization: non-inf distances count=%d, crossed edges count=%d\n", nonInfCount, crossedCount);
 }
 
-static void floodFill(VoxelGrid& voxels) {
+static void floodFill(VoxelGrid& voxels, std::function<void(int stage, int progress)> onProgress = nullptr) {
     float step = voxels.step;
     int rx = voxels.dims[0];
     int ry = voxels.dims[1];
@@ -403,14 +410,16 @@ static void floodFill(VoxelGrid& voxels) {
     int rxy = rx * ry;
 
     int datalen = rx * ry * rz;
-    std::vector<bool> tagCell(datalen, false);
+    std::vector<uint8_t> tagCell(datalen, 0);
     std::vector<int32_t> stack;
     stack.reserve(datalen / 64);
 
     printf("[C++ floodFill] Starting flood fill: datalen=%d\n", datalen);
 
+    if (onProgress) onProgress(1, 0);
+
     stack.push_back(0);
-    tagCell[0] = true;
+    tagCell[0] = 1;
 
     int dirs[6] = { -1, 1, -rx, rx, -rxy, rxy };
     int dirsEdge[6] = { 0, 0, 1, 1, 2, 2 };
@@ -430,7 +439,7 @@ static void floodFill(VoxelGrid& voxels) {
                 int idx = off >= 0 ? cell : idNext;
                 int bit = 1 << dirsEdge[i];
                 if ((voxels.crossedEdges[idx] & bit) == 0) {
-                    tagCell[idNext] = true;
+                    tagCell[idNext] = 1;
                     stack.push_back(idNext);
                 }
             }
@@ -440,7 +449,7 @@ static void floodFill(VoxelGrid& voxels) {
                 int idNext = cell + dirs[i];
                 if (idNext >= datalen || idNext < 0) continue;
                 if (tagCell[idNext]) continue;
-                tagCell[idNext] = true;
+                tagCell[idNext] = 1;
                 stack.push_back(idNext);
             }
         }
@@ -455,6 +464,7 @@ static void floodFill(VoxelGrid& voxels) {
         }
     }
     printf("[C++ floodFill] Finished: tagged (exterior) cells=%d, untagged (interior) cells=%d\n", taggedCount, datalen - taggedCount);
+    if (onProgress) onProgress(1, 100);
 }
 
 // ---------------------------------------------------------
@@ -600,22 +610,16 @@ static uint8_t readScalarValuesMarchingCubes(
             p = std::min(1.0f / std::abs(p), 1e15f);
             invSum += p;
             if (voxels.hasColorField) {
-                auto it = voxels.colorField.find(id);
-                if (it != voxels.colorField.end()) {
-                    uint32_t val = it->second;
-                    c1 += (float)((val >> 16) & 0xff) * p;
-                    c2 += (float)((val >> 8) & 0xff) * p;
-                    c3 += (float)(val & 0xff) * p;
-                }
+                uint32_t val = voxels.colorField[id];
+                c1 += (float)((val >> 16) & 0xff) * p;
+                c2 += (float)((val >> 8) & 0xff) * p;
+                c3 += (float)(val & 0xff) * p;
             }
             if (voxels.hasMaterialField) {
-                auto it = voxels.materialField.find(id);
-                if (it != voxels.materialField.end()) {
-                    uint32_t val = it->second;
-                    m1 += (float)((val >> 16) & 0xff) * p;
-                    m2 += (float)((val >> 8) & 0xff) * p;
-                    m3 += (float)(val & 0xff) * p;
-                }
+                uint32_t val = voxels.materialField[id];
+                m1 += (float)((val >> 16) & 0xff) * p;
+                m2 += (float)((val >> 8) & 0xff) * p;
+                m3 += (float)(val & 0xff) * p;
             }
         }
     }
@@ -647,14 +651,17 @@ static uint8_t readScalarValuesMarchingCubes(
     return mask;
 }
 
-static RemeshResult marchingCubesReconstruct(VoxelGrid& voxels) {
+static RemeshResult marchingCubesReconstruct(VoxelGrid& voxels, std::function<void(int stage, int progress)> onProgress = nullptr) {
     RemeshResult res;
     int rx = voxels.dims[0];
     int ry = voxels.dims[1];
     int rz = voxels.dims[2];
     int rxy = rx * ry;
 
-    std::unordered_map<std::string, uint32_t> mapVertices;
+    std::vector<uint32_t> edgeVertX((rx - 1) * ry * rz, 0xffffffff);
+    std::vector<uint32_t> edgeVertY(rx * (ry - 1) * rz, 0xffffffff);
+    std::vector<uint32_t> edgeVertZ(rx * ry * (rz - 1), 0xffffffff);
+
     int n = 0;
     float grid[8];
     uint32_t edges[12];
@@ -664,6 +671,10 @@ static RemeshResult marchingCubesReconstruct(VoxelGrid& voxels) {
     float tmpM[3] = {0.0f, 0.0f, 0.0f};
 
     for (int z = 0; z < rz - 1; ++z, n += rx) {
+        if (onProgress && (z % 10 == 0)) {
+            int pct = (z * 100) / (rz - 1);
+            onProgress(2, pct);
+        }
         for (int y = 0; y < ry - 1; ++y, ++n) {
             for (int x = 0; x < rx - 1; ++x, ++n) {
                 int cubeIndex = readScalarValuesMarchingCubes(voxels, grid, n, tmpC, tmpM);
@@ -673,31 +684,55 @@ static RemeshResult marchingCubesReconstruct(VoxelGrid& voxels) {
                 for (int k = 0; k < 12; ++k) {
                     if (!(edgeMask & (1 << k))) continue;
 
-                    const int* e = mcEdgeIndex[k];
-                    const int* p0 = mcCubeVerts[e[0]];
-                    const int* p1 = mcCubeVerts[e[1]];
-                    float a = grid[e[0]];
-                    float b = grid[e[1]];
-                    float d = a - b;
-                    float t = 0.0f;
-                    if (std::abs(d) > 1e-6f) {
-                        t = a / d;
+                    int ex = x;
+                    int ey = y;
+                    int ez = z;
+                    int axis = 0; // 0=X, 1=Y, 2=Z
+
+                    switch (k) {
+                        case 0:  ex = x;     ey = y;     ez = z;     axis = 0; break;
+                        case 1:  ex = x + 1; ey = y;     ez = z;     axis = 1; break;
+                        case 2:  ex = x;     ey = y + 1; ez = z;     axis = 0; break;
+                        case 3:  ex = x;     ey = y;     ez = z;     axis = 1; break;
+                        case 4:  ex = x;     ey = y;     ez = z + 1; axis = 0; break;
+                        case 5:  ex = x + 1; ey = y;     ez = z + 1; axis = 1; break;
+                        case 6:  ex = x;     ey = y + 1; ez = z + 1; axis = 0; break;
+                        case 7:  ex = x;     ey = y;     ez = z + 1; axis = 1; break;
+                        case 8:  ex = x;     ey = y;     ez = z;     axis = 2; break;
+                        case 9:  ex = x + 1; ey = y;     ez = z;     axis = 2; break;
+                        case 10: ex = x + 1; ey = y + 1; ez = z;     axis = 2; break;
+                        case 11: ex = x;     ey = y + 1; ez = z;     axis = 2; break;
                     }
 
-                    tmpV[0] = (float)x + (float)p0[0] + t * (float)(p1[0] - p0[0]);
-                    tmpV[1] = (float)y + (float)p0[1] + t * (float)(p1[1] - p0[1]);
-                    tmpV[2] = (float)z + (float)p0[2] + t * (float)(p1[2] - p0[2]);
-
-                    char hashBuf[128];
-                    std::sprintf(hashBuf, "%.7g+%.7g+%.7g", tmpV[0], tmpV[1], tmpV[2]);
-                    std::string hash(hashBuf);
-
-                    auto it = mapVertices.find(hash);
-                    if (it != mapVertices.end()) {
-                        edges[k] = it->second;
+                    uint32_t* slot = nullptr;
+                    if (axis == 0) {
+                        slot = &edgeVertX[ex + ey * (rx - 1) + ez * (rx - 1) * ry];
+                    } else if (axis == 1) {
+                        slot = &edgeVertY[ex + ey * rx + ez * rx * (ry - 1)];
                     } else {
+                        slot = &edgeVertZ[ex + ey * rx + ez * rx * ry];
+                    }
+
+                    if (*slot != 0xffffffff) {
+                        edges[k] = *slot;
+                    } else {
+                        const int* e = mcEdgeIndex[k];
+                        const int* p0 = mcCubeVerts[e[0]];
+                        const int* p1 = mcCubeVerts[e[1]];
+                        float a = grid[e[0]];
+                        float b = grid[e[1]];
+                        float d = a - b;
+                        float t = 0.0f;
+                        if (std::abs(d) > 1e-6f) {
+                            t = a / d;
+                        }
+
+                        tmpV[0] = (float)x + (float)p0[0] + t * (float)(p1[0] - p0[0]);
+                        tmpV[1] = (float)y + (float)p0[1] + t * (float)(p1[1] - p0[1]);
+                        tmpV[2] = (float)z + (float)p0[2] + t * (float)(p1[2] - p0[2]);
+
                         uint32_t idVertex = res.vertices.size() / 3;
-                        mapVertices[hash] = idVertex;
+                        *slot = idVertex;
                         edges[k] = idVertex;
                         res.vertices.push_back(tmpV[0]);
                         res.vertices.push_back(tmpV[1]);
@@ -790,22 +825,16 @@ static uint8_t readScalarValuesSurfaceNets(
                     p = std::min(1.0f / std::abs(p), 1e15f);
                     invSum += p;
                     if (voxels.hasColorField) {
-                        auto it = voxels.colorField.find(id);
-                        if (it != voxels.colorField.end()) {
-                            uint32_t val = it->second;
-                            c1 += (float)((val >> 16) & 0xff) * p;
-                            c2 += (float)((val >> 8) & 0xff) * p;
-                            c3 += (float)(val & 0xff) * p;
-                        }
+                        uint32_t val = voxels.colorField[id];
+                        c1 += (float)((val >> 16) & 0xff) * p;
+                        c2 += (float)((val >> 8) & 0xff) * p;
+                        c3 += (float)(val & 0xff) * p;
                     }
                     if (voxels.hasMaterialField) {
-                        auto it = voxels.materialField.find(id);
-                        if (it != voxels.materialField.end()) {
-                            uint32_t val = it->second;
-                            m1 += (float)((val >> 16) & 0xff) * p;
-                            m2 += (float)((val >> 8) & 0xff) * p;
-                            m3 += (float)(val & 0xff) * p;
-                        }
+                        uint32_t val = voxels.materialField[id];
+                        m1 += (float)((val >> 16) & 0xff) * p;
+                        m2 += (float)((val >> 8) & 0xff) * p;
+                        m3 += (float)(val & 0xff) * p;
                     }
                 }
             }
@@ -911,7 +940,7 @@ static void createFaceSurfaceNets(
     }
 }
 
-static RemeshResult surfaceNetsReconstruct(VoxelGrid& voxels, bool block) {
+static RemeshResult surfaceNetsReconstruct(VoxelGrid& voxels, bool block, std::function<void(int stage, int progress)> onProgress = nullptr) {
     RemeshResult res;
     int rx = voxels.dims[0];
     int ry = voxels.dims[1];
@@ -925,6 +954,10 @@ static RemeshResult surfaceNetsReconstruct(VoxelGrid& voxels, bool block) {
     std::vector<int32_t> buffer((rx + 1) * (ry + 1) * 2, 0);
 
     for (x[2] = 0; x[2] < rz - 1; ++x[2], n += rx, nbBuf ^= 1, R[2] = -R[2]) {
+        if (onProgress && (x[2] % 10 == 0)) {
+            int pct = (x[2] * 100) / (rz - 1);
+            onProgress(2, pct);
+        }
         int m = 1 + (rx + 1) * (1 + nbBuf * (ry + 1));
 
         for (x[1] = 0; x[1] < ry - 1; ++x[1], ++n, m += 2) {
@@ -960,7 +993,8 @@ RemeshResult doRemesh(
     const float* uniformColor,
     const float* uniformMaterial,
     bool hasColors,
-    bool hasMaterials
+    bool hasMaterials,
+    std::function<void(int stage, int progress)> onProgress
 ) {
     printf("[C++ doRemesh] Start. nbVerts=%d, nbTris=%d, resolution=%.2f, block=%d, smooth=%d, manifold=%d, hasColors=%d, hasMaterials=%d\n",
            nbVerts, nbTris, resolution, block, smooth, manifold, hasColors, hasMaterials);
@@ -1005,31 +1039,35 @@ RemeshResult doRemesh(
     voxels.distanceField.assign(datalen, std::numeric_limits<float>::infinity());
 
     voxels.hasColorField = hasColors;
-    if (!hasColors) {
+    if (hasColors) {
+        voxels.colorField.assign(datalen, 0);
+    } else {
         voxels.uniformColor[0] = uniformColor[0];
         voxels.uniformColor[1] = uniformColor[1];
         voxels.uniformColor[2] = uniformColor[2];
     }
 
     voxels.hasMaterialField = hasMaterials;
-    if (!hasMaterials) {
+    if (hasMaterials) {
+        voxels.materialField.assign(datalen, 0);
+    } else {
         voxels.uniformMaterial[0] = uniformMaterial[0];
         voxels.uniformMaterial[1] = uniformMaterial[1];
         voxels.uniformMaterial[2] = uniformMaterial[2];
     }
 
     // 3. Voxelize
-    voxelize(verts, nbVerts, tris, nbTris, colors, materials, voxels);
+    voxelize(verts, nbVerts, tris, nbTris, colors, materials, voxels, onProgress);
 
     // 4. Flood fill inside/outside
-    floodFill(voxels);
+    floodFill(voxels, onProgress);
 
     // 5. Reconstruct Surface
     RemeshResult r;
     if (manifold) {
-        r = marchingCubesReconstruct(voxels);
+        r = marchingCubesReconstruct(voxels, onProgress);
     } else {
-        r = surfaceNetsReconstruct(voxels, block);
+        r = surfaceNetsReconstruct(voxels, block, onProgress);
     }
 
     for (size_t i = 0; i < r.vertices.size(); i += 3) {
@@ -1037,6 +1075,8 @@ RemeshResult doRemesh(
         r.vertices[i + 1] = voxels.minCoord[1] + r.vertices[i + 1] * step;
         r.vertices[i + 2] = voxels.minCoord[2] + r.vertices[i + 2] * step;
     }
+
+    if (onProgress) onProgress(2, 100);
 
     printf("[C++ doRemesh] Reconstructed. output verts: %d, faces: %d\n", (int)(r.vertices.size() / 3), (int)(r.faces.size() / 4));
     return r;

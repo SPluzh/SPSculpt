@@ -371,7 +371,11 @@ int main(int argc, char* argv[]) {
         SDL_GetMouseState(&rawMouseX, &rawMouseY);
         sculpt.setRawMousePos(rawMouseX, rawMouseY);
 
-        sculpt.processFrame(scene);
+        if (gui.isRemeshRunning()) {
+            sculpt.getCursor().hide();
+        } else {
+            sculpt.processFrame(scene);
+        }
         sculpt.getCursor().applyToRenderer(renderer);
         renderer.setLassoParameters(sculpt.isLassoActive(), sculpt.getLassoPoints(), sculpt.getLassoAlt(), sculpt.isMaskLasso());
         renderer.render(scene);

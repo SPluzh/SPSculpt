@@ -11,6 +11,10 @@ HotkeyDispatcher::HotkeyDispatcher()
     , m_ctrlActive(false) {}
 
 bool HotkeyDispatcher::processEvent(const SDL_Event& event, SculptManager& sculpt, Scene& scene, GuiManager& gui) {
+    if (gui.isRemeshRunning()) {
+        return true; // Consume event without acting
+    }
+
     if (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) {
         ImGuiIO& io = ImGui::GetIO();
         if (io.WantCaptureKeyboard) {

@@ -9,6 +9,8 @@ struct RemeshResult {
     std::vector<float> materials;
 };
 
+#include <functional>
+
 RemeshResult doRemesh(
     const float* verts, int nbVerts,
     const uint32_t* tris, int nbTris,
@@ -22,5 +24,6 @@ RemeshResult doRemesh(
     const float* uniformColor,     // float[3]
     const float* uniformMaterial,  // float[3]
     bool hasColors,
-    bool hasMaterials
+    bool hasMaterials,
+    std::function<void(int stage, int progress)> onProgress = nullptr
 );

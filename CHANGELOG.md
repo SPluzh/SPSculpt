@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.0]
+- **Performance**: Optimized floodFill by replacing `std::vector<bool>` with `std::vector<uint8_t>` to avoid bit-manipulation overhead and speed up the BFS traversal during remeshing.
+- **UI**: Customized the ImGui progress bar to use the premium teal accent color and replaced the default white/gray modal dimming background color with a dark translucent overlay to prevent white-washing.
+- **Performance**: Converted the remeshing process (Remesh) to run asynchronously in a background worker thread, eliminating application freezes during voxelization and surface reconstruction.
+- **UI**: Added a thread-safe progress modal popup in ImGui that tracks and displays real-time progress for voxelization, flood-filling, and reconstruction stages.
+- **Performance**: Optimized Marching Cubes reconstruction by replacing the expensive string-based vertex hash map with zero-overhead integer edge lookup arrays, achieving a massive speedup.
+- **Performance**: Optimized voxelization distance checks by comparing squared distances, avoiding millions of costly square root calculations.
+- **Performance**: Replaced sparse maps (`std::unordered_map`) for color and material fields with flat pre-allocated vectors for O(1) cache-friendly direct memory access.
+- **Input**: Blocked keyboard hotkeys and brush interactions while remeshing is active to prevent race conditions and ensure mesh data integrity.
 - **Tools**: Replaced the central sphere handle of the transform gizmo with camera-plane aligned corner brackets of a square that matches the diameter of the rotation rings (providing feature parity with the legacy JS `planeW` camera translation indicator), updating both visual rendering (with a subtle transparent background) and the screen-space picking boundaries so that activation/hovering only occurs when the cursor is positioned directly over the corners.
 - **Tools**: Replaced scale end-handle circles with squares (representing 3D cubes) and configured a yellow square in the center representing the universal/global scale cube (configured to be yellow always, larger, with dedicated center hover picking box supporting both `SCALE` and `SCALEU` universal operations) when scaling.
 - **Tools**: Increased the visual size and length of the Transform Tool gizmo axes by default (clip-space size 0.20) and decreased the diameter of the rotation rings and screen-space rotation circles to make the gizmo layout cleaner and more compact.
