@@ -1176,6 +1176,7 @@ void AngleRenderer::setSymmetryParametersFast(bool showSymmetryLine, uintptr_t p
 
 void AngleRenderer::setCursorParameters(
     bool showCursor,
+    bool showCircle,
     const std::vector<float>& circleMVP,
     const std::vector<float>& innerCircleMVP,
     const std::vector<float>& dotMVP,
@@ -1183,6 +1184,7 @@ void AngleRenderer::setCursorParameters(
     const std::vector<float>& cursorColor
 ) {
     m_showCursor = showCursor;
+    m_showCircle = showCircle;
     if (circleMVP.size() == 16) {
         std::memcpy(&m_circleMVP, circleMVP.data(), 16 * sizeof(float));
     }
@@ -1204,6 +1206,7 @@ void AngleRenderer::setCursorParameters(
 
 void AngleRenderer::setCursorParametersFast(
     bool showCursor,
+    bool showCircle,
     uintptr_t circleMVPPtr,
     uintptr_t innerCircleMVPPtr,
     uintptr_t dotMVPPtr,
@@ -1212,6 +1215,7 @@ void AngleRenderer::setCursorParametersFast(
     uintptr_t cursorColorPtr
 ) {
     m_showCursor = showCursor;
+    m_showCircle = showCircle;
     if (circleMVPPtr) {
         std::memcpy(&m_circleMVP, reinterpret_cast<const float*>(circleMVPPtr), 16 * sizeof(float));
     }
@@ -1607,17 +1611,20 @@ void AngleRenderer::drawSelectionCursor() {
     
     glUniform3fv(locColor, 1, &m_cursorColor[0]);
     
-    // Draw outer circle
-    glUniformMatrix4fv(locMVP, 1, GL_FALSE, &m_circleMVP[0][0]);
     glBindVertexArray(m_selectionVao);
-    glBindBuffer(GL_ARRAY_BUFFER, m_circleVbo);
-    glVertexAttribPointer(locPos, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(locPos);
-    glDrawArrays(GL_LINE_LOOP, 0, 64);
     
-    // Draw inner circle
-    glUniformMatrix4fv(locMVP, 1, GL_FALSE, &m_innerCircleMVP[0][0]);
-    glDrawArrays(GL_LINE_LOOP, 0, 64);
+    if (m_showCircle) {
+        // Draw outer circle
+        glUniformMatrix4fv(locMVP, 1, GL_FALSE, &m_circleMVP[0][0]);
+        glBindBuffer(GL_ARRAY_BUFFER, m_circleVbo);
+        glVertexAttribPointer(locPos, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(locPos);
+        glDrawArrays(GL_LINE_LOOP, 0, 64);
+        
+        // Draw inner circle
+        glUniformMatrix4fv(locMVP, 1, GL_FALSE, &m_innerCircleMVP[0][0]);
+        glDrawArrays(GL_LINE_LOOP, 0, 64);
+    }
     
     // Draw main dot
     glUniformMatrix4fv(locMVP, 1, GL_FALSE, &m_dotMVP[0][0]);

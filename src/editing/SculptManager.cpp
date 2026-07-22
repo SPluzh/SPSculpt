@@ -1214,7 +1214,27 @@ void SculptManager::processFrame(Scene& scene) {
     if (m_cameraController.isDragging()) {
         m_cursor.hide();
     } else {
-        m_cursor.update(m_prevMouseX, m_prevMouseY, scene, getBrushRadius(), m_useSym, m_symAxis);
+        // Resolve dynamic brush modifier swap (Shift->Smooth, Ctrl->Mask)
+        BrushType activeBrush = m_currentBrush;
+        SDL_Keymod mod = SDL_GetModState();
+        if (mod & KMOD_SHIFT) {
+            activeBrush = BRUSH_SMOOTH;
+        } else if (mod & KMOD_CTRL) {
+            activeBrush = BRUSH_MASK;
+        }
+
+        m_cursor.update(
+            m_prevMouseX, m_prevMouseY,
+            scene,
+            getBrushRadius(),
+            m_useSym,
+            m_symAxis,
+            m_isSculpting,
+            activeBrush,
+            m_isSculpting,
+            m_currentIntersection,
+            m_currentIntersectionNormal
+        );
     }
 }
 

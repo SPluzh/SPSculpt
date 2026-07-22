@@ -46,133 +46,190 @@ void BrushCursor::update(int mouseX, int mouseY,
                           const Scene& scene,
                           float brushRadius,
                           bool useSym,
-                          int symAxis) {
+                          int symAxis,
+                          bool isSculpting,
+                          BrushType brushType,
+                          bool hasActiveStrokeHit,
+                          const glm::vec3& activeStrokeHitPt,
+                          const glm::vec3& activeStrokeHitNormal) {
     Mesh* mesh = scene.getSelected();
     const Camera& camera = scene.getCamera();
 
-    if (!mesh) {
-        m_state.visible = false;
-        return;
-    }
+    bool hitMesh = false;
+    glm::vec3 worldPt{0.0f};
+    glm::vec3 worldNormal{0.0f, 1.0f, 0.0f};
+    glm::vec3 localPt{0.0f};
+    glm::vec3 localNormal{0.0f, 1.0f, 0.0f};
 
-    Ray ray = camera.getRay((float)mouseX, (float)mouseY);
-    glm::mat4 invMatrix = glm::inverse(mesh->matrix);
-    glm::vec3 localRayOrigin = glm::vec3(invMatrix * glm::vec4(ray.origin, 1.0f));
-    glm::vec3 localRayDir = glm::normalize(glm::vec3(invMatrix * glm::vec4(ray.dir, 0.0f)));
+    if (hasActiveStrokeHit) {
+        hitMesh = true;
+        worldPt = activeStrokeHitPt;
+        worldNormal = activeStrokeHitNormal;
+    } else if (mesh) {
+        Ray ray = camera.getRay((float)mouseX, (float)mouseY);
+        glm::mat4 invMatrix = glm::inverse(mesh->matrix);
+        glm::vec3 localRayOrigin = glm::vec3(invMatrix * glm::vec4(ray.origin, 1.0f));
+        glm::vec3 localRayDir = glm::normalize(glm::vec3(invMatrix * glm::vec4(ray.dir, 0.0f)));
 
-    std::vector<uint32_t> candidateFaces = mesh->octree.collectIntersectRay(
-        localRayOrigin.x, localRayOrigin.y, localRayOrigin.z,
-        localRayDir.x, localRayDir.y, localRayDir.z
-    );
+        std::vector<uint32_t> candidateFaces = mesh->octree.collectIntersectRay(
+            localRayOrigin.x, localRayOrigin.y, localRayOrigin.z,
+            localRayDir.x, localRayDir.y, localRayDir.z
+        );
 
-    float minT = std::numeric_limits<float>::infinity();
-    uint32_t intersectFaceId = 0xffffffff;
+        float minT = std::numeric_limits<float>::infinity();
+        uint32_t intersectFaceId = 0xffffffff;
 
-    for (uint32_t faceId : candidateFaces) {
-        if (faceId >= (uint32_t)mesh->nbFaces) continue;
-        uint32_t v0Id = mesh->faces[faceId * 4];
-        uint32_t v1Id = mesh->faces[faceId * 4 + 1];
-        uint32_t v2Id = mesh->faces[faceId * 4 + 2];
-        uint32_t v3Id = mesh->faces[faceId * 4 + 3];
+        for (uint32_t faceId : candidateFaces) {
+            if (faceId >= (uint32_t)mesh->nbFaces) continue;
+            uint32_t v0Id = mesh->faces[faceId * 4];
+            uint32_t v1Id = mesh->faces[faceId * 4 + 1];
+            uint32_t v2Id = mesh->faces[faceId * 4 + 2];
+            uint32_t v3Id = mesh->faces[faceId * 4 + 3];
 
-        if (!mesh->vertVisible[v0Id] || !mesh->vertVisible[v1Id] || !mesh->vertVisible[v2Id] || (v3Id != 0xffffffff && !mesh->vertVisible[v3Id])) {
-            continue;
-        }
-
-        glm::vec3 v0(mesh->verts[v0Id * 3], mesh->verts[v0Id * 3 + 1], mesh->verts[v0Id * 3 + 2]);
-        glm::vec3 v1(mesh->verts[v1Id * 3], mesh->verts[v1Id * 3 + 1], mesh->verts[v1Id * 3 + 2]);
-        glm::vec3 v2(mesh->verts[v2Id * 3], mesh->verts[v2Id * 3 + 1], mesh->verts[v2Id * 3 + 2]);
-
-        float t;
-        if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v1, v2, t)) {
-            if (t < minT) {
-                minT = t;
-                intersectFaceId = faceId;
+            if (!mesh->vertVisible[v0Id] || !mesh->vertVisible[v1Id] || !mesh->vertVisible[v2Id] || (v3Id != 0xffffffff && !mesh->vertVisible[v3Id])) {
+                continue;
             }
-        }
 
-        if (v3Id != 0xffffffff) {
-            glm::vec3 v3(mesh->verts[v3Id * 3], mesh->verts[v3Id * 3 + 1], mesh->verts[v3Id * 3 + 2]);
-            if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v2, v3, t)) {
+            glm::vec3 v0(mesh->verts[v0Id * 3], mesh->verts[v0Id * 3 + 1], mesh->verts[v0Id * 3 + 2]);
+            glm::vec3 v1(mesh->verts[v1Id * 3], mesh->verts[v1Id * 3 + 1], mesh->verts[v1Id * 3 + 2]);
+            glm::vec3 v2(mesh->verts[v2Id * 3], mesh->verts[v2Id * 3 + 1], mesh->verts[v2Id * 3 + 2]);
+
+            float t;
+            if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v1, v2, t)) {
                 if (t < minT) {
                     minT = t;
                     intersectFaceId = faceId;
                 }
             }
-        }
-    }
 
-    if (intersectFaceId == 0xffffffff) {
-        m_state.visible = false;
-        return;
+            if (v3Id != 0xffffffff) {
+                glm::vec3 v3(mesh->verts[v3Id * 3], mesh->verts[v3Id * 3 + 1], mesh->verts[v3Id * 3 + 2]);
+                if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v2, v3, t)) {
+                    if (t < minT) {
+                        minT = t;
+                        intersectFaceId = faceId;
+                    }
+                }
+            }
+        }
+
+        if (intersectFaceId != 0xffffffff) {
+            hitMesh = true;
+            localPt = localRayOrigin + minT * localRayDir;
+            localNormal = glm::vec3(
+                mesh->faceNormals[intersectFaceId * 3],
+                mesh->faceNormals[intersectFaceId * 3 + 1],
+                mesh->faceNormals[intersectFaceId * 3 + 2]
+            );
+
+            worldPt = glm::vec3(mesh->matrix * glm::vec4(localPt, 1.0f));
+            glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(mesh->matrix)));
+            worldNormal = glm::normalize(normalMatrix * localNormal);
+        }
     }
 
     m_state.visible = true;
+    m_state.showCircle = !isSculpting;
 
-    // Intersection details in local coordinates
-    glm::vec3 localPt = localRayOrigin + minT * localRayDir;
-    glm::vec3 localNormal(
-        mesh->faceNormals[intersectFaceId * 3],
-        mesh->faceNormals[intersectFaceId * 3 + 1],
-        mesh->faceNormals[intersectFaceId * 3 + 2]
-    );
-
-    // Transform intersection details to world coordinates
-    glm::vec3 worldPt = glm::vec3(mesh->matrix * glm::vec4(localPt, 1.0f));
-    glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(mesh->matrix)));
-    glm::vec3 worldNormal = glm::normalize(normalMatrix * localNormal);
-
-    m_state.hitPoint = worldPt;
-    m_state.hitNormal = worldNormal;
-
-    // Calculate dynamic world radius based on camera distance / type
-    glm::vec3 cameraPos = camera.computePosition();
-    float hitDepth = glm::distance(cameraPos, worldPt);
-
-    float worldRadius = 0.0f;
-    if (camera.isOrthographic()) {
-        worldRadius = brushRadius * 2.0f * camera.getOrthoZoom();
-    } else {
-        float fov_rad = camera.getFovDegrees() * (float)M_PI / 180.0f;
-        float screenHeight = (float)camera.getHeight();
-        if (screenHeight <= 0.0f) screenHeight = 1.0f;
-        worldRadius = brushRadius * hitDepth * std::tan(fov_rad * 0.5f) * 2.0f / screenHeight;
-    }
-    m_state.radius = worldRadius;
-
-    // Build main circle MVPs
-    m_state.circleMVP = buildCircleMVP(worldPt, worldNormal, worldRadius, camera);
-    
-    // Default focal shift of 0.0 gives an inner ratio of 0.5f
-    float innerWorldRadius = worldRadius * 0.5f;
-    m_state.innerCircleMVP = buildCircleMVP(worldPt, worldNormal, innerWorldRadius, camera);
-
-    // Dot MVP
-    float ratio = worldRadius / brushRadius;
-    float constRadius = 2.5f * ratio;
-    m_state.dotMVP = buildCircleMVP(worldPt, worldNormal, constRadius, camera);
-
-    // Symmetry MVPs
-    m_state.symMVPs.clear();
-    if (useSym) {
-        glm::vec3 localSymPt = localPt;
-        glm::vec3 localSymNormal = localNormal;
-        if (symAxis == 0) { // X
-            localSymPt.x = -localSymPt.x;
-            localSymNormal.x = -localSymNormal.x;
-        } else if (symAxis == 1) { // Y
-            localSymPt.y = -localSymPt.y;
-            localSymNormal.y = -localSymNormal.y;
-        } else if (symAxis == 2) { // Z
-            localSymPt.z = -localSymPt.z;
-            localSymNormal.z = -localSymNormal.z;
+    // Color Setup based on active brush & hover status
+    bool drawCircle = !isSculpting;
+    if (brushType == BRUSH_SMOOTH) {
+        if (drawCircle && hitMesh) {
+            m_state.color = glm::vec3(0.0f, 0.4f, 0.8f);
+        } else {
+            m_state.color = glm::vec3(0.0f, 0.6f, 1.0f);
         }
+    } else if (brushType == BRUSH_MASK) {
+        if (drawCircle && hitMesh) {
+            m_state.color = glm::vec3(0.9f, 0.9f, 0.0f);
+        } else {
+            m_state.color = glm::vec3(1.0f, 1.0f, 0.0f);
+        }
+    } else if (brushType == BRUSH_VISIBILITY) {
+        if (drawCircle && hitMesh) {
+            m_state.color = glm::vec3(0.6f, 0.0f, 0.9f);
+        } else {
+            m_state.color = glm::vec3(0.6f, 0.2f, 0.9f);
+        }
+    } else {
+        if (drawCircle && hitMesh) {
+            m_state.color = glm::vec3(0.8f, 0.0f, 0.0f);
+        } else {
+            m_state.color = glm::vec3(0.8f, 0.4f, 0.0f);
+        }
+    }
 
-        glm::vec3 worldSymPt = glm::vec3(mesh->matrix * glm::vec4(localSymPt, 1.0f));
-        glm::vec3 worldSymNormal = glm::normalize(normalMatrix * localSymNormal);
+    if (hitMesh) {
+        m_state.hitPoint = worldPt;
+        m_state.hitNormal = worldNormal;
 
-        glm::mat4 symMVP = buildCircleMVP(worldSymPt, worldSymNormal, constRadius, camera);
-        m_state.symMVPs.push_back(symMVP);
+        // Calculate dynamic world radius based on camera distance / type
+        glm::vec3 cameraPos = camera.computePosition();
+        float hitDepth = glm::distance(cameraPos, worldPt);
+
+        float worldRadius = 0.0f;
+        if (camera.isOrthographic()) {
+            worldRadius = brushRadius * 2.0f * camera.getOrthoZoom();
+        } else {
+            float fov_rad = camera.getFovDegrees() * (float)M_PI / 180.0f;
+            float screenHeight = (float)camera.getHeight();
+            if (screenHeight <= 0.0f) screenHeight = 1.0f;
+            worldRadius = brushRadius * hitDepth * std::tan(fov_rad * 0.5f) * 2.0f / screenHeight;
+        }
+        m_state.radius = worldRadius;
+
+        // Build main circle MVPs
+        m_state.circleMVP = buildCircleMVP(worldPt, worldNormal, worldRadius, camera);
+        
+        // Default focal shift of 0.0 gives an inner ratio of 0.5f
+        float innerWorldRadius = worldRadius * 0.5f;
+        m_state.innerCircleMVP = buildCircleMVP(worldPt, worldNormal, innerWorldRadius, camera);
+
+        // Dot MVP
+        float ratio = worldRadius / brushRadius;
+        float constRadius = 2.5f * ratio;
+        m_state.dotMVP = buildCircleMVP(worldPt, worldNormal, constRadius, camera);
+
+        // Symmetry MVPs
+        m_state.symMVPs.clear();
+        if (useSym && mesh) {
+            glm::mat4 invMatrix = glm::inverse(mesh->matrix);
+            glm::vec3 lPt = glm::vec3(invMatrix * glm::vec4(worldPt, 1.0f));
+            glm::vec3 lNormal = glm::normalize(glm::vec3(glm::transpose(mesh->matrix) * glm::vec4(worldNormal, 0.0f)));
+
+            glm::vec3 localSymPt = lPt;
+            glm::vec3 localSymNormal = lNormal;
+            if (symAxis == 0) { // X
+                localSymPt.x = -localSymPt.x;
+                localSymNormal.x = -localSymNormal.x;
+            } else if (symAxis == 1) { // Y
+                localSymPt.y = -localSymPt.y;
+                localSymNormal.y = -localSymNormal.y;
+            } else if (symAxis == 2) { // Z
+                localSymPt.z = -localSymPt.z;
+                localSymNormal.z = -localSymNormal.z;
+            }
+
+            glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(mesh->matrix)));
+            glm::vec3 worldSymPt = glm::vec3(mesh->matrix * glm::vec4(localSymPt, 1.0f));
+            glm::vec3 worldSymNormal = glm::normalize(normalMatrix * localSymNormal);
+
+            glm::mat4 symMVP = buildCircleMVP(worldSymPt, worldSymNormal, constRadius, camera);
+            m_state.symMVPs.push_back(symMVP);
+        }
+    } else {
+        // Background Screenspace Mode
+        float w = camera.getWidth() * 0.5f;
+        float h = camera.getHeight() * 0.5f;
+        glm::mat4 orthoProj = glm::ortho(-w, w, -h, h, -10.0f, 10.0f);
+        
+        glm::mat4 trans = glm::mat4(1.0f);
+        trans = glm::translate(trans, glm::vec3(-w + (float)mouseX, h - (float)mouseY, 0.0f));
+        
+        m_state.circleMVP = orthoProj * glm::scale(trans, glm::vec3(brushRadius, brushRadius, 1.0f));
+        m_state.innerCircleMVP = orthoProj * glm::scale(trans, glm::vec3(brushRadius * 0.5f, brushRadius * 0.5f, 1.0f));
+        m_state.dotMVP = orthoProj * glm::scale(trans, glm::vec3(2.5f, 2.5f, 1.0f));
+        m_state.symMVPs.clear();
     }
 }
 
@@ -187,6 +244,7 @@ void BrushCursor::applyToRenderer(AngleRenderer& renderer) const {
 
         renderer.setCursorParametersFast(
             true,
+            m_state.showCircle,
             circlePtr,
             innerPtr,
             dotPtr,
@@ -195,7 +253,7 @@ void BrushCursor::applyToRenderer(AngleRenderer& renderer) const {
             colorPtr
         );
     } else {
-        renderer.setCursorParametersFast(false, 0, 0, 0, 0, 0, 0);
+        renderer.setCursorParametersFast(false, false, 0, 0, 0, 0, 0, 0);
     }
 }
 

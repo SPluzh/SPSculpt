@@ -100,6 +100,7 @@ public:
     // Selection cursor drawing parameters
     void setCursorParameters(
         bool showCursor,
+        bool showCircle,
         const std::vector<float>& circleMVP,
         const std::vector<float>& innerCircleMVP,
         const std::vector<float>& dotMVP,
@@ -108,6 +109,7 @@ public:
     );
     void setCursorParametersFast(
         bool showCursor,
+        bool showCircle,
         uintptr_t circleMVPPtr,
         uintptr_t innerCircleMVPPtr,
         uintptr_t dotMVPPtr,
@@ -166,6 +168,7 @@ private:
 
     // Selection parameters
     bool m_showCursor = false;
+    bool m_showCircle = true;
     glm::mat4 m_circleMVP{1.0f};
     glm::mat4 m_innerCircleMVP{1.0f};
     glm::mat4 m_dotMVP{1.0f};

@@ -1,6 +1,7 @@
 #pragma once
 #include <glm/glm.hpp>
 #include <vector>
+#include "common/Enums.h"
 
 class AngleRenderer;
 class Scene;
@@ -8,6 +9,7 @@ class Camera;
 
 struct BrushCursorState {
     bool      visible        = false;
+    bool      showCircle     = true;
     glm::vec3 hitPoint       {0.0f};
     glm::vec3 hitNormal      {0.0f, 1.0f, 0.0f};
     float     radius         = 8.0f;   // in world units
@@ -30,7 +32,12 @@ public:
                 const Scene& scene,
                 float brushRadius,
                 bool useSym = false,
-                int symAxis = 0); // 0=X, 1=Y, 2=Z
+                int symAxis = 0,
+                bool isSculpting = false,
+                BrushType brushType = BRUSH_FLATTEN,
+                bool hasActiveStrokeHit = false,
+                const glm::vec3& activeStrokeHitPt = glm::vec3(0.0f),
+                const glm::vec3& activeStrokeHitNormal = glm::vec3(0.0f, 1.0f, 0.0f));
 
     void applyToRenderer(AngleRenderer& renderer) const;
 
