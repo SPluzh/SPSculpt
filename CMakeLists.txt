@@ -106,6 +106,7 @@ add_executable(sculptsp
     src/gui/GuiManager.cpp
     # platform
     src/platform/HotkeyDispatcher.cpp
+    src/platform/TabletInput.cpp
     src/platform/NativeMain.cpp
 )
 

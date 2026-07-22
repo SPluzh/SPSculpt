@@ -268,6 +268,9 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGui::MenuItem("Reference Images", nullptr, &m_showReferenceImagesPanel);
             ImGui::MenuItem("Navigation Cube", nullptr, &m_showGizmoCube);
             ImGui::MenuItem("Mesh Statistics & FPS", nullptr, &m_showMeshInfo);
+#ifdef _WIN32
+            ImGui::MenuItem("Tablet Diagnostics", nullptr, &m_showTabletDiagPanel);
+#endif
             ImGui::EndMenu();
         }
         ImGui::EndMainMenuBar();
@@ -1078,6 +1081,124 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         
         ImGui::PopStyleColor(2);
     }
+
+#ifdef _WIN32
+    if (m_showTabletDiagPanel) {
+        ImGui::Begin("Tablet Diagnostics", &m_showTabletDiagPanel, ImGuiWindowFlags_AlwaysAutoResize);
+        
+        TabletMode activeMode = g_tablet.getActiveMode();
+        TabletMode forcedMode = g_tablet.getForcedMode();
+        
+        const char* modeNames[] = { "Auto (Fallback)", "Windows Ink", "WinTab" };
+        int currentModeIdx = 0;
+        if (forcedMode == TabletMode::WININK) currentModeIdx = 1;
+        else if (forcedMode == TabletMode::WINTAB) currentModeIdx = 2;
+        
+        if (ImGui::Combo("Forced Mode", &currentModeIdx, modeNames, 3)) {
+            if (currentModeIdx == 0) g_tablet.setForcedMode(TabletMode::NONE);
+            else if (currentModeIdx == 1) g_tablet.setForcedMode(TabletMode::WININK);
+            else if (currentModeIdx == 2) g_tablet.setForcedMode(TabletMode::WINTAB);
+        }
+        
+        TabletInput::DiagInfo diag = g_tablet.getDiagInfo();
+        
+        ImGui::Text("Active Mode: %s", (diag.activeMode == TabletMode::WINTAB ? "WinTab" : (diag.activeMode == TabletMode::WININK ? "Windows Ink" : "None (Mouse)")));
+        ImGui::SameLine();
+        if (diag.activeMode != TabletMode::NONE) {
+            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "  [Connected]");
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "  [Disconnected]");
+        }
+        
+        ImGui::Separator();
+        
+        ImGui::Text("Pressure:");
+        ImGui::ProgressBar(diag.currentPressure, ImVec2(-1, 20), "");
+        ImGui::SameLine(ImGui::GetWindowWidth() * 0.5f);
+        ImGui::Text("Pressure Value: %.3f", diag.currentPressure);
+        
+        ImGui::Text("Tilt X: %.1f deg", diag.currentTiltX);
+        ImGui::Text("Tilt Y: %.1f deg", diag.currentTiltY);
+        
+        ImGui::Text("Pen Down: %s", (diag.isPenDown ? "YES" : "NO"));
+        
+        ImGui::Separator();
+        
+        ImGui::Text("Wintab32.dll: %s", (diag.wintabLoaded ? "LOADED" : "NOT FOUND"));
+        ImGui::Text("WinTab Context: %s", (diag.wintabContextOpen ? "OPEN" : "CLOSED"));
+        ImGui::Text("Windows Ink: %s", (diag.winInkAvailable ? "AVAILABLE" : "NOT ACTIVE"));
+        ImGui::Text("Max Pressure: %d", diag.maxPressure);
+        ImGui::Text("Packets/Sec: %d", diag.packetsLastSecond);
+        
+        ImGui::Separator();
+        
+        bool pressureEnabled = g_tablet.isPressureEnabled();
+        if (ImGui::Checkbox("Use Pressure for Sculpting", &pressureEnabled)) {
+            g_tablet.setPressureEnabled(pressureEnabled);
+        }
+        
+        bool tiltEnabled = g_tablet.isTiltEnabled();
+        if (ImGui::Checkbox("Use Tilt for Sculpting", &tiltEnabled)) {
+            g_tablet.setTiltEnabled(tiltEnabled);
+        }
+        
+        ImGui::Separator();
+        ImGui::Text("Live Pressure Test (Draw below):");
+        
+        struct TestPoint {
+            ImVec2 pos;
+            float pressure;
+            bool isStart;
+        };
+        static std::vector<TestPoint> testPoints;
+        static bool lastPenDown = false;
+        
+        ImVec2 canvasPos = ImGui::GetCursorScreenPos();
+        ImVec2 canvasSize = ImVec2(280.0f, 100.0f);
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        
+        drawList->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(15, 15, 18, 255));
+        drawList->AddRect(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(70, 70, 80, 255));
+        
+        ImGui::InvisibleButton("canvas", canvasSize);
+        bool isHovered = ImGui::IsItemHovered();
+        
+        if (isHovered && diag.isPenDown) {
+            ImVec2 mPos = ImGui::GetIO().MousePos;
+            bool isStart = !lastPenDown;
+            testPoints.push_back({ mPos, diag.currentPressure, isStart });
+            if (testPoints.size() > 500) {
+                testPoints.erase(testPoints.begin());
+            }
+        }
+        lastPenDown = diag.isPenDown;
+        
+        if (testPoints.size() > 1) {
+            for (size_t i = 1; i < testPoints.size(); ++i) {
+                if (testPoints[i].isStart) continue;
+                ImVec2 p1 = testPoints[i-1].pos;
+                ImVec2 p2 = testPoints[i].pos;
+                
+                if (p1.x >= canvasPos.x && p1.x <= canvasPos.x + canvasSize.x &&
+                    p1.y >= canvasPos.y && p1.y <= canvasPos.y + canvasSize.y &&
+                    p2.x >= canvasPos.x && p2.x <= canvasPos.x + canvasSize.x &&
+                    p2.y >= canvasPos.y && p2.y <= canvasPos.y + canvasSize.y) {
+                    
+                    float thickness = testPoints[i].pressure * 10.0f;
+                    if (thickness < 1.0f) thickness = 1.0f;
+                    
+                    drawList->AddLine(p1, p2, IM_COL32(0, 192, 255, 255), thickness);
+                }
+            }
+        }
+        
+        if (ImGui::Button("Clear Test Canvas")) {
+            testPoints.clear();
+        }
+        
+        ImGui::End();
+    }
+#endif
 
     if (sculpt.getBrush() == BRUSH_MASK_GRADIENT_BLUR && sculpt.getGradActive()) {
         ImDrawList* drawList = ImGui::GetForegroundDrawList();

@@ -3,6 +3,9 @@
 #include "scene/Camera.h"
 #include "render/AngleRenderer.h"
 #include "mesh/Mesh.h"
+#ifdef _WIN32
+#include "platform/TabletInput.h"
+#endif
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <cmath>
@@ -182,17 +185,26 @@ void BrushCursor::update(int mouseX, int mouseY,
         }
         m_state.radius = worldRadius;
 
-        // Build main circle MVPs
-        m_state.circleMVP = buildCircleMVP(worldPt, worldNormal, worldRadius, camera);
+        // Build main circle MVPs with tilt squeezing
+        float tiltX = 0.0f;
+        float tiltY = 0.0f;
+#ifdef _WIN32
+        if (g_tablet.isAvailable() && g_tablet.isPenActive() && g_tablet.isTiltEnabled()) {
+            tiltX = g_tablet.getTiltX();
+            tiltY = g_tablet.getTiltY();
+        }
+#endif
+
+        m_state.circleMVP = buildCircleMVP(worldPt, worldNormal, worldRadius, camera, tiltX, tiltY);
         
         // Default focal shift of 0.0 gives an inner ratio of 0.5f
         float innerWorldRadius = worldRadius * 0.5f;
-        m_state.innerCircleMVP = buildCircleMVP(worldPt, worldNormal, innerWorldRadius, camera);
+        m_state.innerCircleMVP = buildCircleMVP(worldPt, worldNormal, innerWorldRadius, camera, tiltX, tiltY);
 
         // Dot MVP
         float ratio = worldRadius / brushRadius;
         float constRadius = 2.5f * ratio;
-        m_state.dotMVP = buildCircleMVP(worldPt, worldNormal, constRadius, camera);
+        m_state.dotMVP = buildCircleMVP(worldPt, worldNormal, constRadius, camera, tiltX, tiltY);
 
         // Symmetry MVPs
         m_state.symMVPs.clear();
@@ -218,7 +230,7 @@ void BrushCursor::update(int mouseX, int mouseY,
             glm::vec3 worldSymPt = glm::vec3(mesh->matrix * glm::vec4(localSymPt, 1.0f));
             glm::vec3 worldSymNormal = glm::normalize(normalMatrix * localSymNormal);
 
-            glm::mat4 symMVP = buildCircleMVP(worldSymPt, worldSymNormal, constRadius, camera);
+            glm::mat4 symMVP = buildCircleMVP(worldSymPt, worldSymNormal, constRadius, camera, tiltX, tiltY);
             m_state.symMVPs.push_back(symMVP);
         }
     } else {
@@ -274,7 +286,9 @@ void BrushCursor::applyToRenderer(AngleRenderer& renderer) const {
 glm::mat4 BrushCursor::buildCircleMVP(const glm::vec3& center,
                                       const glm::vec3& normal,
                                       float radius,
-                                      const Camera& cam) const {
+                                      const Camera& cam,
+                                      float tiltX,
+                                      float tiltY) const {
     glm::vec3 n = glm::normalize(normal);
     glm::vec3 base(0.0f, 0.0f, 1.0f);
     float dot = glm::dot(base, n);
@@ -297,7 +311,13 @@ glm::mat4 BrushCursor::buildCircleMVP(const glm::vec3& center,
     if (dot < 0.9999f) {
         model = glm::rotate(model, rad, axis);
     }
-    model = glm::scale(model, glm::vec3(radius, radius, radius));
+
+    float scaleX = 1.0f - std::abs(tiltX) / 90.0f * 0.5f;
+    float scaleY = 1.0f - std::abs(tiltY) / 90.0f * 0.5f;
+    scaleX = std::max(0.2f, std::min(1.0f, scaleX));
+    scaleY = std::max(0.2f, std::min(1.0f, scaleY));
+
+    model = glm::scale(model, glm::vec3(radius * scaleX, radius * scaleY, radius));
 
     return cam.getProjMatrix() * cam.getViewMatrix() * model;
 }

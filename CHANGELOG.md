@@ -3,6 +3,10 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.0]
+- **Input**: Finalized high-precision tablet support by integrating thread-safe polling for both WinTab and Windows Ink APIs, retrieving real-time stylus pressure and tilt data engine-wide.
+- **Renderer**: Implemented interactive brush cursor deformation that dynamically squeezes/flattens the cursor circle along the tool's local tangent axes when the pen is tilted.
+- **UI**: Added a "Tablet Diagnostics" panel under the main toolbar to monitor connection health, active input mode (WinTab/WinInk/Auto), and raw packets in real-time, complete with a pressure-sensitive test canvas.
+- **Core**: Integrated `src/platform/TabletInput.cpp` into `CMakeLists.txt` and initialized/closed the Wintab context cleanly during application lifecycle.
 - **Renderer**: Added a smooth, vector-based rendering option for the brush cursor using screen-space projection, providing perfect anti-aliasing and subpixel precision. The cursor is automatically hidden when the mouse hovers over menu bars and settings panels.
 - **UI**: Added a "Smooth (Antialiased) Cursor" toggle option under Shading & Rendering settings to switch between the new smooth vector cursor and the legacy hardware shader cursor.
 - **Settings**: Serialized the smooth cursor toggle and cursor line thickness settings to the local configuration file for persistence across sessions.

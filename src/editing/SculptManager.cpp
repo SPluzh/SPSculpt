@@ -1,6 +1,9 @@
 #include "editing/SculptManager.h"
 #include "sculpt/SculptEngine.h"
 #include "mesh/NormalCalc.h"
+#ifdef _WIN32
+#include "platform/TabletInput.h"
+#endif
 #include "mesh/Topology.h"
 #include "mesh/Mesh.h"
 #include <vector>
@@ -1168,12 +1171,25 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 // Copy vertices to proxy at start of stroke
                 mesh->vertProxy = mesh->verts;
 
-                // Check stylus timeout
+                // Check stylus/tablet pressure
+                float currentPressure = 1.0f;
+#ifdef _WIN32
+                if (g_tablet.isAvailable() && g_tablet.isPenActive()) {
+                    currentPressure = g_tablet.getPressure();
+                } else {
+                    if (m_usingStylus && (SDL_GetTicks() - m_lastStylusTime > 1000)) {
+                        m_usingStylus = false;
+                        m_stylusPressure = 1.0f;
+                    }
+                    currentPressure = m_usingStylus ? m_stylusPressure : 1.0f;
+                }
+#else
                 if (m_usingStylus && (SDL_GetTicks() - m_lastStylusTime > 1000)) {
                     m_usingStylus = false;
                     m_stylusPressure = 1.0f;
                 }
-                float currentPressure = m_usingStylus ? m_stylusPressure : 1.0f;
+                currentPressure = m_usingStylus ? m_stylusPressure : 1.0f;
+#endif
 
                 // Execute first stroke frame immediately
                 executeStroke(scene, mesh, camera, (float)mouseX, (float)mouseY, currentPressure);
@@ -1705,12 +1721,25 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
         if (m_cameraController.isDragging()) {
             m_cameraController.handleEvent(event, camera);
         } else if (m_isSculpting && mesh) {
-            // Check stylus timeout
+            // Check stylus/tablet pressure
+            float currentPressure = 1.0f;
+#ifdef _WIN32
+            if (g_tablet.isAvailable() && g_tablet.isPenActive()) {
+                currentPressure = g_tablet.getPressure();
+            } else {
+                if (m_usingStylus && (SDL_GetTicks() - m_lastStylusTime > 1000)) {
+                    m_usingStylus = false;
+                    m_stylusPressure = 1.0f;
+                }
+                currentPressure = m_usingStylus ? m_stylusPressure : 1.0f;
+            }
+#else
             if (m_usingStylus && (SDL_GetTicks() - m_lastStylusTime > 1000)) {
                 m_usingStylus = false;
                 m_stylusPressure = 1.0f;
             }
-            float currentPressure = m_usingStylus ? m_stylusPressure : 1.0f;
+            currentPressure = m_usingStylus ? m_stylusPressure : 1.0f;
+#endif
 
             float strokeDx = (float)(mouseX - m_lastStrokeX);
             float strokeDy = (float)(mouseY - m_lastStrokeY);

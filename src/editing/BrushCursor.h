@@ -51,5 +51,7 @@ private:
     glm::mat4 buildCircleMVP(const glm::vec3& center,
                              const glm::vec3& normal,
                              float radius,
-                             const Camera& cam) const;
+                             const Camera& cam,
+                             float tiltX = 0.0f,
+                             float tiltY = 0.0f) const;
 };

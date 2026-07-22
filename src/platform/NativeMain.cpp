@@ -36,6 +36,8 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include <SDL2/SDL_syswm.h>
+#include "platform/TabletInput.h"
 LONG WINAPI windowsExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo) {
     std::cerr << "\n=============================================" << std::endl;
     std::cerr << "[CRITICAL ERROR] Windows Unhandled Exception! Code: 0x" 
@@ -114,16 +116,20 @@ static void SDLCALL TabletMessageHook(void* userdata, void* hWnd, unsigned int m
                 POINTER_PEN_INFO_LITE penInfo;
                 std::memset(&penInfo, 0, sizeof(penInfo));
                 if (pfnGetPointerPenInfo(pointerId, &penInfo)) {
-                    if (penInfo.pointerInfo.pointerFlags & POINTER_FLAG_INCONTACT) {
-                        float pressure = (float)penInfo.pressure / 1024.0f;
-                        sculpt->setStylusPressure(pressure);
-                    } else {
-                        sculpt->setStylusPressure(0.0f);
+                    bool inContact = (penInfo.pointerInfo.pointerFlags & POINTER_FLAG_INCONTACT) != 0;
+                    float pressure = 0.0f;
+                    if (inContact) {
+                        pressure = (float)penInfo.pressure / 1024.0f;
                     }
+                    float tiltX = (float)penInfo.tiltX;
+                    float tiltY = (float)penInfo.tiltY;
+                    g_tablet.onWinInkUpdate(pressure, tiltX, tiltY, inContact);
+                    sculpt->setStylusPressure(pressure);
                 }
             }
         }
     } else if (message == 0x0247) { // WM_POINTERUP
+        g_tablet.onWinInkUp();
         sculpt->setStylusPressure(0.0f);
     }
 }
@@ -305,6 +311,16 @@ int main(int argc, char* argv[]) {
     HotkeyDispatcher dispatcher;
 
 #ifdef _WIN32
+    SDL_SysWMinfo wmInfo;
+    SDL_VERSION(&wmInfo.version);
+    HWND hwnd = nullptr;
+    if (SDL_GetWindowWMInfo(window, &wmInfo)) {
+        hwnd = wmInfo.info.win.window;
+    }
+    if (g_tablet.wintabLoad()) {
+        g_tablet.wintabOpen(hwnd);
+        g_tablet.startPolling();
+    }
     SDL_SetWindowsMessageHook(TabletMessageHook, &sculpt);
 #endif
 
@@ -387,6 +403,10 @@ int main(int argc, char* argv[]) {
     // Auto-save render and shading settings on exit
     sculpt.saveSettings("brush_settings.cfg");
     RenderSettings::save("render_settings.cfg", renderer, scene);
+
+#ifdef _WIN32
+    g_tablet.wintabClose();
+#endif
 
     gui.shutdown();
 

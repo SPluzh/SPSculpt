@@ -1,5 +1,8 @@
 #pragma once
 #include <SDL2/SDL.h>
+#ifdef _WIN32
+#include "platform/TabletInput.h"
+#endif
 #include <deque>
 #include <chrono>
 #include <thread>
@@ -38,6 +41,7 @@ private:
     bool m_showReferenceImagesPanel = true;
     bool m_showGizmoCube = true;
     bool m_showMeshInfo = true;
+    bool m_showTabletDiagPanel = false;
 
     // FPS calculation variables
     std::deque<std::chrono::steady_clock::time_point> m_fpsTimes;
