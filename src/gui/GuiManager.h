@@ -1,5 +1,7 @@
 #pragma once
 #include <SDL2/SDL.h>
+#include <deque>
+#include <chrono>
 #include "editing/SculptManager.h"
 #include "scene/Scene.h"
 
@@ -19,6 +21,12 @@ private:
     bool m_showZSpheresPanel = true;
     bool m_showReferenceImagesPanel = true;
     bool m_showGizmoCube = true;
+    bool m_showMeshInfo = true;
+
+    // FPS calculation variables
+    std::deque<std::chrono::steady_clock::time_point> m_fpsTimes;
+    std::chrono::steady_clock::time_point m_fpsLastUpdate = std::chrono::steady_clock::now();
+    int m_fpsValue = 0;
 
     // settings
     float m_dyntopoDetail = 100.0f;
@@ -54,6 +62,7 @@ public:
     void toggleZSpheresPanel() { m_showZSpheresPanel = !m_showZSpheresPanel; }
     void toggleReferenceImagesPanel() { m_showReferenceImagesPanel = !m_showReferenceImagesPanel; }
     void toggleGizmoCube() { m_showGizmoCube = !m_showGizmoCube; }
+    void toggleMeshInfo() { m_showMeshInfo = !m_showMeshInfo; }
 
     bool getShowTopologyPanel() const { return m_showTopologyPanel; }
     void setShowTopologyPanel(bool show) { m_showTopologyPanel = show; }

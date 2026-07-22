@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.0.0]
+- **UI**: Added a real-time Mesh Statistics & FPS HUD in the bottom-right corner of the viewport showing active points, total points, and a sliding-window frame rate counter, matching the legacy JavaScript version.
+- **UI**: Added a toggle in the Panels menu to show/hide the Mesh Statistics & FPS HUD.
 - **Performance**: Optimized sculpting responsiveness and GPU uploads to match WebGL/JavaScript speed.
 - **Performance**: Switched GPU buffer uploads to incremental updates (`glBufferSubData`) using vertex range tracking instead of full buffer re-uploads.
 - **Performance**: Implemented caching for sculpting area normal and center computations during brush strokes.

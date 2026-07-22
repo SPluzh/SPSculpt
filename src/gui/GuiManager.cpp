@@ -92,6 +92,20 @@ static bool importOBJ(Mesh& mesh, const std::string& path) {
     return true;
 }
 
+static std::string formatCount(int n) {
+    if (n >= 1000000) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.1fM", n / 1000000.0f);
+        return buf;
+    }
+    if (n >= 1000) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.1fK", n / 1000.0f);
+        return buf;
+    }
+    return std::to_string(n);
+}
+
 static bool isPointInPolygon(ImVec2 p, const ImVec2* poly, int count) {
     auto side = [](ImVec2 p1, ImVec2 p2, ImVec2 p) {
         return (p2.x - p1.x) * (p.y - p1.y) - (p2.y - p1.y) * (p.x - p1.x);
@@ -234,6 +248,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGui::MenuItem("Rendering Quality", nullptr, &m_showRenderingPanel);
             ImGui::MenuItem("Reference Images", nullptr, &m_showReferenceImagesPanel);
             ImGui::MenuItem("Navigation Cube", nullptr, &m_showGizmoCube);
+            ImGui::MenuItem("Mesh Statistics & FPS", nullptr, &m_showMeshInfo);
             ImGui::EndMenu();
         }
         ImGui::EndMainMenuBar();
@@ -832,6 +847,72 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         }
 
         ImGui::End();
+    }
+
+    // 9. Mesh Statistics & FPS HUD Window (bottom-right)
+    if (m_showMeshInfo) {
+        int wWidth, wHeight;
+        SDL_GetWindowSize(window, &wWidth, &wHeight);
+
+        // Position it at the bottom-right corner, with a small padding
+        float padX = 10.0f;
+        float padY = 10.0f;
+        ImGui::SetNextWindowPos(ImVec2((float)wWidth - padX, (float)wHeight - padY), ImGuiCond_Always, ImVec2(1.0f, 1.0f));
+        ImGui::SetNextWindowBgAlpha(0.75f); // Transparent background
+
+        // Use custom style colors for the window bg/border to match the sleek dark theme/CSS
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.27f, 0.27f, 0.27f, 0.75f));
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.18f, 0.20f, 0.22f, 0.60f));
+        
+        ImGui::Begin("Mesh Statistics HUD", nullptr, 
+            ImGuiWindowFlags_NoTitleBar | 
+            ImGuiWindowFlags_NoResize | 
+            ImGuiWindowFlags_NoScrollbar | 
+            ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_AlwaysAutoResize |
+            ImGuiWindowFlags_NoFocusOnAppearing |
+            ImGuiWindowFlags_NoNav |
+            ImGuiWindowFlags_NoMove);
+
+        // Get mesh stats
+        Mesh* activeMesh = scene.getSelected();
+        int activePoints = activeMesh ? activeMesh->getNbVertices() : 0;
+        
+        int totalPoints = 0;
+        for (Mesh* m : scene.getMeshes()) {
+            if (m) {
+                totalPoints += m->getNbVertices();
+            }
+        }
+
+        // Calculate sliding-window FPS
+        m_fpsTimes.push_back(std::chrono::steady_clock::now());
+        while (m_fpsTimes.size() > 60) {
+            m_fpsTimes.pop_front();
+        }
+
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_fpsLastUpdate).count();
+        if (elapsed > 500 && m_fpsTimes.size() >= 2) {
+            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_fpsTimes.front()).count();
+            if (duration > 0) {
+                m_fpsValue = (int)std::round(((m_fpsTimes.size() - 1) * 1000.0f) / duration);
+            }
+            m_fpsLastUpdate = now;
+        }
+
+        // Display
+        ImGui::Text("Active points: %s", formatCount(activePoints).c_str());
+        ImGui::Text("Total points: %s", formatCount(totalPoints).c_str());
+        if (m_fpsValue > 0) {
+            ImGui::Text("FPS: %d", m_fpsValue);
+        } else {
+            ImGui::Text("FPS: --");
+        }
+
+        ImGui::End();
+        
+        ImGui::PopStyleColor(2);
     }
 
     ImGui::Render();
