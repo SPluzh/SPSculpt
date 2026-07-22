@@ -203,7 +203,13 @@ void BrushCursor::update(int mouseX, int mouseY,
 
         // Dot MVP
         float ratio = worldRadius / brushRadius;
-        float constRadius = 2.5f * ratio;
+        float pressureDotFactor = 1.0f;
+#ifdef _WIN32
+        if (g_tablet.isPressureCursorEnabled() && g_tablet.isPressureEnabled() && g_tablet.isAvailable() && g_tablet.isPenActive()) {
+            pressureDotFactor = g_tablet.getPressure();
+        }
+#endif
+        float constRadius = 2.5f * ratio * pressureDotFactor;
         m_state.dotMVP = buildCircleMVP(worldPt, worldNormal, constRadius, camera, tiltX, tiltY);
 
         // Symmetry MVPs
@@ -242,9 +248,15 @@ void BrushCursor::update(int mouseX, int mouseY,
         glm::mat4 trans = glm::mat4(1.0f);
         trans = glm::translate(trans, glm::vec3(-w + (float)mouseX, h - (float)mouseY, 0.0f));
         
+        float backgroundDotSize = 2.5f;
+#ifdef _WIN32
+        if (g_tablet.isPressureCursorEnabled() && g_tablet.isPressureEnabled() && g_tablet.isAvailable() && g_tablet.isPenActive()) {
+            backgroundDotSize = 2.5f * g_tablet.getPressure();
+        }
+#endif
         m_state.circleMVP = orthoProj * glm::scale(trans, glm::vec3(brushRadius, brushRadius, 1.0f));
         m_state.innerCircleMVP = orthoProj * glm::scale(trans, glm::vec3(brushRadius * 0.5f, brushRadius * 0.5f, 1.0f));
-        m_state.dotMVP = orthoProj * glm::scale(trans, glm::vec3(2.5f, 2.5f, 1.0f));
+        m_state.dotMVP = orthoProj * glm::scale(trans, glm::vec3(backgroundDotSize, backgroundDotSize, 1.0f));
         m_state.symMVPs.clear();
     }
 
@@ -255,7 +267,13 @@ void BrushCursor::update(int mouseX, int mouseY,
         glm::mat4 orthoProj = glm::ortho(-w, w, -h, h, -10.0f, 10.0f);
         glm::mat4 trans = glm::translate(glm::mat4(1.0f),
             glm::vec3(-w + (float)mouseX, h - (float)mouseY, 0.0f));
-        m_state.dotMVP = orthoProj * glm::scale(trans, glm::vec3(3.5f, 3.5f, 1.0f));
+        float sculptingDotSize = 3.5f;
+#ifdef _WIN32
+        if (g_tablet.isPressureCursorEnabled() && g_tablet.isPressureEnabled() && g_tablet.isAvailable() && g_tablet.isPenActive()) {
+            sculptingDotSize = 3.5f * g_tablet.getPressure();
+        }
+#endif
+        m_state.dotMVP = orthoProj * glm::scale(trans, glm::vec3(sculptingDotSize, sculptingDotSize, 1.0f));
     }
 }
 

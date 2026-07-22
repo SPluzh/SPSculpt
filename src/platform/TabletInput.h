@@ -40,6 +40,8 @@ public:
     void setPressureEnabled(bool enable) { _usePressure = enable; }
     bool isPressureSizeEnabled() const { return _usePressureSize; }
     void setPressureSizeEnabled(bool enable) { _usePressureSize = enable; }
+    bool isPressureCursorEnabled() const { return _usePressureCursor; }
+    void setPressureCursorEnabled(bool enable) { _usePressureCursor = enable; }
     bool isTiltEnabled() const { return _useTilt; }
     void setTiltEnabled(bool enable) { _useTilt = enable; }
 
@@ -108,6 +110,7 @@ private:
 
     std::atomic<bool> _usePressure{true};
     std::atomic<bool> _usePressureSize{true};
+    std::atomic<bool> _usePressureCursor{true};
     std::atomic<bool> _useTilt{true};
     std::atomic<uint32_t> _lastPenTime{0};
 };

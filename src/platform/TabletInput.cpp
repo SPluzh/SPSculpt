@@ -44,6 +44,7 @@ TabletInput::TabletInput() {
     _packetsPerSec.store(0);
     _lastPenTime.store(0);
     _usePressureSize.store(true);
+    _usePressureCursor.store(true);
 }
 
 TabletInput::~TabletInput() {

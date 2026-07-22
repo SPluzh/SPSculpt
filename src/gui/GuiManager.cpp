@@ -328,6 +328,12 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 g_tablet.setPressureSizeEnabled(pressureSize);
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Vary brush radius dynamically based on stylus pressure");
+
+            bool pressureCursor = g_tablet.isPressureCursorEnabled();
+            if (ImGui::Checkbox("Use Pressure for Cursor Dot", &pressureCursor)) {
+                g_tablet.setPressureCursorEnabled(pressureCursor);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Vary cursor dot/point size dynamically based on stylus pressure");
 #endif
 
             ImGui::SliderFloat("Intensity", &settings.intensity, 0.0f, 1.0f, "%.2f");
@@ -1148,6 +1154,11 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         bool pressureSizeEnabled = g_tablet.isPressureSizeEnabled();
         if (ImGui::Checkbox("Use Pressure for Brush Size", &pressureSizeEnabled)) {
             g_tablet.setPressureSizeEnabled(pressureSizeEnabled);
+        }
+        
+        bool pressureCursorEnabled = g_tablet.isPressureCursorEnabled();
+        if (ImGui::Checkbox("Use Pressure for Cursor Dot", &pressureCursorEnabled)) {
+            g_tablet.setPressureCursorEnabled(pressureCursorEnabled);
         }
         
         bool tiltEnabled = g_tablet.isTiltEnabled();

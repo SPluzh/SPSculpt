@@ -1892,6 +1892,7 @@ bool SculptManager::saveSettings(const std::string& filepath) {
 #ifdef _WIN32
     out << "usePressure=" << (g_tablet.isPressureEnabled() ? "true" : "false") << "\n";
     out << "usePressureSize=" << (g_tablet.isPressureSizeEnabled() ? "true" : "false") << "\n";
+    out << "usePressureCursor=" << (g_tablet.isPressureCursorEnabled() ? "true" : "false") << "\n";
     out << "useTilt=" << (g_tablet.isTiltEnabled() ? "true" : "false") << "\n";
 #endif
     out << "\n";
@@ -2008,6 +2009,10 @@ bool SculptManager::loadSettings(const std::string& filepath) {
         it = params.find("usePressureSize");
         if (it != params.end()) {
             g_tablet.setPressureSizeEnabled(it->second == "true" || it->second == "1");
+        }
+        it = params.find("usePressureCursor");
+        if (it != params.end()) {
+            g_tablet.setPressureCursorEnabled(it->second == "true" || it->second == "1");
         }
         it = params.find("useTilt");
         if (it != params.end()) {
