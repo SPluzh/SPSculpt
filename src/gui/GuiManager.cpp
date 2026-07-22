@@ -285,53 +285,130 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     // 3. Sculpting settings panel
     if (m_showSculptingPanel) {
         ImGui::SetNextWindowPos({160, 40}, ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize({280, 200}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize({300, 400}, ImGuiCond_FirstUseEver);
         ImGui::Begin("Sculpting Settings", &m_showSculptingPanel, ImGuiWindowFlags_AlwaysAutoResize);
-        
-        float radius = sculpt.getBrushRadius();
-        if (ImGui::SliderFloat("Radius", &radius, 1.0f, 100.0f, "%.1f")) {
-            sculpt.setBrushRadius(radius);
-        }
-        
-        float intensity = sculpt.getBrushIntensity();
-        if (ImGui::SliderFloat("Intensity", &intensity, 0.0f, 1.0f, "%.2f")) {
-            sculpt.setBrushIntensity(intensity);
-        }
 
-        float focal = sculpt.getFocalShift();
-        if (ImGui::SliderFloat("Focal Shift", &focal, -1.0f, 1.0f, "%.2f")) {
-            sculpt.setFocalShift(focal);
-        }
+        BrushSettings& settings = sculpt.getCurrentSettings();
+        BrushType brushType = sculpt.getBrush();
 
-        float hardness = sculpt.getHardness();
-        if (ImGui::SliderFloat("Hardness", &hardness, 0.0f, 1.0f, "%.2f")) {
-            sculpt.setHardness(hardness);
-        }
-
-        bool negative = sculpt.getNegative();
-        if (ImGui::Checkbox("Negative (Invert)", &negative)) {
-            sculpt.setNegative(negative);
-        }
-
-        if (sculpt.getBrush() == BRUSH_PAINT) {
-            ImGui::Separator();
-            ImGui::Text("Paint Tool Settings:");
-            glm::vec3 col = sculpt.getPaintColor();
-            if (ImGui::ColorEdit3("Paint Color", &col.r)) {
-                sculpt.setPaintColor(col);
-            }
-            float rough = sculpt.getPaintRoughness();
-            if (ImGui::SliderFloat("Paint Roughness", &rough, 0.0f, 1.0f, "%.2f")) {
-                sculpt.setPaintRoughness(rough);
-            }
-            float metal = sculpt.getPaintMetallic();
-            if (ImGui::SliderFloat("Paint Metalness", &metal, 0.0f, 1.0f, "%.2f")) {
-                sculpt.setPaintMetallic(metal);
-            }
-        }
-
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.9f, 1.0f, 1.0f));
+        ImGui::Text("Active Brush: %s", getBrushNameLocal(brushType));
+        ImGui::PopStyleColor();
         ImGui::Separator();
-        ImGui::Text("Active Brush: %s", getBrushNameLocal(sculpt.getBrush()));
+
+        // 1. General Brush Settings Section
+        if (ImGui::CollapsingHeader("General Parameters", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::SliderFloat("Radius", &settings.radius, 1.0f, 250.0f, "%.1f px");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Brush radius in pixels");
+
+            ImGui::SliderFloat("Intensity", &settings.intensity, 0.0f, 1.0f, "%.2f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Overall brush strength");
+
+            ImGui::SliderFloat("Hardness", &settings.hardness, 0.0f, 1.0f, "%.2f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Brush profile hardness/falloff shape");
+
+            ImGui::SliderFloat("Focal Shift", &settings.focalShift, -1.0f, 1.0f, "%.2f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Controls transition from center to border");
+
+            ImGui::Checkbox("Focal Shift Falloff", &settings.focalShiftFalloff);
+
+            ImGui::SliderFloat("Spacing", &settings.spacing, 0.01f, 1.0f, "%.2f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spacing between stroke points as fraction of radius");
+
+            ImGui::Checkbox("Negative (Invert)", &settings.negative);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggles add vs subtract sculpting direction");
+
+            ImGui::Checkbox("Backface Culling", &settings.culling);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Enable backface culling to avoid painting through surfaces");
+
+            // Alpha Texture
+            const char* alphas[] = { "None (Sphere)", "Square (Clay)", "Alpha 1", "Alpha 2" };
+            ImGui::Combo("Alpha Texture", &settings.idAlpha, alphas, IM_ARRAYSIZE(alphas));
+        }
+
+        // 2. Symmetry Settings Section
+        if (ImGui::CollapsingHeader("Symmetry Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+            bool useSym = sculpt.getUseSym();
+            if (ImGui::Checkbox("Enable Symmetry", &useSym)) {
+                sculpt.setUseSym(useSym);
+            }
+            if (useSym) {
+                int axis = sculpt.getSymAxis();
+                const char* axes[] = { "X Axis", "Y Axis", "Z Axis" };
+                if (ImGui::Combo("Symmetry Axis", &axis, axes, IM_ARRAYSIZE(axes))) {
+                    sculpt.setSymAxis(axis);
+                }
+            }
+        }
+
+        // 3. Tool-Specific Parameters Section
+        bool hasSpecialParams = (brushType == BRUSH_SMOOTH || brushType == BRUSH_MOVE || 
+                                 brushType == BRUSH_ELASTIC || brushType == BRUSH_CLAY || 
+                                 brushType == BRUSH_CLAYBUILDUP || 
+                                 brushType == BRUSH_SQUAREBRUSH || brushType == BRUSH_PAINT || 
+                                 brushType == BRUSH_MASK);
+
+        if (hasSpecialParams) {
+            if (ImGui::CollapsingHeader("Tool Specific Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (brushType == BRUSH_SMOOTH) {
+                    ImGui::Checkbox("Tangential Smoothing", &settings.tangent);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Applies smoothing tangentially to the surface");
+                }
+                else if (brushType == BRUSH_MOVE || brushType == BRUSH_ELASTIC) {
+                    ImGui::Checkbox("Topological Check", &settings.topoCheck);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only grabs topologically connected vertices within radius");
+                    
+                    if (brushType == BRUSH_ELASTIC) {
+                        ImGui::SliderFloat("Elasticity", &settings.elasticity, 0.1f, 3.0f, "%.2f");
+                    }
+                }
+                else if (brushType == BRUSH_CLAY || brushType == BRUSH_CLAYBUILDUP || 
+                         brushType == BRUSH_SQUAREBRUSH) {
+                    ImGui::Checkbox("Accumulate", &settings.accumulate);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Allows the brush to build up stroke details on overlap");
+                    
+                    ImGui::Checkbox("Lock Position", &settings.lockPosition);
+                }
+                else if (brushType == BRUSH_PAINT) {
+                    ImGui::ColorEdit3("Albedo (Color)", &settings.paintColor.r);
+                    ImGui::SliderFloat("Roughness", &settings.paintRoughness, 0.0f, 1.0f, "%.2f");
+                    ImGui::SliderFloat("Metalness", &settings.paintMetallic, 0.0f, 1.0f, "%.2f");
+                    
+                    ImGui::Separator();
+                    ImGui::Text("Paint Channels:");
+                    ImGui::Checkbox("Write Albedo", &settings.writeAlbedo);
+                    ImGui::SameLine();
+                    ImGui::Checkbox("Write Roughness", &settings.writeRoughness);
+                    ImGui::SameLine();
+                    ImGui::Checkbox("Write Metalness", &settings.writeMetalness);
+                }
+                else if (brushType == BRUSH_MASK) {
+                    Mesh* selectedMesh = scene.getSelected();
+                    
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.44f, 0.70f, 1.00f));
+                    if (ImGui::Button("Clear Mask", ImVec2(120, 26))) {
+                        sculpt.clearMask(selectedMesh);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Invert Mask", ImVec2(120, 26))) {
+                        sculpt.invertMask(selectedMesh);
+                    }
+                    if (ImGui::Button("Blur Mask", ImVec2(120, 26))) {
+                        sculpt.blurMask(selectedMesh);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Sharpen Mask", ImVec2(120, 26))) {
+                        sculpt.sharpenMask(selectedMesh);
+                    }
+                    ImGui::PopStyleColor();
+
+                    ImGui::Separator();
+                    ImGui::SliderInt("Iterations", &settings.maskSharpenBlurIterations, 1, 50);
+                    ImGui::SliderFloat("Sharpen Factor", &settings.maskSharpenFactor, 0.1f, 5.0f, "%.2f");
+                    ImGui::SliderFloat("Extract Thickness", &settings.maskExtractThickness, -0.5f, 0.5f, "%.2f");
+                }
+            }
+        }
 
         ImGui::End();
     }

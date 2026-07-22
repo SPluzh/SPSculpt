@@ -3,6 +3,10 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.0.0]
+- **Settings**: Added automatic saving and loading of all brush parameters per brush type to `brush_settings.cfg`.
+- **UI**: Added a fully dynamic and interactive Sculpting Settings panel showing custom parameters for each tool, including sliders for spacing and hardness, and toggles for backface culling and topological constraints.
+- **UI**: Added interactive Masking buttons (Clear, Invert, Blur, and Sharpen) to the masking tool settings panel.
+- **Symmetry**: Exposed symmetry axis and toggle settings inside the Sculpting Settings panel.
 - **Core**: Optimized remeshing memory consumption to resolve crashes (out of memory std::bad_alloc) at high grid resolutions (e.g. 900+). Switched to sparse voxel structures for colors/materials, bit-vector tracking, and dynamically-sized stacks.
 - **UI**: Added a real-time Mesh Statistics & FPS HUD in the bottom-right corner of the viewport showing active points, total points, and a sliding-window frame rate counter, matching the legacy JavaScript version.
 - **UI**: Added a toggle in the Panels menu to show/hide the Mesh Statistics & FPS HUD.

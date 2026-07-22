@@ -296,6 +296,7 @@ int main(int argc, char* argv[]) {
     RenderSettings::load("render_settings.cfg", renderer, scene);
 
     SculptManager sculpt;
+    sculpt.loadSettings("brush_settings.cfg");
     GuiManager gui;
     gui.init(window, glContext);
     HotkeyDispatcher dispatcher;
@@ -351,6 +352,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Auto-save render and shading settings on exit
+    sculpt.saveSettings("brush_settings.cfg");
     RenderSettings::save("render_settings.cfg", renderer, scene);
 
     gui.shutdown();
