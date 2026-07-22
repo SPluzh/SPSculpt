@@ -3,6 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.0.0]
+- **Core**: Optimized remeshing memory consumption to resolve crashes (out of memory std::bad_alloc) at high grid resolutions (e.g. 900+). Switched to sparse voxel structures for colors/materials, bit-vector tracking, and dynamically-sized stacks.
 - **UI**: Added a real-time Mesh Statistics & FPS HUD in the bottom-right corner of the viewport showing active points, total points, and a sliding-window frame rate counter, matching the legacy JavaScript version.
 - **UI**: Added a toggle in the Panels menu to show/hide the Mesh Statistics & FPS HUD.
 - **Performance**: Optimized sculpting responsiveness and GPU uploads to match WebGL/JavaScript speed.

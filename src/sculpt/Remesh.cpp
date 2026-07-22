@@ -14,8 +14,8 @@ struct VoxelGrid {
     float maxCoord[3];
     std::vector<uint8_t> crossedEdges;
     std::vector<float> distanceField;
-    std::vector<uint8_t> colorField;      // empty if uniform
-    std::vector<uint8_t> materialField;   // empty if uniform
+    std::unordered_map<int, uint32_t> colorField;      // sparse map of packed colors
+    std::unordered_map<int, uint32_t> materialField;   // sparse map of packed materials
     float uniformColor[3];
     float uniformMaterial[3];
     bool hasColorField = false;
@@ -345,15 +345,17 @@ static void voxelize(
                     if (newDist < voxels.distanceField[n]) {
                         voxels.distanceField[n] = (float)newDist;
                         int n3 = n * 3;
-                        if (!voxels.colorField.empty() && voxels.hasColorField) {
-                            voxels.colorField[n3] = (uint8_t)(c1[0] * 255.0f + 0.5f);
-                            voxels.colorField[n3 + 1] = (uint8_t)(c1[1] * 255.0f + 0.5f);
-                            voxels.colorField[n3 + 2] = (uint8_t)(c1[2] * 255.0f + 0.5f);
+                        if (voxels.hasColorField) {
+                            uint8_t r = (uint8_t)(c1[0] * 255.0f + 0.5f);
+                            uint8_t g = (uint8_t)(c1[1] * 255.0f + 0.5f);
+                            uint8_t b = (uint8_t)(c1[2] * 255.0f + 0.5f);
+                            voxels.colorField[n] = ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
                         }
-                        if (!voxels.materialField.empty() && voxels.hasMaterialField) {
-                            voxels.materialField[n3] = (uint8_t)(m1[0] * 255.0f + 0.5f);
-                            voxels.materialField[n3 + 1] = (uint8_t)(m1[1] * 255.0f + 0.5f);
-                            voxels.materialField[n3 + 2] = (uint8_t)(m1[2] * 255.0f + 0.5f);
+                        if (voxels.hasMaterialField) {
+                            uint8_t r = (uint8_t)(m1[0] * 255.0f + 0.5f);
+                            uint8_t g = (uint8_t)(m1[1] * 255.0f + 0.5f);
+                            uint8_t b = (uint8_t)(m1[2] * 255.0f + 0.5f);
+                            voxels.materialField[n] = ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
                         }
                     }
 
@@ -401,20 +403,21 @@ static void floodFill(VoxelGrid& voxels) {
     int rxy = rx * ry;
 
     int datalen = rx * ry * rz;
-    std::vector<uint8_t> tagCell(datalen, 0);
-    std::vector<int32_t> stack(datalen, 0);
+    std::vector<bool> tagCell(datalen, false);
+    std::vector<int32_t> stack;
+    stack.reserve(datalen / 64);
 
     printf("[C++ floodFill] Starting flood fill: datalen=%d\n", datalen);
 
-    stack[0] = 0;
-    tagCell[0] = 1;
-    int curStack = 1;
+    stack.push_back(0);
+    tagCell[0] = true;
 
     int dirs[6] = { -1, 1, -rx, rx, -rxy, rxy };
     int dirsEdge[6] = { 0, 0, 1, 1, 2, 2 };
 
-    while (curStack > 0) {
-        int cell = stack[--curStack];
+    while (!stack.empty()) {
+        int cell = stack.back();
+        stack.pop_back();
         float cellDist = voxels.distanceField[cell];
         if (cellDist < step) {
             // border hit
@@ -422,13 +425,13 @@ static void floodFill(VoxelGrid& voxels) {
                 int off = dirs[i];
                 int idNext = cell + off;
                 if (idNext >= datalen || idNext < 0) continue;
-                if (tagCell[idNext] == 1) continue;
+                if (tagCell[idNext]) continue;
                 if (voxels.distanceField[idNext] == std::numeric_limits<float>::infinity()) continue;
                 int idx = off >= 0 ? cell : idNext;
                 int bit = 1 << dirsEdge[i];
                 if ((voxels.crossedEdges[idx] & bit) == 0) {
-                    tagCell[idNext] = 1;
-                    stack[curStack++] = idNext;
+                    tagCell[idNext] = true;
+                    stack.push_back(idNext);
                 }
             }
         } else {
@@ -436,16 +439,16 @@ static void floodFill(VoxelGrid& voxels) {
             for (int i = 0; i < 6; ++i) {
                 int idNext = cell + dirs[i];
                 if (idNext >= datalen || idNext < 0) continue;
-                if (tagCell[idNext] == 1) continue;
-                tagCell[idNext] = 1;
-                stack[curStack++] = idNext;
+                if (tagCell[idNext]) continue;
+                tagCell[idNext] = true;
+                stack.push_back(idNext);
             }
         }
     }
 
     int taggedCount = 0;
     for (int id = 0; id < datalen; ++id) {
-        if (tagCell[id] == 0) {
+        if (!tagCell[id]) {
             voxels.distanceField[id] = -voxels.distanceField[id];
         } else {
             taggedCount++;
@@ -586,7 +589,6 @@ static uint8_t readScalarValuesMarchingCubes(
     for (int i = 0; i < 8; ++i) {
         const int* v = mcCubeVerts[i];
         int id = n + v[0] + v[1] * rx + v[2] * rxy;
-        int id3 = id * 3;
         float p = voxels.distanceField[id];
         grid[i] = p;
 
@@ -598,14 +600,22 @@ static uint8_t readScalarValuesMarchingCubes(
             p = std::min(1.0f / std::abs(p), 1e15f);
             invSum += p;
             if (voxels.hasColorField) {
-                c1 += (float)voxels.colorField[id3] * p;
-                c2 += (float)voxels.colorField[id3 + 1] * p;
-                c3 += (float)voxels.colorField[id3 + 2] * p;
+                auto it = voxels.colorField.find(id);
+                if (it != voxels.colorField.end()) {
+                    uint32_t val = it->second;
+                    c1 += (float)((val >> 16) & 0xff) * p;
+                    c2 += (float)((val >> 8) & 0xff) * p;
+                    c3 += (float)(val & 0xff) * p;
+                }
             }
             if (voxels.hasMaterialField) {
-                m1 += (float)voxels.materialField[id3] * p;
-                m2 += (float)voxels.materialField[id3 + 1] * p;
-                m3 += (float)voxels.materialField[id3 + 2] * p;
+                auto it = voxels.materialField.find(id);
+                if (it != voxels.materialField.end()) {
+                    uint32_t val = it->second;
+                    m1 += (float)((val >> 16) & 0xff) * p;
+                    m2 += (float)((val >> 8) & 0xff) * p;
+                    m3 += (float)(val & 0xff) * p;
+                }
             }
         }
     }
@@ -770,7 +780,6 @@ static uint8_t readScalarValuesSurfaceNets(
         for (int j = 0; j < 2; ++j) {
             for (int i = 0; i < 2; ++i) {
                 int id = n + i + j * rx + k * rxy;
-                int id3 = id * 3;
                 float p = voxels.distanceField[id];
                 grid[g] = p;
                 if (p < 0.0f) {
@@ -781,14 +790,22 @@ static uint8_t readScalarValuesSurfaceNets(
                     p = std::min(1.0f / std::abs(p), 1e15f);
                     invSum += p;
                     if (voxels.hasColorField) {
-                        c1 += (float)voxels.colorField[id3] * p;
-                        c2 += (float)voxels.colorField[id3 + 1] * p;
-                        c3 += (float)voxels.colorField[id3 + 2] * p;
+                        auto it = voxels.colorField.find(id);
+                        if (it != voxels.colorField.end()) {
+                            uint32_t val = it->second;
+                            c1 += (float)((val >> 16) & 0xff) * p;
+                            c2 += (float)((val >> 8) & 0xff) * p;
+                            c3 += (float)(val & 0xff) * p;
+                        }
                     }
                     if (voxels.hasMaterialField) {
-                        m1 += (float)voxels.materialField[id3] * p;
-                        m2 += (float)voxels.materialField[id3 + 1] * p;
-                        m3 += (float)voxels.materialField[id3 + 2] * p;
+                        auto it = voxels.materialField.find(id);
+                        if (it != voxels.materialField.end()) {
+                            uint32_t val = it->second;
+                            m1 += (float)((val >> 16) & 0xff) * p;
+                            m2 += (float)((val >> 8) & 0xff) * p;
+                            m3 += (float)(val & 0xff) * p;
+                        }
                     }
                 }
             }
@@ -988,18 +1005,14 @@ RemeshResult doRemesh(
     voxels.distanceField.assign(datalen, std::numeric_limits<float>::infinity());
 
     voxels.hasColorField = hasColors;
-    if (hasColors) {
-        voxels.colorField.assign(datalen * 3, 0);
-    } else {
+    if (!hasColors) {
         voxels.uniformColor[0] = uniformColor[0];
         voxels.uniformColor[1] = uniformColor[1];
         voxels.uniformColor[2] = uniformColor[2];
     }
 
     voxels.hasMaterialField = hasMaterials;
-    if (hasMaterials) {
-        voxels.materialField.assign(datalen * 3, 0);
-    } else {
+    if (!hasMaterials) {
         voxels.uniformMaterial[0] = uniformMaterial[0];
         voxels.uniformMaterial[1] = uniformMaterial[1];
         voxels.uniformMaterial[2] = uniformMaterial[2];
