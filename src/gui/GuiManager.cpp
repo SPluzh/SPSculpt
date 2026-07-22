@@ -322,6 +322,14 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGui::SliderFloat("Radius", &settings.radius, 1.0f, 250.0f, "%.1f px");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Brush radius in pixels");
 
+#ifdef _WIN32
+            bool pressureSize = g_tablet.isPressureSizeEnabled();
+            if (ImGui::Checkbox("Use Pressure for Size", &pressureSize)) {
+                g_tablet.setPressureSizeEnabled(pressureSize);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Vary brush radius dynamically based on stylus pressure");
+#endif
+
             ImGui::SliderFloat("Intensity", &settings.intensity, 0.0f, 1.0f, "%.2f");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Overall brush strength");
 
@@ -1135,6 +1143,11 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         bool pressureEnabled = g_tablet.isPressureEnabled();
         if (ImGui::Checkbox("Use Pressure for Sculpting", &pressureEnabled)) {
             g_tablet.setPressureEnabled(pressureEnabled);
+        }
+        
+        bool pressureSizeEnabled = g_tablet.isPressureSizeEnabled();
+        if (ImGui::Checkbox("Use Pressure for Brush Size", &pressureSizeEnabled)) {
+            g_tablet.setPressureSizeEnabled(pressureSizeEnabled);
         }
         
         bool tiltEnabled = g_tablet.isTiltEnabled();

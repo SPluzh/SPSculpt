@@ -38,6 +38,8 @@ public:
     // Toggles for Sculpting
     bool isPressureEnabled() const { return _usePressure; }
     void setPressureEnabled(bool enable) { _usePressure = enable; }
+    bool isPressureSizeEnabled() const { return _usePressureSize; }
+    void setPressureSizeEnabled(bool enable) { _usePressureSize = enable; }
     bool isTiltEnabled() const { return _useTilt; }
     void setTiltEnabled(bool enable) { _useTilt = enable; }
 
@@ -105,6 +107,7 @@ private:
     std::atomic<bool> _wintabAvailable{false};
 
     std::atomic<bool> _usePressure{true};
+    std::atomic<bool> _usePressureSize{true};
     std::atomic<bool> _useTilt{true};
     std::atomic<uint32_t> _lastPenTime{0};
 };

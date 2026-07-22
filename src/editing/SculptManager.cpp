@@ -319,7 +319,11 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     float scale = glm::length(col0);
     if (scale < 1e-12f) scale = 1.0f;
 
-    float localRadius = (worldRadius / scale) * (0.4f + 0.6f * currentPressure);
+    float sizeMultiplier = 1.0f;
+    if (g_tablet.isPressureSizeEnabled() && g_tablet.isPressureEnabled()) {
+        sizeMultiplier = currentPressure;
+    }
+    float localRadius = (worldRadius / scale) * sizeMultiplier;
     float intensity = getCurrentSettings().intensity * currentPressure;
     float radius2 = localRadius * localRadius;
 
@@ -1884,7 +1888,13 @@ bool SculptManager::saveSettings(const std::string& filepath) {
 
     out << "[General]\n";
     out << "dividerDivisions=" << m_dividerDivisions << "\n";
-    out << "measureUseDistanceThickness=" << (m_measureUseDistanceThickness ? "true" : "false") << "\n\n";
+    out << "measureUseDistanceThickness=" << (m_measureUseDistanceThickness ? "true" : "false") << "\n";
+#ifdef _WIN32
+    out << "usePressure=" << (g_tablet.isPressureEnabled() ? "true" : "false") << "\n";
+    out << "usePressureSize=" << (g_tablet.isPressureSizeEnabled() ? "true" : "false") << "\n";
+    out << "useTilt=" << (g_tablet.isTiltEnabled() ? "true" : "false") << "\n";
+#endif
+    out << "\n";
 
     std::cout << "Successfully saved brush settings to: " << filepath << std::endl;
     return true;
@@ -1990,6 +2000,20 @@ bool SculptManager::loadSettings(const std::string& filepath) {
         if (it != params.end()) {
             m_measureUseDistanceThickness = (it->second == "true" || it->second == "1");
         }
+#ifdef _WIN32
+        it = params.find("usePressure");
+        if (it != params.end()) {
+            g_tablet.setPressureEnabled(it->second == "true" || it->second == "1");
+        }
+        it = params.find("usePressureSize");
+        if (it != params.end()) {
+            g_tablet.setPressureSizeEnabled(it->second == "true" || it->second == "1");
+        }
+        it = params.find("useTilt");
+        if (it != params.end()) {
+            g_tablet.setTiltEnabled(it->second == "true" || it->second == "1");
+        }
+#endif
     }
 
     std::cout << "Successfully loaded brush settings from: " << filepath << std::endl;

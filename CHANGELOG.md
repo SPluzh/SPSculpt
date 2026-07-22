@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.0]
+- **UI**: Added a "Use Pressure for Size" toggle to both the Sculpting Settings and Tablet Diagnostics panels to dynamically scale the brush size based on stylus pressure.
+- **Settings**: Serialized tablet pressure, pressure-size, and tilt settings to the local configuration file for persistence across sessions.
 - **Input**: Finalized high-precision tablet support by integrating thread-safe polling for both WinTab and Windows Ink APIs, retrieving real-time stylus pressure and tilt data engine-wide.
 - **Renderer**: Implemented interactive brush cursor deformation that dynamically squeezes/flattens the cursor circle along the tool's local tangent axes when the pen is tilted.
 - **UI**: Added a "Tablet Diagnostics" panel under the main toolbar to monitor connection health, active input mode (WinTab/WinInk/Auto), and raw packets in real-time, complete with a pressure-sensitive test canvas.
