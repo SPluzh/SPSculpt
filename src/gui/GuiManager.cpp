@@ -4,6 +4,7 @@
 #include "editing/BrushCursor.h"
 #include "files/FileManager.h"
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <imgui_impl_sdl2.h>
 #include <imgui_impl_opengl3.h>
 #include <ImGuizmo.h>
@@ -218,6 +219,22 @@ void GuiManager::shutdown() {
     ImGui::DestroyContext();
 
     m_imguiInitialized = false;
+}
+
+static bool isPointOverImGuiWindow(const ImVec2& pt) {
+    ImGuiContext& g = *GImGui;
+    for (int i = 0; i < g.Windows.Size; i++) {
+        ImGuiWindow* window = g.Windows[i];
+        if (window->Active && window->WasActive && !window->Hidden) {
+            if (!(window->Flags & ImGuiWindowFlags_NoMouseInputs)) {
+                ImRect rect = window->Rect();
+                if (rect.Contains(pt)) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
 }
 
 void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer, SDL_Window* window) {
@@ -1664,6 +1681,12 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             for (size_t idx = 0; idx < cursorState.symMVPs.size(); ++idx) {
                 const auto& symMVP = cursorState.symMVPs[idx];
                 bool occluded = (idx < cursorState.symOccluded.size()) ? cursorState.symOccluded[idx] : false;
+
+                // Project center of symmetry dot to check if it's covered by an ImGui panel
+                ImVec2 symCenter = projectPoint(symMVP, glm::vec3(0.0f), leftViewportWidth, viewportHeight, leftViewportX);
+                if (isPointOverImGuiWindow(symCenter)) {
+                    continue;
+                }
 
                 std::vector<ImVec2> symPoints(dotSegments);
                 for (int i = 0; i < dotSegments; ++i) {
