@@ -13,6 +13,8 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include "mesh/Topology.h"
+#include "sculpt/Remesh.h"
+#include "files/MeshUtils.h"
 
 static void exportOBJ(const Mesh& mesh, const std::string& path) {
     FILE* f = fopen(path.c_str(), "w");
@@ -379,6 +381,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
             if (ImGui::Button("Remesh", ImVec2(-1, 0))) {
                 std::cout << "[Topology] Trigger remesh with resolution: " << m_remeshResolution << std::endl;
+                performRemesh(scene);
             }
         } else {
             ImGui::Text("No active mesh selected");
@@ -917,4 +920,79 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+}
+
+void GuiManager::performRemesh(Scene& scene) {
+    Mesh* selectedMesh = scene.getSelected();
+    if (selectedMesh) {
+        scene.pushHistoryState();
+
+        // 1. Triangulate the current mesh faces
+        std::vector<uint32_t> triangles = MeshUtils::triangulate(*selectedMesh);
+
+        // 2. Compute bounding box
+        float bbox[6];
+        selectedMesh->computeBbox(bbox);
+
+        // 3. Prepare color/material uniforms
+        float uniformColor[3] = { selectedMesh->albedo[0], selectedMesh->albedo[1], selectedMesh->albedo[2] };
+        float uniformMaterial[3] = { selectedMesh->roughness, selectedMesh->metallic, 1.0f };
+
+        bool hasColors = !selectedMesh->colors.empty();
+        bool hasMaterials = !selectedMesh->materials.empty();
+
+        // 4. Call doRemesh
+        RemeshResult r = doRemesh(
+            selectedMesh->verts.data(), selectedMesh->nbVerts,
+            triangles.data(), triangles.size() / 3,
+            hasColors ? selectedMesh->colors.data() : nullptr,
+            hasMaterials ? selectedMesh->materials.data() : nullptr,
+            bbox,
+            static_cast<float>(m_remeshResolution),
+            false, // block
+            false, // smooth
+            false, // manifold (Marching Cubes) -> false uses Surface Nets (quads)
+            uniformColor,
+            uniformMaterial,
+            hasColors,
+            hasMaterials
+        );
+
+        // 5. Update mesh data
+        selectedMesh->verts = r.vertices;
+        selectedMesh->faces = r.faces;
+        selectedMesh->colors = r.colors;
+        selectedMesh->materials = r.materials;
+        selectedMesh->nbVerts = r.vertices.size() / 3;
+        selectedMesh->nbFaces = r.faces.size() / 4;
+
+        // 6. Recompute topology
+        std::vector<uint32_t> vrvStartCount;
+        std::vector<uint32_t> vertRingVert;
+        std::vector<uint32_t> vrfStartCount;
+        std::vector<uint32_t> vertRingFace;
+        std::vector<uint8_t> vertOnEdge;
+        computeTopology(
+            selectedMesh->nbVerts,
+            selectedMesh->faces.data(),
+            selectedMesh->nbFaces,
+            vrfStartCount,
+            vertRingFace,
+            vrvStartCount,
+            vertRingVert,
+            vertOnEdge
+        );
+
+        selectedMesh->vrfStartCount = vrfStartCount;
+        selectedMesh->vertRingFace = vertRingFace;
+        selectedMesh->vrvStartCount = vrvStartCount;
+        selectedMesh->vertRingVert = vertRingVert;
+        selectedMesh->vertOnEdge = vertOnEdge;
+
+        // 7. Post-init (updates normals, proxy, octree)
+        selectedMesh->postInit();
+
+        // 8. Mark GPU buffers dirty for upload
+        selectedMesh->isDirty = true;
+    }
 }

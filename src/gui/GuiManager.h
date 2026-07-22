@@ -74,6 +74,8 @@ public:
     int getRemeshResolution() const { return m_remeshResolution; }
     void setRemeshResolution(int val) { m_remeshResolution = val; }
 
+    void performRemesh(Scene& scene);
+
     // Context popup request
     bool m_openContextPopup = false;
 };

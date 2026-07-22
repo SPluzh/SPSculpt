@@ -241,6 +241,7 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
             case HKAction::ExportOBJ: gui.toggleFilesPanel(); break;
             case HKAction::ToggleDyntopo: gui.toggleTopologyPanel(); break;
             case HKAction::OpenContextPopup: gui.m_openContextPopup = true; break;
+            case HKAction::RunRemesh: gui.performRemesh(scene); break;
             
             default: break;
         }

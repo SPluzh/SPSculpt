@@ -1018,6 +1018,13 @@ RemeshResult doRemesh(
     } else {
         r = surfaceNetsReconstruct(voxels, block);
     }
+
+    for (size_t i = 0; i < r.vertices.size(); i += 3) {
+        r.vertices[i]     = voxels.minCoord[0] + r.vertices[i] * step;
+        r.vertices[i + 1] = voxels.minCoord[1] + r.vertices[i + 1] * step;
+        r.vertices[i + 2] = voxels.minCoord[2] + r.vertices[i + 2] * step;
+    }
+
     printf("[C++ doRemesh] Reconstructed. output verts: %d, faces: %d\n", (int)(r.vertices.size() / 3), (int)(r.faces.size() / 4));
     return r;
 }
