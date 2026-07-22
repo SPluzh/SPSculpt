@@ -48,6 +48,7 @@ public:
     // Core render loop called from JS requestAnimationFrame or SDL main loop
     void render(const Scene& scene);
     void setShowBackground(bool show) { m_showBackground = show; }
+    bool getShowBackground() const { return m_showBackground; }
 
     void setBackgroundType(int type) { m_backgroundType = type; }
     int getBackgroundType() const { return m_backgroundType; }
@@ -63,6 +64,8 @@ public:
     glm::vec4 getContourColor() const { return m_contourColor; }
     void setSplitMode(bool split) { m_splitMode = split; }
     bool getSplitMode() const { return m_splitMode; }
+    float getExposure() const { return m_exposure; }
+    void setExposure(float exp) { m_exposure = exp; }
     void setCameraRight(std::shared_ptr<Camera> cameraRight) { m_cameraRight = cameraRight; }
     std::shared_ptr<Camera> getCameraRight() const { return m_cameraRight; }
 
@@ -111,6 +114,8 @@ public:
         uintptr_t cursorColorPtr
     );
 
+    void setLassoParameters(bool active, const std::vector<glm::vec2>& points, bool altMode);
+
     // Shader compilation helpers
     GLuint compileShader(GLenum type, const std::string& source);
     GLuint linkProgram(GLuint vs, GLuint fs);
@@ -129,6 +134,7 @@ private:
     void drawWireframe(Mesh* mesh, const Scene& scene, const Camera& camera);
     void drawReferenceImages(const Scene& scene);
     void drawSelectionCursor();
+    void drawLasso();
 
     void initGrid();
     void drawGrid(const Scene& scene, const Camera& camera);
@@ -163,6 +169,13 @@ private:
     glm::mat4 m_dotMVP{1.0f};
     std::vector<glm::mat4> m_symMVPs;
     glm::vec3 m_cursorColor{1.0f, 0.0f, 0.0f};
+
+    // Lasso selection parameters
+    bool m_lassoActive = false;
+    std::vector<glm::vec2> m_lassoPoints;
+    bool m_lassoAlt = false;
+    GLuint m_lassoVao = 0;
+    GLuint m_lassoVbo = 0;
 
     // Shader programs
     GLuint m_pbrProgram = 0;

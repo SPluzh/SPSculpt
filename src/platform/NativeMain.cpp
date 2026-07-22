@@ -31,6 +31,7 @@
 #include "editing/SculptManager.h"
 #include "gui/GuiManager.h"
 #include "platform/HotkeyDispatcher.h"
+#include "render/RenderSettings.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -41,6 +42,89 @@ LONG WINAPI windowsExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo) {
     std::cerr << "=============================================" << std::endl;
     system("pause");
     return EXCEPTION_EXECUTE_HANDLER;
+}
+
+#ifndef PT_PEN
+#define PT_PEN 3
+#endif
+
+#ifndef POINTER_FLAG_INCONTACT
+#define POINTER_FLAG_INCONTACT 0x00020000
+#endif
+
+struct POINTER_INFO_LITE {
+    DWORD pointerType;
+    UINT32 pointerId;
+    void* frameId;
+    DWORD pointerFlags;
+    void* sourceDevice;
+    HWND hwndTarget;
+    POINT ptPixelLocation;
+    POINT ptHimetricLocation;
+    POINT ptPixelLocationRaw;
+    POINT ptHimetricLocationRaw;
+    DWORD dwTime;
+    UINT32 historyCount;
+    INT32 InputData;
+    DWORD dwKeyStates;
+    UINT64 PerformanceCount;
+    DWORD ButtonChangeType;
+};
+
+struct POINTER_PEN_INFO_LITE {
+    POINTER_INFO_LITE pointerInfo;
+    DWORD penFlags;
+    DWORD penMask;
+    UINT32 pressure;
+    UINT32 rotation;
+    INT32 tiltX;
+    INT32 tiltY;
+};
+
+typedef BOOL(WINAPI* GetPointerTypePFN)(UINT32 pointerId, DWORD* pointerType);
+typedef BOOL(WINAPI* GetPointerPenInfoPFN)(UINT32 pointerId, POINTER_PEN_INFO_LITE* penInfo);
+
+static GetPointerTypePFN pfnGetPointerType = nullptr;
+static GetPointerPenInfoPFN pfnGetPointerPenInfo = nullptr;
+static bool s_pointerAPIsLoaded = false;
+
+static void loadPointerAPIs() {
+    if (s_pointerAPIsLoaded) return;
+    HMODULE user32 = GetModuleHandleA("user32.dll");
+    if (user32) {
+        pfnGetPointerType = (GetPointerTypePFN)GetProcAddress(user32, "GetPointerType");
+        pfnGetPointerPenInfo = (GetPointerPenInfoPFN)GetProcAddress(user32, "GetPointerPenInfo");
+    }
+    s_pointerAPIsLoaded = true;
+}
+
+static void SDLCALL TabletMessageHook(void* userdata, void* hWnd, unsigned int message, Uint64 wParam, Sint64 lParam) {
+    SculptManager* sculpt = static_cast<SculptManager*>(userdata);
+    if (!sculpt) return;
+
+    loadPointerAPIs();
+    if (!pfnGetPointerType || !pfnGetPointerPenInfo) return;
+
+    if (message == 0x0245 || message == 0x0246) { // WM_POINTERUPDATE, WM_POINTERDOWN
+        UINT32 pointerId = (UINT32)(wParam & 0xFFFF);
+        DWORD pointerType = 0;
+        if (pfnGetPointerType(pointerId, &pointerType)) {
+            if (pointerType == PT_PEN) {
+                POINTER_PEN_INFO_LITE penInfo;
+                std::memset(&penInfo, 0, sizeof(penInfo));
+                if (pfnGetPointerPenInfo(pointerId, &penInfo)) {
+                    if (penInfo.pointerInfo.pointerFlags & POINTER_FLAG_INCONTACT) {
+                        float pressure = (float)penInfo.pressure / 1024.0f;
+                        sculpt->setStylusPressure(pressure);
+                    } else {
+                        sculpt->setStylusPressure(0.0f);
+                    }
+                }
+            }
+        }
+    } else if (message == 0x0247) { // WM_POINTERUP
+        sculpt->setStylusPressure(0.0f);
+    }
 }
 #endif
 
@@ -208,10 +292,17 @@ int main(int argc, char* argv[]) {
         mesh->textureId = 0;
     }
 
+    // Auto-load render and shading settings if they exist
+    RenderSettings::load("render_settings.cfg", renderer, scene);
+
     SculptManager sculpt;
     GuiManager gui;
     gui.init(window, glContext);
     HotkeyDispatcher dispatcher;
+
+#ifdef _WIN32
+    SDL_SetWindowsMessageHook(TabletMessageHook, &sculpt);
+#endif
 
     bool quit = false;
     SDL_Event event;
@@ -251,12 +342,16 @@ int main(int argc, char* argv[]) {
 
         sculpt.processFrame(scene);
         sculpt.getCursor().applyToRenderer(renderer);
+        renderer.setLassoParameters(sculpt.isLassoActive(), sculpt.getLassoPoints(), sculpt.getLassoAlt());
         renderer.render(scene);
         gui.render(sculpt, scene, renderer, window);
 
         SDL_GL_SwapWindow(window);
         SDL_Delay(8); // limit to ~120fps
     }
+
+    // Auto-save render and shading settings on exit
+    RenderSettings::save("render_settings.cfg", renderer, scene);
 
     gui.shutdown();
 

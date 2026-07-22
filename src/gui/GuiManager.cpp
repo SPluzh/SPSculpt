@@ -1,5 +1,6 @@
 #include "gui/GuiManager.h"
 #include "render/AngleRenderer.h"
+#include "render/RenderSettings.h"
 #include <imgui.h>
 #include <imgui_impl_sdl2.h>
 #include <imgui_impl_opengl3.h>
@@ -107,7 +108,7 @@ static bool isPointInPolygon(ImVec2 p, const ImVec2* poly, int count) {
 // Helper to get brush name
 static const char* getBrushNameLocal(BrushType brush) {
     switch (brush) {
-        case BRUSH_FLATTEN: return "Flatten / Clay";
+        case BRUSH_FLATTEN: return "Flatten";
         case BRUSH_SMOOTH:   return "Smooth";
         case BRUSH_INFLATE:  return "Inflate";
         case BRUSH_PINCH:    return "Pinch";
@@ -116,6 +117,15 @@ static const char* getBrushNameLocal(BrushType brush) {
         case BRUSH_MOVE:     return "Move";
         case BRUSH_DRAG:     return "Drag";
         case BRUSH_ELASTIC:  return "Elastic";
+        case BRUSH_MASK:     return "Mask";
+        case BRUSH_PAINT:    return "Paint";
+        case BRUSH_TWIST:    return "Twist";
+        case BRUSH_LOCALSCALE: return "Local Scale";
+        case BRUSH_CLAY:     return "Clay";
+        case BRUSH_CLAYBUILDUP: return "Clay Buildup";
+        case BRUSH_DAMSTANDARD: return "Dam Standard";
+        case BRUSH_SQUAREBRUSH: return "Square Brush";
+        case BRUSH_VISIBILITY: return "Visibility";
     }
     return "Unknown";
 }
@@ -197,6 +207,13 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             if (ImGui::MenuItem("Load Default Sphere")) {
                 scene.loadDefaultSphere();
             }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Save Render Settings")) {
+                RenderSettings::save("render_settings.cfg", renderer, scene);
+            }
+            if (ImGui::MenuItem("Load Render Settings")) {
+                RenderSettings::load("render_settings.cfg", renderer, scene);
+            }
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Panels")) {
@@ -219,14 +236,17 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         ImGui::SetNextWindowSizeConstraints(ImVec2(160.0f, -1.0f), ImVec2(160.0f, -1.0f));
         ImGui::Begin("Toolbar", &m_showToolbar, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize);
         
-        const char* tools[] = { "Flatten", "Smooth", "Inflate", "Pinch", "Crease", "V-Tool", "Move", "Drag", "Elastic" };
+        const char* tools[] = { 
+            "Flatten", "Smooth", "Inflate", "Pinch", "Crease", "V-Tool", "Move", "Drag", "Elastic", 
+            "Mask", "Paint", "Twist", "Local Scale", "Clay", "Clay Buildup", "Dam Standard", "Square Brush", "Visibility"
+        };
         BrushType current = sculpt.getBrush();
-        for (int i = 0; i < 9; i++) {
+        for (int i = 0; i < 18; i++) {
             bool selected = (current == (BrushType)i);
             if (selected) {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_HeaderActive]);
             }
-            if (ImGui::Button(tools[i], ImVec2(-1, 30))) {
+            if (ImGui::Button(tools[i], ImVec2(-1, 26))) {
                 sculpt.setBrush((BrushType)i);
             }
             if (selected) {
@@ -252,9 +272,36 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             sculpt.setBrushIntensity(intensity);
         }
 
+        float focal = sculpt.getFocalShift();
+        if (ImGui::SliderFloat("Focal Shift", &focal, -1.0f, 1.0f, "%.2f")) {
+            sculpt.setFocalShift(focal);
+        }
+
+        float hardness = sculpt.getHardness();
+        if (ImGui::SliderFloat("Hardness", &hardness, 0.0f, 1.0f, "%.2f")) {
+            sculpt.setHardness(hardness);
+        }
+
         bool negative = sculpt.getNegative();
         if (ImGui::Checkbox("Negative (Invert)", &negative)) {
             sculpt.setNegative(negative);
+        }
+
+        if (sculpt.getBrush() == BRUSH_PAINT) {
+            ImGui::Separator();
+            ImGui::Text("Paint Tool Settings:");
+            glm::vec3 col = sculpt.getPaintColor();
+            if (ImGui::ColorEdit3("Paint Color", &col.r)) {
+                sculpt.setPaintColor(col);
+            }
+            float rough = sculpt.getPaintRoughness();
+            if (ImGui::SliderFloat("Paint Roughness", &rough, 0.0f, 1.0f, "%.2f")) {
+                sculpt.setPaintRoughness(rough);
+            }
+            float metal = sculpt.getPaintMetallic();
+            if (ImGui::SliderFloat("Paint Metalness", &metal, 0.0f, 1.0f, "%.2f")) {
+                sculpt.setPaintMetallic(metal);
+            }
         }
 
         ImGui::Separator();
@@ -451,6 +498,18 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 selectedMesh->setFlatShading(flat);
             }
 
+            bool showContour = renderer.getShowContour();
+            if (ImGui::Checkbox("Show Selection Outline", &showContour)) {
+                renderer.setShowContour(showContour);
+            }
+
+            if (showContour) {
+                glm::vec4 cColor = renderer.getContourColor();
+                if (ImGui::ColorEdit4("Outline Color", glm::value_ptr(cColor))) {
+                    renderer.setContourColor(cColor);
+                }
+            }
+
             float alpha = selectedMesh->alpha;
             if (ImGui::SliderFloat("Transparency (Alpha)", &alpha, 0.0f, 1.0f, "%.2f")) {
                 selectedMesh->setAlpha(alpha);
@@ -459,6 +518,16 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGui::ColorEdit3("Albedo Base Color", selectedMesh->albedo);
         } else {
             ImGui::Text("No active mesh selected");
+        }
+
+        ImGui::Separator();
+        ImGui::Text("Settings Profile:");
+        if (ImGui::Button("Save Profile", ImVec2(120, 0))) {
+            RenderSettings::save("render_settings.cfg", renderer, scene);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Load Profile", ImVec2(120, 0))) {
+            RenderSettings::load("render_settings.cfg", renderer, scene);
         }
 
         ImGui::End();

@@ -2,10 +2,10 @@
 #include <cstdint>
 
 int strokeFlatten(
-    uintptr_t vertsPtr,
-    uintptr_t vertProxyPtr,
-    uintptr_t materialsPtr,
-    uintptr_t iVertsPtr, int nbIVerts,
+    float* verts,
+    const float* vertProxy,
+    const float* materials,
+    uint32_t* iVerts, int nbIVerts,
     float cx, float cy, float cz,
     float ax, float ay, float az,
     float anx, float any, float anz,
@@ -13,232 +13,262 @@ int strokeFlatten(
     bool negative, bool accumulate, bool lockPosition,
     float focalShift, bool focalShiftFalloff,
     // Alpha params
-    bool hasAlpha, uintptr_t alphaTexPtr, int alphaWidth, int alphaHeight,
+    bool hasAlpha, const uint8_t* alphaTex, int alphaWidth, int alphaHeight,
     float alphaRatioX, float alphaRatioY, float alphaSide,
-    uintptr_t alphaLookAtPtr, bool alphaXSym
+    const float* alphaLookAt, bool alphaXSym
 );
 
 int strokeSmooth(
-    uintptr_t vertsPtr,
-    uintptr_t normalsPtr,
-    uintptr_t materialsPtr,
-    uintptr_t vrvStartCountPtr,
-    uintptr_t vertRingVertPtr,
-    uintptr_t vertOnEdgePtr,
-    uintptr_t iVertsPtr, int nbIVerts,
+    float* verts,
+    const float* normals,
+    const float* materials,
+    const uint32_t* vrvStartCount,
+    const uint32_t* vertRingVert,
+    const uint8_t* vertOnEdge,
+    uint32_t* iVerts, int nbIVerts,
     float cx, float cy, float cz,
     float radius, float intensity,
     bool tangent,
     float focalShift, bool focalShiftFalloff,
     // Alpha params
-    bool hasAlpha, uintptr_t alphaTexPtr, int alphaWidth, int alphaHeight,
+    bool hasAlpha, const uint8_t* alphaTex, int alphaWidth, int alphaHeight,
     float alphaRatioX, float alphaRatioY, float alphaSide,
-    uintptr_t alphaLookAtPtr, bool alphaXSym
+    const float* alphaLookAt, bool alphaXSym
 );
 
 uint32_t getFacesFromVerticesFast(
-    uintptr_t iVertsPtr,    uint32_t nbIVerts,
-    uintptr_t vrfStartCountPtr,
-    uintptr_t vertRingFacePtr,
-    uintptr_t outIFacesPtr,
-    uintptr_t tagFlagsPtr,
-    uintptr_t tagEpochPtr,
+    const uint32_t* iVerts, uint32_t nbIVerts,
+    const uint32_t* vrfStartCount,
+    const uint32_t* vertRingFace,
+    uint32_t* outIFaces,
+    uint32_t* tagFlags,
+    uint32_t* tagEpoch,
     uint32_t nbFaces
 );
 
 bool computeAreaNormalAndCenter(
-    uintptr_t vertsPtr,
-    uintptr_t normalsPtr,
-    uintptr_t materialsPtr,
-    uintptr_t iVertsPtr, int nbIVerts,
-    uintptr_t outResultsPtr
+    const float* verts,
+    const float* normals,
+    const float* materials,
+    const uint32_t* iVerts, int nbIVerts,
+    float* outResults
 );
 
 int strokeInflate(
-    uintptr_t vertsPtr,
-    uintptr_t vertProxyPtr,
-    uintptr_t materialsPtr,
-    uintptr_t normalsPtr,
-    uintptr_t iVertsPtr, int nbIVerts,
+    float* verts,
+    const float* vertProxy,
+    const float* materials,
+    const float* normals,
+    uint32_t* iVerts, int nbIVerts,
     float cx, float cy, float cz,
     float radius, float intensity,
     bool negative,
     float focalShift, bool focalShiftFalloff,
-    bool hasAlpha, uintptr_t alphaTexPtr, int alphaWidth, int alphaHeight,
+    bool hasAlpha, const uint8_t* alphaTex, int alphaWidth, int alphaHeight,
     float alphaRatioX, float alphaRatioY, float alphaSide,
-    uintptr_t alphaLookAtPtr, bool alphaXSym,
-    bool useAccuCurve, uintptr_t accuCurveLutPtr
+    const float* alphaLookAt, bool alphaXSym,
+    bool useAccuCurve, const float* accuCurveLut
 );
 
 int strokePinch(
-    uintptr_t vertsPtr,
-    uintptr_t materialsPtr,
-    uintptr_t iVertsPtr, int nbIVerts,
+    float* verts,
+    const float* materials,
+    uint32_t* iVerts, int nbIVerts,
     float cx, float cy, float cz,
     float radius, float intensity,
     bool negative,
     float focalShift, bool focalShiftFalloff,
-    bool hasAlpha, uintptr_t alphaTexPtr, int alphaWidth, int alphaHeight,
+    bool hasAlpha, const uint8_t* alphaTex, int alphaWidth, int alphaHeight,
     float alphaRatioX, float alphaRatioY, float alphaSide,
-    uintptr_t alphaLookAtPtr, bool alphaXSym,
-    bool useAccuCurve, uintptr_t accuCurveLutPtr
+    const float* alphaLookAt, bool alphaXSym,
+    bool useAccuCurve, const float* accuCurveLut
 );
 
 int strokeCrease(
-    uintptr_t vertsPtr,
-    uintptr_t vertProxyPtr,
-    uintptr_t materialsPtr,
-    uintptr_t iVertsPtr, int nbIVerts,
+    float* verts,
+    const float* vertProxy,
+    const float* materials,
+    uint32_t* iVerts, int nbIVerts,
     float cx, float cy, float cz,
     float anx, float any, float anz,
     float radius, float intensity,
     bool negative,
     float focalShift, bool focalShiftFalloff,
-    bool hasAlpha, uintptr_t alphaTexPtr, int alphaWidth, int alphaHeight,
+    bool hasAlpha, const uint8_t* alphaTex, int alphaWidth, int alphaHeight,
     float alphaRatioX, float alphaRatioY, float alphaSide,
-    uintptr_t alphaLookAtPtr, bool alphaXSym,
-    bool useAccuCurve, uintptr_t accuCurveLutPtr
+    const float* alphaLookAt, bool alphaXSym,
+    bool useAccuCurve, const float* accuCurveLut
 );
 
 int strokeVTool(
-    uintptr_t vertsPtr,
-    uintptr_t vertProxyPtr,
-    uintptr_t materialsPtr,
-    uintptr_t iVertsPtr, int nbIVerts,
+    float* verts,
+    const float* vertProxy,
+    const float* materials,
+    uint32_t* iVerts, int nbIVerts,
     float cx, float cy, float cz,
     float anx, float any, float anz,
     float radius, float intensity,
     bool negative,
     float focalShift, bool focalShiftFalloff,
-    bool hasAlpha, uintptr_t alphaTexPtr, int alphaWidth, int alphaHeight,
+    bool hasAlpha, const uint8_t* alphaTex, int alphaWidth, int alphaHeight,
     float alphaRatioX, float alphaRatioY, float alphaSide,
-    uintptr_t alphaLookAtPtr, bool alphaXSym,
-    bool useAccuCurve, uintptr_t accuCurveLutPtr
+    const float* alphaLookAt, bool alphaXSym,
+    bool useAccuCurve, const float* accuCurveLut
 );
 
 int strokeMove(
-    uintptr_t vertsPtr,
-    uintptr_t vertProxyPtr,
-    uintptr_t materialsPtr,
-    uintptr_t iVertsPtr, int nbIVerts,
+    float* verts,
+    const float* vertProxy,
+    const float* materials,
+    uint32_t* iVerts, int nbIVerts,
     float cx, float cy, float cz,
     float dirx, float diry, float dirz,
     float radius,
     float focalShift, bool focalShiftFalloff,
-    bool hasAlpha, uintptr_t alphaTexPtr, int alphaWidth, int alphaHeight,
+    bool hasAlpha, const uint8_t* alphaTex, int alphaWidth, int alphaHeight,
     float alphaRatioX, float alphaRatioY, float alphaSide,
-    uintptr_t alphaLookAtPtr, bool alphaXSym,
-    bool useAccuCurve, uintptr_t accuCurveLutPtr
+    const float* alphaLookAt, bool alphaXSym,
+    bool useAccuCurve, const float* accuCurveLut
 );
 
 int strokeDrag(
-    uintptr_t vertsPtr,
-    uintptr_t materialsPtr,
-    uintptr_t iVertsPtr, int nbIVerts,
+    float* verts,
+    const float* materials,
+    uint32_t* iVerts, int nbIVerts,
     float cx, float cy, float cz,
     float dirx, float diry, float dirz,
     float radius,
     float focalShift, bool focalShiftFalloff,
-    bool hasAlpha, uintptr_t alphaTexPtr, int alphaWidth, int alphaHeight,
+    bool hasAlpha, const uint8_t* alphaTex, int alphaWidth, int alphaHeight,
     float alphaRatioX, float alphaRatioY, float alphaSide,
-    uintptr_t alphaLookAtPtr, bool alphaXSym,
-    bool useAccuCurve, uintptr_t accuCurveLutPtr
+    const float* alphaLookAt, bool alphaXSym,
+    bool useAccuCurve, const float* accuCurveLut
 );
 
 int strokeElastic(
-    uintptr_t vertsPtr,
-    uintptr_t vertProxyPtr,
-    uintptr_t materialsPtr,
-    uintptr_t iVertsPtr, int nbIVerts,
+    float* verts,
+    const float* vertProxy,
+    const float* materials,
+    uint32_t* iVerts, int nbIVerts,
     float cx, float cy, float cz,
     float dirx, float diry, float dirz,
     float radius, float elasticity,
     float focalShift, bool focalShiftFalloff,
-    bool hasAlpha, uintptr_t alphaTexPtr, int alphaWidth, int alphaHeight,
+    bool hasAlpha, const uint8_t* alphaTex, int alphaWidth, int alphaHeight,
     float alphaRatioX, float alphaRatioY, float alphaSide,
-    uintptr_t alphaLookAtPtr, bool alphaXSym,
-    bool useAccuCurve, uintptr_t accuCurveLutPtr
+    const float* alphaLookAt, bool alphaXSym,
+    bool useAccuCurve, const float* accuCurveLut
 );
 
 int strokeMask(
-    uintptr_t vertsPtr,
-    uintptr_t materialsPtr,
-    uintptr_t iVertsPtr, int nbIVerts,
+    float* verts,
+    float* materials,
+    uint32_t* iVerts, int nbIVerts,
     float cx, float cy, float cz,
     float radius, float intensity, float hardness,
     bool negative,
     float focalShift, bool focalShiftFalloff,
-    bool hasAlpha, uintptr_t alphaTexPtr, int alphaWidth, int alphaHeight,
+    bool hasAlpha, const uint8_t* alphaTex, int alphaWidth, int alphaHeight,
     float alphaRatioX, float alphaRatioY, float alphaSide,
-    uintptr_t alphaLookAtPtr, bool alphaXSym
+    const float* alphaLookAt, bool alphaXSym
 );
 
 int strokePaint(
-    uintptr_t vertsPtr,
-    uintptr_t colorsPtr,
-    uintptr_t materialsPtr,
-    uintptr_t iVertsPtr, int nbIVerts,
+    float* verts,
+    float* colors,
+    float* materials,
+    uint32_t* iVerts, int nbIVerts,
     float cx, float cy, float cz,
     float radius, float intensity, float hardness,
     float cr, float cg, float cb,
     float roughness, float metallic,
     bool writeAlbedo, bool writeRoughness, bool writeMetalness,
     float focalShift, bool focalShiftFalloff,
-    bool hasAlpha, uintptr_t alphaTexPtr, int alphaWidth, int alphaHeight,
+    bool hasAlpha, const uint8_t* alphaTex, int alphaWidth, int alphaHeight,
     float alphaRatioX, float alphaRatioY, float alphaSide,
-    uintptr_t alphaLookAtPtr, bool alphaXSym
+    const float* alphaLookAt, bool alphaXSym
 );
 
 int strokePaintAll(
-    uintptr_t colorsPtr,
-    uintptr_t materialsPtr,
-    uintptr_t iVertsPtr, int nbIVerts,
+    float* colors,
+    float* materials,
+    uint32_t* iVerts, int nbIVerts,
     float cr, float cg, float cb,
     float roughness, float metallic,
     bool writeAlbedo, bool writeRoughness, bool writeMetalness
 );
 
 int strokeLocalScale(
-    uintptr_t vertsPtr,
-    uintptr_t materialsPtr,
-    uintptr_t iVertsPtr, int nbIVerts,
+    float* verts,
+    const float* materials,
+    uint32_t* iVerts, int nbIVerts,
     float cx, float cy, float cz,
     float radius, float intensity,
     float focalShift, bool focalShiftFalloff,
-    bool hasAlpha, uintptr_t alphaTexPtr, int alphaWidth, int alphaHeight,
+    bool hasAlpha, const uint8_t* alphaTex, int alphaWidth, int alphaHeight,
     float alphaRatioX, float alphaRatioY, float alphaSide,
-    uintptr_t alphaLookAtPtr, bool alphaXSym
+    const float* alphaLookAt, bool alphaXSym
 );
 
 int strokeTwist(
-    uintptr_t vertsPtr,
-    uintptr_t materialsPtr,
-    uintptr_t iVertsPtr, int nbIVerts,
+    float* verts,
+    const float* materials,
+    uint32_t* iVerts, int nbIVerts,
     float cx, float cy, float cz,
     float nx, float ny, float nz,
     float radius, float angle,
     float focalShift, bool focalShiftFalloff,
-    bool hasAlpha, uintptr_t alphaTexPtr, int alphaWidth, int alphaHeight,
+    bool hasAlpha, const uint8_t* alphaTex, int alphaWidth, int alphaHeight,
     float alphaRatioX, float alphaRatioY, float alphaSide,
-    uintptr_t alphaLookAtPtr, bool alphaXSym
+    const float* alphaLookAt, bool alphaXSym
 );
 
+int strokeDamStandard(
+    float* verts,
+    const float* vertProxy,
+    const float* materials,
+    uint32_t* iVerts, int nbIVerts,
+    float cx, float cy, float cz,
+    float anx, float any, float anz,
+    float radius, float intensity,
+    bool negative,
+    float focalShift, bool focalShiftFalloff,
+    bool hasAlpha, const uint8_t* alphaTex, int alphaWidth, int alphaHeight,
+    float alphaRatioX, float alphaRatioY, float alphaSide,
+    const float* alphaLookAt, bool alphaXSym
+);
+
+int strokeSquareBrush(
+    float* verts,
+    const float* materials,
+    uint32_t* iVerts, int nbIVerts,
+    float cx, float cy, float cz,
+    float ax, float ay, float az,
+    float anx, float any, float anz,
+    float radius, float intensity,
+    bool negative,
+    float focalShift, bool focalShiftFalloff,
+    float alphaRatioX, float alphaRatioY, float alphaSide,
+    const float* alphaLookAt, bool alphaXSym
+);
+
+
 int blurMask(
-    uintptr_t iVertsPtr, int nbIVerts,
-    uintptr_t vrvStartCountPtr,
-    uintptr_t vertRingVertPtr,
-    uintptr_t vertOnEdgePtr,
+    const uint32_t* iVerts, int nbIVerts,
+    const uint32_t* vrvStartCount,
+    const uint32_t* vertRingVert,
+    const uint8_t* vertOnEdge,
     int iterations,
-    uintptr_t tempMasksPtr
+    float* tempMasks
 );
 
 int applyGradientMask(
-    uintptr_t vertsPtr,
-    uintptr_t materialsPtr,
-    uintptr_t activeVertsPtr, int nbActiveVerts,
-    uintptr_t origMasksPtr,
-    uintptr_t blurredMasksPtr,
-    uintptr_t localToScreenPtr,
+    const float* verts,
+    float* materials,
+    const uint32_t* activeVerts, int nbActiveVerts,
+    const float* origMasks,
+    const float* blurredMasks,
+    const float* localToScreen,
     float height,
     float ax, float ay, float bx, float by,
     bool symmetry,
@@ -247,5 +277,3 @@ int applyGradientMask(
     bool blurMaskedOnly,
     int totalNbVerts
 );
-
-

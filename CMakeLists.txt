@@ -66,6 +66,7 @@ add_executable(sculptsp
     src/render/AngleRenderer.cpp
     src/render/ReferenceImage.cpp
     src/render/RenderTarget.cpp
+    src/render/RenderSettings.cpp
     # editing
     src/editing/SculptManager.cpp
     src/editing/CameraController.cpp

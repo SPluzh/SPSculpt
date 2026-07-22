@@ -39,11 +39,11 @@ public:
     BrushType getBrush() const { return m_currentBrush; }
     void setBrush(BrushType brush) { 
         m_currentBrush = brush; 
-        m_negative = (brush == BRUSH_FLATTEN || brush == BRUSH_CREASE || brush == BRUSH_VTOOL);
+        m_negative = (brush == BRUSH_FLATTEN || brush == BRUSH_CREASE || brush == BRUSH_VTOOL || brush == BRUSH_DAMSTANDARD);
     }
     void setTool(BrushType brush) { 
         m_currentBrush = brush; 
-        m_negative = (brush == BRUSH_FLATTEN || brush == BRUSH_CREASE || brush == BRUSH_VTOOL);
+        m_negative = (brush == BRUSH_FLATTEN || brush == BRUSH_CREASE || brush == BRUSH_VTOOL || brush == BRUSH_DAMSTANDARD);
     }
 
     float getBrushRadius() const { return m_brushRadius; }
@@ -57,6 +57,22 @@ public:
 
     float getHardness() const { return m_hardness; }
     void setHardness(float val) { m_hardness = val; }
+
+    glm::vec3 getPaintColor() const { return m_paintColor; }
+    void setPaintColor(const glm::vec3& color) { m_paintColor = color; }
+
+    float getPaintRoughness() const { return m_paintRoughness; }
+    void setPaintRoughness(float val) { m_paintRoughness = val; }
+
+    float getPaintMetallic() const { return m_paintMetallic; }
+    void setPaintMetallic(float val) { m_paintMetallic = val; }
+
+    float getStylusPressure() const { return m_stylusPressure; }
+    void setStylusPressure(float p) {
+        m_stylusPressure = p;
+        m_usingStylus = true;
+        m_lastStylusTime = SDL_GetTicks();
+    }
 
     bool getNegative() const { return m_negative; }
     void setNegative(bool val) { m_negative = val; }
@@ -74,8 +90,25 @@ public:
     CameraController& getCameraController() { return m_cameraController; }
     const CameraController& getCameraController() const { return m_cameraController; }
 
+    bool isLassoActive() const { return m_isLassoActive; }
+    const std::vector<glm::vec2>& getLassoPoints() const { return m_lassoPoints; }
+    bool getLassoAlt() const { return m_lassoAlt; }
+
+    std::vector<uint32_t> getVerticesInLasso(Mesh* mesh, const Camera& camera);
+
 private:
     float m_focalShift = 0.0f;
     float m_hardness = 0.5f;
+    glm::vec3 m_paintColor{1.0f, 0.8f, 0.6f};
+    float m_paintRoughness = 0.5f;
+    float m_paintMetallic = 0.0f;
+    float m_stylusPressure = 1.0f;
+    bool m_usingStylus = false;
+    uint32_t m_lastStylusTime = 0;
     bool m_negative = false;
+
+    bool m_isLassoActive = false;
+    std::vector<glm::vec2> m_lassoPoints;
+    bool m_lassoAlt = false;
 };
+

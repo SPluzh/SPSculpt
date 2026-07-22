@@ -41,6 +41,8 @@ AngleRenderer::~AngleRenderer() {
     if (m_selectionVao) glDeleteVertexArrays(1, &m_selectionVao);
     if (m_circleVbo) glDeleteBuffers(1, &m_circleVbo);
     if (m_dotVbo) glDeleteBuffers(1, &m_dotVbo);
+    if (m_lassoVao) glDeleteVertexArrays(1, &m_lassoVao);
+    if (m_lassoVbo) glDeleteBuffers(1, &m_lassoVbo);
 
     if (m_envTexture) glDeleteTextures(1, &m_envTexture);
 
@@ -1094,6 +1096,15 @@ bool AngleRenderer::init(int width, int height) {
     glBufferData(GL_ARRAY_BUFFER, dotVerts.size() * sizeof(float), dotVerts.data(), GL_STATIC_DRAW);
     glBindVertexArray(0);
 
+    // Lasso buffers initialization
+    glGenVertexArrays(1, &m_lassoVao);
+    glGenBuffers(1, &m_lassoVbo);
+    glBindVertexArray(m_lassoVao);
+    glBindBuffer(GL_ARRAY_BUFFER, m_lassoVbo);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glBindVertexArray(0);
+
     // D. Initialize Grid
     initGrid();
 
@@ -1283,6 +1294,9 @@ void AngleRenderer::render(const Scene& scene) {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     drawFullscreenViewport2D(scene);
+
+    // Render screen-space Lasso overlay on top of screen
+    drawLasso();
 }
 
 void AngleRenderer::renderScenePass(const Scene& scene, int passType) {
@@ -1620,14 +1634,74 @@ void AngleRenderer::drawSelectionCursor() {
     glBindVertexArray(0);
 }
 
+void AngleRenderer::setLassoParameters(bool active, const std::vector<glm::vec2>& points, bool altMode) {
+    m_lassoActive = active;
+    m_lassoPoints = points;
+    m_lassoAlt = altMode;
+}
+
+void AngleRenderer::drawLasso() {
+    if (!m_lassoActive || m_lassoPoints.size() < 2 || m_selectionProgram == 0) return;
+
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    // Map screen-space points to NDC [-1, 1]
+    std::vector<float> ndcPoints;
+    ndcPoints.reserve(m_lassoPoints.size() * 3);
+    for (const auto& p : m_lassoPoints) {
+        float x = (p.x / m_width) * 2.0f - 1.0f;
+        float y = 1.0f - (p.y / m_height) * 2.0f;
+        ndcPoints.push_back(x);
+        ndcPoints.push_back(y);
+        ndcPoints.push_back(0.0f);
+    }
+
+    glBindVertexArray(m_lassoVao);
+    glBindBuffer(GL_ARRAY_BUFFER, m_lassoVbo);
+    glBufferData(GL_ARRAY_BUFFER, ndcPoints.size() * sizeof(float), ndcPoints.data(), GL_DYNAMIC_DRAW);
+
+    glUseProgram(m_selectionProgram);
+    GLint locColor = glGetUniformLocation(m_selectionProgram, "uColor");
+    GLint locMVP = glGetUniformLocation(m_selectionProgram, "uMVP");
+
+    // Red for Alt/subtraction (negative), blue/cyan for standard (positive) selection
+    glm::vec3 lassoColor = m_lassoAlt ? glm::vec3(0.9f, 0.1f, 0.1f) : glm::vec3(0.1f, 0.8f, 0.9f);
+    glUniform3fv(locColor, 1, &lassoColor[0]);
+
+    glm::mat4 identityMVP(1.0f);
+    glUniformMatrix4fv(locMVP, 1, GL_FALSE, &identityMVP[0][0]);
+
+    // Draw contour outline as GL_LINE_LOOP
+    glDrawArrays(GL_LINE_LOOP, 0, (GLsizei)m_lassoPoints.size());
+
+    glDisable(GL_BLEND);
+    glEnable(GL_DEPTH_TEST);
+    glBindVertexArray(0);
+}
+
+
 void AngleRenderer::generateTriangleIndices(const Mesh* mesh, std::vector<uint32_t>& outIndices) {
     outIndices.clear();
     outIndices.reserve(mesh->nbFaces * 6);
+    const auto& visible = mesh->vertVisible;
+    bool hasVisibility = !visible.empty();
+
     for (int i = 0; i < mesh->nbFaces; ++i) {
         uint32_t iv1 = mesh->faces[i * 4];
         uint32_t iv2 = mesh->faces[i * 4 + 1];
         uint32_t iv3 = mesh->faces[i * 4 + 2];
         uint32_t iv4 = mesh->faces[i * 4 + 3];
+
+        if (hasVisibility) {
+            if (iv1 >= visible.size() || !visible[iv1]) continue;
+            if (iv2 >= visible.size() || !visible[iv2]) continue;
+            if (iv3 >= visible.size() || !visible[iv3]) continue;
+            if (iv4 != 0xffffffff && (iv4 >= visible.size() || !visible[iv4])) continue;
+        }
+
         if (iv4 == 0xffffffff) {
             outIndices.push_back(iv1);
             outIndices.push_back(iv2);
@@ -1646,12 +1720,22 @@ void AngleRenderer::generateTriangleIndices(const Mesh* mesh, std::vector<uint32
 void AngleRenderer::generateWireframeIndices(const Mesh* mesh, std::vector<uint32_t>& outEdges) {
     outEdges.clear();
     outEdges.reserve(mesh->nbFaces * 8);
+    const auto& visible = mesh->vertVisible;
+    bool hasVisibility = !visible.empty();
+
     for (int i = 0; i < mesh->nbFaces; ++i) {
         uint32_t iv1 = mesh->faces[i * 4];
         uint32_t iv2 = mesh->faces[i * 4 + 1];
         uint32_t iv3 = mesh->faces[i * 4 + 2];
         uint32_t iv4 = mesh->faces[i * 4 + 3];
         bool isQuad = (iv4 != 0xffffffff);
+
+        if (hasVisibility) {
+            if (iv1 >= visible.size() || !visible[iv1]) continue;
+            if (iv2 >= visible.size() || !visible[iv2]) continue;
+            if (iv3 >= visible.size() || !visible[iv3]) continue;
+            if (isQuad && (iv4 >= visible.size() || !visible[iv4])) continue;
+        }
         
         outEdges.push_back(iv1);
         outEdges.push_back(iv2);
