@@ -1140,7 +1140,7 @@ bool AngleRenderer::init(int width, int height) {
     m_rttContour.init(width, height, false);
     m_rttTransparent.init(width, height, true, m_rttOpaque.depth);
     m_rttMerge.init(width, height, false);
-    m_rttComposite.init(width, height, false);
+    m_rttComposite.init(width, height, true, m_rttOpaque.depth);
 
     return true;
 }
@@ -1231,7 +1231,8 @@ void AngleRenderer::setCursorParametersFast(
     uintptr_t dotMVPPtr,
     uintptr_t symMVPsPtr,
     int symMVPsCount,
-    uintptr_t cursorColorPtr
+    uintptr_t cursorColorPtr,
+    uintptr_t symOccludedPtr
 ) {
     m_showCursor = showCursor;
     m_showCircle = showCircle;
@@ -1249,9 +1250,17 @@ void AngleRenderer::setCursorParametersFast(
         m_cursorColor = glm::vec3(c[0], c[1], c[2]);
     }
     m_symMVPs.clear();
+    m_symOccluded.clear();
     if (symMVPsPtr && symMVPsCount > 0) {
         m_symMVPs.resize(symMVPsCount);
         std::memcpy(m_symMVPs.data(), reinterpret_cast<const float*>(symMVPsPtr), symMVPsCount * 16 * sizeof(float));
+
+        m_symOccluded.resize(symMVPsCount);
+        if (symOccludedPtr) {
+            std::memcpy(m_symOccluded.data(), reinterpret_cast<const char*>(symOccludedPtr), symMVPsCount * sizeof(char));
+        } else {
+            std::fill(m_symOccluded.begin(), m_symOccluded.end(), 0);
+        }
     }
 }
 
@@ -1686,19 +1695,31 @@ void AngleRenderer::drawSelectionCursor() {
         if (locOffsetPixels != -1) glUniform1f(locOffsetPixels, 0.0f);
     }
     
+    // Draw main dot and symmetry dots
+    glDisable(GL_DEPTH_TEST);
+
     // Draw main dot
+    glUniform3fv(locColor, 1, &m_cursorColor[0]);
     glUniformMatrix4fv(locMVP, 1, GL_FALSE, &m_dotMVP[0][0]);
     glBindBuffer(GL_ARRAY_BUFFER, m_dotVbo);
     glVertexAttribPointer(locPos, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(locPos);
     glDrawArrays(GL_TRIANGLE_FAN, 0, 34);
-    
+
     // Draw symmetry dots
-    for (const auto& symMVP : m_symMVPs) {
-        glUniformMatrix4fv(locMVP, 1, GL_FALSE, &symMVP[0][0]);
+    for (size_t idx = 0; idx < m_symMVPs.size(); ++idx) {
+        bool occluded = (idx < m_symOccluded.size()) ? m_symOccluded[idx] : false;
+        if (occluded) {
+            glm::vec3 darkColor = m_cursorColor * 0.3f;
+            glUniform3fv(locColor, 1, &darkColor[0]);
+        } else {
+            glUniform3fv(locColor, 1, &m_cursorColor[0]);
+        }
+        glUniformMatrix4fv(locMVP, 1, GL_FALSE, &m_symMVPs[idx][0][0]);
         glDrawArrays(GL_TRIANGLE_FAN, 0, 34);
     }
-    
+
+    // Restore state
     glDisable(GL_BLEND);
     glEnable(GL_DEPTH_TEST);
     glBindVertexArray(0);

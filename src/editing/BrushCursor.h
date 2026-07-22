@@ -20,6 +20,7 @@ struct BrushCursorState {
     glm::mat4 innerCircleMVP {1.0f};
     glm::mat4 dotMVP         {1.0f};
     std::vector<glm::mat4> symMVPs;
+    std::vector<char> symOccluded;
 };
 
 class BrushCursor {

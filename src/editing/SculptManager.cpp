@@ -239,6 +239,421 @@ SculptManager::SculptManager() {
     m_brushSettings[BRUSH_TRANSFORM].culling = false;
 }
 
+int SculptManager::doStrokePass(
+    Scene& scene,
+    Mesh* mesh,
+    BrushType activeBrush,
+    bool negative,
+    std::vector<uint32_t>& pickedVertices,
+    const glm::vec3& currentIntersection,
+    const glm::vec3& currentIntersectionNormal,
+    const glm::vec3& initialIntersection,
+    const glm::vec3& cachedAreaNormal,
+    const glm::vec3& cachedAreaCenter,
+    float localRadius,
+    float intensity
+) {
+    int deformedCount = 0;
+
+    switch (activeBrush) {
+        case BRUSH_FLATTEN: {
+            glm::vec3 areaCenter = currentIntersection;
+            glm::vec3 areaNormal = currentIntersectionNormal;
+            std::vector<float> areaResults(7, 0.0f);
+            computeAreaNormalAndCenter(
+                mesh->verts.data(),
+                mesh->normals.data(),
+                mesh->materials.data(),
+                pickedVertices.data(),
+                pickedVertices.size(),
+                areaResults.data()
+            );
+            areaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
+            areaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
+
+            deformedCount = strokeFlatten(
+                mesh->verts.data(),
+                mesh->vertProxy.data(),
+                mesh->materials.data(),
+                pickedVertices.data(),
+                pickedVertices.size(),
+                currentIntersection.x, currentIntersection.y, currentIntersection.z,
+                areaCenter.x, areaCenter.y, areaCenter.z,
+                areaNormal.x, areaNormal.y, areaNormal.z,
+                localRadius, intensity,
+                negative, getCurrentSettings().accumulate, getCurrentSettings().lockPosition,
+                getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
+                false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
+            );
+            break;
+        }
+        case BRUSH_SMOOTH: {
+            deformedCount = strokeSmooth(
+                mesh->verts.data(),
+                mesh->normals.data(),
+                mesh->materials.data(),
+                mesh->vrvStartCount.data(),
+                mesh->vertRingVert.data(),
+                mesh->vertOnEdge.data(),
+                pickedVertices.data(),
+                pickedVertices.size(),
+                currentIntersection.x, currentIntersection.y, currentIntersection.z,
+                localRadius, intensity,
+                getCurrentSettings().tangent,
+                getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
+                false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
+            );
+            break;
+        }
+        case BRUSH_INFLATE: {
+            deformedCount = strokeInflate(
+                mesh->verts.data(),
+                mesh->vertProxy.data(),
+                mesh->materials.data(),
+                mesh->normals.data(),
+                pickedVertices.data(),
+                pickedVertices.size(),
+                currentIntersection.x, currentIntersection.y, currentIntersection.z,
+                localRadius, intensity,
+                negative,
+                getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
+                false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false,
+                false, nullptr
+            );
+            break;
+        }
+        case BRUSH_PINCH: {
+            deformedCount = strokePinch(
+                mesh->verts.data(),
+                mesh->materials.data(),
+                pickedVertices.data(),
+                pickedVertices.size(),
+                currentIntersection.x, currentIntersection.y, currentIntersection.z,
+                localRadius, intensity,
+                negative,
+                getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
+                false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false,
+                false, nullptr
+            );
+            break;
+        }
+        case BRUSH_CREASE: {
+            deformedCount = strokeCrease(
+                mesh->verts.data(),
+                mesh->vertProxy.data(),
+                mesh->materials.data(),
+                pickedVertices.data(),
+                pickedVertices.size(),
+                currentIntersection.x, currentIntersection.y, currentIntersection.z,
+                currentIntersectionNormal.x, currentIntersectionNormal.y, currentIntersectionNormal.z,
+                localRadius, intensity,
+                negative,
+                getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
+                false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false,
+                false, nullptr
+            );
+            break;
+        }
+        case BRUSH_VTOOL: {
+            deformedCount = strokeVTool(
+                mesh->verts.data(),
+                mesh->vertProxy.data(),
+                mesh->materials.data(),
+                pickedVertices.data(),
+                pickedVertices.size(),
+                currentIntersection.x, currentIntersection.y, currentIntersection.z,
+                currentIntersectionNormal.x, currentIntersectionNormal.y, currentIntersectionNormal.z,
+                localRadius, intensity,
+                negative,
+                -0.4f, true,
+                false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false,
+                false, nullptr
+            );
+            break;
+        }
+        case BRUSH_MOVE: {
+            glm::vec3 dragDirection = currentIntersection - initialIntersection;
+            deformedCount = strokeMove(
+                mesh->verts.data(),
+                mesh->vertProxy.data(),
+                mesh->materials.data(),
+                pickedVertices.data(),
+                pickedVertices.size(),
+                initialIntersection.x, initialIntersection.y, initialIntersection.z,
+                dragDirection.x, dragDirection.y, dragDirection.z,
+                localRadius,
+                getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
+                false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false,
+                false, nullptr
+            );
+            break;
+        }
+        case BRUSH_DRAG: {
+            glm::vec3 dragDirection = currentIntersection - initialIntersection;
+            deformedCount = strokeDrag(
+                mesh->verts.data(),
+                mesh->materials.data(),
+                pickedVertices.data(),
+                pickedVertices.size(),
+                initialIntersection.x, initialIntersection.y, initialIntersection.z,
+                dragDirection.x, dragDirection.y, dragDirection.z,
+                localRadius,
+                getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
+                false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false,
+                false, nullptr
+            );
+            break;
+        }
+        case BRUSH_ELASTIC: {
+            glm::vec3 dragDirection = currentIntersection - initialIntersection;
+            deformedCount = strokeElastic(
+                mesh->verts.data(),
+                mesh->vertProxy.data(),
+                mesh->materials.data(),
+                pickedVertices.data(),
+                pickedVertices.size(),
+                initialIntersection.x, initialIntersection.y, initialIntersection.z,
+                dragDirection.x, dragDirection.y, dragDirection.z,
+                localRadius, getCurrentSettings().elasticity,
+                getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
+                false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false,
+                false, nullptr
+            );
+            break;
+        }
+        case BRUSH_MASK: {
+            deformedCount = strokeMask(
+                mesh->verts.data(),
+                mesh->materials.data(),
+                pickedVertices.data(),
+                pickedVertices.size(),
+                currentIntersection.x, currentIntersection.y, currentIntersection.z,
+                localRadius, intensity, getCurrentSettings().hardness,
+                negative,
+                getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
+                false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
+            );
+            break;
+        }
+        case BRUSH_PAINT: {
+            deformedCount = strokePaint(
+                mesh->verts.data(),
+                mesh->colors.data(),
+                mesh->materials.data(),
+                pickedVertices.data(),
+                pickedVertices.size(),
+                currentIntersection.x, currentIntersection.y, currentIntersection.z,
+                localRadius, intensity, getCurrentSettings().hardness,
+                getCurrentSettings().paintColor.r, getCurrentSettings().paintColor.g, getCurrentSettings().paintColor.b,
+                getCurrentSettings().paintRoughness, getCurrentSettings().paintMetallic,
+                getCurrentSettings().writeAlbedo, getCurrentSettings().writeRoughness, getCurrentSettings().writeMetalness,
+                getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
+                false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
+            );
+            break;
+        }
+        case BRUSH_TWIST: {
+            deformedCount = strokeTwist(
+                mesh->verts.data(),
+                mesh->materials.data(),
+                pickedVertices.data(),
+                pickedVertices.size(),
+                currentIntersection.x, currentIntersection.y, currentIntersection.z,
+                currentIntersectionNormal.x, currentIntersectionNormal.y, currentIntersectionNormal.z,
+                localRadius, intensity * 3.14159f * 0.5f,
+                getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
+                false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
+            );
+            break;
+        }
+        case BRUSH_LOCALSCALE: {
+            deformedCount = strokeLocalScale(
+                mesh->verts.data(),
+                mesh->materials.data(),
+                pickedVertices.data(),
+                pickedVertices.size(),
+                currentIntersection.x, currentIntersection.y, currentIntersection.z,
+                localRadius, intensity,
+                getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
+                false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
+            );
+            break;
+        }
+        case BRUSH_CLAY: {
+            glm::vec3 areaNormal = cachedAreaNormal;
+            glm::vec3 areaCenter = cachedAreaCenter;
+
+            float off = localRadius * 0.1f;
+            areaCenter += areaNormal * (negative ? -off : off);
+
+            deformedCount = strokeFlatten(
+                mesh->verts.data(),
+                mesh->vertProxy.data(),
+                mesh->materials.data(),
+                pickedVertices.data(),
+                pickedVertices.size(),
+                currentIntersection.x, currentIntersection.y, currentIntersection.z,
+                areaCenter.x, areaCenter.y, areaCenter.z,
+                areaNormal.x, areaNormal.y, areaNormal.z,
+                localRadius, intensity,
+                negative, getCurrentSettings().accumulate, getCurrentSettings().lockPosition,
+                0.0f, true,
+                false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
+            );
+            break;
+        }
+        case BRUSH_CLAYBUILDUP: {
+            glm::vec3 areaNormal = cachedAreaNormal;
+            glm::vec3 areaCenter = cachedAreaCenter;
+
+            float off = localRadius * 0.1f;
+            areaCenter += areaNormal * (negative ? -off : off);
+
+            deformedCount = strokeFlatten(
+                mesh->verts.data(),
+                mesh->vertProxy.data(),
+                mesh->materials.data(),
+                pickedVertices.data(),
+                pickedVertices.size(),
+                currentIntersection.x, currentIntersection.y, currentIntersection.z,
+                areaCenter.x, areaCenter.y, areaCenter.z,
+                areaNormal.x, areaNormal.y, areaNormal.z,
+                localRadius, intensity * 0.1f,
+                negative, getCurrentSettings().accumulate, getCurrentSettings().lockPosition,
+                0.0f, true,
+                false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
+            );
+            break;
+        }
+        case BRUSH_DAMSTANDARD: {
+            deformedCount = strokeDamStandard(
+                mesh->verts.data(),
+                mesh->vertProxy.data(),
+                mesh->materials.data(),
+                pickedVertices.data(),
+                pickedVertices.size(),
+                currentIntersection.x, currentIntersection.y, currentIntersection.z,
+                currentIntersectionNormal.x, currentIntersectionNormal.y, currentIntersectionNormal.z,
+                localRadius, intensity,
+                negative,
+                getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
+                false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
+            );
+            break;
+        }
+        case BRUSH_SQUAREBRUSH: {
+            glm::vec3 areaCenter = currentIntersection;
+            glm::vec3 areaNormal = currentIntersectionNormal;
+            std::vector<float> areaResults(7, 0.0f);
+            computeAreaNormalAndCenter(
+                mesh->verts.data(),
+                mesh->normals.data(),
+                mesh->materials.data(),
+                pickedVertices.data(),
+                pickedVertices.size(),
+                areaResults.data()
+            );
+            areaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
+            areaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
+
+            float off = localRadius * 0.1f;
+            areaCenter += areaNormal * (negative ? -off : off);
+
+            glm::mat4 invMeshMatrix = glm::inverse(mesh->matrix);
+            glm::mat4 camWorld = glm::inverse(scene.getCamera().getViewMatrix());
+            glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
+            glm::vec3 camUpLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[1]), 0.0f)));
+
+            glm::vec3 sqX = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
+            glm::vec3 sqY = glm::normalize(glm::cross(areaNormal, sqX));
+
+            float alphaLookAt[16] = {0.0f};
+            alphaLookAt[0] = sqX.x; alphaLookAt[4] = sqX.y; alphaLookAt[8] = sqX.z;  alphaLookAt[12] = -glm::dot(sqX, currentIntersection);
+            alphaLookAt[1] = sqY.x; alphaLookAt[5] = sqY.y; alphaLookAt[9] = sqY.z;  alphaLookAt[13] = -glm::dot(sqY, currentIntersection);
+
+            deformedCount = strokeSquareBrush(
+                mesh->verts.data(),
+                mesh->materials.data(),
+                pickedVertices.data(),
+                pickedVertices.size(),
+                currentIntersection.x, currentIntersection.y, currentIntersection.z,
+                areaCenter.x, areaCenter.y, areaCenter.z,
+                areaNormal.x, areaNormal.y, areaNormal.z,
+                localRadius, intensity,
+                negative,
+                getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
+                1.0f, 1.0f, localRadius,
+                alphaLookAt, false
+            );
+            break;
+        }
+        default:
+            break;
+    }
+
+    if (deformedCount > 0) {
+        if (m_tagFlags.size() < (size_t)mesh->nbFaces) {
+            m_tagFlags.assign(mesh->nbFaces, 0);
+        }
+        if (m_iFacesCache.size() < (size_t)mesh->nbFaces) {
+            m_iFacesCache.resize(mesh->nbFaces);
+        }
+
+        uint32_t numIFaces = getFacesFromVerticesFast(
+            pickedVertices.data(),
+            pickedVertices.size(),
+            mesh->vrfStartCount.data(),
+            mesh->vertRingFace.data(),
+            m_iFacesCache.data(),
+            m_tagFlags.data(),
+            &m_tagEpoch,
+            mesh->nbFaces
+        );
+
+        updateFaceNormalsAndBoxes(
+            mesh->verts.data(), mesh->nbVerts,
+            mesh->faces.data(), mesh->nbFaces,
+            m_iFacesCache.data(), numIFaces,
+            mesh->faceNormals.data(),
+            mesh->faceBoxes.data(),
+            mesh->faceCenters.data()
+        );
+
+        updateVertexNormals(
+            pickedVertices.data(), pickedVertices.size(), mesh->nbVerts,
+            mesh->vrfStartCount.data(),
+            mesh->vertRingFace.data(),
+            mesh->faceNormals.data(),
+            mesh->normals.data()
+        );
+
+        mesh->octree.update(
+            mesh->verts.data(), mesh->nbVerts,
+            mesh->faces.data(), mesh->nbFaces,
+            mesh->faceBoxes.data(),
+            m_iFacesCache.data(), numIFaces
+        );
+
+        uint32_t minV = pickedVertices[0];
+        uint32_t maxV = pickedVertices[0];
+        for (int i = 1; i < deformedCount; ++i) {
+            uint32_t v = pickedVertices[i];
+            if (v < minV) minV = v;
+            if (v > maxV) maxV = v;
+        }
+        if (mesh->isVertexDirty) {
+            mesh->dirtyVertMin = std::min(mesh->dirtyVertMin, minV);
+            mesh->dirtyVertMax = std::max(mesh->dirtyVertMax, maxV);
+        } else {
+            mesh->dirtyVertMin = minV;
+            mesh->dirtyVertMax = maxV;
+            mesh->isVertexDirty = true;
+        }
+    }
+
+    return deformedCount;
+}
+
 void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, float mouseX, float mouseY, float currentPressure) {
     Ray ray = camera.getRay(mouseX, mouseY);
     glm::mat4 invMatrix = glm::inverse(mesh->matrix);
@@ -300,6 +715,11 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         mesh->faceNormals[intersectFaceId * 3 + 2]
     );
 
+    // Save last valid intersection to prevent cursor jitter (Step 1b)
+    m_lastValidIntersection = m_currentIntersection;
+    m_lastValidIntersectionNormal = m_currentIntersectionNormal;
+    m_hasAnyValidIntersection = true;
+
     glm::vec3 cameraPos = camera.computePosition();
     glm::vec3 worldIntersection = glm::vec3(mesh->matrix * glm::vec4(m_currentIntersection, 1.0f));
     float hitDepth = glm::distance(cameraPos, worldIntersection);
@@ -351,427 +771,96 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         bool altPressed = (SDL_GetModState() & KMOD_ALT) != 0;
         bool negative = getCurrentSettings().negative ^ altPressed;
 
-        int deformedCount = 0;
-
-        switch (activeBrush) {
-            case BRUSH_FLATTEN: {
-                glm::vec3 areaCenter = m_currentIntersection;
-                glm::vec3 areaNormal = m_currentIntersectionNormal;
-                std::vector<float> areaResults(7, 0.0f);
-                computeAreaNormalAndCenter(
-                    mesh->verts.data(),
-                    mesh->normals.data(),
-                    mesh->materials.data(),
-                    pickedVertices.data(),
-                    pickedVertices.size(),
-                    areaResults.data()
-                );
-                areaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
-                areaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
-
-                deformedCount = strokeFlatten(
-                    mesh->verts.data(),
-                    mesh->vertProxy.data(),
-                    mesh->materials.data(),
-                    pickedVertices.data(),
-                    pickedVertices.size(),
-                    m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z,
-                    areaCenter.x, areaCenter.y, areaCenter.z,
-                    areaNormal.x, areaNormal.y, areaNormal.z,
-                    localRadius, intensity,
-                    negative, getCurrentSettings().accumulate, getCurrentSettings().lockPosition,
-                    getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
-                    false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
-                );
-                break;
-            }
-            case BRUSH_SMOOTH: {
-                deformedCount = strokeSmooth(
-                    mesh->verts.data(),
-                    mesh->normals.data(),
-                    mesh->materials.data(),
-                    mesh->vrvStartCount.data(),
-                    mesh->vertRingVert.data(),
-                    mesh->vertOnEdge.data(),
-                    pickedVertices.data(),
-                    pickedVertices.size(),
-                    m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z,
-                    localRadius, intensity,
-                    getCurrentSettings().tangent,
-                    getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
-                    false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
-                );
-                break;
-            }
-            case BRUSH_INFLATE: {
-                deformedCount = strokeInflate(
-                    mesh->verts.data(),
-                    mesh->vertProxy.data(),
-                    mesh->materials.data(),
-                    mesh->normals.data(),
-                    pickedVertices.data(),
-                    pickedVertices.size(),
-                    m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z,
-                    localRadius, intensity,
-                    negative,
-                    getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
-                    false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false,
-                    false, nullptr
-                );
-                break;
-            }
-            case BRUSH_PINCH: {
-                deformedCount = strokePinch(
-                    mesh->verts.data(),
-                    mesh->materials.data(),
-                    pickedVertices.data(),
-                    pickedVertices.size(),
-                    m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z,
-                    localRadius, intensity,
-                    negative,
-                    getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
-                    false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false,
-                    false, nullptr
-                );
-                break;
-            }
-            case BRUSH_CREASE: {
-                deformedCount = strokeCrease(
-                    mesh->verts.data(),
-                    mesh->vertProxy.data(),
-                    mesh->materials.data(),
-                    pickedVertices.data(),
-                    pickedVertices.size(),
-                    m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z,
-                    m_currentIntersectionNormal.x, m_currentIntersectionNormal.y, m_currentIntersectionNormal.z,
-                    localRadius, intensity,
-                    negative,
-                    getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
-                    false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false,
-                    false, nullptr
-                );
-                break;
-            }
-            case BRUSH_VTOOL: {
-                deformedCount = strokeVTool(
-                    mesh->verts.data(),
-                    mesh->vertProxy.data(),
-                    mesh->materials.data(),
-                    pickedVertices.data(),
-                    pickedVertices.size(),
-                    m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z,
-                    m_currentIntersectionNormal.x, m_currentIntersectionNormal.y, m_currentIntersectionNormal.z,
-                    localRadius, intensity,
-                    negative,
-                    -0.4f, true,
-                    false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false,
-                    false, nullptr
-                );
-                break;
-            }
-            case BRUSH_MOVE: {
-                glm::vec3 dragDirection = m_currentIntersection - m_initialIntersection;
-                deformedCount = strokeMove(
-                    mesh->verts.data(),
-                    mesh->vertProxy.data(),
-                    mesh->materials.data(),
-                    pickedVertices.data(),
-                    pickedVertices.size(),
-                    m_initialIntersection.x, m_initialIntersection.y, m_initialIntersection.z,
-                    dragDirection.x, dragDirection.y, dragDirection.z,
-                    localRadius,
-                    getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
-                    false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false,
-                    false, nullptr
-                );
-                break;
-            }
-            case BRUSH_DRAG: {
-                glm::vec3 dragDirection = m_currentIntersection - m_initialIntersection;
-                deformedCount = strokeDrag(
-                    mesh->verts.data(),
-                    mesh->materials.data(),
-                    pickedVertices.data(),
-                    pickedVertices.size(),
-                    m_initialIntersection.x, m_initialIntersection.y, m_initialIntersection.z,
-                    dragDirection.x, dragDirection.y, dragDirection.z,
-                    localRadius,
-                    getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
-                    false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false,
-                    false, nullptr
-                );
-                break;
-            }
-            case BRUSH_ELASTIC: {
-                glm::vec3 dragDirection = m_currentIntersection - m_initialIntersection;
-                deformedCount = strokeElastic(
-                    mesh->verts.data(),
-                    mesh->vertProxy.data(),
-                    mesh->materials.data(),
-                    pickedVertices.data(),
-                    pickedVertices.size(),
-                    m_initialIntersection.x, m_initialIntersection.y, m_initialIntersection.z,
-                    dragDirection.x, dragDirection.y, dragDirection.z,
-                    localRadius, getCurrentSettings().elasticity,
-                    getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
-                    false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false,
-                    false, nullptr
-                );
-                break;
-            }
-            case BRUSH_MASK: {
-                deformedCount = strokeMask(
-                    mesh->verts.data(),
-                    mesh->materials.data(),
-                    pickedVertices.data(),
-                    pickedVertices.size(),
-                    m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z,
-                    localRadius, intensity, getCurrentSettings().hardness,
-                    negative,
-                    getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
-                    false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
-                );
-                break;
-            }
-            case BRUSH_PAINT: {
-                deformedCount = strokePaint(
-                    mesh->verts.data(),
-                    mesh->colors.data(),
-                    mesh->materials.data(),
-                    pickedVertices.data(),
-                    pickedVertices.size(),
-                    m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z,
-                    localRadius, intensity, getCurrentSettings().hardness,
-                    getCurrentSettings().paintColor.r, getCurrentSettings().paintColor.g, getCurrentSettings().paintColor.b,
-                    getCurrentSettings().paintRoughness, getCurrentSettings().paintMetallic,
-                    getCurrentSettings().writeAlbedo, getCurrentSettings().writeRoughness, getCurrentSettings().writeMetalness,
-                    getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
-                    false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
-                );
-                break;
-            }
-            case BRUSH_TWIST: {
-                deformedCount = strokeTwist(
-                    mesh->verts.data(),
-                    mesh->materials.data(),
-                    pickedVertices.data(),
-                    pickedVertices.size(),
-                    m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z,
-                    m_currentIntersectionNormal.x, m_currentIntersectionNormal.y, m_currentIntersectionNormal.z,
-                    localRadius, intensity * 3.14159f * 0.5f,
-                    getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
-                    false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
-                );
-                break;
-            }
-            case BRUSH_LOCALSCALE: {
-                deformedCount = strokeLocalScale(
-                    mesh->verts.data(),
-                    mesh->materials.data(),
-                    pickedVertices.data(),
-                    pickedVertices.size(),
-                    m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z,
-                    localRadius, intensity,
-                    getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
-                    false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
-                );
-                break;
-            }
-            case BRUSH_CLAY: {
-                if (m_firstStrokeFrame) {
-                    std::vector<float> areaResults(7, 0.0f);
-                    computeAreaNormalAndCenter(
-                        mesh->verts.data(),
-                        mesh->normals.data(),
-                        mesh->materials.data(),
-                        pickedVertices.data(),
-                        pickedVertices.size(),
-                        areaResults.data()
-                    );
-                    m_cachedAreaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
-                    m_cachedAreaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
-                }
-                glm::vec3 areaNormal = m_cachedAreaNormal;
-                glm::vec3 areaCenter = m_cachedAreaCenter;
-
-                float off = localRadius * 0.1f;
-                areaCenter += areaNormal * (negative ? -off : off);
-
-                deformedCount = strokeFlatten(
-                    mesh->verts.data(),
-                    mesh->vertProxy.data(),
-                    mesh->materials.data(),
-                    pickedVertices.data(),
-                    pickedVertices.size(),
-                    m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z,
-                    areaCenter.x, areaCenter.y, areaCenter.z,
-                    areaNormal.x, areaNormal.y, areaNormal.z,
-                    localRadius, intensity,
-                    negative, getCurrentSettings().accumulate, getCurrentSettings().lockPosition,
-                    0.0f, true,
-                    false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
-                );
-                break;
-            }
-            case BRUSH_CLAYBUILDUP: {
-                if (m_firstStrokeFrame) {
-                    std::vector<float> areaResults(7, 0.0f);
-                    computeAreaNormalAndCenter(
-                        mesh->verts.data(),
-                        mesh->normals.data(),
-                        mesh->materials.data(),
-                        pickedVertices.data(),
-                        pickedVertices.size(),
-                        areaResults.data()
-                    );
-                    m_cachedAreaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
-                    m_cachedAreaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
-                }
-                glm::vec3 areaNormal = m_cachedAreaNormal;
-                glm::vec3 areaCenter = m_cachedAreaCenter;
-
-                float off = localRadius * 0.1f;
-                areaCenter += areaNormal * (negative ? -off : off);
-
-                deformedCount = strokeFlatten(
-                    mesh->verts.data(),
-                    mesh->vertProxy.data(),
-                    mesh->materials.data(),
-                    pickedVertices.data(),
-                    pickedVertices.size(),
-                    m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z,
-                    areaCenter.x, areaCenter.y, areaCenter.z,
-                    areaNormal.x, areaNormal.y, areaNormal.z,
-                    localRadius, intensity * 0.1f,
-                    negative, getCurrentSettings().accumulate, getCurrentSettings().lockPosition,
-                    0.0f, true,
-                    false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
-                );
-                break;
-            }
-            case BRUSH_DAMSTANDARD: {
-                deformedCount = strokeDamStandard(
-                    mesh->verts.data(),
-                    mesh->vertProxy.data(),
-                    mesh->materials.data(),
-                    pickedVertices.data(),
-                    pickedVertices.size(),
-                    m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z,
-                    m_currentIntersectionNormal.x, m_currentIntersectionNormal.y, m_currentIntersectionNormal.z,
-                    localRadius, intensity,
-                    negative,
-                    getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
-                    false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
-                );
-                break;
-            }
-            case BRUSH_SQUAREBRUSH: {
-                glm::vec3 areaCenter = m_currentIntersection;
-                glm::vec3 areaNormal = m_currentIntersectionNormal;
-                std::vector<float> areaResults(7, 0.0f);
-                computeAreaNormalAndCenter(
-                    mesh->verts.data(),
-                    mesh->normals.data(),
-                    mesh->materials.data(),
-                    pickedVertices.data(),
-                    pickedVertices.size(),
-                    areaResults.data()
-                );
-                areaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
-                areaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
-
-                float off = localRadius * 0.1f;
-                areaCenter += areaNormal * (negative ? -off : off);
-
-                glm::mat4 invMeshMatrix = glm::inverse(mesh->matrix);
-                glm::mat4 camWorld = glm::inverse(scene.getCamera().getViewMatrix());
-                glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
-                glm::vec3 camUpLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[1]), 0.0f)));
-
-                glm::vec3 sqX = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
-                glm::vec3 sqY = glm::normalize(glm::cross(areaNormal, sqX));
-
-                float alphaLookAt[16] = {0.0f};
-                alphaLookAt[0] = sqX.x; alphaLookAt[4] = sqX.y; alphaLookAt[8] = sqX.z;  alphaLookAt[12] = -glm::dot(sqX, m_currentIntersection);
-                alphaLookAt[1] = sqY.x; alphaLookAt[5] = sqY.y; alphaLookAt[9] = sqY.z;  alphaLookAt[13] = -glm::dot(sqY, m_currentIntersection);
-
-                deformedCount = strokeSquareBrush(
-                    mesh->verts.data(),
-                    mesh->materials.data(),
-                    pickedVertices.data(),
-                    pickedVertices.size(),
-                    m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z,
-                    areaCenter.x, areaCenter.y, areaCenter.z,
-                    areaNormal.x, areaNormal.y, areaNormal.z,
-                    localRadius, intensity,
-                    negative,
-                    getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
-                    1.0f, 1.0f, localRadius,
-                    alphaLookAt, false
-                );
-                break;
-            }
-            default:
-                break;
-        }
-
-        if (deformedCount > 0) {
-            if (m_tagFlags.size() < (size_t)mesh->nbFaces) {
-                m_tagFlags.assign(mesh->nbFaces, 0);
-            }
-            if (m_iFacesCache.size() < (size_t)mesh->nbFaces) {
-                m_iFacesCache.resize(mesh->nbFaces);
-            }
-
-            uint32_t numIFaces = getFacesFromVerticesFast(
+        // Cache area normal and center for Clay brushes on first frame
+        if (m_firstStrokeFrame && (activeBrush == BRUSH_CLAY || activeBrush == BRUSH_CLAYBUILDUP)) {
+            std::vector<float> areaResults(7, 0.0f);
+            computeAreaNormalAndCenter(
+                mesh->verts.data(),
+                mesh->normals.data(),
+                mesh->materials.data(),
                 pickedVertices.data(),
                 pickedVertices.size(),
-                mesh->vrfStartCount.data(),
-                mesh->vertRingFace.data(),
-                m_iFacesCache.data(),
-                m_tagFlags.data(),
-                &m_tagEpoch,
-                mesh->nbFaces
+                areaResults.data()
             );
+            m_cachedAreaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
+            m_cachedAreaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
+        }
 
-            updateFaceNormalsAndBoxes(
-                mesh->verts.data(), mesh->nbVerts,
-                mesh->faces.data(), mesh->nbFaces,
-                m_iFacesCache.data(), numIFaces,
-                mesh->faceNormals.data(),
-                mesh->faceBoxes.data(),
-                mesh->faceCenters.data()
-            );
+        // Primary pass
+        doStrokePass(
+            scene,
+            mesh,
+            activeBrush,
+            negative,
+            pickedVertices,
+            m_currentIntersection,
+            m_currentIntersectionNormal,
+            m_initialIntersection,
+            m_cachedAreaNormal,
+            m_cachedAreaCenter,
+            localRadius,
+            intensity
+        );
 
-            updateVertexNormals(
-                pickedVertices.data(), pickedVertices.size(), mesh->nbVerts,
-                mesh->vrfStartCount.data(),
-                mesh->vertRingFace.data(),
-                mesh->faceNormals.data(),
-                mesh->normals.data()
-            );
-
-            mesh->octree.update(
-                mesh->verts.data(), mesh->nbVerts,
-                mesh->faces.data(), mesh->nbFaces,
-                mesh->faceBoxes.data(),
-                m_iFacesCache.data(), numIFaces
-            );
-
-            uint32_t minV = pickedVertices[0];
-            uint32_t maxV = pickedVertices[0];
-            for (int i = 1; i < deformedCount; ++i) {
-                uint32_t v = pickedVertices[i];
-                if (v < minV) minV = v;
-                if (v > maxV) maxV = v;
+        // Symmetry pass (Step 2)
+        if (m_useSym) {
+            // Reflect center of stroke in mesh's local space
+            glm::vec3 symCenter = m_currentIntersection;
+            glm::vec3 symNormal = m_currentIntersectionNormal;
+            if (m_symAxis == 0) {
+                symCenter.x = -symCenter.x;
+                symNormal.x = -symNormal.x;
+            } else if (m_symAxis == 1) {
+                symCenter.y = -symCenter.y;
+                symNormal.y = -symNormal.y;
+            } else if (m_symAxis == 2) {
+                symCenter.z = -symCenter.z;
+                symNormal.z = -symNormal.z;
             }
-            if (mesh->isVertexDirty) {
-                mesh->dirtyVertMin = std::min(mesh->dirtyVertMin, minV);
-                mesh->dirtyVertMax = std::max(mesh->dirtyVertMax, maxV);
-            } else {
-                mesh->dirtyVertMin = minV;
-                mesh->dirtyVertMax = maxV;
-                mesh->isVertexDirty = true;
+
+            // Gather symmetry vertices in local space
+            std::vector<uint32_t> symVerts = mesh->octree.pickVerticesInSphere(
+                symCenter.x, symCenter.y, symCenter.z,
+                radius2, mesh->vertVisible.data()
+            );
+
+            if (getCurrentSettings().culling && !symVerts.empty()) {
+                glm::vec3 symRayDir = localRayDir;
+                if (m_symAxis == 0) symRayDir.x = -symRayDir.x;
+                else if (m_symAxis == 1) symRayDir.y = -symRayDir.y;
+                else if (m_symAxis == 2) symRayDir.z = -symRayDir.z;
+                filterCullingVertices(symVerts, mesh, symRayDir);
+            }
+
+            if (!symVerts.empty()) {
+                // Mirror cached area normal and center for symmetry pass
+                glm::vec3 symAreaNormal = m_cachedAreaNormal;
+                glm::vec3 symAreaCenter = m_cachedAreaCenter;
+                if (m_symAxis == 0) {
+                    symAreaNormal.x = -symAreaNormal.x;
+                    symAreaCenter.x = -symAreaCenter.x;
+                } else if (m_symAxis == 1) {
+                    symAreaNormal.y = -symAreaNormal.y;
+                    symAreaCenter.y = -symAreaCenter.y;
+                } else if (m_symAxis == 2) {
+                    symAreaNormal.z = -symAreaNormal.z;
+                    symAreaCenter.z = -symAreaCenter.z;
+                }
+
+                doStrokePass(
+                    scene,
+                    mesh,
+                    activeBrush,
+                    negative,
+                    symVerts,
+                    symCenter,
+                    symNormal,
+                    m_initialSymIntersection,
+                    symAreaNormal,
+                    symAreaCenter,
+                    localRadius,
+                    intensity
+                );
             }
         }
     }
@@ -1479,6 +1568,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
         if (m_isSculpting) {
             m_isSculpting = false;
             m_currentIntersectionValid = false;
+            m_hasAnyValidIntersection = false;
             int dragDistX = std::abs(event.button.x - m_mouseDownX);
             int dragDistY = std::abs(event.button.y - m_mouseDownY);
             bool wasClick = (dragDistX <= 3 && dragDistY <= 3);
@@ -1797,9 +1887,9 @@ void SculptManager::processFrame(Scene& scene) {
             m_symAxis,
             m_isSculpting,
             activeBrush,
-            m_isSculpting && m_currentIntersectionValid,
-            m_currentIntersection,
-            m_currentIntersectionNormal
+            m_isSculpting ? m_hasAnyValidIntersection : m_currentIntersectionValid,
+            m_isSculpting ? m_lastValidIntersection : m_currentIntersection,
+            m_isSculpting ? m_lastValidIntersectionNormal : m_currentIntersectionNormal
         );
     }
 }

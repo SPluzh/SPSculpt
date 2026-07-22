@@ -72,6 +72,11 @@ private:
     glm::vec3 m_currentIntersection{0.0f};
     glm::vec3 m_currentIntersectionNormal{0.0f};
 
+    glm::vec3 m_lastValidIntersection{0.0f};
+    glm::vec3 m_lastValidIntersectionNormal{0.0f, 1.0f, 0.0f};
+    bool      m_hasAnyValidIntersection = false;
+    glm::vec3 m_initialSymIntersection{0.0f};
+
     int m_prevMouseX = 0;
     int m_prevMouseY = 0;
 
@@ -268,6 +273,21 @@ private:
 
     int m_dividerDivisions = 3; // От 2 до 6
     bool m_measureUseDistanceThickness = true;
+
+    int doStrokePass(
+        Scene& scene,
+        Mesh* mesh,
+        BrushType activeBrush,
+        bool negative,
+        std::vector<uint32_t>& pickedVertices,
+        const glm::vec3& currentIntersection,
+        const glm::vec3& currentIntersectionNormal,
+        const glm::vec3& initialIntersection,
+        const glm::vec3& cachedAreaNormal,
+        const glm::vec3& cachedAreaCenter,
+        float localRadius,
+        float intensity
+    );
 };
 
 

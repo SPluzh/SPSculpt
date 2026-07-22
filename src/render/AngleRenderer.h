@@ -119,7 +119,8 @@ public:
         uintptr_t dotMVPPtr,
         uintptr_t symMVPsPtr,
         int symMVPsCount,
-        uintptr_t cursorColorPtr
+        uintptr_t cursorColorPtr,
+        uintptr_t symOccludedPtr = 0
     );
 
     void setLassoParameters(bool active, const std::vector<glm::vec2>& points, bool altMode, bool isMaskLasso);
@@ -177,6 +178,7 @@ private:
     glm::mat4 m_innerCircleMVP{1.0f};
     glm::mat4 m_dotMVP{1.0f};
     std::vector<glm::mat4> m_symMVPs;
+    std::vector<char> m_symOccluded;
     glm::vec3 m_cursorColor{1.0f, 0.0f, 0.0f};
 
     // Lasso selection parameters

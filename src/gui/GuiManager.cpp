@@ -1661,14 +1661,23 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGui::GetForegroundDrawList()->AddConvexPolyFilled(dotPoints.data(), dotSegments, colorU32);
 
             // Draw symmetry dots
-            for (const auto& symMVP : cursorState.symMVPs) {
+            for (size_t idx = 0; idx < cursorState.symMVPs.size(); ++idx) {
+                const auto& symMVP = cursorState.symMVPs[idx];
+                bool occluded = (idx < cursorState.symOccluded.size()) ? cursorState.symOccluded[idx] : false;
+
                 std::vector<ImVec2> symPoints(dotSegments);
                 for (int i = 0; i < dotSegments; ++i) {
                     float angle = i * 2.0f * 3.1415926535f / dotSegments;
                     glm::vec3 localPos(std::cos(angle), std::sin(angle), 0.0f);
                     symPoints[i] = projectPoint(symMVP, localPos, leftViewportWidth, viewportHeight, leftViewportX);
                 }
-                ImGui::GetForegroundDrawList()->AddConvexPolyFilled(symPoints.data(), dotSegments, colorU32);
+                
+                ImU32 dotColorU32 = colorU32;
+                if (occluded) {
+                    glm::vec3 darkColor = cursorState.color * 0.3f;
+                    dotColorU32 = ImGui::ColorConvertFloat4ToU32(ImVec4(darkColor.r, darkColor.g, darkColor.b, 1.0f));
+                }
+                ImGui::GetForegroundDrawList()->AddConvexPolyFilled(symPoints.data(), dotSegments, dotColorU32);
             }
         }
     }

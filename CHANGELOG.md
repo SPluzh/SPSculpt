@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.1]
+- **Symmetry**: Implemented highly-optimized CPU-based raycasting check using the mesh's octree traversal and Möller-Trumbore ray-triangle intersections. Symmetry cursor dots are dynamically dimmed/darkened to 0.3x opacity when hidden behind the mesh geometry, fully supporting both the vector-based Smooth Cursor (drawn in ImGui) and the standard OpenGL shader cursor.
+- **Symmetry**: Extracted brush logic switch into `doStrokePass` and implemented double-pass brush execution (primary coordinate and mirrored coordinate across the selected axis) inside `executeStroke`, resolving issues with broken symmetry for all brush types (including drag-based brushes).
+- **Symmetry**: Modified stroke frame throttling to cache the last valid raycast intersection, preventing the sculpting cursor from flickering and snapping back to screen-space coordinates during active strokes.
+
 ## [1.2.0]
 - **UI**: Added "Use Pressure for Size" and "Use Pressure for Cursor Dot" toggles to both the Sculpting Settings and Tablet Diagnostics panels to dynamically scale the brush size and the cursor dot based on stylus pressure.
 - **Settings**: Serialized tablet pressure, pressure-size, pressure-cursor, and tilt settings to the local configuration file for persistence across sessions.

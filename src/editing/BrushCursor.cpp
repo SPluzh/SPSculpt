@@ -41,6 +41,64 @@ static bool rayTriangleIntersect(
     return t > EPSILON;
 }
 
+static bool checkOcclusion(const glm::vec3& worldPos, const Camera& camera, Mesh* mesh) {
+    if (!mesh) return false;
+
+    glm::vec3 screenPos = camera.project(worldPos);
+    Ray ray = camera.getRay(screenPos.x, screenPos.y);
+
+    glm::mat4 invMatrix = glm::inverse(mesh->matrix);
+    glm::vec3 localRayOrigin = glm::vec3(invMatrix * glm::vec4(ray.origin, 1.0f));
+    glm::vec3 localRayDir = glm::normalize(glm::vec3(invMatrix * glm::vec4(ray.dir, 0.0f)));
+
+    float targetLocalT = glm::distance(localRayOrigin, glm::vec3(invMatrix * glm::vec4(worldPos, 1.0f)));
+
+    std::vector<uint32_t> candidateFaces = mesh->octree.collectIntersectRay(
+        localRayOrigin.x, localRayOrigin.y, localRayOrigin.z,
+        localRayDir.x, localRayDir.y, localRayDir.z
+    );
+
+    float minT = std::numeric_limits<float>::infinity();
+
+    for (uint32_t faceId : candidateFaces) {
+        if (faceId >= (uint32_t)mesh->nbFaces) continue;
+        uint32_t v0Id = mesh->faces[faceId * 4];
+        uint32_t v1Id = mesh->faces[faceId * 4 + 1];
+        uint32_t v2Id = mesh->faces[faceId * 4 + 2];
+        uint32_t v3Id = mesh->faces[faceId * 4 + 3];
+
+        if (!mesh->vertVisible[v0Id] || !mesh->vertVisible[v1Id] || !mesh->vertVisible[v2Id] || (v3Id != 0xffffffff && !mesh->vertVisible[v3Id])) {
+            continue;
+        }
+
+        glm::vec3 v0(mesh->verts[v0Id * 3], mesh->verts[v0Id * 3 + 1], mesh->verts[v0Id * 3 + 2]);
+        glm::vec3 v1(mesh->verts[v1Id * 3], mesh->verts[v1Id * 3 + 1], mesh->verts[v1Id * 3 + 2]);
+        glm::vec3 v2(mesh->verts[v2Id * 3], mesh->verts[v2Id * 3 + 1], mesh->verts[v2Id * 3 + 2]);
+
+        float t;
+        if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v1, v2, t)) {
+            if (t < minT) {
+                minT = t;
+            }
+        }
+
+        if (v3Id != 0xffffffff) {
+            glm::vec3 v3(mesh->verts[v3Id * 3], mesh->verts[v3Id * 3 + 1], mesh->verts[v3Id * 3 + 2]);
+            if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v2, v3, t)) {
+                if (t < minT) {
+                    minT = t;
+                }
+            }
+        }
+    }
+
+    if (minT < targetLocalT * 0.995f) {
+        return true;
+    }
+    return false;
+}
+
+
 BrushCursor::BrushCursor() {
     m_state.visible = false;
 }
@@ -214,6 +272,7 @@ void BrushCursor::update(int mouseX, int mouseY,
 
         // Symmetry MVPs
         m_state.symMVPs.clear();
+        m_state.symOccluded.clear();
         if (useSym && mesh) {
             glm::mat4 invMatrix = glm::inverse(mesh->matrix);
             glm::vec3 lPt = glm::vec3(invMatrix * glm::vec4(worldPt, 1.0f));
@@ -238,6 +297,9 @@ void BrushCursor::update(int mouseX, int mouseY,
 
             glm::mat4 symMVP = buildCircleMVP(worldSymPt, worldSymNormal, constRadius, camera, tiltX, tiltY);
             m_state.symMVPs.push_back(symMVP);
+            
+            bool occluded = checkOcclusion(worldSymPt, camera, mesh);
+            m_state.symOccluded.push_back(occluded ? 1 : 0);
         }
     } else {
         // Background Screenspace Mode
@@ -258,6 +320,7 @@ void BrushCursor::update(int mouseX, int mouseY,
         m_state.innerCircleMVP = orthoProj * glm::scale(trans, glm::vec3(brushRadius * 0.5f, brushRadius * 0.5f, 1.0f));
         m_state.dotMVP = orthoProj * glm::scale(trans, glm::vec3(backgroundDotSize, backgroundDotSize, 1.0f));
         m_state.symMVPs.clear();
+        m_state.symOccluded.clear();
     }
 
     if (isSculpting) {
@@ -285,6 +348,7 @@ void BrushCursor::applyToRenderer(AngleRenderer& renderer) const {
         uintptr_t symPtr = m_state.symMVPs.empty() ? 0 : reinterpret_cast<uintptr_t>(m_state.symMVPs.data());
         int symCount = static_cast<int>(m_state.symMVPs.size());
         uintptr_t colorPtr = reinterpret_cast<uintptr_t>(glm::value_ptr(m_state.color));
+        uintptr_t occludedPtr = m_state.symOccluded.empty() ? 0 : reinterpret_cast<uintptr_t>(m_state.symOccluded.data());
 
         renderer.setCursorParametersFast(
             true,
@@ -294,10 +358,11 @@ void BrushCursor::applyToRenderer(AngleRenderer& renderer) const {
             dotPtr,
             symPtr,
             symCount,
-            colorPtr
+            colorPtr,
+            occludedPtr
         );
     } else {
-        renderer.setCursorParametersFast(false, false, 0, 0, 0, 0, 0, 0);
+        renderer.setCursorParametersFast(false, false, 0, 0, 0, 0, 0, 0, 0);
     }
 }
 
