@@ -89,4 +89,5 @@ private:
     ModalMode m_modalMode = ModalMode::NONE;
     BrushType m_prevBrush = BRUSH_FLATTEN;
     bool m_shiftActive = false;
+    bool m_ctrlActive = false;
 };

@@ -7,7 +7,8 @@
 HotkeyDispatcher::HotkeyDispatcher() 
     : m_modalMode(ModalMode::NONE)
     , m_prevBrush(BRUSH_FLATTEN)
-    , m_shiftActive(false) {}
+    , m_shiftActive(false)
+    , m_ctrlActive(false) {}
 
 bool HotkeyDispatcher::processEvent(const SDL_Event& event, SculptManager& sculpt, Scene& scene, GuiManager& gui) {
     if (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) {
@@ -80,16 +81,39 @@ void HotkeyDispatcher::updateModifiers(const SDL_Event& event, SculptManager& sc
     if (event.type == SDL_KEYDOWN) {
         if (event.key.keysym.sym == SDLK_LSHIFT || event.key.keysym.sym == SDLK_RSHIFT) {
             if (!m_shiftActive) {
-                m_prevBrush = sculpt.getBrush();
+                if (!m_ctrlActive) {
+                    m_prevBrush = sculpt.getBrush();
+                }
                 sculpt.setBrush(BRUSH_SMOOTH);
                 m_shiftActive = true;
+            }
+        } else if (event.key.keysym.sym == SDLK_LCTRL || event.key.keysym.sym == SDLK_RCTRL) {
+            if (!m_ctrlActive) {
+                if (!m_shiftActive) {
+                    m_prevBrush = sculpt.getBrush();
+                }
+                sculpt.setBrush(BRUSH_MASK);
+                m_ctrlActive = true;
             }
         }
     } else if (event.type == SDL_KEYUP) {
         if (event.key.keysym.sym == SDLK_LSHIFT || event.key.keysym.sym == SDLK_RSHIFT) {
             if (m_shiftActive) {
-                sculpt.setBrush(m_prevBrush);
                 m_shiftActive = false;
+                if (m_ctrlActive) {
+                    sculpt.setBrush(BRUSH_MASK);
+                } else {
+                    sculpt.setBrush(m_prevBrush);
+                }
+            }
+        } else if (event.key.keysym.sym == SDLK_LCTRL || event.key.keysym.sym == SDLK_RCTRL) {
+            if (m_ctrlActive) {
+                m_ctrlActive = false;
+                if (m_shiftActive) {
+                    sculpt.setBrush(BRUSH_SMOOTH);
+                } else {
+                    sculpt.setBrush(m_prevBrush);
+                }
             }
         }
     }

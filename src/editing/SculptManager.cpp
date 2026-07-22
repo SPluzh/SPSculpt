@@ -326,6 +326,8 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         BrushType activeBrush = m_currentBrush;
         if (SDL_GetModState() & KMOD_SHIFT) {
             activeBrush = BRUSH_SMOOTH;
+        } else if (SDL_GetModState() & KMOD_CTRL) {
+            activeBrush = BRUSH_MASK;
         }
 
         bool altPressed = (SDL_GetModState() & KMOD_ALT) != 0;
