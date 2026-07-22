@@ -1,0 +1,48 @@
+#pragma once
+#include <glm/glm.hpp>
+#include <vector>
+
+class AngleRenderer;
+class Scene;
+class Camera;
+
+struct BrushCursorState {
+    bool      visible        = false;
+    glm::vec3 hitPoint       {0.0f};
+    glm::vec3 hitNormal      {0.0f, 1.0f, 0.0f};
+    float     radius         = 8.0f;   // in world units
+    glm::vec3 color          {1.0f, 0.3f, 0.1f};
+
+    // Computed MVPs for AngleRenderer
+    glm::mat4 circleMVP      {1.0f};
+    glm::mat4 innerCircleMVP {1.0f};
+    glm::mat4 dotMVP         {1.0f};
+    std::vector<glm::mat4> symMVPs;
+};
+
+class BrushCursor {
+public:
+    BrushCursor();
+    ~BrushCursor() = default;
+
+    // Called on mouse move over viewport
+    void update(int mouseX, int mouseY,
+                const Scene& scene,
+                float brushRadius,
+                bool useSym = false,
+                int symAxis = 0); // 0=X, 1=Y, 2=Z
+
+    void applyToRenderer(AngleRenderer& renderer) const;
+
+    void hide() { m_state.visible = false; }
+
+    const BrushCursorState& getState() const { return m_state; }
+
+private:
+    BrushCursorState m_state;
+
+    glm::mat4 buildCircleMVP(const glm::vec3& center,
+                             const glm::vec3& normal,
+                             float radius,
+                             const Camera& cam) const;
+};

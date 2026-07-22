@@ -1,0 +1,227 @@
+#include "editing/BrushCursor.h"
+#include "scene/Scene.h"
+#include "scene/Camera.h"
+#include "render/AngleRenderer.h"
+#include "mesh/Mesh.h"
+#include <glm/gtc/type_ptr.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <cmath>
+#include <limits>
+#include <algorithm>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846f
+#endif
+
+static bool rayTriangleIntersect(
+    const glm::vec3& rayOrigin, const glm::vec3& rayDir,
+    const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2,
+    float& t
+) {
+    const float EPSILON = 0.0000001f;
+    glm::vec3 edge1 = v1 - v0;
+    glm::vec3 edge2 = v2 - v0;
+    glm::vec3 h = glm::cross(rayDir, edge2);
+    float a = glm::dot(edge1, h);
+    if (a > -EPSILON && a < EPSILON)
+        return false;
+    float f = 1.0f / a;
+    glm::vec3 s = rayOrigin - v0;
+    float u = f * glm::dot(s, h);
+    if (u < 0.0f || u > 1.0f)
+        return false;
+    glm::vec3 q = glm::cross(s, edge1);
+    float v = f * glm::dot(rayDir, q);
+    if (v < 0.0f || u + v > 1.0f)
+        return false;
+    t = f * glm::dot(edge2, q);
+    return t > EPSILON;
+}
+
+BrushCursor::BrushCursor() {
+    m_state.visible = false;
+}
+
+void BrushCursor::update(int mouseX, int mouseY,
+                          const Scene& scene,
+                          float brushRadius,
+                          bool useSym,
+                          int symAxis) {
+    Mesh* mesh = scene.getSelected();
+    const Camera& camera = scene.getCamera();
+
+    if (!mesh) {
+        m_state.visible = false;
+        return;
+    }
+
+    Ray ray = camera.getRay((float)mouseX, (float)mouseY);
+    glm::mat4 invMatrix = glm::inverse(mesh->matrix);
+    glm::vec3 localRayOrigin = glm::vec3(invMatrix * glm::vec4(ray.origin, 1.0f));
+    glm::vec3 localRayDir = glm::normalize(glm::vec3(invMatrix * glm::vec4(ray.dir, 0.0f)));
+
+    std::vector<uint32_t> candidateFaces = mesh->octree.collectIntersectRay(
+        localRayOrigin.x, localRayOrigin.y, localRayOrigin.z,
+        localRayDir.x, localRayDir.y, localRayDir.z
+    );
+
+    float minT = std::numeric_limits<float>::infinity();
+    uint32_t intersectFaceId = 0xffffffff;
+
+    for (uint32_t faceId : candidateFaces) {
+        if (faceId >= (uint32_t)mesh->nbFaces) continue;
+        uint32_t v0Id = mesh->faces[faceId * 4];
+        uint32_t v1Id = mesh->faces[faceId * 4 + 1];
+        uint32_t v2Id = mesh->faces[faceId * 4 + 2];
+        uint32_t v3Id = mesh->faces[faceId * 4 + 3];
+
+        glm::vec3 v0(mesh->verts[v0Id * 3], mesh->verts[v0Id * 3 + 1], mesh->verts[v0Id * 3 + 2]);
+        glm::vec3 v1(mesh->verts[v1Id * 3], mesh->verts[v1Id * 3 + 1], mesh->verts[v1Id * 3 + 2]);
+        glm::vec3 v2(mesh->verts[v2Id * 3], mesh->verts[v2Id * 3 + 1], mesh->verts[v2Id * 3 + 2]);
+
+        float t;
+        if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v1, v2, t)) {
+            if (t < minT) {
+                minT = t;
+                intersectFaceId = faceId;
+            }
+        }
+
+        if (v3Id != 0xffffffff) {
+            glm::vec3 v3(mesh->verts[v3Id * 3], mesh->verts[v3Id * 3 + 1], mesh->verts[v3Id * 3 + 2]);
+            if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v2, v3, t)) {
+                if (t < minT) {
+                    minT = t;
+                    intersectFaceId = faceId;
+                }
+            }
+        }
+    }
+
+    if (intersectFaceId == 0xffffffff) {
+        m_state.visible = false;
+        return;
+    }
+
+    m_state.visible = true;
+
+    // Intersection details in local coordinates
+    glm::vec3 localPt = localRayOrigin + minT * localRayDir;
+    glm::vec3 localNormal(
+        mesh->faceNormals[intersectFaceId * 3],
+        mesh->faceNormals[intersectFaceId * 3 + 1],
+        mesh->faceNormals[intersectFaceId * 3 + 2]
+    );
+
+    // Transform intersection details to world coordinates
+    glm::vec3 worldPt = glm::vec3(mesh->matrix * glm::vec4(localPt, 1.0f));
+    glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(mesh->matrix)));
+    glm::vec3 worldNormal = glm::normalize(normalMatrix * localNormal);
+
+    m_state.hitPoint = worldPt;
+    m_state.hitNormal = worldNormal;
+
+    // Calculate dynamic world radius based on camera distance / type
+    glm::vec3 cameraPos = camera.computePosition();
+    float hitDepth = glm::distance(cameraPos, worldPt);
+
+    float worldRadius = 0.0f;
+    if (camera.isOrthographic()) {
+        worldRadius = brushRadius * 2.0f * camera.getOrthoZoom();
+    } else {
+        float fov_rad = camera.getFovDegrees() * (float)M_PI / 180.0f;
+        float screenHeight = (float)camera.getHeight();
+        if (screenHeight <= 0.0f) screenHeight = 1.0f;
+        worldRadius = brushRadius * hitDepth * std::tan(fov_rad * 0.5f) * 2.0f / screenHeight;
+    }
+    m_state.radius = worldRadius;
+
+    // Build main circle MVPs
+    m_state.circleMVP = buildCircleMVP(worldPt, worldNormal, worldRadius, camera);
+    
+    // Default focal shift of 0.0 gives an inner ratio of 0.5f
+    float innerWorldRadius = worldRadius * 0.5f;
+    m_state.innerCircleMVP = buildCircleMVP(worldPt, worldNormal, innerWorldRadius, camera);
+
+    // Dot MVP
+    float ratio = worldRadius / brushRadius;
+    float constRadius = 2.5f * ratio;
+    m_state.dotMVP = buildCircleMVP(worldPt, worldNormal, constRadius, camera);
+
+    // Symmetry MVPs
+    m_state.symMVPs.clear();
+    if (useSym) {
+        glm::vec3 localSymPt = localPt;
+        glm::vec3 localSymNormal = localNormal;
+        if (symAxis == 0) { // X
+            localSymPt.x = -localSymPt.x;
+            localSymNormal.x = -localSymNormal.x;
+        } else if (symAxis == 1) { // Y
+            localSymPt.y = -localSymPt.y;
+            localSymNormal.y = -localSymNormal.y;
+        } else if (symAxis == 2) { // Z
+            localSymPt.z = -localSymPt.z;
+            localSymNormal.z = -localSymNormal.z;
+        }
+
+        glm::vec3 worldSymPt = glm::vec3(mesh->matrix * glm::vec4(localSymPt, 1.0f));
+        glm::vec3 worldSymNormal = glm::normalize(normalMatrix * localSymNormal);
+
+        glm::mat4 symMVP = buildCircleMVP(worldSymPt, worldSymNormal, constRadius, camera);
+        m_state.symMVPs.push_back(symMVP);
+    }
+}
+
+void BrushCursor::applyToRenderer(AngleRenderer& renderer) const {
+    if (m_state.visible) {
+        uintptr_t circlePtr = reinterpret_cast<uintptr_t>(glm::value_ptr(m_state.circleMVP));
+        uintptr_t innerPtr = reinterpret_cast<uintptr_t>(glm::value_ptr(m_state.innerCircleMVP));
+        uintptr_t dotPtr = reinterpret_cast<uintptr_t>(glm::value_ptr(m_state.dotMVP));
+        uintptr_t symPtr = m_state.symMVPs.empty() ? 0 : reinterpret_cast<uintptr_t>(m_state.symMVPs.data());
+        int symCount = static_cast<int>(m_state.symMVPs.size());
+        uintptr_t colorPtr = reinterpret_cast<uintptr_t>(glm::value_ptr(m_state.color));
+
+        renderer.setCursorParametersFast(
+            true,
+            circlePtr,
+            innerPtr,
+            dotPtr,
+            symPtr,
+            symCount,
+            colorPtr
+        );
+    } else {
+        renderer.setCursorParametersFast(false, 0, 0, 0, 0, 0, 0);
+    }
+}
+
+glm::mat4 BrushCursor::buildCircleMVP(const glm::vec3& center,
+                                      const glm::vec3& normal,
+                                      float radius,
+                                      const Camera& cam) const {
+    glm::vec3 n = glm::normalize(normal);
+    glm::vec3 base(0.0f, 0.0f, 1.0f);
+    float dot = glm::dot(base, n);
+    float rad = 0.0f;
+    glm::vec3 axis(0.0f, 0.0f, 1.0f);
+
+    if (dot > 0.9999f) {
+        rad = 0.0f;
+        axis = glm::vec3(0.0f, 0.0f, 1.0f);
+    } else if (dot < -0.9999f) {
+        rad = (float)M_PI;
+        axis = glm::vec3(1.0f, 0.0f, 0.0f);
+    } else {
+        rad = std::acos(dot);
+        axis = glm::normalize(glm::cross(base, n));
+    }
+
+    glm::mat4 model = glm::mat4(1.0f);
+    model = glm::translate(model, center);
+    if (dot < 0.9999f) {
+        model = glm::rotate(model, rad, axis);
+    }
+    model = glm::scale(model, glm::vec3(radius, radius, radius));
+
+    return cam.getProjMatrix() * cam.getViewMatrix() * model;
+}

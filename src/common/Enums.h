@@ -1,0 +1,13 @@
+#pragma once
+
+enum BrushType {
+    BRUSH_FLATTEN = 0,
+    BRUSH_SMOOTH,
+    BRUSH_INFLATE,
+    BRUSH_PINCH,
+    BRUSH_CREASE,
+    BRUSH_VTOOL,
+    BRUSH_MOVE,
+    BRUSH_DRAG,
+    BRUSH_ELASTIC
+};

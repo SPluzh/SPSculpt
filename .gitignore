@@ -1,0 +1,7 @@
+build/
+.cache/
+.vs/
+out/
+*.user
+*.suo
+*.py
