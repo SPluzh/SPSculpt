@@ -3,6 +3,9 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.0]
+- **Renderer**: Added a smooth, vector-based rendering option for the brush cursor using screen-space projection, providing perfect anti-aliasing and subpixel precision. The cursor is automatically hidden when the mouse hovers over menu bars and settings panels.
+- **UI**: Added a "Smooth (Antialiased) Cursor" toggle option under Shading & Rendering settings to switch between the new smooth vector cursor and the legacy hardware shader cursor.
+- **Settings**: Serialized the smooth cursor toggle and cursor line thickness settings to the local configuration file for persistence across sessions.
 - **Performance**: Optimized floodFill by replacing `std::vector<bool>` with `std::vector<uint8_t>` to avoid bit-manipulation overhead and speed up the BFS traversal during remeshing.
 - **UI**: Customized the ImGui progress bar to use the premium teal accent color and replaced the default white/gray modal dimming background color with a dark translucent overlay to prevent white-washing.
 - **Performance**: Converted the remeshing process (Remesh) to run asynchronously in a background worker thread, eliminating application freezes during voxelization and surface reconstruction.

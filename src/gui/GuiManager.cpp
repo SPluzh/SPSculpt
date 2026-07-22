@@ -1,6 +1,7 @@
 #include "gui/GuiManager.h"
 #include "render/AngleRenderer.h"
 #include "render/RenderSettings.h"
+#include "editing/BrushCursor.h"
 #include "files/FileManager.h"
 #include <imgui.h>
 #include <imgui_impl_sdl2.h>
@@ -685,6 +686,16 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 if (ImGui::ColorEdit4("Outline Color", glm::value_ptr(cColor))) {
                     renderer.setContourColor(cColor);
                 }
+            }
+
+            float cursorThickness = renderer.getCursorThickness();
+            if (ImGui::SliderFloat("Brush Cursor Thickness", &cursorThickness, 1.0f, 5.0f, "%.1f px")) {
+                renderer.setCursorThickness(cursorThickness);
+            }
+
+            bool smoothCursor = renderer.getSmoothCursor();
+            if (ImGui::Checkbox("Smooth (Antialiased) Cursor", &smoothCursor)) {
+                renderer.setSmoothCursor(smoothCursor);
             }
 
             float alpha = selectedMesh->alpha;
@@ -1447,6 +1458,75 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     }
 
     drawRemeshProgressModal();
+
+    // Render brush cursor using ImGui foreground draw list for beautiful antialiased lines
+    if (renderer.getSmoothCursor()) {
+        const auto& cursorState = sculpt.getCursor().getState();
+        if (cursorState.visible && !ImGui::GetIO().WantCaptureMouse) {
+            float viewportWidth = ImGui::GetIO().DisplaySize.x;
+            float viewportHeight = ImGui::GetIO().DisplaySize.y;
+            float leftViewportWidth = viewportWidth;
+            float leftViewportX = 0.0f;
+            
+            if (renderer.getSplitMode()) {
+                leftViewportWidth = viewportWidth * 0.5f;
+            }
+
+            auto projectPoint = [](const glm::mat4& mvp, const glm::vec3& localPos, float width, float height, float xOffset) -> ImVec2 {
+                glm::vec4 clipPos = mvp * glm::vec4(localPos, 1.0f);
+                if (clipPos.w == 0.0f) return ImVec2(0.0f, 0.0f);
+                glm::vec3 ndcPos = glm::vec3(clipPos) / clipPos.w;
+                float sx = (ndcPos.x * 0.5f + 0.5f) * width + xOffset;
+                float sy = (0.5f - ndcPos.y * 0.5f) * height;
+                return ImVec2(sx, sy);
+            };
+
+            ImU32 colorU32 = ImGui::ColorConvertFloat4ToU32(ImVec4(cursorState.color.r, cursorState.color.g, cursorState.color.b, 1.0f));
+            float thickness = renderer.getCursorThickness();
+
+            if (cursorState.showCircle) {
+                // Draw outer circle
+                const int numSegments = 64;
+                std::vector<ImVec2> outerPoints(numSegments);
+                for (int i = 0; i < numSegments; ++i) {
+                    float angle = i * 2.0f * 3.1415926535f / numSegments;
+                    glm::vec3 localPos(std::cos(angle), std::sin(angle), 0.0f);
+                    outerPoints[i] = projectPoint(cursorState.circleMVP, localPos, leftViewportWidth, viewportHeight, leftViewportX);
+                }
+                ImGui::GetForegroundDrawList()->AddPolyline(outerPoints.data(), numSegments, colorU32, ImDrawFlags_Closed, thickness);
+
+                // Draw inner circle
+                std::vector<ImVec2> innerPoints(numSegments);
+                for (int i = 0; i < numSegments; ++i) {
+                    float angle = i * 2.0f * 3.1415926535f / numSegments;
+                    glm::vec3 localPos(std::cos(angle), std::sin(angle), 0.0f);
+                    innerPoints[i] = projectPoint(cursorState.innerCircleMVP, localPos, leftViewportWidth, viewportHeight, leftViewportX);
+                }
+                ImGui::GetForegroundDrawList()->AddPolyline(innerPoints.data(), numSegments, colorU32, ImDrawFlags_Closed, thickness);
+            }
+
+            // Draw main dot (filled circle)
+            const int dotSegments = 32;
+            std::vector<ImVec2> dotPoints(dotSegments);
+            for (int i = 0; i < dotSegments; ++i) {
+                float angle = i * 2.0f * 3.1415926535f / dotSegments;
+                glm::vec3 localPos(std::cos(angle), std::sin(angle), 0.0f);
+                dotPoints[i] = projectPoint(cursorState.dotMVP, localPos, leftViewportWidth, viewportHeight, leftViewportX);
+            }
+            ImGui::GetForegroundDrawList()->AddConvexPolyFilled(dotPoints.data(), dotSegments, colorU32);
+
+            // Draw symmetry dots
+            for (const auto& symMVP : cursorState.symMVPs) {
+                std::vector<ImVec2> symPoints(dotSegments);
+                for (int i = 0; i < dotSegments; ++i) {
+                    float angle = i * 2.0f * 3.1415926535f / dotSegments;
+                    glm::vec3 localPos(std::cos(angle), std::sin(angle), 0.0f);
+                    symPoints[i] = projectPoint(symMVP, localPos, leftViewportWidth, viewportHeight, leftViewportX);
+                }
+                ImGui::GetForegroundDrawList()->AddConvexPolyFilled(symPoints.data(), dotSegments, colorU32);
+            }
+        }
+    }
 
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());

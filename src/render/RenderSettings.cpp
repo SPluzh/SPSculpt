@@ -48,6 +48,8 @@ bool RenderSettings::save(const std::string& filepath, const AngleRenderer& rend
     
     glm::vec4 cColor = renderer.getContourColor();
     out << "contourColor=" << cColor.r << " " << cColor.g << " " << cColor.b << " " << cColor.a << "\n";
+    out << "cursorThickness=" << renderer.getCursorThickness() << "\n";
+    out << "smoothCursor=" << (renderer.getSmoothCursor() ? "true" : "false") << "\n";
     out << "splitMode=" << (renderer.getSplitMode() ? "true" : "false") << "\n";
     out << "currentEnvIdx=" << renderer.getCurrentEnvIdx() << "\n";
     out << "exposure=" << renderer.getExposure() << "\n\n";
@@ -137,6 +139,14 @@ bool RenderSettings::load(const std::string& filepath, AngleRenderer& renderer, 
             if (ss >> r >> g >> b >> a) {
                 renderer.setContourColor(glm::vec4(r, g, b, a));
             }
+        }
+        it = params.find("cursorThickness");
+        if (it != params.end()) {
+            renderer.setCursorThickness(safe_stof(it->second, 2.5f));
+        }
+        it = params.find("smoothCursor");
+        if (it != params.end()) {
+            renderer.setSmoothCursor(it->second == "true" || it->second == "1");
         }
         it = params.find("splitMode");
         if (it != params.end()) {

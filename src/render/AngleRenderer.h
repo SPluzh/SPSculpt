@@ -58,6 +58,10 @@ public:
     bool getFilmic() const { return m_filmic; }
     void setShowContour(bool show) { m_showContour = show; }
     bool getShowContour() const { return m_showContour; }
+    void setCursorThickness(float thickness) { m_cursorThickness = thickness; }
+    float getCursorThickness() const { return m_cursorThickness; }
+    void setSmoothCursor(bool smooth) { m_smoothCursor = smooth; }
+    bool getSmoothCursor() const { return m_smoothCursor; }
     void setShowGrid(bool show) { m_showGrid = show; }
     bool getShowGrid() const { return m_showGrid; }
     void setShowSymmetryLine(bool show) { m_showSymmetryLine = show; }
@@ -222,6 +226,8 @@ private:
     bool m_showContour = true;
     bool m_showGrid = true;
     glm::vec4 m_contourColor{1.0f, 0.75f, 0.1f, 1.0f};
+    float m_cursorThickness = 2.5f;
+    bool m_smoothCursor = true;
 
     // Split Viewport
     bool m_splitMode = false;

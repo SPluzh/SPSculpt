@@ -399,8 +399,19 @@ bool AngleRenderer::init(int width, int height) {
     std::string selVert = R"(#version 300 es
         layout(location = 0) in vec3 aVertex;
         uniform mat4 uMVP;
+        uniform vec2 uViewportSize;
+        uniform float uOffsetPixels;
         void main() {
-            gl_Position = uMVP * vec4(aVertex, 1.0);
+            vec4 clipPos = uMVP * vec4(aVertex, 1.0);
+            if (uOffsetPixels != 0.0 && clipPos.w > 0.0) {
+                float len = length(aVertex.xy);
+                if (len > 0.0001) {
+                    vec2 dir = aVertex.xy / len;
+                    vec2 ndcOffset = (dir * uOffsetPixels * 2.0) / uViewportSize;
+                    clipPos.xy += ndcOffset * clipPos.w;
+                }
+            }
+            gl_Position = clipPos;
         }
     )";
     std::string selFrag = R"(#version 300 es
@@ -1605,6 +1616,7 @@ void AngleRenderer::drawWireframe(Mesh* mesh, const Scene& scene, const Camera& 
 }
 
 void AngleRenderer::drawSelectionCursor() {
+    if (m_smoothCursor) return; // Drawn via ImGui in GuiManager
     if (!m_showCursor || m_selectionProgram == 0) return;
     
     glDisable(GL_DEPTH_TEST);
@@ -1627,16 +1639,51 @@ void AngleRenderer::drawSelectionCursor() {
     glBindVertexArray(m_selectionVao);
     
     if (m_showCircle) {
+        GLint locViewport = glGetUniformLocation(m_selectionProgram, "uViewportSize");
+        GLint locOffsetPixels = glGetUniformLocation(m_selectionProgram, "uOffsetPixels");
+        
+        float viewportWidth = (float)m_width;
+        if (m_splitMode) {
+            viewportWidth *= 0.5f;
+        }
+        float viewportHeight = (float)m_height;
+        
+        if (locViewport != -1) {
+            glUniform2f(locViewport, viewportWidth, viewportHeight);
+        }
+
+        int passes = static_cast<int>(std::round(m_cursorThickness));
+        if (passes < 1) passes = 1;
+
         // Draw outer circle
-        glUniformMatrix4fv(locMVP, 1, GL_FALSE, &m_circleMVP[0][0]);
         glBindBuffer(GL_ARRAY_BUFFER, m_circleVbo);
         glVertexAttribPointer(locPos, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
         glEnableVertexAttribArray(locPos);
-        glDrawArrays(GL_LINE_LOOP, 0, 64);
+
+        for (int i = 0; i < passes; ++i) {
+            float offset = 0.0f;
+            if (passes > 1) {
+                offset = -0.5f * (passes - 1) + i;
+            }
+            if (locOffsetPixels != -1) glUniform1f(locOffsetPixels, offset);
+            
+            glUniformMatrix4fv(locMVP, 1, GL_FALSE, &m_circleMVP[0][0]);
+            glDrawArrays(GL_LINE_LOOP, 0, 64);
+        }
         
         // Draw inner circle
-        glUniformMatrix4fv(locMVP, 1, GL_FALSE, &m_innerCircleMVP[0][0]);
-        glDrawArrays(GL_LINE_LOOP, 0, 64);
+        for (int i = 0; i < passes; ++i) {
+            float offset = 0.0f;
+            if (passes > 1) {
+                offset = -0.5f * (passes - 1) + i;
+            }
+            if (locOffsetPixels != -1) glUniform1f(locOffsetPixels, offset);
+
+            glUniformMatrix4fv(locMVP, 1, GL_FALSE, &m_innerCircleMVP[0][0]);
+            glDrawArrays(GL_LINE_LOOP, 0, 64);
+        }
+
+        if (locOffsetPixels != -1) glUniform1f(locOffsetPixels, 0.0f);
     }
     
     // Draw main dot
@@ -1692,6 +1739,8 @@ void AngleRenderer::drawLasso() {
     GLint locMVP = glGetUniformLocation(m_selectionProgram, "uMVP");
     GLint locAlpha = glGetUniformLocation(m_selectionProgram, "uAlpha");
     GLint locDashed = glGetUniformLocation(m_selectionProgram, "uDashed");
+    GLint locOffsetPixels = glGetUniformLocation(m_selectionProgram, "uOffsetPixels");
+    if (locOffsetPixels != -1) glUniform1f(locOffsetPixels, 0.0f);
 
     // Colors matching JS project
     glm::vec3 lassoColor;
@@ -1722,7 +1771,9 @@ void AngleRenderer::drawLasso() {
     // 2. Draw border/stroke (dashed, opacity 1.0)
     if (locAlpha != -1) glUniform1f(locAlpha, 1.0f);
     if (locDashed != -1) glUniform1i(locDashed, 1);
+    glLineWidth(2.0f);
     glDrawArrays(GL_LINE_LOOP, 0, (GLsizei)m_lassoPoints.size());
+    glLineWidth(1.0f);
 
     glDisable(GL_BLEND);
     glEnable(GL_DEPTH_TEST);
@@ -1959,6 +2010,8 @@ void AngleRenderer::drawGrid(const Scene& scene, const Camera& camera) {
     GLint locDashed = glGetUniformLocation(m_selectionProgram, "uDashed");
     if (locAlpha != -1) glUniform1f(locAlpha, 1.0f);
     if (locDashed != -1) glUniform1i(locDashed, 0);
+    GLint locOffsetPixels = glGetUniformLocation(m_selectionProgram, "uOffsetPixels");
+    if (locOffsetPixels != -1) glUniform1f(locOffsetPixels, 0.0f);
 
     glm::vec3 gridColor(0.4f, 0.4f, 0.4f);
     glUniform3fv(glGetUniformLocation(m_selectionProgram, "uColor"), 1, &gridColor[0]);
