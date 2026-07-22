@@ -19,6 +19,7 @@
 
 #include <imgui.h>
 #include <imgui_impl_sdl2.h>
+#include <ImGuizmo.h>
 
 #include "render/AngleRenderer.h"
 #include "mesh/Octree.h"
@@ -329,8 +330,20 @@ int main(int argc, char* argv[]) {
                 if (!handledByHotkey) {
                     ImGuiIO& io = ImGui::GetIO();
                     bool skipSculpt = false;
-                    if (io.WantCaptureMouse && (event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP || event.type == SDL_MOUSEMOTION || event.type == SDL_MOUSEWHEEL)) {
-                        skipSculpt = true;
+                    
+                    // Prioritize ImGuizmo over camera orbit when hovering/interacting with the gizmo
+                    if (sculpt.getBrush() == BRUSH_TRANSFORM && (ImGuizmo::IsOver() || ImGuizmo::IsUsing())) {
+                        if (!sculpt.getCameraController().isDragging()) {
+                            skipSculpt = true;
+                        }
+                    }
+
+                    if (!skipSculpt && io.WantCaptureMouse && (event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP || event.type == SDL_MOUSEMOTION || event.type == SDL_MOUSEWHEEL)) {
+                        // Never skip mouse events if the camera controller is actively dragging/navigating,
+                        // otherwise mouse up or mouse motion events will be swallowed by ImGui and lock navigation state.
+                        if (!sculpt.getCameraController().isDragging()) {
+                            skipSculpt = true;
+                        }
                     }
                     if (io.WantCaptureKeyboard && (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP)) {
                         skipSculpt = true;

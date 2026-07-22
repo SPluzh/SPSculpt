@@ -457,10 +457,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     }
                 }
                 else if (brushType == BRUSH_TRANSFORM) {
-                    ImGui::Text("Gizmo Controls:");
-                    ImGui::BulletText("W - Translate");
-                    ImGui::BulletText("E - Rotate");
-                    ImGui::BulletText("R - Scale");
+                    ImGui::Checkbox("Edit Pivot (Alt)", &m_editPivot);
+                    ImGui::Separator();
                     
                     if (ImGui::Button("Reset Matrix", ImVec2(-1, 26))) {
                         Mesh* selectedMesh = scene.getSelected();
@@ -1319,29 +1317,120 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGuizmo::SetDrawlist(ImGui::GetForegroundDrawList());
             ImGuizmo::SetRect(0.0f, 0.0f, (float)camera.getWidth(), (float)camera.getHeight());
 
+            bool cameraDragging = sculpt.getCameraController().isDragging();
+            ImGuizmo::Enable(!cameraDragging);
+            ImGuizmo::SetGizmoSizeClipSpace(0.20f);
+
             glm::mat4 view = camera.getViewMatrix();
             glm::mat4 proj = camera.getProjMatrix();
             glm::mat4 matrix = selectedMesh->matrix;
 
-            static ImGuizmo::OPERATION currentOperation = ImGuizmo::TRANSLATE;
-            if (ImGui::IsKeyPressed(ImGuiKey_W)) currentOperation = ImGuizmo::TRANSLATE;
-            if (ImGui::IsKeyPressed(ImGuiKey_E)) currentOperation = ImGuizmo::ROTATE;
-            if (ImGui::IsKeyPressed(ImGuiKey_R)) currentOperation = ImGuizmo::SCALE;
+            static bool wasUsingGizmo = false;
+            static bool draggedPivot = false;
+            static glm::mat4 pivotStartMatrix = glm::mat4(1.0f);
+
+            bool isUsingGizmo = ImGuizmo::IsUsing();
+            bool isMovingPivot = m_editPivot || ImGui::GetIO().KeyAlt;
+
+            if (isUsingGizmo && !wasUsingGizmo) {
+                scene.pushHistoryState();
+                pivotStartMatrix = selectedMesh->matrix;
+                draggedPivot = isMovingPivot;
+            }
+
+            ImGuizmo::OPERATION op = draggedPivot ? (ImGuizmo::TRANSLATE | ImGuizmo::ROTATE) : ImGuizmo::UNIVERSAL;
+
+            // Apply custom styling matching legacy JS colors and sizes
+            ImGuizmo::Style& style = ImGuizmo::GetStyle();
+            style.Colors[ImGuizmo::DIRECTION_X] = ImVec4(0.7f, 0.2f, 0.2f, 1.0f);
+            style.Colors[ImGuizmo::DIRECTION_Y] = ImVec4(0.2f, 0.7f, 0.2f, 1.0f);
+            style.Colors[ImGuizmo::DIRECTION_Z] = ImVec4(0.2f, 0.2f, 0.7f, 1.0f);
+            style.Colors[ImGuizmo::PLANE_X] = ImVec4(0.7f, 0.2f, 0.2f, 0.38f);
+            style.Colors[ImGuizmo::PLANE_Y] = ImVec4(0.2f, 0.7f, 0.2f, 0.38f);
+            style.Colors[ImGuizmo::PLANE_Z] = ImVec4(0.2f, 0.2f, 0.7f, 0.38f);
+            style.Colors[ImGuizmo::SELECTION] = ImVec4(1.0f, 1.0f, 0.4f, 1.0f);
+            style.Colors[ImGuizmo::INACTIVE] = ImVec4(0.4f, 0.4f, 0.4f, 0.54f);
+            style.TranslationLineThickness = 3.5f;
+            style.TranslationLineArrowSize = 10.0f;
+            style.RotationLineThickness = 3.5f;
+            style.RotationOuterLineThickness = 4.0f;
+            style.ScaleLineThickness = 3.5f;
+            style.ScaleLineCircleSize = 9.0f;
+            style.CenterCircleSize = 9.0f;
 
             // Draw and manipulate gizmo
             if (ImGuizmo::Manipulate(
                 glm::value_ptr(view), glm::value_ptr(proj),
-                currentOperation, ImGuizmo::LOCAL, glm::value_ptr(matrix)
+                op, ImGuizmo::LOCAL, glm::value_ptr(matrix)
             )) {
-                static bool wasUsingGizmo = false;
-                bool isUsingGizmo = ImGuizmo::IsUsing();
-                if (isUsingGizmo && !wasUsingGizmo) {
-                    scene.pushHistoryState();
+                if (draggedPivot) {
+                    glm::mat4 deltaLocalMatrix = glm::inverse(pivotStartMatrix) * matrix;
+                    glm::mat4 deltaLocalMatrixInv = glm::inverse(deltaLocalMatrix);
+                    selectedMesh->matrix = matrix;
+                    selectedMesh->editMatrix = deltaLocalMatrixInv;
+                    selectedMesh->enMatrix = glm::transpose(glm::inverse(glm::mat3(deltaLocalMatrixInv)));
+                } else {
+                    selectedMesh->matrix = matrix;
                 }
-                wasUsingGizmo = isUsingGizmo;
-
-                selectedMesh->matrix = matrix;
                 selectedMesh->isDirty = true;
+            }
+
+            if (!isUsingGizmo && wasUsingGizmo) {
+                if (draggedPivot) {
+                    if (selectedMesh->editMatrix != glm::mat4(1.0f)) {
+                        for (int i = 0; i < selectedMesh->nbVerts; ++i) {
+                            glm::vec4 pos(selectedMesh->verts[i * 3], selectedMesh->verts[i * 3 + 1], selectedMesh->verts[i * 3 + 2], 1.0f);
+                            glm::vec4 newPos = selectedMesh->editMatrix * pos;
+                            selectedMesh->verts[i * 3]     = newPos.x;
+                            selectedMesh->verts[i * 3 + 1] = newPos.y;
+                            selectedMesh->verts[i * 3 + 2] = newPos.z;
+
+                            glm::vec3 normal(selectedMesh->normals[i * 3], selectedMesh->normals[i * 3 + 1], selectedMesh->normals[i * 3 + 2]);
+                            glm::vec3 newNormal = glm::normalize(selectedMesh->enMatrix * normal);
+                            selectedMesh->normals[i * 3]     = newNormal.x;
+                            selectedMesh->normals[i * 3 + 1] = newNormal.y;
+                            selectedMesh->normals[i * 3 + 2] = newNormal.z;
+                        }
+                        selectedMesh->editMatrix = glm::mat4(1.0f);
+                        selectedMesh->enMatrix = glm::mat3(1.0f);
+                        selectedMesh->postInit();
+                        selectedMesh->isDirty = true;
+                    }
+                }
+                draggedPivot = false;
+            }
+            wasUsingGizmo = isUsingGizmo;
+
+            // Draw floating pivot lock button near the gizmo center
+            glm::vec3 pivotWorldPos = glm::vec3(selectedMesh->matrix[3]);
+            glm::vec3 screenPos = camera.project(pivotWorldPos);
+
+            if (screenPos.z >= 0.0f && screenPos.z <= 1.0f &&
+                screenPos.x >= 0.0f && screenPos.x <= (float)camera.getWidth() &&
+                screenPos.y >= 0.0f && screenPos.y <= (float)camera.getHeight()) {
+                
+                ImGui::SetNextWindowPos(ImVec2(screenPos.x - 45, screenPos.y - 45), ImGuiCond_Always);
+                ImGui::SetNextWindowBgAlpha(0.7f);
+                ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | 
+                                         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | 
+                                         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize;
+                if (ImGui::Begin("##PivotLockWindow", nullptr, flags)) {
+                    bool activeMoving = m_editPivot || ImGui::GetIO().KeyAlt;
+                    if (activeMoving) {
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.83f, 0.18f, 0.18f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.25f, 0.25f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.70f, 0.10f, 0.10f, 1.0f));
+                        if (ImGui::Button(" Unlock Pivot ")) {
+                            m_editPivot = false;
+                        }
+                        ImGui::PopStyleColor(3);
+                    } else {
+                        if (ImGui::Button(" Lock Pivot ")) {
+                            m_editPivot = true;
+                        }
+                    }
+                }
+                ImGui::End();
             }
         }
     }

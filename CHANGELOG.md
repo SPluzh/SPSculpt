@@ -3,11 +3,18 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.0]
+- **Tools**: Replaced the central sphere handle of the transform gizmo with camera-plane aligned corner brackets of a square that matches the diameter of the rotation rings (providing feature parity with the legacy JS `planeW` camera translation indicator), updating both visual rendering (with a subtle transparent background) and the screen-space picking boundaries so that activation/hovering only occurs when the cursor is positioned directly over the corners.
+- **Tools**: Replaced scale end-handle circles with squares (representing 3D cubes) and configured a yellow square in the center representing the universal/global scale cube (configured to be yellow always, larger, with dedicated center hover picking box supporting both `SCALE` and `SCALEU` universal operations) when scaling.
+- **Tools**: Increased the visual size and length of the Transform Tool gizmo axes by default (clip-space size 0.20) and decreased the diameter of the rotation rings and screen-space rotation circles to make the gizmo layout cleaner and more compact.
+- **Tools**: Fixed the Transform Tool gizmo axes orientation so they remain completely stable and do not rotate or shift when the camera angle is changed.
+- **Input**: Resolved conflict between camera navigation and gizmo manipulation by prioritizing gizmo interaction when the mouse is over the handles and disabling gizmo input during active viewport navigation.
 - **Tools**: Added interactive Measure and Divider tools featuring screen-space overlay lines, dynamic hover feedback, custom ticks/subdivisions, and rounded semi-transparent text badges showing distance or relative scale reference.
-- **Tools**: Integrated mesh Transform Tool with interactive 3D local transform gizmos (translation, rotation, scaling) using ImGuizmo, with full Hotkey support (W, E, R).
+- **Tools**: Upgraded the Transform Tool gizmo to support full feature and visual parity with the legacy JS application. Configured custom color coding and sizing via ImGuizmo styling, implemented interactive pivot translation/rotation (Alt hotkey or UI toggle) that offsets vertex geometry dynamically via the edit matrix, added a CPU baking step on drag release to commit the pivot modifications with automatic octree/normal/bounding-box rebuild, and integrated a floating screen-space Lock/Unlock Pivot toggle button projected at the gizmo's center.
 - **Core**: Added mesh matrix serialization to save/restore mesh transforms within the history stack for undo/redo support.
 - **Settings**: Serialized divider divisions and measure perspective settings to the general section of `brush_settings.cfg`.
 - **Camera**: Fixed a major perspective depth unprojection bug where clicking outside the mesh (`FREE` anchors) caused points to fly away to extreme distances due to linear z-depth interpolation in `Camera::unproject`. Now correctly uses the inverted viewport-view-projection matrix for exact, linear screen-to-world mapping.
+- **Input**: Fixed camera navigation getting stuck and orbiting/spinning continuously if the mouse cursor crossed over ImGui interface elements (such as the floating gizmo lock button or side panels) during drag rotation/panning.
+
 
 ## [1.1.0]
 - **Tools**: Added interactive Mask Gradient Blur tool featuring screen-space dashed guides and interactive draggable handle controls.

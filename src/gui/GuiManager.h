@@ -32,6 +32,7 @@ private:
     float m_dyntopoDetail = 100.0f;
     int m_remeshResolution = 150;
     bool m_imguiInitialized = false;
+    bool m_editPivot = false;
 
     // File path buffers
     char m_importPath[256] = "model.obj";
