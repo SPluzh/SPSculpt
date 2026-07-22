@@ -110,5 +110,15 @@ private:
     bool m_isLassoActive = false;
     std::vector<glm::vec2> m_lassoPoints;
     bool m_lassoAlt = false;
+
+    // Cache buffers for fast dirty faces lookup
+    std::vector<uint32_t> m_tagFlags;
+    uint32_t m_tagEpoch = 0;
+    std::vector<uint32_t> m_iFacesCache;
+
+    // Cache for computeAreaNormalAndCenter
+    bool m_firstStrokeFrame = false;
+    glm::vec3 m_cachedAreaNormal{0.0f};
+    glm::vec3 m_cachedAreaCenter{0.0f};
 };
 

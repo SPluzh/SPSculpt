@@ -9,6 +9,9 @@
 #include "mesh/Mesh.h"
 #include "../third_party/stb_image.h"
 
+// Cache uniform locations to avoid driver lookups on every draw call
+#define glGetUniformLocation(prog, name) getCachedUniformLocation(prog, name)
+
 #ifndef M_PI
 #define M_PI 3.14159265358979323846f
 #endif
@@ -1756,7 +1759,6 @@ void AngleRenderer::generateWireframeIndices(const Mesh* mesh, std::vector<uint3
 void AngleRenderer::uploadIfDirty(Mesh* mesh) {
     auto& bufs = m_meshBuffers[mesh];
     if (!bufs) {
-        std::cout << "[uploadIfDirty] Creating buffers..." << std::endl;
         bufs = std::make_unique<MeshRenderBuffers>();
         glGenVertexArrays(1, &bufs->vao);
         glGenBuffers(1, &bufs->vboVertices);
@@ -1769,7 +1771,6 @@ void AngleRenderer::uploadIfDirty(Mesh* mesh) {
     }
     
     if (mesh->isDirty) {
-        std::cout << "[uploadIfDirty] Binding VAO..." << std::endl;
         glBindVertexArray(bufs->vao);
         
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
@@ -1800,6 +1801,47 @@ void AngleRenderer::uploadIfDirty(Mesh* mesh) {
         bufs->vertCount = mesh->nbVerts;
         
         mesh->isDirty = false;
+        mesh->isVertexDirty = false;
+        mesh->isTopologyDirty = false;
+    } else {
+        if (mesh->isVertexDirty && mesh->dirtyVertMin <= mesh->dirtyVertMax && mesh->dirtyVertMax < (uint32_t)mesh->nbVerts) {
+            size_t offset = mesh->dirtyVertMin * 3 * sizeof(float);
+            size_t size   = (mesh->dirtyVertMax - mesh->dirtyVertMin + 1) * 3 * sizeof(float);
+            
+            glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
+            glBufferSubData(GL_ARRAY_BUFFER, offset, size,
+                            mesh->verts.data() + mesh->dirtyVertMin * 3);
+            
+            glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
+            glBufferSubData(GL_ARRAY_BUFFER, offset, size,
+                            mesh->normals.data() + mesh->dirtyVertMin * 3);
+            
+            glBindBuffer(GL_ARRAY_BUFFER, bufs->vboColors);
+            glBufferSubData(GL_ARRAY_BUFFER, offset, size,
+                            mesh->colors.data() + mesh->dirtyVertMin * 3);
+            
+            glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
+            glBufferSubData(GL_ARRAY_BUFFER, offset, size,
+                            mesh->materials.data() + mesh->dirtyVertMin * 3);
+            
+            mesh->isVertexDirty = false;
+        }
+        
+        if (mesh->isTopologyDirty) {
+            std::vector<uint32_t> triIndices;
+            generateTriangleIndices(mesh, triIndices);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, triIndices.size() * sizeof(uint32_t), triIndices.data(), GL_STATIC_DRAW);
+            bufs->triIndexCount = triIndices.size();
+            
+            std::vector<uint32_t> wireIndices;
+            generateWireframeIndices(mesh, wireIndices);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboWireframe);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, wireIndices.size() * sizeof(uint32_t), wireIndices.data(), GL_STATIC_DRAW);
+            bufs->wireIndexCount = wireIndices.size();
+            
+            mesh->isTopologyDirty = false;
+        }
     }
 }
 
@@ -2202,4 +2244,16 @@ void AngleRenderer::initMatcaps() {
 
         m_matcaps.push_back(preset);
     }
+}
+
+GLint AngleRenderer::getCachedUniformLocation(GLuint program, const char* name) {
+    auto& programMap = m_uniformLocations[program];
+    std::string nameStr(name);
+    auto it = programMap.find(nameStr);
+    if (it != programMap.end()) {
+        return it->second;
+    }
+    GLint loc = (::glGetUniformLocation)(program, name);
+    programMap[nameStr] = loc;
+    return loc;
 }

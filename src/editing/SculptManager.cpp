@@ -124,6 +124,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             if (intersectFaceId != 0xffffffff) {
                 scene.pushHistoryState();
                 m_isSculpting = true;
+                m_firstStrokeFrame = true;
                 m_initialIntersection = localRayOrigin + minT * localRayDir;
                 m_initialIntersectionNormal = glm::vec3(
                     mesh->faceNormals[intersectFaceId * 3],
@@ -564,19 +565,21 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                         break;
                     }
                     case BRUSH_CLAY: {
-                        glm::vec3 areaCenter = m_currentIntersection;
-                        glm::vec3 areaNormal = m_currentIntersectionNormal;
-                        std::vector<float> areaResults(7, 0.0f);
-                        computeAreaNormalAndCenter(
-                            mesh->verts.data(),
-                            mesh->normals.data(),
-                            mesh->materials.data(),
-                            pickedVertices.data(),
-                            pickedVertices.size(),
-                            areaResults.data()
-                        );
-                        areaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
-                        areaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
+                        if (m_firstStrokeFrame) {
+                            std::vector<float> areaResults(7, 0.0f);
+                            computeAreaNormalAndCenter(
+                                mesh->verts.data(),
+                                mesh->normals.data(),
+                                mesh->materials.data(),
+                                pickedVertices.data(),
+                                pickedVertices.size(),
+                                areaResults.data()
+                            );
+                            m_cachedAreaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
+                            m_cachedAreaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
+                        }
+                        glm::vec3 areaNormal = m_cachedAreaNormal;
+                        glm::vec3 areaCenter = m_cachedAreaCenter;
 
                         float off = localRadius * 0.1f;
                         areaCenter += areaNormal * (negative ? -off : off);
@@ -598,19 +601,21 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                         break;
                     }
                     case BRUSH_CLAYBUILDUP: {
-                        glm::vec3 areaCenter = m_currentIntersection;
-                        glm::vec3 areaNormal = m_currentIntersectionNormal;
-                        std::vector<float> areaResults(7, 0.0f);
-                        computeAreaNormalAndCenter(
-                            mesh->verts.data(),
-                            mesh->normals.data(),
-                            mesh->materials.data(),
-                            pickedVertices.data(),
-                            pickedVertices.size(),
-                            areaResults.data()
-                        );
-                        areaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
-                        areaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
+                        if (m_firstStrokeFrame) {
+                            std::vector<float> areaResults(7, 0.0f);
+                            computeAreaNormalAndCenter(
+                                mesh->verts.data(),
+                                mesh->normals.data(),
+                                mesh->materials.data(),
+                                pickedVertices.data(),
+                                pickedVertices.size(),
+                                areaResults.data()
+                            );
+                            m_cachedAreaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
+                            m_cachedAreaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
+                        }
+                        glm::vec3 areaNormal = m_cachedAreaNormal;
+                        glm::vec3 areaCenter = m_cachedAreaCenter;
 
                         float off = localRadius * 0.1f;
                         areaCenter += areaNormal * (negative ? -off : off);
@@ -696,24 +701,28 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 }
 
                 if (deformedCount > 0) {
-                    std::vector<uint32_t> dirtyFaces(mesh->nbFaces, 0);
-                    std::vector<uint32_t> iFaces;
-                    for (uint32_t vid : pickedVertices) {
-                        uint32_t start = mesh->vrfStartCount[vid * 2];
-                        uint32_t count = mesh->vrfStartCount[vid * 2 + 1];
-                        for (uint32_t k = 0; k < count; ++k) {
-                            uint32_t fid = mesh->vertRingFace[start + k];
-                            if (dirtyFaces[fid] == 0) {
-                                dirtyFaces[fid] = 1;
-                                iFaces.push_back(fid);
-                            }
-                        }
+                    if (m_tagFlags.size() < (size_t)mesh->nbFaces) {
+                        m_tagFlags.assign(mesh->nbFaces, 0);
                     }
+                    if (m_iFacesCache.size() < (size_t)mesh->nbFaces) {
+                        m_iFacesCache.resize(mesh->nbFaces);
+                    }
+
+                    uint32_t numIFaces = getFacesFromVerticesFast(
+                        pickedVertices.data(),
+                        pickedVertices.size(),
+                        mesh->vrfStartCount.data(),
+                        mesh->vertRingFace.data(),
+                        m_iFacesCache.data(),
+                        m_tagFlags.data(),
+                        &m_tagEpoch,
+                        mesh->nbFaces
+                    );
 
                     updateFaceNormalsAndBoxes(
                         mesh->verts.data(), mesh->nbVerts,
                         mesh->faces.data(), mesh->nbFaces,
-                        iFaces.data(), iFaces.size(),
+                        m_iFacesCache.data(), numIFaces,
                         mesh->faceNormals.data(),
                         mesh->faceBoxes.data(),
                         mesh->faceCenters.data()
@@ -731,12 +740,28 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                         mesh->verts.data(), mesh->nbVerts,
                         mesh->faces.data(), mesh->nbFaces,
                         mesh->faceBoxes.data(),
-                        iFaces.data(), iFaces.size()
+                        m_iFacesCache.data(), numIFaces
                     );
 
-                    mesh->setDirty(true);
+                    // Track dirty vertex range for glBufferSubData
+                    uint32_t minV = pickedVertices[0];
+                    uint32_t maxV = pickedVertices[0];
+                    for (int i = 1; i < deformedCount; ++i) {
+                        uint32_t v = pickedVertices[i];
+                        if (v < minV) minV = v;
+                        if (v > maxV) maxV = v;
+                    }
+                    if (mesh->isVertexDirty) {
+                        mesh->dirtyVertMin = std::min(mesh->dirtyVertMin, minV);
+                        mesh->dirtyVertMax = std::max(mesh->dirtyVertMax, maxV);
+                    } else {
+                        mesh->dirtyVertMin = minV;
+                        mesh->dirtyVertMax = maxV;
+                        mesh->isVertexDirty = true;
+                    }
                 }
             }
+            m_firstStrokeFrame = false;
         }
     }
 }

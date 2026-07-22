@@ -3,6 +3,12 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.0.0]
+- **Performance**: Optimized sculpting responsiveness and GPU uploads to match WebGL/JavaScript speed.
+- **Performance**: Switched GPU buffer uploads to incremental updates (`glBufferSubData`) using vertex range tracking instead of full buffer re-uploads.
+- **Performance**: Implemented caching for sculpting area normal and center computations during brush strokes.
+- **Performance**: Eliminated per-frame memory allocations by implementing epoch-based tagging for visited arrays and dirty faces tracking.
+- **Performance**: Cached shader uniform locations in the renderer to eliminate driver overhead during rendering.
+- **Performance**: Removed performance-blocking logging output from the hot sculpting rendering path.
 - **Files**: Added native C++ support for importing and exporting all major 3D file formats, including SGL (native scene format), OBJ, STL, PLY, and GLTF/GLB.
 - **Files**: Integrated JSON parsing library for native GLTF file loading and scene structure traversal.
 - **UI**: Added a new "Import & Export" panel to manage loading/saving models, alongside new options in the main File menu.

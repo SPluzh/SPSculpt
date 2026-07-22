@@ -35,6 +35,10 @@ public:
     int nbVerts = 0;
     int nbFaces = 0;
     bool isDirty = true;
+    bool isVertexDirty = false;
+    bool isTopologyDirty = false;
+    uint32_t dirtyVertMin = 0;
+    uint32_t dirtyVertMax = 0;
 
     // SGL/OBJ migration properties
     bool visibleV1 = true;

@@ -98,6 +98,9 @@ public:
     void rebuildInternal();
 
 private:
+    std::vector<uint32_t> m_visitedFlags;
+    uint32_t m_visitedEpoch = 0;
+
     void constructChildren(OctreeCell* cell);
     void constructLeaf(OctreeCell* cell);
     std::vector<uint32_t> collectIntersectSphere(float vx, float vy, float vz, float radiusSquared);

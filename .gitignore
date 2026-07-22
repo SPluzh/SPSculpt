@@ -5,3 +5,14 @@ out/
 *.user
 *.suo
 *.py
+
+# Agents & Tools
+.gemini/
+.serena/
+.cursorrules
+.windsurfrules
+gemini.md
+todo.md
+implementation_plan.md
+walkthrough.md
+

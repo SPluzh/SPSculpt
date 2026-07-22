@@ -280,7 +280,15 @@ std::vector<uint32_t> Octree::pickVerticesInSphere(
 
     std::vector<uint32_t> iFacesInCells = collectIntersectSphere(cx, cy, cz, radius2);
 
-    std::vector<bool> visited(nbVerts, false);
+    if (m_visitedFlags.size() < (size_t)nbVerts) {
+        m_visitedFlags.assign(nbVerts, 0);
+    }
+    m_visitedEpoch++;
+    if (m_visitedEpoch == 0) {
+        std::fill(m_visitedFlags.begin(), m_visitedFlags.end(), 0);
+        m_visitedEpoch = 1;
+    }
+
     std::vector<uint32_t> iVerts;
 
     for (uint32_t iFace : iFacesInCells) {
@@ -289,8 +297,8 @@ std::vector<uint32_t> Octree::pickVerticesInSphere(
         for (int k = 0; k < 4; ++k) {
             uint32_t iVer = facesData[ind + k];
             if (iVer == 4294967295) continue;
-            if (iVer < (uint32_t)nbVerts && !visited[iVer]) {
-                visited[iVer] = true;
+            if (iVer < (uint32_t)nbVerts && m_visitedFlags[iVer] != m_visitedEpoch) {
+                m_visitedFlags[iVer] = m_visitedEpoch;
                 iVerts.push_back(iVer);
             }
         }

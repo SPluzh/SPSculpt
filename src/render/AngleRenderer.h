@@ -241,4 +241,8 @@ private:
 
     // GPU buffers cache for meshes
     std::unordered_map<const Mesh*, std::unique_ptr<MeshRenderBuffers>> m_meshBuffers;
+
+    // Uniform locations cache
+    std::unordered_map<GLuint, std::unordered_map<std::string, GLint>> m_uniformLocations;
+    GLint getCachedUniformLocation(GLuint program, const char* name);
 };
