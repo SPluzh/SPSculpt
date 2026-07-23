@@ -16,6 +16,14 @@ static glm::vec2 normalizedMouse(float mouseX, float mouseY, float width, float 
     );
 }
 
+static float normalizeAngle(float target, float current) {
+    float diff = target - current;
+    diff = std::fmod(diff, 2.0f * M_PI);
+    if (diff < -M_PI) diff += 2.0f * M_PI;
+    if (diff > M_PI) diff -= 2.0f * M_PI;
+    return current + diff;
+}
+
 Camera::Camera() {
     resetView();
 }
@@ -432,8 +440,13 @@ void Camera::snapClosestRotation() {
         float qy = targetQuat.y;
         float qz = targetQuat.z;
         float qw = targetQuat.w;
-        targetRotY = std::atan2(2.0f * (qw * qy + qz * qx), 1.0f - 2.0f * (qy * qy + qz * qz));
+        float rawRotY = std::atan2(2.0f * (qw * qy + qz * qx), 1.0f - 2.0f * (qy * qy + qz * qz));
+        targetRotY = normalizeAngle(rawRotY, m_rotY);
         targetRotX = std::max<float>(-M_PI * 0.49f, std::min<float>(M_PI * 0.49f, std::atan2(2.0f * (qw * qx + qy * qz), 1.0f - 2.0f * (qz * qz + qx * qx))));
+    }
+
+    if (glm::dot(m_quatRot, targetQuat) < 0.0f) {
+        targetQuat = -targetQuat;
     }
 
     CameraState targetState;
@@ -535,7 +548,7 @@ void Camera::toggleViewFront() {
     targetState.trans = m_trans;
     targetState.quatRot = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
     targetState.rotX = 0.0f;
-    targetState.rotY = 0.0f;
+    targetState.rotY = normalizeAngle(0.0f, m_rotY);
     targetState.fov = m_fov;
     targetState.projectionType = m_projectionType;
     targetState.mode = m_mode;
@@ -543,6 +556,10 @@ void Camera::toggleViewFront() {
     targetState.view2DOffsetX = m_view2DOffsetX;
     targetState.view2DOffsetY = m_view2DOffsetY;
     targetState.view2DZoom = m_view2DZoom;
+
+    if (glm::dot(m_quatRot, targetState.quatRot) < 0.0f) {
+        targetState.quatRot = -targetState.quatRot;
+    }
 
     startTransition(targetState, 0.2f);
     pushState();
@@ -554,9 +571,9 @@ void Camera::toggleViewTop() {
     targetState.center = m_center;
     targetState.offset = m_offset;
     targetState.trans = m_trans;
-    targetState.quatRot = glm::quat(SQ, SQ, 0.0f, 0.0f);
-    targetState.rotX = 1.570796f; // PI/2
-    targetState.rotY = 0.0f;
+    targetState.quatRot = glm::quat(SQ, -SQ, 0.0f, 0.0f);
+    targetState.rotX = -1.570796f; // -PI/2
+    targetState.rotY = normalizeAngle(0.0f, m_rotY);
     targetState.fov = m_fov;
     targetState.projectionType = m_projectionType;
     targetState.mode = m_mode;
@@ -564,6 +581,10 @@ void Camera::toggleViewTop() {
     targetState.view2DOffsetX = m_view2DOffsetX;
     targetState.view2DOffsetY = m_view2DOffsetY;
     targetState.view2DZoom = m_view2DZoom;
+
+    if (glm::dot(m_quatRot, targetState.quatRot) < 0.0f) {
+        targetState.quatRot = -targetState.quatRot;
+    }
 
     startTransition(targetState, 0.2f);
     pushState();
@@ -575,9 +596,9 @@ void Camera::toggleViewLeft() {
     targetState.center = m_center;
     targetState.offset = m_offset;
     targetState.trans = m_trans;
-    targetState.quatRot = glm::quat(SQ, 0.0f, -SQ, 0.0f);
+    targetState.quatRot = glm::quat(SQ, 0.0f, SQ, 0.0f);
     targetState.rotX = 0.0f;
-    targetState.rotY = -1.570796f; // -PI/2
+    targetState.rotY = normalizeAngle(1.570796f, m_rotY); // PI/2
     targetState.fov = m_fov;
     targetState.projectionType = m_projectionType;
     targetState.mode = m_mode;
@@ -585,6 +606,10 @@ void Camera::toggleViewLeft() {
     targetState.view2DOffsetX = m_view2DOffsetX;
     targetState.view2DOffsetY = m_view2DOffsetY;
     targetState.view2DZoom = m_view2DZoom;
+
+    if (glm::dot(m_quatRot, targetState.quatRot) < 0.0f) {
+        targetState.quatRot = -targetState.quatRot;
+    }
 
     startTransition(targetState, 0.2f);
     pushState();
@@ -596,16 +621,20 @@ void Camera::toggleViewRight() {
     targetState.center = m_center;
     targetState.offset = m_offset;
     targetState.trans = m_trans;
-    targetState.quatRot = glm::quat(SQ, 0.0f, SQ, 0.0f);
+    targetState.quatRot = glm::quat(SQ, 0.0f, -SQ, 0.0f);
     targetState.rotX = 0.0f;
-    targetState.rotY = 1.570796f; // PI/2
+    targetState.rotY = normalizeAngle(-1.570796f, m_rotY); // -PI/2
     targetState.fov = m_fov;
-    targetState.projectionType = CameraEnums::Projection::ORTHOGRAPHIC;
+    targetState.projectionType = m_projectionType;
     targetState.mode = m_mode;
     targetState.usePivot = m_usePivot;
     targetState.view2DOffsetX = m_view2DOffsetX;
     targetState.view2DOffsetY = m_view2DOffsetY;
     targetState.view2DZoom = m_view2DZoom;
+
+    if (glm::dot(m_quatRot, targetState.quatRot) < 0.0f) {
+        targetState.quatRot = -targetState.quatRot;
+    }
 
     startTransition(targetState, 0.2f);
     pushState();
@@ -617,9 +646,9 @@ void Camera::toggleViewAngles(float rx, float ry) {
     targetState.offset = m_offset;
     targetState.trans = m_trans;
     targetState.rotX = rx;
-    targetState.rotY = ry;
-    targetState.quatRot = glm::angleAxis(rx, glm::vec3(1.0f, 0.0f, 0.0f)) *
-                          glm::angleAxis(ry, glm::vec3(0.0f, 1.0f, 0.0f));
+    targetState.rotY = normalizeAngle(ry, m_rotY);
+    targetState.quatRot = glm::angleAxis(targetState.rotX, glm::vec3(1.0f, 0.0f, 0.0f)) *
+                          glm::angleAxis(targetState.rotY, glm::vec3(0.0f, 1.0f, 0.0f));
     targetState.fov = m_fov;
     targetState.projectionType = CameraEnums::Projection::ORTHOGRAPHIC;
     targetState.mode = m_mode;

@@ -952,12 +952,12 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         }
         ImGui::SameLine();
         if (ImGui::Button("Left", ImVec2(80, 0))) {
-            camera.setOrbitAngles(0.0f, -3.14159265f * 0.5f);
+            camera.setOrbitAngles(0.0f, 3.14159265f * 0.5f);
             camera.setProjectionType(CameraEnums::Projection::ORTHOGRAPHIC);
         }
         ImGui::SameLine();
         if (ImGui::Button("Right", ImVec2(80, 0))) {
-            camera.setOrbitAngles(0.0f, 3.14159265f * 0.5f);
+            camera.setOrbitAngles(0.0f, -3.14159265f * 0.5f);
             camera.setProjectionType(CameraEnums::Projection::ORTHOGRAPHIC);
         }
 
@@ -1409,38 +1409,38 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         GizmoPart parts[26] = {
             // --- 6 Faces ---
             { "Front",  4, { 0, 1, 2, 3 }, { 0.0f,  0.0f,  1.0f },  0.0f,                 0.0f,                 IM_COL32(50, 120, 230, 220),  IM_COL32(70, 150, 255, 255), { 1.0f,  0.0f,  0.0f } },
-            { "Back",   4, { 4, 5, 6, 7 }, { 0.0f,  0.0f, -1.0f },  0.0f,                 3.14159265f,          IM_COL32(40, 90, 180, 220),   IM_COL32(60, 120, 220, 255), {-1.0f,  0.0f,  0.0f } },
-            { "Left",   4, { 8, 9, 10, 11 }, {-1.0f,  0.0f,  0.0f },  0.0f,                -3.14159265f * 0.5f,   IM_COL32(180, 40, 40, 220),   IM_COL32(220, 60, 60, 255), { 0.0f,  0.0f,  1.0f } },
-            { "Right",  4, { 12, 13, 14, 15 }, { 1.0f,  0.0f,  0.0f },  0.0f,                 3.14159265f * 0.5f,   IM_COL32(230, 50, 50, 220),   IM_COL32(255, 70, 70, 255), { 0.0f,  0.0f, -1.0f } },
+            { "Back",   4, { 4, 5, 6, 7 }, { 0.0f,  0.0f, -1.0f },  0.0f,                -3.14159265f,          IM_COL32(40, 90, 180, 220),   IM_COL32(60, 120, 220, 255), {-1.0f,  0.0f,  0.0f } },
+            { "Left",   4, { 8, 9, 10, 11 }, {-1.0f,  0.0f,  0.0f },  0.0f,                 3.14159265f * 0.5f,   IM_COL32(180, 40, 40, 220),   IM_COL32(220, 60, 60, 255), { 0.0f,  0.0f,  1.0f } },
+            { "Right",  4, { 12, 13, 14, 15 }, { 1.0f,  0.0f,  0.0f },  0.0f,                -3.14159265f * 0.5f,   IM_COL32(230, 50, 50, 220),   IM_COL32(255, 70, 70, 255), { 0.0f,  0.0f, -1.0f } },
             { "Top",    4, { 16, 17, 18, 19 }, { 0.0f,  1.0f,  0.0f }, -3.14159265f * 0.49f,  0.0f,                 IM_COL32(50, 200, 50, 220),   IM_COL32(70, 240, 70, 255), { 1.0f,  0.0f,  0.0f } },
             { "Bottom", 4, { 20, 21, 22, 23 }, { 0.0f, -1.0f,  0.0f },  3.14159265f * 0.49f,  0.0f,                 IM_COL32(40, 150, 40, 220),   IM_COL32(60, 190, 60, 255), { 1.0f,  0.0f,  0.0f } },
 
             // --- 12 Edges ---
             { "", 4, { 3, 2, 17, 16 }, { 0.0f, 0.707f, 0.707f }, -3.14159265f * 0.25f, 0.0f,                 IM_COL32(50, 160, 140, 220),  IM_COL32(70, 200, 180, 255), { 0.0f, 0.0f, 0.0f } },
             { "", 4, { 0, 23, 22, 1 }, { 0.0f, -0.707f, 0.707f },  3.14159265f * 0.25f, 0.0f,                 IM_COL32(45, 135, 135, 220),  IM_COL32(65, 170, 170, 255), { 0.0f, 0.0f, 0.0f } },
-            { "", 4, { 7, 6, 19, 18 }, { 0.0f, 0.707f, -0.707f }, -3.14159265f * 0.25f, 3.14159265f,          IM_COL32(45, 145, 115, 220),  IM_COL32(65, 180, 145, 255), { 0.0f, 0.0f, 0.0f } },
-            { "", 4, { 4, 21, 20, 5 }, { 0.0f, -0.707f, -0.707f },  3.14159265f * 0.25f, 3.14159265f,          IM_COL32(40, 120, 110, 220),  IM_COL32(60, 150, 140, 255), { 0.0f, 0.0f, 0.0f } },
+            { "", 4, { 7, 6, 19, 18 }, { 0.0f, 0.707f, -0.707f }, -3.14159265f * 0.25f, -3.14159265f,          IM_COL32(45, 145, 115, 220),  IM_COL32(65, 180, 145, 255), { 0.0f, 0.0f, 0.0f } },
+            { "", 4, { 4, 21, 20, 5 }, { 0.0f, -0.707f, -0.707f },  3.14159265f * 0.25f, -3.14159265f,          IM_COL32(40, 120, 110, 220),  IM_COL32(60, 150, 140, 255), { 0.0f, 0.0f, 0.0f } },
 
-            { "", 4, { 3, 10, 9, 0 }, {-0.707f, 0.0f, 0.707f }, 0.0f,                 -3.14159265f * 0.25f,  IM_COL32(115, 80, 135, 220),  IM_COL32(145, 100, 170, 255), { 0.0f, 0.0f, 0.0f } },
-            { "", 4, { 1, 12, 15, 2 }, { 0.707f, 0.0f, 0.707f }, 0.0f,                  3.14159265f * 0.25f,  IM_COL32(140, 85, 140, 220),  IM_COL32(170, 110, 170, 255), { 0.0f, 0.0f, 0.0f } },
-            { "", 4, { 5, 8, 11, 6 }, {-0.707f, 0.0f, -0.707f }, 0.0f,                 -3.14159265f * 0.75f,  IM_COL32(110, 65, 110, 220),  IM_COL32(140, 85, 140, 255), { 0.0f, 0.0f, 0.0f } },
-            { "", 4, { 7, 14, 13, 4 }, { 0.707f, 0.0f, -0.707f }, 0.0f,                  3.14159265f * 0.75f,  IM_COL32(135, 70, 115, 220),  IM_COL32(165, 90, 145, 255), { 0.0f, 0.0f, 0.0f } },
+            { "", 4, { 3, 10, 9, 0 }, {-0.707f, 0.0f, 0.707f }, 0.0f,                  3.14159265f * 0.25f,  IM_COL32(115, 80, 135, 220),  IM_COL32(145, 100, 170, 255), { 0.0f, 0.0f, 0.0f } },
+            { "", 4, { 1, 12, 15, 2 }, { 0.707f, 0.0f, 0.707f }, 0.0f,                 -3.14159265f * 0.25f,  IM_COL32(140, 85, 140, 220),  IM_COL32(170, 110, 170, 255), { 0.0f, 0.0f, 0.0f } },
+            { "", 4, { 5, 8, 11, 6 }, {-0.707f, 0.0f, -0.707f }, 0.0f,                  3.14159265f * 0.75f,  IM_COL32(110, 65, 110, 220),  IM_COL32(140, 85, 140, 255), { 0.0f, 0.0f, 0.0f } },
+            { "", 4, { 7, 14, 13, 4 }, { 0.707f, 0.0f, -0.707f }, 0.0f,                 -3.14159265f * 0.75f,  IM_COL32(135, 70, 115, 220),  IM_COL32(165, 90, 145, 255), { 0.0f, 0.0f, 0.0f } },
 
-            { "", 4, { 16, 10, 11, 19 }, {-0.707f, 0.707f, 0.0f }, -3.14159265f * 0.25f, -3.14159265f * 0.5f,   IM_COL32(115, 120, 45, 220),  IM_COL32(145, 150, 65, 255), { 0.0f, 0.0f, 0.0f } },
-            { "", 4, { 17, 15, 14, 18 }, { 0.707f, 0.707f, 0.0f }, -3.14159265f * 0.25f,  3.14159265f * 0.5f,   IM_COL32(140, 125, 50, 220),  IM_COL32(175, 155, 70, 255), { 0.0f, 0.0f, 0.0f } },
-            { "", 4, { 23, 9, 8, 20 }, {-0.707f, -0.707f, 0.0f },  3.14159265f * 0.25f, -3.14159265f * 0.5f,   IM_COL32(110, 95, 40, 220),   IM_COL32(140, 120, 60, 255), { 0.0f, 0.0f, 0.0f } },
-            { "", 4, { 22, 12, 13, 21 }, { 0.707f, -0.707f, 0.0f },  3.14159265f * 0.25f,  3.14159265f * 0.5f,   IM_COL32(135, 100, 45, 220),  IM_COL32(165, 125, 65, 255), { 0.0f, 0.0f, 0.0f } },
+            { "", 4, { 16, 10, 11, 19 }, {-0.707f, 0.707f, 0.0f }, -3.14159265f * 0.25f,  3.14159265f * 0.5f,   IM_COL32(115, 120, 45, 220),  IM_COL32(145, 150, 65, 255), { 0.0f, 0.0f, 0.0f } },
+            { "", 4, { 17, 15, 14, 18 }, { 0.707f, 0.707f, 0.0f }, -3.14159265f * 0.25f, -3.14159265f * 0.5f,   IM_COL32(140, 125, 50, 220),  IM_COL32(175, 155, 70, 255), { 0.0f, 0.0f, 0.0f } },
+            { "", 4, { 23, 9, 8, 20 }, {-0.707f, -0.707f, 0.0f },  3.14159265f * 0.25f,  3.14159265f * 0.5f,   IM_COL32(110, 95, 40, 220),   IM_COL32(140, 120, 60, 255), { 0.0f, 0.0f, 0.0f } },
+            { "", 4, { 22, 12, 13, 21 }, { 0.707f, -0.707f, 0.0f },  3.14159265f * 0.25f, -3.14159265f * 0.5f,   IM_COL32(135, 100, 45, 220),  IM_COL32(165, 125, 65, 255), { 0.0f, 0.0f, 0.0f } },
 
             // --- 8 Corners ---
-            { "", 3, { 2, 15, 17, 0 }, { 0.577f, 0.577f, 0.577f }, -3.14159265f * 0.25f,  3.14159265f * 0.25f,   IM_COL32(110, 120, 110, 220), IM_COL32(140, 150, 140, 255), { 0.0f, 0.0f, 0.0f } },
-            { "", 3, { 3, 16, 10, 0 }, {-0.577f, 0.577f, 0.577f }, -3.14159265f * 0.25f, -3.14159265f * 0.25f,   IM_COL32(95, 120, 95, 220),   IM_COL32(125, 150, 125, 255), { 0.0f, 0.0f, 0.0f } },
-            { "", 3, { 7, 18, 14, 0 }, { 0.577f, 0.577f, -0.577f }, -3.14159265f * 0.25f,  3.14159265f * 0.75f,   IM_COL32(105, 110, 100, 220), IM_COL32(135, 140, 130, 255), { 0.0f, 0.0f, 0.0f } },
-            { "", 3, { 6, 11, 19, 0 }, {-0.577f, 0.577f, -0.577f }, -3.14159265f * 0.25f, -3.14159265f * 0.75f,   IM_COL32(90, 110, 90, 220),   IM_COL32(120, 140, 120, 255), { 0.0f, 0.0f, 0.0f } },
+            { "", 3, { 2, 15, 17, 0 }, { 0.577f, 0.577f, 0.577f }, -3.14159265f * 0.25f, -3.14159265f * 0.25f,   IM_COL32(110, 120, 110, 220), IM_COL32(140, 150, 140, 255), { 0.0f, 0.0f, 0.0f } },
+            { "", 3, { 3, 16, 10, 0 }, {-0.577f, 0.577f, 0.577f }, -3.14159265f * 0.25f,  3.14159265f * 0.25f,   IM_COL32(95, 120, 95, 220),   IM_COL32(125, 150, 125, 255), { 0.0f, 0.0f, 0.0f } },
+            { "", 3, { 7, 18, 14, 0 }, { 0.577f, 0.577f, -0.577f }, -3.14159265f * 0.25f, -3.14159265f * 0.75f,   IM_COL32(105, 110, 100, 220), IM_COL32(135, 140, 130, 255), { 0.0f, 0.0f, 0.0f } },
+            { "", 3, { 6, 11, 19, 0 }, {-0.577f, 0.577f, -0.577f }, -3.14159265f * 0.25f,  3.14159265f * 0.75f,   IM_COL32(90, 110, 90, 220),   IM_COL32(120, 140, 120, 255), { 0.0f, 0.0f, 0.0f } },
 
-            { "", 3, { 1, 22, 12, 0 }, { 0.577f, -0.577f, 0.577f },  3.14159265f * 0.25f,  3.14159265f * 0.25f,   IM_COL32(110, 100, 100, 220), IM_COL32(140, 130, 130, 255), { 0.0f, 0.0f, 0.0f } },
-            { "", 3, { 0, 9, 23, 0 }, {-0.577f, -0.577f, 0.577f },  3.14159265f * 0.25f, -3.14159265f * 0.25f,   IM_COL32(95, 100, 85, 220),   IM_COL32(125, 130, 115, 255), { 0.0f, 0.0f, 0.0f } },
-            { "", 3, { 4, 13, 21, 0 }, { 0.577f, -0.577f, -0.577f },  3.14159265f * 0.25f,  3.14159265f * 0.75f,   IM_COL32(105, 95, 90, 220),   IM_COL32(135, 125, 120, 255), { 0.0f, 0.0f, 0.0f } },
-            { "", 3, { 5, 8, 20, 0 }, {-0.577f, -0.577f, -0.577f },  3.14159265f * 0.25f, -3.14159265f * 0.75f,   IM_COL32(90, 95, 80, 220),    IM_COL32(120, 125, 110, 255), { 0.0f, 0.0f, 0.0f } }
+            { "", 3, { 1, 22, 12, 0 }, { 0.577f, -0.577f, 0.577f },  3.14159265f * 0.25f, -3.14159265f * 0.25f,   IM_COL32(110, 100, 100, 220), IM_COL32(140, 130, 130, 255), { 0.0f, 0.0f, 0.0f } },
+            { "", 3, { 0, 9, 23, 0 }, {-0.577f, -0.577f, 0.577f },  3.14159265f * 0.25f,  3.14159265f * 0.25f,   IM_COL32(95, 100, 85, 220),   IM_COL32(125, 130, 115, 255), { 0.0f, 0.0f, 0.0f } },
+            { "", 3, { 4, 13, 21, 0 }, { 0.577f, -0.577f, -0.577f },  3.14159265f * 0.25f, -3.14159265f * 0.75f,   IM_COL32(105, 95, 90, 220),   IM_COL32(135, 125, 120, 255), { 0.0f, 0.0f, 0.0f } },
+            { "", 3, { 5, 8, 20, 0 }, {-0.577f, -0.577f, -0.577f },  3.14159265f * 0.25f,  3.14159265f * 0.75f,   IM_COL32(90, 95, 80, 220),    IM_COL32(120, 125, 110, 255), { 0.0f, 0.0f, 0.0f } }
         };
 
         std::vector<int> visiblePartIndices;
@@ -1547,20 +1547,64 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             }
 
             if (isHovered && mouseClicked) {
+                std::ofstream logFile("c:\\Users\\user\\Desktop\\cpp\\sculptsp-native\\debug_log.txt", std::ios::app);
+                if (logFile.is_open()) {
+                    logFile << "Hovered and Clicked Part: " << part.label << std::endl;
+                    logFile << "  part.rotX: " << part.rotX << ", part.rotY: " << part.rotY << std::endl;
+                    logFile << "  m_gizmoClickPending: " << (m_gizmoClickPending ? "yes" : "no") << std::endl;
+                    if (m_gizmoClickPending) {
+                        logFile << "  pendingRotX: " << m_gizmoClickPartRotX << ", pendingRotY: " << m_gizmoClickPartRotY << std::endl;
+                    }
+                    logFile.close();
+                }
+
+                if (m_gizmoClickPending && std::abs(m_gizmoClickPartRotX - (-part.rotX)) < 1e-3f && std::abs(m_gizmoClickPartRotY - part.rotY) < 1e-3f) {
+                    // Cancel pending view change on double-click
+                    m_gizmoClickPending = false;
+                } else {
+                    // Set pending click
+                    m_gizmoClickPending = true;
+                    m_gizmoClickTime = std::chrono::steady_clock::now();
+                    m_gizmoClickPartRotX = -part.rotX;
+                    m_gizmoClickPartRotY = part.rotY;
+                }
+            }
+        }
+
+        // Process pending gizmo click
+        if (m_gizmoClickPending) {
+            auto now = std::chrono::steady_clock::now();
+            auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_gizmoClickTime).count();
+            if (elapsedMs > 250) {
+                m_gizmoClickPending = false;
+
                 const float PI = 3.14159265f;
                 float targetRotX = camera.getTargetRotX();
                 float targetRotY = camera.getTargetRotY();
 
-                float diffX = std::abs(targetRotX - part.rotX);
-                float diffY = targetRotY - part.rotY;
+                float diffX = std::abs(targetRotX - m_gizmoClickPartRotX);
+                float diffY = targetRotY - m_gizmoClickPartRotY;
                 diffY = std::fmod(diffY, 2.0f * PI);
                 if (diffY < -PI) diffY += 2.0f * PI;
                 if (diffY > PI) diffY -= 2.0f * PI;
                 diffY = std::abs(diffY);
 
                 bool alreadyMatch = camera.isOrthographic() && (diffX < 1e-3f) && (diffY < 1e-3f);
+
+                std::ofstream logFile("c:\\Users\\user\\Desktop\\cpp\\sculptsp-native\\debug_log.txt", std::ios::app);
+                if (logFile.is_open()) {
+                    logFile << "Gizmo Click Triggered:" << std::endl;
+                    logFile << "  targetRotX: " << targetRotX << ", targetRotY: " << targetRotY << std::endl;
+                    logFile << "  clickedRotX: " << m_gizmoClickPartRotX << ", clickedRotY: " << m_gizmoClickPartRotY << std::endl;
+                    logFile << "  diffX: " << diffX << ", diffY: " << diffY << std::endl;
+                    logFile << "  isOrthographic: " << (camera.isOrthographic() ? "yes" : "no") << std::endl;
+                    logFile << "  alreadyMatch: " << (alreadyMatch ? "yes" : "no") << std::endl;
+                    logFile << "--------------------------------------" << std::endl;
+                    logFile.close();
+                }
+
                 if (!alreadyMatch) {
-                    camera.toggleViewAngles(part.rotX, part.rotY);
+                    camera.toggleViewAngles(m_gizmoClickPartRotX, m_gizmoClickPartRotY);
                 }
             }
         }

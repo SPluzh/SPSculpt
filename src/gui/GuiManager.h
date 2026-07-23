@@ -66,6 +66,12 @@ private:
     int m_modalStartMouseX = 0;
     int m_modalStartMouseY = 0;
 
+    // Gizmo Cube double-click prevention / delay state
+    bool m_gizmoClickPending = false;
+    std::chrono::steady_clock::time_point m_gizmoClickTime;
+    float m_gizmoClickPartRotX = 0.0f;
+    float m_gizmoClickPartRotY = 0.0f;
+
 public:
     GuiManager();
     ~GuiManager();
