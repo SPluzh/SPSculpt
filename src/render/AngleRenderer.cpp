@@ -120,7 +120,7 @@ bool AngleRenderer::init(int width, int height) {
         uniform int uFlat;
 
         vec3 getNormal() {
-            return uFlat == 0 ? normalize(vNormal) : normalize(cross(dFdx(vVertex), dFdy(vVertex)));
+            return uFlat == 0 ? normalize(vNormal) : normalize(cross(dFdy(vVertex), dFdx(vVertex)));
         }
 
         vec3 sRGBToLinear(const in vec3 col) {
