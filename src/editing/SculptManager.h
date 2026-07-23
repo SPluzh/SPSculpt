@@ -8,6 +8,8 @@
 #include <vector>
 #include <string>
 
+#include "brushes/BrushPreset.h"
+
 struct BrushSettings {
     float radius = 50.0f;
     float intensity = 0.5f;
@@ -40,6 +42,37 @@ struct BrushSettings {
     float maskSharpenFactor = 1.0f;
     float maskExtractThickness = 0.05f;
     bool blurMaskedOnly = false;
+
+    // --- ZBrush Preset Extension Fields ---
+    StrokeMode strokeMode = StrokeMode::Dot;
+    DeformMode deformMode = DeformMode::Normal;
+    bool altmode = false;
+    float lazyRadius = 0.0f;
+    float lazySmooth = 0.0f;
+    bool grabRadius = false;
+    float grabRadiusScale = 0.28f;
+    float areaNormalRadius = 0.4f;
+    float areaPointRadius = 0.0f;
+    float areaSharp = 0.0f;
+    bool areaSampling = true;
+    bool flattenLockNormal = false;
+    bool flattenLockOrigin = false;
+    bool smoothTaubin = false;
+    float smoothTaubinInflate = 0.53f;
+    float smoothTaubinShrink = 0.75f;
+    bool smoothRelax = false;
+    bool smoothStable = false;
+    bool smoothStickyBorder = false;
+    DepthFilter depthFilter;
+    bool connectedTopology = false;
+    bool onlyFrontFace = false;
+    bool useDynamicTopology = false;
+    float subdivFactor = 1.0f;
+    float decimFactor = 1.0f;
+    bool pressureIntensity = false;
+    bool pressureRadius = false;
+    bool useGlobalPressure = false;
+    FalloffCurve falloff;
 };
 
 struct MeasurementAnchor {
@@ -225,6 +258,9 @@ public:
     static glm::vec3 getAnchorWorldPos(const MeasurementAnchor& anchor);
     MeasurementAnchor pickAnchor(float mouseX, float mouseY, Scene& scene, const glm::vec3* referenceWorldPos);
     void validateSegments(Scene& scene);
+
+    void applyPreset(const BrushPreset& preset);
+    void applyActivePreset();
 
 private:
     float m_stylusPressure = 1.0f;

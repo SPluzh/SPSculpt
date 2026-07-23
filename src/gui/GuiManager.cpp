@@ -3,6 +3,7 @@
 #include "render/RenderSettings.h"
 #include "editing/BrushCursor.h"
 #include "files/FileManager.h"
+#include "brushes/BrushPresetManager.h"
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <imgui_impl_sdl2.h>
@@ -332,6 +333,90 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.9f, 1.0f, 1.0f));
         ImGui::Text("Active Brush: %s", getBrushNameLocal(brushType));
         ImGui::PopStyleColor();
+        ImGui::Separator();
+
+        // ZBrush Presets Section
+        if (ImGui::CollapsingHeader("ZBrush Brush Presets", ImGuiTreeNodeFlags_DefaultOpen)) {
+            const auto& presets = BrushPresetManager::instance().presets();
+            const BrushPreset* activePreset = BrushPresetManager::instance().active();
+            std::string activeName = activePreset ? activePreset->name : "None (Custom)";
+
+            if (ImGui::BeginCombo("Select Preset", activeName.c_str())) {
+                for (const auto& preset : presets) {
+                    bool isSelected = (activePreset && activePreset->uid == preset.uid);
+                    if (ImGui::Selectable(preset.name.c_str(), isSelected)) {
+                        BrushPresetManager::instance().setActive(preset.uid);
+                        sculpt.applyActivePreset();
+                    }
+                    if (isSelected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+
+            if (activePreset) {
+                ImGui::Indent();
+                ImGui::Text("Deform Mode: %s", activePreset->deformMode == DeformMode::Normal ? "Normal" :
+                                            activePreset->deformMode == DeformMode::Clay ? "Clay" :
+                                            activePreset->deformMode == DeformMode::Inflate ? "Inflate" :
+                                            activePreset->deformMode == DeformMode::Pinch ? "Pinch" :
+                                            activePreset->deformMode == DeformMode::Crease ? "Crease" :
+                                            activePreset->deformMode == DeformMode::Flatten ? "Flatten" :
+                                            activePreset->deformMode == DeformMode::Smooth ? "Smooth" :
+                                            activePreset->deformMode == DeformMode::Move ? "Move" : "Unknown");
+                ImGui::Text("Stroke Mode: %s", activePreset->strokeMode == StrokeMode::Dot ? "Dot" :
+                                            activePreset->strokeMode == StrokeMode::Roll ? "Roll" :
+                                            activePreset->strokeMode == StrokeMode::Grab ? "Grab" :
+                                            activePreset->strokeMode == StrokeMode::GrabDynamicRadius ? "Grab (Dynamic Radius)" : "Unknown");
+                ImGui::Text("Depth Filter: %s", activePreset->depthFilter.enable ? "Enabled" : "Disabled");
+                if (activePreset->depthFilter.enable) {
+                    ImGui::Text("  Range: [%.2f, %.2f], Offset: %.2f", activePreset->depthFilter.min, activePreset->depthFilter.max, activePreset->depthFilter.offset);
+                }
+                if (activePreset->smoothTaubin) {
+                    ImGui::Text("Taubin Smoothing: Enabled");
+                    ImGui::Text("  Shrink: %.2f, Inflate: %.2f", activePreset->smoothTaubinShrink, activePreset->smoothTaubinInflate);
+                }
+                if (activePreset->grabRadius) {
+                    ImGui::Text("Grab Radius Scale: %.2f", activePreset->grabRadiusScale);
+                }
+                ImGui::Unindent();
+            }
+
+            if (ImGui::Button("Load Custom Preset (.json)...", ImVec2(-1, 0))) {
+                ImGui::OpenPopup("Load Preset Path Dialog");
+            }
+
+            if (ImGui::BeginPopupModal("Load Preset Path Dialog", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                static char presetPathBuf[256] = "";
+                ImGui::Text("Enter absolute or relative path to brush preset JSON file:");
+                ImGui::InputText("Path", presetPathBuf, sizeof(presetPathBuf));
+                
+                if (ImGui::Button("Load", ImVec2(120, 0))) {
+                    if (std::strlen(presetPathBuf) > 0) {
+                        if (BrushPresetManager::instance().loadFromFile(presetPathBuf)) {
+                            std::string pathStr(presetPathBuf);
+                            size_t lastSlash = pathStr.find_last_of("/\\");
+                            std::string filename = (lastSlash == std::string::npos) ? pathStr : pathStr.substr(lastSlash + 1);
+                            size_t lastDot = filename.find_last_of('.');
+                            std::string name = (lastDot == std::string::npos) ? filename : filename.substr(0, lastDot);
+                            const auto* loadedPreset = BrushPresetManager::instance().findByName(name);
+                            if (loadedPreset) {
+                                BrushPresetManager::instance().setActive(loadedPreset->uid);
+                                sculpt.applyActivePreset();
+                            }
+                        }
+                    }
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndPopup();
+            }
+        }
+
         ImGui::Separator();
 
         // 1. General Brush Settings Section

@@ -1,4 +1,5 @@
 #include "editing/SculptManager.h"
+#include "brushes/BrushPresetManager.h"
 #include "sculpt/SculptEngine.h"
 #include "mesh/NormalCalc.h"
 #ifdef _WIN32
@@ -2256,6 +2257,130 @@ void SculptManager::sharpenMask(Mesh* mesh) {
     mesh->isVertexDirty = true;
     mesh->dirtyVertMin = 0;
     mesh->dirtyVertMax = nbVerts - 1;
+}
+
+void SculptManager::applyPreset(const BrushPreset& preset) {
+    BrushType targetBrush = m_currentBrush;
+    switch (preset.deformMode) {
+        case DeformMode::Normal:
+            targetBrush = BRUSH_SQUAREBRUSH;
+            break;
+        case DeformMode::Clay:
+            if (!preset.accumulate) {
+                targetBrush = BRUSH_CLAYBUILDUP;
+            } else {
+                targetBrush = BRUSH_CLAY;
+            }
+            break;
+        case DeformMode::Inflate:
+            targetBrush = BRUSH_INFLATE;
+            break;
+        case DeformMode::Pinch:
+            targetBrush = BRUSH_PINCH;
+            break;
+        case DeformMode::Crease:
+            {
+                std::string lowerName = preset.name;
+                std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), ::tolower);
+                if (lowerName.find("dam") != std::string::npos) {
+                    targetBrush = BRUSH_DAMSTANDARD;
+                } else {
+                    targetBrush = BRUSH_CREASE;
+                }
+            }
+            break;
+        case DeformMode::Flatten:
+            targetBrush = BRUSH_FLATTEN;
+            break;
+        case DeformMode::Smooth:
+            targetBrush = BRUSH_SMOOTH;
+            break;
+        case DeformMode::Move:
+            {
+                std::string lowerName = preset.name;
+                std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), ::tolower);
+                if (lowerName.find("elastic") != std::string::npos) {
+                    targetBrush = BRUSH_ELASTIC;
+                } else if (lowerName.find("drag") != std::string::npos) {
+                    targetBrush = BRUSH_DRAG;
+                } else {
+                    targetBrush = BRUSH_MOVE;
+                }
+            }
+            break;
+    }
+
+    m_currentBrush = targetBrush;
+    
+    BrushSettings& settings = m_brushSettings[targetBrush];
+    settings.radius = preset.radius;
+    settings.intensity = preset.intensity;
+    settings.spacing = preset.spacing;
+    settings.hardness = preset.hardness;
+    settings.focalShift = preset.focalShift;
+    settings.focalShiftFalloff = preset.focalShiftFalloff;
+    settings.negative = preset.negative;
+    settings.culling = preset.culling;
+    settings.accumulate = preset.accumulate;
+    settings.lockPosition = preset.lockPosition;
+    settings.idAlpha = preset.idAlpha;
+    
+    settings.strokeMode = preset.strokeMode;
+    settings.deformMode = preset.deformMode;
+    settings.altmode = preset.altmode;
+    settings.lazyRadius = preset.lazyRadius;
+    settings.lazySmooth = preset.lazySmooth;
+    settings.grabRadius = preset.grabRadius;
+    settings.grabRadiusScale = preset.grabRadiusScale;
+    settings.areaNormalRadius = preset.areaNormalRadius;
+    settings.areaPointRadius = preset.areaPointRadius;
+    settings.areaSharp = preset.areaSharp;
+    settings.areaSampling = preset.areaSampling;
+    
+    settings.flattenLockNormal = preset.flattenLockNormal;
+    settings.flattenLockOrigin = preset.flattenLockOrigin;
+    
+    settings.smoothTaubin = preset.smoothTaubin;
+    settings.smoothTaubinInflate = preset.smoothTaubinInflate;
+    settings.smoothTaubinShrink = preset.smoothTaubinShrink;
+    settings.smoothRelax = preset.smoothRelax;
+    settings.smoothStable = preset.smoothStable;
+    settings.smoothStickyBorder = preset.smoothStickyBorder;
+    settings.tangent = preset.tangent;
+    
+    settings.depthFilter = preset.depthFilter;
+    settings.connectedTopology = preset.connectedTopology;
+    settings.onlyFrontFace = preset.onlyFrontFace;
+    settings.topoCheck = preset.topoCheck;
+    settings.useDynamicTopology = preset.useDynamicTopology;
+    settings.elasticity = preset.elasticity;
+    
+    settings.paintColor = glm::vec3(preset.paintColor[0], preset.paintColor[1], preset.paintColor[2]);
+    settings.paintRoughness = preset.roughness;
+    settings.paintMetallic = preset.metallic;
+    settings.writeAlbedo = preset.writeAlbedo;
+    settings.writeRoughness = preset.writeRoughness;
+    settings.writeMetalness = preset.writeMetalness;
+    
+    settings.pressureIntensity = preset.pressureIntensity;
+    settings.pressureRadius = preset.pressureRadius;
+    settings.useGlobalPressure = preset.useGlobalPressure;
+    
+    settings.falloff.preset = preset.falloff.preset;
+    settings.falloff.points.clear();
+    for (const auto& pt : preset.falloff.points) {
+        settings.falloff.points.push_back({pt[0], pt[1]});
+    }
+    
+    settings.subdivFactor = preset.subdivFactor;
+    settings.decimFactor = preset.decimFactor;
+}
+
+void SculptManager::applyActivePreset() {
+    const BrushPreset* activePreset = BrushPresetManager::instance().active();
+    if (activePreset) {
+        applyPreset(*activePreset);
+    }
 }
 
 

@@ -33,6 +33,7 @@
 #include "gui/GuiManager.h"
 #include "platform/HotkeyDispatcher.h"
 #include "render/RenderSettings.h"
+#include "brushes/BrushPresetManager.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -313,6 +314,7 @@ int main(int argc, char* argv[]) {
         scene.getCamera().onResize(width, height);
     }
 
+    BrushPresetManager::instance().loadDefaults();
     SculptManager sculpt;
     sculpt.loadSettings("brush_settings.cfg");
     GuiManager gui;
