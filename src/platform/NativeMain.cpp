@@ -335,10 +335,24 @@ int main(int argc, char* argv[]) {
     SDL_SetWindowsMessageHook(TabletMessageHook, &sculpt);
 #endif
 
+    auto lastFrameTime = std::chrono::high_resolution_clock::now();
     bool quit = false;
     SDL_Event event;
     std::cout << "[Debug] Entering main loop." << std::endl;
     while (!quit) {
+        auto currentFrameTime = std::chrono::high_resolution_clock::now();
+        float deltaTime = std::chrono::duration<float>(currentFrameTime - lastFrameTime).count();
+        lastFrameTime = currentFrameTime;
+
+        // Update cameras
+        scene.getCamera().update(deltaTime);
+        if (scene.getSplitMode() != Scene::SplitMode::OFF) {
+            auto camRight = scene.getCameraRight();
+            if (camRight) {
+                camRight->update(deltaTime);
+            }
+        }
+
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
                 quit = true;

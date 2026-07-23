@@ -23,6 +23,22 @@ struct Ray {
 
 class Camera {
 public:
+    struct CameraState {
+        glm::quat quatRot;
+        glm::vec3 trans;
+        glm::vec3 center;
+        glm::vec3 offset;
+        float rotX;
+        float rotY;
+        float fov;
+        CameraEnums::Projection projectionType;
+        CameraEnums::CameraMode mode;
+        bool usePivot;
+        float view2DOffsetX;
+        float view2DOffsetY;
+        float view2DZoom;
+    };
+
     Camera();
 
     void setProjectionType(CameraEnums::Projection projType);
@@ -69,11 +85,17 @@ public:
     glm::vec3 computePosition() const;
     void resetView();
     void resetViewToMesh(const float* bbox);
+    float computeFrustumFit() const;
     void snapClosestRotation();
     void toggleViewFront();
     void toggleViewTop();
     void toggleViewLeft();
     void toggleViewRight();
+
+    void update(float deltaTime);
+    void startTransition(const CameraState& targetState, float duration = 0.2f);
+    void cancelTransition();
+    bool isAnimating() const { return m_transitionActive; }
 
     float getNear() const { return m_near; }
     float getFar() const { return m_far; }
@@ -102,22 +124,6 @@ public:
     float getView2DZoom() const { return m_view2DZoom; }
     void setView2DZoom(float z) { m_view2DZoom = z > 0.01f ? z : 0.01f; }
     void resetView2D() { m_view2DOffsetX = 0.0f; m_view2DOffsetY = 0.0f; m_view2DZoom = 1.0f; }
-
-    struct CameraState {
-        glm::quat quatRot;
-        glm::vec3 trans;
-        glm::vec3 center;
-        glm::vec3 offset;
-        float rotX;
-        float rotY;
-        float fov;
-        CameraEnums::Projection projectionType;
-        CameraEnums::CameraMode mode;
-        bool usePivot;
-        float view2DOffsetX;
-        float view2DOffsetY;
-        float view2DZoom;
-    };
 
     void pushState();
     void undo();
@@ -168,4 +174,10 @@ private:
     float m_view2DOffsetX = 0.0f;
     float m_view2DOffsetY = 0.0f;
     float m_view2DZoom = 1.0f;
+
+    CameraState m_startState;
+    CameraState m_targetState;
+    float m_transitionDuration = 0.0f;
+    float m_transitionTime = 0.0f;
+    bool m_transitionActive = false;
 };

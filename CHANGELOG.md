@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.2]
+- **Camera**: Ported the legacy smooth camera transitions and zoom-to-focus behavior. Pressing the 'F' key to focus on a selected object, resetting the view, or switching between orthographic angles now smoothly animates the camera transition using quartic easing instead of instantly snapping. Focusing on the object preserves the current camera rotation (view angle) and calculates the correct zoom fit factor to fit the mesh bounds perfectly within the viewport, matching the legacy application's behavior.
+- **Input**: Configured camera animations to cancel instantly if the user initiates manual navigation (orbiting, panning, zooming) during a transition, ensuring seamless and responsive control.
 - **Brushes**: Fixed Move, Drag, and Elastic brush behavior to match the legacy JavaScript project:
   - Vertices are now deformed relative to their initial (proxy) positions at the start of the stroke, rather than accumulating displacement cumulatively across stroke frames.
   - Implemented the `vertexOnLine` mouse ray projection algorithm in C++ to compute drag directions stably relative to the initial intersection coordinates instead of relying on shifting dynamic raycast hits.
