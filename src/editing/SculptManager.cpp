@@ -176,6 +176,7 @@ SculptManager::SculptManager() {
         m_brushSettings[i].writeAlbedo = true;
         m_brushSettings[i].writeRoughness = true;
         m_brushSettings[i].writeMetalness = true;
+        m_brushSettings[i].pickColor = false;
         m_brushSettings[i].maskSharpenBlurIterations = 4;
         m_brushSettings[i].maskSharpenFactor = 1.0f;
         m_brushSettings[i].maskExtractThickness = 0.05f;
@@ -735,47 +736,51 @@ int SculptManager::doStrokePass(
     }
 
     if (deformedCount > 0) {
-        if (m_tagFlags.size() < (size_t)mesh->nbFaces) {
-            m_tagFlags.assign(mesh->nbFaces, 0);
+        bool isSculptDeform = (activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_MASK_GRADIENT_BLUR);
+
+        if (isSculptDeform) {
+            if (m_tagFlags.size() < (size_t)mesh->nbFaces) {
+                m_tagFlags.assign(mesh->nbFaces, 0);
+            }
+            if (m_iFacesCache.size() < (size_t)mesh->nbFaces) {
+                m_iFacesCache.resize(mesh->nbFaces);
+            }
+
+            uint32_t numIFaces = getFacesFromVerticesFast(
+                pickedVertices.data(),
+                pickedVertices.size(),
+                mesh->vrfStartCount.data(),
+                mesh->vertRingFace.data(),
+                m_iFacesCache.data(),
+                m_tagFlags.data(),
+                &m_tagEpoch,
+                mesh->nbFaces
+            );
+
+            updateFaceNormalsAndBoxes(
+                mesh->verts.data(), mesh->nbVerts,
+                mesh->faces.data(), mesh->nbFaces,
+                m_iFacesCache.data(), numIFaces,
+                mesh->faceNormals.data(),
+                mesh->faceBoxes.data(),
+                mesh->faceCenters.data()
+            );
+
+            updateVertexNormals(
+                pickedVertices.data(), pickedVertices.size(), mesh->nbVerts,
+                mesh->vrfStartCount.data(),
+                mesh->vertRingFace.data(),
+                mesh->faceNormals.data(),
+                mesh->normals.data()
+            );
+
+            mesh->octree.update(
+                mesh->verts.data(), mesh->nbVerts,
+                mesh->faces.data(), mesh->nbFaces,
+                mesh->faceBoxes.data(),
+                m_iFacesCache.data(), numIFaces
+            );
         }
-        if (m_iFacesCache.size() < (size_t)mesh->nbFaces) {
-            m_iFacesCache.resize(mesh->nbFaces);
-        }
-
-        uint32_t numIFaces = getFacesFromVerticesFast(
-            pickedVertices.data(),
-            pickedVertices.size(),
-            mesh->vrfStartCount.data(),
-            mesh->vertRingFace.data(),
-            m_iFacesCache.data(),
-            m_tagFlags.data(),
-            &m_tagEpoch,
-            mesh->nbFaces
-        );
-
-        updateFaceNormalsAndBoxes(
-            mesh->verts.data(), mesh->nbVerts,
-            mesh->faces.data(), mesh->nbFaces,
-            m_iFacesCache.data(), numIFaces,
-            mesh->faceNormals.data(),
-            mesh->faceBoxes.data(),
-            mesh->faceCenters.data()
-        );
-
-        updateVertexNormals(
-            pickedVertices.data(), pickedVertices.size(), mesh->nbVerts,
-            mesh->vrfStartCount.data(),
-            mesh->vertRingFace.data(),
-            mesh->faceNormals.data(),
-            mesh->normals.data()
-        );
-
-        mesh->octree.update(
-            mesh->verts.data(), mesh->nbVerts,
-            mesh->faces.data(), mesh->nbFaces,
-            mesh->faceBoxes.data(),
-            m_iFacesCache.data(), numIFaces
-        );
 
         uint32_t minV = pickedVertices[0];
         uint32_t maxV = pickedVertices[0];
@@ -784,12 +789,26 @@ int SculptManager::doStrokePass(
             if (v < minV) minV = v;
             if (v > maxV) maxV = v;
         }
-        if (mesh->isVertexDirty) {
+        
+        if (mesh->isVertexDirty || mesh->isColorDirty || mesh->isMaterialDirty) {
             mesh->dirtyVertMin = std::min(mesh->dirtyVertMin, minV);
             mesh->dirtyVertMax = std::max(mesh->dirtyVertMax, maxV);
         } else {
             mesh->dirtyVertMin = minV;
             mesh->dirtyVertMax = maxV;
+        }
+
+        const auto& settings = getCurrentSettings();
+        if (activeBrush == BRUSH_PAINT) {
+            if (settings.writeAlbedo) {
+                mesh->isColorDirty = true;
+            }
+            if (settings.writeRoughness || settings.writeMetalness) {
+                mesh->isMaterialDirty = true;
+            }
+        } else if (activeBrush == BRUSH_MASK || activeBrush == BRUSH_MASK_GRADIENT_BLUR) {
+            mesh->isMaterialDirty = true;
+        } else {
             mesh->isVertexDirty = true;
         }
     }
@@ -893,6 +912,13 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         m_lastValidIntersection = m_currentIntersection;
         m_lastValidIntersectionNormal = m_currentIntersectionNormal;
         m_hasAnyValidIntersection = true;
+    }
+
+    if (activeBrush == BRUSH_PAINT && getCurrentSettings().pickColor) {
+        if (m_currentIntersectionValid && intersectFaceId != 0xffffffff) {
+            pickColor(mesh, intersectFaceId, m_currentIntersection);
+        }
+        return;
     }
 
     glm::vec3 cameraPos = camera.computePosition();
@@ -2177,7 +2203,8 @@ void SculptManager::processFrame(Scene& scene) {
             m_isSculpting ? m_lastValidIntersection : m_currentIntersection,
             m_isSculpting ? m_lastValidIntersectionNormal : m_currentIntersectionNormal,
             activeSettings.focalShift,
-            activeSettings.hardness
+            activeSettings.hardness,
+            activeSettings.paintColor
         );
     }
 }
@@ -2673,6 +2700,85 @@ void SculptManager::applyActivePreset() {
     if (activePreset) {
         applyPreset(*activePreset);
     }
+}
+
+static glm::vec3 polyLerp(Mesh* mesh, uint32_t faceId, const glm::vec3& interPoint, const float* field) {
+    if (!mesh || faceId == 0xffffffff || faceId >= (uint32_t)mesh->nbFaces) return glm::vec3(0.0f);
+    
+    uint32_t iv1 = mesh->faces[faceId * 4];
+    uint32_t iv2 = mesh->faces[faceId * 4 + 1];
+    uint32_t iv3 = mesh->faces[faceId * 4 + 2];
+    uint32_t iv4 = mesh->faces[faceId * 4 + 3];
+    bool isQuad = (iv4 != 0xffffffff);
+    
+    glm::vec3 v1(mesh->verts[iv1 * 3], mesh->verts[iv1 * 3 + 1], mesh->verts[iv1 * 3 + 2]);
+    glm::vec3 v2(mesh->verts[iv2 * 3], mesh->verts[iv2 * 3 + 1], mesh->verts[iv2 * 3 + 2]);
+    glm::vec3 v3(mesh->verts[iv3 * 3], mesh->verts[iv3 * 3 + 1], mesh->verts[iv3 * 3 + 2]);
+    glm::vec3 v4(0.0f);
+    if (isQuad) {
+        v4 = glm::vec3(mesh->verts[iv4 * 3], mesh->verts[iv4 * 3 + 1], mesh->verts[iv4 * 3 + 2]);
+    }
+    
+    float len1 = 1.0f / std::max(glm::distance(interPoint, v1), 1e-6f);
+    float len2 = 1.0f / std::max(glm::distance(interPoint, v2), 1e-6f);
+    float len3 = 1.0f / std::max(glm::distance(interPoint, v3), 1e-6f);
+    float len4 = isQuad ? (1.0f / std::max(glm::distance(interPoint, v4), 1e-6f)) : 0.0f;
+    
+    float invSum = 1.0f / (len1 + len2 + len3 + len4);
+    
+    glm::vec3 f1(field[iv1 * 3], field[iv1 * 3 + 1], field[iv1 * 3 + 2]);
+    glm::vec3 f2(field[iv2 * 3], field[iv2 * 3 + 1], field[iv2 * 3 + 2]);
+    glm::vec3 f3(field[iv3 * 3], field[iv3 * 3 + 1], field[iv3 * 3 + 2]);
+    glm::vec3 f4(0.0f);
+    if (isQuad) {
+        f4 = glm::vec3(field[iv4 * 3], field[iv4 * 3 + 1], field[iv4 * 3 + 2]);
+    }
+    
+    return (f1 * len1 + f2 * len2 + f3 * len3 + f4 * len4) * invSum;
+}
+
+void SculptManager::pickColor(Mesh* mesh, uint32_t faceId, const glm::vec3& interPoint) {
+    if (!mesh) return;
+    glm::vec3 mat = polyLerp(mesh, faceId, interPoint, mesh->materials.data());
+    glm::vec3 col = polyLerp(mesh, faceId, interPoint, mesh->colors.data());
+    
+    auto& settings = getCurrentSettings();
+    settings.paintColor = col;
+    settings.paintRoughness = mat.x;
+    settings.paintMetallic = mat.y;
+}
+
+void SculptManager::paintAll(Scene& scene, Mesh* mesh) {
+    if (!mesh) return;
+    
+    scene.pushHistoryState();
+
+    int nbVerts = mesh->nbVerts;
+    std::vector<uint32_t> iVerts;
+    iVerts.reserve(nbVerts);
+    for (int i = 0; i < nbVerts; ++i) {
+        if (mesh->materials[i * 3 + 2] > 0.0f) {
+            iVerts.push_back(i);
+        }
+    }
+    
+    if (iVerts.empty()) return;
+
+    const auto& settings = m_brushSettings[BRUSH_PAINT];
+    strokePaintAll(
+        mesh->colors.data(),
+        mesh->materials.data(),
+        iVerts.data(),
+        iVerts.size(),
+        settings.paintColor.r, settings.paintColor.g, settings.paintColor.b,
+        settings.paintRoughness, settings.paintMetallic,
+        settings.writeAlbedo, settings.writeRoughness, settings.writeMetalness
+    );
+
+    mesh->isColorDirty = true;
+    mesh->isMaterialDirty = true;
+    mesh->dirtyVertMin = 0;
+    mesh->dirtyVertMax = nbVerts - 1;
 }
 
 

@@ -8,6 +8,7 @@
 struct MeshState {
     std::vector<float> verts;
     std::vector<float> colors;
+    std::vector<float> materials;
     std::vector<uint32_t> faces;
     std::vector<uint32_t> vrfStartCount;
     std::vector<uint32_t> vertRingFace;

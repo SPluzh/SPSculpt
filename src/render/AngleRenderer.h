@@ -127,6 +127,10 @@ public:
     unsigned int getTextureId() const { return m_textureId; }
     void setHasUV(bool h) { m_hasUV = h; }
     bool getHasUV() const { return m_hasUV; }
+    void setUseVertexColors(bool use) { m_useVertexColors = use; }
+    bool getUseVertexColors() const { return m_useVertexColors; }
+    void setUseVertexMaterials(bool use) { m_useVertexMaterials = use; }
+    bool getUseVertexMaterials() const { return m_useVertexMaterials; }
 
     struct EnvironmentPreset {
         std::string name;
@@ -328,6 +332,8 @@ private:
     float m_alpha = 1.0f;
     unsigned int m_textureId = 0;
     bool m_hasUV = false;
+    bool m_useVertexColors = false;
+    bool m_useVertexMaterials = false;
 
     // Wet clay parameters
     float m_wetClayWetness = 0.6f;

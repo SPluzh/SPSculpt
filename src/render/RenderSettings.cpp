@@ -82,6 +82,8 @@ bool RenderSettings::save(const std::string& filepath, const AngleRenderer& rend
     out << "wetClaySSSIntensity=" << renderer.getWetClaySSSIntensity() << "\n";
     out << "wetClaySSSColor=" << renderer.getWetClaySSSColor().r << " " << renderer.getWetClaySSSColor().g << " " << renderer.getWetClaySSSColor().b << "\n\n";
 
+    out << "useVertexColors=" << (renderer.getUseVertexColors() ? "true" : "false") << "\n";
+    out << "useVertexMaterials=" << (renderer.getUseVertexMaterials() ? "true" : "false") << "\n";
     out << "albedo=" << renderer.getAlbedo()[0] << " " << renderer.getAlbedo()[1] << " " << renderer.getAlbedo()[2] << "\n";
     out << "roughness=" << renderer.getRoughness() << "\n";
     out << "metallic=" << renderer.getMetallic() << "\n";
@@ -295,6 +297,15 @@ bool RenderSettings::load(const std::string& filepath, AngleRenderer& renderer, 
         it = params.find("bevelScaleWithDistance");
         if (it != params.end()) {
             renderer.setBevelScaleWithDistance(it->second == "true" || it->second == "1");
+        }
+
+        it = params.find("useVertexColors");
+        if (it != params.end()) {
+            renderer.setUseVertexColors(it->second == "true" || it->second == "1");
+        }
+        it = params.find("useVertexMaterials");
+        if (it != params.end()) {
+            renderer.setUseVertexMaterials(it->second == "true" || it->second == "1");
         }
 
         // Global material settings

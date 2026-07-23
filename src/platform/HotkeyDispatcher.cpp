@@ -55,8 +55,13 @@ bool HotkeyDispatcher::processEvent(const SDL_Event& event, SculptManager& sculp
                         break;
                     }
                     case ModalMode::FOCAL_SHIFT: {
-                        float f = sculpt.getFocalShift() + deltaX * 0.005f;
-                        sculpt.setFocalShift(std::max(-1.0f, std::min(1.0f, f)));
+                        if (sculpt.getBrush() == BRUSH_PAINT) {
+                            float h = sculpt.getHardness() + deltaX * 0.005f;
+                            sculpt.setHardness(std::max(0.0f, std::min(1.0f, h)));
+                        } else {
+                            float f = sculpt.getFocalShift() + deltaX * 0.005f;
+                            sculpt.setFocalShift(std::max(-1.0f, std::min(1.0f, f)));
+                        }
                         break;
                     }
                     case ModalMode::REMESH_RESOLUTION: {

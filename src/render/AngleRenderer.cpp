@@ -872,7 +872,13 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
     glUniformMatrix4fv(glGetUniformLocation(program, "uEM"), 1, GL_FALSE, glm::value_ptr(mesh->editMatrix));
     glUniformMatrix3fv(glGetUniformLocation(program, "uEN"), 1, GL_FALSE, glm::value_ptr(mesh->enMatrix));
     glUniform1f(glGetUniformLocation(program, "uAlpha"), m_alpha);
-    glUniform3fv(glGetUniformLocation(program, "uAlbedo"), 1, &m_albedo[0]);
+    float effectiveAlbedo[3] = { m_albedo[0], m_albedo[1], m_albedo[2] };
+    if (m_useVertexColors) {
+        effectiveAlbedo[0] = -1.0f;
+        effectiveAlbedo[1] = -1.0f;
+        effectiveAlbedo[2] = -1.0f;
+    }
+    glUniform3fv(glGetUniformLocation(program, "uAlbedo"), 1, &effectiveAlbedo[0]);
     glUniform1i(glGetUniformLocation(program, "uFlat"), m_flatShading ? 1 : 0);
 
     glUniform3f(glGetUniformLocation(program, "uPlaneN"), m_planeNormal.x, m_planeNormal.y, m_planeNormal.z);
@@ -907,8 +913,10 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
     }
 
     if (m_shaderType == 0) {
-        glUniform1f(glGetUniformLocation(program, "uRoughness"), m_roughness);
-        glUniform1f(glGetUniformLocation(program, "uMetallic"), m_metallic);
+        float effectiveRoughness = m_useVertexMaterials ? -1.0f : m_roughness;
+        float effectiveMetallic = m_useVertexMaterials ? -1.0f : m_metallic;
+        glUniform1f(glGetUniformLocation(program, "uRoughness"), effectiveRoughness);
+        glUniform1f(glGetUniformLocation(program, "uMetallic"), effectiveMetallic);
         glUniform1f(glGetUniformLocation(program, "uExposure"), m_exposure);
         glUniform3fv(glGetUniformLocation(program, "uSPH"), 9, m_sph);
         
@@ -923,7 +931,11 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
         bool hasMatcap = (m_textureId != 0) || (m_matcapIdx >= 0 && m_matcapIdx < static_cast<int>(m_matcaps.size()) && m_matcaps[m_matcapIdx].textureId != 0);
         glUniform1i(glGetUniformLocation(program, "uUseTexture"), hasMatcap ? 1 : 0);
     } else if (m_shaderType == 2) {
-        glUniform3f(glGetUniformLocation(program, "uClayColor"), m_albedo[0], m_albedo[1], m_albedo[2]);
+        float effectiveClayColor[3] = { m_albedo[0], m_albedo[1], m_albedo[2] };
+        if (m_useVertexColors) {
+            effectiveClayColor[0] = -1.0f;
+        }
+        glUniform3f(glGetUniformLocation(program, "uClayColor"), effectiveClayColor[0], effectiveClayColor[1], effectiveClayColor[2]);
         glUniform1f(glGetUniformLocation(program, "uWetness"), m_wetClayWetness);
         glUniform1f(glGetUniformLocation(program, "uBumpStrength"), m_wetClayBumpStrength);
         glUniform1f(glGetUniformLocation(program, "uNoiseScale"), m_wetClayNoiseScale);
@@ -1476,6 +1488,8 @@ void AngleRenderer::uploadIfDirty(Mesh* mesh) {
         
         mesh->isDirty = false;
         mesh->isVertexDirty = false;
+        mesh->isColorDirty = false;
+        mesh->isMaterialDirty = false;
         mesh->isTopologyDirty = false;
     } else {
         if (mesh->isVertexDirty && mesh->dirtyVertMin <= mesh->dirtyVertMax && mesh->dirtyVertMax < (uint32_t)mesh->nbVerts) {
@@ -1490,15 +1504,29 @@ void AngleRenderer::uploadIfDirty(Mesh* mesh) {
             glBufferSubData(GL_ARRAY_BUFFER, offset, size,
                             mesh->normals.data() + mesh->dirtyVertMin * 3);
             
+            mesh->isVertexDirty = false;
+        }
+
+        if (mesh->isColorDirty && mesh->dirtyVertMin <= mesh->dirtyVertMax && mesh->dirtyVertMax < (uint32_t)mesh->nbVerts) {
+            size_t offset = mesh->dirtyVertMin * 3 * sizeof(float);
+            size_t size   = (mesh->dirtyVertMax - mesh->dirtyVertMin + 1) * 3 * sizeof(float);
+
             glBindBuffer(GL_ARRAY_BUFFER, bufs->vboColors);
             glBufferSubData(GL_ARRAY_BUFFER, offset, size,
                             mesh->colors.data() + mesh->dirtyVertMin * 3);
-            
+
+            mesh->isColorDirty = false;
+        }
+
+        if (mesh->isMaterialDirty && mesh->dirtyVertMin <= mesh->dirtyVertMax && mesh->dirtyVertMax < (uint32_t)mesh->nbVerts) {
+            size_t offset = mesh->dirtyVertMin * 3 * sizeof(float);
+            size_t size   = (mesh->dirtyVertMax - mesh->dirtyVertMin + 1) * 3 * sizeof(float);
+
             glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
             glBufferSubData(GL_ARRAY_BUFFER, offset, size,
                             mesh->materials.data() + mesh->dirtyVertMin * 3);
-            
-            mesh->isVertexDirty = false;
+
+            mesh->isMaterialDirty = false;
         }
         
         if (mesh->isTopologyDirty) {

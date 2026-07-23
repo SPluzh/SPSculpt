@@ -37,6 +37,8 @@ public:
     int nbFaces = 0;
     bool isDirty = true;
     bool isVertexDirty = false;
+    bool isColorDirty = false;
+    bool isMaterialDirty = false;
     bool isTopologyDirty = false;
     uint32_t dirtyVertMin = 0;
     uint32_t dirtyVertMax = 0;

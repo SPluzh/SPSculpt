@@ -78,6 +78,13 @@ private:
     int m_screenshotHeight = 1080;
     bool m_screenshotShowGrid = false;
     bool m_screenshotShowContour = false;
+    BrushType m_lastBrushType = BRUSH_MOVE;
+    bool m_previewingPaint = false;
+    float m_savedAlbedo[3] = {0.72f, 0.52f, 0.45f};
+    float m_savedRoughness = 0.5f;
+    float m_savedMetallic = 0.0f;
+    bool m_savedUseVertexColors = false;
+    bool m_savedUseVertexMaterials = false;
     void takeScreenshot(const Scene& scene, AngleRenderer& renderer);
 
 public:

@@ -114,7 +114,8 @@ void BrushCursor::update(int mouseX, int mouseY,
                           const glm::vec3& activeStrokeHitPt,
                           const glm::vec3& activeStrokeHitNormal,
                           float focalShift,
-                          float hardness) {
+                          float hardness,
+                          const glm::vec3& paintColor) {
     if (brushType == BRUSH_VISIBILITY || brushType == BRUSH_MASK_GRADIENT_BLUR) {
         m_state.visible = false;
         return;
@@ -234,6 +235,8 @@ void BrushCursor::update(int mouseX, int mouseY,
         } else {
             m_state.color = glm::vec3(0.6f, 0.2f, 0.9f);
         }
+    } else if (brushType == BRUSH_PAINT) {
+        m_state.color = paintColor;
     } else {
         if (drawCircle && hitMesh) {
             m_state.color = glm::vec3(0.8f, 0.0f, 0.0f);

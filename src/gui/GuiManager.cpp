@@ -253,6 +253,24 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     m_renderer = &renderer;
     if (!m_imguiInitialized) return;
 
+    BrushType currentBrush = sculpt.getBrush();
+    if (m_previewingPaint && currentBrush != BRUSH_PAINT) {
+        m_previewingPaint = false;
+        renderer.setAlbedo(m_savedAlbedo[0], m_savedAlbedo[1], m_savedAlbedo[2]);
+        renderer.setRoughness(m_savedRoughness);
+        renderer.setMetallic(m_savedMetallic);
+        renderer.setUseVertexColors(m_savedUseVertexColors);
+        renderer.setUseVertexMaterials(m_savedUseVertexMaterials);
+    }
+
+    if (currentBrush != m_lastBrushType) {
+        if (currentBrush == BRUSH_PAINT) {
+            renderer.setUseVertexColors(true);
+            renderer.setUseVertexMaterials(true);
+        }
+        m_lastBrushType = currentBrush;
+    }
+
     if (m_remeshAsync.state == RemeshState::Done) {
         applyRemeshResult(scene, m_remeshAsync.result);
         sculpt.cancelStroke();
@@ -531,9 +549,53 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 }
                 else if (brushType == BRUSH_PAINT) {
                     ImGui::ColorEdit3("Albedo (Color)", &settings.paintColor.r);
-                    ImGui::SliderFloat("Roughness", &settings.paintRoughness, 0.0f, 1.0f, "%.2f");
-                    ImGui::SliderFloat("Metalness", &settings.paintMetallic, 0.0f, 1.0f, "%.2f");
+                    bool albedoActive = ImGui::IsItemActive();
                     
+                    ImGui::SliderFloat("Roughness", &settings.paintRoughness, 0.0f, 1.0f, "%.2f");
+                    bool roughnessActive = ImGui::IsItemActive();
+                    
+                    ImGui::SliderFloat("Metalness", &settings.paintMetallic, 0.0f, 1.0f, "%.2f");
+                    bool metallicActive = ImGui::IsItemActive();
+
+                    bool anyActive = albedoActive || roughnessActive || metallicActive;
+                    if (anyActive) {
+                        if (!m_previewingPaint) {
+                            m_savedAlbedo[0] = renderer.getAlbedo()[0];
+                            m_savedAlbedo[1] = renderer.getAlbedo()[1];
+                            m_savedAlbedo[2] = renderer.getAlbedo()[2];
+                            m_savedRoughness = renderer.getRoughness();
+                            m_savedMetallic = renderer.getMetallic();
+                            m_savedUseVertexColors = renderer.getUseVertexColors();
+                            m_savedUseVertexMaterials = renderer.getUseVertexMaterials();
+                            m_previewingPaint = true;
+                        }
+                        renderer.setUseVertexColors(false);
+                        renderer.setUseVertexMaterials(false);
+                        renderer.setAlbedo(settings.paintColor.r, settings.paintColor.g, settings.paintColor.b);
+                        renderer.setRoughness(settings.paintRoughness);
+                        renderer.setMetallic(settings.paintMetallic);
+                    } else if (m_previewingPaint) {
+                        m_previewingPaint = false;
+                        renderer.setAlbedo(m_savedAlbedo[0], m_savedAlbedo[1], m_savedAlbedo[2]);
+                        renderer.setRoughness(m_savedRoughness);
+                        renderer.setMetallic(m_savedMetallic);
+                        renderer.setUseVertexColors(m_savedUseVertexColors);
+                        renderer.setUseVertexMaterials(m_savedUseVertexMaterials);
+                    }
+                    
+                    ImGui::Separator();
+                    Mesh* selectedMesh = scene.getSelected();
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.44f, 0.70f, 1.00f));
+                    if (ImGui::Button("Paint All", ImVec2(120, 26))) {
+                        renderer.setUseVertexColors(true);
+                        renderer.setUseVertexMaterials(true);
+                        sculpt.paintAll(scene, selectedMesh);
+                    }
+                    ImGui::PopStyleColor();
+                    ImGui::SameLine();
+                    ImGui::Checkbox("Pick Color", &settings.pickColor);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Use the dropper tool to pick color/roughness/metallic from mesh surface");
+
                     ImGui::Separator();
                     ImGui::Text("Paint Channels:");
                     ImGui::Checkbox("Write Albedo", &settings.writeAlbedo);
@@ -1198,12 +1260,25 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             renderer.setAlpha(alpha);
         }
 
+        bool useVertexColors = renderer.getUseVertexColors();
+        if (ImGui::Checkbox("Use Vertex Colors", &useVertexColors)) {
+            renderer.setUseVertexColors(useVertexColors);
+        }
+        ImGui::SameLine();
+        bool useVertexMaterials = renderer.getUseVertexMaterials();
+        if (ImGui::Checkbox("Use Vertex Materials", &useVertexMaterials)) {
+            renderer.setUseVertexMaterials(useVertexMaterials);
+        }
+
+        ImGui::BeginDisabled(useVertexColors);
         float albedo[3] = { renderer.getAlbedo()[0], renderer.getAlbedo()[1], renderer.getAlbedo()[2] };
         if (ImGui::ColorEdit3("Albedo Base Color", albedo)) {
             renderer.setAlbedo(albedo[0], albedo[1], albedo[2]);
         }
+        ImGui::EndDisabled();
 
         if (type == 0) { // PBR Shader settings
+            ImGui::BeginDisabled(useVertexMaterials);
             float roughness = renderer.getRoughness();
             if (ImGui::SliderFloat("Roughness", &roughness, 0.0f, 1.0f, "%.2f")) {
                 renderer.setRoughness(roughness);
@@ -1212,6 +1287,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             if (ImGui::SliderFloat("Metallic", &metallic, 0.0f, 1.0f, "%.2f")) {
                 renderer.setMetallic(metallic);
             }
+            ImGui::EndDisabled();
 
             // Import UV texture option
             static char texturePath[256] = "";
@@ -2644,9 +2720,15 @@ void GuiManager::drawModalIndicatorHUD(SculptManager& sculpt, Scene& scene) {
             fraction = sculpt.getBrushIntensity();
             break;
         case ModalMode::FOCAL_SHIFT:
-            label = "Focal Shift";
-            snprintf(valStr, sizeof(valStr), "%d%%", (int)(sculpt.getFocalShift() * 100.0f));
-            fraction = (sculpt.getFocalShift() + 1.0f) * 0.5f;
+            if (sculpt.getBrush() == BRUSH_PAINT) {
+                label = "Hardness";
+                snprintf(valStr, sizeof(valStr), "%d%%", (int)(sculpt.getHardness() * 100.0f));
+                fraction = sculpt.getHardness();
+            } else {
+                label = "Focal Shift";
+                snprintf(valStr, sizeof(valStr), "%d%%", (int)(sculpt.getFocalShift() * 100.0f));
+                fraction = (sculpt.getFocalShift() + 1.0f) * 0.5f;
+            }
             break;
         case ModalMode::RADIUS:
             label = "Radius";

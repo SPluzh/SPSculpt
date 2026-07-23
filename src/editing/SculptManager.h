@@ -36,6 +36,7 @@ struct BrushSettings {
     bool writeAlbedo = true;
     bool writeRoughness = true;
     bool writeMetalness = true;
+    bool pickColor = false;
 
     // Mask settings
     int maskSharpenBlurIterations = 4;
@@ -213,6 +214,9 @@ public:
     void invertMask(Mesh* mesh);
     void blurMask(Mesh* mesh);
     void sharpenMask(Mesh* mesh);
+
+    void paintAll(Scene& scene, Mesh* mesh);
+    void pickColor(Mesh* mesh, uint32_t faceId, const glm::vec3& interPoint);
 
     bool getGradActive() const { return m_gradActive; }
     void setGradActive(bool val) { m_gradActive = val; }

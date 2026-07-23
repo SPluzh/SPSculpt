@@ -68,6 +68,7 @@ HistoryState Scene::saveCurrentState() const {
         MeshState ms;
         ms.verts = m->verts;
         ms.colors = m->colors;
+        ms.materials = m->materials;
         ms.faces = m->faces;
         ms.vrfStartCount = m->vrfStartCount;
         ms.vertRingFace = m->vertRingFace;
@@ -101,6 +102,7 @@ void Scene::restoreState(const HistoryState& hs) {
         Mesh* m = new Mesh();
         m->verts = ms.verts;
         m->colors = ms.colors;
+        m->materials = ms.materials;
         m->faces = ms.faces;
         m->vrfStartCount = ms.vrfStartCount;
         m->vertRingFace = ms.vertRingFace;
