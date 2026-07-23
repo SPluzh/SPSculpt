@@ -133,7 +133,12 @@ public:
     void resetView2D() { m_view2DOffsetX = 0.0f; m_view2DOffsetY = 0.0f; m_view2DZoom = 1.0f; }
 
     bool getRef2DMode() const { return m_ref2DMode; }
-    void setRef2DMode(bool val) { m_ref2DMode = val; }
+    void setRef2DMode(bool val) {
+        m_ref2DMode = val;
+        if (!val) {
+            resetView2D();
+        }
+    }
     bool getRefDragEnabled() const { return m_refDrag; }
     void setRefDragEnabled(bool val) { m_refDrag = val; }
 
