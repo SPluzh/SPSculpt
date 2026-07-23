@@ -3,6 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.3]
+- **Settings**: Added persistence for camera movement speeds (rotation, panning, zoom, and roll), ensuring they are automatically saved to `render_settings.cfg` on exit and restored on startup.
 - **UI**: Added automatic saving and loading of GUI panel visibility states (toolbar, sculpting settings, scene outliner, etc.) to a local configuration file `gui_settings.cfg` on startup and shutdown.
 - **UI**: Added "Save GUI Settings" and "Load GUI Settings" options to the main File menu to allow manual GUI state persistence.
 - **Fix**: Resolved viewport visibility toggles (V1/V2) not correctly updating mesh rendering by routing the viewport index to the geometry drawing pass and filtering out hidden meshes.

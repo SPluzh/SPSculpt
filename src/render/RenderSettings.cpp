@@ -55,6 +55,14 @@ bool RenderSettings::save(const std::string& filepath, const AngleRenderer& rend
     out << "splitMode=" << static_cast<int>(scene.getSplitMode()) << "\n";
     out << "splitShowInactiveCursor=" << (scene.getSplitShowInactiveCursor() ? "true" : "false") << "\n";
     out << "currentEnvIdx=" << renderer.getCurrentEnvIdx() << "\n";
+    
+    const Camera* mainCam = scene.getCameraByIndex(0);
+    if (mainCam) {
+        out << "speedRotate=" << mainCam->getSpeedRotate() << "\n";
+        out << "speedTranslate=" << mainCam->getSpeedTranslate() << "\n";
+        out << "speedZoom=" << mainCam->getSpeedZoom() << "\n";
+        out << "speedRoll=" << mainCam->getSpeedRoll() << "\n";
+    }
     out << "exposure=" << renderer.getExposure() << "\n";
     out << "wetClayWetness=" << renderer.getWetClayWetness() << "\n";
     out << "wetClayBumpStrength=" << renderer.getWetClayBumpStrength() << "\n";
@@ -171,6 +179,39 @@ bool RenderSettings::load(const std::string& filepath, AngleRenderer& renderer, 
         it = params.find("splitShowInactiveCursor");
         if (it != params.end()) {
             scene.setSplitShowInactiveCursor(it->second == "true" || it->second == "1");
+        }
+
+        it = params.find("speedRotate");
+        if (it != params.end()) {
+            float val = safe_stof(it->second, 1.0f);
+            for (int cIdx = 0; cIdx < 2; ++cIdx) {
+                Camera* cam = scene.getCameraByIndex(cIdx);
+                if (cam) cam->setSpeedRotate(val);
+            }
+        }
+        it = params.find("speedTranslate");
+        if (it != params.end()) {
+            float val = safe_stof(it->second, 1.0f);
+            for (int cIdx = 0; cIdx < 2; ++cIdx) {
+                Camera* cam = scene.getCameraByIndex(cIdx);
+                if (cam) cam->setSpeedTranslate(val);
+            }
+        }
+        it = params.find("speedZoom");
+        if (it != params.end()) {
+            float val = safe_stof(it->second, 1.0f);
+            for (int cIdx = 0; cIdx < 2; ++cIdx) {
+                Camera* cam = scene.getCameraByIndex(cIdx);
+                if (cam) cam->setSpeedZoom(val);
+            }
+        }
+        it = params.find("speedRoll");
+        if (it != params.end()) {
+            float val = safe_stof(it->second, 1.0f);
+            for (int cIdx = 0; cIdx < 2; ++cIdx) {
+                Camera* cam = scene.getCameraByIndex(cIdx);
+                if (cam) cam->setSpeedRoll(val);
+            }
         }
         
         // Load environment preset first (so it resets exposure and SH)
