@@ -81,6 +81,17 @@ public:
     void setCameraRight(std::shared_ptr<const Camera> cameraRight) { m_cameraRight = cameraRight; }
     std::shared_ptr<const Camera> getCameraRight() const { return m_cameraRight; }
 
+    float getWetClayWetness() const { return m_wetClayWetness; }
+    void setWetClayWetness(float val) { m_wetClayWetness = val; }
+    float getWetClayBumpStrength() const { return m_wetClayBumpStrength; }
+    void setWetClayBumpStrength(float val) { m_wetClayBumpStrength = val; }
+    float getWetClayNoiseScale() const { return m_wetClayNoiseScale; }
+    void setWetClayNoiseScale(float val) { m_wetClayNoiseScale = val; }
+    float getWetClaySSSIntensity() const { return m_wetClaySSSIntensity; }
+    void setWetClaySSSIntensity(float val) { m_wetClaySSSIntensity = val; }
+    glm::vec3 getWetClaySSSColor() const { return m_wetClaySSSColor; }
+    void setWetClaySSSColor(const glm::vec3& col) { m_wetClaySSSColor = col; }
+
     struct EnvironmentPreset {
         std::string name;
         std::string texPath;
@@ -97,6 +108,7 @@ public:
         GLuint textureId = 0;
     };
     const std::vector<MatcapPreset>& getMatcaps() const { return m_matcaps; }
+    void importMatcap(const std::string& name, const std::string& path);
 
     std::vector<uint8_t> renderToBuffer(const Scene& scene, int w, int h);
 
@@ -251,6 +263,13 @@ private:
     glm::vec4 m_contourColor{1.0f, 0.75f, 0.1f, 1.0f};
     float m_cursorThickness = 2.5f;
     bool m_smoothCursor = true;
+
+    // Wet clay parameters
+    float m_wetClayWetness = 0.6f;
+    float m_wetClayBumpStrength = 0.4f;
+    float m_wetClayNoiseScale = 8.0f;
+    float m_wetClaySSSIntensity = 0.25f;
+    glm::vec3 m_wetClaySSSColor{0.8f, 0.3f, 0.15f};
 
     // Split Viewport
     bool m_splitMode = false;

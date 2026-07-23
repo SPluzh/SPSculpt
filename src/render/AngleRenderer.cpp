@@ -1664,11 +1664,11 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
         glUniform1i(glGetUniformLocation(program, "uUseTexture"), hasMatcap ? 1 : 0);
     } else if (mesh->shaderType == 2) {
         glUniform3f(glGetUniformLocation(program, "uClayColor"), mesh->albedo[0], mesh->albedo[1], mesh->albedo[2]);
-        glUniform1f(glGetUniformLocation(program, "uWetness"), 0.5f);
-        glUniform1f(glGetUniformLocation(program, "uBumpStrength"), 0.5f);
-        glUniform1f(glGetUniformLocation(program, "uNoiseScale"), 0.5f);
-        glUniform1f(glGetUniformLocation(program, "uSSSIntensity"), 0.3f);
-        glUniform3f(glGetUniformLocation(program, "uSSSColor"), 0.8f, 0.4f, 0.3f);
+        glUniform1f(glGetUniformLocation(program, "uWetness"), m_wetClayWetness);
+        glUniform1f(glGetUniformLocation(program, "uBumpStrength"), m_wetClayBumpStrength);
+        glUniform1f(glGetUniformLocation(program, "uNoiseScale"), m_wetClayNoiseScale);
+        glUniform1f(glGetUniformLocation(program, "uSSSIntensity"), m_wetClaySSSIntensity);
+        glUniform3f(glGetUniformLocation(program, "uSSSColor"), m_wetClaySSSColor.x, m_wetClaySSSColor.y, m_wetClaySSSColor.z);
     } else if (mesh->shaderType == 4) {
         glUniform1f(glGetUniformLocation(program, "uStep"), 0.5f);
     }
@@ -2617,4 +2617,27 @@ GLint AngleRenderer::getCachedUniformLocation(GLuint program, const char* name) 
     GLint loc = (::glGetUniformLocation)(program, name);
     programMap[nameStr] = loc;
     return loc;
+}
+
+void AngleRenderer::importMatcap(const std::string& name, const std::string& path) {
+    int width = 0, height = 0, channels = 0;
+    stbi_set_flip_vertically_on_load(false);
+    unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, 4);
+    if (!data) {
+        std::cerr << "Failed to load matcap image: " << path << std::endl;
+        return;
+    }
+    MatcapPreset preset;
+    preset.name = name;
+    preset.texPath = path;
+    glGenTextures(1, &preset.textureId);
+    glBindTexture(GL_TEXTURE_2D, preset.textureId);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    stbi_image_free(data);
+    m_matcaps.push_back(preset);
 }

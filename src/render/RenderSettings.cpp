@@ -55,7 +55,12 @@ bool RenderSettings::save(const std::string& filepath, const AngleRenderer& rend
     out << "splitMode=" << static_cast<int>(scene.getSplitMode()) << "\n";
     out << "splitShowInactiveCursor=" << (scene.getSplitShowInactiveCursor() ? "true" : "false") << "\n";
     out << "currentEnvIdx=" << renderer.getCurrentEnvIdx() << "\n";
-    out << "exposure=" << renderer.getExposure() << "\n\n";
+    out << "exposure=" << renderer.getExposure() << "\n";
+    out << "wetClayWetness=" << renderer.getWetClayWetness() << "\n";
+    out << "wetClayBumpStrength=" << renderer.getWetClayBumpStrength() << "\n";
+    out << "wetClayNoiseScale=" << renderer.getWetClayNoiseScale() << "\n";
+    out << "wetClaySSSIntensity=" << renderer.getWetClaySSSIntensity() << "\n";
+    out << "wetClaySSSColor=" << renderer.getWetClaySSSColor().r << " " << renderer.getWetClaySSSColor().g << " " << renderer.getWetClaySSSColor().b << "\n\n";
 
     const auto& meshes = scene.getMeshes();
     for (size_t i = 0; i < meshes.size(); ++i) {
@@ -180,6 +185,31 @@ bool RenderSettings::load(const std::string& filepath, AngleRenderer& renderer, 
         it = params.find("exposure");
         if (it != params.end()) {
             renderer.setExposure(safe_stof(it->second));
+        }
+
+        it = params.find("wetClayWetness");
+        if (it != params.end()) {
+            renderer.setWetClayWetness(safe_stof(it->second, 0.6f));
+        }
+        it = params.find("wetClayBumpStrength");
+        if (it != params.end()) {
+            renderer.setWetClayBumpStrength(safe_stof(it->second, 0.4f));
+        }
+        it = params.find("wetClayNoiseScale");
+        if (it != params.end()) {
+            renderer.setWetClayNoiseScale(safe_stof(it->second, 8.0f));
+        }
+        it = params.find("wetClaySSSIntensity");
+        if (it != params.end()) {
+            renderer.setWetClaySSSIntensity(safe_stof(it->second, 0.25f));
+        }
+        it = params.find("wetClaySSSColor");
+        if (it != params.end()) {
+            std::stringstream ss(it->second);
+            float r, g, b;
+            if (ss >> r >> g >> b) {
+                renderer.setWetClaySSSColor(glm::vec3(r, g, b));
+            }
         }
     }
 

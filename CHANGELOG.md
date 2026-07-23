@@ -3,6 +3,10 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.2]
+- **UI**: Added a Curvature control slider, Wet Clay rendering sliders (Wetness, Bump Strength, Noise Scale, Subsurface Scattering Intensity and Color), and a Filmic Tonemapping checkbox to the Rendering Quality panel.
+- **UI**: Added path inputs and buttons to import custom UV textures and custom Matcap images from local files in the Rendering Quality panel.
+- **Renderer**: Dynamic rendering parameters (wetness, bump strength, noise scale, subsurface scattering intensity/color) are now correctly updated in the wet clay shader.
+- **Settings**: Serialized the new wet clay rendering options to `render_settings.cfg` for persistence across sessions.
 - **Camera**: Ported the legacy smooth camera transitions and zoom-to-focus behavior. Pressing the 'F' key to focus on a selected object, resetting the view, or switching between orthographic angles now smoothly animates the camera transition using quartic easing instead of instantly snapping. Focusing on the object preserves the current camera rotation (view angle) and calculates the correct zoom fit factor to fit the mesh bounds perfectly within the viewport, matching the legacy application's behavior.
 - **Input**: Configured camera animations to cancel instantly if the user initiates manual navigation (orbiting, panning, zooming) during a transition, ensuring seamless and responsive control.
 - **Brushes**: Fixed Move, Drag, and Elastic brush behavior to match the legacy JavaScript project:
