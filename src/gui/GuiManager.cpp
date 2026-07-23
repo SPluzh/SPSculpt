@@ -178,7 +178,7 @@ void GuiManager::init(SDL_Window* window, SDL_GLContext glContext) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io;
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+    // io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
 
     // Setup Dear ImGui style
     ImGui::StyleColorsDark();

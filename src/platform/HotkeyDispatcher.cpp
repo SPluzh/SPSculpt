@@ -197,7 +197,6 @@ HKAction HotkeyDispatcher::mapKeyToAction(const SDL_Keysym& keysym, bool ctrlPre
         case SDLK_p: return HKAction::CameraProjection;
         case SDLK_f: return HKAction::CameraFrame;
         case SDLK_l: return HKAction::CameraLeft;
-        case SDLK_SPACE: return HKAction::CameraReset;
         
         case SDLK_LEFT: return HKAction::StrifeLeft;
         case SDLK_RIGHT: return HKAction::StrifeRight;
