@@ -82,8 +82,8 @@ public:
     bool getSplitShowInactiveCursor() const { return m_splitShowInactiveCursor; }
     void setSplitShowInactiveCursor(bool val) { m_splitShowInactiveCursor = val; }
     
-    std::shared_ptr<Camera> getCameraRight() { return m_cameraRight; }
-    std::shared_ptr<const Camera> getCameraRight() const { return m_cameraRight; }
+    std::shared_ptr<Camera> getCameraRight() { return m_splitMode == SplitMode::INDEPENDENT ? m_cameraRight : nullptr; }
+    std::shared_ptr<const Camera> getCameraRight() const { return m_splitMode == SplitMode::INDEPENDENT ? m_cameraRight : nullptr; }
 
     void loadDefaultSphere();
 

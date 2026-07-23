@@ -227,14 +227,14 @@ const Camera* Scene::getCameraPtr() const {
 }
 
 Camera* Scene::getCameraByIndex(int idx) {
-    if (idx == 1 && m_cameraRight) {
+    if (idx == 1 && m_splitMode == SplitMode::INDEPENDENT && m_cameraRight) {
         return m_cameraRight.get();
     }
     return &m_camera;
 }
 
 const Camera* Scene::getCameraByIndex(int idx) const {
-    if (idx == 1 && m_cameraRight) {
+    if (idx == 1 && m_splitMode == SplitMode::INDEPENDENT && m_cameraRight) {
         return m_cameraRight.get();
     }
     return &m_camera;
