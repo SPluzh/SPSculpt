@@ -258,19 +258,34 @@ int SculptManager::doStrokePass(
 
     switch (activeBrush) {
         case BRUSH_FLATTEN: {
-            glm::vec3 areaCenter = currentIntersection;
-            glm::vec3 areaNormal = currentIntersectionNormal;
-            std::vector<float> areaResults(7, 0.0f);
-            computeAreaNormalAndCenter(
-                mesh->verts.data(),
-                mesh->normals.data(),
-                mesh->materials.data(),
-                pickedVertices.data(),
-                pickedVertices.size(),
-                areaResults.data()
-            );
-            areaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
-            areaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
+            glm::vec3 areaNormal = cachedAreaNormal;
+            glm::vec3 areaCenter = cachedAreaCenter;
+
+            if (!getCurrentSettings().flattenLockNormal || !getCurrentSettings().flattenLockOrigin) {
+                std::vector<float> areaResults(7, 0.0f);
+                if (computeAreaNormalAndCenter(
+                    mesh->verts.data(),
+                    mesh->normals.data(),
+                    mesh->materials.data(),
+                    pickedVertices.data(),
+                    pickedVertices.size(),
+                    areaResults.data()
+                )) {
+                    if (!getCurrentSettings().flattenLockNormal) {
+                        areaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
+                    }
+                    if (!getCurrentSettings().flattenLockOrigin) {
+                        areaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
+                    }
+                } else {
+                    if (!getCurrentSettings().flattenLockNormal) {
+                        areaNormal = currentIntersectionNormal;
+                    }
+                    if (!getCurrentSettings().flattenLockOrigin) {
+                        areaCenter = currentIntersection;
+                    }
+                }
+            }
 
             deformedCount = strokeFlatten(
                 mesh->verts.data(),
@@ -484,6 +499,32 @@ int SculptManager::doStrokePass(
             glm::vec3 areaNormal = cachedAreaNormal;
             glm::vec3 areaCenter = cachedAreaCenter;
 
+            if (!getCurrentSettings().flattenLockNormal || !getCurrentSettings().flattenLockOrigin) {
+                std::vector<float> areaResults(7, 0.0f);
+                if (computeAreaNormalAndCenter(
+                    mesh->verts.data(),
+                    mesh->normals.data(),
+                    mesh->materials.data(),
+                    pickedVertices.data(),
+                    pickedVertices.size(),
+                    areaResults.data()
+                )) {
+                    if (!getCurrentSettings().flattenLockNormal) {
+                        areaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
+                    }
+                    if (!getCurrentSettings().flattenLockOrigin) {
+                        areaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
+                    }
+                } else {
+                    if (!getCurrentSettings().flattenLockNormal) {
+                        areaNormal = currentIntersectionNormal;
+                    }
+                    if (!getCurrentSettings().flattenLockOrigin) {
+                        areaCenter = currentIntersection;
+                    }
+                }
+            }
+
             float off = localRadius * 0.1f;
             areaCenter += areaNormal * (negative ? -off : off);
 
@@ -498,7 +539,7 @@ int SculptManager::doStrokePass(
                 areaNormal.x, areaNormal.y, areaNormal.z,
                 localRadius, intensity,
                 negative, getCurrentSettings().accumulate, getCurrentSettings().lockPosition,
-                0.0f, true,
+                getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
                 false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
             );
             break;
@@ -506,6 +547,32 @@ int SculptManager::doStrokePass(
         case BRUSH_CLAYBUILDUP: {
             glm::vec3 areaNormal = cachedAreaNormal;
             glm::vec3 areaCenter = cachedAreaCenter;
+
+            if (!getCurrentSettings().flattenLockNormal || !getCurrentSettings().flattenLockOrigin) {
+                std::vector<float> areaResults(7, 0.0f);
+                if (computeAreaNormalAndCenter(
+                    mesh->verts.data(),
+                    mesh->normals.data(),
+                    mesh->materials.data(),
+                    pickedVertices.data(),
+                    pickedVertices.size(),
+                    areaResults.data()
+                )) {
+                    if (!getCurrentSettings().flattenLockNormal) {
+                        areaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
+                    }
+                    if (!getCurrentSettings().flattenLockOrigin) {
+                        areaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
+                    }
+                } else {
+                    if (!getCurrentSettings().flattenLockNormal) {
+                        areaNormal = currentIntersectionNormal;
+                    }
+                    if (!getCurrentSettings().flattenLockOrigin) {
+                        areaCenter = currentIntersection;
+                    }
+                }
+            }
 
             float off = localRadius * 0.1f;
             areaCenter += areaNormal * (negative ? -off : off);
@@ -521,7 +588,7 @@ int SculptManager::doStrokePass(
                 areaNormal.x, areaNormal.y, areaNormal.z,
                 localRadius, intensity * 0.1f,
                 negative, getCurrentSettings().accumulate, getCurrentSettings().lockPosition,
-                0.0f, true,
+                getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
                 false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
             );
             break;
@@ -772,8 +839,8 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         bool altPressed = (SDL_GetModState() & KMOD_ALT) != 0;
         bool negative = getCurrentSettings().negative ^ altPressed;
 
-        // Cache area normal and center for Clay brushes on first frame
-        if (m_firstStrokeFrame && (activeBrush == BRUSH_CLAY || activeBrush == BRUSH_CLAYBUILDUP)) {
+        // Cache area normal and center for Clay/Flatten brushes on first frame
+        if (m_firstStrokeFrame && (activeBrush == BRUSH_CLAY || activeBrush == BRUSH_CLAYBUILDUP || activeBrush == BRUSH_FLATTEN)) {
             std::vector<float> areaResults(7, 0.0f);
             computeAreaNormalAndCenter(
                 mesh->verts.data(),
