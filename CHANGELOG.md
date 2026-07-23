@@ -3,6 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.1]
+- **Brushes**: Fixed a bug where the clay and flatten brushes did not update their plane normals and centers dynamically per-frame, causing them to flatten geometry incorrectly relative to the starting point of the stroke.
 - **Brushes**: Implemented support for loading, managing, and applying 28 custom ZBrush brush presets directly from JSON files.
 - **UI**: Added a "ZBrush Brush Presets" collapsing header to the Sculpting Settings panel, featuring a preset selection dropdown, real-time read-only details of the active preset, and a button to load custom preset JSON files.
 - **Core**: Integrated a parallel brush settings track that dynamically maps ZBrush preset deformation and stroke modes to native brush tools at runtime.
