@@ -2165,6 +2165,11 @@ std::vector<uint32_t> SculptManager::getVerticesInLasso(Mesh* mesh, const Camera
         float ndcX = clipPos.x / w;
         float ndcY = clipPos.y / w;
 
+        if (camera.getRef2DMode()) {
+            ndcX = ndcX * camera.getView2DZoom() + camera.getView2DOffsetX();
+            ndcY = ndcY * camera.getView2DZoom() + camera.getView2DOffsetY();
+        }
+
         float screenX = (ndcX + 1.0f) * 0.5f * width;
         float screenY = (1.0f - ndcY) * 0.5f * height;
 

@@ -1937,6 +1937,8 @@ void AngleRenderer::drawLasso() {
     GLint locDashed = glGetUniformLocation(m_selectionProgram, "uDashed");
     GLint locOffsetPixels = glGetUniformLocation(m_selectionProgram, "uOffsetPixels");
     if (locOffsetPixels != -1) glUniform1f(locOffsetPixels, 0.0f);
+    GLint locRef2DMode = glGetUniformLocation(m_selectionProgram, "uRef2DMode");
+    if (locRef2DMode != -1) glUniform1i(locRef2DMode, 0);
 
     // Colors matching JS project
     glm::vec3 lassoColor;
