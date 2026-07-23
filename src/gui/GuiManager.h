@@ -72,6 +72,14 @@ private:
     float m_gizmoClickPartRotX = 0.0f;
     float m_gizmoClickPartRotY = 0.0f;
 
+    // Screenshot settings
+    int m_screenshotPreset = 1; // 0: Viewport, 1: 1080p, 2: 2K, 3: 4K, 4: Custom
+    int m_screenshotWidth = 1920;
+    int m_screenshotHeight = 1080;
+    bool m_screenshotShowGrid = false;
+    bool m_screenshotShowContour = false;
+    void takeScreenshot(const Scene& scene, AngleRenderer& renderer);
+
 public:
     GuiManager();
     ~GuiManager();

@@ -3,6 +3,10 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.3]
+- **UI**: Added a viewport screenshot feature to the Camera settings panel. Users can choose from several size presets ("Viewport Size", "1080p", "2K", "4K") or input custom dimensions (ranging from 256x256 to 7680x4320). Includes toggles to show or hide the grid and outline contours in the final screenshot.
+- **Renderer**: Implemented high-resolution offscreen rendering for capturing screenshots, temporarily resizing active viewport cameras and render targets to the target dimensions without altering the primary application window size.
+- **Renderer**: Automatically hides editor-only overlays (such as the selection brush cursor and lasso selection outlines) during screenshot capture to produce clean output images.
+- **Files**: Integrated automatic timestamp-based PNG image saving under a dedicated `screenshots/` directory, performing a vertical image flip to align OpenGL coordinate space with standard picture viewing software.
 - **Renderer**: Refactored the shader architecture by extracting all hardcoded GLSL shader source code from the C++ renderer into external `.vert`, `.frag`, and `.glsl` files in a dedicated `shaders/` directory.
 - **Renderer**: Implemented a custom preprocessor include mechanism (`#include "filename.glsl"`) to support modular shader development.
 - **Renderer**: Enabled dynamic runtime loading of external shader files with a clean, single source of truth structure.

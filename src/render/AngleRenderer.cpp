@@ -454,9 +454,9 @@ void AngleRenderer::setCursorParametersRightFast(
     }
 }
 
-void AngleRenderer::render(const Scene& scene) {
+void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
     // Sync split mode and right camera from scene
-    m_splitMode = (scene.getSplitMode() != Scene::SplitMode::OFF);
+    m_splitMode = m_isTakingScreenshot ? false : (scene.getSplitMode() != Scene::SplitMode::OFF);
     m_cameraRight = scene.getCameraRight();
 
     // 0. Ensure all mesh dirty buffers are uploaded first (must run on the active GL thread/context)
@@ -539,38 +539,40 @@ void AngleRenderer::render(const Scene& scene) {
     }
 
     // Selection Cursor
-    if (!m_splitMode) {
-        glViewport(0, 0, m_width, m_height);
-        glScissor(0, 0, m_width, m_height);
-        glEnable(GL_SCISSOR_TEST);
-        drawSelectionCursor(scene, false);
-        glDisable(GL_SCISSOR_TEST);
-    } else {
-        int w2 = m_width / 2;
-        int activeVp = scene.getActiveViewport();
-        bool showInactive = scene.getSplitShowInactiveCursor();
-
-        // Draw Left Viewport Cursor (isRight = false)
-        if (activeVp == 0 || showInactive) {
-            glViewport(0, 0, w2, m_height);
-            glScissor(0, 0, w2, m_height);
+    if (!m_isTakingScreenshot) {
+        if (!m_splitMode) {
+            glViewport(0, 0, m_width, m_height);
+            glScissor(0, 0, m_width, m_height);
             glEnable(GL_SCISSOR_TEST);
             drawSelectionCursor(scene, false);
             glDisable(GL_SCISSOR_TEST);
-        }
+        } else {
+            int w2 = m_width / 2;
+            int activeVp = scene.getActiveViewport();
+            bool showInactive = scene.getSplitShowInactiveCursor();
 
-        // Draw Right Viewport Cursor (isRight = true)
-        if (activeVp == 1 || showInactive) {
-            glViewport(w2, 0, m_width - w2, m_height);
-            glScissor(w2, 0, m_width - w2, m_height);
-            glEnable(GL_SCISSOR_TEST);
-            drawSelectionCursor(scene, true);
-            glDisable(GL_SCISSOR_TEST);
+            // Draw Left Viewport Cursor (isRight = false)
+            if (activeVp == 0 || showInactive) {
+                glViewport(0, 0, w2, m_height);
+                glScissor(0, 0, w2, m_height);
+                glEnable(GL_SCISSOR_TEST);
+                drawSelectionCursor(scene, false);
+                glDisable(GL_SCISSOR_TEST);
+            }
+
+            // Draw Right Viewport Cursor (isRight = true)
+            if (activeVp == 1 || showInactive) {
+                glViewport(w2, 0, m_width - w2, m_height);
+                glScissor(w2, 0, m_width - w2, m_height);
+                glEnable(GL_SCISSOR_TEST);
+                drawSelectionCursor(scene, true);
+                glDisable(GL_SCISSOR_TEST);
+            }
         }
     }
 
     // 7. Final Blit to Screen (or Viewport2D Zoom/Pan)
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, targetFbo);
     glViewport(0, 0, m_width, m_height);
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -578,27 +580,29 @@ void AngleRenderer::render(const Scene& scene) {
     drawFullscreenViewport2D(scene);
 
     // Render screen-space Lasso overlay on top of screen
-    if (!m_splitMode) {
-        glViewport(0, 0, m_width, m_height);
-        glScissor(0, 0, m_width, m_height);
-        glEnable(GL_SCISSOR_TEST);
-        drawLasso();
-        glDisable(GL_SCISSOR_TEST);
-    } else {
-        int w2 = m_width / 2;
-        int activeVp = scene.getActiveViewport();
-        if (activeVp == 0) {
-            glViewport(0, 0, w2, m_height);
-            glScissor(0, 0, w2, m_height);
+    if (!m_isTakingScreenshot) {
+        if (!m_splitMode) {
+            glViewport(0, 0, m_width, m_height);
+            glScissor(0, 0, m_width, m_height);
             glEnable(GL_SCISSOR_TEST);
             drawLasso();
+            glDisable(GL_SCISSOR_TEST);
         } else {
-            glViewport(w2, 0, m_width - w2, m_height);
-            glScissor(w2, 0, m_width - w2, m_height);
-            glEnable(GL_SCISSOR_TEST);
-            drawLasso();
+            int w2 = m_width / 2;
+            int activeVp = scene.getActiveViewport();
+            if (activeVp == 0) {
+                glViewport(0, 0, w2, m_height);
+                glScissor(0, 0, w2, m_height);
+                glEnable(GL_SCISSOR_TEST);
+                drawLasso();
+            } else {
+                glViewport(w2, 0, m_width - w2, m_height);
+                glScissor(w2, 0, m_width - w2, m_height);
+                glEnable(GL_SCISSOR_TEST);
+                drawLasso();
+            }
+            glDisable(GL_SCISSOR_TEST);
         }
-        glDisable(GL_SCISSOR_TEST);
     }
 }
 
@@ -1605,17 +1609,62 @@ std::vector<uint8_t> AngleRenderer::renderToBuffer(const Scene& scene, int w, in
     int oldW = m_width;
     int oldH = m_height;
     
+    m_isTakingScreenshot = true;
+    
+    // Resize renderer and all its RTTs to target width & height
     resize(w, h);
-    render(scene);
-
+    
+    // Resize active camera temporarily to match screenshot dimensions/aspect ratio
+    Camera& camera = const_cast<Camera&>(scene.getCamera());
+    int oldCamW = camera.getWidth();
+    int oldCamH = camera.getHeight();
+    camera.onResize(w, h);
+    
+    // Create temporary offscreen framebuffer & texture to render the final blit
+    GLuint tempFbo = 0;
+    GLuint tempTex = 0;
+    glGenFramebuffers(1, &tempFbo);
+    glGenTextures(1, &tempTex);
+    
+    glBindTexture(GL_TEXTURE_2D, tempTex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    
+    glBindFramebuffer(GL_FRAMEBUFFER, tempFbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tempTex, 0);
+    
+    // Render the scene to the temporary FBO
+    render(scene, tempFbo);
+    
+    // Read the rendered pixels from the temporary FBO
     std::vector<uint8_t> buffer(w * h * 4);
-    glBindFramebuffer(GL_FRAMEBUFFER, m_rttComposite.fbo);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, buffer.data());
+    
+    // Clean up temporary GL resources
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
+    glDeleteFramebuffers(1, &tempFbo);
+    glDeleteTextures(1, &tempTex);
+    
+    // Restore states
+    m_isTakingScreenshot = false;
+    camera.onResize(oldCamW, oldCamH);
     resize(oldW, oldH);
-
-    return buffer;
+    
+    // Flip pixels vertically (since OpenGL coords start from bottom-left)
+    std::vector<uint8_t> flippedBuffer(w * h * 4);
+    for (int y = 0; y < h; ++y) {
+        std::memcpy(
+            flippedBuffer.data() + y * w * 4,
+            buffer.data() + (h - 1 - y) * w * 4,
+            w * 4
+        );
+    }
+    
+    return flippedBuffer;
 }
 
 void AngleRenderer::initMatcaps() {

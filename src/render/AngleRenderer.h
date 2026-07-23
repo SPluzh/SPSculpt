@@ -44,9 +44,11 @@ public:
 
     bool init(int width, int height);
     void resize(int width, int height);
+    int getWidth() const { return m_width; }
+    int getHeight() const { return m_height; }
     
     // Core render loop called from JS requestAnimationFrame or SDL main loop
-    void render(const Scene& scene);
+    void render(const Scene& scene, unsigned int targetFbo = 0);
     void setShowBackground(bool show) { m_showBackground = show; }
     bool getShowBackground() const { return m_showBackground; }
 
@@ -316,6 +318,7 @@ private:
     // Split Viewport
     bool m_splitMode = false;
     std::shared_ptr<const Camera> m_cameraRight;
+    bool m_isTakingScreenshot = false;
 
     // Environment presets
     std::vector<EnvironmentPreset> m_environments;

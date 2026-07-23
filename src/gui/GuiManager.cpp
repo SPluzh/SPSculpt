@@ -22,6 +22,13 @@
 #include "sculpt/Remesh.h"
 #include "files/MeshUtils.h"
 #include "../third_party/stb_image.h"
+#include <filesystem>
+#include <chrono>
+#include <iomanip>
+#include <sstream>
+
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "../third_party/stb_image_write.h"
 
 static void exportOBJ(const Mesh& mesh, const std::string& path) {
     FILE* f = fopen(path.c_str(), "w");
@@ -1002,6 +1009,30 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             if (ImGui::Checkbox("Show cursor in inactive viewport", &showInactive)) {
                 scene.setSplitShowInactiveCursor(showInactive);
             }
+        }
+
+        ImGui::Separator();
+        ImGui::Text("Screenshot Settings:");
+        
+        const char* screenshotPresets[] = { "Viewport Size", "1080p (1920x1080)", "2K (2560x1440)", "4K (3840x2160)", "Custom" };
+        ImGui::Combo("Preset##Screenshot", &m_screenshotPreset, screenshotPresets, IM_ARRAYSIZE(screenshotPresets));
+        
+        if (m_screenshotPreset == 4) { // Custom
+            ImGui::InputInt("Width##Screenshot", &m_screenshotWidth);
+            ImGui::InputInt("Height##Screenshot", &m_screenshotHeight);
+            
+            // Clamp custom values
+            if (m_screenshotWidth < 256) m_screenshotWidth = 256;
+            if (m_screenshotWidth > 7680) m_screenshotWidth = 7680;
+            if (m_screenshotHeight < 256) m_screenshotHeight = 256;
+            if (m_screenshotHeight > 4320) m_screenshotHeight = 4320;
+        }
+        
+        ImGui::Checkbox("Show Grid##Screenshot", &m_screenshotShowGrid);
+        ImGui::Checkbox("Show Contour##Screenshot", &m_screenshotShowContour);
+        
+        if (ImGui::Button("Take Screenshot", ImVec2(-1, 0))) {
+            takeScreenshot(scene, renderer);
         }
 
         ImGui::End();
@@ -2694,5 +2725,63 @@ bool GuiManager::loadSettings(const std::string& filepath) {
 
     std::cout << "Successfully loaded GUI panel settings from: " << filepath << std::endl;
     return true;
+}
+
+void GuiManager::takeScreenshot(const Scene& scene, AngleRenderer& renderer) {
+    // 1. Resolve screenshot dimensions
+    int w = m_screenshotWidth;
+    int h = m_screenshotHeight;
+    if (m_screenshotPreset == 0) {
+        w = renderer.getWidth();
+        h = renderer.getHeight();
+    } else if (m_screenshotPreset == 1) {
+        w = 1920;
+        h = 1080;
+    } else if (m_screenshotPreset == 2) {
+        w = 2560;
+        h = 1440;
+    } else if (m_screenshotPreset == 3) {
+        w = 3840;
+        h = 2160;
+    }
+
+    // 2. Temporarily apply screenshot specific rendering overrides
+    bool oldGrid = renderer.getShowGrid();
+    bool oldContour = renderer.getShowContour();
+
+    renderer.setShowGrid(m_screenshotShowGrid);
+    renderer.setShowContour(m_screenshotShowContour);
+
+    // 3. Render offscreen
+    std::vector<uint8_t> pixels = renderer.renderToBuffer(scene, w, h);
+
+    // 4. Restore original rendering settings
+    renderer.setShowGrid(oldGrid);
+    renderer.setShowContour(oldContour);
+
+    // 5. Create screenshots directory if it doesn't exist
+    std::error_code ec;
+    std::filesystem::create_directories("screenshots", ec);
+    if (ec) {
+        std::cerr << "Failed to create screenshots directory: " << ec.message() << std::endl;
+        return;
+    }
+
+    // 6. Generate filename using timestamp
+    auto now = std::chrono::system_clock::now();
+    auto in_time_t = std::chrono::system_clock::to_time_t(now);
+    std::stringstream ss;
+    ss << "screenshots/screenshot_";
+    ss << std::put_time(std::localtime(&in_time_t), "%Y-%m-%d_%H-%M-%S");
+    ss << ".png";
+    std::string filepath = ss.str();
+
+    // 7. Save PNG to disk using stb_image_write
+    int success = stbi_write_png(filepath.c_str(), w, h, 4, pixels.data(), w * 4);
+    if (success) {
+        std::cout << "Screenshot successfully saved to: " << filepath << " (" << w << "x" << h << ")" << std::endl;
+    } else {
+        std::cerr << "Failed to write screenshot image file: " << filepath << std::endl;
+    }
 }
 
