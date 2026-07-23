@@ -2392,10 +2392,12 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         }
     }
 
-    // Draw Camera Pivot Point if enabled and actively orbiting
+    // Draw Camera Pivot Point if enabled and actively orbiting or zooming
     const Camera& camera = scene.getCamera();
-    bool isOrbiting = (sculpt.getCameraController().getDragMode() == CameraController::DragMode::Orbit || sculpt.getCameraController().getDragMode() == CameraController::DragMode::Roll);
-    if (camera.getUsePivot() && isOrbiting) {
+    bool isOrbitingOrZooming = (sculpt.getCameraController().getDragMode() == CameraController::DragMode::Orbit || 
+                                sculpt.getCameraController().getDragMode() == CameraController::DragMode::Roll ||
+                                sculpt.getCameraController().getDragMode() == CameraController::DragMode::Zoom);
+    if (camera.getUsePivot() && isOrbitingOrZooming) {
         ImDrawList* drawList = ImGui::GetForegroundDrawList();
         glm::vec3 pivotWorld = camera.getPivot();
         

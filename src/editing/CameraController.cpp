@@ -36,7 +36,7 @@ void CameraController::startDrag(DragMode mode, int mouseX, int mouseY, Camera& 
     m_snapTriggered = false;
     camera.start(static_cast<float>(mouseX), static_cast<float>(mouseY));
 
-    if ((mode == DragMode::Orbit || mode == DragMode::Roll) && camera.getUsePivot()) {
+    if ((mode == DragMode::Orbit || mode == DragMode::Roll || mode == DragMode::Zoom) && camera.getUsePivot()) {
         Ray ray = camera.getRay(static_cast<float>(mouseX), static_cast<float>(mouseY));
         float minT = std::numeric_limits<float>::infinity();
         Mesh* hitMesh = nullptr;
@@ -132,8 +132,6 @@ void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std
                 startDrag(DragMode::Zoom, mouseX, mouseY, camera, meshes);
             } else if (shiftPressed && altPressed && camera.getMode() != CameraEnums::CameraMode::ORBIT) {
                 startDrag(DragMode::Roll, mouseX, mouseY, camera, meshes);
-            } else if (shiftPressed) {
-                startDrag(DragMode::Pan, mouseX, mouseY, camera, meshes);
             } else if (altPressed) {
                 startDrag(DragMode::Pan, mouseX, mouseY, camera, meshes);
             } else {
@@ -163,7 +161,7 @@ void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std
                         m_snapTriggered = true;
                         camera.snapClosestRotation();
                     }
-                    camera.start(static_cast<float>(mouseX), static_cast<float>(mouseY));
+                    camera.start(static_cast<float>(mouseX), static_cast<float>(mouseY), false);
                 } else {
                     m_snapTriggered = false;
                     camera.rotate(static_cast<float>(mouseX), static_cast<float>(mouseY));

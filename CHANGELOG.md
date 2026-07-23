@@ -3,6 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.3]
+- **Input**: Fixed camera navigation snapping behavior when starting a drag with the Shift key already held down, and resolved an issue where the snap transition was immediately cancelled on mouse motion. Initiating a drag using the Right Mouse Button + Shift now correctly locks and smoothly snaps the view to the closest orthogonal angle. Also, fixed Ctrl + RMB Zoom behavior so it correctly updates the rotation and zoom pivot on mouse down, preventing the camera from translating sideways during zoom. Now renders the visual pivot marker (red ring and center dot) during camera zoom as well, matching the rotation behavior.
 - **Renderer**: Fixed voxel grid preview colors to match the web application. Using pre-multiplied alpha values in the voxel preview shader ensures blending occurs correctly through the deferred post-process compositor.
 - **Renderer**: Eliminated perspective distortion in the voxel grid preview. The preview squares are now projected from the camera's viewpoint, so they always appear as perfectly straight, unwarped squares on the screen and scale correctly with zoom level, matching the original web-based implementation.
 - **UI**: Added a dynamic voxel grid preview overlay when adjusting remesh resolution using the 'X' hotkey or the UI slider. This screen-space checkerboard visualization renders in real-time on the selected mesh, showing the density of the future voxel grid.

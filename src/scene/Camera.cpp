@@ -68,8 +68,10 @@ float Camera::getFovDegrees() const {
     return 2.0f * std::atan(12.0f / m_fov) * 180.0f / M_PI;
 }
 
-void Camera::start(float mouseX, float mouseY) {
-    cancelTransition();
+void Camera::start(float mouseX, float mouseY, bool cancelAnim) {
+    if (cancelAnim) {
+        cancelTransition();
+    }
     m_lastNormalizedMouseXY = normalizedMouse(mouseX, mouseY, (float)m_width, (float)m_height);
     m_virtualNormalizedMouseXY = m_lastNormalizedMouseXY;
 }
