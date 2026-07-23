@@ -106,6 +106,20 @@ void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std
         bool shiftPressed = (SDL_GetModState() & KMOD_SHIFT) != 0;
         bool ctrlPressed = (SDL_GetModState() & KMOD_CTRL) != 0;
 
+        if (camera.getRef2DMode()) {
+            if (e.button.button == SDL_BUTTON_RIGHT) {
+                if (e.button.clicks >= 2) {
+                    camera.resetView2D();
+                    m_drag = DragMode::None;
+                } else if (ctrlPressed) {
+                    startDrag(DragMode::Zoom2D, mouseX, mouseY, camera, meshes);
+                } else if (altPressed) {
+                    startDrag(DragMode::Pan2D, mouseX, mouseY, camera, meshes);
+                }
+            }
+            return; // Block all other 3D navigation mouse-down triggers in 2D mode
+        }
+
         if (e.button.button == SDL_BUTTON_MIDDLE) {
             if (e.button.clicks >= 2) {
                 camera.resetView();
@@ -131,6 +145,9 @@ void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std
             stopDrag();
         }
     } else if (e.type == SDL_MOUSEWHEEL) {
+        if (camera.getRef2DMode()) {
+            return; // Block 3D scroll-zoom in 2D mode
+        }
         camera.zoom(-static_cast<float>(e.wheel.y) * 0.05f);
     } else if (e.type == SDL_MOUSEMOTION) {
         if (m_drag != DragMode::None) {
@@ -155,6 +172,15 @@ void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std
                 camera.translate(static_cast<float>(dx), static_cast<float>(dy));
             } else if (m_drag == DragMode::Zoom) {
                 camera.zoom(static_cast<float>(dx) * 0.01f);
+            } else if (m_drag == DragMode::Pan2D) {
+                float w = camera.getWidth() > 0 ? static_cast<float>(camera.getWidth()) : 1.0f;
+                float h = camera.getHeight() > 0 ? static_cast<float>(camera.getHeight()) : 1.0f;
+                float dxNorm = static_cast<float>(dx) / (w / 2.0f);
+                float dyNorm = -static_cast<float>(dy) / (h / 2.0f);
+                camera.setView2DOffset(camera.getView2DOffsetX() + dxNorm, camera.getView2DOffsetY() + dyNorm);
+            } else if (m_drag == DragMode::Zoom2D) {
+                float factor = 1.0f + static_cast<float>(dx) * 0.005f;
+                camera.setView2DZoom(camera.getView2DZoom() * factor);
             } else if (m_drag == DragMode::Roll) {
                 float h = camera.getHeight() > 0 ? static_cast<float>(camera.getHeight()) : 1000.0f;
                 float speedTranslateFactor = camera.getSpeedTranslate() / h;

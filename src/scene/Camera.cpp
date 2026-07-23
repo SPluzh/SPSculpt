@@ -260,6 +260,8 @@ void Camera::resetView() {
     targetState.view2DOffsetX = 0.0f;
     targetState.view2DOffsetY = 0.0f;
     targetState.view2DZoom = 1.0f;
+    targetState.ref2DMode = m_ref2DMode;
+    targetState.refDrag = m_refDrag;
 
     m_speed = speed;
 
@@ -300,6 +302,8 @@ void Camera::resetViewToMesh(const float* bbox) {
     targetState.view2DOffsetX = 0.0f;
     targetState.view2DOffsetY = 0.0f;
     targetState.view2DZoom = 1.0f;
+    targetState.ref2DMode = m_ref2DMode;
+    targetState.refDrag = m_refDrag;
 
     m_speed = radius * 1.5f;
 
@@ -334,6 +338,16 @@ float Camera::computeFrustumFit() const {
 }
 
 Ray Camera::getRay(float mouseX, float mouseY) const {
+    if (m_ref2DMode) {
+        float w = m_width > 0 ? (float)m_width : 1.0f;
+        float h = m_height > 0 ? (float)m_height : 1.0f;
+        float ndcX = (mouseX / w) * 2.0f - 1.0f;
+        float ndcY = 1.0f - (mouseY / h) * 2.0f;
+        float ndcXReal = (ndcX - m_view2DOffsetX) / m_view2DZoom;
+        float ndcYReal = (ndcY - m_view2DOffsetY) / m_view2DZoom;
+        mouseX = (ndcXReal + 1.0f) * 0.5f * w;
+        mouseY = (1.0f - ndcYReal) * 0.5f * h;
+    }
     float w = m_width > 0 ? (float)m_width : 1.0f;
     float h = m_height > 0 ? (float)m_height : 1.0f;
     float ndcX = (mouseX / w) * 2.0f - 1.0f;
@@ -364,6 +378,16 @@ Ray Camera::getRay(float mouseX, float mouseY) const {
 }
 
 glm::vec3 Camera::unproject(float mouseX, float mouseY, float z) const {
+    if (m_ref2DMode) {
+        float w = m_width > 0 ? (float)m_width : 1.0f;
+        float h = m_height > 0 ? (float)m_height : 1.0f;
+        float ndcX = (mouseX / w) * 2.0f - 1.0f;
+        float ndcY = 1.0f - (mouseY / h) * 2.0f;
+        float ndcXReal = (ndcX - m_view2DOffsetX) / m_view2DZoom;
+        float ndcYReal = (ndcY - m_view2DOffsetY) / m_view2DZoom;
+        mouseX = (ndcXReal + 1.0f) * 0.5f * w;
+        mouseY = (1.0f - ndcYReal) * 0.5f * h;
+    }
     float h = m_height > 0 ? (float)m_height : 1.0f;
     glm::mat4 invW2S = glm::inverse(computeWorldToScreenMatrix());
     glm::vec4 screenPos(mouseX, h - mouseY, z, 1.0f);
@@ -375,6 +399,17 @@ glm::vec3 Camera::project(const glm::vec3& worldPos) const {
     glm::vec4 screen = computeWorldToScreenMatrix() * glm::vec4(worldPos, 1.0f);
     glm::vec3 proj = glm::vec3(screen) / screen.w;
     proj.y = (float)m_height - proj.y;
+
+    if (m_ref2DMode) {
+        float w = m_width > 0 ? (float)m_width : 1.0f;
+        float h = m_height > 0 ? (float)m_height : 1.0f;
+        float ndcX = (proj.x / w) * 2.0f - 1.0f;
+        float ndcY = 1.0f - (proj.y / h) * 2.0f;
+        float ndcXS = ndcX * m_view2DZoom + m_view2DOffsetX;
+        float ndcYS = ndcY * m_view2DZoom + m_view2DOffsetY;
+        proj.x = (ndcXS + 1.0f) * 0.5f * w;
+        proj.y = (1.0f - ndcYS) * 0.5f * h;
+    }
     return proj;
 }
 
@@ -463,6 +498,8 @@ void Camera::snapClosestRotation() {
     targetState.view2DOffsetX = m_view2DOffsetX;
     targetState.view2DOffsetY = m_view2DOffsetY;
     targetState.view2DZoom = m_view2DZoom;
+    targetState.ref2DMode = m_ref2DMode;
+    targetState.refDrag = m_refDrag;
 
     startTransition(targetState, 0.2f);
 }
@@ -481,7 +518,9 @@ void Camera::pushState() {
         m_usePivot,
         m_view2DOffsetX,
         m_view2DOffsetY,
-        m_view2DZoom
+        m_view2DZoom,
+        m_ref2DMode,
+        m_refDrag
     };
 
     if (m_historyIndex >= 0) {
@@ -498,7 +537,9 @@ void Camera::pushState() {
                      std::abs(glm::dot(prev.quatRot, state.quatRot)) > 1.0f - 1e-5f &&
                      std::abs(prev.view2DOffsetX - state.view2DOffsetX) < 1e-5f &&
                      std::abs(prev.view2DOffsetY - state.view2DOffsetY) < 1e-5f &&
-                     std::abs(prev.view2DZoom - state.view2DZoom) < 1e-5f;
+                     std::abs(prev.view2DZoom - state.view2DZoom) < 1e-5f &&
+                     prev.ref2DMode == state.ref2DMode &&
+                     prev.refDrag == state.refDrag;
         if (isSame) return;
     }
 
@@ -537,6 +578,8 @@ void Camera::applyState(const CameraState& state) {
     m_view2DOffsetX = state.view2DOffsetX;
     m_view2DOffsetY = state.view2DOffsetY;
     m_view2DZoom = state.view2DZoom;
+    m_ref2DMode = state.ref2DMode;
+    m_refDrag = state.refDrag;
     updateView();
     updateProjection();
 }
@@ -556,6 +599,8 @@ void Camera::toggleViewFront() {
     targetState.view2DOffsetX = m_view2DOffsetX;
     targetState.view2DOffsetY = m_view2DOffsetY;
     targetState.view2DZoom = m_view2DZoom;
+    targetState.ref2DMode = m_ref2DMode;
+    targetState.refDrag = m_refDrag;
 
     if (glm::dot(m_quatRot, targetState.quatRot) < 0.0f) {
         targetState.quatRot = -targetState.quatRot;
@@ -581,6 +626,8 @@ void Camera::toggleViewTop() {
     targetState.view2DOffsetX = m_view2DOffsetX;
     targetState.view2DOffsetY = m_view2DOffsetY;
     targetState.view2DZoom = m_view2DZoom;
+    targetState.ref2DMode = m_ref2DMode;
+    targetState.refDrag = m_refDrag;
 
     if (glm::dot(m_quatRot, targetState.quatRot) < 0.0f) {
         targetState.quatRot = -targetState.quatRot;
@@ -606,6 +653,8 @@ void Camera::toggleViewLeft() {
     targetState.view2DOffsetX = m_view2DOffsetX;
     targetState.view2DOffsetY = m_view2DOffsetY;
     targetState.view2DZoom = m_view2DZoom;
+    targetState.ref2DMode = m_ref2DMode;
+    targetState.refDrag = m_refDrag;
 
     if (glm::dot(m_quatRot, targetState.quatRot) < 0.0f) {
         targetState.quatRot = -targetState.quatRot;
@@ -631,6 +680,8 @@ void Camera::toggleViewRight() {
     targetState.view2DOffsetX = m_view2DOffsetX;
     targetState.view2DOffsetY = m_view2DOffsetY;
     targetState.view2DZoom = m_view2DZoom;
+    targetState.ref2DMode = m_ref2DMode;
+    targetState.refDrag = m_refDrag;
 
     if (glm::dot(m_quatRot, targetState.quatRot) < 0.0f) {
         targetState.quatRot = -targetState.quatRot;
@@ -656,6 +707,8 @@ void Camera::toggleViewAngles(float rx, float ry) {
     targetState.view2DOffsetX = m_view2DOffsetX;
     targetState.view2DOffsetY = m_view2DOffsetY;
     targetState.view2DZoom = m_view2DZoom;
+    targetState.ref2DMode = m_ref2DMode;
+    targetState.refDrag = m_refDrag;
 
     if (glm::dot(m_quatRot, targetState.quatRot) < 0.0f) {
         targetState.quatRot = -targetState.quatRot;
@@ -684,6 +737,8 @@ void Camera::update(float deltaTime) {
             m_view2DOffsetX = m_targetState.view2DOffsetX;
             m_view2DOffsetY = m_targetState.view2DOffsetY;
             m_view2DZoom = m_targetState.view2DZoom;
+            m_ref2DMode = m_targetState.ref2DMode;
+            m_refDrag = m_targetState.refDrag;
             m_transitionActive = false;
         } else {
             // Easing function: easeOutQuart
@@ -700,6 +755,8 @@ void Camera::update(float deltaTime) {
             m_view2DOffsetX = glm::mix(m_startState.view2DOffsetX, m_targetState.view2DOffsetX, tEscaped);
             m_view2DOffsetY = glm::mix(m_startState.view2DOffsetY, m_targetState.view2DOffsetY, tEscaped);
             m_view2DZoom = glm::mix(m_startState.view2DZoom, m_targetState.view2DZoom, tEscaped);
+            m_ref2DMode = m_targetState.ref2DMode;
+            m_refDrag = m_targetState.refDrag;
         }
         updateView();
         updateProjection();
@@ -720,12 +777,16 @@ void Camera::startTransition(const CameraState& targetState, float duration) {
         m_usePivot,
         m_view2DOffsetX,
         m_view2DOffsetY,
-        m_view2DZoom
+        m_view2DZoom,
+        m_ref2DMode,
+        m_refDrag
     };
     m_targetState = targetState;
     m_projectionType = targetState.projectionType;
     m_mode = targetState.mode;
     m_usePivot = targetState.usePivot;
+    m_ref2DMode = targetState.ref2DMode;
+    m_refDrag = targetState.refDrag;
 
     m_transitionDuration = duration;
     m_transitionTime = 0.0f;

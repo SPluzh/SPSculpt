@@ -1247,6 +1247,23 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
         ImGui::Separator();
 
+        Camera& camera = scene.getCamera();
+        bool ref2D = camera.getRef2DMode();
+        if (ImGui::Checkbox("2D Pan/Zoom Mode", &ref2D)) {
+            camera.setRef2DMode(ref2D);
+        }
+        ImGui::SameLine();
+        bool refDrag = camera.getRefDragEnabled();
+        if (ImGui::Checkbox("Ref Drag", &refDrag)) {
+            camera.setRefDragEnabled(refDrag);
+        }
+
+        if (ImGui::Button("Reset 2D View", ImVec2(-1, 0))) {
+            camera.resetView2D();
+        }
+
+        ImGui::Separator();
+
         auto& images = scene.getReferenceImages();
         if (images.empty()) {
             ImGui::Text("No reference images loaded.");
@@ -1323,8 +1340,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         SDL_GetWindowSize(window, &wWidth, &wHeight);
 
         // Position it at the top-right corner, below the main menu bar
-        ImGui::SetNextWindowPos(ImVec2((float)wWidth - 140.0f, 40.0f), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(120.0f, 120.0f));
+        ImGui::SetNextWindowPos(ImVec2((float)wWidth - 150.0f, 40.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(130.0f, 130.0f));
         
         ImGui::Begin("Gizmo Cube", nullptr, 
             ImGuiWindowFlags_NoTitleBar | 
@@ -1337,7 +1354,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         ImDrawList* drawList = ImGui::GetWindowDrawList();
         
         // Cube half size in pixels on screen
-        float side = 30.0f;
+        float side = 36.0f;
         const float w = 0.70f;
         glm::vec3 localVerts[24] = {
             // Front face (Z = +1.0)
@@ -1408,12 +1425,12 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         // 26 parts in total: 6 faces, 12 edges, 8 corners
         GizmoPart parts[26] = {
             // --- 6 Faces ---
-            { "Front",  4, { 0, 1, 2, 3 }, { 0.0f,  0.0f,  1.0f },  0.0f,                 0.0f,                 IM_COL32(50, 120, 230, 220),  IM_COL32(70, 150, 255, 255), { 1.0f,  0.0f,  0.0f } },
-            { "Back",   4, { 4, 5, 6, 7 }, { 0.0f,  0.0f, -1.0f },  0.0f,                -3.14159265f,          IM_COL32(40, 90, 180, 220),   IM_COL32(60, 120, 220, 255), {-1.0f,  0.0f,  0.0f } },
-            { "Left",   4, { 8, 9, 10, 11 }, {-1.0f,  0.0f,  0.0f },  0.0f,                 3.14159265f * 0.5f,   IM_COL32(180, 40, 40, 220),   IM_COL32(220, 60, 60, 255), { 0.0f,  0.0f,  1.0f } },
-            { "Right",  4, { 12, 13, 14, 15 }, { 1.0f,  0.0f,  0.0f },  0.0f,                -3.14159265f * 0.5f,   IM_COL32(230, 50, 50, 220),   IM_COL32(255, 70, 70, 255), { 0.0f,  0.0f, -1.0f } },
-            { "Top",    4, { 16, 17, 18, 19 }, { 0.0f,  1.0f,  0.0f }, -3.14159265f * 0.49f,  0.0f,                 IM_COL32(50, 200, 50, 220),   IM_COL32(70, 240, 70, 255), { 1.0f,  0.0f,  0.0f } },
-            { "Bottom", 4, { 20, 21, 22, 23 }, { 0.0f, -1.0f,  0.0f },  3.14159265f * 0.49f,  0.0f,                 IM_COL32(40, 150, 40, 220),   IM_COL32(60, 190, 60, 255), { 1.0f,  0.0f,  0.0f } },
+            { "FRONT",  4, { 0, 1, 2, 3 }, { 0.0f,  0.0f,  1.0f },  0.0f,                 0.0f,                 IM_COL32(50, 120, 230, 220),  IM_COL32(70, 150, 255, 255), { 1.0f,  0.0f,  0.0f } },
+            { "BACK",   4, { 4, 5, 6, 7 }, { 0.0f,  0.0f, -1.0f },  0.0f,                -3.14159265f,          IM_COL32(40, 90, 180, 220),   IM_COL32(60, 120, 220, 255), {-1.0f,  0.0f,  0.0f } },
+            { "LEFT",   4, { 8, 9, 10, 11 }, {-1.0f,  0.0f,  0.0f },  0.0f,                 3.14159265f * 0.5f,   IM_COL32(180, 40, 40, 220),   IM_COL32(220, 60, 60, 255), { 0.0f,  0.0f,  1.0f } },
+            { "RIGHT",  4, { 12, 13, 14, 15 }, { 1.0f,  0.0f,  0.0f },  0.0f,                -3.14159265f * 0.5f,   IM_COL32(230, 50, 50, 220),   IM_COL32(255, 70, 70, 255), { 0.0f,  0.0f, -1.0f } },
+            { "TOP",    4, { 16, 17, 18, 19 }, { 0.0f,  1.0f,  0.0f }, -3.14159265f * 0.49f,  0.0f,                 IM_COL32(50, 200, 50, 220),   IM_COL32(70, 240, 70, 255), { 1.0f,  0.0f,  0.0f } },
+            { "BOTTOM", 4, { 20, 21, 22, 23 }, { 0.0f, -1.0f,  0.0f },  3.14159265f * 0.49f,  0.0f,                 IM_COL32(40, 150, 40, 220),   IM_COL32(60, 190, 60, 255), { 1.0f,  0.0f,  0.0f } },
 
             // --- 12 Edges ---
             { "", 4, { 3, 2, 17, 16 }, { 0.0f, 0.707f, 0.707f }, -3.14159265f * 0.25f, 0.0f,                 IM_COL32(50, 160, 140, 220),  IM_COL32(70, 200, 180, 255), { 0.0f, 0.0f, 0.0f } },
@@ -1505,7 +1522,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             if (part.label[0] != '\0') {
                 glm::vec3 viewNormal = viewRot * part.normal;
                 if (viewNormal.z >= 0.5f) {
-                    ImGui::SetWindowFontScale(0.7f);
+                    ImGui::SetWindowFontScale(1.0f);
                     ImVec2 centerPos(0.0f, 0.0f);
                     for (int j = 0; j < part.numVerts; ++j) {
                         centerPos.x += poly[j].x;
@@ -1517,7 +1534,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     ImVec2 textSize = ImGui::CalcTextSize(part.label);
                     ImVec2 textPos = ImVec2(centerPos.x - textSize.x * 0.5f, centerPos.y - textSize.y * 0.5f);
 
-                    // Record start vertex buffer size to rotate newly added vertices
                     int vtxStart = drawList->VtxBuffer.Size;
 
                     drawList->AddText(ImVec2(textPos.x + 1.0f, textPos.y + 1.0f), IM_COL32(0, 0, 0, 200), part.label);
@@ -1525,21 +1541,20 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
                     int vtxEnd = drawList->VtxBuffer.Size;
 
-                    // Rotate the generated text vertices around centerPos by the projected localX angle
-                    glm::vec3 viewX = viewRot * part.localX;
-                    ImVec2 screenDir(viewX.x, -viewX.y); // Project viewX to screen-space (negating Y)
-                    float len = std::sqrt(screenDir.x * screenDir.x + screenDir.y * screenDir.y);
-                    if (len > 1e-5f) {
-                        float cosTheta = screenDir.x / len;
-                        float sinTheta = screenDir.y / len;
+                    glm::vec3 localY = glm::cross(part.normal, part.localX);
+                    for (int vIdx = vtxStart; vIdx < vtxEnd; ++vIdx) {
+                        ImDrawVert& v = drawList->VtxBuffer[vIdx];
+                        float dx = v.pos.x - centerPos.x;
+                        float dy = v.pos.y - centerPos.y;
 
-                        for (int vIdx = vtxStart; vIdx < vtxEnd; ++vIdx) {
-                            ImDrawVert& v = drawList->VtxBuffer[vIdx];
-                            float dx = v.pos.x - centerPos.x;
-                            float dy = v.pos.y - centerPos.y;
-                            v.pos.x = centerPos.x + (dx * cosTheta - dy * sinTheta);
-                            v.pos.y = centerPos.y + (dx * sinTheta + dy * cosTheta);
-                        }
+                        float local_dx = dx / side;
+                        float local_dy = -dy / side;
+
+                        glm::vec3 P_local = part.normal + local_dx * part.localX + local_dy * localY;
+                        glm::vec3 rotVert = viewRot * P_local;
+
+                        v.pos.x = center.x + rotVert.x * side;
+                        v.pos.y = center.y - rotVert.y * side;
                     }
 
                     ImGui::SetWindowFontScale(1.0f);

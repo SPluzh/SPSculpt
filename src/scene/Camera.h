@@ -37,6 +37,8 @@ public:
         float view2DOffsetX;
         float view2DOffsetY;
         float view2DZoom;
+        bool ref2DMode;
+        bool refDrag;
     };
 
     Camera();
@@ -130,6 +132,11 @@ public:
     void setView2DZoom(float z) { m_view2DZoom = z > 0.01f ? z : 0.01f; }
     void resetView2D() { m_view2DOffsetX = 0.0f; m_view2DOffsetY = 0.0f; m_view2DZoom = 1.0f; }
 
+    bool getRef2DMode() const { return m_ref2DMode; }
+    void setRef2DMode(bool val) { m_ref2DMode = val; }
+    bool getRefDragEnabled() const { return m_refDrag; }
+    void setRefDragEnabled(bool val) { m_refDrag = val; }
+
     void pushState();
     void undo();
     void redo();
@@ -179,6 +186,9 @@ private:
     float m_view2DOffsetX = 0.0f;
     float m_view2DOffsetY = 0.0f;
     float m_view2DZoom = 1.0f;
+
+    bool m_ref2DMode = false;
+    bool m_refDrag = true;
 
     CameraState m_startState;
     CameraState m_targetState;
