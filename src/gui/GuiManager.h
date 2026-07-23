@@ -62,6 +62,10 @@ private:
     RemeshProgress m_remeshAsync;
     AngleRenderer* m_renderer = nullptr;
 
+    ModalMode m_activeModalMode = ModalMode::NONE;
+    int m_modalStartMouseX = 0;
+    int m_modalStartMouseY = 0;
+
 public:
     GuiManager();
     ~GuiManager();
@@ -105,6 +109,13 @@ public:
     void applyRemeshResult(Scene& scene, const RemeshResult& r);
     void drawRemeshProgressModal();
     bool isRemeshRunning() const { return m_remeshAsync.state == RemeshState::Running; }
+
+    void setModalMode(ModalMode mode, int startX, int startY) {
+        m_activeModalMode = mode;
+        m_modalStartMouseX = startX;
+        m_modalStartMouseY = startY;
+    }
+    void drawModalIndicatorHUD(SculptManager& sculpt, Scene& scene);
 
     // Context popup request
     bool m_openContextPopup = false;

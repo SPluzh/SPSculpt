@@ -2261,6 +2261,10 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         }
     }
 
+    if (m_activeModalMode != ModalMode::NONE) {
+        drawModalIndicatorHUD(sculpt, scene);
+    }
+
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
@@ -2411,6 +2415,84 @@ void GuiManager::drawRemeshProgressModal() {
         ImGui::EndPopup();
     }
 }
+
+void GuiManager::drawModalIndicatorHUD(SculptManager& sculpt, Scene& scene) {
+    const char* label = nullptr;
+    char valStr[64] = "";
+    float fraction = 0.0f;
+
+    switch (m_activeModalMode) {
+        case ModalMode::INTENSITY:
+            label = "Intensity";
+            snprintf(valStr, sizeof(valStr), "%d%%", (int)(sculpt.getBrushIntensity() * 100.0f));
+            fraction = sculpt.getBrushIntensity();
+            break;
+        case ModalMode::FOCAL_SHIFT:
+            label = "Focal Shift";
+            snprintf(valStr, sizeof(valStr), "%d%%", (int)(sculpt.getFocalShift() * 100.0f));
+            fraction = (sculpt.getFocalShift() + 1.0f) * 0.5f;
+            break;
+        case ModalMode::RADIUS:
+            label = "Radius";
+            snprintf(valStr, sizeof(valStr), "%d px", (int)sculpt.getBrushRadius());
+            fraction = (sculpt.getBrushRadius() - 0.5f) / (250.0f - 0.5f);
+            break;
+        case ModalMode::REMESH_RESOLUTION:
+            label = "Remesh Resolution";
+            snprintf(valStr, sizeof(valStr), "%d", m_remeshResolution);
+            fraction = (float)(m_remeshResolution - 10) / (1000 - 10);
+            break;
+        case ModalMode::TOPOLOGY_DETAIL:
+            label = "Topology Detail";
+            snprintf(valStr, sizeof(valStr), "%d", (int)m_dyntopoDetail);
+            fraction = (m_dyntopoDetail - 1.0f) / (500.0f - 1.0f);
+            break;
+        case ModalMode::CAMERA_FOV:
+            label = "FOV";
+            snprintf(valStr, sizeof(valStr), "%d mm", (int)scene.getCamera().getFov());
+            fraction = (scene.getCamera().getFov() - 10.0f) / (200.0f - 10.0f);
+            break;
+        default:
+            return;
+    }
+
+    if (!label) return;
+
+    // Center horizontally (-50% pivot) and place slightly above mouse cursor (-100% pivot)
+    ImGui::SetNextWindowPos(ImVec2((float)m_modalStartMouseX, (float)m_modalStartMouseY - 25.0f), ImGuiCond_Always, ImVec2(0.5f, 1.0f));
+    ImGui::SetNextWindowBgAlpha(0.85f);
+
+    // Style overrides for floating indicator card
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 8.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 6.0f));
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | 
+                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | 
+                             ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoInputs | 
+                             ImGuiWindowFlags_AlwaysAutoResize;
+
+    if (ImGui::Begin("##ModalIndicatorHUD", nullptr, flags)) {
+        float width = 150.0f; // matches min-width of 150px
+        
+        float posX = ImGui::GetCursorPosX();
+        ImGui::Text("%s", label);
+        float valWidth = ImGui::CalcTextSize(valStr).x;
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(posX + width - valWidth);
+        ImGui::Text("%s", valStr);
+
+        // Render sleek progress bar
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.01f, 0.52f, 0.45f, 1.00f)); // Teal Accent
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(1.0f, 1.0f, 1.0f, 0.2f)); // Track
+        ImGui::ProgressBar(std::max(0.0f, std::min(1.0f, fraction)), ImVec2(width, 5.0f), "");
+        ImGui::PopStyleColor(2);
+    }
+    ImGui::End();
+
+    ImGui::PopStyleVar(3);
+}
+
 
 bool GuiManager::saveSettings(const std::string& filepath) {
     std::ofstream out(filepath);

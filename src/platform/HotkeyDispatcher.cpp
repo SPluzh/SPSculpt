@@ -221,12 +221,60 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
             
             case HKAction::BrushNegative: sculpt.toggleNegative(); break;
             
-            case HKAction::BrushIntensity: m_modalMode = ModalMode::INTENSITY; break;
-            case HKAction::BrushRadius: m_modalMode = ModalMode::RADIUS; break;
-            case HKAction::BrushFocalShift: m_modalMode = ModalMode::FOCAL_SHIFT; break;
-            case HKAction::RemeshResolution: m_modalMode = ModalMode::REMESH_RESOLUTION; break;
-            case HKAction::TopologyDetail: m_modalMode = ModalMode::TOPOLOGY_DETAIL; break;
-            case HKAction::CameraFov: m_modalMode = ModalMode::CAMERA_FOV; break;
+            case HKAction::BrushIntensity: {
+                if (m_modalMode != ModalMode::INTENSITY) {
+                    m_modalMode = ModalMode::INTENSITY;
+                    int mx, my;
+                    SDL_GetMouseState(&mx, &my);
+                    gui.setModalMode(m_modalMode, mx, my);
+                }
+                break;
+            }
+            case HKAction::BrushRadius: {
+                if (m_modalMode != ModalMode::RADIUS) {
+                    m_modalMode = ModalMode::RADIUS;
+                    int mx, my;
+                    SDL_GetMouseState(&mx, &my);
+                    gui.setModalMode(m_modalMode, mx, my);
+                }
+                break;
+            }
+            case HKAction::BrushFocalShift: {
+                if (m_modalMode != ModalMode::FOCAL_SHIFT) {
+                    m_modalMode = ModalMode::FOCAL_SHIFT;
+                    int mx, my;
+                    SDL_GetMouseState(&mx, &my);
+                    gui.setModalMode(m_modalMode, mx, my);
+                }
+                break;
+            }
+            case HKAction::RemeshResolution: {
+                if (m_modalMode != ModalMode::REMESH_RESOLUTION) {
+                    m_modalMode = ModalMode::REMESH_RESOLUTION;
+                    int mx, my;
+                    SDL_GetMouseState(&mx, &my);
+                    gui.setModalMode(m_modalMode, mx, my);
+                }
+                break;
+            }
+            case HKAction::TopologyDetail: {
+                if (m_modalMode != ModalMode::TOPOLOGY_DETAIL) {
+                    m_modalMode = ModalMode::TOPOLOGY_DETAIL;
+                    int mx, my;
+                    SDL_GetMouseState(&mx, &my);
+                    gui.setModalMode(m_modalMode, mx, my);
+                }
+                break;
+            }
+            case HKAction::CameraFov: {
+                if (m_modalMode != ModalMode::CAMERA_FOV) {
+                    m_modalMode = ModalMode::CAMERA_FOV;
+                    int mx, my;
+                    SDL_GetMouseState(&mx, &my);
+                    gui.setModalMode(m_modalMode, mx, my);
+                }
+                break;
+            }
             
             case HKAction::DeleteSelected: {
                 Mesh* selected = scene.getSelected();
@@ -280,22 +328,40 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
     } else {
         switch (action) {
             case HKAction::BrushIntensity:
-                if (m_modalMode == ModalMode::INTENSITY) m_modalMode = ModalMode::NONE;
+                if (m_modalMode == ModalMode::INTENSITY) {
+                    m_modalMode = ModalMode::NONE;
+                    gui.setModalMode(m_modalMode, 0, 0);
+                }
                 break;
             case HKAction::BrushRadius:
-                if (m_modalMode == ModalMode::RADIUS) m_modalMode = ModalMode::NONE;
+                if (m_modalMode == ModalMode::RADIUS) {
+                    m_modalMode = ModalMode::NONE;
+                    gui.setModalMode(m_modalMode, 0, 0);
+                }
                 break;
             case HKAction::BrushFocalShift:
-                if (m_modalMode == ModalMode::FOCAL_SHIFT) m_modalMode = ModalMode::NONE;
+                if (m_modalMode == ModalMode::FOCAL_SHIFT) {
+                    m_modalMode = ModalMode::NONE;
+                    gui.setModalMode(m_modalMode, 0, 0);
+                }
                 break;
             case HKAction::RemeshResolution:
-                if (m_modalMode == ModalMode::REMESH_RESOLUTION) m_modalMode = ModalMode::NONE;
+                if (m_modalMode == ModalMode::REMESH_RESOLUTION) {
+                    m_modalMode = ModalMode::NONE;
+                    gui.setModalMode(m_modalMode, 0, 0);
+                }
                 break;
             case HKAction::TopologyDetail:
-                if (m_modalMode == ModalMode::TOPOLOGY_DETAIL) m_modalMode = ModalMode::NONE;
+                if (m_modalMode == ModalMode::TOPOLOGY_DETAIL) {
+                    m_modalMode = ModalMode::NONE;
+                    gui.setModalMode(m_modalMode, 0, 0);
+                }
                 break;
             case HKAction::CameraFov:
-                if (m_modalMode == ModalMode::CAMERA_FOV) m_modalMode = ModalMode::NONE;
+                if (m_modalMode == ModalMode::CAMERA_FOV) {
+                    m_modalMode = ModalMode::NONE;
+                    gui.setModalMode(m_modalMode, 0, 0);
+                }
                 break;
             default: break;
         }

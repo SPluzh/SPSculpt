@@ -26,3 +26,14 @@ enum BrushType {
     BRUSH_DIVIDER,
     BRUSH_TRANSFORM
 };
+
+enum class ModalMode {
+    NONE = 0,
+    RADIUS,
+    INTENSITY,
+    FOCAL_SHIFT,
+    REMESH_RESOLUTION,
+    TOPOLOGY_DETAIL,
+    CAMERA_FOV
+};
+

@@ -61,15 +61,6 @@ enum class HKAction {
     None
 };
 
-enum class ModalMode {
-    NONE = 0,
-    RADIUS,
-    INTENSITY,
-    FOCAL_SHIFT,
-    REMESH_RESOLUTION,
-    TOPOLOGY_DETAIL,
-    CAMERA_FOV
-};
 
 class HotkeyDispatcher {
 public:
