@@ -162,7 +162,8 @@ public:
         uintptr_t symMVPsPtr,
         int symMVPsCount,
         uintptr_t cursorColorPtr,
-        uintptr_t symOccludedPtr = 0
+        uintptr_t symOccludedPtr = 0,
+        bool isScreenspace = false
     );
     void setCursorParametersRightFast(
         uintptr_t circleMVPPtr,
@@ -231,6 +232,7 @@ private:
     std::vector<glm::mat4> m_symMVPs;
     std::vector<char> m_symOccluded;
     glm::vec3 m_cursorColor{1.0f, 0.0f, 0.0f};
+    bool m_cursorIsScreenspace = false;
 
     glm::mat4 m_circleMVPRight{1.0f};
     glm::mat4 m_innerCircleMVPRight{1.0f};

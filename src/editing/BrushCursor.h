@@ -10,6 +10,7 @@ class Camera;
 struct BrushCursorState {
     bool      visible        = false;
     bool      showCircle     = true;
+    bool      isScreenspace  = false;
     glm::vec3 hitPoint       {0.0f};
     glm::vec3 hitNormal      {0.0f, 1.0f, 0.0f};
     float     radius         = 8.0f;   // in world units

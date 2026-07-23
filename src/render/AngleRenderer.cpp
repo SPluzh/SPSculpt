@@ -1258,10 +1258,12 @@ void AngleRenderer::setCursorParametersFast(
     uintptr_t symMVPsPtr,
     int symMVPsCount,
     uintptr_t cursorColorPtr,
-    uintptr_t symOccludedPtr
+    uintptr_t symOccludedPtr,
+    bool isScreenspace
 ) {
     m_showCursor = showCursor;
     m_showCircle = showCircle;
+    m_cursorIsScreenspace = isScreenspace;
     if (circleMVPPtr) {
         std::memcpy(&m_circleMVP, reinterpret_cast<const float*>(circleMVPPtr), 16 * sizeof(float));
     }
@@ -1804,7 +1806,7 @@ void AngleRenderer::drawSelectionCursor(const Scene& scene, bool isRight) {
     GLint locMVP = glGetUniformLocation(m_selectionProgram, "uMVP");
     GLint locPos = glGetAttribLocation(m_selectionProgram, "aVertex");
     
-    glUniform1i(glGetUniformLocation(m_selectionProgram, "uRef2DMode"), camera.getRef2DMode() ? 1 : 0);
+    glUniform1i(glGetUniformLocation(m_selectionProgram, "uRef2DMode"), (camera.getRef2DMode() && !m_cursorIsScreenspace) ? 1 : 0);
     glUniform2f(glGetUniformLocation(m_selectionProgram, "uView2DOffset"), camera.getView2DOffsetX(), camera.getView2DOffsetY());
     glUniform1f(glGetUniformLocation(m_selectionProgram, "uView2DZoom"), camera.getView2DZoom());
 

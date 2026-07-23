@@ -242,6 +242,8 @@ void BrushCursor::update(int mouseX, int mouseY,
         }
     }
 
+    m_state.isScreenspace = isSculpting || !hitMesh;
+
     if (hitMesh) {
         m_state.hitPoint = worldPt;
         m_state.hitNormal = worldNormal;
@@ -445,7 +447,8 @@ void BrushCursor::applyToRenderer(AngleRenderer& renderer) const {
             symPtr,
             symCount,
             colorPtr,
-            occludedPtr
+            occludedPtr,
+            m_state.isScreenspace
         );
 
         uintptr_t circlePtrR = reinterpret_cast<uintptr_t>(glm::value_ptr(m_state.circleMVPRight));
@@ -464,7 +467,7 @@ void BrushCursor::applyToRenderer(AngleRenderer& renderer) const {
             occludedPtrR
         );
     } else {
-        renderer.setCursorParametersFast(false, false, 0, 0, 0, 0, 0, 0, 0);
+        renderer.setCursorParametersFast(false, false, 0, 0, 0, 0, 0, 0, 0, false);
         renderer.setCursorParametersRightFast(0, 0, 0, 0, 0, 0);
     }
 }
