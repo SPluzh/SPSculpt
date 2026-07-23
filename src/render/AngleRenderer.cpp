@@ -824,7 +824,7 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
     glUniform1i(glGetUniformLocation(program, "uSym"), m_showSymmetryLine ? 1 : 0);
     
     bool darken = false;
-    if (scene.getMeshes().size() > 1 && scene.getSelected() && scene.getSelected() != mesh) {
+    if (m_darkenUnselected && scene.getMeshes().size() > 1 && scene.getSelected() && scene.getSelected() != mesh) {
         darken = true;
     }
     glUniform1i(glGetUniformLocation(program, "uDarken"), darken ? 1 : 0);

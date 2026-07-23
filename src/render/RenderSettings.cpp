@@ -47,6 +47,7 @@ bool RenderSettings::save(const std::string& filepath, const AngleRenderer& rend
     out << "filmic=" << (renderer.getFilmic() ? "true" : "false") << "\n";
     out << "showContour=" << (renderer.getShowContour() ? "true" : "false") << "\n";
     out << "showGrid=" << (renderer.getShowGrid() ? "true" : "false") << "\n";
+    out << "darkenUnselected=" << (renderer.getDarkenUnselected() ? "true" : "false") << "\n";
     
     glm::vec4 cColor = renderer.getContourColor();
     out << "contourColor=" << cColor.r << " " << cColor.g << " " << cColor.b << " " << cColor.a << "\n";
@@ -152,6 +153,10 @@ bool RenderSettings::load(const std::string& filepath, AngleRenderer& renderer, 
         it = params.find("showGrid");
         if (it != params.end()) {
             renderer.setShowGrid(it->second == "true" || it->second == "1");
+        }
+        it = params.find("darkenUnselected");
+        if (it != params.end()) {
+            renderer.setDarkenUnselected(it->second == "true" || it->second == "1");
         }
         it = params.find("contourColor");
         if (it != params.end()) {

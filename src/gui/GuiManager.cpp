@@ -1124,6 +1124,11 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             renderer.setFlatShading(flat);
         }
 
+        bool darkenUnselected = renderer.getDarkenUnselected();
+        if (ImGui::Checkbox("Darken unselected", &darkenUnselected)) {
+            renderer.setDarkenUnselected(darkenUnselected);
+        }
+
         bool bevel = renderer.getBevelEnabled();
         if (ImGui::Checkbox("Screen-space Bevel (Melt)", &bevel)) {
             renderer.setBevelEnabled(bevel);

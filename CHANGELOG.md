@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.3]
+- **UI**: Added a "Darken unselected" checkbox to the Rendering Quality panel to toggle darkening of non-selected meshes in multi-mesh scenes.
+- **Settings**: Serialized the "Darken unselected" setting in `render_settings.cfg` for persistence across sessions.
 - **Renderer**: Implemented a screen-space post-process Bevel (Melt) shader that detects intersection boundaries between meshes and blends their normals to visually fuse intersecting models.
 - **Renderer**: Resolved an issue where screen-space bevels disappeared when zooming out due to dynamic near and far plane camera optimizations. The camera's dynamic near and far parameters, as well as the active projection mode, are now bound as uniforms and computed correctly in the fragment shader.
 - **UI**: Added a "Screen-space Bevel (Melt)" toggle checkbox in the Rendering Quality panel along with "Bevel Radius" and "Bevel Strength" sliders to customize the size and intensity of the blending effect.

@@ -106,6 +106,8 @@ public:
     int getMatcap() const { return m_matcapIdx; }
     void setFlatShading(bool flat) { m_flatShading = flat; }
     bool getFlatShading() const { return m_flatShading; }
+    void setDarkenUnselected(bool darken) { m_darkenUnselected = darken; }
+    bool getDarkenUnselected() const { return m_darkenUnselected; }
     void setShowWireframe(bool show) { m_showWireframe = show; }
     bool getShowWireframe() const { return m_showWireframe; }
     void setCurvature(float c) { m_curvature = c; }
@@ -311,6 +313,7 @@ private:
     int m_shaderType = 0;
     int m_matcapIdx = 0;
     bool m_flatShading = false;
+    bool m_darkenUnselected = true;
     bool m_showWireframe = false;
     float m_curvature = 0.0f;
 
