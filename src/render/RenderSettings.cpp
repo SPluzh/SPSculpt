@@ -42,6 +42,8 @@ bool RenderSettings::save(const std::string& filepath, const AngleRenderer& rend
     out << "showBackground=" << (renderer.getShowBackground() ? "true" : "false") << "\n";
     out << "backgroundType=" << renderer.getBackgroundType() << "\n";
     out << "bgBlur=" << renderer.getBgBlur() << "\n";
+    out << "bgFill=" << (renderer.getBgFill() ? "true" : "false") << "\n";
+    out << "bgTexturePath=" << renderer.getBgTexturePath() << "\n";
     out << "filmic=" << (renderer.getFilmic() ? "true" : "false") << "\n";
     out << "showContour=" << (renderer.getShowContour() ? "true" : "false") << "\n";
     out << "showGrid=" << (renderer.getShowGrid() ? "true" : "false") << "\n";
@@ -117,9 +119,17 @@ bool RenderSettings::load(const std::string& filepath, AngleRenderer& renderer, 
         if (it != params.end()) {
             renderer.setBackgroundType(safe_stoi(it->second));
         }
-        it = params.find("bgBlur");
+         it = params.find("bgBlur");
         if (it != params.end()) {
             renderer.setBgBlur(safe_stof(it->second));
+        }
+        it = params.find("bgFill");
+        if (it != params.end()) {
+            renderer.setBgFill(it->second == "true" || it->second == "1");
+        }
+        it = params.find("bgTexturePath");
+        if (it != params.end()) {
+            renderer.loadBackgroundTexture(it->second);
         }
         it = params.find("filmic");
         if (it != params.end()) {

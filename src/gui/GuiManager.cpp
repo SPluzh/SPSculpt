@@ -878,6 +878,52 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         }
 
         ImGui::Separator();
+        if (ImGui::CollapsingHeader("Background Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+            bool showBg = renderer.getShowBackground();
+            if (ImGui::Checkbox("Show Background", &showBg)) {
+                renderer.setShowBackground(showBg);
+            }
+
+            if (showBg) {
+                const char* bgTypes[] = { "Image", "Environment", "Ambient env" };
+                int bgType = renderer.getBackgroundType();
+                if (ImGui::Combo("Type##bg", &bgType, bgTypes, IM_ARRAYSIZE(bgTypes))) {
+                    renderer.setBackgroundType(bgType);
+                }
+
+                if (bgType == 1) { // Environment
+                    float bgBlur = renderer.getBgBlur();
+                    if (ImGui::SliderFloat("Blur##bg", &bgBlur, 0.0f, 1.0f, "%.2f")) {
+                        renderer.setBgBlur(bgBlur);
+                    }
+                }
+
+                if (bgType == 0) { // Image
+                    bool bgFill = renderer.getBgFill();
+                    if (ImGui::Checkbox("Fill##bg", &bgFill)) {
+                        renderer.setBgFill(bgFill);
+                    }
+
+                    std::string path = renderer.getBgTexturePath();
+                    static char bgImagePath[256] = "";
+                    if (path != bgImagePath && path.size() < sizeof(bgImagePath)) {
+                        std::strncpy(bgImagePath, path.c_str(), sizeof(bgImagePath));
+                    }
+
+                    ImGui::InputText("Image Path##bg", bgImagePath, sizeof(bgImagePath));
+                    if (ImGui::Button("Import Image##bg", ImVec2(120, 0))) {
+                        renderer.loadBackgroundTexture(bgImagePath);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Reset Image##bg", ImVec2(120, 0))) {
+                        renderer.deleteBackgroundTexture();
+                        bgImagePath[0] = '\0';
+                    }
+                }
+            }
+        }
+
+        ImGui::Separator();
         ImGui::Text("Settings Profile:");
         if (ImGui::Button("Save Profile", ImVec2(120, 0))) {
             RenderSettings::save("render_settings.cfg", renderer, scene);

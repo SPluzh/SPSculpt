@@ -50,10 +50,16 @@ public:
     void setShowBackground(bool show) { m_showBackground = show; }
     bool getShowBackground() const { return m_showBackground; }
 
-    void setBackgroundType(int type) { m_backgroundType = type; }
+    void setBackgroundType(int type) { m_backgroundType = type; updateBackgroundGeometry(); }
     int getBackgroundType() const { return m_backgroundType; }
     void setBgBlur(float blur) { m_bgBlur = blur; }
     float getBgBlur() const { return m_bgBlur; }
+    void setBgFill(bool fill) { m_bgFill = fill; updateBackgroundGeometry(); }
+    bool getBgFill() const { return m_bgFill; }
+    std::string getBgTexturePath() const { return m_bgTexturePath; }
+    void setBgTexturePath(const std::string& path) { m_bgTexturePath = path; }
+    void loadBackgroundTexture(const std::string& path);
+    void deleteBackgroundTexture();
     void setFilmic(bool filmic) { m_filmic = filmic; }
     bool getFilmic() const { return m_filmic; }
     void setShowContour(bool show) { m_showContour = show; }
@@ -145,6 +151,7 @@ private:
     void generateWireframeIndices(const Mesh* mesh, std::vector<uint32_t>& outEdges);
 
     void drawBackground(const Scene& scene, const Camera& camera);
+    void updateBackgroundGeometry();
     void drawMesh(Mesh* mesh, const Scene& scene); // Keep for compatibility
     void drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& camera);
     void drawMeshFlatColor(Mesh* mesh, const Scene& scene, const Camera& camera, const glm::vec4& color);
@@ -253,6 +260,8 @@ private:
     std::vector<EnvironmentPreset> m_environments;
     int m_currentEnvIdx = 0;
     GLuint m_envTexture = 0;
+    int m_envWidth = 1024;
+    int m_envHeight = 512;
 
     // Matcap presets
     std::vector<MatcapPreset> m_matcaps;
@@ -260,6 +269,13 @@ private:
     // Static buffers for background quad, selection circle and dot
     GLuint m_bgVao = 0;
     GLuint m_bgVbo = 0;
+    GLuint m_bgTexCoordVbo = 0;
+    GLuint m_bgTexture = 0;
+    GLuint m_bgMonoTexture = 0;
+    bool m_bgFill = true;
+    int m_bgWidth = 1;
+    int m_bgHeight = 1;
+    std::string m_bgTexturePath;
 
     GLuint m_selectionVao = 0;
     GLuint m_circleVbo = 0;

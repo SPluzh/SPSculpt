@@ -36,6 +36,9 @@ AngleRenderer::~AngleRenderer() {
 
     if (m_bgVao) glDeleteVertexArrays(1, &m_bgVao);
     if (m_bgVbo) glDeleteBuffers(1, &m_bgVbo);
+    if (m_bgTexCoordVbo) glDeleteBuffers(1, &m_bgTexCoordVbo);
+    if (m_bgTexture) glDeleteTextures(1, &m_bgTexture);
+    if (m_bgMonoTexture) glDeleteTextures(1, &m_bgMonoTexture);
     if (m_fsqVao) glDeleteVertexArrays(1, &m_fsqVao);
     if (m_fsqVbo) glDeleteBuffers(1, &m_fsqVbo);
     if (m_gridVao) glDeleteVertexArrays(1, &m_gridVao);
@@ -310,9 +313,10 @@ bool AngleRenderer::init(int width, int height) {
     // 1. Background Shader
     std::string bgVert = R"(#version 300 es
         layout(location = 0) in vec2 aVertex;
+        layout(location = 1) in vec2 aTexCoord;
         out vec2 vTexCoord;
         void main() {
-            vTexCoord = aVertex * 0.5 + 0.5;
+            vTexCoord = aTexCoord;
             gl_Position = vec4(aVertex, 1.0, 1.0);
         }
     )";
@@ -373,9 +377,7 @@ bool AngleRenderer::init(int width, int height) {
         void main() {
             vec3 color;
             if (uBackgroundType == 0) {
-                vec3 color1 = vec3(0.08, 0.09, 0.1);
-                vec3 color2 = vec3(0.22, 0.23, 0.25);
-                color = sRGBToLinear(mix(color1, color2, vTexCoord.y));
+                color = sRGBToLinear(texture(uTexture0, vTexCoord).rgb);
             } else {
                 vec3 dir = uIblTransform * vec3(vTexCoord.xy * 2.0 - 1.0, -1.0);
                 dir = normalize(dir);
@@ -1060,18 +1062,34 @@ bool AngleRenderer::init(int width, int height) {
 
     // C. Initialize static geometry buffers
     // 1. Background quad
-    float bgQuad[] = {
-        -1.0f, -1.0f,
-         1.0f, -1.0f,
-        -1.0f,  1.0f,
-         1.0f,  1.0f
-    };
     glGenVertexArrays(1, &m_bgVao);
     glGenBuffers(1, &m_bgVbo);
     glBindVertexArray(m_bgVao);
     glBindBuffer(GL_ARRAY_BUFFER, m_bgVbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(bgQuad), bgQuad, GL_STATIC_DRAW);
+    // Buffer initialized dynamically in updateBackgroundGeometry
+    
+    // Texture coordinates buffer
+    float bgTexCoords[] = {
+        0.0f, 0.0f,
+        1.0f, 0.0f,
+        0.0f, 1.0f,
+        1.0f, 1.0f
+    };
+    glGenBuffers(1, &m_bgTexCoordVbo);
+    glBindBuffer(GL_ARRAY_BUFFER, m_bgTexCoordVbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(bgTexCoords), bgTexCoords, GL_STATIC_DRAW);
     glBindVertexArray(0);
+
+    // Initialize 1x1 grey background mono texture
+    glGenTextures(1, &m_bgMonoTexture);
+    glBindTexture(GL_TEXTURE_2D, m_bgMonoTexture);
+    unsigned char greyPixel[] = { 50, 50, 50, 255 };
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, greyPixel);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    updateBackgroundGeometry();
 
     // 2. Fullscreen quad triangle (Large triangle trick)
     float fsqTriangle[] = {
@@ -1155,6 +1173,8 @@ void AngleRenderer::resize(int width, int height) {
     m_rttTransparent.resize(width, height);
     m_rttMerge.resize(width, height);
     m_rttComposite.resize(width, height);
+
+    updateBackgroundGeometry();
 }
 
 void AngleRenderer::setEnvironmentParameters(float exposure, const std::vector<float>& sph) {
@@ -1524,24 +1544,41 @@ void AngleRenderer::drawBackground(const Scene& scene, const Camera& camera) {
     glUniform1i(glGetUniformLocation(m_bgProgram, "uBackgroundType"), m_backgroundType);
     glUniform1f(glGetUniformLocation(m_bgProgram, "uBlur"), m_bgBlur);
     glUniform1i(glGetUniformLocation(m_bgProgram, "uTexture0"), 0);
-    glUniform2f(glGetUniformLocation(m_bgProgram, "uEnvSize"), 1024.0f, 512.0f);
+    glUniform2f(glGetUniformLocation(m_bgProgram, "uEnvSize"), (float)m_envWidth, (float)m_envHeight);
     glUniform3fv(glGetUniformLocation(m_bgProgram, "uSPH"), 9, m_sph);
 
     glm::mat3 uIblTransform = glm::transpose(glm::mat3(camera.getViewMatrix()));
     glUniformMatrix3fv(glGetUniformLocation(m_bgProgram, "uIblTransform"), 1, GL_FALSE, glm::value_ptr(uIblTransform));
 
     glActiveTexture(GL_TEXTURE0);
-    if (m_envTexture != 0) {
-        glBindTexture(GL_TEXTURE_2D, m_envTexture);
+    if (m_backgroundType == 0) {
+        if (m_bgTexture != 0) {
+            glBindTexture(GL_TEXTURE_2D, m_bgTexture);
+        } else {
+            glBindTexture(GL_TEXTURE_2D, m_bgMonoTexture);
+        }
     } else {
-        glBindTexture(GL_TEXTURE_2D, 0);
+        if (m_envTexture != 0) {
+            glBindTexture(GL_TEXTURE_2D, m_envTexture);
+        } else {
+            glBindTexture(GL_TEXTURE_2D, 0);
+        }
     }
     
     GLint locPos = glGetAttribLocation(m_bgProgram, "aVertex");
+    GLint locTex = glGetAttribLocation(m_bgProgram, "aTexCoord");
+
     glBindVertexArray(m_bgVao);
+
     glBindBuffer(GL_ARRAY_BUFFER, m_bgVbo);
     glVertexAttribPointer(locPos, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(locPos);
+    
+    if (locTex != -1) {
+        glBindBuffer(GL_ARRAY_BUFFER, m_bgTexCoordVbo);
+        glVertexAttribPointer(locTex, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(locTex);
+    }
     
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
@@ -1619,7 +1656,7 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
         glUniformMatrix3fv(glGetUniformLocation(program, "uIblTransform"), 1, GL_FALSE, glm::value_ptr(uIblTransform));
         
         glUniform1i(glGetUniformLocation(program, "uTexture0"), 0);
-        glUniform2f(glGetUniformLocation(program, "uEnvSize"), 1024.0f, 512.0f);
+        glUniform2f(glGetUniformLocation(program, "uEnvSize"), (float)m_envWidth, (float)m_envHeight);
         glUniform1i(glGetUniformLocation(program, "uUseTexture"), (mesh->textureId != 0 || m_envTexture != 0) ? 1 : 0);
     } else if (mesh->shaderType == 1) {
         glUniform1i(glGetUniformLocation(program, "uTexture0"), 0);
@@ -2400,6 +2437,9 @@ void AngleRenderer::loadEnvironmentTexture(int idx) {
     std::cout << "Successfully loaded environment map: " << loadedPath 
               << " (" << width << "x" << height << ")" << std::endl;
 
+    m_envWidth = width;
+    m_envHeight = height;
+
     m_exposure = env.exposure;
     std::memcpy(m_sph, env.sph, 27 * sizeof(float));
 }
@@ -2491,6 +2531,80 @@ void AngleRenderer::initMatcaps() {
 
         m_matcaps.push_back(preset);
     }
+}
+
+void AngleRenderer::updateBackgroundGeometry() {
+    float x = 1.0f;
+    float y = 1.0f;
+
+    if (m_backgroundType == 0) {
+        if (m_bgWidth > 0 && m_bgHeight > 0 && m_width > 0 && m_height > 0) {
+            float ratio = ((float)m_width / m_height) / ((float)m_bgWidth / m_bgHeight);
+            float comp = m_bgFill ? 1.0f / ratio : ratio;
+            x = comp < 1.0f ? 1.0f : 1.0f / ratio;
+            y = comp < 1.0f ? ratio : 1.0f;
+        }
+    }
+
+    float bgQuad[] = {
+        -x, -y,
+         x, -y,
+        -x,  y,
+         x,  y
+    };
+
+    glBindBuffer(GL_ARRAY_BUFFER, m_bgVbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(bgQuad), bgQuad, GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+void AngleRenderer::loadBackgroundTexture(const std::string& path) {
+    m_bgTexturePath = path;
+    if (path.empty()) {
+        deleteBackgroundTexture();
+        return;
+    }
+    
+    int width = 0, height = 0, channels = 0;
+    stbi_set_flip_vertically_on_load(false);
+    unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, 4);
+    if (!data) {
+        std::cerr << "Failed to load background image: " << path << std::endl;
+        deleteBackgroundTexture();
+        return;
+    }
+
+    if (m_bgTexture) {
+        glDeleteTextures(1, &m_bgTexture);
+        m_bgTexture = 0;
+    }
+
+    glGenTextures(1, &m_bgTexture);
+    glBindTexture(GL_TEXTURE_2D, m_bgTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    stbi_image_free(data);
+
+    m_bgWidth = width;
+    m_bgHeight = height;
+
+    updateBackgroundGeometry();
+}
+
+void AngleRenderer::deleteBackgroundTexture() {
+    if (m_bgTexture) {
+        glDeleteTextures(1, &m_bgTexture);
+        m_bgTexture = 0;
+    }
+    m_bgTexturePath = "";
+    m_bgWidth = 1;
+    m_bgHeight = 1;
+    updateBackgroundGeometry();
 }
 
 GLint AngleRenderer::getCachedUniformLocation(GLuint program, const char* name) {
