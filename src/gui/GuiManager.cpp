@@ -432,7 +432,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
         // 1. General Brush Settings Section
         if (ImGui::CollapsingHeader("General Parameters", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::SliderFloat("Radius", &settings.radius, 1.0f, 250.0f, "%.1f px");
+            ImGui::SliderFloat("Radius", &settings.radius, 1.0f, 500.0f, "%.1f px");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Brush radius in pixels");
 
 #ifdef _WIN32
@@ -2543,7 +2543,7 @@ void GuiManager::drawModalIndicatorHUD(SculptManager& sculpt, Scene& scene) {
         case ModalMode::RADIUS:
             label = "Radius";
             snprintf(valStr, sizeof(valStr), "%d px", (int)sculpt.getBrushRadius());
-            fraction = (sculpt.getBrushRadius() - 0.5f) / (250.0f - 0.5f);
+            fraction = (sculpt.getBrushRadius() - 0.5f) / (500.0f - 0.5f);
             break;
         case ModalMode::REMESH_RESOLUTION:
             label = "Remesh Resolution";
