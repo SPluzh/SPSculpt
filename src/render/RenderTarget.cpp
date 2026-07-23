@@ -1,15 +1,20 @@
 #include "render/RenderTarget.h"
 #include <iostream>
 
-bool RenderTarget::init(int w, int h, bool hasDepth, GLuint sharedDepth) {
+bool RenderTarget::init(int w, int h, bool hasDepth, GLuint sharedDepth, bool depthAsTexture) {
     glGenFramebuffers(1, &fbo);
     glGenTextures(1, &texture);
+    this->depthAsTexture = depthAsTexture;
 
     if (sharedDepth != 0) {
         depth = sharedDepth;
         ownsDepth = false;
     } else if (hasDepth) {
-        glGenRenderbuffers(1, &depth);
+        if (depthAsTexture) {
+            glGenTextures(1, &depth);
+        } else {
+            glGenRenderbuffers(1, &depth);
+        }
         ownsDepth = true;
     } else {
         depth = 0;
@@ -33,15 +38,28 @@ void RenderTarget::resize(int w, int h) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
     if (depth && ownsDepth) {
-        glBindRenderbuffer(GL_RENDERBUFFER, depth);
-        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w, h);
+        if (depthAsTexture) {
+            glBindTexture(GL_TEXTURE_2D, depth);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, w, h, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        } else {
+            glBindRenderbuffer(GL_RENDERBUFFER, depth);
+            glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w, h);
+        }
     }
 
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
 
     if (depth) {
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, depth);
+        if (depthAsTexture) {
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depth, 0);
+        } else {
+            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, depth);
+        }
     } else {
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, 0);
     }
@@ -65,7 +83,11 @@ void RenderTarget::release() {
         texture = 0;
     }
     if (depth && ownsDepth) {
-        glDeleteRenderbuffers(1, &depth);
+        if (depthAsTexture) {
+            glDeleteTextures(1, &depth);
+        } else {
+            glDeleteRenderbuffers(1, &depth);
+        }
         depth = 0;
     }
 }

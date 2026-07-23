@@ -35,6 +35,8 @@ AngleRenderer::~AngleRenderer() {
     if (m_wetClayProgram) glDeleteProgram(m_wetClayProgram);
     if (m_voxelCheckerProgram) glDeleteProgram(m_voxelCheckerProgram);
     if (m_normalProgram) glDeleteProgram(m_normalProgram);
+    if (m_bevelPrepassProgram) glDeleteProgram(m_bevelPrepassProgram);
+    if (m_bevelFilterProgram) glDeleteProgram(m_bevelFilterProgram);
 
     if (m_bgVao) glDeleteVertexArrays(1, &m_bgVao);
     if (m_bgVbo) glDeleteBuffers(1, &m_bgVbo);
@@ -66,6 +68,8 @@ AngleRenderer::~AngleRenderer() {
     m_rttTransparent.release();
     m_rttMerge.release();
     m_rttComposite.release();
+    m_rttPrepass.release();
+    m_rttBevel.release();
 }
 
 GLuint AngleRenderer::compileShader(GLenum type, const std::string& source) {
@@ -187,12 +191,14 @@ bool AngleRenderer::init(int width, int height) {
     m_fxaaProgram = loadAndCompileProgram("fxaa.vert", "fxaa.frag");
     m_viewport2DProgram = loadAndCompileProgram("viewport2d.vert", "fxaa.frag");
     m_contourProgram = loadAndCompileProgram("contour.vert", "contour.frag");
+    m_bevelPrepassProgram = loadAndCompileProgram("bevel_prepass.vert", "bevel_prepass.frag");
+    m_bevelFilterProgram = loadAndCompileProgram("bevel.vert", "bevel.frag");
 
     // Check if critical shader programs failed to load/link
     if (!m_bgProgram || !m_selectionProgram || !m_refImageProgram || !m_wireframeProgram ||
         !m_flatProgram || !m_matcapProgram || !m_pbrProgram || !m_wetClayProgram ||
         !m_normalProgram || !m_voxelCheckerProgram || !m_mergeProgram || !m_fxaaProgram ||
-        !m_viewport2DProgram || !m_contourProgram) {
+        !m_viewport2DProgram || !m_contourProgram || !m_bevelPrepassProgram || !m_bevelFilterProgram) {
         std::cerr << "Error: One or more shader programs failed to compile and link." << std::endl;
         return false;
     }
@@ -291,11 +297,13 @@ bool AngleRenderer::init(int width, int height) {
     initMatcaps();
 
     // F. Initialize RTT Targets
-    m_rttOpaque.init(width, height, true);
+    m_rttOpaque.init(width, height, true, 0, true);
     m_rttContour.init(width, height, false);
     m_rttTransparent.init(width, height, true, m_rttOpaque.depth);
     m_rttMerge.init(width, height, false);
     m_rttComposite.init(width, height, true, m_rttOpaque.depth);
+    m_rttPrepass.init(width, height, true, 0, true);
+    m_rttBevel.init(width, height, false);
 
     return true;
 }
@@ -310,6 +318,8 @@ void AngleRenderer::resize(int width, int height) {
     m_rttTransparent.resize(width, height);
     m_rttMerge.resize(width, height);
     m_rttComposite.resize(width, height);
+    m_rttPrepass.resize(width, height);
+    m_rttBevel.resize(width, height);
 
     updateBackgroundGeometry();
 }
@@ -465,6 +475,42 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
         uploadIfDirty(mesh);
     }
 
+    // 0b. Bevel Pre-pass and Filtering
+    if (m_bevelEnabled) {
+        glBindFramebuffer(GL_FRAMEBUFFER, m_rttPrepass.fbo);
+        glViewport(0, 0, m_width, m_height);
+        glClearColor(0.5f, 0.5f, 0.5f, 1.0f); // Default normal is (0,0,1) -> encoded as (0.5,0.5,1.0)
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        renderScenePass(scene, 4); // 4 = Bevel prepass
+        
+        glBindFramebuffer(GL_FRAMEBUFFER, m_rttBevel.fbo);
+        glViewport(0, 0, m_width, m_height);
+        glClearColor(0.5f, 0.5f, 0.5f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_CULL_FACE);
+        glUseProgram(m_bevelFilterProgram);
+        
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, m_rttPrepass.texture);
+        glUniform1i(glGetUniformLocation(m_bevelFilterProgram, "uNormalMap"), 0);
+        
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, m_rttPrepass.depth);
+        glUniform1i(glGetUniformLocation(m_bevelFilterProgram, "uDepthMap"), 1);
+        
+        glUniform2f(glGetUniformLocation(m_bevelFilterProgram, "uInvViewportSize"), 1.0f / m_width, 1.0f / m_height);
+        glUniform1f(glGetUniformLocation(m_bevelFilterProgram, "uBevelRadius"), m_bevelRadius);
+        glUniform1f(glGetUniformLocation(m_bevelFilterProgram, "uBevelStrength"), m_bevelStrength);
+        
+        glBindVertexArray(m_fsqVao);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glBindVertexArray(0);
+        
+        glEnable(GL_DEPTH_TEST);
+    }
+
     // 1. Contour Pass
     glBindFramebuffer(GL_FRAMEBUFFER, m_rttContour.fbo);
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
@@ -489,7 +535,7 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
     glViewport(0, 0, m_width, m_height);
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT);
-    drawFullscreenMerge();
+    drawFullscreenMerge(scene);
 
     // 5. FXAA Pass (FBO Merge -> FBO Composite)
     glBindFramebuffer(GL_FRAMEBUFFER, m_rttComposite.fbo);
@@ -673,6 +719,13 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
                 }
             }
         }
+    } else if (passType == 4) {
+        // Bevel pre-pass
+        for (auto* mesh : scene.getMeshes()) {
+            if (mesh->isVisible(viewportIdx)) {
+                drawMeshPrepass(mesh, scene, camera);
+            }
+        }
     }
 }
 
@@ -778,6 +831,14 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
     glUniform1f(glGetUniformLocation(program, "uCurvature"), m_curvature);
     glUniform1f(glGetUniformLocation(program, "uFov"), camera.getFov());
 
+    glUniform1i(glGetUniformLocation(program, "uBevelEnabled"), m_bevelEnabled ? 1 : 0);
+    if (m_bevelEnabled) {
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, m_rttBevel.texture);
+        glUniform1i(glGetUniformLocation(program, "uBevelNormalMap"), 1);
+        glUniform2f(glGetUniformLocation(program, "uInvViewportSize"), 1.0f / m_width, 1.0f / m_height);
+    }
+
     glActiveTexture(GL_TEXTURE0);
     if (m_textureId != 0) {
         glBindTexture(GL_TEXTURE_2D, m_textureId);
@@ -840,6 +901,47 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
     glBindVertexArray(0);
 }
 
+void AngleRenderer::drawMeshPrepass(Mesh* mesh, const Scene& scene, const Camera& camera) {
+    auto it = m_meshBuffers.find(mesh);
+    if (it == m_meshBuffers.end() || it->second->triIndexCount == 0) return;
+    auto& bufs = it->second;
+
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDisable(GL_CULL_FACE);
+
+    if (m_bevelPrepassProgram == 0) return;
+    glUseProgram(m_bevelPrepassProgram);
+
+    mesh->updateMatrices(camera);
+
+    glUniformMatrix4fv(glGetUniformLocation(m_bevelPrepassProgram, "uMV"), 1, GL_FALSE, glm::value_ptr(mesh->mvMatrix));
+    glUniformMatrix4fv(glGetUniformLocation(m_bevelPrepassProgram, "uMVP"), 1, GL_FALSE, glm::value_ptr(mesh->mvpMatrix));
+    glUniformMatrix3fv(glGetUniformLocation(m_bevelPrepassProgram, "uN"), 1, GL_FALSE, glm::value_ptr(mesh->nMatrix));
+    glUniformMatrix4fv(glGetUniformLocation(m_bevelPrepassProgram, "uEM"), 1, GL_FALSE, glm::value_ptr(mesh->editMatrix));
+    glUniformMatrix3fv(glGetUniformLocation(m_bevelPrepassProgram, "uEN"), 1, GL_FALSE, glm::value_ptr(mesh->enMatrix));
+    glUniform1i(glGetUniformLocation(m_bevelPrepassProgram, "uFlat"), m_flatShading ? 1 : 0);
+
+    glBindVertexArray(bufs->vao);
+
+    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(1);
+
+    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
+    glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(3);
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
+    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
+
+    glBindVertexArray(0);
+}
+
 void AngleRenderer::drawMeshFlatColor(Mesh* mesh, const Scene& scene, const Camera& camera, const glm::vec4& color) {
     auto it = m_meshBuffers.find(mesh);
     if (it == m_meshBuffers.end() || it->second->triIndexCount == 0) return;
@@ -868,6 +970,14 @@ void AngleRenderer::drawMeshFlatColor(Mesh* mesh, const Scene& scene, const Came
     glUniform1i(glGetUniformLocation(m_flatProgram, "uDarken"), 0);
     glUniform1f(glGetUniformLocation(m_flatProgram, "uCurvature"), 0.0f);
     glUniform1f(glGetUniformLocation(m_flatProgram, "uFov"), camera.getFov());
+
+    glUniform1i(glGetUniformLocation(m_flatProgram, "uBevelEnabled"), m_bevelEnabled ? 1 : 0);
+    if (m_bevelEnabled) {
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, m_rttBevel.texture);
+        glUniform1i(glGetUniformLocation(m_flatProgram, "uBevelNormalMap"), 1);
+        glUniform2f(glGetUniformLocation(m_flatProgram, "uInvViewportSize"), 1.0f / m_width, 1.0f / m_height);
+    }
 
     glBindVertexArray(bufs->vao);
 
@@ -1389,7 +1499,7 @@ void AngleRenderer::initGrid() {
     glBindVertexArray(0);
 }
 
-void AngleRenderer::drawFullscreenMerge() {
+void AngleRenderer::drawFullscreenMerge(const Scene& scene) {
     if (m_mergeProgram == 0) return;
 
     glDisable(GL_DEPTH_TEST);
@@ -1404,6 +1514,36 @@ void AngleRenderer::drawFullscreenMerge() {
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, m_rttTransparent.texture);
     glUniform1i(glGetUniformLocation(m_mergeProgram, "uTransparent"), 1);
+
+    // Bind depth texture to slot 2
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, m_rttOpaque.depth);
+    glUniform1i(glGetUniformLocation(m_mergeProgram, "uOpaqueDepth"), 2);
+
+    // Bind current matcap texture (slot 3) if in Matcap Shading mode
+    glActiveTexture(GL_TEXTURE3);
+    if (m_shaderType == 1 && m_matcapIdx >= 0 && m_matcapIdx < static_cast<int>(m_matcaps.size()) && m_matcaps[m_matcapIdx].textureId != 0) {
+        glBindTexture(GL_TEXTURE_2D, m_matcaps[m_matcapIdx].textureId);
+    } else {
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+    glUniform1i(glGetUniformLocation(m_mergeProgram, "uMatcapTexture"), 3);
+
+    // Pass bevel parameters
+    glUniform1i(glGetUniformLocation(m_mergeProgram, "uBevelEnabled"), m_bevelEnabled ? 1 : 0);
+    glUniform1f(glGetUniformLocation(m_mergeProgram, "uBevelRadius"), m_bevelRadius);
+    glUniform1f(glGetUniformLocation(m_mergeProgram, "uBevelStrength"), m_bevelStrength);
+    glUniform1i(glGetUniformLocation(m_mergeProgram, "uShaderType"), m_shaderType);
+    glUniform3fv(glGetUniformLocation(m_mergeProgram, "uAlbedo"), 1, m_albedo);
+    glUniform1f(glGetUniformLocation(m_mergeProgram, "uFov"), scene.getCamera().getFov());
+    glUniform1f(glGetUniformLocation(m_mergeProgram, "uNear"), scene.getCamera().getNear());
+    glUniform1f(glGetUniformLocation(m_mergeProgram, "uFar"), scene.getCamera().getFar());
+    glUniform1i(glGetUniformLocation(m_mergeProgram, "uOrtho"), scene.getCamera().isOrthographic() ? 1 : 0);
+    
+    // Also pass camera aspect ratio
+    float aspect = (m_height > 0) ? (float)m_width / (float)m_height : 1.0f;
+    if (m_splitMode) aspect *= 0.5f; // Split mode viewports are half width
+    glUniform1f(glGetUniformLocation(m_mergeProgram, "uAspect"), aspect);
 
     glUniform1i(glGetUniformLocation(m_mergeProgram, "uFilmic"), m_filmic ? 1 : 0);
 

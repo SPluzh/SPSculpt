@@ -9,8 +9,9 @@ struct RenderTarget {
     float invW = 0.0f;
     float invH = 0.0f;
     bool ownsDepth = true;
+    bool depthAsTexture = false;
 
-    bool init(int w, int h, bool hasDepth = true, GLuint sharedDepth = 0);
+    bool init(int w, int h, bool hasDepth = true, GLuint sharedDepth = 0, bool depthAsTexture = false);
     void resize(int w, int h);
     void release();
 };

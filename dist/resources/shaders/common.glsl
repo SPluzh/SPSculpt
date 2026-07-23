@@ -9,7 +9,19 @@ uniform float uCurvature;
 uniform float uFov;
 uniform int uFlat;
 
+uniform int uBevelEnabled;
+uniform sampler2D uBevelNormalMap;
+uniform vec2 uInvViewportSize;
+
+vec3 getBevelNormal() {
+    vec3 ssNormal = texture(uBevelNormalMap, gl_FragCoord.xy * uInvViewportSize).rgb;
+    return normalize(ssNormal * 2.0 - 1.0);
+}
+
 vec3 getAlignedNormal() {
+    if (uBevelEnabled == 1) {
+        return getBevelNormal();
+    }
     vec3 N = normalize(vNormal);
     vec3 flatNormal = normalize(cross(dFdy(vVertex), dFdx(vVertex)));
     if (dot(N, flatNormal) < 0.0) {
@@ -19,6 +31,9 @@ vec3 getAlignedNormal() {
 }
 
 vec3 getNormal() {
+    if (uBevelEnabled == 1) {
+        return getBevelNormal();
+    }
     return uFlat == 0 ? getAlignedNormal() : normalize(cross(dFdy(vVertex), dFdx(vVertex)));
 }
 

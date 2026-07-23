@@ -1124,6 +1124,23 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             renderer.setFlatShading(flat);
         }
 
+        bool bevel = renderer.getBevelEnabled();
+        if (ImGui::Checkbox("Screen-space Bevel (Melt)", &bevel)) {
+            renderer.setBevelEnabled(bevel);
+        }
+        if (bevel) {
+            ImGui::Indent();
+            float radius = renderer.getBevelRadius();
+            if (ImGui::SliderFloat("Bevel Radius", &radius, 1.0f, 8.0f, "%.1f px")) {
+                renderer.setBevelRadius(radius);
+            }
+            float strength = renderer.getBevelStrength();
+            if (ImGui::SliderFloat("Bevel Strength", &strength, 0.1f, 5.0f, "%.2f")) {
+                renderer.setBevelStrength(strength);
+            }
+            ImGui::Unindent();
+        }
+
         bool filmic = renderer.getFilmic();
         if (ImGui::Checkbox("Filmic Tonemapping", &filmic)) {
             renderer.setFilmic(filmic);

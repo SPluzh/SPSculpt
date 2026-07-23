@@ -64,6 +64,12 @@ public:
     void deleteBackgroundTexture();
     void setFilmic(bool filmic) { m_filmic = filmic; }
     bool getFilmic() const { return m_filmic; }
+    void setBevelEnabled(bool enabled) { m_bevelEnabled = enabled; }
+    bool getBevelEnabled() const { return m_bevelEnabled; }
+    void setBevelRadius(float radius) { m_bevelRadius = radius; }
+    float getBevelRadius() const { return m_bevelRadius; }
+    void setBevelStrength(float strength) { m_bevelStrength = strength; }
+    float getBevelStrength() const { return m_bevelStrength; }
     void setShowContour(bool show) { m_showContour = show; }
     bool getShowContour() const { return m_showContour; }
     void setCursorThickness(float thickness) { m_cursorThickness = thickness; }
@@ -195,6 +201,7 @@ private:
     void updateBackgroundGeometry();
     void drawMesh(Mesh* mesh, const Scene& scene); // Keep for compatibility
     void drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& camera);
+    void drawMeshPrepass(Mesh* mesh, const Scene& scene, const Camera& camera);
     void drawMeshFlatColor(Mesh* mesh, const Scene& scene, const Camera& camera, const glm::vec4& color);
     void drawWireframe(Mesh* mesh, const Scene& scene, const Camera& camera);
     void drawReferenceImages(const Scene& scene, const Camera& camera);
@@ -203,7 +210,7 @@ private:
 
     void initGrid();
     void drawGrid(const Scene& scene, const Camera& camera);
-    void drawFullscreenMerge();
+    void drawFullscreenMerge(const Scene& scene);
     void drawFullscreenFxaa();
     void drawFullscreenViewport2D(const Scene& scene);
     void drawContourOverlay(const Scene& scene);
@@ -267,6 +274,8 @@ private:
     GLuint m_wetClayProgram = 0;
     GLuint m_voxelCheckerProgram = 0;
     GLuint m_normalProgram = 0;
+    GLuint m_bevelPrepassProgram = 0;
+    GLuint m_bevelFilterProgram = 0;
 
     // RTT Targets
     RenderTarget m_rttContour;
@@ -274,6 +283,8 @@ private:
     RenderTarget m_rttTransparent;
     RenderTarget m_rttMerge;
     RenderTarget m_rttComposite;
+    RenderTarget m_rttPrepass;
+    RenderTarget m_rttBevel;
 
     // Fullscreen quad
     GLuint m_fsqVao = 0;
@@ -288,6 +299,9 @@ private:
     int m_backgroundType = 0;
     float m_bgBlur = 0.0f;
     bool m_filmic = false;
+    bool m_bevelEnabled = false;
+    float m_bevelRadius = 4.0f;
+    float m_bevelStrength = 1.5f;
     bool m_showContour = true;
     bool m_showGrid = true;
     glm::vec4 m_contourColor{1.0f, 0.75f, 0.1f, 1.0f};

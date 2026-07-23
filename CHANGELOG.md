@@ -3,6 +3,9 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.3]
+- **Renderer**: Implemented a screen-space post-process Bevel (Melt) shader that detects intersection boundaries between meshes and blends their normals to visually fuse intersecting models.
+- **Renderer**: Resolved an issue where screen-space bevels disappeared when zooming out due to dynamic near and far plane camera optimizations. The camera's dynamic near and far parameters, as well as the active projection mode, are now bound as uniforms and computed correctly in the fragment shader.
+- **UI**: Added a "Screen-space Bevel (Melt)" toggle checkbox in the Rendering Quality panel along with "Bevel Radius" and "Bevel Strength" sliders to customize the size and intensity of the blending effect.
 - **Renderer**: Restructured shader file organization by consolidating all GLSL shader sources into the unified `dist/resources/shaders/` directory.
 - **UI**: Added a viewport screenshot feature to the Camera settings panel. Users can choose from several size presets ("Viewport Size", "1080p", "2K", "4K") or input custom dimensions (ranging from 256x256 to 7680x4320). Includes toggles to show or hide the grid and outline contours in the final screenshot.
 - **Renderer**: Implemented high-resolution offscreen rendering for capturing screenshots, temporarily resizing active viewport cameras and render targets to the target dimensions without altering the primary application window size.
