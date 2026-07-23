@@ -3,6 +3,9 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.3]
+- **Renderer**: Fixed voxel grid preview colors to match the web application. Using pre-multiplied alpha values in the voxel preview shader ensures blending occurs correctly through the deferred post-process compositor.
+- **Renderer**: Eliminated perspective distortion in the voxel grid preview. The preview squares are now projected from the camera's viewpoint, so they always appear as perfectly straight, unwarped squares on the screen and scale correctly with zoom level, matching the original web-based implementation.
+- **UI**: Added a dynamic voxel grid preview overlay when adjusting remesh resolution using the 'X' hotkey or the UI slider. This screen-space checkerboard visualization renders in real-time on the selected mesh, showing the density of the future voxel grid.
 - **UI**: Resolved keyboard capturing issues that blocked hotkeys on startup or after interacting with ImGui panels until the viewport was clicked. Commented out keyboard navigation inside ImGui to allow global hotkeys to be evaluated immediately.
 - **UI**: Removed the spacebar hotkey mapping (which previously triggered camera reset) to prevent accidental camera snap triggers.
 - **Fix**: Resolved an issue where pressing the '4' hotkey did not activate the Transform tool by adding the missing mapping in the hotkey execution handler.

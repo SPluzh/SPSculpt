@@ -873,6 +873,15 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
             ImGui::SliderFloat("Detail Factor", &m_dyntopoDetail, 10.0f, 500.0f, "%.1f");
             ImGui::SliderInt("Remesh Resolution", &m_remeshResolution, 32, 512);
+            if (ImGui::IsItemActive()) {
+                float bbox[6];
+                selectedMesh->computeBbox(bbox);
+                float maxDim = std::max({bbox[3] - bbox[0], bbox[4] - bbox[1], bbox[5] - bbox[2]});
+                float step = maxDim / (float)m_remeshResolution;
+                scene.updateVoxelPreview(step, {selectedMesh});
+            } else if (ImGui::IsItemDeactivated()) {
+                scene.updateVoxelPreview(0.0f, {});
+            }
 
             if (ImGui::Button("Remesh", ImVec2(-1, 0))) {
                 std::cout << "[Topology] Trigger remesh with resolution: " << m_remeshResolution << std::endl;

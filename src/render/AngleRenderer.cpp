@@ -759,6 +759,9 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
                 }
             }
         }
+        if (scene.getVoxelPreview()) {
+            drawVoxelPreview(scene, camera, viewportIdx);
+        }
     } else if (passType == 2) {
         // Transparent meshes (alpha < 1.0)
         for (auto* mesh : scene.getMeshes()) {
@@ -768,6 +771,9 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
                     drawWireframe(mesh, scene, camera);
                 }
             }
+        }
+        if (scene.getVoxelPreview()) {
+            drawVoxelPreview(scene, camera, viewportIdx);
         }
     } else if (passType == 4) {
         // Bevel pre-pass
@@ -925,6 +931,9 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
         glUniform3f(glGetUniformLocation(program, "uSSSColor"), m_wetClaySSSColor.x, m_wetClaySSSColor.y, m_wetClaySSSColor.z);
     } else if (m_shaderType == 4) {
         glUniform1f(glGetUniformLocation(program, "uStep"), 0.5f);
+        glUniform1i(glGetUniformLocation(program, "uIsPerspective"), camera.isOrthographic() ? 0 : 1);
+        glUniform1f(glGetUniformLocation(program, "uCenterDepth"), camera.getTransZ());
+        glUniform1i(glGetUniformLocation(program, "uIsPreview"), 0);
     }
 
     glBindVertexArray(bufs->vao);
@@ -990,6 +999,49 @@ void AngleRenderer::drawMeshPrepass(Mesh* mesh, const Scene& scene, const Camera
     glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
 
     glBindVertexArray(0);
+}
+
+void AngleRenderer::drawVoxelPreview(const Scene& scene, const Camera& camera, int viewportIdx) {
+    if (!scene.getVoxelPreview() || m_voxelCheckerProgram == 0) return;
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(-1.0f, -1.0f);
+
+    glUseProgram(m_voxelCheckerProgram);
+    glUniform1f(glGetUniformLocation(m_voxelCheckerProgram, "uStep"), scene.getVoxelStep());
+    glUniform1i(glGetUniformLocation(m_voxelCheckerProgram, "uIsPerspective"), camera.isOrthographic() ? 0 : 1);
+    glUniform1f(glGetUniformLocation(m_voxelCheckerProgram, "uCenterDepth"), camera.getTransZ());
+    glUniform1i(glGetUniformLocation(m_voxelCheckerProgram, "uIsPreview"), 1);
+
+    for (auto* mesh : scene.getVoxelMeshes()) {
+        if (!mesh->isVisible(viewportIdx)) continue;
+
+        auto it = m_meshBuffers.find(mesh);
+        if (it == m_meshBuffers.end() || it->second->triIndexCount == 0) continue;
+        auto& bufs = it->second;
+
+        mesh->updateMatrices(camera);
+
+        glUniformMatrix4fv(glGetUniformLocation(m_voxelCheckerProgram, "uMV"), 1, GL_FALSE, glm::value_ptr(mesh->mvMatrix));
+        glUniformMatrix4fv(glGetUniformLocation(m_voxelCheckerProgram, "uMVP"), 1, GL_FALSE, glm::value_ptr(mesh->mvpMatrix));
+
+        glBindVertexArray(bufs->vao);
+
+        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
+
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
+
+        glBindVertexArray(0);
+    }
+
+    glDisable(GL_POLYGON_OFFSET_FILL);
+    glDisable(GL_BLEND);
 }
 
 void AngleRenderer::drawMeshFlatColor(Mesh* mesh, const Scene& scene, const Camera& camera, const glm::vec4& color) {

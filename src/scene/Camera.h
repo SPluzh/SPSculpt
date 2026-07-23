@@ -142,9 +142,9 @@ public:
     void redo();
     void applyState(const CameraState& state);
     void roll(float angle);
+    float getTransZ() const;
 
 private:
-    float getTransZ() const;
     void updateOrtho();
     void setOrbit(float rx, float ry);
 

@@ -1148,3 +1148,15 @@ void Scene::clearScene() {
     pushHistoryState();
     clear();
 }
+
+void Scene::updateVoxelPreview(float step, const std::vector<Mesh*>& meshes) {
+    if (step <= 0.0f || meshes.empty()) {
+        m_voxelPreview = false;
+        m_voxelStep = 0.0f;
+        m_voxelMeshes.clear();
+    } else {
+        m_voxelPreview = true;
+        m_voxelStep = step;
+        m_voxelMeshes = meshes;
+    }
+}

@@ -111,10 +111,19 @@ public:
     void addReferenceImage(const std::string& path);
     void removeReferenceImage(size_t index);
 
+    bool getVoxelPreview() const { return m_voxelPreview; }
+    float getVoxelStep() const { return m_voxelStep; }
+    const std::vector<Mesh*>& getVoxelMeshes() const { return m_voxelMeshes; }
+    void updateVoxelPreview(float step, const std::vector<Mesh*>& meshes);
+
 private:
     std::vector<ReferenceImage> m_refImages;
     SplitMode m_splitMode = SplitMode::OFF;
     int m_activeViewport = 0;
     bool m_splitShowInactiveCursor = false;
     std::shared_ptr<Camera> m_cameraRight;
+
+    bool m_voxelPreview = false;
+    float m_voxelStep = 0.0f;
+    std::vector<Mesh*> m_voxelMeshes;
 };

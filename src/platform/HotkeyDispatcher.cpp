@@ -62,6 +62,14 @@ bool HotkeyDispatcher::processEvent(const SDL_Event& event, SculptManager& sculp
                     case ModalMode::REMESH_RESOLUTION: {
                         int r = gui.getRemeshResolution() + deltaX;
                         gui.setRemeshResolution(std::max(10, std::min(1000, r)));
+                        Mesh* selected = scene.getSelected();
+                        if (selected) {
+                            float bbox[6];
+                            selected->computeBbox(bbox);
+                            float maxDim = std::max({bbox[3] - bbox[0], bbox[4] - bbox[1], bbox[5] - bbox[2]});
+                            float step = maxDim / (float)gui.getRemeshResolution();
+                            scene.updateVoxelPreview(step, {selected});
+                        }
                         break;
                     }
                     case ModalMode::TOPOLOGY_DETAIL: {
@@ -265,6 +273,15 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
                     int mx, my;
                     SDL_GetMouseState(&mx, &my);
                     gui.setModalMode(m_modalMode, mx, my);
+
+                    Mesh* selected = scene.getSelected();
+                    if (selected) {
+                        float bbox[6];
+                        selected->computeBbox(bbox);
+                        float maxDim = std::max({bbox[3] - bbox[0], bbox[4] - bbox[1], bbox[5] - bbox[2]});
+                        float step = maxDim / (float)gui.getRemeshResolution();
+                        scene.updateVoxelPreview(step, {selected});
+                    }
                 }
                 break;
             }
@@ -360,6 +377,7 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
                 if (m_modalMode == ModalMode::REMESH_RESOLUTION) {
                     m_modalMode = ModalMode::NONE;
                     gui.setModalMode(m_modalMode, 0, 0);
+                    scene.updateVoxelPreview(0.0f, {});
                 }
                 break;
             case HKAction::TopologyDetail:
