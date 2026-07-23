@@ -3,6 +3,9 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.3]
+- **Renderer**: Refactored the shader architecture by extracting all hardcoded GLSL shader source code from the C++ renderer into external `.vert`, `.frag`, and `.glsl` files in a dedicated `shaders/` directory.
+- **Renderer**: Implemented a custom preprocessor include mechanism (`#include "filename.glsl"`) to support modular shader development.
+- **Renderer**: Enabled dynamic runtime loading of external shader files with a clean, single source of truth structure.
 - **UI**: Added support for 2D View Mode, enabling viewport and reference images to be panned and zoomed in 2D space. Panning is performed by dragging the Right Mouse button while holding Alt, and zooming by dragging while holding Ctrl. Double right-clicking resets the 2D view offset and zoom. Toggles for 2D Pan/Zoom Mode and Reference Drag, along with a Reset button, have been added to the Reference Images panel. When 2D mode is active, standard 3D camera navigation (such as right-click dragging and mouse wheel zoom) is automatically blocked.
 - **UI**: Increased the size of the Navigation Cube window, increased the cube's render scale, and enlarged the text labels on the cube faces for improved readability. Aligned, capitalized, and projected the label text directly onto the 3D planes of the cube faces so they appear natively written on the faces in uppercase rather than billboarding toward the camera.
 - **UI**: Normalized camera snap and view transition logic for all 26 gizmo interaction parts (faces, edges, and corners), ensuring camera snaps always follow the shortest angular path without erratic spinning or rotational jumps.

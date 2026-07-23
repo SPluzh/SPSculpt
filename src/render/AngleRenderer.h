@@ -179,6 +179,8 @@ public:
     // Shader compilation helpers
     GLuint compileShader(GLenum type, const std::string& source);
     GLuint linkProgram(GLuint vs, GLuint fs);
+    std::string loadShaderSource(const std::string& filename);
+    GLuint loadAndCompileProgram(const std::string& vertFile, const std::string& fragFile);
 
     // Mesh buffer uploads
     void uploadIfDirty(Mesh* mesh);
