@@ -56,6 +56,13 @@ bool RenderSettings::save(const std::string& filepath, const AngleRenderer& rend
     out << "splitShowInactiveCursor=" << (scene.getSplitShowInactiveCursor() ? "true" : "false") << "\n";
     out << "currentEnvIdx=" << renderer.getCurrentEnvIdx() << "\n";
     
+    // Global shading display settings
+    out << "shaderType=" << renderer.getShaderType() << "\n";
+    out << "matcapIdx=" << renderer.getMatcap() << "\n";
+    out << "showWireframe=" << (renderer.getShowWireframe() ? "true" : "false") << "\n";
+    out << "flatShading=" << (renderer.getFlatShading() ? "true" : "false") << "\n";
+    out << "curvature=" << renderer.getCurvature() << "\n";
+
     const Camera* mainCam = scene.getCameraByIndex(0);
     if (mainCam) {
         out << "speedRotate=" << mainCam->getSpeedRotate() << "\n";
@@ -70,20 +77,10 @@ bool RenderSettings::save(const std::string& filepath, const AngleRenderer& rend
     out << "wetClaySSSIntensity=" << renderer.getWetClaySSSIntensity() << "\n";
     out << "wetClaySSSColor=" << renderer.getWetClaySSSColor().r << " " << renderer.getWetClaySSSColor().g << " " << renderer.getWetClaySSSColor().b << "\n\n";
 
-    const auto& meshes = scene.getMeshes();
-    for (size_t i = 0; i < meshes.size(); ++i) {
-        const Mesh* m = meshes[i];
-        out << "[Mesh_" << i << "]\n";
-        out << "shaderType=" << m->shaderType << "\n";
-        out << "matcapIdx=" << m->matcapIdx << "\n";
-        out << "albedo=" << m->albedo[0] << " " << m->albedo[1] << " " << m->albedo[2] << "\n";
-        out << "roughness=" << m->roughness << "\n";
-        out << "metallic=" << m->metallic << "\n";
-        out << "alpha=" << m->alpha << "\n";
-        out << "showWireframe=" << (m->showWireframe ? "true" : "false") << "\n";
-        out << "flatShading=" << (m->flatShading ? "true" : "false") << "\n";
-        out << "curvature=" << m->curvature << "\n\n";
-    }
+    out << "albedo=" << renderer.getAlbedo()[0] << " " << renderer.getAlbedo()[1] << " " << renderer.getAlbedo()[2] << "\n";
+    out << "roughness=" << renderer.getRoughness() << "\n";
+    out << "metallic=" << renderer.getMetallic() << "\n";
+    out << "alpha=" << renderer.getAlpha() << "\n\n";
 
     std::cout << "Successfully saved render and shading settings to: " << filepath << std::endl;
     return true;
@@ -252,59 +249,113 @@ bool RenderSettings::load(const std::string& filepath, AngleRenderer& renderer, 
                 renderer.setWetClaySSSColor(glm::vec3(r, g, b));
             }
         }
+
+        // Global shading display settings
+        it = params.find("shaderType");
+        if (it != params.end()) {
+            renderer.setShaderType(safe_stoi(it->second, 0));
+        }
+        it = params.find("matcapIdx");
+        if (it != params.end()) {
+            renderer.setMatcap(safe_stoi(it->second, 0));
+        }
+        it = params.find("showWireframe");
+        if (it != params.end()) {
+            renderer.setShowWireframe(it->second == "true" || it->second == "1");
+        }
+        it = params.find("flatShading");
+        if (it != params.end()) {
+            renderer.setFlatShading(it->second == "true" || it->second == "1");
+        }
+        it = params.find("curvature");
+        if (it != params.end()) {
+            renderer.setCurvature(safe_stof(it->second, 0.0f));
+        }
+
+        // Global material settings
+        it = params.find("albedo");
+        if (it != params.end()) {
+            std::stringstream ss(it->second);
+            float r, g, b;
+            if (ss >> r >> g >> b) {
+                renderer.setAlbedo(r, g, b);
+            }
+        }
+        it = params.find("roughness");
+        if (it != params.end()) {
+            renderer.setRoughness(safe_stof(it->second, 0.5f));
+        }
+        it = params.find("metallic");
+        if (it != params.end()) {
+            renderer.setMetallic(safe_stof(it->second, 0.0f));
+        }
+        it = params.find("alpha");
+        if (it != params.end()) {
+            renderer.setAlpha(safe_stof(it->second, 1.0f));
+        }
     }
 
-    // Process [Mesh_X] sections
-    const auto& meshes = scene.getMeshes();
-    for (size_t i = 0; i < meshes.size(); ++i) {
-        std::string sectionName = "Mesh_" + std::to_string(i);
-        auto meshIt = sections.find(sectionName);
-        if (meshIt != sections.end()) {
-            Mesh* m = meshes[i];
-            const auto& params = meshIt->second;
-
-            auto it = params.find("shaderType");
-            if (it != params.end()) {
-                m->setShaderType(safe_stoi(it->second));
+    // Fallback: check if settings exist in [Mesh_0] but not [Renderer]
+    auto renderer_params = (rent != sections.end()) ? rent->second : std::unordered_map<std::string, std::string>();
+    bool has_shaderType = renderer_params.find("shaderType") != renderer_params.end();
+    bool has_matcapIdx = renderer_params.find("matcapIdx") != renderer_params.end();
+    bool has_showWireframe = renderer_params.find("showWireframe") != renderer_params.end();
+    bool has_flatShading = renderer_params.find("flatShading") != renderer_params.end();
+    bool has_curvature = renderer_params.find("curvature") != renderer_params.end();
+    bool has_albedo = renderer_params.find("albedo") != renderer_params.end();
+    bool has_roughness = renderer_params.find("roughness") != renderer_params.end();
+    bool has_metallic = renderer_params.find("metallic") != renderer_params.end();
+    bool has_alpha = renderer_params.find("alpha") != renderer_params.end();
+ 
+    if (!has_shaderType || !has_matcapIdx || !has_showWireframe || !has_flatShading || !has_curvature ||
+        !has_albedo || !has_roughness || !has_metallic || !has_alpha) {
+        auto m0 = sections.find("Mesh_0");
+        if (m0 != sections.end()) {
+            const auto& m0Params = m0->second;
+            if (!has_shaderType) {
+                auto it = m0Params.find("shaderType");
+                if (it != m0Params.end()) renderer.setShaderType(safe_stoi(it->second, 0));
             }
-            it = params.find("matcapIdx");
-            if (it != params.end()) {
-                m->setMatcap(safe_stoi(it->second));
+            if (!has_matcapIdx) {
+                auto it = m0Params.find("matcapIdx");
+                if (it != m0Params.end()) renderer.setMatcap(safe_stoi(it->second, 0));
             }
-            it = params.find("albedo");
-            if (it != params.end()) {
-                std::stringstream ss(it->second);
-                float r, g, b;
-                if (ss >> r >> g >> b) {
-                    m->setAlbedo(r, g, b);
+            if (!has_showWireframe) {
+                auto it = m0Params.find("showWireframe");
+                if (it != m0Params.end()) renderer.setShowWireframe(it->second == "true" || it->second == "1");
+            }
+            if (!has_flatShading) {
+                auto it = m0Params.find("flatShading");
+                if (it != m0Params.end()) renderer.setFlatShading(it->second == "true" || it->second == "1");
+            }
+            if (!has_curvature) {
+                auto it = m0Params.find("curvature");
+                if (it != m0Params.end()) renderer.setCurvature(safe_stof(it->second, 0.0f));
+            }
+            if (!has_albedo) {
+                auto it = m0Params.find("albedo");
+                if (it != m0Params.end()) {
+                    std::stringstream ss(it->second);
+                    float r, g, b;
+                    if (ss >> r >> g >> b) renderer.setAlbedo(r, g, b);
                 }
             }
-            it = params.find("roughness");
-            if (it != params.end()) {
-                m->setRoughness(safe_stof(it->second));
+            if (!has_roughness) {
+                auto it = m0Params.find("roughness");
+                if (it != m0Params.end()) renderer.setRoughness(safe_stof(it->second, 0.5f));
             }
-            it = params.find("metallic");
-            if (it != params.end()) {
-                m->setMetallic(safe_stof(it->second));
+            if (!has_metallic) {
+                auto it = m0Params.find("metallic");
+                if (it != m0Params.end()) renderer.setMetallic(safe_stof(it->second, 0.0f));
             }
-            it = params.find("alpha");
-            if (it != params.end()) {
-                m->setAlpha(safe_stof(it->second));
-            }
-            it = params.find("showWireframe");
-            if (it != params.end()) {
-                m->setShowWireframe(it->second == "true" || it->second == "1");
-            }
-            it = params.find("flatShading");
-            if (it != params.end()) {
-                m->setFlatShading(it->second == "true" || it->second == "1");
-            }
-            it = params.find("curvature");
-            if (it != params.end()) {
-                m->setCurvature(safe_stof(it->second));
+            if (!has_alpha) {
+                auto it = m0Params.find("alpha");
+                if (it != m0Params.end()) renderer.setAlpha(safe_stof(it->second, 1.0f));
             }
         }
     }
+
+
 
     std::cout << "Successfully loaded render and shading settings from: " << filepath << std::endl;
     return true;

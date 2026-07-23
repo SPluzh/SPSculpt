@@ -1184,9 +1184,85 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
         if (event.button.button == SDL_BUTTON_LEFT) {
             SDL_Keymod mod = SDL_GetModState();
 
+            if (mod & KMOD_ALT) {
+                float minT = std::numeric_limits<float>::infinity();
+                Mesh* closestMesh = nullptr;
+
+                Ray ray = camera.getRay((float)mouseX, (float)mouseY);
+
+                for (Mesh* m : scene.getMeshes()) {
+                    if (!m) continue;
+                    if (!m->isVisible(activeVp)) continue;
+
+                    glm::mat4 invMatrix = glm::inverse(m->matrix);
+                    glm::vec3 localRayOrigin = glm::vec3(invMatrix * glm::vec4(ray.origin, 1.0f));
+                    glm::vec3 localRayDir = glm::normalize(glm::vec3(invMatrix * glm::vec4(ray.dir, 0.0f)));
+
+                    std::vector<uint32_t> candidateFaces = m->octree.collectIntersectRay(
+                        localRayOrigin.x, localRayOrigin.y, localRayOrigin.z,
+                        localRayDir.x, localRayDir.y, localRayDir.z
+                    );
+
+                    float localMinT = std::numeric_limits<float>::infinity();
+                    bool hitThisMesh = false;
+
+                    for (uint32_t faceId : candidateFaces) {
+                        if (faceId >= (uint32_t)m->nbFaces) continue;
+                        uint32_t v0Id = m->faces[faceId * 4];
+                        uint32_t v1Id = m->faces[faceId * 4 + 1];
+                        uint32_t v2Id = m->faces[faceId * 4 + 2];
+                        uint32_t v3Id = m->faces[faceId * 4 + 3];
+
+                        if (!m->vertVisible[v0Id] || !m->vertVisible[v1Id] || !m->vertVisible[v2Id] || 
+                            (v3Id != 0xffffffff && !m->vertVisible[v3Id])) {
+                            continue;
+                        }
+
+                        glm::vec3 v0(m->verts[v0Id * 3], m->verts[v0Id * 3 + 1], m->verts[v0Id * 3 + 2]);
+                        glm::vec3 v1(m->verts[v1Id * 3], m->verts[v1Id * 3 + 1], m->verts[v1Id * 3 + 2]);
+                        glm::vec3 v2(m->verts[v2Id * 3], m->verts[v2Id * 3 + 1], m->verts[v2Id * 3 + 2]);
+
+                        float t;
+                        if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v1, v2, t)) {
+                            if (t < localMinT) {
+                                localMinT = t;
+                                hitThisMesh = true;
+                            }
+                        }
+
+                        if (v3Id != 0xffffffff) {
+                            glm::vec3 v3(m->verts[v3Id * 3], m->verts[v3Id * 3 + 1], m->verts[v3Id * 3 + 2]);
+                            if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v2, v3, t)) {
+                                if (t < localMinT) {
+                                    localMinT = t;
+                                    hitThisMesh = true;
+                                }
+                            }
+                        }
+                    }
+
+                    if (hitThisMesh) {
+                        glm::vec3 worldHit = glm::vec3(m->matrix * glm::vec4(localRayOrigin + localMinT * localRayDir, 1.0f));
+                        float worldT = glm::distance(ray.origin, worldHit);
+                        if (worldT < minT) {
+                            minT = worldT;
+                            closestMesh = m;
+                        }
+                    }
+                }
+
+                if (closestMesh) {
+                    if (closestMesh != scene.getSelected()) {
+                        scene.setOrUnsetMesh(closestMesh, false);
+                        return;
+                    }
+                } else {
+                    return;
+                }
+            }
+
             if (m_currentBrush == BRUSH_MEASURE || m_currentBrush == BRUSH_DIVIDER) {
                 if (mod & KMOD_ALT) {
-                    m_cameraController.handleEvent(event, camera, scene.getMeshes());
                     return;
                 }
 
@@ -1234,7 +1310,6 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
             if (m_currentBrush == BRUSH_TRANSFORM) {
                 if (mod & KMOD_ALT) {
-                    m_cameraController.handleEvent(event, camera, scene.getMeshes());
                     return;
                 }
                 return;
@@ -1254,7 +1329,6 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
             if (m_currentBrush == BRUSH_MASK_GRADIENT_BLUR && mesh) {
                 if (mod & KMOD_ALT) {
-                    m_cameraController.handleEvent(event, camera, scene.getMeshes());
                     return;
                 }
                 glm::vec2 mousePos((float)mouseX, (float)mouseY);
@@ -1449,10 +1523,6 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
                 // Execute first stroke frame immediately
                 executeStroke(scene, mesh, camera, (float)mouseX, (float)mouseY, currentPressure);
-            } else {
-                if (mod & KMOD_ALT) {
-                    m_cameraController.startDrag(CameraController::DragMode::Orbit, mouseX, mouseY, camera, scene.getMeshes());
-                }
             }
         }
     } else if (event.type == SDL_MOUSEBUTTONUP) {

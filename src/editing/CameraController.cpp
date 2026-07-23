@@ -125,12 +125,6 @@ void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std
             } else {
                 startDrag(DragMode::Orbit, mouseX, mouseY, camera, meshes);
             }
-        } else if (e.button.button == SDL_BUTTON_LEFT && altPressed) {
-            if (shiftPressed && camera.getMode() != CameraEnums::CameraMode::ORBIT) {
-                startDrag(DragMode::Roll, mouseX, mouseY, camera, meshes);
-            } else {
-                startDrag(DragMode::Orbit, mouseX, mouseY, camera, meshes);
-            }
         }
     } else if (e.type == SDL_MOUSEBUTTONUP) {
         if (e.button.button == SDL_BUTTON_MIDDLE || e.button.button == SDL_BUTTON_RIGHT || e.button.button == SDL_BUTTON_LEFT) {

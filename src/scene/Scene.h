@@ -18,14 +18,6 @@ struct MeshState {
     int nbVerts = 0;
     int nbFaces = 0;
 
-    int shaderType = 0;
-    int matcapIdx = 0;
-    float albedo[3] = {0.72f, 0.52f, 0.45f};
-    float roughness = 0.5f;
-    float metallic = 0.0f;
-    float alpha = 1.0f;
-    bool showWireframe = false;
-    bool flatShading = false;
     glm::mat4 matrix = glm::mat4(1.0f);
 
     uint32_t id = 0;

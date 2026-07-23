@@ -80,11 +80,11 @@ std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& sc
         if (!mesh) continue;
 
         // Render settings
-        writer.writeU32(mesh->getShaderType());
-        writer.writeU32(mesh->getMatcap());
-        writer.writeU32(mesh->getShowWireframe() ? 1 : 0);
-        writer.writeU32(mesh->getFlatShading() ? 1 : 0);
-        writer.writeF32(mesh->getOpacity());
+        writer.writeU32(renderer.getShaderType());
+        writer.writeU32(renderer.getMatcap());
+        writer.writeU32(renderer.getShowWireframe() ? 1 : 0);
+        writer.writeU32(renderer.getFlatShading() ? 1 : 0);
+        writer.writeF32(renderer.getAlpha());
 
         // Visibility
         writer.writeU32(mesh->isVisible(0) ? 1 : 0);

@@ -3,6 +3,15 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.3]
+- **Input**: Implemented Alt + Left Click on any viewport object to select and make it the active mesh in the scene, facilitating faster multi-object scene navigation.
+- **Renderer**: Globalized all material settings (`albedo`, `roughness`, `metallic`, `alpha`, and texture maps) across all scene meshes, moving them from individual mesh properties to central renderer fields to maintain consistency when creating/rendering objects.
+- **Settings**: Updated `render_settings.cfg` serialization to save and load global material attributes under the `[Renderer]` section, with legacy compatibility fallbacks to restore older settings from `Mesh_0` when reading legacy configurations.
+- **UI**: Updated the "Rendering Quality" panel to directly display and modify the global material settings on the `AngleRenderer`, ensuring all meshes in the scene share a uniform material representation.
+- **Files**: Restructured SGL file import and export routines (`ImportSGL` / `ExportSGL`) to use global alpha values rather than storing opacity per-mesh.
+- **Renderer**: Globalized shading settings (`shaderType`, `matcapIdx`, `flatShading`, `showWireframe`, `curvature`) across all scene meshes, moving them from individual mesh properties to the central renderer.
+- **Settings**: Refactored the serialization of shading settings in `render_settings.cfg` to save them globally under the `[Renderer]` section, with backward-compatibility fallbacks to restore older mesh-specific settings.
+- **Settings**: Updated SGL scene importer and exporter to read/write shading settings globally instead of per-mesh.
+- **UI**: Reworked the Rendering Quality panel to separate global scene shading controls from active object material parameters (albedo, roughness, metallic, transparency, and textures).
 - **Settings**: Added persistence for camera movement speeds (rotation, panning, zoom, and roll), ensuring they are automatically saved to `render_settings.cfg` on exit and restored on startup.
 - **UI**: Added automatic saving and loading of GUI panel visibility states (toolbar, sculpting settings, scene outliner, etc.) to a local configuration file `gui_settings.cfg` on startup and shutdown.
 - **UI**: Added "Save GUI Settings" and "Load GUI Settings" options to the main File menu to allow manual GUI state persistence.

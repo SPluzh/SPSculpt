@@ -294,13 +294,10 @@ int main(int argc, char* argv[]) {
     scene.loadDefaultSphere();
     scene.getCamera().onResize(width, height);
 
-    // Apply matcap clay preset to the default sphere
-    Mesh* mesh = scene.getSelected();
-    if (mesh) {
-        mesh->matcapIdx = 5; // "Clay" matcap preset index
-        mesh->shaderType = 1; // MATCAP
-        mesh->textureId = 0;
-    }
+    // Apply matcap clay preset globally to the renderer
+    renderer.setMatcap(5); // "Clay" matcap preset index
+    renderer.setShaderType(1); // MATCAP
+    renderer.setTextureId(0);
 
     // Auto-load render and shading settings if they exist
     RenderSettings::load("render_settings.cfg", renderer, scene);

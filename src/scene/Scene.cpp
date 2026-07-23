@@ -76,14 +76,6 @@ HistoryState Scene::saveCurrentState() const {
         ms.nbVerts = m->nbVerts;
         ms.nbFaces = m->nbFaces;
         
-        ms.shaderType = m->shaderType;
-        ms.matcapIdx = m->matcapIdx;
-        std::memcpy(ms.albedo, m->albedo, 3 * sizeof(float));
-        ms.roughness = m->roughness;
-        ms.metallic = m->metallic;
-        ms.alpha = m->alpha;
-        ms.showWireframe = m->showWireframe;
-        ms.flatShading = m->flatShading;
         ms.matrix = m->matrix;
         
         ms.id = m->m_id;
@@ -117,14 +109,6 @@ void Scene::restoreState(const HistoryState& hs) {
         m->nbVerts = ms.nbVerts;
         m->nbFaces = ms.nbFaces;
 
-        m->shaderType = ms.shaderType;
-        m->matcapIdx = ms.matcapIdx;
-        std::memcpy(m->albedo, ms.albedo, 3 * sizeof(float));
-        m->roughness = ms.roughness;
-        m->metallic = ms.metallic;
-        m->alpha = ms.alpha;
-        m->showWireframe = ms.showWireframe;
-        m->flatShading = ms.flatShading;
         m->matrix = ms.matrix;
 
         m->m_id = ms.id;
@@ -967,14 +951,6 @@ void Scene::duplicateSelection() {
         copy->nbVerts = src->nbVerts;
         copy->nbFaces = src->nbFaces;
 
-        copy->shaderType = src->shaderType;
-        copy->matcapIdx = src->matcapIdx;
-        std::memcpy(copy->albedo, src->albedo, 3 * sizeof(float));
-        copy->roughness = src->roughness;
-        copy->metallic = src->metallic;
-        copy->alpha = src->alpha;
-        copy->showWireframe = src->showWireframe;
-        copy->flatShading = src->flatShading;
         copy->matrix = src->matrix;
         copy->visibleV1 = src->visibleV1;
         copy->visibleV2 = src->visibleV2;

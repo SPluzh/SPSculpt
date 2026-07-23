@@ -1513,9 +1513,9 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
     } else if (passType == 1) {
         // Opaque meshes (alpha == 1.0)
         for (auto* mesh : scene.getMeshes()) {
-            if (mesh->isVisible(viewportIdx) && mesh->alpha == 1.0f) {
+            if (mesh->isVisible(viewportIdx) && m_alpha == 1.0f) {
                 drawMeshSolid(mesh, scene, camera);
-                if (mesh->showWireframe) {
+                if (m_showWireframe) {
                     drawWireframe(mesh, scene, camera);
                 }
             }
@@ -1523,9 +1523,9 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
     } else if (passType == 2) {
         // Transparent meshes (alpha < 1.0)
         for (auto* mesh : scene.getMeshes()) {
-            if (mesh->isVisible(viewportIdx) && mesh->alpha < 1.0f) {
+            if (mesh->isVisible(viewportIdx) && m_alpha < 1.0f) {
                 drawMeshSolid(mesh, scene, camera);
-                if (mesh->showWireframe) {
+                if (m_showWireframe) {
                     drawWireframe(mesh, scene, camera);
                 }
             }
@@ -1588,7 +1588,7 @@ void AngleRenderer::drawBackground(const Scene& scene, const Camera& camera) {
 
 void AngleRenderer::drawMesh(Mesh* mesh, const Scene& scene) {
     drawMeshSolid(mesh, scene, scene.getCamera());
-    if (mesh->showWireframe) {
+    if (m_showWireframe) {
         drawWireframe(mesh, scene, scene.getCamera());
     }
 }
@@ -1603,11 +1603,11 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
     glDisable(GL_CULL_FACE);
 
     GLuint program = m_flatProgram;
-    if (mesh->shaderType == 0) program = m_pbrProgram;
-    else if (mesh->shaderType == 1) program = m_matcapProgram;
-    else if (mesh->shaderType == 2) program = m_wetClayProgram;
-    else if (mesh->shaderType == 3) program = m_normalProgram;
-    else if (mesh->shaderType == 4) program = m_voxelCheckerProgram;
+    if (m_shaderType == 0) program = m_pbrProgram;
+    else if (m_shaderType == 1) program = m_matcapProgram;
+    else if (m_shaderType == 2) program = m_wetClayProgram;
+    else if (m_shaderType == 3) program = m_normalProgram;
+    else if (m_shaderType == 4) program = m_voxelCheckerProgram;
 
     if (program == 0) return;
     glUseProgram(program);
@@ -1619,9 +1619,9 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
     glUniformMatrix3fv(glGetUniformLocation(program, "uN"), 1, GL_FALSE, glm::value_ptr(mesh->nMatrix));
     glUniformMatrix4fv(glGetUniformLocation(program, "uEM"), 1, GL_FALSE, glm::value_ptr(mesh->editMatrix));
     glUniformMatrix3fv(glGetUniformLocation(program, "uEN"), 1, GL_FALSE, glm::value_ptr(mesh->enMatrix));
-    glUniform1f(glGetUniformLocation(program, "uAlpha"), mesh->alpha);
-    glUniform3fv(glGetUniformLocation(program, "uAlbedo"), 1, &mesh->albedo[0]);
-    glUniform1i(glGetUniformLocation(program, "uFlat"), mesh->flatShading ? 1 : 0);
+    glUniform1f(glGetUniformLocation(program, "uAlpha"), m_alpha);
+    glUniform3fv(glGetUniformLocation(program, "uAlbedo"), 1, &m_albedo[0]);
+    glUniform1i(glGetUniformLocation(program, "uFlat"), m_flatShading ? 1 : 0);
 
     glUniform3f(glGetUniformLocation(program, "uPlaneN"), m_planeNormal.x, m_planeNormal.y, m_planeNormal.z);
     glUniform3f(glGetUniformLocation(program, "uPlaneO"), m_planeOrigin.x, m_planeOrigin.y, m_planeOrigin.z);
@@ -1632,23 +1632,23 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
         darken = true;
     }
     glUniform1i(glGetUniformLocation(program, "uDarken"), darken ? 1 : 0);
-    glUniform1f(glGetUniformLocation(program, "uCurvature"), mesh->curvature);
+    glUniform1f(glGetUniformLocation(program, "uCurvature"), m_curvature);
     glUniform1f(glGetUniformLocation(program, "uFov"), camera.getFov());
 
     glActiveTexture(GL_TEXTURE0);
-    if (mesh->textureId != 0) {
-        glBindTexture(GL_TEXTURE_2D, mesh->textureId);
-    } else if (mesh->shaderType == 0 && m_envTexture != 0) {
+    if (m_textureId != 0) {
+        glBindTexture(GL_TEXTURE_2D, m_textureId);
+    } else if (m_shaderType == 0 && m_envTexture != 0) {
         glBindTexture(GL_TEXTURE_2D, m_envTexture);
-    } else if (mesh->shaderType == 1 && mesh->matcapIdx >= 0 && mesh->matcapIdx < static_cast<int>(m_matcaps.size()) && m_matcaps[mesh->matcapIdx].textureId != 0) {
-        glBindTexture(GL_TEXTURE_2D, m_matcaps[mesh->matcapIdx].textureId);
+    } else if (m_shaderType == 1 && m_matcapIdx >= 0 && m_matcapIdx < static_cast<int>(m_matcaps.size()) && m_matcaps[m_matcapIdx].textureId != 0) {
+        glBindTexture(GL_TEXTURE_2D, m_matcaps[m_matcapIdx].textureId);
     } else {
         glBindTexture(GL_TEXTURE_2D, 0);
     }
 
-    if (mesh->shaderType == 0) {
-        glUniform1f(glGetUniformLocation(program, "uRoughness"), mesh->roughness);
-        glUniform1f(glGetUniformLocation(program, "uMetallic"), mesh->metallic);
+    if (m_shaderType == 0) {
+        glUniform1f(glGetUniformLocation(program, "uRoughness"), m_roughness);
+        glUniform1f(glGetUniformLocation(program, "uMetallic"), m_metallic);
         glUniform1f(glGetUniformLocation(program, "uExposure"), m_exposure);
         glUniform3fv(glGetUniformLocation(program, "uSPH"), 9, m_sph);
         
@@ -1657,19 +1657,19 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
         
         glUniform1i(glGetUniformLocation(program, "uTexture0"), 0);
         glUniform2f(glGetUniformLocation(program, "uEnvSize"), (float)m_envWidth, (float)m_envHeight);
-        glUniform1i(glGetUniformLocation(program, "uUseTexture"), (mesh->textureId != 0 || m_envTexture != 0) ? 1 : 0);
-    } else if (mesh->shaderType == 1) {
+        glUniform1i(glGetUniformLocation(program, "uUseTexture"), (m_textureId != 0 || m_envTexture != 0) ? 1 : 0);
+    } else if (m_shaderType == 1) {
         glUniform1i(glGetUniformLocation(program, "uTexture0"), 0);
-        bool hasMatcap = (mesh->textureId != 0) || (mesh->matcapIdx >= 0 && mesh->matcapIdx < static_cast<int>(m_matcaps.size()) && m_matcaps[mesh->matcapIdx].textureId != 0);
+        bool hasMatcap = (m_textureId != 0) || (m_matcapIdx >= 0 && m_matcapIdx < static_cast<int>(m_matcaps.size()) && m_matcaps[m_matcapIdx].textureId != 0);
         glUniform1i(glGetUniformLocation(program, "uUseTexture"), hasMatcap ? 1 : 0);
-    } else if (mesh->shaderType == 2) {
-        glUniform3f(glGetUniformLocation(program, "uClayColor"), mesh->albedo[0], mesh->albedo[1], mesh->albedo[2]);
+    } else if (m_shaderType == 2) {
+        glUniform3f(glGetUniformLocation(program, "uClayColor"), m_albedo[0], m_albedo[1], m_albedo[2]);
         glUniform1f(glGetUniformLocation(program, "uWetness"), m_wetClayWetness);
         glUniform1f(glGetUniformLocation(program, "uBumpStrength"), m_wetClayBumpStrength);
         glUniform1f(glGetUniformLocation(program, "uNoiseScale"), m_wetClayNoiseScale);
         glUniform1f(glGetUniformLocation(program, "uSSSIntensity"), m_wetClaySSSIntensity);
         glUniform3f(glGetUniformLocation(program, "uSSSColor"), m_wetClaySSSColor.x, m_wetClaySSSColor.y, m_wetClaySSSColor.z);
-    } else if (mesh->shaderType == 4) {
+    } else if (m_shaderType == 4) {
         glUniform1f(glGetUniformLocation(program, "uStep"), 0.5f);
     }
 

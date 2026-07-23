@@ -242,6 +242,7 @@ static bool isPointOverImGuiWindow(const ImVec2& pt) {
 }
 
 void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer, SDL_Window* window) {
+    m_renderer = &renderer;
     if (!m_imguiInitialized) return;
 
     if (m_remeshAsync.state == RemeshState::Done) {
@@ -1004,154 +1005,165 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         ImGui::SetNextWindowSize({280, 200}, ImGuiCond_FirstUseEver);
         ImGui::Begin("Rendering Quality", &m_showRenderingPanel, ImGuiWindowFlags_AlwaysAutoResize);
 
-        Mesh* selectedMesh = scene.getSelected();
-        if (selectedMesh) {
-            // Material options
-            const char* shaders[] = { "PBR Shader", "Matcap Shading", "Wet Clay Shading", "Normal Shader", "Voxel Checker Shader", "Flat Shading" };
-            int type = selectedMesh->shaderType;
-            if (ImGui::Combo("Material Shader", &type, shaders, IM_ARRAYSIZE(shaders))) {
-                selectedMesh->setShaderType(type);
+        // Global shading settings (always accessible)
+        const char* shaders[] = { "PBR Shader", "Matcap Shading", "Wet Clay Shading", "Normal Shader", "Voxel Checker Shader", "Flat Shading" };
+        int type = renderer.getShaderType();
+        if (ImGui::Combo("Material Shader", &type, shaders, IM_ARRAYSIZE(shaders))) {
+            renderer.setShaderType(type);
+        }
+
+        float curvatureVal = renderer.getCurvature() * 20.0f;
+        if (ImGui::SliderFloat("Curvature", &curvatureVal, 0.0f, 100.0f, "%.0f")) {
+            renderer.setCurvature(curvatureVal / 20.0f);
+        }
+
+        if (type == 0) { // PBR Shader
+            const auto& envs = renderer.getEnvironments();
+            if (!envs.empty()) {
+                std::vector<const char*> envNames;
+                for (const auto& env : envs) {
+                    envNames.push_back(env.name.c_str());
+                }
+                int currentEnvIdx = renderer.getCurrentEnvIdx();
+                if (ImGui::Combo("Environment Preset", &currentEnvIdx, envNames.data(), static_cast<int>(envNames.size()))) {
+                    renderer.setEnvironmentPreset(currentEnvIdx);
+                }
+            }
+        } else if (type == 1) { // Matcap Shading
+            const auto& matcaps = renderer.getMatcaps();
+            if (!matcaps.empty()) {
+                std::vector<const char*> matcapNames;
+                for (const auto& mc : matcaps) {
+                    matcapNames.push_back(mc.name.c_str());
+                }
+                int matcapIdx = renderer.getMatcap();
+                if (ImGui::Combo("Matcap Preset", &matcapIdx, matcapNames.data(), static_cast<int>(matcapNames.size()))) {
+                    renderer.setMatcap(matcapIdx);
+                }
             }
 
-            float curvatureVal = selectedMesh->curvature * 20.0f;
-            if (ImGui::SliderFloat("Curvature", &curvatureVal, 0.0f, 100.0f, "%.0f")) {
-                selectedMesh->setCurvature(curvatureVal / 20.0f);
+            // Import custom Matcap option
+            static char matcapPath[256] = "";
+            ImGui::InputText("Matcap Path", matcapPath, sizeof(matcapPath));
+            ImGui::SameLine();
+            if (ImGui::Button("Import Matcap")) {
+                std::string pathStr(matcapPath);
+                size_t lastSlash = pathStr.find_last_of("/\\");
+                std::string name = (lastSlash != std::string::npos) ? pathStr.substr(lastSlash + 1) : pathStr;
+                renderer.importMatcap(name, pathStr);
+            }
+        } else if (type == 2) { // Wet Clay Shading
+            float wetness = renderer.getWetClayWetness();
+            if (ImGui::SliderFloat("Wetness", &wetness, 0.0f, 1.0f, "%.2f")) {
+                renderer.setWetClayWetness(wetness);
+            }
+            float bumpStrength = renderer.getWetClayBumpStrength();
+            if (ImGui::SliderFloat("Bump Strength", &bumpStrength, 0.0f, 1.0f, "%.2f")) {
+                renderer.setWetClayBumpStrength(bumpStrength);
+            }
+            float noiseScale = renderer.getWetClayNoiseScale();
+            if (ImGui::SliderFloat("Noise Scale", &noiseScale, 1.0f, 30.0f, "%.1f")) {
+                renderer.setWetClayNoiseScale(noiseScale);
+            }
+            float sssIntensity = renderer.getWetClaySSSIntensity();
+            if (ImGui::SliderFloat("SSS Intensity", &sssIntensity, 0.0f, 1.0f, "%.2f")) {
+                renderer.setWetClaySSSIntensity(sssIntensity);
+            }
+            glm::vec3 sssColor = renderer.getWetClaySSSColor();
+            if (ImGui::ColorEdit3("SSS Color", glm::value_ptr(sssColor))) {
+                renderer.setWetClaySSSColor(sssColor);
+            }
+        }
+
+        bool wire = renderer.getShowWireframe();
+        if (ImGui::Checkbox("Show Wireframe", &wire)) {
+            renderer.setShowWireframe(wire);
+        }
+
+        bool flat = renderer.getFlatShading();
+        if (ImGui::Checkbox("Flat Shading Mode", &flat)) {
+            renderer.setFlatShading(flat);
+        }
+
+        bool filmic = renderer.getFilmic();
+        if (ImGui::Checkbox("Filmic Tonemapping", &filmic)) {
+            renderer.setFilmic(filmic);
+        }
+
+        bool showContour = renderer.getShowContour();
+        if (ImGui::Checkbox("Show Selection Outline", &showContour)) {
+            renderer.setShowContour(showContour);
+        }
+
+        if (showContour) {
+            glm::vec4 cColor = renderer.getContourColor();
+            if (ImGui::ColorEdit4("Outline Color", glm::value_ptr(cColor))) {
+                renderer.setContourColor(cColor);
+            }
+        }
+
+        float cursorThickness = renderer.getCursorThickness();
+        if (ImGui::SliderFloat("Brush Cursor Thickness", &cursorThickness, 1.0f, 5.0f, "%.1f px")) {
+            renderer.setCursorThickness(cursorThickness);
+        }
+
+        bool smoothCursor = renderer.getSmoothCursor();
+        if (ImGui::Checkbox("Smooth (Antialiased) Cursor", &smoothCursor)) {
+            renderer.setSmoothCursor(smoothCursor);
+        }
+
+        // Global Material Settings (always accessible)
+        ImGui::Separator();
+        ImGui::TextDisabled("MATERIAL SETTINGS");
+        
+        float alpha = renderer.getAlpha();
+        if (ImGui::SliderFloat("Transparency (Alpha)", &alpha, 0.0f, 1.0f, "%.2f")) {
+            renderer.setAlpha(alpha);
+        }
+
+        float albedo[3] = { renderer.getAlbedo()[0], renderer.getAlbedo()[1], renderer.getAlbedo()[2] };
+        if (ImGui::ColorEdit3("Albedo Base Color", albedo)) {
+            renderer.setAlbedo(albedo[0], albedo[1], albedo[2]);
+        }
+
+        if (type == 0) { // PBR Shader settings
+            float roughness = renderer.getRoughness();
+            if (ImGui::SliderFloat("Roughness", &roughness, 0.0f, 1.0f, "%.2f")) {
+                renderer.setRoughness(roughness);
+            }
+            float metallic = renderer.getMetallic();
+            if (ImGui::SliderFloat("Metallic", &metallic, 0.0f, 1.0f, "%.2f")) {
+                renderer.setMetallic(metallic);
             }
 
-            if (type == 0) { // PBR Shader
-                const auto& envs = renderer.getEnvironments();
-                if (!envs.empty()) {
-                    std::vector<const char*> envNames;
-                    for (const auto& env : envs) {
-                        envNames.push_back(env.name.c_str());
+            // Import UV texture option
+            static char texturePath[256] = "";
+            ImGui::InputText("UV Texture Path", texturePath, sizeof(texturePath));
+            ImGui::SameLine();
+            if (ImGui::Button("Import UV##PBR")) {
+                int w = 0, h = 0, ch = 0;
+                unsigned char* data = stbi_load(texturePath, &w, &h, &ch, 4);
+                if (data) {
+                    if (renderer.getTextureId() != 0) {
+                        GLuint tid = renderer.getTextureId();
+                        glDeleteTextures(1, &tid);
                     }
-                    int currentEnvIdx = renderer.getCurrentEnvIdx();
-                    if (ImGui::Combo("Environment Preset", &currentEnvIdx, envNames.data(), static_cast<int>(envNames.size()))) {
-                        renderer.setEnvironmentPreset(currentEnvIdx);
-                    }
-                }
-                ImGui::SliderFloat("Roughness", &selectedMesh->roughness, 0.0f, 1.0f, "%.2f");
-                ImGui::SliderFloat("Metallic", &selectedMesh->metallic, 0.0f, 1.0f, "%.2f");
-
-                // Import UV texture option
-                static char texturePath[256] = "";
-                ImGui::InputText("UV Texture Path", texturePath, sizeof(texturePath));
-                ImGui::SameLine();
-                if (ImGui::Button("Import UV##PBR")) {
-                    int w = 0, h = 0, ch = 0;
-                    unsigned char* data = stbi_load(texturePath, &w, &h, &ch, 4);
-                    if (data) {
-                        if (selectedMesh->textureId != 0) {
-                            GLuint tid = selectedMesh->textureId;
-                            glDeleteTextures(1, &tid);
-                        }
-                        GLuint newTexId = 0;
-                        glGenTextures(1, &newTexId);
-                        glBindTexture(GL_TEXTURE_2D, newTexId);
-                        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
-                        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-                        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-                        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-                        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-                        glBindTexture(GL_TEXTURE_2D, 0);
-                        stbi_image_free(data);
-                        selectedMesh->setTextureId(newTexId);
-                        selectedMesh->setHasUV(true);
-                    } else {
-                        std::cerr << "Failed to load UV texture: " << texturePath << std::endl;
-                    }
-                }
-            } else if (type == 1) { // Matcap Shading
-                const auto& matcaps = renderer.getMatcaps();
-                if (!matcaps.empty()) {
-                    std::vector<const char*> matcapNames;
-                    for (const auto& mc : matcaps) {
-                        matcapNames.push_back(mc.name.c_str());
-                    }
-                    int matcapIdx = selectedMesh->getMatcap();
-                    if (ImGui::Combo("Matcap Preset", &matcapIdx, matcapNames.data(), static_cast<int>(matcapNames.size()))) {
-                        selectedMesh->setMatcap(matcapIdx);
-                    }
-                }
-
-                // Import custom Matcap option
-                static char matcapPath[256] = "";
-                ImGui::InputText("Matcap Path", matcapPath, sizeof(matcapPath));
-                ImGui::SameLine();
-                if (ImGui::Button("Import Matcap")) {
-                    std::string pathStr(matcapPath);
-                    size_t lastSlash = pathStr.find_last_of("/\\");
-                    std::string name = (lastSlash != std::string::npos) ? pathStr.substr(lastSlash + 1) : pathStr;
-                    renderer.importMatcap(name, pathStr);
-                }
-            } else if (type == 2) { // Wet Clay Shading
-                float wetness = renderer.getWetClayWetness();
-                if (ImGui::SliderFloat("Wetness", &wetness, 0.0f, 1.0f, "%.2f")) {
-                    renderer.setWetClayWetness(wetness);
-                }
-                float bumpStrength = renderer.getWetClayBumpStrength();
-                if (ImGui::SliderFloat("Bump Strength", &bumpStrength, 0.0f, 1.0f, "%.2f")) {
-                    renderer.setWetClayBumpStrength(bumpStrength);
-                }
-                float noiseScale = renderer.getWetClayNoiseScale();
-                if (ImGui::SliderFloat("Noise Scale", &noiseScale, 1.0f, 30.0f, "%.1f")) {
-                    renderer.setWetClayNoiseScale(noiseScale);
-                }
-                float sssIntensity = renderer.getWetClaySSSIntensity();
-                if (ImGui::SliderFloat("SSS Intensity", &sssIntensity, 0.0f, 1.0f, "%.2f")) {
-                    renderer.setWetClaySSSIntensity(sssIntensity);
-                }
-                glm::vec3 sssColor = renderer.getWetClaySSSColor();
-                if (ImGui::ColorEdit3("SSS Color", glm::value_ptr(sssColor))) {
-                    renderer.setWetClaySSSColor(sssColor);
+                    GLuint newTexId = 0;
+                    glGenTextures(1, &newTexId);
+                    glBindTexture(GL_TEXTURE_2D, newTexId);
+                    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+                    glBindTexture(GL_TEXTURE_2D, 0);
+                    stbi_image_free(data);
+                    renderer.setTextureId(newTexId);
+                    renderer.setHasUV(true);
+                } else {
+                    std::cerr << "Failed to load UV texture: " << texturePath << std::endl;
                 }
             }
-
-            bool wire = selectedMesh->showWireframe;
-            if (ImGui::Checkbox("Show Wireframe", &wire)) {
-                selectedMesh->setShowWireframe(wire);
-            }
-
-            bool flat = selectedMesh->flatShading;
-            if (ImGui::Checkbox("Flat Shading Mode", &flat)) {
-                selectedMesh->setFlatShading(flat);
-            }
-
-            bool filmic = renderer.getFilmic();
-            if (ImGui::Checkbox("Filmic Tonemapping", &filmic)) {
-                renderer.setFilmic(filmic);
-            }
-
-            bool showContour = renderer.getShowContour();
-            if (ImGui::Checkbox("Show Selection Outline", &showContour)) {
-                renderer.setShowContour(showContour);
-            }
-
-            if (showContour) {
-                glm::vec4 cColor = renderer.getContourColor();
-                if (ImGui::ColorEdit4("Outline Color", glm::value_ptr(cColor))) {
-                    renderer.setContourColor(cColor);
-                }
-            }
-
-            float cursorThickness = renderer.getCursorThickness();
-            if (ImGui::SliderFloat("Brush Cursor Thickness", &cursorThickness, 1.0f, 5.0f, "%.1f px")) {
-                renderer.setCursorThickness(cursorThickness);
-            }
-
-            bool smoothCursor = renderer.getSmoothCursor();
-            if (ImGui::Checkbox("Smooth (Antialiased) Cursor", &smoothCursor)) {
-                renderer.setSmoothCursor(smoothCursor);
-            }
-
-            float alpha = selectedMesh->alpha;
-            if (ImGui::SliderFloat("Transparency (Alpha)", &alpha, 0.0f, 1.0f, "%.2f")) {
-                selectedMesh->setAlpha(alpha);
-            }
-
-            ImGui::ColorEdit3("Albedo Base Color", selectedMesh->albedo);
-        } else {
-            ImGui::Text("No active mesh selected");
         }
 
         ImGui::Separator();
@@ -2265,8 +2277,15 @@ void GuiManager::performRemesh(Scene& scene) {
     selectedMesh->computeBbox(bbox);
     float resolution = (float)m_remeshResolution;
     
-    float uniformColor[3] = { selectedMesh->albedo[0], selectedMesh->albedo[1], selectedMesh->albedo[2] };
-    float uniformMaterial[3] = { selectedMesh->roughness, selectedMesh->metallic, 1.0f };
+    float uniformColor[3] = { 0.72f, 0.52f, 0.45f };
+    float uniformMaterial[3] = { 0.5f, 0.0f, 1.0f };
+    if (m_renderer) {
+        uniformColor[0] = m_renderer->getAlbedo()[0];
+        uniformColor[1] = m_renderer->getAlbedo()[1];
+        uniformColor[2] = m_renderer->getAlbedo()[2];
+        uniformMaterial[0] = m_renderer->getRoughness();
+        uniformMaterial[1] = m_renderer->getMetallic();
+    }
 
     m_remeshAsync.state = RemeshState::Running;
     m_remeshAsync.stage = 0;

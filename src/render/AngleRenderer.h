@@ -92,6 +92,30 @@ public:
     glm::vec3 getWetClaySSSColor() const { return m_wetClaySSSColor; }
     void setWetClaySSSColor(const glm::vec3& col) { m_wetClaySSSColor = col; }
 
+    void setShaderType(int type) { m_shaderType = type; }
+    int getShaderType() const { return m_shaderType; }
+    void setMatcap(int idx) { m_matcapIdx = idx; }
+    int getMatcap() const { return m_matcapIdx; }
+    void setFlatShading(bool flat) { m_flatShading = flat; }
+    bool getFlatShading() const { return m_flatShading; }
+    void setShowWireframe(bool show) { m_showWireframe = show; }
+    bool getShowWireframe() const { return m_showWireframe; }
+    void setCurvature(float c) { m_curvature = c; }
+    float getCurvature() const { return m_curvature; }
+
+    void setAlbedo(float r, float g, float b) { m_albedo[0] = r; m_albedo[1] = g; m_albedo[2] = b; }
+    const float* getAlbedo() const { return m_albedo; }
+    void setRoughness(float r) { m_roughness = r; }
+    float getRoughness() const { return m_roughness; }
+    void setMetallic(float m) { m_metallic = m; }
+    float getMetallic() const { return m_metallic; }
+    void setAlpha(float a) { m_alpha = a; }
+    float getAlpha() const { return m_alpha; }
+    void setTextureId(unsigned int id) { m_textureId = id; }
+    unsigned int getTextureId() const { return m_textureId; }
+    void setHasUV(bool h) { m_hasUV = h; }
+    bool getHasUV() const { return m_hasUV; }
+
     struct EnvironmentPreset {
         std::string name;
         std::string texPath;
@@ -263,6 +287,20 @@ private:
     glm::vec4 m_contourColor{1.0f, 0.75f, 0.1f, 1.0f};
     float m_cursorThickness = 2.5f;
     bool m_smoothCursor = true;
+
+    int m_shaderType = 0;
+    int m_matcapIdx = 0;
+    bool m_flatShading = false;
+    bool m_showWireframe = false;
+    float m_curvature = 0.0f;
+
+    // Global material settings
+    float m_albedo[3] = {0.72f, 0.52f, 0.45f};
+    float m_roughness = 0.5f;
+    float m_metallic = 0.0f;
+    float m_alpha = 1.0f;
+    unsigned int m_textureId = 0;
+    bool m_hasUV = false;
 
     // Wet clay parameters
     float m_wetClayWetness = 0.6f;

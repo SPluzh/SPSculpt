@@ -60,6 +60,7 @@ private:
     char m_refImagePath[256] = "";
 
     RemeshProgress m_remeshAsync;
+    AngleRenderer* m_renderer = nullptr;
 
 public:
     GuiManager();

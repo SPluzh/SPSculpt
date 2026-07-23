@@ -98,11 +98,15 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
         Mesh* mesh = new Mesh();
 
         if (version >= 2) {
-            mesh->setShaderType(reader.readU32());
-            mesh->setMatcap(reader.readU32());
-            mesh->setShowWireframe(reader.readU32() != 0);
-            mesh->setFlatShading(reader.readU32() != 0);
-            mesh->setAlpha(reader.readF32());
+            uint32_t sType = reader.readU32();
+            uint32_t mIdx = reader.readU32();
+            bool wire = reader.readU32() != 0;
+            bool flat = reader.readU32() != 0;
+            renderer.setShaderType(sType);
+            renderer.setMatcap(mIdx);
+            renderer.setShowWireframe(wire);
+            renderer.setFlatShading(flat);
+            renderer.setAlpha(reader.readF32());
         }
 
         if (version >= 4) {

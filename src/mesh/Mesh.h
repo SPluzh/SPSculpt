@@ -74,32 +74,6 @@ public:
     void setDirty(bool dirty) { isDirty = dirty; }
     bool getDirty() const { return isDirty; }
 
-    int shaderType = 0; // 0 = PBR, 1 = MATCAP, 2 = FLAT
-    int matcapIdx = 0;
-    float albedo[3] = {0.72f, 0.52f, 0.45f};
-    float roughness = 0.5f;
-    float metallic = 0.0f;
-    float alpha = 1.0f;
-    bool showWireframe = false;
-    bool flatShading = false;
-
-    unsigned int textureId = 0;
-    void setTextureId(unsigned int id) { textureId = id; }
-    void setShaderType(int type) { shaderType = type; }
-    int getShaderType() const { return shaderType; }
-    void setMatcap(int idx) { matcapIdx = idx; }
-    int getMatcap() const { return matcapIdx; }
-    void setAlbedo(float r, float g, float b) { albedo[0] = r; albedo[1] = g; albedo[2] = b; }
-    void setRoughness(float r) { roughness = r; }
-    void setMetallic(float m) { metallic = m; }
-    void setAlpha(float a) { alpha = a; }
-    float getOpacity() const { return alpha; }
-    void setShowWireframe(bool show) { showWireframe = show; }
-    bool getShowWireframe() const { return showWireframe; }
-    void setFlatShading(bool flat) { flatShading = flat; }
-    bool getFlatShading() const { return flatShading; }
-    float curvature = 0.0f;
-    void setCurvature(float c) { curvature = c; }
 
     bool isVisible(int viewport) const { return viewport == 0 ? visibleV1 : visibleV2; }
     void setVisible(bool visible, int viewport) { if (viewport == 0) visibleV1 = visible; else visibleV2 = visible; }
