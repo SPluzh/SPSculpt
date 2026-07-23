@@ -27,16 +27,23 @@ struct MeshState {
     bool showWireframe = false;
     bool flatShading = false;
     glm::mat4 matrix = glm::mat4(1.0f);
+
+    uint32_t id = 0;
+    std::string outlinerName;
+    bool visibleV1 = true;
+    bool visibleV2 = true;
 };
 
 struct HistoryState {
     int selectedMeshIdx = -1;
+    std::vector<int> selectedMeshIndices;
     std::vector<MeshState> meshes;
 };
 
 class Scene {
 private:
     std::vector<Mesh*> m_meshes;
+    std::vector<Mesh*> m_selectedMeshes;
     int m_selectedIdx = -1;
     Camera m_camera;
 
@@ -65,6 +72,19 @@ public:
     Mesh* getSelected() const;
     int getSelectedIdx() const;
     void setSelectedIdx(int idx);
+
+    const std::vector<Mesh*>& getSelectedMeshes() const;
+    void setOrUnsetMesh(Mesh* target, bool multiSelect);
+    bool isMeshSelected(Mesh* target) const;
+
+    void addSphere();
+    void addCube();
+    void addCylinder();
+    void addTorus();
+    void addPrimitiveAtMask(const std::string& type, bool useSym, int symAxis);
+    void duplicateSelection();
+    void mergeSelection();
+    void clearScene();
 
     Camera& getCamera();
     const Camera& getCamera() const;

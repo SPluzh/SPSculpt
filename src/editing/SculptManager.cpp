@@ -1159,6 +1159,10 @@ void SculptManager::validateSegments(Scene& scene) {
 
 void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
     Mesh* mesh = scene.getSelected();
+    int activeVp = scene.getActiveViewport();
+    if (mesh && !mesh->isVisible(activeVp)) {
+        mesh = nullptr;
+    }
     Camera& camera = scene.getCamera();
 
     if (event.type == SDL_MOUSEBUTTONDOWN) {

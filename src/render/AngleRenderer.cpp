@@ -1469,7 +1469,7 @@ void AngleRenderer::renderScenePass(const Scene& scene, int passType) {
         glViewport(0, 0, m_width, m_height);
         glScissor(0, 0, m_width, m_height);
         glEnable(GL_SCISSOR_TEST);
-        drawPassGeometry(scene, passType, scene.getCamera());
+        drawPassGeometry(scene, passType, scene.getCamera(), 0);
         glDisable(GL_SCISSOR_TEST);
     } else {
         int w2 = m_width / 2;
@@ -1481,7 +1481,7 @@ void AngleRenderer::renderScenePass(const Scene& scene, int passType) {
         const Camera* camLeft = scene.getCameraByIndex(0);
         if (camLeft) {
             const_cast<Camera*>(camLeft)->onResize(w2, m_height);
-            drawPassGeometry(scene, passType, *camLeft);
+            drawPassGeometry(scene, passType, *camLeft, 0);
         }
 
         // Right camera (mirror or independent)
@@ -1490,16 +1490,16 @@ void AngleRenderer::renderScenePass(const Scene& scene, int passType) {
             glViewport(w2, 0, m_width - w2, m_height);
             glScissor(w2, 0, m_width - w2, m_height);
             const_cast<Camera*>(camRight)->onResize(m_width - w2, m_height);
-            drawPassGeometry(scene, passType, *camRight);
+            drawPassGeometry(scene, passType, *camRight, 1);
         }
         glDisable(GL_SCISSOR_TEST);
     }
 }
 
-void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Camera& camera) {
+void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Camera& camera, int viewportIdx) {
     if (passType == 0) {
         // Contour pass
-        if (scene.getSelected()) {
+        if (scene.getSelected() && scene.getSelected()->isVisible(viewportIdx)) {
             drawMeshFlatColor(scene.getSelected(), scene, camera, glm::vec4(1.0f));
         }
     } else if (passType == 3) {
@@ -1513,7 +1513,7 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
     } else if (passType == 1) {
         // Opaque meshes (alpha == 1.0)
         for (auto* mesh : scene.getMeshes()) {
-            if (mesh->alpha == 1.0f) {
+            if (mesh->isVisible(viewportIdx) && mesh->alpha == 1.0f) {
                 drawMeshSolid(mesh, scene, camera);
                 if (mesh->showWireframe) {
                     drawWireframe(mesh, scene, camera);
@@ -1523,7 +1523,7 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
     } else if (passType == 2) {
         // Transparent meshes (alpha < 1.0)
         for (auto* mesh : scene.getMeshes()) {
-            if (mesh->alpha < 1.0f) {
+            if (mesh->isVisible(viewportIdx) && mesh->alpha < 1.0f) {
                 drawMeshSolid(mesh, scene, camera);
                 if (mesh->showWireframe) {
                     drawWireframe(mesh, scene, camera);

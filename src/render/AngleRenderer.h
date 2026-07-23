@@ -183,7 +183,7 @@ private:
     void initMatcaps();
 
     void renderScenePass(const Scene& scene, int passType);
-    void drawPassGeometry(const Scene& scene, int passType, const Camera& camera);
+    void drawPassGeometry(const Scene& scene, int passType, const Camera& camera, int viewportIdx);
 
     int m_width = 0;
     int m_height = 0;

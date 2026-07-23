@@ -610,26 +610,222 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     // 4. Scene outliner
     if (m_showScenePanel) {
         ImGui::SetNextWindowPos({450, 40}, ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize({280, 300}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize({320, 450}, ImGuiCond_FirstUseEver);
         ImGui::Begin("Scene Outliner", &m_showScenePanel);
+
+        // Primitive Spawning Tools
+        ImGui::TextDisabled("PRIMITIVES");
+        static bool spawnAtMask = false;
+        static bool spawnMirror = false;
+        ImGui::Checkbox("At Masked BBox", &spawnAtMask);
+        ImGui::SameLine();
+        ImGui::Checkbox("Mirror Symmetry", &spawnMirror);
+
+        if (ImGui::Button("Sphere##Add", ImVec2(65, 0))) {
+            if (spawnAtMask) {
+                scene.addPrimitiveAtMask("sphere", spawnMirror, sculpt.getSymAxis());
+            } else {
+                scene.addSphere();
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cube##Add", ImVec2(60, 0))) {
+            if (spawnAtMask) {
+                scene.addPrimitiveAtMask("cube", spawnMirror, sculpt.getSymAxis());
+            } else {
+                scene.addCube();
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cylinder##Add", ImVec2(75, 0))) {
+            if (spawnAtMask) {
+                scene.addPrimitiveAtMask("cylinder", spawnMirror, sculpt.getSymAxis());
+            } else {
+                scene.addCylinder();
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Torus##Add", ImVec2(60, 0))) {
+            if (spawnAtMask) {
+                scene.addPrimitiveAtMask("torus", spawnMirror, sculpt.getSymAxis());
+            } else {
+                scene.addTorus();
+            }
+        }
+
+        ImGui::Separator();
 
         const auto& meshes = scene.getMeshes();
         int selected = scene.getSelectedIdx();
-        
+
         ImGui::Text("Meshes in scene: %d", (int)meshes.size());
-        ImGui::BeginChild("MeshList", ImVec2(0, 150), true);
-        for (int i = 0; i < (int)meshes.size(); i++) {
-            std::string name = "Mesh " + std::to_string(i + 1) + " (" + std::to_string(meshes[i]->nbVerts) + " verts)";
-            if (ImGui::Selectable(name.c_str(), selected == i)) {
-                scene.setSelectedIdx(i);
+
+        static int renameTargetId = -1;
+        static char renameBuf[128] = "";
+
+        ImGui::BeginChild("MeshList", ImVec2(0, 180), true);
+        if (ImGui::BeginTable("MeshListTable", 5, ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV)) {
+            ImGui::TableSetupColumn("Act", ImGuiTableColumnFlags_WidthFixed, 30.0f);
+            ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Verts", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+            ImGui::TableSetupColumn("V1", ImGuiTableColumnFlags_WidthFixed, 30.0f);
+            ImGui::TableSetupColumn("V2", ImGuiTableColumnFlags_WidthFixed, 30.0f);
+            ImGui::TableHeadersRow();
+
+            for (int i = 0; i < (int)meshes.size(); i++) {
+                Mesh* mesh = meshes[i];
+                ImGui::TableNextRow();
+
+                // Column 0: Act (Active checkbox)
+                ImGui::TableNextColumn();
+                ImGui::PushID(mesh->getID() * 10 + 3);
+                bool isActive = (scene.getSelected() == mesh);
+                if (ImGui::Checkbox("##Active", &isActive)) {
+                    if (isActive) {
+                        scene.setOrUnsetMesh(mesh, false);
+                    } else {
+                        scene.setOrUnsetMesh(nullptr, false);
+                    }
+                }
+                ImGui::PopID();
+
+                // Column 1: Name (Selectable / Renaming input)
+                ImGui::TableNextColumn();
+                ImGui::PushID(mesh->getID());
+
+                bool isSelected = scene.isMeshSelected(mesh);
+                if (renameTargetId == (int)mesh->getID()) {
+                    ImGui::SetNextItemWidth(-FLT_MIN);
+                    if (ImGui::InputText("##RenameInput", renameBuf, sizeof(renameBuf), ImGuiInputTextFlags_EnterReturnsTrue)) {
+                        mesh->outlinerName = renameBuf;
+                        renameTargetId = -1;
+                    }
+                    if (ImGui::IsItemDeactivated() && !ImGui::IsItemDeactivatedAfterEdit()) {
+                        mesh->outlinerName = renameBuf;
+                        renameTargetId = -1;
+                    }
+                } else {
+                    std::string displayName = mesh->outlinerName;
+                    if (displayName.empty()) {
+                        displayName = "Mesh " + std::to_string(i + 1);
+                    }
+                    if (ImGui::Selectable(displayName.c_str(), isSelected)) {
+                        bool ctrl = ImGui::GetIO().KeyCtrl;
+                        bool shift = ImGui::GetIO().KeyShift;
+                        if (ctrl) {
+                            scene.setOrUnsetMesh(mesh, true);
+                        } else if (shift && selected != -1) {
+                            int currentIdx = i;
+                            int start = std::min(selected, currentIdx);
+                            int end = std::max(selected, currentIdx);
+                            scene.setOrUnsetMesh(nullptr, false);
+                            for (int j = start; j <= end; ++j) {
+                                scene.setOrUnsetMesh(meshes[j], true);
+                            }
+                        } else {
+                            scene.setOrUnsetMesh(mesh, false);
+                        }
+                    }
+                    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+                        renameTargetId = (int)mesh->getID();
+                        strncpy(renameBuf, mesh->outlinerName.c_str(), sizeof(renameBuf));
+                    }
+                }
+                ImGui::PopID();
+
+                // Column 2: Verts Count
+                ImGui::TableNextColumn();
+                ImGui::Text("%s", formatCount(mesh->nbVerts).c_str());
+
+                // Column 3: V1 Toggle
+                ImGui::TableNextColumn();
+                ImGui::PushID(mesh->getID() * 10 + 1);
+                bool v1 = mesh->visibleV1;
+                if (ImGui::Checkbox("##V1", &v1)) {
+                    mesh->visibleV1 = v1;
+                }
+                ImGui::PopID();
+
+                // Column 4: V2 Toggle
+                ImGui::TableNextColumn();
+                ImGui::PushID(mesh->getID() * 10 + 2);
+                bool v2 = mesh->visibleV2;
+                if (ImGui::Checkbox("##V2", &v2)) {
+                    mesh->visibleV2 = v2;
+                }
+                ImGui::PopID();
             }
+            ImGui::EndTable();
         }
         ImGui::EndChild();
 
-        if (ImGui::Button("Delete Mesh", ImVec2(-1, 0))) {
-            if (selected >= 0 && selected < (int)meshes.size()) {
-                scene.removeMesh(meshes[selected]);
+        // Selection Actions
+        bool canMerge = scene.getSelectedMeshes().size() >= 2;
+        bool hasSelection = !scene.getSelectedMeshes().empty();
+
+        if (ImGui::Button("Duplicate", ImVec2(80, 0))) {
+            scene.duplicateSelection();
+        }
+        ImGui::SameLine();
+        if (!canMerge) ImGui::BeginDisabled();
+        if (ImGui::Button("Merge", ImVec2(60, 0))) {
+            scene.mergeSelection();
+        }
+        if (!canMerge) ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (!hasSelection) ImGui::BeginDisabled();
+        if (ImGui::Button("Delete", ImVec2(60, 0))) {
+            std::vector<Mesh*> toDel = scene.getSelectedMeshes();
+            for (Mesh* m : toDel) {
+                scene.removeMesh(m);
             }
+        }
+        if (!hasSelection) ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Clear All", ImVec2(-1, 0))) {
+            scene.clearScene();
+        }
+
+        // Measurement & Divider Tools Section
+        ImGui::Separator();
+        ImGui::TextDisabled("MEASURE & DIVIDER TOOLS");
+        
+        bool isMeasureActive = (sculpt.getBrush() == BRUSH_MEASURE);
+        bool isDividerActive = (sculpt.getBrush() == BRUSH_DIVIDER);
+
+        ImVec4 tealActive = ImVec4(0.01f, 0.52f, 0.45f, 1.00f);
+
+        if (isMeasureActive) ImGui::PushStyleColor(ImGuiCol_Button, tealActive);
+        if (ImGui::Button("Measure Tool", ImVec2(100, 0))) {
+            sculpt.setTool(BRUSH_MEASURE);
+        }
+        if (isMeasureActive) ImGui::PopStyleColor();
+
+        ImGui::SameLine();
+
+        if (isDividerActive) ImGui::PushStyleColor(ImGuiCol_Button, tealActive);
+        if (ImGui::Button("Divider Tool", ImVec2(100, 0))) {
+            sculpt.setTool(BRUSH_DIVIDER);
+        }
+        if (isDividerActive) ImGui::PopStyleColor();
+
+        ImGui::SameLine();
+        if (ImGui::Button("Clear Tools", ImVec2(-1, 0))) {
+            sculpt.clearMeasurements();
+        }
+
+        if (isMeasureActive) {
+            bool useDist = sculpt.getMeasureUseDistanceThickness();
+            if (ImGui::Checkbox("Use Distance Thickness", &useDist)) {
+                sculpt.setMeasureUseDistanceThickness(useDist);
+            }
+            ImGui::Text("Active measure segments: %d", (int)sculpt.getMeasureSegments().size());
+        } else if (isDividerActive) {
+            int divs = sculpt.getDividerDivisions();
+            if (ImGui::SliderInt("Divisions", &divs, 2, 6)) {
+                sculpt.setDividerDivisions(divs);
+            }
+            ImGui::Text("Active divider segments: %d", (int)sculpt.getDividerSegments().size());
         }
 
         ImGui::End();

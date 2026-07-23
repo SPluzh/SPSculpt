@@ -2,6 +2,7 @@
 #include <vector>
 #include <cstdint>
 #include <cstring>
+#include <string>
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include "mesh/Octree.h"
@@ -49,7 +50,15 @@ public:
     std::vector<uint32_t> facesTexCoord;  // nbFaces * 4
     bool hasUV = false;
 
-    Mesh() = default;
+    uint32_t m_id = 0;
+    std::string outlinerName = "";
+    uint32_t getID() const { return m_id; }
+
+    Mesh() {
+        static uint32_t s_idCounter = 0;
+        m_id = ++s_idCounter;
+        outlinerName = "Mesh " + std::to_string(m_id);
+    }
     ~Mesh() = default;
 
     // Initialization from JS-managed arrays

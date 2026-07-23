@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.3]
+- **Fix**: Resolved viewport visibility toggles (V1/V2) not correctly updating mesh rendering by routing the viewport index to the geometry drawing pass and filtering out hidden meshes.
+- **Fix**: Prevented brush cursor projection and sculpting raycasts on hidden meshes in the active viewport.
+- **UI**: Added a dedicated "Act" checkbox column to indicate and control the active mesh in the Scene Outliner, removing full-row selection highlighting.
+- **UI**: Redesigned the Scene Outliner panel with a comprehensive, professional table layout displaying each mesh's name, vertex count, and dual-viewport visibility toggles (V1 and V2) with interactive checkboxes.
+- **UI**: Added interactive inline renaming for meshes directly in the Scene Outliner by double-clicking on any mesh name.
+- **UI**: Added range selection support (holding Shift) and toggle selection support (holding Ctrl) to select multiple meshes simultaneously in the Outliner.
+- **UI**: Integrated quick-action buttons in the Scene Outliner to duplicate selection, merge multiple selected meshes into a single object, delete selected meshes, or clear the entire scene.
+- **UI**: Added primitive spawning options to create Spheres, Cubes, Cylinders, and Toruses with toggles to place them at the masked bounding box coordinates of the active mesh or spawn them symmetrically across the selected mirror axis.
+- **UI**: Exposes dedicated selection buttons for the Measure and Divider tools in the Outliner, along with sliders and check-boxes for active tool parameters and a button to clear all measurements.
+
 ## [1.2.2]
 - **UI**: Added a Curvature control slider, Wet Clay rendering sliders (Wetness, Bump Strength, Noise Scale, Subsurface Scattering Intensity and Color), and a Filmic Tonemapping checkbox to the Rendering Quality panel.
 - **UI**: Added path inputs and buttons to import custom UV textures and custom Matcap images from local files in the Rendering Quality panel.
