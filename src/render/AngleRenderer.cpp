@@ -2300,9 +2300,15 @@ void AngleRenderer::drawFullscreenViewport2D(const Scene& scene) {
     glm::vec2 invSize(1.0f / m_width, 1.0f / m_height);
     glUniform2fv(glGetUniformLocation(m_viewport2DProgram, "uInvSize"), 1, &invSize[0]);
 
-    float offset[2] = { scene.getCamera().getView2DOffsetX(), scene.getCamera().getView2DOffsetY() };
+    float offset[2] = { 0.0f, 0.0f };
+    float zoom = 1.0f;
+    if (scene.getCamera().getRef2DMode()) {
+        offset[0] = scene.getCamera().getView2DOffsetX();
+        offset[1] = scene.getCamera().getView2DOffsetY();
+        zoom = scene.getCamera().getView2DZoom();
+    }
     glUniform2fv(glGetUniformLocation(m_viewport2DProgram, "uView2DOffset"), 1, offset);
-    glUniform1f(glGetUniformLocation(m_viewport2DProgram, "uView2DZoom"), scene.getCamera().getView2DZoom());
+    glUniform1f(glGetUniformLocation(m_viewport2DProgram, "uView2DZoom"), zoom);
 
     glBindVertexArray(m_fsqVao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
