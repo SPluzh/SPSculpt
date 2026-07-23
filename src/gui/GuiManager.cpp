@@ -594,7 +594,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         }
 
         bool usePivot = camera.getUsePivot();
-        if (ImGui::Checkbox("Use Pivot", &usePivot)) {
+        if (ImGui::Checkbox("Picking pivot", &usePivot)) {
             camera.setUsePivot(usePivot);
         }
 
@@ -1701,6 +1701,56 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     dotColorU32 = ImGui::ColorConvertFloat4ToU32(ImVec4(darkColor.r, darkColor.g, darkColor.b, 1.0f));
                 }
                 ImGui::GetForegroundDrawList()->AddConvexPolyFilled(symPoints.data(), dotSegments, dotColorU32);
+            }
+        }
+    }
+
+    // Draw Camera Pivot Point if enabled and actively orbiting
+    const Camera& camera = scene.getCamera();
+    bool isOrbiting = (sculpt.getCameraController().getDragMode() == CameraController::DragMode::Orbit);
+    if (camera.getUsePivot() && isOrbiting) {
+        ImDrawList* drawList = ImGui::GetForegroundDrawList();
+        glm::vec3 pivotWorld = camera.getPivot();
+        
+        ImU32 pivotColor = IM_COL32(230, 50, 50, 240);
+        
+        auto drawPivotMarker = [&](ImVec2 p) {
+            if (isPointOverImGuiWindow(p)) return;
+
+            // Draw center dot
+            drawList->AddCircleFilled(p, 2.0f, pivotColor);
+            // Draw outer ring
+            drawList->AddCircle(p, 6.0f, pivotColor, 0, 1.0f);
+            // Draw crosshair ticks
+            drawList->AddLine(ImVec2(p.x - 10.0f, p.y), ImVec2(p.x - 6.0f, p.y), pivotColor, 1.0f);
+            drawList->AddLine(ImVec2(p.x + 6.0f, p.y), ImVec2(p.x + 10.0f, p.y), pivotColor, 1.0f);
+            drawList->AddLine(ImVec2(p.x, p.y - 10.0f), ImVec2(p.x, p.y - 6.0f), pivotColor, 1.0f);
+            drawList->AddLine(ImVec2(p.x, p.y + 6.0f), ImVec2(p.x, p.y + 10.0f), pivotColor, 1.0f);
+        };
+
+        if (!renderer.getSplitMode()) {
+            glm::vec3 screenPos = camera.project(pivotWorld);
+            if (screenPos.z >= 0.0f && screenPos.z <= 1.0f) {
+                drawPivotMarker(ImVec2(screenPos.x, screenPos.y));
+            }
+        } else {
+            // Left viewport
+            glm::vec3 screenPosLeft = camera.project(pivotWorld);
+            if (screenPosLeft.z >= 0.0f && screenPosLeft.z <= 1.0f) {
+                float sx = screenPosLeft.x * 0.5f;
+                drawPivotMarker(ImVec2(sx, screenPosLeft.y));
+            }
+
+            // Right viewport
+            auto cameraRight = renderer.getCameraRight();
+            if (cameraRight && cameraRight->getUsePivot()) {
+                glm::vec3 pivotWorldRight = cameraRight->getPivot();
+                glm::vec3 screenPosRight = cameraRight->project(pivotWorldRight);
+                if (screenPosRight.z >= 0.0f && screenPosRight.z <= 1.0f) {
+                    float w2 = ImGui::GetIO().DisplaySize.x * 0.5f;
+                    float sx = screenPosRight.x + w2;
+                    drawPivotMarker(ImVec2(sx, screenPosRight.y));
+                }
             }
         }
     }

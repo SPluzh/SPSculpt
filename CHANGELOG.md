@@ -3,6 +3,9 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.1]
+- **Camera**: Ported the legacy "Picking pivot" camera rotation feature. When starting a viewport rotate/orbit drag with "Picking pivot" enabled, the camera performs a raycast intersection check against scene meshes and centers its rotation pivot directly on the surface intersection point.
+- **UI**: Renamed the "Use Pivot" camera setting checkbox to "Picking pivot" to align with the legacy JavaScript design.
+- **UI**: Implemented a visual pivot point indicator at the camera's pivot coordinates (red ring, center dot, and crosshair ticks) using the ImGui foreground draw list. The marker is gated by the "Picking pivot" state, is visible only when the camera is actively orbiting (disappearing immediately when the right mouse button/orbit drag is released), and is automatically hidden when occluded by active ImGui panels or when split-screen viewports require offset projection.
 - **Symmetry**: Implemented highly-optimized CPU-based raycasting check using the mesh's octree traversal and Möller-Trumbore ray-triangle intersections. Symmetry cursor dots are dynamically dimmed/darkened to 0.3x opacity when hidden behind the mesh geometry, fully supporting both the vector-based Smooth Cursor (drawn in ImGui) and the standard OpenGL shader cursor.
 - **Symmetry**: Extracted brush logic switch into `doStrokePass` and implemented double-pass brush execution (primary coordinate and mirrored coordinate across the selected axis) inside `executeStroke`, resolving issues with broken symmetry for all brush types (including drag-based brushes).
 - **Symmetry**: Modified stroke frame throttling to cache the last valid raycast intersection, preventing the sculpting cursor from flickering and snapping back to screen-space coordinates during active strokes.

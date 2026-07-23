@@ -1018,7 +1018,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
         // Middle button and Right button are always camera controls
         if (event.button.button == SDL_BUTTON_MIDDLE || event.button.button == SDL_BUTTON_RIGHT) {
-            m_cameraController.handleEvent(event, camera);
+            m_cameraController.handleEvent(event, camera, scene.getMeshes());
             return;
         }
 
@@ -1028,7 +1028,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
             if (m_currentBrush == BRUSH_MEASURE || m_currentBrush == BRUSH_DIVIDER) {
                 if (mod & KMOD_ALT) {
-                    m_cameraController.handleEvent(event, camera);
+                    m_cameraController.handleEvent(event, camera, scene.getMeshes());
                     return;
                 }
 
@@ -1076,7 +1076,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
             if (m_currentBrush == BRUSH_TRANSFORM) {
                 if (mod & KMOD_ALT) {
-                    m_cameraController.handleEvent(event, camera);
+                    m_cameraController.handleEvent(event, camera, scene.getMeshes());
                     return;
                 }
                 return;
@@ -1096,7 +1096,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
             if (m_currentBrush == BRUSH_MASK_GRADIENT_BLUR && mesh) {
                 if (mod & KMOD_ALT) {
-                    m_cameraController.handleEvent(event, camera);
+                    m_cameraController.handleEvent(event, camera, scene.getMeshes());
                     return;
                 }
                 glm::vec2 mousePos((float)mouseX, (float)mouseY);
@@ -1288,7 +1288,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 executeStroke(scene, mesh, camera, (float)mouseX, (float)mouseY, currentPressure);
             } else {
                 if (mod & KMOD_ALT) {
-                    m_cameraController.startDrag(CameraController::DragMode::Orbit, mouseX, mouseY, camera);
+                    m_cameraController.startDrag(CameraController::DragMode::Orbit, mouseX, mouseY, camera, scene.getMeshes());
                 }
             }
         }
@@ -1348,7 +1348,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
         }
 
         if (m_currentBrush == BRUSH_TRANSFORM) {
-            m_cameraController.handleEvent(event, camera);
+            m_cameraController.handleEvent(event, camera, scene.getMeshes());
             return;
         }
 
@@ -1672,9 +1672,9 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 }
             }
         }
-        m_cameraController.handleEvent(event, camera);
+        m_cameraController.handleEvent(event, camera, scene.getMeshes());
     } else if (event.type == SDL_MOUSEWHEEL) {
-        m_cameraController.handleEvent(event, camera);
+        m_cameraController.handleEvent(event, camera, scene.getMeshes());
     } else if (event.type == SDL_MOUSEMOTION) {
         int mouseX = event.motion.x;
         int mouseY = event.motion.y;
@@ -1734,14 +1734,14 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             }
 
             if (m_cameraController.isDragging()) {
-                m_cameraController.handleEvent(event, camera);
+                m_cameraController.handleEvent(event, camera, scene.getMeshes());
             }
             return;
         }
 
         if (m_currentBrush == BRUSH_TRANSFORM) {
             if (m_cameraController.isDragging()) {
-                m_cameraController.handleEvent(event, camera);
+                m_cameraController.handleEvent(event, camera, scene.getMeshes());
             }
             return;
         }
@@ -1813,7 +1813,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
         }
 
         if (m_cameraController.isDragging()) {
-            m_cameraController.handleEvent(event, camera);
+            m_cameraController.handleEvent(event, camera, scene.getMeshes());
         } else if (m_isSculpting && mesh) {
             // Check stylus/tablet pressure
             float currentPressure = 1.0f;
