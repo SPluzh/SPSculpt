@@ -90,7 +90,7 @@ struct MeasurementSegment {
 
 class SculptManager {
 private:
-    BrushType m_currentBrush = BRUSH_FLATTEN;
+    BrushType m_currentBrush = BRUSH_MOVE;
     BrushSettings m_brushSettings[22];
 
     CameraController m_cameraController;
@@ -294,6 +294,10 @@ private:
     std::vector<float> m_blurredMasks;
     std::vector<uint32_t> m_gradActiveVerts;
 
+    // Grab/Move/Elastic brush cached vertices
+    std::vector<uint32_t> m_grabbedVertices;
+    std::vector<uint32_t> m_grabbedVerticesSym;
+
     // Measurement & Divider states
     std::vector<MeasurementSegment> m_measureSegments;
     std::vector<MeasurementSegment> m_dividerSegments;
@@ -322,7 +326,8 @@ private:
         const glm::vec3& cachedAreaNormal,
         const glm::vec3& cachedAreaCenter,
         float localRadius,
-        float intensity
+        float intensity,
+        float mouseX
     );
 };
 

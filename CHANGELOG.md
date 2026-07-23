@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.2]
+- **Brushes**: Fixed Move, Drag, and Elastic brush behavior to match the legacy JavaScript project:
+  - Vertices are now deformed relative to their initial (proxy) positions at the start of the stroke, rather than accumulating displacement cumulatively across stroke frames.
+  - Implemented the `vertexOnLine` mouse ray projection algorithm in C++ to compute drag directions stably relative to the initial intersection coordinates instead of relying on shifting dynamic raycast hits.
+  - Locked the grabbed vertex group (`pickedVertices`) on the first frame of the stroke for these grab-based brushes, preventing new vertices from being picked and old ones dropped as the mouse moves.
+  - Scaled the calculated drag direction by the brush's `intensity` parameter.
+  - Properly initialized and mirrored the start coordinates for the symmetry pass (`m_initialSymIntersection`), ensuring symmetrical strokes work correctly.
+
 ## [1.2.1]
 - **UI**: Fixed a bug where the inner ring of the brush cursor did not scale dynamically when the "Focal Shift" parameter was adjusted.
 - **Brushes**: Fixed a bug where the clay and flatten brushes did not update their plane normals and centers dynamically per-frame, causing them to flatten geometry incorrectly relative to the starting point of the stroke.

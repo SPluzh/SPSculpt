@@ -38,6 +38,14 @@ static bool rayTriangleIntersect(
     return t > EPSILON;
 }
 
+static glm::vec3 vertexOnLine(const glm::vec3& vertex, const glm::vec3& vNear, const glm::vec3& vFar) {
+    glm::vec3 ab = vFar - vNear;
+    float len2 = glm::dot(ab, ab);
+    if (len2 < 1e-12f) return vNear;
+    float dot = glm::dot(ab, vertex - vNear);
+    return vNear + ab * (dot / len2);
+}
+
 #include <fstream>
 #include <sstream>
 #include <unordered_map>
@@ -252,7 +260,8 @@ int SculptManager::doStrokePass(
     const glm::vec3& cachedAreaNormal,
     const glm::vec3& cachedAreaCenter,
     float localRadius,
-    float intensity
+    float intensity,
+    float mouseX
 ) {
     int deformedCount = 0;
 
@@ -388,7 +397,15 @@ int SculptManager::doStrokePass(
             break;
         }
         case BRUSH_MOVE: {
-            glm::vec3 dragDirection = currentIntersection - initialIntersection;
+            glm::vec3 dragDirection;
+            if (negative) {
+                float len = glm::distance(currentIntersection, initialIntersection);
+                glm::vec3 norm = (glm::length(currentIntersectionNormal) > 1e-6f) ? glm::normalize(currentIntersectionNormal) : glm::vec3(0.0f, 1.0f, 0.0f);
+                float sign = (mouseX < (float)m_mouseDownX) ? 1.0f : -1.0f;
+                dragDirection = norm * (len * sign * intensity);
+            } else {
+                dragDirection = (currentIntersection - initialIntersection) * intensity;
+            }
             deformedCount = strokeMove(
                 mesh->verts.data(),
                 mesh->vertProxy.data(),
@@ -405,7 +422,15 @@ int SculptManager::doStrokePass(
             break;
         }
         case BRUSH_DRAG: {
-            glm::vec3 dragDirection = currentIntersection - initialIntersection;
+            glm::vec3 dragDirection;
+            if (negative) {
+                float len = glm::distance(currentIntersection, initialIntersection);
+                glm::vec3 norm = (glm::length(currentIntersectionNormal) > 1e-6f) ? glm::normalize(currentIntersectionNormal) : glm::vec3(0.0f, 1.0f, 0.0f);
+                float sign = (mouseX < (float)m_mouseDownX) ? 1.0f : -1.0f;
+                dragDirection = norm * (len * sign * intensity);
+            } else {
+                dragDirection = (currentIntersection - initialIntersection) * intensity;
+            }
             deformedCount = strokeDrag(
                 mesh->verts.data(),
                 mesh->materials.data(),
@@ -421,7 +446,15 @@ int SculptManager::doStrokePass(
             break;
         }
         case BRUSH_ELASTIC: {
-            glm::vec3 dragDirection = currentIntersection - initialIntersection;
+            glm::vec3 dragDirection;
+            if (negative) {
+                float len = glm::distance(currentIntersection, initialIntersection);
+                glm::vec3 norm = (glm::length(currentIntersectionNormal) > 1e-6f) ? glm::normalize(currentIntersectionNormal) : glm::vec3(0.0f, 1.0f, 0.0f);
+                float sign = (mouseX < (float)m_mouseDownX) ? 1.0f : -1.0f;
+                dragDirection = norm * (len * sign * intensity);
+            } else {
+                dragDirection = (currentIntersection - initialIntersection) * intensity;
+            }
             deformedCount = strokeElastic(
                 mesh->verts.data(),
                 mesh->vertProxy.data(),
@@ -728,65 +761,87 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     glm::vec3 localRayOrigin = glm::vec3(invMatrix * glm::vec4(ray.origin, 1.0f));
     glm::vec3 localRayDir = glm::normalize(glm::vec3(invMatrix * glm::vec4(ray.dir, 0.0f)));
 
-    std::vector<uint32_t> candidateFaces = mesh->octree.collectIntersectRay(
-        localRayOrigin.x, localRayOrigin.y, localRayOrigin.z,
-        localRayDir.x, localRayDir.y, localRayDir.z
-    );
+    BrushType activeBrush = m_currentBrush;
+    if (SDL_GetModState() & KMOD_SHIFT) {
+        activeBrush = BRUSH_SMOOTH;
+    } else if (SDL_GetModState() & KMOD_CTRL) {
+        activeBrush = BRUSH_MASK;
+    }
 
-    float minT = std::numeric_limits<float>::infinity();
+    bool isGrabBrush = (activeBrush == BRUSH_MOVE || activeBrush == BRUSH_DRAG || activeBrush == BRUSH_ELASTIC);
+
     uint32_t intersectFaceId = 0xffffffff;
 
-    for (uint32_t faceId : candidateFaces) {
-        if (faceId >= (uint32_t)mesh->nbFaces) continue;
-        uint32_t v0Id = mesh->faces[faceId * 4];
-        uint32_t v1Id = mesh->faces[faceId * 4 + 1];
-        uint32_t v2Id = mesh->faces[faceId * 4 + 2];
-        uint32_t v3Id = mesh->faces[faceId * 4 + 3];
+    if (isGrabBrush && !m_firstStrokeFrame) {
+        // Bypass raycast for grab brushes on subsequent frames
+        glm::vec3 rayNear = localRayOrigin;
+        glm::vec3 rayFar = localRayOrigin + localRayDir;
+        glm::vec3 dragDir = vertexOnLine(m_initialIntersection, rayNear, rayFar) - m_initialIntersection;
+        m_currentIntersection = m_initialIntersection + dragDir;
+        m_currentIntersectionValid = true;
 
-        if (!mesh->vertVisible[v0Id] || !mesh->vertVisible[v1Id] || !mesh->vertVisible[v2Id] || (v3Id != 0xffffffff && !mesh->vertVisible[v3Id])) {
-            continue;
-        }
+        m_lastValidIntersection = m_currentIntersection;
+        m_hasAnyValidIntersection = true;
+    } else {
+        std::vector<uint32_t> candidateFaces = mesh->octree.collectIntersectRay(
+            localRayOrigin.x, localRayOrigin.y, localRayOrigin.z,
+            localRayDir.x, localRayDir.y, localRayDir.z
+        );
 
-        glm::vec3 v0(mesh->verts[v0Id * 3], mesh->verts[v0Id * 3 + 1], mesh->verts[v0Id * 3 + 2]);
-        glm::vec3 v1(mesh->verts[v1Id * 3], mesh->verts[v1Id * 3 + 1], mesh->verts[v1Id * 3 + 2]);
-        glm::vec3 v2(mesh->verts[v2Id * 3], mesh->verts[v2Id * 3 + 1], mesh->verts[v2Id * 3 + 2]);
+        float minT = std::numeric_limits<float>::infinity();
 
-        float t;
-        if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v1, v2, t)) {
-            if (t < minT) {
-                minT = t;
-                intersectFaceId = faceId;
+        for (uint32_t faceId : candidateFaces) {
+            if (faceId >= (uint32_t)mesh->nbFaces) continue;
+            uint32_t v0Id = mesh->faces[faceId * 4];
+            uint32_t v1Id = mesh->faces[faceId * 4 + 1];
+            uint32_t v2Id = mesh->faces[faceId * 4 + 2];
+            uint32_t v3Id = mesh->faces[faceId * 4 + 3];
+
+            if (!mesh->vertVisible[v0Id] || !mesh->vertVisible[v1Id] || !mesh->vertVisible[v2Id] || (v3Id != 0xffffffff && !mesh->vertVisible[v3Id])) {
+                continue;
             }
-        }
 
-        if (v3Id != 0xffffffff) {
-            glm::vec3 v3(mesh->verts[v3Id * 3], mesh->verts[v3Id * 3 + 1], mesh->verts[v3Id * 3 + 2]);
-            if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v2, v3, t)) {
+            glm::vec3 v0(mesh->verts[v0Id * 3], mesh->verts[v0Id * 3 + 1], mesh->verts[v0Id * 3 + 2]);
+            glm::vec3 v1(mesh->verts[v1Id * 3], mesh->verts[v1Id * 3 + 1], mesh->verts[v1Id * 3 + 2]);
+            glm::vec3 v2(mesh->verts[v2Id * 3], mesh->verts[v2Id * 3 + 1], mesh->verts[v2Id * 3 + 2]);
+
+            float t;
+            if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v1, v2, t)) {
                 if (t < minT) {
                     minT = t;
                     intersectFaceId = faceId;
                 }
             }
+
+            if (v3Id != 0xffffffff) {
+                glm::vec3 v3(mesh->verts[v3Id * 3], mesh->verts[v3Id * 3 + 1], mesh->verts[v3Id * 3 + 2]);
+                if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v2, v3, t)) {
+                    if (t < minT) {
+                        minT = t;
+                        intersectFaceId = faceId;
+                    }
+                }
+            }
         }
+
+        if (intersectFaceId == 0xffffffff) {
+            m_currentIntersectionValid = false;
+            return;
+        }
+
+        m_currentIntersectionValid = true;
+        m_currentIntersection = localRayOrigin + minT * localRayDir;
+        m_currentIntersectionNormal = glm::vec3(
+            mesh->faceNormals[intersectFaceId * 3],
+            mesh->faceNormals[intersectFaceId * 3 + 1],
+            mesh->faceNormals[intersectFaceId * 3 + 2]
+        );
+
+        // Save last valid intersection to prevent cursor jitter (Step 1b)
+        m_lastValidIntersection = m_currentIntersection;
+        m_lastValidIntersectionNormal = m_currentIntersectionNormal;
+        m_hasAnyValidIntersection = true;
     }
-
-    if (intersectFaceId == 0xffffffff) {
-        m_currentIntersectionValid = false;
-        return;
-    }
-
-    m_currentIntersectionValid = true;
-    m_currentIntersection = localRayOrigin + minT * localRayDir;
-    m_currentIntersectionNormal = glm::vec3(
-        mesh->faceNormals[intersectFaceId * 3],
-        mesh->faceNormals[intersectFaceId * 3 + 1],
-        mesh->faceNormals[intersectFaceId * 3 + 2]
-    );
-
-    // Save last valid intersection to prevent cursor jitter (Step 1b)
-    m_lastValidIntersection = m_currentIntersection;
-    m_lastValidIntersectionNormal = m_currentIntersectionNormal;
-    m_hasAnyValidIntersection = true;
 
     glm::vec3 cameraPos = camera.computePosition();
     glm::vec3 worldIntersection = glm::vec3(mesh->matrix * glm::vec4(m_currentIntersection, 1.0f));
@@ -816,26 +871,27 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     float radius2 = localRadius * localRadius;
 
     std::vector<uint32_t> pickedVertices;
-    if (getCurrentSettings().topoCheck) {
-        pickedVertices = pickVerticesInSphereTopological(mesh, m_currentIntersection, radius2, intersectFaceId);
+    if (isGrabBrush && !m_firstStrokeFrame) {
+        pickedVertices = m_grabbedVertices;
     } else {
-        pickedVertices = mesh->octree.pickVerticesInSphere(
-            m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z, radius2, mesh->vertVisible.data()
-        );
-    }
+        if (getCurrentSettings().topoCheck) {
+            pickedVertices = pickVerticesInSphereTopological(mesh, m_currentIntersection, radius2, intersectFaceId);
+        } else {
+            pickedVertices = mesh->octree.pickVerticesInSphere(
+                m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z, radius2, mesh->vertVisible.data()
+            );
+        }
 
-    if (getCurrentSettings().culling) {
-        filterCullingVertices(pickedVertices, mesh, localRayDir);
+        if (getCurrentSettings().culling) {
+            filterCullingVertices(pickedVertices, mesh, localRayDir);
+        }
+
+        if (isGrabBrush) {
+            m_grabbedVertices = pickedVertices;
+        }
     }
 
     if (!pickedVertices.empty()) {
-        BrushType activeBrush = m_currentBrush;
-        if (SDL_GetModState() & KMOD_SHIFT) {
-            activeBrush = BRUSH_SMOOTH;
-        } else if (SDL_GetModState() & KMOD_CTRL) {
-            activeBrush = BRUSH_MASK;
-        }
-
         bool altPressed = (SDL_GetModState() & KMOD_ALT) != 0;
         bool negative = getCurrentSettings().negative ^ altPressed;
 
@@ -867,37 +923,60 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             m_cachedAreaNormal,
             m_cachedAreaCenter,
             localRadius,
-            intensity
+            intensity,
+            mouseX
         );
 
         // Symmetry pass (Step 2)
         if (m_useSym) {
-            // Reflect center of stroke in mesh's local space
-            glm::vec3 symCenter = m_currentIntersection;
-            glm::vec3 symNormal = m_currentIntersectionNormal;
-            if (m_symAxis == 0) {
-                symCenter.x = -symCenter.x;
-                symNormal.x = -symNormal.x;
-            } else if (m_symAxis == 1) {
-                symCenter.y = -symCenter.y;
-                symNormal.y = -symNormal.y;
-            } else if (m_symAxis == 2) {
-                symCenter.z = -symCenter.z;
-                symNormal.z = -symNormal.z;
-            }
+            glm::vec3 symCenter;
+            std::vector<uint32_t> symVerts;
 
-            // Gather symmetry vertices in local space
-            std::vector<uint32_t> symVerts = mesh->octree.pickVerticesInSphere(
-                symCenter.x, symCenter.y, symCenter.z,
-                radius2, mesh->vertVisible.data()
-            );
-
-            if (getCurrentSettings().culling && !symVerts.empty()) {
+            if (isGrabBrush && !m_firstStrokeFrame) {
+                // Calculate symmetry drag direction and center
+                glm::vec3 symRayOrigin = localRayOrigin;
                 glm::vec3 symRayDir = localRayDir;
-                if (m_symAxis == 0) symRayDir.x = -symRayDir.x;
-                else if (m_symAxis == 1) symRayDir.y = -symRayDir.y;
-                else if (m_symAxis == 2) symRayDir.z = -symRayDir.z;
-                filterCullingVertices(symVerts, mesh, symRayDir);
+                if (m_symAxis == 0) {
+                    symRayOrigin.x = -symRayOrigin.x;
+                    symRayDir.x = -symRayDir.x;
+                } else if (m_symAxis == 1) {
+                    symRayOrigin.y = -symRayOrigin.y;
+                    symRayDir.y = -symRayDir.y;
+                } else if (m_symAxis == 2) {
+                    symRayOrigin.z = -symRayOrigin.z;
+                    symRayDir.z = -symRayDir.z;
+                }
+                glm::vec3 symDragDir = vertexOnLine(m_initialSymIntersection, symRayOrigin, symRayOrigin + symRayDir) - m_initialSymIntersection;
+                symCenter = m_initialSymIntersection + symDragDir;
+                symVerts = m_grabbedVerticesSym;
+            } else {
+                // Reflect center of stroke in mesh's local space
+                symCenter = m_currentIntersection;
+                if (m_symAxis == 0) {
+                    symCenter.x = -symCenter.x;
+                } else if (m_symAxis == 1) {
+                    symCenter.y = -symCenter.y;
+                } else if (m_symAxis == 2) {
+                    symCenter.z = -symCenter.z;
+                }
+
+                // Gather symmetry vertices in local space
+                symVerts = mesh->octree.pickVerticesInSphere(
+                    symCenter.x, symCenter.y, symCenter.z,
+                    radius2, mesh->vertVisible.data()
+                );
+
+                if (getCurrentSettings().culling && !symVerts.empty()) {
+                    glm::vec3 symRayDir = localRayDir;
+                    if (m_symAxis == 0) symRayDir.x = -symRayDir.x;
+                    else if (m_symAxis == 1) symRayDir.y = -symRayDir.y;
+                    else if (m_symAxis == 2) symRayDir.z = -symRayDir.z;
+                    filterCullingVertices(symVerts, mesh, symRayDir);
+                }
+
+                if (isGrabBrush) {
+                    m_grabbedVerticesSym = symVerts;
+                }
             }
 
             if (!symVerts.empty()) {
@@ -915,6 +994,12 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                     symAreaCenter.z = -symAreaCenter.z;
                 }
 
+                // Mirror current intersection normal for symmetry pass
+                glm::vec3 symIntersectionNormal = m_currentIntersectionNormal;
+                if (m_symAxis == 0) symIntersectionNormal.x = -symIntersectionNormal.x;
+                else if (m_symAxis == 1) symIntersectionNormal.y = -symIntersectionNormal.y;
+                else if (m_symAxis == 2) symIntersectionNormal.z = -symIntersectionNormal.z;
+
                 doStrokePass(
                     scene,
                     mesh,
@@ -922,12 +1007,13 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                     negative,
                     symVerts,
                     symCenter,
-                    symNormal,
+                    symIntersectionNormal,
                     m_initialSymIntersection,
                     symAreaNormal,
                     symAreaCenter,
                     localRadius,
-                    intensity
+                    intensity,
+                    mouseX
                 );
             }
         }
@@ -1325,6 +1411,11 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 );
                 m_currentIntersection = m_initialIntersection;
                 m_currentIntersectionNormal = m_initialIntersectionNormal;
+
+                m_initialSymIntersection = m_initialIntersection;
+                if (m_symAxis == 0) m_initialSymIntersection.x = -m_initialSymIntersection.x;
+                else if (m_symAxis == 1) m_initialSymIntersection.y = -m_initialSymIntersection.y;
+                else if (m_symAxis == 2) m_initialSymIntersection.z = -m_initialSymIntersection.z;
 
                 m_lastStrokeX = mouseX;
                 m_lastStrokeY = mouseY;
