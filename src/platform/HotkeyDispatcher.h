@@ -73,6 +73,8 @@ public:
     // Update the modifier key stack (Shift/Ctrl/Alt)
     void updateModifiers(const SDL_Event& event, SculptManager& sculpt);
 
+    ModalMode getModalMode() const { return m_modalMode; }
+
 private:
     HKAction mapKeyToAction(const SDL_Keysym& keysym, bool ctrlPressed, bool altPressed, bool shiftPressed);
     bool executeAction(HKAction action, bool isDown, SculptManager& sculpt, Scene& scene, GuiManager& gui);

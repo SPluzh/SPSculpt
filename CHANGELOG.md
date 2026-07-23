@@ -3,6 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.3]
+- **UI**: Frozen brush cursor coordinates while modal hotkey adjustments are active, keeping the visual cursor circle projected stably on the mesh surface even as the mouse moves.
 - **UI**: Added a sleek, floating HUD popup card that displays real-time value and progress information directly under the cursor when adjusting brush settings (like Intensity, Focal Shift, and Radius) or scene parameters via keyboard hotkeys.
 - **Geometry**: Added a Geosphere (quad-sphere / cubed-sphere) primitive generator (constructed by subdividing a cube, projecting its vertices to a sphere of radius R, and merging boundary vertices for watertight topology) with quad polygons. Exposed it under both default scene loading and "At Masked BBox" spawning mechanisms.
 - **Fix**: Corrected the face winding order of the UV Sphere primitive (from clockwise to counter-clockwise), resolving the issue where sphere normals were inverted relative to other primitives.

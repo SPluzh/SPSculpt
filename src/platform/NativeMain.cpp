@@ -442,13 +442,15 @@ int main(int argc, char* argv[]) {
         }
 
         // Poll raw mouse position right before rendering to eliminate input lag
-        int rawMouseX, rawMouseY;
-        SDL_GetMouseState(&rawMouseX, &rawMouseY);
-        if (scene.getSplitMode() != Scene::SplitMode::OFF && scene.getActiveViewport() == 1) {
-            int halfW = width / 2;
-            sculpt.setRawMousePos(rawMouseX - halfW, rawMouseY);
-        } else {
-            sculpt.setRawMousePos(rawMouseX, rawMouseY);
+        if (dispatcher.getModalMode() == ModalMode::NONE) {
+            int rawMouseX, rawMouseY;
+            SDL_GetMouseState(&rawMouseX, &rawMouseY);
+            if (scene.getSplitMode() != Scene::SplitMode::OFF && scene.getActiveViewport() == 1) {
+                int halfW = width / 2;
+                sculpt.setRawMousePos(rawMouseX - halfW, rawMouseY);
+            } else {
+                sculpt.setRawMousePos(rawMouseX, rawMouseY);
+            }
         }
 
         if (gui.isRemeshRunning()) {
