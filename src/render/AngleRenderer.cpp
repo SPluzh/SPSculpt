@@ -106,11 +106,12 @@ GLuint AngleRenderer::linkProgram(GLuint vs, GLuint fs) {
 
 std::string AngleRenderer::loadShaderSource(const std::string& filename) {
     std::vector<std::string> searchPaths = {
-        "shaders/" + filename,
-        "../shaders/" + filename,
-        "../../shaders/" + filename,
+        "resources/shaders/" + filename,
+        "../resources/shaders/" + filename,
+        "../../resources/shaders/" + filename,
         "dist/resources/shaders/" + filename,
-        "../dist/resources/shaders/" + filename
+        "../dist/resources/shaders/" + filename,
+        "../../dist/resources/shaders/" + filename
     };
     std::string path;
     for (const auto& p : searchPaths) {
