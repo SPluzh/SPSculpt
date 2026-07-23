@@ -3,6 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.3]
+- **UI**: Refined Snap Cube (navigation gizmo) text labels to be rendered directly onto the cube faces, aligned to the 3D plane of the faces. Changed labels to mixed-case, scaled down the font, rotated the text vertices to match the face's orientation on screen, and added face-angle thresholds so labels are only shown when a face is mostly facing the camera. Prevented redundant camera snaps and view transitions when repeatedly clicking on Snap Cube faces, including during active transitions, by comparing clicks to target camera orientations.
 - **UI**: Frozen brush cursor coordinates while modal hotkey adjustments are active, keeping the visual cursor circle projected stably on the mesh surface even as the mouse moves.
 - **UI**: Added a sleek, floating HUD popup card that displays real-time value and progress information directly under the cursor when adjusting brush settings (like Intensity, Focal Shift, and Radius) or scene parameters via keyboard hotkeys.
 - **Geometry**: Added a Geosphere (quad-sphere / cubed-sphere) primitive generator (constructed by subdividing a cube, projecting its vertices to a sphere of radius R, and merging boundary vertices for watertight topology) with quad polygons. Exposed it under both default scene loading and "At Masked BBox" spawning mechanisms.

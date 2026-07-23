@@ -611,6 +611,32 @@ void Camera::toggleViewRight() {
     pushState();
 }
 
+void Camera::toggleViewAngles(float rx, float ry) {
+    CameraState targetState;
+    targetState.center = m_center;
+    targetState.offset = m_offset;
+    targetState.trans = m_trans;
+    targetState.rotX = rx;
+    targetState.rotY = ry;
+    targetState.quatRot = glm::angleAxis(rx, glm::vec3(1.0f, 0.0f, 0.0f)) *
+                          glm::angleAxis(ry, glm::vec3(0.0f, 1.0f, 0.0f));
+    targetState.fov = m_fov;
+    targetState.projectionType = CameraEnums::Projection::ORTHOGRAPHIC;
+    targetState.mode = m_mode;
+    targetState.usePivot = m_usePivot;
+    targetState.view2DOffsetX = m_view2DOffsetX;
+    targetState.view2DOffsetY = m_view2DOffsetY;
+    targetState.view2DZoom = m_view2DZoom;
+
+    if (glm::dot(m_quatRot, targetState.quatRot) < 0.0f) {
+        targetState.quatRot = -targetState.quatRot;
+    }
+
+    startTransition(targetState, 0.2f);
+    pushState();
+}
+
+
 void Camera::update(float deltaTime) {
     if (m_transitionActive) {
         m_transitionTime += deltaTime;

@@ -113,6 +113,11 @@ public:
     float getSpeedRoll() const { return m_speedRoll; }
 
     void setOrbitAngles(float rx, float ry);
+    float getRotX() const { return m_rotX; }
+    float getRotY() const { return m_rotY; }
+    float getTargetRotX() const { return m_transitionActive ? m_targetState.rotX : m_rotX; }
+    float getTargetRotY() const { return m_transitionActive ? m_targetState.rotY : m_rotY; }
+    void toggleViewAngles(float rx, float ry);
 
     int getWidth() const { return m_width; }
     int getHeight() const { return m_height; }
