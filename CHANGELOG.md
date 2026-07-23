@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [1.2.3]
 - **UI**: Resolved keyboard capturing issues that blocked hotkeys on startup or after interacting with ImGui panels until the viewport was clicked. Commented out keyboard navigation inside ImGui to allow global hotkeys to be evaluated immediately.
 - **UI**: Removed the spacebar hotkey mapping (which previously triggered camera reset) to prevent accidental camera snap triggers.
+- **Fix**: Resolved an issue where pressing the '4' hotkey did not activate the Transform tool by adding the missing mapping in the hotkey execution handler.
 - **Fix**: Prevented random crashes and freezes when interacting with the model immediately after remeshing.
 - **Fix**: Resolved a bug where the Ctrl modifier key would remain stuck in an active state after triggering Ctrl + X remeshing, causing the masking brush to remain stuck until switching brushes manually.
 - **Stability**: Added automatic safety checks to ensure visual model buffers match actual shape data before drawing, preventing visual glitches and crashes.

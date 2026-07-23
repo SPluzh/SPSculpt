@@ -228,6 +228,7 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
             case HKAction::ToolDamStandard: sculpt.setBrush(BRUSH_DAMSTANDARD); break;
             case HKAction::ToolPaint: sculpt.setBrush(BRUSH_PAINT); break;
             case HKAction::ToolTwist: sculpt.setBrush(BRUSH_TWIST); break;
+            case HKAction::ToolTransform: sculpt.setBrush(BRUSH_TRANSFORM); break;
             
             case HKAction::BrushNegative: sculpt.toggleNegative(); break;
             
