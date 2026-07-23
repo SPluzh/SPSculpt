@@ -1947,6 +1947,7 @@ void SculptManager::processFrame(Scene& scene) {
             activeBrush = BRUSH_MASK;
         }
 
+        const auto& activeSettings = getSettings(activeBrush);
         m_cursor.update(
             m_rawMouseX, m_rawMouseY,
             scene,
@@ -1957,7 +1958,9 @@ void SculptManager::processFrame(Scene& scene) {
             activeBrush,
             m_isSculpting ? m_hasAnyValidIntersection : m_currentIntersectionValid,
             m_isSculpting ? m_lastValidIntersection : m_currentIntersection,
-            m_isSculpting ? m_lastValidIntersectionNormal : m_currentIntersectionNormal
+            m_isSculpting ? m_lastValidIntersectionNormal : m_currentIntersectionNormal,
+            activeSettings.focalShift,
+            activeSettings.hardness
         );
     }
 }

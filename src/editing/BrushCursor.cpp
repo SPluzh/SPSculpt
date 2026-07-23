@@ -112,11 +112,21 @@ void BrushCursor::update(int mouseX, int mouseY,
                           BrushType brushType,
                           bool hasActiveStrokeHit,
                           const glm::vec3& activeStrokeHitPt,
-                          const glm::vec3& activeStrokeHitNormal) {
+                          const glm::vec3& activeStrokeHitNormal,
+                          float focalShift,
+                          float hardness) {
     if (brushType == BRUSH_VISIBILITY || brushType == BRUSH_MASK_GRADIENT_BLUR) {
         m_state.visible = false;
         return;
     }
+
+    float innerRatio = 0.5f;
+    if (brushType == BRUSH_MASK || brushType == BRUSH_PAINT) {
+        innerRatio = hardness;
+    } else {
+        innerRatio = (1.0f - focalShift) / 2.0f;
+    }
+    innerRatio = std::max(0.0f, std::min(1.0f, innerRatio));
     Mesh* mesh = scene.getSelected();
     const Camera& cameraLeft = scene.getCamera();
     const Camera* cameraRight = (scene.getSplitMode() != Scene::SplitMode::OFF) ? scene.getCameraByIndex(1) : nullptr;
@@ -255,7 +265,7 @@ void BrushCursor::update(int mouseX, int mouseY,
 #endif
 
         m_state.circleMVP = buildCircleMVP(worldPt, worldNormal, worldRadiusLeft, cameraLeft, tiltX, tiltY);
-        float innerWorldRadiusLeft = worldRadiusLeft * 0.5f;
+        float innerWorldRadiusLeft = worldRadiusLeft * innerRatio;
         m_state.innerCircleMVP = buildCircleMVP(worldPt, worldNormal, innerWorldRadiusLeft, cameraLeft, tiltX, tiltY);
 
         float pressureDotFactor = 1.0f;
@@ -314,7 +324,7 @@ void BrushCursor::update(int mouseX, int mouseY,
             }
 
             m_state.circleMVPRight = buildCircleMVP(worldPt, worldNormal, worldRadiusRight, *cameraRight, tiltX, tiltY);
-            float innerWorldRadiusRight = worldRadiusRight * 0.5f;
+            float innerWorldRadiusRight = worldRadiusRight * innerRatio;
             m_state.innerCircleMVPRight = buildCircleMVP(worldPt, worldNormal, innerWorldRadiusRight, *cameraRight, tiltX, tiltY);
 
             float constRadiusRight = 2.5f * (worldRadiusRight / brushRadius) * pressureDotFactor;
@@ -365,7 +375,7 @@ void BrushCursor::update(int mouseX, int mouseY,
         }
 #endif
         m_state.circleMVP = orthoProjLeft * glm::scale(transLeft, glm::vec3(brushRadius, brushRadius, 1.0f));
-        m_state.innerCircleMVP = orthoProjLeft * glm::scale(transLeft, glm::vec3(brushRadius * 0.5f, brushRadius * 0.5f, 1.0f));
+        m_state.innerCircleMVP = orthoProjLeft * glm::scale(transLeft, glm::vec3(brushRadius * innerRatio, brushRadius * innerRatio, 1.0f));
         m_state.dotMVP = orthoProjLeft * glm::scale(transLeft, glm::vec3(backgroundDotSize, backgroundDotSize, 1.0f));
         m_state.symMVPs.clear();
         m_state.symOccluded.clear();
@@ -379,7 +389,7 @@ void BrushCursor::update(int mouseX, int mouseY,
             transRight = glm::translate(transRight, glm::vec3(-wRight + (float)mouseX, hRight - (float)mouseY, 0.0f));
             
             m_state.circleMVPRight = orthoProjRight * glm::scale(transRight, glm::vec3(brushRadius, brushRadius, 1.0f));
-            m_state.innerCircleMVPRight = orthoProjRight * glm::scale(transRight, glm::vec3(brushRadius * 0.5f, brushRadius * 0.5f, 1.0f));
+            m_state.innerCircleMVPRight = orthoProjRight * glm::scale(transRight, glm::vec3(brushRadius * innerRatio, brushRadius * innerRatio, 1.0f));
             m_state.dotMVPRight = orthoProjRight * glm::scale(transRight, glm::vec3(backgroundDotSize, backgroundDotSize, 1.0f));
             m_state.symMVPsRight.clear();
             m_state.symOccludedRight.clear();
