@@ -70,6 +70,7 @@ public:
     bool isMeshSelected(Mesh* target) const;
 
     void addSphere();
+    void addGeosphere();
     void addCube();
     void addCylinder();
     void addTorus();

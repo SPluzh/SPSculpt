@@ -639,6 +639,14 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             }
         }
         ImGui::SameLine();
+        if (ImGui::Button("Geosphere##Add", ImVec2(90, 0))) {
+            if (spawnAtMask) {
+                scene.addPrimitiveAtMask("geosphere", spawnMirror, sculpt.getSymAxis());
+            } else {
+                scene.addGeosphere();
+            }
+        }
+        ImGui::SameLine();
         if (ImGui::Button("Cube##Add", ImVec2(60, 0))) {
             if (spawnAtMask) {
                 scene.addPrimitiveAtMask("cube", spawnMirror, sculpt.getSymAxis());

@@ -1,6 +1,8 @@
 #include "scene/Scene.h"
 #include <algorithm>
 #include <cstring>
+#include <map>
+#include <utility>
 #include <glm/gtc/matrix_transform.hpp>
 #include "files/MeshUtils.h"
 #include "common/Constants.h"
@@ -371,10 +373,99 @@ static void generateUVSphere(
             uint32_t v3 = (r + 1) * sectors + s;
 
             faces.push_back(v0);
-            faces.push_back(v1);
-            faces.push_back(v2);
             faces.push_back(v3);
+            faces.push_back(v2);
+            faces.push_back(v1);
         }
+    }
+}
+
+static void generateGeosphere(
+    float radius, int subdivision,
+    std::vector<float>& vertices,
+    std::vector<uint32_t>& faces,
+    std::vector<float>& colors,
+    std::vector<float>& normals
+) {
+    int sub = subdivision * 8;
+    if (sub < 1) sub = 1;
+
+    struct VecCompare {
+        bool operator()(const glm::vec3& a, const glm::vec3& b) const {
+            float eps = 1e-4f;
+            if (std::abs(a.x - b.x) > eps) return a.x < b.x;
+            if (std::abs(a.y - b.y) > eps) return a.y < b.y;
+            if (std::abs(a.z - b.z) > eps) return a.z < b.z;
+            return false;
+        }
+    };
+
+    std::map<glm::vec3, uint32_t, VecCompare> vertexMap;
+    std::vector<glm::vec3> uniqueVertices;
+
+    auto getUniqueVertex = [&](const glm::vec3& pos) {
+        glm::vec3 spherePos = glm::normalize(pos) * radius;
+        auto it = vertexMap.find(spherePos);
+        if (it != vertexMap.end()) {
+            return it->second;
+        }
+        uint32_t index = uniqueVertices.size();
+        uniqueVertices.push_back(spherePos);
+        vertexMap[spherePos] = index;
+        return index;
+    };
+
+    float side = 2.0f;
+    float half = 1.0f;
+
+    int startIdx = vertices.size() / 3;
+
+    auto generateFace = [&](glm::vec3 origin, glm::vec3 right, glm::vec3 up) {
+        std::vector<std::vector<uint32_t>> grid(sub + 1, std::vector<uint32_t>(sub + 1));
+        for (int y = 0; y <= sub; ++y) {
+            float v = (float)y / sub;
+            for (int x = 0; x <= sub; ++x) {
+                float u = (float)x / sub;
+                glm::vec3 pos = origin + (u - 0.5f) * side * right + (v - 0.5f) * side * up;
+                grid[y][x] = getUniqueVertex(pos);
+            }
+        }
+
+        for (int y = 0; y < sub; ++y) {
+            for (int x = 0; x < sub; ++x) {
+                uint32_t v0 = grid[y][x];
+                uint32_t v1 = grid[y][x + 1];
+                uint32_t v2 = grid[y + 1][x + 1];
+                uint32_t v3 = grid[y + 1][x];
+
+                faces.push_back(startIdx + v0);
+                faces.push_back(startIdx + v1);
+                faces.push_back(startIdx + v2);
+                faces.push_back(startIdx + v3);
+            }
+        }
+    };
+
+    generateFace(glm::vec3(0, 0, half), glm::vec3(1, 0, 0), glm::vec3(0, 1, 0));
+    generateFace(glm::vec3(0, 0, -half), glm::vec3(-1, 0, 0), glm::vec3(0, 1, 0));
+    generateFace(glm::vec3(half, 0, 0), glm::vec3(0, 0, -1), glm::vec3(0, 1, 0));
+    generateFace(glm::vec3(-half, 0, 0), glm::vec3(0, 0, 1), glm::vec3(0, 1, 0));
+    generateFace(glm::vec3(0, half, 0), glm::vec3(1, 0, 0), glm::vec3(0, 0, -1));
+    generateFace(glm::vec3(0, -half, 0), glm::vec3(1, 0, 0), glm::vec3(0, 0, 1));
+
+    for (auto const& v : uniqueVertices) {
+        vertices.push_back(v.x);
+        vertices.push_back(v.y);
+        vertices.push_back(v.z);
+
+        colors.push_back(0.72f);
+        colors.push_back(0.52f);
+        colors.push_back(0.45f);
+
+        glm::vec3 n = glm::normalize(v);
+        normals.push_back(n.x);
+        normals.push_back(n.y);
+        normals.push_back(n.z);
     }
 }
 
@@ -712,6 +803,43 @@ void Scene::addSphere() {
     selectMesh(mesh);
 }
 
+void Scene::addGeosphere() {
+    std::vector<float> vertices;
+    std::vector<uint32_t> faces;
+    std::vector<float> colors;
+    std::vector<float> normals;
+
+    generateGeosphere(50.0f, 4, vertices, faces, colors, normals);
+    int nbVerts = vertices.size() / 3;
+    int nbFaces = faces.size() / 4;
+
+    std::vector<uint32_t> vrvStartCount;
+    std::vector<uint32_t> vertRingVert;
+    std::vector<uint32_t> vrfStartCount;
+    std::vector<uint32_t> vertRingFace;
+    std::vector<uint8_t> vertOnEdge;
+    computeTopology(nbVerts, faces.data(), nbFaces, vrfStartCount, vertRingFace, vrvStartCount, vertRingVert, vertOnEdge);
+
+    Mesh* mesh = new Mesh();
+    mesh->verts = vertices;
+    mesh->faces = faces;
+    mesh->colors = colors;
+    mesh->normals = normals;
+    mesh->nbVerts = nbVerts;
+    mesh->nbFaces = nbFaces;
+    mesh->vrfStartCount = vrfStartCount;
+    mesh->vertRingFace = vertRingFace;
+    mesh->vrvStartCount = vrvStartCount;
+    mesh->vertRingVert = vertRingVert;
+    mesh->vertOnEdge = vertOnEdge;
+    mesh->outlinerName = "Geosphere " + std::to_string(mesh->m_id);
+    mesh->postInit();
+
+    pushHistoryState();
+    addMesh(mesh);
+    selectMesh(mesh);
+}
+
 void Scene::addCube() {
     std::vector<float> vertices;
     std::vector<uint32_t> faces;
@@ -842,6 +970,7 @@ void Scene::addPrimitiveAtMask(const std::string& type, bool useSym, int symAxis
 
     if (count == 0) {
         if (type == "sphere") addSphere();
+        else if (type == "geosphere") addGeosphere();
         else if (type == "cube") addCube();
         else if (type == "cylinder") addCylinder();
         else if (type == "torus") addTorus();
@@ -864,6 +993,10 @@ void Scene::addPrimitiveAtMask(const std::string& type, bool useSym, int symAxis
             generateUVSphere(50.0f, 100, 100, vertices, faces, colors, normals);
             mesh = new Mesh();
             mesh->outlinerName = "Sphere " + suffix;
+        } else if (type == "geosphere") {
+            generateGeosphere(50.0f, 4, vertices, faces, colors, normals);
+            mesh = new Mesh();
+            mesh->outlinerName = "Geosphere " + suffix;
         } else if (type == "cube") {
             generateSubdividedCube(70.0f, 50, vertices, faces, colors, normals);
             mesh = new Mesh();

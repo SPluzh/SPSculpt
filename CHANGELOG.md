@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.3]
+- **Geometry**: Added a Geosphere (quad-sphere / cubed-sphere) primitive generator (constructed by subdividing a cube, projecting its vertices to a sphere of radius R, and merging boundary vertices for watertight topology) with quad polygons. Exposed it under both default scene loading and "At Masked BBox" spawning mechanisms.
+- **Fix**: Corrected the face winding order of the UV Sphere primitive (from clockwise to counter-clockwise), resolving the issue where sphere normals were inverted relative to other primitives.
 - **Input**: Implemented Alt + Left Click on any viewport object to select and make it the active mesh in the scene, facilitating faster multi-object scene navigation.
 - **Renderer**: Globalized all material settings (`albedo`, `roughness`, `metallic`, `alpha`, and texture maps) across all scene meshes, moving them from individual mesh properties to central renderer fields to maintain consistency when creating/rendering objects.
 - **Settings**: Updated `render_settings.cfg` serialization to save and load global material attributes under the `[Renderer]` section, with legacy compatibility fallbacks to restore older settings from `Mesh_0` when reading legacy configurations.
