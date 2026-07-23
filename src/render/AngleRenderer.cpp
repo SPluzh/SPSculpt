@@ -119,8 +119,17 @@ bool AngleRenderer::init(int width, int height) {
         uniform float uFov;
         uniform int uFlat;
 
+        vec3 getAlignedNormal() {
+            vec3 N = normalize(vNormal);
+            vec3 flatNormal = normalize(cross(dFdy(vVertex), dFdx(vVertex)));
+            if (dot(N, flatNormal) < 0.0) {
+                return -N;
+            }
+            return N;
+        }
+
         vec3 getNormal() {
-            return uFlat == 0 ? normalize(vNormal) : normalize(cross(dFdy(vVertex), dFdx(vVertex)));
+            return uFlat == 0 ? getAlignedNormal() : normalize(cross(dFdy(vVertex), dFdx(vVertex)));
         }
 
         vec3 sRGBToLinear(const in vec3 col) {
@@ -158,7 +167,7 @@ bool AngleRenderer::init(int width, int height) {
         }
 
         vec4 encodeFragColor(const in vec3 frag, const in float alpha) {
-            vec3 col = computeCurvature(vVertex, vNormal, frag, uCurvature, uFov);
+            vec3 col = computeCurvature(vVertex, getAlignedNormal(), frag, uCurvature, uFov);
             if (uDarken == 1) col *= 0.3;
             col *= (0.15 + 0.85 * vMasking);
             if (uSym == 1 && abs(dot(uPlaneN, vVertex - uPlaneO)) < 0.15) {
@@ -826,7 +835,7 @@ bool AngleRenderer::init(int width, int height) {
         out vec4 fragColor;
         )" + commonFragCode + wetClayCode + R"(
         void main() {
-            vec3 color = computeWetClay(vVertex, vNormal, vColor, vMasking, vObjectPos);
+            vec3 color = computeWetClay(vVertex, getAlignedNormal(), vColor, vMasking, vObjectPos);
             fragColor = encodeFragColor(color, uAlpha);
         }
     )";
