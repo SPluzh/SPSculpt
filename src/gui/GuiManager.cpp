@@ -1815,22 +1815,18 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 drawPivotMarker(ImVec2(screenPos.x, screenPos.y));
             }
         } else {
-            // Left viewport
-            glm::vec3 screenPosLeft = camera.project(pivotWorld);
-            if (screenPosLeft.z >= 0.0f && screenPosLeft.z <= 1.0f) {
-                float sx = screenPosLeft.x * 0.5f;
-                drawPivotMarker(ImVec2(sx, screenPosLeft.y));
-            }
+            int activeVp = scene.getActiveViewport();
+            float w2 = ImGui::GetIO().DisplaySize.x * 0.5f;
 
-            // Right viewport
-            auto cameraRight = renderer.getCameraRight();
-            if (cameraRight && cameraRight->getUsePivot()) {
-                glm::vec3 pivotWorldRight = cameraRight->getPivot();
-                glm::vec3 screenPosRight = cameraRight->project(pivotWorldRight);
+            if (activeVp == 0) {
+                glm::vec3 screenPosLeft = camera.project(pivotWorld);
+                if (screenPosLeft.z >= 0.0f && screenPosLeft.z <= 1.0f) {
+                    drawPivotMarker(ImVec2(screenPosLeft.x, screenPosLeft.y));
+                }
+            } else if (activeVp == 1) {
+                glm::vec3 screenPosRight = camera.project(pivotWorld);
                 if (screenPosRight.z >= 0.0f && screenPosRight.z <= 1.0f) {
-                    float w2 = ImGui::GetIO().DisplaySize.x * 0.5f;
-                    float sx = screenPosRight.x + w2;
-                    drawPivotMarker(ImVec2(sx, screenPosRight.y));
+                    drawPivotMarker(ImVec2(screenPosRight.x + w2, screenPosRight.y));
                 }
             }
         }
