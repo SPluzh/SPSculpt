@@ -598,6 +598,13 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             camera.setUsePivot(usePivot);
         }
 
+        // Camera Mode Selection
+        const char* modes[] = { "Orbit", "Plane Trackball", "Spherical Trackball" };
+        int currentMode = (int)camera.getMode();
+        if (ImGui::Combo("Camera Mode", &currentMode, modes, IM_ARRAYSIZE(modes))) {
+            camera.setMode((CameraEnums::CameraMode)currentMode);
+        }
+
         ImGui::Separator();
         ImGui::Text("Camera Speeds:");
         
@@ -614,6 +621,11 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         float zm = camera.getSpeedZoom();
         if (ImGui::SliderFloat("Zoom Speed", &zm, 0.1f, 5.0f, "%.1f")) {
             camera.setSpeedZoom(zm);
+        }
+
+        float roll = camera.getSpeedRoll();
+        if (ImGui::SliderFloat("Roll Speed", &roll, 0.1f, 5.0f, "%.1f")) {
+            camera.setSpeedRoll(roll);
         }
 
         ImGui::Separator();
@@ -1707,7 +1719,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
     // Draw Camera Pivot Point if enabled and actively orbiting
     const Camera& camera = scene.getCamera();
-    bool isOrbiting = (sculpt.getCameraController().getDragMode() == CameraController::DragMode::Orbit);
+    bool isOrbiting = (sculpt.getCameraController().getDragMode() == CameraController::DragMode::Orbit || sculpt.getCameraController().getDragMode() == CameraController::DragMode::Roll);
     if (camera.getUsePivot() && isOrbiting) {
         ImDrawList* drawList = ImGui::GetForegroundDrawList();
         glm::vec3 pivotWorld = camera.getPivot();

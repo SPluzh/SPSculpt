@@ -36,7 +36,7 @@ void CameraController::startDrag(DragMode mode, int mouseX, int mouseY, Camera& 
     m_snapTriggered = false;
     camera.start(static_cast<float>(mouseX), static_cast<float>(mouseY));
 
-    if (mode == DragMode::Orbit && camera.getUsePivot()) {
+    if ((mode == DragMode::Orbit || mode == DragMode::Roll) && camera.getUsePivot()) {
         Ray ray = camera.getRay(static_cast<float>(mouseX), static_cast<float>(mouseY));
         float minT = std::numeric_limits<float>::infinity();
         Mesh* hitMesh = nullptr;
@@ -116,6 +116,8 @@ void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std
         } else if (e.button.button == SDL_BUTTON_RIGHT) {
             if (ctrlPressed) {
                 startDrag(DragMode::Zoom, mouseX, mouseY, camera, meshes);
+            } else if (shiftPressed && altPressed && camera.getMode() != CameraEnums::CameraMode::ORBIT) {
+                startDrag(DragMode::Roll, mouseX, mouseY, camera, meshes);
             } else if (shiftPressed) {
                 startDrag(DragMode::Pan, mouseX, mouseY, camera, meshes);
             } else if (altPressed) {
@@ -124,7 +126,11 @@ void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std
                 startDrag(DragMode::Orbit, mouseX, mouseY, camera, meshes);
             }
         } else if (e.button.button == SDL_BUTTON_LEFT && altPressed) {
-            startDrag(DragMode::Orbit, mouseX, mouseY, camera, meshes);
+            if (shiftPressed && camera.getMode() != CameraEnums::CameraMode::ORBIT) {
+                startDrag(DragMode::Roll, mouseX, mouseY, camera, meshes);
+            } else {
+                startDrag(DragMode::Orbit, mouseX, mouseY, camera, meshes);
+            }
         }
     } else if (e.type == SDL_MOUSEBUTTONUP) {
         if (e.button.button == SDL_BUTTON_MIDDLE || e.button.button == SDL_BUTTON_RIGHT || e.button.button == SDL_BUTTON_LEFT) {
@@ -155,6 +161,11 @@ void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std
                 camera.translate(static_cast<float>(dx), static_cast<float>(dy));
             } else if (m_drag == DragMode::Zoom) {
                 camera.zoom(static_cast<float>(dx) * 0.01f);
+            } else if (m_drag == DragMode::Roll) {
+                float h = camera.getHeight() > 0 ? static_cast<float>(camera.getHeight()) : 1000.0f;
+                float speedTranslateFactor = camera.getSpeedTranslate() / h;
+                float angle = static_cast<float>(dx) * speedTranslateFactor * 6.0f * camera.getSpeedRoll();
+                camera.roll(angle);
             }
 
             m_prevX = mouseX;

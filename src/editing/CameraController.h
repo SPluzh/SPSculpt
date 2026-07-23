@@ -7,7 +7,7 @@ class Mesh;
 
 class CameraController {
 public:
-    enum class DragMode { None, Orbit, Pan, Zoom };
+    enum class DragMode { None, Orbit, Pan, Zoom, Roll };
 
     CameraController() = default;
     ~CameraController() = default;

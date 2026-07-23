@@ -86,6 +86,8 @@ public:
     float getSpeedTranslate() const { return m_speedTranslate; }
     void setSpeedZoom(float val) { m_speedZoom = val; }
     float getSpeedZoom() const { return m_speedZoom; }
+    void setSpeedRoll(float val) { m_speedRoll = val; }
+    float getSpeedRoll() const { return m_speedRoll; }
 
     void setOrbitAngles(float rx, float ry);
 
@@ -120,6 +122,7 @@ public:
     void undo();
     void redo();
     void applyState(const CameraState& state);
+    void roll(float angle);
 
 private:
     float getTransZ() const;
@@ -140,6 +143,7 @@ private:
     glm::mat4 m_viewportMatrix{1.0f};
 
     glm::vec2 m_lastNormalizedMouseXY{0.0f};
+    glm::vec2 m_virtualNormalizedMouseXY{0.0f};
     int m_width = 0;
     int m_height = 0;
 
@@ -147,6 +151,7 @@ private:
     float m_speedRotate = 1.0f;
     float m_speedTranslate = 1.0f;
     float m_speedZoom = 1.0f;
+    float m_speedRoll = 1.0f;
     float m_fov = 45.0f; // Focal length in mm
 
     glm::vec3 m_trans{0.0f, 0.0f, 30.0f};
