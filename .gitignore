@@ -24,4 +24,8 @@ walkthrough.md
 # Copied build artifacts
 dist/shaders/
 
+# Debug logs
+debug_log.txt
+
+
 
