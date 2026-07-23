@@ -93,28 +93,17 @@ void Camera::rotate(float mouseX, float mouseY, float speedRotate) {
     } else if (m_mode == CameraEnums::CameraMode::PLANE) {
         glm::vec2 realDiff = normalizedMouseXY - m_lastNormalizedMouseXY;
         glm::vec2 scaledDiff = realDiff * speedFactor;
-        glm::vec2 nextVirtualMouseXY = m_virtualNormalizedMouseXY + scaledDiff;
-        float len = glm::length(nextVirtualMouseXY);
-        if (len > 1.0f) {
-            nextVirtualMouseXY /= len;
-        }
-
-        float length = glm::distance(m_virtualNormalizedMouseXY, nextVirtualMouseXY);
+        float length = glm::length(scaledDiff);
         if (length > 0.0f) {
             glm::vec3 axisRot(-scaledDiff.y, scaledDiff.x, 0.0f);
             axisRot = glm::normalize(axisRot);
             glm::quat q = glm::angleAxis(length * 2.0f, axisRot);
             m_quatRot = q * m_quatRot;
         }
-        m_virtualNormalizedMouseXY = nextVirtualMouseXY;
     } else if (m_mode == CameraEnums::CameraMode::SPHERICAL) {
         glm::vec2 realDiff = normalizedMouseXY - m_lastNormalizedMouseXY;
         glm::vec2 scaledDiff = realDiff * speedFactor;
         glm::vec2 nextVirtualMouseXY = m_virtualNormalizedMouseXY + scaledDiff;
-        float len = glm::length(nextVirtualMouseXY);
-        if (len > 1.0f) {
-            nextVirtualMouseXY /= len;
-        }
 
         auto mouseOnUnitSphere = [](const glm::vec2& mouse) -> glm::vec3 {
             float len2 = mouse.x * mouse.x + mouse.y * mouse.y;
