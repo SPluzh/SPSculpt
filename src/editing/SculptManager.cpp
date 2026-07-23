@@ -399,10 +399,24 @@ int SculptManager::doStrokePass(
         case BRUSH_MOVE: {
             glm::vec3 dragDirection;
             if (negative) {
-                float len = glm::distance(currentIntersection, initialIntersection);
                 glm::vec3 norm = (glm::length(currentIntersectionNormal) > 1e-6f) ? glm::normalize(currentIntersectionNormal) : glm::vec3(0.0f, 1.0f, 0.0f);
-                float sign = (mouseX < (float)m_mouseDownX) ? 1.0f : -1.0f;
-                dragDirection = norm * (len * sign * intensity);
+                glm::mat4 localToView = scene.getCamera().getViewMatrix() * mesh->matrix;
+                glm::vec3 dragVec = currentIntersection - initialIntersection;
+                glm::vec3 dragView = glm::vec3(localToView * glm::vec4(dragVec, 0.0f));
+                glm::vec3 normView = glm::vec3(localToView * glm::vec4(norm, 0.0f));
+                if (glm::length(normView) > 1e-6f) {
+                    normView = glm::normalize(normView);
+                }
+                float amount2D = dragView.x * normView.x + dragView.y * normView.y;
+                float amountDepth = (dragView.x + dragView.y) * 0.7071f * std::abs(normView.z);
+                float amount = amount2D + amountDepth;
+
+                glm::vec3 col0(mesh->matrix[0][0], mesh->matrix[0][1], mesh->matrix[0][2]);
+                float scale = glm::length(col0);
+                if (scale < 1e-12f) scale = 1.0f;
+                float localAmount = amount / scale;
+
+                dragDirection = norm * (localAmount * intensity);
             } else {
                 dragDirection = (currentIntersection - initialIntersection) * intensity;
             }
@@ -424,10 +438,24 @@ int SculptManager::doStrokePass(
         case BRUSH_DRAG: {
             glm::vec3 dragDirection;
             if (negative) {
-                float len = glm::distance(currentIntersection, initialIntersection);
                 glm::vec3 norm = (glm::length(currentIntersectionNormal) > 1e-6f) ? glm::normalize(currentIntersectionNormal) : glm::vec3(0.0f, 1.0f, 0.0f);
-                float sign = (mouseX < (float)m_mouseDownX) ? 1.0f : -1.0f;
-                dragDirection = norm * (len * sign * intensity);
+                glm::mat4 localToView = scene.getCamera().getViewMatrix() * mesh->matrix;
+                glm::vec3 dragVec = currentIntersection - initialIntersection;
+                glm::vec3 dragView = glm::vec3(localToView * glm::vec4(dragVec, 0.0f));
+                glm::vec3 normView = glm::vec3(localToView * glm::vec4(norm, 0.0f));
+                if (glm::length(normView) > 1e-6f) {
+                    normView = glm::normalize(normView);
+                }
+                float amount2D = dragView.x * normView.x + dragView.y * normView.y;
+                float amountDepth = (dragView.x + dragView.y) * 0.7071f * std::abs(normView.z);
+                float amount = amount2D + amountDepth;
+
+                glm::vec3 col0(mesh->matrix[0][0], mesh->matrix[0][1], mesh->matrix[0][2]);
+                float scale = glm::length(col0);
+                if (scale < 1e-12f) scale = 1.0f;
+                float localAmount = amount / scale;
+
+                dragDirection = norm * (localAmount * intensity);
             } else {
                 dragDirection = (currentIntersection - initialIntersection) * intensity;
             }
@@ -448,10 +476,24 @@ int SculptManager::doStrokePass(
         case BRUSH_ELASTIC: {
             glm::vec3 dragDirection;
             if (negative) {
-                float len = glm::distance(currentIntersection, initialIntersection);
                 glm::vec3 norm = (glm::length(currentIntersectionNormal) > 1e-6f) ? glm::normalize(currentIntersectionNormal) : glm::vec3(0.0f, 1.0f, 0.0f);
-                float sign = (mouseX < (float)m_mouseDownX) ? 1.0f : -1.0f;
-                dragDirection = norm * (len * sign * intensity);
+                glm::mat4 localToView = scene.getCamera().getViewMatrix() * mesh->matrix;
+                glm::vec3 dragVec = currentIntersection - initialIntersection;
+                glm::vec3 dragView = glm::vec3(localToView * glm::vec4(dragVec, 0.0f));
+                glm::vec3 normView = glm::vec3(localToView * glm::vec4(norm, 0.0f));
+                if (glm::length(normView) > 1e-6f) {
+                    normView = glm::normalize(normView);
+                }
+                float amount2D = dragView.x * normView.x + dragView.y * normView.y;
+                float amountDepth = (dragView.x + dragView.y) * 0.7071f * std::abs(normView.z);
+                float amount = amount2D + amountDepth;
+
+                glm::vec3 col0(mesh->matrix[0][0], mesh->matrix[0][1], mesh->matrix[0][2]);
+                float scale = glm::length(col0);
+                if (scale < 1e-12f) scale = 1.0f;
+                float localAmount = amount / scale;
+
+                dragDirection = norm * (localAmount * intensity);
             } else {
                 dragDirection = (currentIntersection - initialIntersection) * intensity;
             }
