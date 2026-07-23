@@ -403,6 +403,9 @@ bool AngleRenderer::init(int width, int height) {
         uniform mat4 uMVP;
         uniform vec2 uViewportSize;
         uniform float uOffsetPixels;
+        uniform bool uRef2DMode;
+        uniform vec2 uView2DOffset;
+        uniform float uView2DZoom;
         void main() {
             vec4 clipPos = uMVP * vec4(aVertex, 1.0);
             if (uOffsetPixels != 0.0 && clipPos.w > 0.0) {
@@ -412,6 +415,9 @@ bool AngleRenderer::init(int width, int height) {
                     vec2 ndcOffset = (dir * uOffsetPixels * 2.0) / uViewportSize;
                     clipPos.xy += ndcOffset * clipPos.w;
                 }
+            }
+            if (uRef2DMode) {
+                clipPos.xy = clipPos.xy * uView2DZoom + uView2DOffset * clipPos.w;
             }
             gl_Position = clipPos;
         }
@@ -1405,7 +1411,7 @@ void AngleRenderer::render(const Scene& scene) {
         glViewport(0, 0, m_width, m_height);
         glScissor(0, 0, m_width, m_height);
         glEnable(GL_SCISSOR_TEST);
-        drawSelectionCursor(false);
+        drawSelectionCursor(scene, false);
         glDisable(GL_SCISSOR_TEST);
     } else {
         int w2 = m_width / 2;
@@ -1417,7 +1423,7 @@ void AngleRenderer::render(const Scene& scene) {
             glViewport(0, 0, w2, m_height);
             glScissor(0, 0, w2, m_height);
             glEnable(GL_SCISSOR_TEST);
-            drawSelectionCursor(false);
+            drawSelectionCursor(scene, false);
             glDisable(GL_SCISSOR_TEST);
         }
 
@@ -1426,7 +1432,7 @@ void AngleRenderer::render(const Scene& scene) {
             glViewport(w2, 0, m_width - w2, m_height);
             glScissor(w2, 0, m_width - w2, m_height);
             glEnable(GL_SCISSOR_TEST);
-            drawSelectionCursor(true);
+            drawSelectionCursor(scene, true);
             glDisable(GL_SCISSOR_TEST);
         }
     }
@@ -1776,9 +1782,11 @@ void AngleRenderer::drawWireframe(Mesh* mesh, const Scene& scene, const Camera& 
     glDisable(GL_BLEND);
 }
 
-void AngleRenderer::drawSelectionCursor(bool isRight) {
+void AngleRenderer::drawSelectionCursor(const Scene& scene, bool isRight) {
     if (m_smoothCursor) return; // Drawn via ImGui in GuiManager
     if (!m_showCursor || m_selectionProgram == 0) return;
+
+    const Camera& camera = isRight ? *scene.getCameraByIndex(1) : scene.getCamera();
 
     const glm::mat4& circleMVP = isRight ? m_circleMVPRight : m_circleMVP;
     const glm::mat4& innerCircleMVP = isRight ? m_innerCircleMVPRight : m_innerCircleMVP;
@@ -1796,6 +1804,10 @@ void AngleRenderer::drawSelectionCursor(bool isRight) {
     GLint locMVP = glGetUniformLocation(m_selectionProgram, "uMVP");
     GLint locPos = glGetAttribLocation(m_selectionProgram, "aVertex");
     
+    glUniform1i(glGetUniformLocation(m_selectionProgram, "uRef2DMode"), camera.getRef2DMode() ? 1 : 0);
+    glUniform2f(glGetUniformLocation(m_selectionProgram, "uView2DOffset"), camera.getView2DOffsetX(), camera.getView2DOffsetY());
+    glUniform1f(glGetUniformLocation(m_selectionProgram, "uView2DZoom"), camera.getView2DZoom());
+
     GLint locAlpha = glGetUniformLocation(m_selectionProgram, "uAlpha");
     GLint locDashed = glGetUniformLocation(m_selectionProgram, "uDashed");
     if (locAlpha != -1) glUniform1f(locAlpha, 1.0f);

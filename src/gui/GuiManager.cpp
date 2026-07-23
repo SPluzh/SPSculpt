@@ -2214,10 +2214,14 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 leftViewportWidth = viewportWidth * 0.5f;
             }
 
-            auto projectPoint = [](const glm::mat4& mvp, const glm::vec3& localPos, float width, float height, float xOffset) -> ImVec2 {
+            auto projectPoint = [](const glm::mat4& mvp, const glm::vec3& localPos, float width, float height, float xOffset, const Camera& camera) -> ImVec2 {
                 glm::vec4 clipPos = mvp * glm::vec4(localPos, 1.0f);
                 if (clipPos.w == 0.0f) return ImVec2(0.0f, 0.0f);
                 glm::vec3 ndcPos = glm::vec3(clipPos) / clipPos.w;
+                if (camera.getRef2DMode()) {
+                    ndcPos.x = ndcPos.x * camera.getView2DZoom() + camera.getView2DOffsetX();
+                    ndcPos.y = ndcPos.y * camera.getView2DZoom() + camera.getView2DOffsetY();
+                }
                 float sx = (ndcPos.x * 0.5f + 0.5f) * width + xOffset;
                 float sy = (0.5f - ndcPos.y * 0.5f) * height;
                 return ImVec2(sx, sy);
@@ -2227,6 +2231,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             float thickness = renderer.getCursorThickness();
 
             auto drawViewportCursor = [&](bool isRight, float xOffset, float width) {
+                const Camera& camera = isRight ? *scene.getCameraByIndex(1) : scene.getCamera();
                 ImGui::GetForegroundDrawList()->PushClipRect(
                     ImVec2(xOffset, 0.0f),
                     ImVec2(xOffset + width, viewportHeight),
@@ -2246,7 +2251,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     for (int i = 0; i < numSegments; ++i) {
                         float angle = i * 2.0f * 3.1415926535f / numSegments;
                         glm::vec3 localPos(std::cos(angle), std::sin(angle), 0.0f);
-                        outerPoints[i] = projectPoint(circleMVP, localPos, width, viewportHeight, xOffset);
+                        outerPoints[i] = projectPoint(circleMVP, localPos, width, viewportHeight, xOffset, camera);
                     }
                     ImGui::GetForegroundDrawList()->AddPolyline(outerPoints.data(), numSegments, colorU32, ImDrawFlags_Closed, thickness);
 
@@ -2255,7 +2260,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     for (int i = 0; i < numSegments; ++i) {
                         float angle = i * 2.0f * 3.1415926535f / numSegments;
                         glm::vec3 localPos(std::cos(angle), std::sin(angle), 0.0f);
-                        innerPoints[i] = projectPoint(innerCircleMVP, localPos, width, viewportHeight, xOffset);
+                        innerPoints[i] = projectPoint(innerCircleMVP, localPos, width, viewportHeight, xOffset, camera);
                     }
                     ImGui::GetForegroundDrawList()->AddPolyline(innerPoints.data(), numSegments, colorU32, ImDrawFlags_Closed, thickness);
                 }
@@ -2266,7 +2271,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 for (int i = 0; i < dotSegments; ++i) {
                     float angle = i * 2.0f * 3.1415926535f / dotSegments;
                     glm::vec3 localPos(std::cos(angle), std::sin(angle), 0.0f);
-                    dotPoints[i] = projectPoint(dotMVP, localPos, width, viewportHeight, xOffset);
+                    dotPoints[i] = projectPoint(dotMVP, localPos, width, viewportHeight, xOffset, camera);
                 }
                 ImGui::GetForegroundDrawList()->AddConvexPolyFilled(dotPoints.data(), dotSegments, colorU32);
 
@@ -2276,7 +2281,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     bool occluded = (idx < symOccluded.size()) ? symOccluded[idx] : false;
 
                     // Project center of symmetry dot to check if it's covered by an ImGui panel
-                    ImVec2 symCenter = projectPoint(symMVP, glm::vec3(0.0f), width, viewportHeight, xOffset);
+                    ImVec2 symCenter = projectPoint(symMVP, glm::vec3(0.0f), width, viewportHeight, xOffset, camera);
                     if (isPointOverImGuiWindow(symCenter)) {
                         continue;
                     }
@@ -2285,7 +2290,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     for (int i = 0; i < dotSegments; ++i) {
                         float angle = i * 2.0f * 3.1415926535f / dotSegments;
                         glm::vec3 localPos(std::cos(angle), std::sin(angle), 0.0f);
-                        symPoints[i] = projectPoint(symMVP, localPos, width, viewportHeight, xOffset);
+                        symPoints[i] = projectPoint(symMVP, localPos, width, viewportHeight, xOffset, camera);
                     }
                     
                     ImU32 dotColorU32 = colorU32;

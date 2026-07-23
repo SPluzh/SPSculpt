@@ -193,7 +193,7 @@ private:
     void drawMeshFlatColor(Mesh* mesh, const Scene& scene, const Camera& camera, const glm::vec4& color);
     void drawWireframe(Mesh* mesh, const Scene& scene, const Camera& camera);
     void drawReferenceImages(const Scene& scene, const Camera& camera);
-    void drawSelectionCursor(bool isRight = false);
+    void drawSelectionCursor(const Scene& scene, bool isRight = false);
     void drawLasso();
 
     void initGrid();
