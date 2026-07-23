@@ -69,6 +69,9 @@ public:
     void shutdown();
     void render(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer, SDL_Window* window);
     
+    bool saveSettings(const std::string& filepath);
+    bool loadSettings(const std::string& filepath);
+    
     // Fallback for empty calls
     void render() {}
 

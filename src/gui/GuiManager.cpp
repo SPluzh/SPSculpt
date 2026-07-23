@@ -12,6 +12,8 @@
 #include <vector>
 #include <string>
 #include <iostream>
+#include <fstream>
+#include <unordered_map>
 #include <cstdio>
 #include <algorithm>
 #include <glm/glm.hpp>
@@ -273,6 +275,13 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             }
             if (ImGui::MenuItem("Load Render Settings")) {
                 RenderSettings::load("render_settings.cfg", renderer, scene);
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Save GUI Settings")) {
+                saveSettings("gui_settings.cfg");
+            }
+            if (ImGui::MenuItem("Load GUI Settings")) {
+                loadSettings("gui_settings.cfg");
             }
             ImGui::EndMenu();
         }
@@ -2374,5 +2383,99 @@ void GuiManager::drawRemeshProgressModal() {
 
         ImGui::EndPopup();
     }
+}
+
+bool GuiManager::saveSettings(const std::string& filepath) {
+    std::ofstream out(filepath);
+    if (!out.is_open()) {
+        std::cerr << "Failed to open GUI settings file for writing: " << filepath << std::endl;
+        return false;
+    }
+
+    out << "[Panels]\n";
+    out << "showToolbar=" << (m_showToolbar ? "true" : "false") << "\n";
+    out << "showSculptingPanel=" << (m_showSculptingPanel ? "true" : "false") << "\n";
+    out << "showScenePanel=" << (m_showScenePanel ? "true" : "false") << "\n";
+    out << "showTopologyPanel=" << (m_showTopologyPanel ? "true" : "false") << "\n";
+    out << "showFilesPanel=" << (m_showFilesPanel ? "true" : "false") << "\n";
+    out << "showCameraPanel=" << (m_showCameraPanel ? "true" : "false") << "\n";
+    out << "showRenderingPanel=" << (m_showRenderingPanel ? "true" : "false") << "\n";
+    out << "showMaskingPanel=" << (m_showMaskingPanel ? "true" : "false") << "\n";
+    out << "showMultiresPanel=" << (m_showMultiresPanel ? "true" : "false") << "\n";
+    out << "showZSpheresPanel=" << (m_showZSpheresPanel ? "true" : "false") << "\n";
+    out << "showReferenceImagesPanel=" << (m_showReferenceImagesPanel ? "true" : "false") << "\n";
+    out << "showGizmoCube=" << (m_showGizmoCube ? "true" : "false") << "\n";
+    out << "showMeshInfo=" << (m_showMeshInfo ? "true" : "false") << "\n";
+    out << "showTabletDiagPanel=" << (m_showTabletDiagPanel ? "true" : "false") << "\n";
+
+    std::cout << "Successfully saved GUI panel settings to: " << filepath << std::endl;
+    return true;
+}
+
+bool GuiManager::loadSettings(const std::string& filepath) {
+    std::ifstream in(filepath);
+    if (!in.is_open()) {
+        std::cerr << "Failed to open GUI settings file for reading: " << filepath << std::endl;
+        return false;
+    }
+
+    std::string line;
+    std::string currentSection = "";
+    std::unordered_map<std::string, std::unordered_map<std::string, std::string>> sections;
+
+    auto trimLocal = [](const std::string& str) {
+        size_t first = str.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos) return std::string("");
+        size_t last = str.find_last_not_of(" \t\r\n");
+        return str.substr(first, (last - first + 1));
+    };
+
+    while (std::getline(in, line)) {
+        line = trimLocal(line);
+        if (line.empty() || line[0] == ';' || line[0] == '#') {
+            continue;
+        }
+
+        if (line[0] == '[' && line[line.size() - 1] == ']') {
+            currentSection = trimLocal(line.substr(1, line.size() - 2));
+            continue;
+        }
+
+        size_t eqPos = line.find('=');
+        if (eqPos != std::string::npos && !currentSection.empty()) {
+            std::string key = trimLocal(line.substr(0, eqPos));
+            std::string val = trimLocal(line.substr(eqPos + 1));
+            sections[currentSection][key] = val;
+        }
+    }
+
+    auto itSection = sections.find("Panels");
+    if (itSection != sections.end()) {
+        const auto& params = itSection->second;
+        auto getBoolParam = [&](const std::string& key, bool& outVal) {
+            auto it = params.find(key);
+            if (it != params.end()) {
+                outVal = (it->second == "true" || it->second == "1");
+            }
+        };
+
+        getBoolParam("showToolbar", m_showToolbar);
+        getBoolParam("showSculptingPanel", m_showSculptingPanel);
+        getBoolParam("showScenePanel", m_showScenePanel);
+        getBoolParam("showTopologyPanel", m_showTopologyPanel);
+        getBoolParam("showFilesPanel", m_showFilesPanel);
+        getBoolParam("showCameraPanel", m_showCameraPanel);
+        getBoolParam("showRenderingPanel", m_showRenderingPanel);
+        getBoolParam("showMaskingPanel", m_showMaskingPanel);
+        getBoolParam("showMultiresPanel", m_showMultiresPanel);
+        getBoolParam("showZSpheresPanel", m_showZSpheresPanel);
+        getBoolParam("showReferenceImagesPanel", m_showReferenceImagesPanel);
+        getBoolParam("showGizmoCube", m_showGizmoCube);
+        getBoolParam("showMeshInfo", m_showMeshInfo);
+        getBoolParam("showTabletDiagPanel", m_showTabletDiagPanel);
+    }
+
+    std::cout << "Successfully loaded GUI panel settings from: " << filepath << std::endl;
+    return true;
 }
 

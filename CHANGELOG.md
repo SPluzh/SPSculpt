@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.3]
+- **UI**: Added automatic saving and loading of GUI panel visibility states (toolbar, sculpting settings, scene outliner, etc.) to a local configuration file `gui_settings.cfg` on startup and shutdown.
+- **UI**: Added "Save GUI Settings" and "Load GUI Settings" options to the main File menu to allow manual GUI state persistence.
 - **Fix**: Resolved viewport visibility toggles (V1/V2) not correctly updating mesh rendering by routing the viewport index to the geometry drawing pass and filtering out hidden meshes.
 - **Fix**: Prevented brush cursor projection and sculpting raycasts on hidden meshes in the active viewport.
 - **UI**: Added a dedicated "Act" checkbox column to indicate and control the active mesh in the Scene Outliner, removing full-row selection highlighting.
