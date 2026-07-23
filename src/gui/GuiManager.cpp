@@ -666,6 +666,44 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             camera.resetView();
         }
 
+        ImGui::Separator();
+        ImGui::Text("Split Viewport:");
+        int splitModeVal = static_cast<int>(scene.getSplitMode());
+        bool splitChanged = false;
+        if (ImGui::RadioButton("Off", &splitModeVal, 0)) {
+            splitChanged = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Mirror", &splitModeVal, 1)) {
+            splitChanged = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Independent", &splitModeVal, 2)) {
+            splitChanged = true;
+        }
+        if (splitChanged) {
+            scene.setSplitMode(static_cast<Scene::SplitMode>(splitModeVal));
+            int w, h;
+            SDL_GetWindowSize(window, &w, &h);
+            renderer.resize(w, h);
+            if (scene.getSplitMode() != Scene::SplitMode::OFF) {
+                int halfW = w / 2;
+                scene.getCamera().onResize(halfW, h);
+                if (scene.getCameraRight()) {
+                    scene.getCameraRight()->onResize(w - halfW, h);
+                }
+            } else {
+                scene.getCamera().onResize(w, h);
+            }
+        }
+
+        if (scene.getSplitMode() != Scene::SplitMode::OFF) {
+            bool showInactive = scene.getSplitShowInactiveCursor();
+            if (ImGui::Checkbox("Show cursor in inactive viewport", &showInactive)) {
+                scene.setSplitShowInactiveCursor(showInactive);
+            }
+        }
+
         ImGui::End();
     }
 
@@ -1658,61 +1696,92 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImU32 colorU32 = ImGui::ColorConvertFloat4ToU32(ImVec4(cursorState.color.r, cursorState.color.g, cursorState.color.b, 1.0f));
             float thickness = renderer.getCursorThickness();
 
-            if (cursorState.showCircle) {
-                // Draw outer circle
-                const int numSegments = 64;
-                std::vector<ImVec2> outerPoints(numSegments);
-                for (int i = 0; i < numSegments; ++i) {
-                    float angle = i * 2.0f * 3.1415926535f / numSegments;
-                    glm::vec3 localPos(std::cos(angle), std::sin(angle), 0.0f);
-                    outerPoints[i] = projectPoint(cursorState.circleMVP, localPos, leftViewportWidth, viewportHeight, leftViewportX);
-                }
-                ImGui::GetForegroundDrawList()->AddPolyline(outerPoints.data(), numSegments, colorU32, ImDrawFlags_Closed, thickness);
+            auto drawViewportCursor = [&](bool isRight, float xOffset, float width) {
+                ImGui::GetForegroundDrawList()->PushClipRect(
+                    ImVec2(xOffset, 0.0f),
+                    ImVec2(xOffset + width, viewportHeight),
+                    true
+                );
 
-                // Draw inner circle
-                std::vector<ImVec2> innerPoints(numSegments);
-                for (int i = 0; i < numSegments; ++i) {
-                    float angle = i * 2.0f * 3.1415926535f / numSegments;
-                    glm::vec3 localPos(std::cos(angle), std::sin(angle), 0.0f);
-                    innerPoints[i] = projectPoint(cursorState.innerCircleMVP, localPos, leftViewportWidth, viewportHeight, leftViewportX);
-                }
-                ImGui::GetForegroundDrawList()->AddPolyline(innerPoints.data(), numSegments, colorU32, ImDrawFlags_Closed, thickness);
-            }
+                const glm::mat4& circleMVP = isRight ? cursorState.circleMVPRight : cursorState.circleMVP;
+                const glm::mat4& innerCircleMVP = isRight ? cursorState.innerCircleMVPRight : cursorState.innerCircleMVP;
+                const glm::mat4& dotMVP = isRight ? cursorState.dotMVPRight : cursorState.dotMVP;
+                const std::vector<glm::mat4>& symMVPs = isRight ? cursorState.symMVPsRight : cursorState.symMVPs;
+                const std::vector<char>& symOccluded = isRight ? cursorState.symOccludedRight : cursorState.symOccluded;
 
-            // Draw main dot (filled circle)
-            const int dotSegments = 32;
-            std::vector<ImVec2> dotPoints(dotSegments);
-            for (int i = 0; i < dotSegments; ++i) {
-                float angle = i * 2.0f * 3.1415926535f / dotSegments;
-                glm::vec3 localPos(std::cos(angle), std::sin(angle), 0.0f);
-                dotPoints[i] = projectPoint(cursorState.dotMVP, localPos, leftViewportWidth, viewportHeight, leftViewportX);
-            }
-            ImGui::GetForegroundDrawList()->AddConvexPolyFilled(dotPoints.data(), dotSegments, colorU32);
+                if (cursorState.showCircle) {
+                    // Draw outer circle
+                    const int numSegments = 64;
+                    std::vector<ImVec2> outerPoints(numSegments);
+                    for (int i = 0; i < numSegments; ++i) {
+                        float angle = i * 2.0f * 3.1415926535f / numSegments;
+                        glm::vec3 localPos(std::cos(angle), std::sin(angle), 0.0f);
+                        outerPoints[i] = projectPoint(circleMVP, localPos, width, viewportHeight, xOffset);
+                    }
+                    ImGui::GetForegroundDrawList()->AddPolyline(outerPoints.data(), numSegments, colorU32, ImDrawFlags_Closed, thickness);
 
-            // Draw symmetry dots
-            for (size_t idx = 0; idx < cursorState.symMVPs.size(); ++idx) {
-                const auto& symMVP = cursorState.symMVPs[idx];
-                bool occluded = (idx < cursorState.symOccluded.size()) ? cursorState.symOccluded[idx] : false;
-
-                // Project center of symmetry dot to check if it's covered by an ImGui panel
-                ImVec2 symCenter = projectPoint(symMVP, glm::vec3(0.0f), leftViewportWidth, viewportHeight, leftViewportX);
-                if (isPointOverImGuiWindow(symCenter)) {
-                    continue;
+                    // Draw inner circle
+                    std::vector<ImVec2> innerPoints(numSegments);
+                    for (int i = 0; i < numSegments; ++i) {
+                        float angle = i * 2.0f * 3.1415926535f / numSegments;
+                        glm::vec3 localPos(std::cos(angle), std::sin(angle), 0.0f);
+                        innerPoints[i] = projectPoint(innerCircleMVP, localPos, width, viewportHeight, xOffset);
+                    }
+                    ImGui::GetForegroundDrawList()->AddPolyline(innerPoints.data(), numSegments, colorU32, ImDrawFlags_Closed, thickness);
                 }
 
-                std::vector<ImVec2> symPoints(dotSegments);
+                // Draw main dot (filled circle)
+                const int dotSegments = 32;
+                std::vector<ImVec2> dotPoints(dotSegments);
                 for (int i = 0; i < dotSegments; ++i) {
                     float angle = i * 2.0f * 3.1415926535f / dotSegments;
                     glm::vec3 localPos(std::cos(angle), std::sin(angle), 0.0f);
-                    symPoints[i] = projectPoint(symMVP, localPos, leftViewportWidth, viewportHeight, leftViewportX);
+                    dotPoints[i] = projectPoint(dotMVP, localPos, width, viewportHeight, xOffset);
                 }
-                
-                ImU32 dotColorU32 = colorU32;
-                if (occluded) {
-                    glm::vec3 darkColor = cursorState.color * 0.3f;
-                    dotColorU32 = ImGui::ColorConvertFloat4ToU32(ImVec4(darkColor.r, darkColor.g, darkColor.b, 1.0f));
+                ImGui::GetForegroundDrawList()->AddConvexPolyFilled(dotPoints.data(), dotSegments, colorU32);
+
+                // Draw symmetry dots
+                for (size_t idx = 0; idx < symMVPs.size(); ++idx) {
+                    const auto& symMVP = symMVPs[idx];
+                    bool occluded = (idx < symOccluded.size()) ? symOccluded[idx] : false;
+
+                    // Project center of symmetry dot to check if it's covered by an ImGui panel
+                    ImVec2 symCenter = projectPoint(symMVP, glm::vec3(0.0f), width, viewportHeight, xOffset);
+                    if (isPointOverImGuiWindow(symCenter)) {
+                        continue;
+                    }
+
+                    std::vector<ImVec2> symPoints(dotSegments);
+                    for (int i = 0; i < dotSegments; ++i) {
+                        float angle = i * 2.0f * 3.1415926535f / dotSegments;
+                        glm::vec3 localPos(std::cos(angle), std::sin(angle), 0.0f);
+                        symPoints[i] = projectPoint(symMVP, localPos, width, viewportHeight, xOffset);
+                    }
+                    
+                    ImU32 dotColorU32 = colorU32;
+                    if (occluded) {
+                        glm::vec3 darkColor = cursorState.color * 0.3f;
+                        dotColorU32 = ImGui::ColorConvertFloat4ToU32(ImVec4(darkColor.r, darkColor.g, darkColor.b, 1.0f));
+                    }
+                    ImGui::GetForegroundDrawList()->AddConvexPolyFilled(symPoints.data(), dotSegments, dotColorU32);
                 }
-                ImGui::GetForegroundDrawList()->AddConvexPolyFilled(symPoints.data(), dotSegments, dotColorU32);
+
+                ImGui::GetForegroundDrawList()->PopClipRect();
+            };
+
+            if (!renderer.getSplitMode()) {
+                drawViewportCursor(false, 0.0f, viewportWidth);
+            } else {
+                int activeVp = scene.getActiveViewport();
+                bool showInactive = scene.getSplitShowInactiveCursor();
+                float halfW = viewportWidth * 0.5f;
+
+                if (activeVp == 0 || showInactive) {
+                    drawViewportCursor(false, 0.0f, halfW);
+                }
+                if (activeVp == 1 || showInactive) {
+                    drawViewportCursor(true, halfW, halfW);
+                }
             }
         }
     }

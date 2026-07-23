@@ -303,6 +303,15 @@ int main(int argc, char* argv[]) {
 
     // Auto-load render and shading settings if they exist
     RenderSettings::load("render_settings.cfg", renderer, scene);
+    if (scene.getSplitMode() != Scene::SplitMode::OFF) {
+        int halfW = width / 2;
+        scene.getCamera().onResize(halfW, height);
+        if (scene.getCameraRight()) {
+            scene.getCameraRight()->onResize(width - halfW, height);
+        }
+    } else {
+        scene.getCamera().onResize(width, height);
+    }
 
     SculptManager sculpt;
     sculpt.loadSettings("brush_settings.cfg");
@@ -336,12 +345,48 @@ int main(int argc, char* argv[]) {
                     width = event.window.data1;
                     height = event.window.data2;
                     renderer.resize(width, height);
-                    scene.getCamera().onResize(width, height);
+                    if (scene.getSplitMode() != Scene::SplitMode::OFF) {
+                        int halfW = width / 2;
+                        scene.getCamera().onResize(halfW, height);
+                        if (scene.getCameraRight()) {
+                            scene.getCameraRight()->onResize(width - halfW, height);
+                        }
+                    } else {
+                        scene.getCamera().onResize(width, height);
+                    }
                 }
             } else {
+                // If split viewport is active, determine active viewport based on the event mouse coordinates
+                if (scene.getSplitMode() != Scene::SplitMode::OFF) {
+                    if (!sculpt.isSculpting() && !sculpt.getCameraController().isDragging()) {
+                        int mx = -1;
+                        if (event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP) {
+                            mx = event.button.x;
+                        } else if (event.type == SDL_MOUSEMOTION) {
+                            mx = event.motion.x;
+                        }
+                        if (mx >= 0) {
+                            int halfW = width / 2;
+                            int activeVp = (mx >= halfW) ? 1 : 0;
+                            scene.setActiveViewport(activeVp);
+                        }
+                    }
+                }
+
+                // If active viewport is 1 (right viewport), translate coordinates to local space for sculpt events
+                SDL_Event eventCopy = event;
+                if (scene.getSplitMode() != Scene::SplitMode::OFF && scene.getActiveViewport() == 1) {
+                    int halfW = width / 2;
+                    if (eventCopy.type == SDL_MOUSEBUTTONDOWN || eventCopy.type == SDL_MOUSEBUTTONUP) {
+                        eventCopy.button.x -= halfW;
+                    } else if (eventCopy.type == SDL_MOUSEMOTION) {
+                        eventCopy.motion.x -= halfW;
+                    }
+                }
+
                 ImGui_ImplSDL2_ProcessEvent(&event);
 
-                bool handledByHotkey = dispatcher.processEvent(event, sculpt, scene, gui);
+                bool handledByHotkey = dispatcher.processEvent(eventCopy, sculpt, scene, gui);
 
                 if (!handledByHotkey) {
                     ImGuiIO& io = ImGui::GetIO();
@@ -354,19 +399,19 @@ int main(int argc, char* argv[]) {
                         }
                     }
 
-                    if (!skipSculpt && io.WantCaptureMouse && (event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP || event.type == SDL_MOUSEMOTION || event.type == SDL_MOUSEWHEEL)) {
+                    if (!skipSculpt && io.WantCaptureMouse && (eventCopy.type == SDL_MOUSEBUTTONDOWN || eventCopy.type == SDL_MOUSEBUTTONUP || eventCopy.type == SDL_MOUSEMOTION || eventCopy.type == SDL_MOUSEWHEEL)) {
                         // Never skip mouse events if the camera controller is actively dragging/navigating,
                         // otherwise mouse up or mouse motion events will be swallowed by ImGui and lock navigation state.
                         if (!sculpt.getCameraController().isDragging()) {
                             skipSculpt = true;
                         }
                     }
-                    if (io.WantCaptureKeyboard && (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP)) {
+                    if (io.WantCaptureKeyboard && (eventCopy.type == SDL_KEYDOWN || eventCopy.type == SDL_KEYUP)) {
                         skipSculpt = true;
                     }
 
                     if (!skipSculpt) {
-                        sculpt.handleEvent(event, scene);
+                        sculpt.handleEvent(eventCopy, scene);
                     }
                 }
             }
@@ -385,7 +430,12 @@ int main(int argc, char* argv[]) {
         // Poll raw mouse position right before rendering to eliminate input lag
         int rawMouseX, rawMouseY;
         SDL_GetMouseState(&rawMouseX, &rawMouseY);
-        sculpt.setRawMousePos(rawMouseX, rawMouseY);
+        if (scene.getSplitMode() != Scene::SplitMode::OFF && scene.getActiveViewport() == 1) {
+            int halfW = width / 2;
+            sculpt.setRawMousePos(rawMouseX - halfW, rawMouseY);
+        } else {
+            sculpt.setRawMousePos(rawMouseX, rawMouseY);
+        }
 
         if (gui.isRemeshRunning()) {
             sculpt.getCursor().hide();

@@ -73,6 +73,7 @@ public:
     void toggleViewFront();
     void toggleViewTop();
     void toggleViewLeft();
+    void toggleViewRight();
 
     float getNear() const { return m_near; }
     float getFar() const { return m_far; }

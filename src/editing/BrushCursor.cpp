@@ -118,7 +118,11 @@ void BrushCursor::update(int mouseX, int mouseY,
         return;
     }
     Mesh* mesh = scene.getSelected();
-    const Camera& camera = scene.getCamera();
+    const Camera& cameraLeft = scene.getCamera();
+    const Camera* cameraRight = (scene.getSplitMode() != Scene::SplitMode::OFF) ? scene.getCameraByIndex(1) : nullptr;
+    const Camera& camera = (scene.getSplitMode() != Scene::SplitMode::OFF && scene.getActiveViewport() == 1 && cameraRight) 
+                           ? *cameraRight 
+                           : cameraLeft;
 
     bool hitMesh = false;
     glm::vec3 worldPt{0.0f};
@@ -228,22 +232,19 @@ void BrushCursor::update(int mouseX, int mouseY,
         m_state.hitPoint = worldPt;
         m_state.hitNormal = worldNormal;
 
-        // Calculate dynamic world radius based on camera distance / type
-        glm::vec3 cameraPos = camera.computePosition();
-        float hitDepth = glm::distance(cameraPos, worldPt);
-
-        float worldRadius = 0.0f;
-        if (camera.isOrthographic()) {
-            worldRadius = brushRadius * 2.0f * camera.getOrthoZoom();
+        // --- Left Viewport MVP construction ---
+        float worldRadiusLeft = 0.0f;
+        if (cameraLeft.isOrthographic()) {
+            worldRadiusLeft = brushRadius * 2.0f * cameraLeft.getOrthoZoom();
         } else {
-            float fov_rad = camera.getFovDegrees() * (float)M_PI / 180.0f;
-            float screenHeight = (float)camera.getHeight();
+            float fov_rad = cameraLeft.getFovDegrees() * (float)M_PI / 180.0f;
+            float screenHeight = (float)cameraLeft.getHeight();
             if (screenHeight <= 0.0f) screenHeight = 1.0f;
-            worldRadius = brushRadius * hitDepth * std::tan(fov_rad * 0.5f) * 2.0f / screenHeight;
+            float hitDepth = glm::distance(cameraLeft.computePosition(), worldPt);
+            worldRadiusLeft = brushRadius * hitDepth * std::tan(fov_rad * 0.5f) * 2.0f / screenHeight;
         }
-        m_state.radius = worldRadius;
+        m_state.radius = worldRadiusLeft; // For compatibility / general usage
 
-        // Build main circle MVPs with tilt squeezing
         float tiltX = 0.0f;
         float tiltY = 0.0f;
 #ifdef _WIN32
@@ -253,24 +254,19 @@ void BrushCursor::update(int mouseX, int mouseY,
         }
 #endif
 
-        m_state.circleMVP = buildCircleMVP(worldPt, worldNormal, worldRadius, camera, tiltX, tiltY);
-        
-        // Default focal shift of 0.0 gives an inner ratio of 0.5f
-        float innerWorldRadius = worldRadius * 0.5f;
-        m_state.innerCircleMVP = buildCircleMVP(worldPt, worldNormal, innerWorldRadius, camera, tiltX, tiltY);
+        m_state.circleMVP = buildCircleMVP(worldPt, worldNormal, worldRadiusLeft, cameraLeft, tiltX, tiltY);
+        float innerWorldRadiusLeft = worldRadiusLeft * 0.5f;
+        m_state.innerCircleMVP = buildCircleMVP(worldPt, worldNormal, innerWorldRadiusLeft, cameraLeft, tiltX, tiltY);
 
-        // Dot MVP
-        float ratio = worldRadius / brushRadius;
         float pressureDotFactor = 1.0f;
 #ifdef _WIN32
         if (g_tablet.isPressureCursorEnabled() && g_tablet.isPressureEnabled() && g_tablet.isAvailable() && g_tablet.isPenActive()) {
             pressureDotFactor = g_tablet.getPressure();
         }
 #endif
-        float constRadius = 2.5f * ratio * pressureDotFactor;
-        m_state.dotMVP = buildCircleMVP(worldPt, worldNormal, constRadius, camera, tiltX, tiltY);
+        float constRadiusLeft = 2.5f * (worldRadiusLeft / brushRadius) * pressureDotFactor;
+        m_state.dotMVP = buildCircleMVP(worldPt, worldNormal, constRadiusLeft, cameraLeft, tiltX, tiltY);
 
-        // Symmetry MVPs
         m_state.symMVPs.clear();
         m_state.symOccluded.clear();
         if (useSym && mesh) {
@@ -295,20 +291,72 @@ void BrushCursor::update(int mouseX, int mouseY,
             glm::vec3 worldSymPt = glm::vec3(mesh->matrix * glm::vec4(localSymPt, 1.0f));
             glm::vec3 worldSymNormal = glm::normalize(normalMatrix * localSymNormal);
 
-            glm::mat4 symMVP = buildCircleMVP(worldSymPt, worldSymNormal, constRadius, camera, tiltX, tiltY);
+            glm::mat4 symMVP = buildCircleMVP(worldSymPt, worldSymNormal, constRadiusLeft, cameraLeft, tiltX, tiltY);
             m_state.symMVPs.push_back(symMVP);
             
-            bool occluded = checkOcclusion(worldSymPt, camera, mesh);
+            bool occluded = checkOcclusion(worldSymPt, cameraLeft, mesh);
             m_state.symOccluded.push_back(occluded ? 1 : 0);
+        }
+
+        // --- Right Viewport MVP construction ---
+        m_state.symMVPsRight.clear();
+        m_state.symOccludedRight.clear();
+        if (cameraRight) {
+            float worldRadiusRight = 0.0f;
+            if (cameraRight->isOrthographic()) {
+                worldRadiusRight = brushRadius * 2.0f * cameraRight->getOrthoZoom();
+            } else {
+                float fov_rad = cameraRight->getFovDegrees() * (float)M_PI / 180.0f;
+                float screenHeight = (float)cameraRight->getHeight();
+                if (screenHeight <= 0.0f) screenHeight = 1.0f;
+                float hitDepth = glm::distance(cameraRight->computePosition(), worldPt);
+                worldRadiusRight = brushRadius * hitDepth * std::tan(fov_rad * 0.5f) * 2.0f / screenHeight;
+            }
+
+            m_state.circleMVPRight = buildCircleMVP(worldPt, worldNormal, worldRadiusRight, *cameraRight, tiltX, tiltY);
+            float innerWorldRadiusRight = worldRadiusRight * 0.5f;
+            m_state.innerCircleMVPRight = buildCircleMVP(worldPt, worldNormal, innerWorldRadiusRight, *cameraRight, tiltX, tiltY);
+
+            float constRadiusRight = 2.5f * (worldRadiusRight / brushRadius) * pressureDotFactor;
+            m_state.dotMVPRight = buildCircleMVP(worldPt, worldNormal, constRadiusRight, *cameraRight, tiltX, tiltY);
+
+            if (useSym && mesh) {
+                glm::mat4 invMatrix = glm::inverse(mesh->matrix);
+                glm::vec3 lPt = glm::vec3(invMatrix * glm::vec4(worldPt, 1.0f));
+                glm::vec3 lNormal = glm::normalize(glm::vec3(glm::transpose(mesh->matrix) * glm::vec4(worldNormal, 0.0f)));
+
+                glm::vec3 localSymPt = lPt;
+                glm::vec3 localSymNormal = lNormal;
+                if (symAxis == 0) { // X
+                    localSymPt.x = -localSymPt.x;
+                    localSymNormal.x = -localSymNormal.x;
+                } else if (symAxis == 1) { // Y
+                    localSymPt.y = -localSymPt.y;
+                    localSymNormal.y = -localSymNormal.y;
+                } else if (symAxis == 2) { // Z
+                    localSymPt.z = -localSymPt.z;
+                    localSymNormal.z = -localSymNormal.z;
+                }
+
+                glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(mesh->matrix)));
+                glm::vec3 worldSymPt = glm::vec3(mesh->matrix * glm::vec4(localSymPt, 1.0f));
+                glm::vec3 worldSymNormal = glm::normalize(normalMatrix * localSymNormal);
+
+                glm::mat4 symMVP = buildCircleMVP(worldSymPt, worldSymNormal, constRadiusRight, *cameraRight, tiltX, tiltY);
+                m_state.symMVPsRight.push_back(symMVP);
+                
+                bool occluded = checkOcclusion(worldSymPt, *cameraRight, mesh);
+                m_state.symOccludedRight.push_back(occluded ? 1 : 0);
+            }
         }
     } else {
         // Background Screenspace Mode
-        float w = camera.getWidth() * 0.5f;
-        float h = camera.getHeight() * 0.5f;
-        glm::mat4 orthoProj = glm::ortho(-w, w, -h, h, -10.0f, 10.0f);
+        float wLeft = cameraLeft.getWidth() * 0.5f;
+        float hLeft = cameraLeft.getHeight() * 0.5f;
+        glm::mat4 orthoProjLeft = glm::ortho(-wLeft, wLeft, -hLeft, hLeft, -10.0f, 10.0f);
         
-        glm::mat4 trans = glm::mat4(1.0f);
-        trans = glm::translate(trans, glm::vec3(-w + (float)mouseX, h - (float)mouseY, 0.0f));
+        glm::mat4 transLeft = glm::mat4(1.0f);
+        transLeft = glm::translate(transLeft, glm::vec3(-wLeft + (float)mouseX, hLeft - (float)mouseY, 0.0f));
         
         float backgroundDotSize = 2.5f;
 #ifdef _WIN32
@@ -316,27 +364,51 @@ void BrushCursor::update(int mouseX, int mouseY,
             backgroundDotSize = 2.5f * g_tablet.getPressure();
         }
 #endif
-        m_state.circleMVP = orthoProj * glm::scale(trans, glm::vec3(brushRadius, brushRadius, 1.0f));
-        m_state.innerCircleMVP = orthoProj * glm::scale(trans, glm::vec3(brushRadius * 0.5f, brushRadius * 0.5f, 1.0f));
-        m_state.dotMVP = orthoProj * glm::scale(trans, glm::vec3(backgroundDotSize, backgroundDotSize, 1.0f));
+        m_state.circleMVP = orthoProjLeft * glm::scale(transLeft, glm::vec3(brushRadius, brushRadius, 1.0f));
+        m_state.innerCircleMVP = orthoProjLeft * glm::scale(transLeft, glm::vec3(brushRadius * 0.5f, brushRadius * 0.5f, 1.0f));
+        m_state.dotMVP = orthoProjLeft * glm::scale(transLeft, glm::vec3(backgroundDotSize, backgroundDotSize, 1.0f));
         m_state.symMVPs.clear();
         m_state.symOccluded.clear();
+
+        if (cameraRight) {
+            float wRight = cameraRight->getWidth() * 0.5f;
+            float hRight = cameraRight->getHeight() * 0.5f;
+            glm::mat4 orthoProjRight = glm::ortho(-wRight, wRight, -hRight, hRight, -10.0f, 10.0f);
+            
+            glm::mat4 transRight = glm::mat4(1.0f);
+            transRight = glm::translate(transRight, glm::vec3(-wRight + (float)mouseX, hRight - (float)mouseY, 0.0f));
+            
+            m_state.circleMVPRight = orthoProjRight * glm::scale(transRight, glm::vec3(brushRadius, brushRadius, 1.0f));
+            m_state.innerCircleMVPRight = orthoProjRight * glm::scale(transRight, glm::vec3(brushRadius * 0.5f, brushRadius * 0.5f, 1.0f));
+            m_state.dotMVPRight = orthoProjRight * glm::scale(transRight, glm::vec3(backgroundDotSize, backgroundDotSize, 1.0f));
+            m_state.symMVPsRight.clear();
+            m_state.symOccludedRight.clear();
+        }
     }
 
     if (isSculpting) {
         // Dot always renders in screen-space at the latest mouse coordinates
-        float w = camera.getWidth()  * 0.5f;
-        float h = camera.getHeight() * 0.5f;
-        glm::mat4 orthoProj = glm::ortho(-w, w, -h, h, -10.0f, 10.0f);
-        glm::mat4 trans = glm::translate(glm::mat4(1.0f),
-            glm::vec3(-w + (float)mouseX, h - (float)mouseY, 0.0f));
+        float wLeft = cameraLeft.getWidth()  * 0.5f;
+        float hLeft = cameraLeft.getHeight() * 0.5f;
+        glm::mat4 orthoProjLeft = glm::ortho(-wLeft, wLeft, -hLeft, hLeft, -10.0f, 10.0f);
+        glm::mat4 transLeft = glm::translate(glm::mat4(1.0f),
+            glm::vec3(-wLeft + (float)mouseX, hLeft - (float)mouseY, 0.0f));
         float sculptingDotSize = 3.5f;
 #ifdef _WIN32
         if (g_tablet.isPressureCursorEnabled() && g_tablet.isPressureEnabled() && g_tablet.isAvailable() && g_tablet.isPenActive()) {
             sculptingDotSize = 3.5f * g_tablet.getPressure();
         }
 #endif
-        m_state.dotMVP = orthoProj * glm::scale(trans, glm::vec3(sculptingDotSize, sculptingDotSize, 1.0f));
+        m_state.dotMVP = orthoProjLeft * glm::scale(transLeft, glm::vec3(sculptingDotSize, sculptingDotSize, 1.0f));
+
+        if (cameraRight) {
+            float wRight = cameraRight->getWidth()  * 0.5f;
+            float hRight = cameraRight->getHeight() * 0.5f;
+            glm::mat4 orthoProjRight = glm::ortho(-wRight, wRight, -hRight, hRight, -10.0f, 10.0f);
+            glm::mat4 transRight = glm::translate(glm::mat4(1.0f),
+                glm::vec3(-wRight + (float)mouseX, hRight - (float)mouseY, 0.0f));
+            m_state.dotMVPRight = orthoProjRight * glm::scale(transRight, glm::vec3(sculptingDotSize, sculptingDotSize, 1.0f));
+        }
     }
 }
 
@@ -361,8 +433,25 @@ void BrushCursor::applyToRenderer(AngleRenderer& renderer) const {
             colorPtr,
             occludedPtr
         );
+
+        uintptr_t circlePtrR = reinterpret_cast<uintptr_t>(glm::value_ptr(m_state.circleMVPRight));
+        uintptr_t innerPtrR = reinterpret_cast<uintptr_t>(glm::value_ptr(m_state.innerCircleMVPRight));
+        uintptr_t dotPtrR = reinterpret_cast<uintptr_t>(glm::value_ptr(m_state.dotMVPRight));
+        uintptr_t symPtrR = m_state.symMVPsRight.empty() ? 0 : reinterpret_cast<uintptr_t>(m_state.symMVPsRight.data());
+        int symCountR = static_cast<int>(m_state.symMVPsRight.size());
+        uintptr_t occludedPtrR = m_state.symOccludedRight.empty() ? 0 : reinterpret_cast<uintptr_t>(m_state.symOccludedRight.data());
+
+        renderer.setCursorParametersRightFast(
+            circlePtrR,
+            innerPtrR,
+            dotPtrR,
+            symPtrR,
+            symCountR,
+            occludedPtrR
+        );
     } else {
         renderer.setCursorParametersFast(false, false, 0, 0, 0, 0, 0, 0, 0);
+        renderer.setCursorParametersRightFast(0, 0, 0, 0, 0, 0);
     }
 }
 

@@ -3,6 +3,16 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.1]
+- **Viewport**: Fixed a bug where the brush cursor would render across the entire screen in the right viewport during split viewport modes, ensuring correct camera mapping and border-aligned clipping are applied to both viewports.
+- **UI**: Added a "Show cursor in inactive viewport" toggle checkbox under the Camera Settings panel when split viewport mode is active.
+- **Settings**: Serialized the "Show cursor in inactive viewport" setting to `render_settings.cfg` for cross-session persistence.
+- **Viewport**: Fixed the split viewport brush cursor rendering so that the cursor displays correctly in the active viewport (left or right).
+- **Viewport**: Implemented projection support for drawing the brush cursor in the inactive viewport when "Show cursor in inactive viewport" is enabled, fully compatible with both the smooth vector cursor and standard shader cursor.
+- **UI**: Added a "Split Viewport" setting ("Off", "Mirror", "Independent") with interactive radio buttons in the Camera Settings panel.
+- **Viewport**: Implemented scissor-based multi-viewport rendering, allowing the main viewport to be split into two separate screens.
+- **Camera**: Added secondary camera support with automatic synchronization and alignment to the orthographic right view upon entering independent split-screen mode.
+- **Input**: Added automatic active viewport detection based on mouse cursor position, routing navigation, sculpting brush strokes, and measuring/divider tools to the correct viewport camera with local coordinate space translation.
+- **Settings**: Serialized the split viewport mode setting to `render_settings.cfg` for cross-session persistence.
 - **Camera**: Ported the legacy "Plane Trackball" and "Spherical Trackball" camera rotation methods from JavaScript to C++.
 - **Camera**: Implemented camera "Roll" functionality (rotating the camera around the view direction Z-axis), triggered by the Shift + Alt key modifier combination during right-click or Alt + left-click viewport drags. Rolling the view with "Picking pivot" enabled correctly performs a raycast check on mouse-down to center the roll rotation directly around the mesh intersection point.
 - **UI**: Added a "Camera Mode" combo box select and a "Roll Speed" slider under the Camera Settings panel to configure and toggle between Orbit, Plane, and Spherical camera modes.

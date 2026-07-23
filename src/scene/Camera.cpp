@@ -490,3 +490,17 @@ void Camera::toggleViewLeft() {
     updateView();
     pushState();
 }
+
+void Camera::toggleViewRight() {
+    float SQ = 0.70710678f;
+    m_quatRot = glm::quat(SQ, 0.0f, SQ, 0.0f);
+    if (m_mode == CameraEnums::CameraMode::ORBIT) {
+        m_rotX = 0.0f;
+        m_rotY = 1.570796f; // PI/2
+    }
+    m_projectionType = CameraEnums::Projection::ORTHOGRAPHIC;
+    updateProjection();
+    updateView();
+    pushState();
+}
+

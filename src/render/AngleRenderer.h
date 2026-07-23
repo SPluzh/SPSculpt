@@ -72,8 +72,8 @@ public:
     bool getSplitMode() const { return m_splitMode; }
     float getExposure() const { return m_exposure; }
     void setExposure(float exp) { m_exposure = exp; }
-    void setCameraRight(std::shared_ptr<Camera> cameraRight) { m_cameraRight = cameraRight; }
-    std::shared_ptr<Camera> getCameraRight() const { return m_cameraRight; }
+    void setCameraRight(std::shared_ptr<const Camera> cameraRight) { m_cameraRight = cameraRight; }
+    std::shared_ptr<const Camera> getCameraRight() const { return m_cameraRight; }
 
     struct EnvironmentPreset {
         std::string name;
@@ -122,6 +122,14 @@ public:
         uintptr_t cursorColorPtr,
         uintptr_t symOccludedPtr = 0
     );
+    void setCursorParametersRightFast(
+        uintptr_t circleMVPPtr,
+        uintptr_t innerCircleMVPPtr,
+        uintptr_t dotMVPPtr,
+        uintptr_t symMVPsPtr,
+        int symMVPsCount,
+        uintptr_t symOccludedPtr = 0
+    );
 
     void setLassoParameters(bool active, const std::vector<glm::vec2>& points, bool altMode, bool isMaskLasso);
 
@@ -141,8 +149,8 @@ private:
     void drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& camera);
     void drawMeshFlatColor(Mesh* mesh, const Scene& scene, const Camera& camera, const glm::vec4& color);
     void drawWireframe(Mesh* mesh, const Scene& scene, const Camera& camera);
-    void drawReferenceImages(const Scene& scene);
-    void drawSelectionCursor();
+    void drawReferenceImages(const Scene& scene, const Camera& camera);
+    void drawSelectionCursor(bool isRight = false);
     void drawLasso();
 
     void initGrid();
@@ -180,6 +188,12 @@ private:
     std::vector<glm::mat4> m_symMVPs;
     std::vector<char> m_symOccluded;
     glm::vec3 m_cursorColor{1.0f, 0.0f, 0.0f};
+
+    glm::mat4 m_circleMVPRight{1.0f};
+    glm::mat4 m_innerCircleMVPRight{1.0f};
+    glm::mat4 m_dotMVPRight{1.0f};
+    std::vector<glm::mat4> m_symMVPsRight;
+    std::vector<char> m_symOccludedRight;
 
     // Lasso selection parameters
     bool m_lassoActive = false;
@@ -233,7 +247,7 @@ private:
 
     // Split Viewport
     bool m_splitMode = false;
-    std::shared_ptr<Camera> m_cameraRight;
+    std::shared_ptr<const Camera> m_cameraRight;
 
     // Environment presets
     std::vector<EnvironmentPreset> m_environments;

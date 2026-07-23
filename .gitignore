@@ -15,4 +15,5 @@ gemini.md
 todo.md
 implementation_plan.md
 walkthrough.md
-
+# Configuration files
+*.cfg

@@ -21,6 +21,13 @@ struct BrushCursorState {
     glm::mat4 dotMVP         {1.0f};
     std::vector<glm::mat4> symMVPs;
     std::vector<char> symOccluded;
+
+    // Right camera MVPs for split viewport support
+    glm::mat4 circleMVPRight      {1.0f};
+    glm::mat4 innerCircleMVPRight {1.0f};
+    glm::mat4 dotMVPRight         {1.0f};
+    std::vector<glm::mat4> symMVPsRight;
+    std::vector<char> symOccludedRight;
 };
 
 class BrushCursor {

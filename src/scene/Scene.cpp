@@ -199,12 +199,56 @@ void Scene::setSelectedIdx(int idx) {
 }
 
 Camera& Scene::getCamera() {
+    if (m_splitMode == SplitMode::INDEPENDENT && m_activeViewport == 1 && m_cameraRight) {
+        return *m_cameraRight;
+    }
     return m_camera;
 }
 
 const Camera& Scene::getCamera() const {
+    if (m_splitMode == SplitMode::INDEPENDENT && m_activeViewport == 1 && m_cameraRight) {
+        return *m_cameraRight;
+    }
     return m_camera;
 }
+
+Camera* Scene::getCameraPtr() {
+    if (m_splitMode == SplitMode::INDEPENDENT && m_activeViewport == 1 && m_cameraRight) {
+        return m_cameraRight.get();
+    }
+    return &m_camera;
+}
+
+const Camera* Scene::getCameraPtr() const {
+    if (m_splitMode == SplitMode::INDEPENDENT && m_activeViewport == 1 && m_cameraRight) {
+        return m_cameraRight.get();
+    }
+    return &m_camera;
+}
+
+Camera* Scene::getCameraByIndex(int idx) {
+    if (idx == 1 && m_cameraRight) {
+        return m_cameraRight.get();
+    }
+    return &m_camera;
+}
+
+const Camera* Scene::getCameraByIndex(int idx) const {
+    if (idx == 1 && m_cameraRight) {
+        return m_cameraRight.get();
+    }
+    return &m_camera;
+}
+
+void Scene::setSplitMode(SplitMode mode) {
+    m_splitMode = mode;
+    if (mode == SplitMode::INDEPENDENT && !m_cameraRight) {
+        m_cameraRight = std::make_shared<Camera>(m_camera);
+        m_cameraRight->toggleViewRight();
+    }
+    m_activeViewport = 0;
+}
+
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846

@@ -1264,7 +1264,43 @@ void AngleRenderer::setCursorParametersFast(
     }
 }
 
+void AngleRenderer::setCursorParametersRightFast(
+    uintptr_t circleMVPPtr,
+    uintptr_t innerCircleMVPPtr,
+    uintptr_t dotMVPPtr,
+    uintptr_t symMVPsPtr,
+    int symMVPsCount,
+    uintptr_t symOccludedPtr
+) {
+    if (circleMVPPtr) {
+        std::memcpy(&m_circleMVPRight, reinterpret_cast<const float*>(circleMVPPtr), 16 * sizeof(float));
+    }
+    if (innerCircleMVPPtr) {
+        std::memcpy(&m_innerCircleMVPRight, reinterpret_cast<const float*>(innerCircleMVPPtr), 16 * sizeof(float));
+    }
+    if (dotMVPPtr) {
+        std::memcpy(&m_dotMVPRight, reinterpret_cast<const float*>(dotMVPPtr), 16 * sizeof(float));
+    }
+    m_symMVPsRight.clear();
+    m_symOccludedRight.clear();
+    if (symMVPsPtr && symMVPsCount > 0) {
+        m_symMVPsRight.resize(symMVPsCount);
+        std::memcpy(m_symMVPsRight.data(), reinterpret_cast<const float*>(symMVPsPtr), symMVPsCount * 16 * sizeof(float));
+
+        m_symOccludedRight.resize(symMVPsCount);
+        if (symOccludedPtr) {
+            std::memcpy(m_symOccludedRight.data(), reinterpret_cast<const char*>(symOccludedPtr), symMVPsCount * sizeof(char));
+        } else {
+            std::fill(m_symOccludedRight.begin(), m_symOccludedRight.end(), 0);
+        }
+    }
+}
+
 void AngleRenderer::render(const Scene& scene) {
+    // Sync split mode and right camera from scene
+    m_splitMode = (scene.getSplitMode() != Scene::SplitMode::OFF);
+    m_cameraRight = scene.getCameraRight();
+
     // 0. Ensure all mesh dirty buffers are uploaded first (must run on the active GL thread/context)
     for (auto* mesh : scene.getMeshes()) {
         uploadIfDirty(mesh);
@@ -1291,19 +1327,44 @@ void AngleRenderer::render(const Scene& scene) {
 
     // 4. Merge Pass (FBO Opaque + FBO Transparent -> FBO Merge)
     glBindFramebuffer(GL_FRAMEBUFFER, m_rttMerge.fbo);
+    glViewport(0, 0, m_width, m_height);
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT);
     drawFullscreenMerge();
 
     // 5. FXAA Pass (FBO Merge -> FBO Composite)
     glBindFramebuffer(GL_FRAMEBUFFER, m_rttComposite.fbo);
+    glViewport(0, 0, m_width, m_height);
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT);
     drawFullscreenFxaa();
 
     // 6. Postprocessing Overlays on FBO Composite
     // Reference Images
-    drawReferenceImages(scene);
+    if (!m_splitMode) {
+        glViewport(0, 0, m_width, m_height);
+        glScissor(0, 0, m_width, m_height);
+        glEnable(GL_SCISSOR_TEST);
+        drawReferenceImages(scene, scene.getCamera());
+        glDisable(GL_SCISSOR_TEST);
+    } else {
+        int w2 = m_width / 2;
+        const Camera* camLeft = scene.getCameraByIndex(0);
+        if (camLeft) {
+            glViewport(0, 0, w2, m_height);
+            glScissor(0, 0, w2, m_height);
+            glEnable(GL_SCISSOR_TEST);
+            drawReferenceImages(scene, *camLeft);
+        }
+        const Camera* camRight = scene.getCameraByIndex(1);
+        if (camRight) {
+            glViewport(w2, 0, m_width - w2, m_height);
+            glScissor(w2, 0, m_width - w2, m_height);
+            glEnable(GL_SCISSOR_TEST);
+            drawReferenceImages(scene, *camRight);
+        }
+        glDisable(GL_SCISSOR_TEST);
+    }
 
     // Contour Outlines (Sobel filter of the Contour Pass)
     if (m_showContour) {
@@ -1320,7 +1381,35 @@ void AngleRenderer::render(const Scene& scene) {
     }
 
     // Selection Cursor
-    drawSelectionCursor();
+    if (!m_splitMode) {
+        glViewport(0, 0, m_width, m_height);
+        glScissor(0, 0, m_width, m_height);
+        glEnable(GL_SCISSOR_TEST);
+        drawSelectionCursor(false);
+        glDisable(GL_SCISSOR_TEST);
+    } else {
+        int w2 = m_width / 2;
+        int activeVp = scene.getActiveViewport();
+        bool showInactive = scene.getSplitShowInactiveCursor();
+
+        // Draw Left Viewport Cursor (isRight = false)
+        if (activeVp == 0 || showInactive) {
+            glViewport(0, 0, w2, m_height);
+            glScissor(0, 0, w2, m_height);
+            glEnable(GL_SCISSOR_TEST);
+            drawSelectionCursor(false);
+            glDisable(GL_SCISSOR_TEST);
+        }
+
+        // Draw Right Viewport Cursor (isRight = true)
+        if (activeVp == 1 || showInactive) {
+            glViewport(w2, 0, m_width - w2, m_height);
+            glScissor(w2, 0, m_width - w2, m_height);
+            glEnable(GL_SCISSOR_TEST);
+            drawSelectionCursor(true);
+            glDisable(GL_SCISSOR_TEST);
+        }
+    }
 
     // 7. Final Blit to Screen (or Viewport2D Zoom/Pan)
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -1331,7 +1420,28 @@ void AngleRenderer::render(const Scene& scene) {
     drawFullscreenViewport2D(scene);
 
     // Render screen-space Lasso overlay on top of screen
-    drawLasso();
+    if (!m_splitMode) {
+        glViewport(0, 0, m_width, m_height);
+        glScissor(0, 0, m_width, m_height);
+        glEnable(GL_SCISSOR_TEST);
+        drawLasso();
+        glDisable(GL_SCISSOR_TEST);
+    } else {
+        int w2 = m_width / 2;
+        int activeVp = scene.getActiveViewport();
+        if (activeVp == 0) {
+            glViewport(0, 0, w2, m_height);
+            glScissor(0, 0, w2, m_height);
+            glEnable(GL_SCISSOR_TEST);
+            drawLasso();
+        } else {
+            glViewport(w2, 0, m_width - w2, m_height);
+            glScissor(w2, 0, m_width - w2, m_height);
+            glEnable(GL_SCISSOR_TEST);
+            drawLasso();
+        }
+        glDisable(GL_SCISSOR_TEST);
+    }
 }
 
 void AngleRenderer::renderScenePass(const Scene& scene, int passType) {
@@ -1348,14 +1458,19 @@ void AngleRenderer::renderScenePass(const Scene& scene, int passType) {
         glViewport(0, 0, w2, m_height);
         glScissor(0, 0, w2, m_height);
         glEnable(GL_SCISSOR_TEST);
-        drawPassGeometry(scene, passType, scene.getCamera());
+        const Camera* camLeft = scene.getCameraByIndex(0);
+        if (camLeft) {
+            const_cast<Camera*>(camLeft)->onResize(w2, m_height);
+            drawPassGeometry(scene, passType, *camLeft);
+        }
 
-        // Right camera (m_cameraRight)
-        if (m_cameraRight) {
+        // Right camera (mirror or independent)
+        const Camera* camRight = scene.getCameraByIndex(1);
+        if (camRight) {
             glViewport(w2, 0, m_width - w2, m_height);
             glScissor(w2, 0, m_width - w2, m_height);
-            m_cameraRight->onResize(m_width - w2, m_height);
-            drawPassGeometry(scene, passType, *m_cameraRight);
+            const_cast<Camera*>(camRight)->onResize(m_width - w2, m_height);
+            drawPassGeometry(scene, passType, *camRight);
         }
         glDisable(GL_SCISSOR_TEST);
     }
@@ -1624,9 +1739,15 @@ void AngleRenderer::drawWireframe(Mesh* mesh, const Scene& scene, const Camera& 
     glDisable(GL_BLEND);
 }
 
-void AngleRenderer::drawSelectionCursor() {
+void AngleRenderer::drawSelectionCursor(bool isRight) {
     if (m_smoothCursor) return; // Drawn via ImGui in GuiManager
     if (!m_showCursor || m_selectionProgram == 0) return;
+
+    const glm::mat4& circleMVP = isRight ? m_circleMVPRight : m_circleMVP;
+    const glm::mat4& innerCircleMVP = isRight ? m_innerCircleMVPRight : m_innerCircleMVP;
+    const glm::mat4& dotMVP = isRight ? m_dotMVPRight : m_dotMVP;
+    const std::vector<glm::mat4>& symMVPs = isRight ? m_symMVPsRight : m_symMVPs;
+    const std::vector<char>& symOccluded = isRight ? m_symOccludedRight : m_symOccluded;
     
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_CULL_FACE);
@@ -1676,7 +1797,7 @@ void AngleRenderer::drawSelectionCursor() {
             }
             if (locOffsetPixels != -1) glUniform1f(locOffsetPixels, offset);
             
-            glUniformMatrix4fv(locMVP, 1, GL_FALSE, &m_circleMVP[0][0]);
+            glUniformMatrix4fv(locMVP, 1, GL_FALSE, &circleMVP[0][0]);
             glDrawArrays(GL_LINE_LOOP, 0, 64);
         }
         
@@ -1688,7 +1809,7 @@ void AngleRenderer::drawSelectionCursor() {
             }
             if (locOffsetPixels != -1) glUniform1f(locOffsetPixels, offset);
 
-            glUniformMatrix4fv(locMVP, 1, GL_FALSE, &m_innerCircleMVP[0][0]);
+            glUniformMatrix4fv(locMVP, 1, GL_FALSE, &innerCircleMVP[0][0]);
             glDrawArrays(GL_LINE_LOOP, 0, 64);
         }
 
@@ -1700,22 +1821,22 @@ void AngleRenderer::drawSelectionCursor() {
 
     // Draw main dot
     glUniform3fv(locColor, 1, &m_cursorColor[0]);
-    glUniformMatrix4fv(locMVP, 1, GL_FALSE, &m_dotMVP[0][0]);
+    glUniformMatrix4fv(locMVP, 1, GL_FALSE, &dotMVP[0][0]);
     glBindBuffer(GL_ARRAY_BUFFER, m_dotVbo);
     glVertexAttribPointer(locPos, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(locPos);
     glDrawArrays(GL_TRIANGLE_FAN, 0, 34);
 
     // Draw symmetry dots
-    for (size_t idx = 0; idx < m_symMVPs.size(); ++idx) {
-        bool occluded = (idx < m_symOccluded.size()) ? m_symOccluded[idx] : false;
+    for (size_t idx = 0; idx < symMVPs.size(); ++idx) {
+        bool occluded = (idx < symOccluded.size()) ? symOccluded[idx] : false;
         if (occluded) {
             glm::vec3 darkColor = m_cursorColor * 0.3f;
             glUniform3fv(locColor, 1, &darkColor[0]);
         } else {
             glUniform3fv(locColor, 1, &m_cursorColor[0]);
         }
-        glUniformMatrix4fv(locMVP, 1, GL_FALSE, &m_symMVPs[idx][0][0]);
+        glUniformMatrix4fv(locMVP, 1, GL_FALSE, &symMVPs[idx][0][0]);
         glDrawArrays(GL_TRIANGLE_FAN, 0, 34);
     }
 
@@ -1740,12 +1861,15 @@ void AngleRenderer::drawLasso() {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
+    float viewportWidth = m_splitMode ? m_width * 0.5f : (float)m_width;
+    float viewportHeight = (float)m_height;
+
     // Map screen-space points to NDC [-1, 1]
     std::vector<float> ndcPoints;
     ndcPoints.reserve(m_lassoPoints.size() * 3);
     for (const auto& p : m_lassoPoints) {
-        float x = (p.x / m_width) * 2.0f - 1.0f;
-        float y = 1.0f - (p.y / m_height) * 2.0f;
+        float x = (p.x / viewportWidth) * 2.0f - 1.0f;
+        float y = 1.0f - (p.y / viewportHeight) * 2.0f;
         ndcPoints.push_back(x);
         ndcPoints.push_back(y);
         ndcPoints.push_back(0.0f);
@@ -1961,7 +2085,7 @@ void AngleRenderer::uploadIfDirty(Mesh* mesh) {
     }
 }
 
-void AngleRenderer::drawReferenceImages(const Scene& scene) {
+void AngleRenderer::drawReferenceImages(const Scene& scene, const Camera& camera) {
     const auto& images = scene.getReferenceImages();
     if (images.empty() || m_refImageProgram == 0) return;
 
@@ -2005,7 +2129,7 @@ void AngleRenderer::drawReferenceImages(const Scene& scene) {
             model = glm::translate(model, glm::vec3(img.offsetX, img.offsetY, 0.0f));
             model = glm::scale(model, glm::vec3(img.scale, img.scale, 1.0f));
             
-            glm::mat4 mvp = scene.getCamera().getProjMatrix() * scene.getCamera().getViewMatrix() * model;
+            glm::mat4 mvp = camera.getProjMatrix() * camera.getViewMatrix() * model;
             glUniformMatrix4fv(locMVP, 1, GL_FALSE, glm::value_ptr(mvp));
         }
 

@@ -50,7 +50,8 @@ bool RenderSettings::save(const std::string& filepath, const AngleRenderer& rend
     out << "contourColor=" << cColor.r << " " << cColor.g << " " << cColor.b << " " << cColor.a << "\n";
     out << "cursorThickness=" << renderer.getCursorThickness() << "\n";
     out << "smoothCursor=" << (renderer.getSmoothCursor() ? "true" : "false") << "\n";
-    out << "splitMode=" << (renderer.getSplitMode() ? "true" : "false") << "\n";
+    out << "splitMode=" << static_cast<int>(scene.getSplitMode()) << "\n";
+    out << "splitShowInactiveCursor=" << (scene.getSplitShowInactiveCursor() ? "true" : "false") << "\n";
     out << "currentEnvIdx=" << renderer.getCurrentEnvIdx() << "\n";
     out << "exposure=" << renderer.getExposure() << "\n\n";
 
@@ -150,7 +151,11 @@ bool RenderSettings::load(const std::string& filepath, AngleRenderer& renderer, 
         }
         it = params.find("splitMode");
         if (it != params.end()) {
-            renderer.setSplitMode(it->second == "true" || it->second == "1");
+            scene.setSplitMode(static_cast<Scene::SplitMode>(safe_stoi(it->second, 0)));
+        }
+        it = params.find("splitShowInactiveCursor");
+        if (it != params.end()) {
+            scene.setSplitShowInactiveCursor(it->second == "true" || it->second == "1");
         }
         
         // Load environment preset first (so it resets exposure and SH)

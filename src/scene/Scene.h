@@ -1,5 +1,6 @@
 #pragma once
 #include <vector>
+#include <memory>
 #include "mesh/Mesh.h"
 #include "scene/Camera.h"
 #include "render/ReferenceImage.h"
@@ -47,6 +48,12 @@ private:
     void restoreState(const HistoryState& state);
 
 public:
+    enum class SplitMode {
+        OFF = 0,
+        MIRROR = 1,
+        INDEPENDENT = 2
+    };
+
     Scene();
     ~Scene();
 
@@ -61,7 +68,22 @@ public:
 
     Camera& getCamera();
     const Camera& getCamera() const;
-    Camera* getCameraPtr() { return &m_camera; }
+    Camera* getCameraPtr();
+    const Camera* getCameraPtr() const;
+    Camera* getCameraByIndex(int idx);
+    const Camera* getCameraByIndex(int idx) const;
+
+    SplitMode getSplitMode() const { return m_splitMode; }
+    void setSplitMode(SplitMode mode);
+    
+    int getActiveViewport() const { return m_activeViewport; }
+    void setActiveViewport(int vp) { m_activeViewport = vp; }
+
+    bool getSplitShowInactiveCursor() const { return m_splitShowInactiveCursor; }
+    void setSplitShowInactiveCursor(bool val) { m_splitShowInactiveCursor = val; }
+    
+    std::shared_ptr<Camera> getCameraRight() { return m_cameraRight; }
+    std::shared_ptr<const Camera> getCameraRight() const { return m_cameraRight; }
 
     void loadDefaultSphere();
 
@@ -78,4 +100,8 @@ public:
 
 private:
     std::vector<ReferenceImage> m_refImages;
+    SplitMode m_splitMode = SplitMode::OFF;
+    int m_activeViewport = 0;
+    bool m_splitShowInactiveCursor = false;
+    std::shared_ptr<Camera> m_cameraRight;
 };
