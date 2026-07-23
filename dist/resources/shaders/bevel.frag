@@ -9,6 +9,15 @@ uniform sampler2D uDepthMap;
 uniform vec2 uInvViewportSize;
 uniform float uBevelRadius;
 uniform float uBevelStrength;
+uniform float uNear[2];
+uniform float uFar[2];
+uniform float uTargetDistance[2];
+uniform int uProjType[2];
+uniform float uOrthoZoom[2];
+uniform float uFov[2];
+uniform float uViewportHeight[2];
+uniform int uSplitMode;
+uniform int uBevelScaleWithDistance;
 
 out vec4 fragColor;
 
@@ -33,11 +42,38 @@ void main() {
     vec3 sumNormal = vec3(0.0);
     float sumWeight = 0.0;
     
-    int r = int(round(uBevelRadius));
+    float radius = uBevelRadius;
+    if (uBevelScaleWithDistance == 1) {
+        int camIdx = 0;
+        if (uSplitMode == 1 && uv.x >= 0.5) {
+            camIdx = 1;
+        }
+        
+        float nearVal = uNear[camIdx];
+        float farVal = uFar[camIdx];
+        float targetDist = uTargetDistance[camIdx];
+        int projType = uProjType[camIdx];
+        float orthoZoom = uOrthoZoom[camIdx];
+        float fov = uFov[camIdx];
+        float vpHeight = uViewportHeight[camIdx];
+        
+        if (projType == 0) { // Perspective
+            float zDepth = (farVal * nearVal) / (farVal - D0 * (farVal - nearVal));
+            float scale = targetDist / max(zDepth, 0.001);
+            radius = uBevelRadius * scale;
+        } else { // Orthographic
+            float tanHalfFov = tan(fov * 0.5 * 3.14159265 / 180.0);
+            float refOrthoZoom = targetDist * tanHalfFov / vpHeight;
+            float scale = refOrthoZoom / max(orthoZoom, 0.00001);
+            radius = uBevelRadius * scale;
+        }
+    }
+    
+    int r = int(round(radius));
     if (r < 1) r = 1;
     if (r > 8) r = 8; // Performance safeguard
     
-    float sigma = uBevelRadius;
+    float sigma = radius;
     float twoSigmaSq = 2.0 * sigma * sigma;
     
     for (int y = -r; y <= r; ++y) {

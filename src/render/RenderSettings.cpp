@@ -63,6 +63,10 @@ bool RenderSettings::save(const std::string& filepath, const AngleRenderer& rend
     out << "showWireframe=" << (renderer.getShowWireframe() ? "true" : "false") << "\n";
     out << "flatShading=" << (renderer.getFlatShading() ? "true" : "false") << "\n";
     out << "curvature=" << renderer.getCurvature() << "\n";
+    out << "bevelEnabled=" << (renderer.getBevelEnabled() ? "true" : "false") << "\n";
+    out << "bevelRadius=" << renderer.getBevelRadius() << "\n";
+    out << "bevelStrength=" << renderer.getBevelStrength() << "\n";
+    out << "bevelScaleWithDistance=" << (renderer.getBevelScaleWithDistance() ? "true" : "false") << "\n";
 
     const Camera* mainCam = scene.getCameraByIndex(0);
     if (mainCam) {
@@ -275,6 +279,22 @@ bool RenderSettings::load(const std::string& filepath, AngleRenderer& renderer, 
         it = params.find("curvature");
         if (it != params.end()) {
             renderer.setCurvature(safe_stof(it->second, 0.0f));
+        }
+        it = params.find("bevelEnabled");
+        if (it != params.end()) {
+            renderer.setBevelEnabled(it->second == "true" || it->second == "1");
+        }
+        it = params.find("bevelRadius");
+        if (it != params.end()) {
+            renderer.setBevelRadius(safe_stof(it->second, 4.0f));
+        }
+        it = params.find("bevelStrength");
+        if (it != params.end()) {
+            renderer.setBevelStrength(safe_stof(it->second, 1.5f));
+        }
+        it = params.find("bevelScaleWithDistance");
+        if (it != params.end()) {
+            renderer.setBevelScaleWithDistance(it->second == "true" || it->second == "1");
         }
 
         // Global material settings

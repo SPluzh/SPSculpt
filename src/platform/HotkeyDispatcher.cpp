@@ -12,6 +12,9 @@ HotkeyDispatcher::HotkeyDispatcher()
 
 bool HotkeyDispatcher::processEvent(const SDL_Event& event, SculptManager& sculpt, Scene& scene, GuiManager& gui) {
     if (gui.isRemeshRunning()) {
+        if (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) {
+            updateModifiers(event, sculpt);
+        }
         return true; // Consume event without acting
     }
 
@@ -124,6 +127,14 @@ void HotkeyDispatcher::updateModifiers(const SDL_Event& event, SculptManager& sc
                 }
             }
         }
+    }
+}
+
+void HotkeyDispatcher::resetModifiers(SculptManager& sculpt) {
+    if (m_ctrlActive || m_shiftActive) {
+        m_ctrlActive = false;
+        m_shiftActive = false;
+        sculpt.setBrush(m_prevBrush);
     }
 }
 

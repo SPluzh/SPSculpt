@@ -9,6 +9,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include "scene/Scene.h"
 #include "mesh/Mesh.h"
+#include "common/Logger.h"
 #include "../third_party/stb_image.h"
 
 // Cache uniform locations to avoid driver lookups on every draw call
@@ -503,6 +504,55 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
         glUniform2f(glGetUniformLocation(m_bevelFilterProgram, "uInvViewportSize"), 1.0f / m_width, 1.0f / m_height);
         glUniform1f(glGetUniformLocation(m_bevelFilterProgram, "uBevelRadius"), m_bevelRadius);
         glUniform1f(glGetUniformLocation(m_bevelFilterProgram, "uBevelStrength"), m_bevelStrength);
+
+        const Camera* camLeft = scene.getCameraByIndex(0);
+        if (!camLeft) camLeft = &scene.getCamera();
+        const Camera* camRight = scene.getCameraByIndex(1);
+
+        float nearVals[2] = { 0.05f, 0.05f };
+        float farVals[2] = { 5000.0f, 5000.0f };
+        float targetDists[2] = { 100.0f, 100.0f };
+        int projTypes[2] = { 0, 0 };
+        float orthoZooms[2] = { 0.044f, 0.044f };
+        float fovs[2] = { 45.0f, 45.0f };
+        float vpHeights[2] = { (float)m_height, (float)m_height };
+
+        if (camLeft) {
+            nearVals[0] = camLeft->getNear();
+            farVals[0] = camLeft->getFar();
+            targetDists[0] = glm::distance(camLeft->computePosition(), camLeft->getPivot());
+            projTypes[0] = (camLeft->getProjectionType() == CameraEnums::Projection::ORTHOGRAPHIC) ? 1 : 0;
+            orthoZooms[0] = camLeft->getOrthoZoom();
+            fovs[0] = camLeft->getFov();
+            vpHeights[0] = (float)m_height;
+        }
+        if (camRight) {
+            nearVals[1] = camRight->getNear();
+            farVals[1] = camRight->getFar();
+            targetDists[1] = glm::distance(camRight->computePosition(), camRight->getPivot());
+            projTypes[1] = (camRight->getProjectionType() == CameraEnums::Projection::ORTHOGRAPHIC) ? 1 : 0;
+            orthoZooms[1] = camRight->getOrthoZoom();
+            fovs[1] = camRight->getFov();
+            vpHeights[1] = (float)m_height;
+        } else {
+            nearVals[1] = nearVals[0];
+            farVals[1] = farVals[0];
+            targetDists[1] = targetDists[0];
+            projTypes[1] = projTypes[0];
+            orthoZooms[1] = orthoZooms[0];
+            fovs[1] = fovs[0];
+            vpHeights[1] = vpHeights[0];
+        }
+
+        glUniform1fv(glGetUniformLocation(m_bevelFilterProgram, "uNear"), 2, nearVals);
+        glUniform1fv(glGetUniformLocation(m_bevelFilterProgram, "uFar"), 2, farVals);
+        glUniform1fv(glGetUniformLocation(m_bevelFilterProgram, "uTargetDistance"), 2, targetDists);
+        glUniform1iv(glGetUniformLocation(m_bevelFilterProgram, "uProjType"), 2, projTypes);
+        glUniform1fv(glGetUniformLocation(m_bevelFilterProgram, "uOrthoZoom"), 2, orthoZooms);
+        glUniform1fv(glGetUniformLocation(m_bevelFilterProgram, "uFov"), 2, fovs);
+        glUniform1fv(glGetUniformLocation(m_bevelFilterProgram, "uViewportHeight"), 2, vpHeights);
+        glUniform1i(glGetUniformLocation(m_bevelFilterProgram, "uSplitMode"), m_splitMode ? 1 : 0);
+        glUniform1i(glGetUniformLocation(m_bevelFilterProgram, "uBevelScaleWithDistance"), m_bevelScaleWithDistance ? 1 : 0);
         
         glBindVertexArray(m_fsqVao);
         glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -1308,7 +1358,41 @@ void AngleRenderer::uploadIfDirty(Mesh* mesh) {
         mesh->isDirty = true;
     }
     
-    if (mesh->isDirty) {
+    if (mesh->nbVerts < 0) {
+        mesh->nbVerts = 0;
+    }
+    size_t expectedSize = (size_t)mesh->nbVerts * 3;
+    if (mesh->verts.size() != expectedSize) {
+        sculpt_log("[WARNING uploadIfDirty] mesh->verts size mismatch: verts.size=%u, expected=%u. Correcting...\n",
+                   (unsigned int)mesh->verts.size(), (unsigned int)expectedSize);
+        mesh->verts.resize(expectedSize, 0.0f);
+        mesh->isDirty = true;
+    }
+    if (mesh->normals.size() != expectedSize) {
+        sculpt_log("[WARNING uploadIfDirty] mesh->normals size mismatch: normals.size=%u, expected=%u. Correcting...\n",
+                   (unsigned int)mesh->normals.size(), (unsigned int)expectedSize);
+        mesh->normals.resize(expectedSize, 0.0f);
+        mesh->isDirty = true;
+    }
+    if (mesh->colors.size() != expectedSize) {
+        sculpt_log("[WARNING uploadIfDirty] mesh->colors size mismatch: colors.size=%u, expected=%u. Correcting...\n",
+                   (unsigned int)mesh->colors.size(), (unsigned int)expectedSize);
+        mesh->colors.assign(expectedSize, 1.0f);
+        mesh->isDirty = true;
+    }
+    if (mesh->materials.size() != expectedSize) {
+        sculpt_log("[WARNING uploadIfDirty] mesh->materials size mismatch: materials.size=%u, expected=%u. Correcting...\n",
+                   (unsigned int)mesh->materials.size(), (unsigned int)expectedSize);
+        mesh->materials.resize(expectedSize);
+        for (int i = 0; i < mesh->nbVerts; ++i) {
+            mesh->materials[i * 3]     = 0.5f;
+            mesh->materials[i * 3 + 1] = 0.0f;
+            mesh->materials[i * 3 + 2] = 1.0f;
+        }
+        mesh->isDirty = true;
+    }
+
+    if (mesh->isDirty || bufs->vertCount != (size_t)mesh->nbVerts) {
         glBindVertexArray(bufs->vao);
         
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);

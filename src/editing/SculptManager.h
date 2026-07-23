@@ -130,6 +130,7 @@ public:
     void handleEvent(const SDL_Event& event, Scene& scene);
     void processFrame(Scene& scene);
     void executeStroke(Scene& scene, Mesh* mesh, Camera& camera, float mouseX, float mouseY, float currentPressure);
+    void cancelStroke();
 
     bool saveSettings(const std::string& filepath);
     bool loadSettings(const std::string& filepath);

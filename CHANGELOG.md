@@ -3,6 +3,12 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.3]
+- **Fix**: Prevented random crashes and freezes when interacting with the model immediately after remeshing.
+- **Fix**: Resolved a bug where the Ctrl modifier key would remain stuck in an active state after triggering Ctrl + X remeshing, causing the masking brush to remain stuck until switching brushes manually.
+- **Stability**: Added automatic safety checks to ensure visual model buffers match actual shape data before drawing, preventing visual glitches and crashes.
+- **Stability**: Resetting active brush strokes and temporary mouse drag states when the shape structure changes to avoid data conflicts.
+- **Fix**: Resolved a critical application crash (segmentation fault) during mesh remeshing by implementing robust out-of-bounds index validation and automatic safe clamping on the reconstructed face buffer prior to topology calculation.
+- **Diagnostics**: Implemented a dual-logging system that dynamically writes execution events and crash signal details to both the console and a local persistent log file (`sculpt_log.txt`) on startup and during execution.
 - **UI**: Added a "Darken unselected" checkbox to the Rendering Quality panel to toggle darkening of non-selected meshes in multi-mesh scenes.
 - **Settings**: Serialized the "Darken unselected" setting in `render_settings.cfg` for persistence across sessions.
 - **Renderer**: Implemented a screen-space post-process Bevel (Melt) shader that detects intersection boundaries between meshes and blends their normals to visually fuse intersecting models.

@@ -21,6 +21,7 @@
 #include "mesh/Topology.h"
 #include "sculpt/Remesh.h"
 #include "files/MeshUtils.h"
+#include "common/Logger.h"
 #include "../third_party/stb_image.h"
 #include <filesystem>
 #include <chrono>
@@ -254,6 +255,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
     if (m_remeshAsync.state == RemeshState::Done) {
         applyRemeshResult(scene, m_remeshAsync.result);
+        sculpt.cancelStroke();
+        SDL_SetModState(KMOD_NONE);
         m_remeshAsync.result = RemeshResult(); // Free memory
         m_remeshAsync.state = RemeshState::Idle;
     } else if (m_remeshAsync.state == RemeshState::Error) {
@@ -1142,6 +1145,10 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             float strength = renderer.getBevelStrength();
             if (ImGui::SliderFloat("Bevel Strength", &strength, 0.1f, 5.0f, "%.2f")) {
                 renderer.setBevelStrength(strength);
+            }
+            bool scaleBevel = renderer.getBevelScaleWithDistance();
+            if (ImGui::Checkbox("Constant World-space Size", &scaleBevel)) {
+                renderer.setBevelScaleWithDistance(scaleBevel);
             }
             ImGui::Unindent();
         }
@@ -2431,12 +2438,18 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 }
 
 void GuiManager::performRemesh(Scene& scene) {
+    sculpt_log("[DEBUG performRemesh] Entered performRemesh. state = %d\n", (int)m_remeshAsync.state.load());
     if (m_remeshAsync.state == RemeshState::Running) {
+        sculpt_log("[DEBUG performRemesh] state is Running, returning.\n");
         return;
     }
 
     Mesh* selectedMesh = scene.getSelected();
-    if (!selectedMesh) return;
+    sculpt_log("[DEBUG performRemesh] selectedMesh = %p\n", (void*)selectedMesh);
+    if (!selectedMesh) {
+        sculpt_log("[DEBUG performRemesh] selectedMesh is null, returning.\n");
+        return;
+    }
 
     scene.pushHistoryState();
 
@@ -2507,8 +2520,16 @@ void GuiManager::performRemesh(Scene& scene) {
 }
 
 void GuiManager::applyRemeshResult(Scene& scene, const RemeshResult& r) {
+    sculpt_log("[DEBUG applyRemeshResult] Started applying remesh result.\n");
+    sculpt_log("[DEBUG applyRemeshResult] RemeshResult: verts=%u, faces=%u, colors=%u, materials=%u\n",
+              (unsigned int)r.vertices.size(), (unsigned int)r.faces.size(),
+              (unsigned int)r.colors.size(), (unsigned int)r.materials.size());
+
     Mesh* selectedMesh = scene.getSelected();
-    if (!selectedMesh) return;
+    if (!selectedMesh) {
+        sculpt_log("[WARNING applyRemeshResult] No selected mesh to apply remesh result to!\n");
+        return;
+    }
 
     selectedMesh->verts = r.vertices;
     selectedMesh->faces = r.faces;
@@ -2517,6 +2538,26 @@ void GuiManager::applyRemeshResult(Scene& scene, const RemeshResult& r) {
     selectedMesh->nbVerts = r.vertices.size() / 3;
     selectedMesh->nbFaces = r.faces.size() / 4;
 
+    sculpt_log("[DEBUG applyRemeshResult] Mesh configuration updated: nbVerts=%d, nbFaces=%d\n",
+              selectedMesh->nbVerts, selectedMesh->nbFaces);
+
+    // Validate face indices to prevent segmentation faults in computeTopology and postInit
+    uint32_t maxVertIndex = selectedMesh->nbVerts;
+    uint32_t outOfBoundsCount = 0;
+    for (size_t i = 0; i < selectedMesh->faces.size(); ++i) {
+        uint32_t vid = selectedMesh->faces[i];
+        if (vid != 0xffffffff && vid >= maxVertIndex) {
+            outOfBoundsCount++;
+            selectedMesh->faces[i] = 0; // Safe clamp to prevent out-of-bounds crash
+        }
+    }
+    if (outOfBoundsCount > 0) {
+        sculpt_log("[WARNING applyRemeshResult] Found and corrected %u out-of-bounds face indices in the reconstruction output!\n", outOfBoundsCount);
+    } else {
+        sculpt_log("[DEBUG applyRemeshResult] Face indices validated. All indices are safe.\n");
+    }
+
+    sculpt_log("[DEBUG applyRemeshResult] Computing topology...\n");
     std::vector<uint32_t> vrvStartCount;
     std::vector<uint32_t> vertRingVert;
     std::vector<uint32_t> vrfStartCount;
@@ -2532,6 +2573,7 @@ void GuiManager::applyRemeshResult(Scene& scene, const RemeshResult& r) {
         vertRingVert,
         vertOnEdge
     );
+    sculpt_log("[DEBUG applyRemeshResult] Topology computed successfully.\n");
 
     selectedMesh->vrfStartCount = vrfStartCount;
     selectedMesh->vertRingFace = vertRingFace;
@@ -2539,7 +2581,9 @@ void GuiManager::applyRemeshResult(Scene& scene, const RemeshResult& r) {
     selectedMesh->vertRingVert = vertRingVert;
     selectedMesh->vertOnEdge = vertOnEdge;
 
+    sculpt_log("[DEBUG applyRemeshResult] Finalizing mesh initialization (postInit)...\n");
     selectedMesh->postInit();
+    sculpt_log("[DEBUG applyRemeshResult] postInit completed successfully.\n");
     selectedMesh->isDirty = true;
 }
 

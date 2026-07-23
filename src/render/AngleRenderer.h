@@ -70,6 +70,8 @@ public:
     float getBevelRadius() const { return m_bevelRadius; }
     void setBevelStrength(float strength) { m_bevelStrength = strength; }
     float getBevelStrength() const { return m_bevelStrength; }
+    void setBevelScaleWithDistance(bool scale) { m_bevelScaleWithDistance = scale; }
+    bool getBevelScaleWithDistance() const { return m_bevelScaleWithDistance; }
     void setShowContour(bool show) { m_showContour = show; }
     bool getShowContour() const { return m_showContour; }
     void setCursorThickness(float thickness) { m_cursorThickness = thickness; }
@@ -304,6 +306,7 @@ private:
     bool m_bevelEnabled = false;
     float m_bevelRadius = 4.0f;
     float m_bevelStrength = 1.5f;
+    bool m_bevelScaleWithDistance = false;
     bool m_showContour = true;
     bool m_showGrid = true;
     glm::vec4 m_contourColor{1.0f, 0.75f, 0.1f, 1.0f};

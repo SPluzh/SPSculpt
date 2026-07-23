@@ -6,6 +6,7 @@
 #include <string>
 #include <cstdio>
 #include <functional>
+#include "common/Logger.h"
 
 // Bounding box mapping and structures
 struct VoxelGrid {
@@ -260,8 +261,8 @@ static void voxelize(
     int rxy = rx * ry;
     int datalen = rx * ry * rz;
 
-    printf("[C++ voxelize] Starting voxelization: input nbVerts=%d, nbTris=%d, grid rx=%d, ry=%d, rz=%d, datalen=%d\n",
-           nbVerts, nbTris, rx, ry, rz, datalen);
+    sculpt_log("[C++ voxelize] Starting voxelization: input nbVerts=%d, nbTris=%d, grid rx=%d, ry=%d, rz=%d, datalen=%d\n",
+               nbVerts, nbTris, rx, ry, rz, datalen);
 
     double step = voxels.step;
     double invStep = 1.0 / step;
@@ -399,7 +400,7 @@ static void voxelize(
             crossedCount++;
         }
     }
-    printf("[C++ voxelize] Finished voxelization: non-inf distances count=%d, crossed edges count=%d\n", nonInfCount, crossedCount);
+    sculpt_log("[C++ voxelize] Finished voxelization: non-inf distances count=%d, crossed edges count=%d\n", nonInfCount, crossedCount);
 }
 
 static void floodFill(VoxelGrid& voxels, std::function<void(int stage, int progress)> onProgress = nullptr) {
@@ -414,7 +415,7 @@ static void floodFill(VoxelGrid& voxels, std::function<void(int stage, int progr
     std::vector<int32_t> stack;
     stack.reserve(datalen / 64);
 
-    printf("[C++ floodFill] Starting flood fill: datalen=%d\n", datalen);
+    sculpt_log("[C++ floodFill] Starting flood fill: datalen=%d\n", datalen);
 
     if (onProgress) onProgress(1, 0);
 
@@ -463,7 +464,7 @@ static void floodFill(VoxelGrid& voxels, std::function<void(int stage, int progr
             taggedCount++;
         }
     }
-    printf("[C++ floodFill] Finished: tagged (exterior) cells=%d, untagged (interior) cells=%d\n", taggedCount, datalen - taggedCount);
+    sculpt_log("[C++ floodFill] Finished: tagged (exterior) cells=%d, untagged (interior) cells=%d\n", taggedCount, datalen - taggedCount);
     if (onProgress) onProgress(1, 100);
 }
 
@@ -996,12 +997,12 @@ RemeshResult doRemesh(
     bool hasMaterials,
     std::function<void(int stage, int progress)> onProgress
 ) {
-    printf("[C++ doRemesh] Start. nbVerts=%d, nbTris=%d, resolution=%.2f, block=%d, smooth=%d, manifold=%d, hasColors=%d, hasMaterials=%d\n",
-           nbVerts, nbTris, resolution, block, smooth, manifold, hasColors, hasMaterials);
+    sculpt_log("[C++ doRemesh] Start. nbVerts=%d, nbTris=%d, resolution=%.2f, block=%d, smooth=%d, manifold=%d, hasColors=%d, hasMaterials=%d\n",
+               nbVerts, nbTris, resolution, block, smooth, manifold, hasColors, hasMaterials);
     if (box) {
-        printf("[C++ doRemesh] box: [%.4f, %.4f, %.4f, %.4f, %.4f, %.4f]\n", box[0], box[1], box[2], box[3], box[4], box[5]);
+        sculpt_log("[C++ doRemesh] box: [%.4f, %.4f, %.4f, %.4f, %.4f, %.4f]\n", box[0], box[1], box[2], box[3], box[4], box[5]);
     } else {
-        printf("[C++ doRemesh] WARNING: box is null!\n");
+        sculpt_log("[C++ doRemesh] WARNING: box is null!\n");
     }
 
     // 1. Compute voxel grid step and dimensions
@@ -1032,7 +1033,7 @@ RemeshResult doRemesh(
     int rz = voxels.dims[2];
     int datalen = rx * ry * rz;
 
-    printf("[C++ doRemesh] dims: [%d, %d, %d], step: %.6f, datalen: %d\n", rx, ry, rz, step, datalen);
+    sculpt_log("[C++ doRemesh] dims: [%d, %d, %d], step: %.6f, datalen: %d\n", rx, ry, rz, step, datalen);
 
     // 2. Allocate voxel fields
     voxels.crossedEdges.assign(datalen, 0);
@@ -1078,6 +1079,6 @@ RemeshResult doRemesh(
 
     if (onProgress) onProgress(2, 100);
 
-    printf("[C++ doRemesh] Reconstructed. output verts: %d, faces: %d\n", (int)(r.vertices.size() / 3), (int)(r.faces.size() / 4));
+    sculpt_log("[C++ doRemesh] Reconstructed. output verts: %d, faces: %d\n", (int)(r.vertices.size() / 3), (int)(r.faces.size() / 4));
     return r;
 }

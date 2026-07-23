@@ -73,6 +73,9 @@ public:
     // Update the modifier key stack (Shift/Ctrl/Alt)
     void updateModifiers(const SDL_Event& event, SculptManager& sculpt);
 
+    // Reset all modifier states and restore the original brush if needed
+    void resetModifiers(SculptManager& sculpt);
+
     ModalMode getModalMode() const { return m_modalMode; }
 
 private:

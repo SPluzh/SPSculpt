@@ -39,11 +39,11 @@
 #include <windows.h>
 #include <SDL2/SDL_syswm.h>
 #include "platform/TabletInput.h"
+#include "common/Logger.h"
 LONG WINAPI windowsExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo) {
-    std::cerr << "\n=============================================" << std::endl;
-    std::cerr << "[CRITICAL ERROR] Windows Unhandled Exception! Code: 0x" 
-              << std::hex << ExceptionInfo->ExceptionRecord->ExceptionCode << std::dec << std::endl;
-    std::cerr << "=============================================" << std::endl;
+    sculpt_log("\n=============================================\n");
+    sculpt_log("[CRITICAL ERROR] Windows Unhandled Exception! Code: 0x%X\n", (unsigned int)ExceptionInfo->ExceptionRecord->ExceptionCode);
+    sculpt_log("=============================================\n");
     system("pause");
     return EXCEPTION_EXECUTE_HANDLER;
 }
@@ -137,18 +137,18 @@ static void SDLCALL TabletMessageHook(void* userdata, void* hWnd, unsigned int m
 #endif
 
 void crashHandler(int signum) {
-    std::cerr << "\n=============================================" << std::endl;
-    std::cerr << "[CRITICAL ERROR] Application crashed! Signal: " << signum;
+    sculpt_log("\n=============================================\n");
+    const char* sigName = "Unknown";
     switch (signum) {
-        case SIGSEGV: std::cerr << " (Segmentation Fault / Access Violation)"; break;
-        case SIGABRT: std::cerr << " (Abort / Assertion Failure)"; break;
-        case SIGFPE:  std::cerr << " (Floating Point Exception)"; break;
-        case SIGILL:  std::cerr << " (Illegal Instruction)"; break;
-        case SIGINT:  std::cerr << " (Interrupt)"; break;
-        case SIGTERM: std::cerr << " (Termination Request)"; break;
+        case SIGSEGV: sigName = "SIGSEGV (Segmentation Fault / Access Violation)"; break;
+        case SIGABRT: sigName = "SIGABRT (Abort / Assertion Failure)"; break;
+        case SIGFPE:  sigName = "SIGFPE (Floating Point Exception)"; break;
+        case SIGILL:  sigName = "SIGILL (Illegal Instruction)"; break;
+        case SIGINT:  sigName = "SIGINT (Interrupt)"; break;
+        case SIGTERM: sigName = "SIGTERM (Termination Request)"; break;
     }
-    std::cerr << std::endl;
-    std::cerr << "=============================================" << std::endl;
+    sculpt_log("[CRITICAL ERROR] Application crashed! Signal: %d (%s)\n", signum, sigName);
+    sculpt_log("=============================================\n");
     #ifdef _WIN32
     system("pause");
     #else
@@ -226,6 +226,9 @@ GLuint generateClayMatcapTexture() {
 }
 
 int main(int argc, char* argv[]) {
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+    sculpt_log_init();
 #ifdef _WIN32
     SetUnhandledExceptionFilter(windowsExceptionFilter);
 #endif
@@ -337,6 +340,7 @@ int main(int argc, char* argv[]) {
     bool quit = false;
     SDL_Event event;
     std::cout << "[Debug] Entering main loop." << std::endl;
+    bool wasRemeshRunning = false;
     while (!quit) {
         auto currentFrameTime = std::chrono::high_resolution_clock::now();
         float deltaTime = std::chrono::duration<float>(currentFrameTime - lastFrameTime).count();
@@ -462,6 +466,12 @@ int main(int argc, char* argv[]) {
         renderer.setLassoParameters(sculpt.isLassoActive(), sculpt.getLassoPoints(), sculpt.getLassoAlt(), sculpt.isMaskLasso());
         renderer.render(scene);
         gui.render(sculpt, scene, renderer, window);
+        
+        bool isRemeshRunning = gui.isRemeshRunning();
+        if (wasRemeshRunning && !isRemeshRunning) {
+            dispatcher.resetModifiers(sculpt);
+        }
+        wasRemeshRunning = isRemeshRunning;
 
         SDL_GL_SwapWindow(window);
     }

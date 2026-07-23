@@ -797,6 +797,16 @@ int SculptManager::doStrokePass(
     return deformedCount;
 }
 
+void SculptManager::cancelStroke() {
+    m_isSculpting = false;
+    m_grabbedVertices.clear();
+    m_grabbedVerticesSym.clear();
+    m_lassoPoints.clear();
+    m_isLassoActive = false;
+    m_gradIsDrawing = false;
+    m_draggedSegment = nullptr;
+}
+
 void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, float mouseX, float mouseY, float currentPressure) {
     Ray ray = camera.getRay(mouseX, mouseY);
     glm::mat4 invMatrix = glm::inverse(mesh->matrix);
