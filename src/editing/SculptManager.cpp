@@ -657,9 +657,19 @@ int SculptManager::doStrokePass(
             float off = localRadius * 0.1f;
             areaCenter += areaNormal * (negative ? -off : off);
 
-            deformedCount = strokeFlatten(
+            glm::mat4 invMeshMatrix = glm::inverse(mesh->matrix);
+            glm::mat4 camWorld = glm::inverse(scene.getCamera().getViewMatrix());
+            glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
+
+            glm::vec3 sqX = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
+            glm::vec3 sqY = glm::normalize(glm::cross(areaNormal, sqX));
+
+            float alphaLookAt[16] = {0.0f};
+            alphaLookAt[0] = sqX.x; alphaLookAt[4] = sqX.y; alphaLookAt[8] = sqX.z;  alphaLookAt[12] = -glm::dot(sqX, currentIntersection);
+            alphaLookAt[1] = sqY.x; alphaLookAt[5] = sqY.y; alphaLookAt[9] = sqY.z;  alphaLookAt[13] = -glm::dot(sqY, currentIntersection);
+
+            deformedCount = strokeSquareBrush(
                 mesh->verts.data(),
-                mesh->vertProxy.data(),
                 mesh->materials.data(),
                 pickedVertices.data(),
                 pickedVertices.size(),
@@ -667,9 +677,10 @@ int SculptManager::doStrokePass(
                 areaCenter.x, areaCenter.y, areaCenter.z,
                 areaNormal.x, areaNormal.y, areaNormal.z,
                 localRadius, intensity * 0.1f,
-                negative, getCurrentSettings().accumulate, getCurrentSettings().lockPosition,
+                negative,
                 getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
-                false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
+                1.0f, 1.0f, localRadius,
+                alphaLookAt, false
             );
             break;
         }
