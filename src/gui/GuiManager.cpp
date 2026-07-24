@@ -177,31 +177,61 @@ GuiManager::~GuiManager() {
     shutdown();
 }
 
-void GuiManager::init(SDL_Window* window, SDL_GLContext glContext) {
-    if (m_imguiInitialized) return;
+void GuiManager::rebuildFontsAndStyles() {
+    if (!m_window) return;
 
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO(); (void)io;
-    // io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+    ImGuiIO& io = ImGui::GetIO();
+    
+    // Clear existing fonts
+    io.Fonts->Clear();
+    
+    // Combined scale factor is the multiplier times the system DPI scale
+    float combinedScale = getUiScale();
+    
+    // Load default font first (crisp high-DPI scaling)
+    ImFont* mainFont = nullptr;
+#ifdef _WIN32
+    std::string fontPath = "C:\\Windows\\Fonts\\segoeui.ttf";
+    mainFont = io.Fonts->AddFontFromFileTTF(fontPath.c_str(), std::round(14.0f * combinedScale));
+    if (!mainFont) {
+        mainFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\arial.ttf", std::round(14.0f * combinedScale));
+    }
+#endif
 
-    // Load default font first
-    io.Fonts->AddFontDefault();
+    if (!mainFont) {
+        io.Fonts->AddFontDefault();
+        if (combinedScale > 1.0f) {
+            io.FontGlobalScale = combinedScale;
+        } else {
+            io.FontGlobalScale = 1.0f;
+        }
+    } else {
+        io.FontGlobalScale = 1.0f;
+    }
 
     // Configure and merge Lucide icon font
     ImFontConfig font_cfg;
     font_cfg.MergeMode = true;
     font_cfg.PixelSnapH = true;
-    font_cfg.GlyphMinAdvanceX = 13.0f;
-    font_cfg.GlyphOffset = ImVec2(0.0f, 4.0f); // Shift down to align vertically with default font
+    font_cfg.FontDataOwnedByAtlas = false;
+    font_cfg.GlyphMinAdvanceX = 13.0f * combinedScale;
+    font_cfg.GlyphOffset = ImVec2(0.0f, 4.0f * combinedScale); // Shift down to align vertically
     static const ImWchar icon_ranges[] = { 0xe000, 0xf8ff, 0 };
-    io.Fonts->AddFontFromMemoryTTF((void*)lucide_font_data, lucide_font_size, 14.0f, &font_cfg, icon_ranges);
-
-    // Setup Dear ImGui style
+    io.Fonts->AddFontFromMemoryTTF((void*)lucide_font_data, lucide_font_size, std::round(14.0f * combinedScale), &font_cfg, icon_ranges);
+    
+    // Recreate the font texture on the GPU if OpenGL is already initialized and the texture exists
+    if (m_imguiInitialized && io.Fonts->TexID != nullptr) {
+        ImGui_ImplOpenGL3_DestroyFontsTexture();
+        ImGui_ImplOpenGL3_CreateFontsTexture();
+    }
+    
+    // Reset style and scale it
+    ImGuiStyle& style = ImGui::GetStyle();
+    ImGuiStyle defaultStyle;
+    style = defaultStyle;
+    
     ImGui::StyleColorsDark();
     
-    // Sleek premium dark styling with teal accent
-    ImGuiStyle& style = ImGui::GetStyle();
     style.WindowRounding = 6.0f;
     style.ChildRounding = 4.0f;
     style.FrameRounding = 4.0f;
@@ -233,6 +263,27 @@ void GuiManager::init(SDL_Window* window, SDL_GLContext glContext) {
     style.Colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.08f, 0.09f, 0.10f, 0.60f);
     style.Colors[ImGuiCol_PlotHistogram] = tealAccent;
     style.Colors[ImGuiCol_PlotHistogramHovered] = tealAccentHover;
+
+    if (combinedScale > 1.0f) {
+        style.ScaleAllSizes(combinedScale);
+    }
+}
+
+void GuiManager::init(SDL_Window* window, SDL_GLContext glContext) {
+    if (m_imguiInitialized) return;
+
+    m_window = window;
+
+    int w, h;
+    SDL_GetWindowSize(window, &w, &h);
+    int display_w, display_h;
+    SDL_GL_GetDrawableSize(window, &display_w, &display_h);
+    m_dpiScale = (w > 0) ? ((float)display_w / (float)w) : 1.0f;
+
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+
+    rebuildFontsAndStyles();
 
     ImGui_ImplSDL2_InitForOpenGL(window, glContext);
     ImGui_ImplOpenGL3_Init(nullptr);
@@ -269,6 +320,13 @@ static bool isPointOverImGuiWindow(const ImVec2& pt) {
 void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer, SDL_Window* window) {
     m_renderer = &renderer;
     if (!m_imguiInitialized) return;
+
+    if (m_pendingUiScaleRefresh) {
+        rebuildFontsAndStyles();
+        m_pendingUiScaleRefresh = false;
+    }
+
+    float scale = getUiScale();
 
     BrushType currentBrush = sculpt.getBrush();
     if (m_previewingPaint && currentBrush != BRUSH_PAINT) {
@@ -348,13 +406,24 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 #endif
             ImGui::EndMenu();
         }
+        if (ImGui::BeginMenu("Options")) {
+            ImGui::SetNextItemWidth(120.0f * scale);
+            ImGui::SliderFloat("UI Scale", &m_uiScale, 0.5f, 2.5f, "%.2fx");
+            if (m_uiScale < 0.5f) m_uiScale = 0.5f;
+            if (m_uiScale > 2.5f) m_uiScale = 2.5f;
+
+            if (ImGui::IsItemDeactivatedAfterEdit()) {
+                m_pendingUiScaleRefresh = true;
+            }
+            ImGui::EndMenu();
+        }
         ImGui::EndMainMenuBar();
     }
 
     // 2. Vertical Toolbar on the left
     if (m_showToolbar) {
-        ImGui::SetNextWindowPos({10, 40}, ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSizeConstraints(ImVec2(160.0f, -1.0f), ImVec2(160.0f, -1.0f));
+        ImGui::SetNextWindowPos({10.0f * scale, 40.0f * scale}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSizeConstraints(ImVec2(160.0f * scale, -1.0f), ImVec2(160.0f * scale, -1.0f));
         ImGui::Begin("Toolbar", &m_showToolbar, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize);
         
         const char* tools[] = { 
@@ -380,8 +449,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
     // 3. Sculpting settings panel
     if (m_showSculptingPanel) {
-        ImGui::SetNextWindowPos({160, 40}, ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize({300, 400}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowPos({160.0f * scale, 40.0f * scale}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize({300.0f * scale, 400.0f * scale}, ImGuiCond_FirstUseEver);
         ImGui::Begin("Sculpting Settings", &m_showSculptingPanel, ImGuiWindowFlags_AlwaysAutoResize);
 
         BrushSettings& settings = sculpt.getCurrentSettings();
@@ -977,8 +1046,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
     // 4. Scene outliner
     if (m_showScenePanel) {
-        ImGui::SetNextWindowPos({450, 40}, ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize({320, 450}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowPos({450.0f * scale, 40.0f * scale}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize({320.0f * scale, 450.0f * scale}, ImGuiCond_FirstUseEver);
         ImGui::Begin("Scene Outliner", &m_showScenePanel);
 
         // Primitive Spawning Tools
@@ -1216,8 +1285,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
     // 5. Topology & Remesh settings panel
     if (m_showTopologyPanel) {
-        ImGui::SetNextWindowPos({740, 40}, ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize({280, 200}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowPos({740.0f * scale, 40.0f * scale}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize({280.0f * scale, 200.0f * scale}, ImGuiCond_FirstUseEver);
         ImGui::Begin("Topology & Remesh", &m_showTopologyPanel, ImGuiWindowFlags_AlwaysAutoResize);
 
         Mesh* selectedMesh = scene.getSelected();
@@ -1251,8 +1320,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
     // 6. Camera & Viewport settings panel
     if (m_showCameraPanel) {
-        ImGui::SetNextWindowPos({160, 260}, ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize({280, 320}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowPos({160.0f * scale, 260.0f * scale}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize({280.0f * scale, 320.0f * scale}, ImGuiCond_FirstUseEver);
         ImGui::Begin("Camera Settings", &m_showCameraPanel, ImGuiWindowFlags_AlwaysAutoResize);
 
         Camera& camera = scene.getCamera();
@@ -1407,8 +1476,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
     // 7. Rendering Quality
     if (m_showRenderingPanel) {
-        ImGui::SetNextWindowPos({450, 350}, ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize({280, 200}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowPos({450.0f * scale, 350.0f * scale}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize({280.0f * scale, 200.0f * scale}, ImGuiCond_FirstUseEver);
         ImGui::Begin("Rendering Quality", &m_showRenderingPanel, ImGuiWindowFlags_AlwaysAutoResize);
 
         // Global shading settings (always accessible)
@@ -1702,8 +1771,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
     // 7. Reference Images Panel
     if (m_showReferenceImagesPanel) {
-        ImGui::SetNextWindowPos({500, 40}, ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize({300, 250}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowPos({500.0f * scale, 40.0f * scale}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize({300.0f * scale, 250.0f * scale}, ImGuiCond_FirstUseEver);
         ImGui::Begin("Reference Images", &m_showReferenceImagesPanel);
 
         ImGui::InputText("Image Path", m_refImagePath, sizeof(m_refImagePath));
@@ -1777,8 +1846,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
     // 7.5. Import & Export Panel
     if (m_showFilesPanel) {
-        ImGui::SetNextWindowPos({740, 260}, ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize({300, 200}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowPos({740.0f * scale, 260.0f * scale}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize({300.0f * scale, 200.0f * scale}, ImGuiCond_FirstUseEver);
         ImGui::Begin("Import & Export", &m_showFilesPanel, ImGuiWindowFlags_AlwaysAutoResize);
 
         ImGui::InputText("Import Path", m_importPath, sizeof(m_importPath));
@@ -1806,8 +1875,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         SDL_GetWindowSize(window, &wWidth, &wHeight);
 
         // Position it at the top-right corner, below the main menu bar
-        ImGui::SetNextWindowPos(ImVec2((float)wWidth - 150.0f, 40.0f), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(130.0f, 130.0f));
+        ImGui::SetNextWindowPos(ImVec2((float)wWidth - 150.0f * scale, 40.0f * scale), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(130.0f * scale, 130.0f * scale));
         
         ImGui::Begin("Gizmo Cube", nullptr, 
             ImGuiWindowFlags_NoTitleBar | 
@@ -1820,7 +1889,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         ImDrawList* drawList = ImGui::GetWindowDrawList();
         
         // Cube half size in pixels on screen
-        float side = 36.0f;
+        float side = 36.0f * scale;
         const float w = 0.70f;
         glm::vec3 localVerts[24] = {
             // Front face (Z = +1.0)
@@ -2099,8 +2168,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         SDL_GetWindowSize(window, &wWidth, &wHeight);
 
         // Position it at the bottom-right corner, with a small padding
-        float padX = 10.0f;
-        float padY = 10.0f;
+        float padX = 10.0f * scale;
+        float padY = 10.0f * scale;
         ImGui::SetNextWindowPos(ImVec2((float)wWidth - padX, (float)wHeight - padY), ImGuiCond_Always, ImVec2(1.0f, 1.0f));
         ImGui::SetNextWindowBgAlpha(0.75f); // Transparent background
 
@@ -2854,7 +2923,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 screenPos.x >= 0.0f && screenPos.x <= (float)camera.getWidth() &&
                 screenPos.y >= 0.0f && screenPos.y <= (float)camera.getHeight()) {
                 
-                ImGui::SetNextWindowPos(ImVec2(screenPos.x - 45, screenPos.y - 45), ImGuiCond_Always);
+                ImGui::SetNextWindowPos(ImVec2(screenPos.x - 45.0f * scale, screenPos.y - 45.0f * scale), ImGuiCond_Always);
                 ImGui::SetNextWindowBgAlpha(0.7f);
                 ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | 
                                          ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | 
@@ -2909,7 +2978,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             };
 
             ImU32 colorU32 = ImGui::ColorConvertFloat4ToU32(ImVec4(cursorState.color.r, cursorState.color.g, cursorState.color.b, 1.0f));
-            float thickness = renderer.getCursorThickness();
+            float thickness = renderer.getCursorThickness() * scale;
 
             auto drawViewportCursor = [&](bool isRight, float xOffset, float width) {
                 const Camera& camera = isRight ? *scene.getCameraByIndex(1) : scene.getCamera();
@@ -3216,12 +3285,13 @@ void GuiManager::drawRemeshProgressModal() {
     if (m_remeshAsync.state != RemeshState::Running) {
         return;
     }
+    float scale = getUiScale();
 
     ImGui::OpenPopup("Remeshing...");
 
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(300, 120));
+    ImGui::SetNextWindowSize(ImVec2(300.0f * scale, 120.0f * scale));
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar;
 
@@ -3247,6 +3317,7 @@ void GuiManager::drawRemeshProgressModal() {
 }
 
 void GuiManager::drawModalIndicatorHUD(SculptManager& sculpt, Scene& scene) {
+    float scale = getUiScale();
     const char* label = nullptr;
     char valStr[64] = "";
     float fraction = 0.0f;
@@ -3295,7 +3366,7 @@ void GuiManager::drawModalIndicatorHUD(SculptManager& sculpt, Scene& scene) {
     if (!label) return;
 
     // Center horizontally (-50% pivot) and place slightly above mouse cursor (-100% pivot)
-    ImGui::SetNextWindowPos(ImVec2((float)m_modalStartMouseX, (float)m_modalStartMouseY - 25.0f), ImGuiCond_Always, ImVec2(0.5f, 1.0f));
+    ImGui::SetNextWindowPos(ImVec2((float)m_modalStartMouseX, (float)m_modalStartMouseY - 25.0f * scale), ImGuiCond_Always, ImVec2(0.5f, 1.0f));
     ImGui::SetNextWindowBgAlpha(0.85f);
 
     // Style overrides for floating indicator card
@@ -3353,6 +3424,9 @@ bool GuiManager::saveSettings(const std::string& filepath) {
     out << "showMeshInfo=" << (m_showMeshInfo ? "true" : "false") << "\n";
     out << "showTabletDiagPanel=" << (m_showTabletDiagPanel ? "true" : "false") << "\n";
     out << "showFloatingIsland=" << (m_showFloatingIsland ? "true" : "false") << "\n";
+
+    out << "[General]\n";
+    out << "uiScaleMultiplier=" << m_uiScale << "\n";
 
     std::cout << "Successfully saved GUI panel settings to: " << filepath << std::endl;
     return true;
@@ -3422,6 +3496,21 @@ bool GuiManager::loadSettings(const std::string& filepath) {
         getBoolParam("showFloatingIsland", m_showFloatingIsland);
     }
 
+    auto itGen = sections.find("General");
+    if (itGen != sections.end()) {
+        const auto& params = itGen->second;
+        auto it = params.find("uiScaleMultiplier");
+        if (it != params.end()) {
+            m_uiScale = std::stof(it->second);
+            if (m_uiScale < 0.5f) m_uiScale = 0.5f;
+            if (m_uiScale > 2.5f) m_uiScale = 2.5f;
+        }
+    }
+
+    if (m_imguiInitialized) {
+        m_pendingUiScaleRefresh = true;
+    }
+
     std::cout << "Successfully loaded GUI panel settings from: " << filepath << std::endl;
     return true;
 }
@@ -3486,16 +3575,17 @@ void GuiManager::takeScreenshot(const Scene& scene, AngleRenderer& renderer) {
 
 void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer) {
     if (!m_showFloatingIsland) return;
+    float scale = getUiScale();
 
     ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImVec2 pos = ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f, viewport->WorkPos.y + 12.0f);
+    ImVec2 pos = ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f, viewport->WorkPos.y + 12.0f * scale);
     ImGui::SetNextWindowPos(pos, ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.0f));
     
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.09f, 0.10f, 0.90f));
     ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.01f, 0.52f, 0.45f, 0.40f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 20.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f, 8.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 20.0f * scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f * scale, 8.0f * scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f * scale, 0.0f));
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                              ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse |

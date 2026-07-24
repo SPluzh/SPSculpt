@@ -2,7 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.4]
+- **UI**: Added a user-accessible "UI Scale" option to the new "Options" menu in the main menu bar, allowing users to scale the entire interface from 0.5x up to 2.5x.
+- **UI**: Implemented dynamic font and style scaling, allowing scaling adjustments to update immediately in real-time without requiring an application restart.
+- **Settings**: Saved custom scaling preferences to the local configuration file to automatically persist adjustments across application restarts.
+- **Fix**: Resolved stability issues and application crashes when modifying the interface scale or loading GUI settings.
+- **Fix**: Resolved erratic slider dragging behavior when adjusting the interface scale, allowing smooth and precise scaling adjustments.
+
+
 ## [1.2.3]
+- **UI**: Added full High-DPI (Retina/4K) display support by integrating Windows process-level DPI awareness and SDL allow-high-dpi window flags, preventing application interface blurriness on high-pixel-density screens.
+- **UI**: Implemented automatic and dynamic DPI-aware scaling for all ImGui interface elements, layouts, and window margins/paddings.
+- **UI**: Upgraded Dear ImGui to load and rasterize system fonts (Segoe UI/Arial) and merged Lucide icon vector shapes at the exact native pixel-density scaled size, ensuring crisp text and icon presentation.
+- **Renderer**: Updated viewport, framebuffer, scissor, lasso selection, and smooth brush cursor rendering to operate natively in physical pixel dimensions while scaling camera views and coordinates proportionally.
 - **UI**: Added a compact, draggable Floating Island HUD panel at the top of the viewport providing quick access to essential controls (Undo, Redo, Symmetry toggle, Brush size/strength sliders, and active brush selection).
 - **UI**: Integrated Lucide vector icons into the user interface (including the floating HUD and the outliner) by configuring the ImGui font atlas to load and merge the embedded Lucide font with vertical alignment adjustments.
 - **UI**: Added a customizable Tablet Pressure Curve editor in the Tablet Diagnostics panel, allowing users to interactively map stylus input pressure using custom control points, presets (Linear, Soft, Hard), and real-time visual tracking feedback.

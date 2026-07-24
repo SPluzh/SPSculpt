@@ -231,6 +231,8 @@ int main(int argc, char* argv[]) {
     sculpt_log_init();
 #ifdef _WIN32
     SetUnhandledExceptionFilter(windowsExceptionFilter);
+    // Configure Windows process-level DPI awareness to avoid system-level scaling blur
+    SetProcessDPIAware();
 #endif
 
     // Register crash signal handlers
@@ -265,7 +267,7 @@ int main(int argc, char* argv[]) {
         "SculptSP Native Engine",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         width, height,
-        SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_SHOWN
+        SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI
     );
 
     if (!window) {
@@ -284,15 +286,23 @@ int main(int argc, char* argv[]) {
 
     SDL_GL_SetSwapInterval(1);
 
-    // Initialize the renderer
+    // Calculate initial DPI scale and physical drawable size
+    int drawableWidth = width;
+    int drawableHeight = height;
+    SDL_GL_GetDrawableSize(window, &drawableWidth, &drawableHeight);
+    float dpiScale = (width > 0) ? ((float)drawableWidth / (float)width) : 1.0f;
+
+    // Initialize the renderer with physical/drawable dimensions
     AngleRenderer renderer;
-    if (!renderer.init(width, height)) {
+    if (!renderer.init(drawableWidth, drawableHeight)) {
         std::cerr << "Failed to initialize renderer" << std::endl;
         SDL_GL_DeleteContext(glContext);
         SDL_DestroyWindow(window);
         SDL_Quit();
         return -1;
     }
+    renderer.resize(drawableWidth, drawableHeight, dpiScale);
+
     Scene scene;
     scene.loadDefaultSphere();
     scene.getCamera().onResize(width, height);
@@ -360,9 +370,13 @@ int main(int argc, char* argv[]) {
                 quit = true;
             } else if (event.type == SDL_WINDOWEVENT) {
                 if (event.window.event == SDL_WINDOWEVENT_RESIZED) {
-                    width = event.window.data1;
-                    height = event.window.data2;
-                    renderer.resize(width, height);
+                     width = event.window.data1;
+                     height = event.window.data2;
+                     
+                     int drawableW, drawableH;
+                     SDL_GL_GetDrawableSize(window, &drawableW, &drawableH);
+                     float currentDpiScale = (width > 0) ? ((float)drawableW / (float)width) : 1.0f;
+                     renderer.resize(drawableW, drawableH, currentDpiScale);
                     if (scene.getSplitMode() != Scene::SplitMode::OFF) {
                         int halfW = width / 2;
                         scene.getCamera().onResize(halfW, height);

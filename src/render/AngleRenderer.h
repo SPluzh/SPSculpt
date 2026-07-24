@@ -44,7 +44,7 @@ public:
     ~AngleRenderer();
 
     bool init(int width, int height);
-    void resize(int width, int height);
+    void resize(int width, int height, float dpiScale = 1.0f);
     int getWidth() const { return m_width; }
     int getHeight() const { return m_height; }
     
@@ -263,6 +263,7 @@ private:
 
     int m_width = 0;
     int m_height = 0;
+    float m_dpiScale = 1.0f;
     bool m_showBackground = true;
 
     // Environmental parameters

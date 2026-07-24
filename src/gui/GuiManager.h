@@ -54,6 +54,13 @@ private:
     int m_remeshResolution = 150;
     bool m_imguiInitialized = false;
     bool m_editPivot = false;
+    float m_dpiScale = 1.0f;
+    float m_uiScale = 1.0f;
+    bool m_pendingUiScaleRefresh = false;
+    SDL_Window* m_window = nullptr;
+
+    void rebuildFontsAndStyles();
+    float getUiScale() const { return m_dpiScale * m_uiScale; }
 
     // File path buffers
     char m_importPath[256] = "model.obj";

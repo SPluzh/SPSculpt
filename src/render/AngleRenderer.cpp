@@ -341,9 +341,10 @@ bool AngleRenderer::init(int width, int height) {
     return true;
 }
 
-void AngleRenderer::resize(int width, int height) {
+void AngleRenderer::resize(int width, int height, float dpiScale) {
     m_width = width;
     m_height = height;
+    m_dpiScale = dpiScale;
     glViewport(0, 0, width, height);
 
     m_rttOpaque.resize(width, height);
@@ -833,7 +834,9 @@ void AngleRenderer::renderScenePass(const Scene& scene, int passType) {
         glEnable(GL_SCISSOR_TEST);
         const Camera* camLeft = scene.getCameraByIndex(0);
         if (camLeft) {
-            const_cast<Camera*>(camLeft)->onResize(w2, m_height);
+            int logicalW2 = (int)(w2 / m_dpiScale);
+            int logicalH = (int)(m_height / m_dpiScale);
+            const_cast<Camera*>(camLeft)->onResize(logicalW2, logicalH);
             drawPassGeometry(scene, passType, *camLeft, 0);
         }
 
@@ -842,7 +845,9 @@ void AngleRenderer::renderScenePass(const Scene& scene, int passType) {
         if (camRight) {
             glViewport(w2, 0, m_width - w2, m_height);
             glScissor(w2, 0, m_width - w2, m_height);
-            const_cast<Camera*>(camRight)->onResize(m_width - w2, m_height);
+            int logicalWRight = (int)((m_width - w2) / m_dpiScale);
+            int logicalH = (int)(m_height / m_dpiScale);
+            const_cast<Camera*>(camRight)->onResize(logicalWRight, logicalH);
             drawPassGeometry(scene, passType, *camRight, 1);
         }
         glDisable(GL_SCISSOR_TEST);
@@ -1337,7 +1342,7 @@ void AngleRenderer::drawSelectionCursor(const Scene& scene, bool isRight) {
             glUniform2f(locViewport, viewportWidth, viewportHeight);
         }
 
-        int passes = static_cast<int>(std::round(m_cursorThickness));
+        int passes = static_cast<int>(std::round(m_cursorThickness * m_dpiScale));
         if (passes < 1) passes = 1;
 
         // Draw outer circle
@@ -1416,8 +1421,8 @@ void AngleRenderer::drawLasso() {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    float viewportWidth = m_splitMode ? m_width * 0.5f : (float)m_width;
-    float viewportHeight = (float)m_height;
+    float viewportWidth = (m_splitMode ? m_width * 0.5f : (float)m_width) / m_dpiScale;
+    float viewportHeight = (float)m_height / m_dpiScale;
 
     // Map screen-space points to NDC [-1, 1]
     std::vector<float> ndcPoints;
