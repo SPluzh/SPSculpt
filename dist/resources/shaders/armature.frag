@@ -9,7 +9,7 @@ in vec3 vNormal;
 out vec4 fragColor;
 vec3 sRGBToLinear(vec3 color) { return pow(color, vec3(2.2)); }
 void main() {
-  vec3 normal = normalize(gl_FrontFacing ? vNormal : -vNormal);
+  vec3 normal = -normalize(gl_FrontFacing ? vNormal : -vNormal);
   vec3 nm_z = normalize(vVertexPres);
   vec3 nm_x = vec3(-nm_z.z, 0.0, nm_z.x);
   vec3 nm_y = cross(nm_x, nm_z);
