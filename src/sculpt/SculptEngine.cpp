@@ -1637,10 +1637,11 @@ int strokeDamStandard(
     float focalShift, bool focalShiftFalloff,
     bool hasAlpha, const uint8_t* alphaTex, int alphaWidth, int alphaHeight,
     float alphaRatioX, float alphaRatioY, float alphaSide,
-    const float* alphaLookAt, bool alphaXSym
+    const float* alphaLookAt, bool alphaXSym,
+    bool useAccuCurve, const float* accuCurveLut
 ) {
     const float radiusSq = radius * radius;
-    float deformIntensity = intensity * 0.08f;
+    float deformIntensity = (intensity / 3.0f) * 0.08f;
     float brushFactor = deformIntensity * radius;
     if (negative) {
         brushFactor = -brushFactor;
@@ -1671,7 +1672,23 @@ int strokeDamStandard(
         float vy = verts[ind + 1];
         float vz = verts[ind + 2];
 
-        float fallOff = getFallOff(dist, focalShiftFalloff ? focalShift : 0.0f, false, nullptr);
+        float fallOff = 0.0f;
+        if (useAccuCurve && accuCurveLut) {
+            if (dist < 1.0f) {
+                float floatIndex = dist * 255.0f;
+                if (floatIndex > 254.0f) floatIndex = 254.0f;
+                int index = static_cast<int>(floatIndex);
+                float fract = floatIndex - index;
+                fallOff = accuCurveLut[index] * (1.0f - fract) + accuCurveLut[index + 1] * fract;
+            }
+        } else {
+            if (dist < 1.0f) {
+                float fs = focalShiftFalloff ? focalShift : 0.0f;
+                float power = std::pow(2.0f, fs * 2.0f);
+                fallOff = std::pow(1.0f - dist, power);
+            }
+        }
+
         float alphaVal = getAlphaVal(
             vx, vy, vz,
             hasAlpha, alphaTex, alphaWidth, alphaHeight,

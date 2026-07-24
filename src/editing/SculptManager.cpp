@@ -685,7 +685,8 @@ int SculptManager::doStrokePass(
                 localRadius, intensity,
                 negative,
                 getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
-                false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
+                false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false,
+                false, nullptr
             );
             break;
         }

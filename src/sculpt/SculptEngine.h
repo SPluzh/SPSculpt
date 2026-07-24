@@ -235,7 +235,8 @@ int strokeDamStandard(
     float focalShift, bool focalShiftFalloff,
     bool hasAlpha, const uint8_t* alphaTex, int alphaWidth, int alphaHeight,
     float alphaRatioX, float alphaRatioY, float alphaSide,
-    const float* alphaLookAt, bool alphaXSym
+    const float* alphaLookAt, bool alphaXSym,
+    bool useAccuCurve, const float* accuCurveLut
 );
 
 int strokeSquareBrush(

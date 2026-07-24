@@ -3,6 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.3]
+- **Brushes**: Fixed the incorrect behavior of the DamStandard brush by aligning its stroke intensity and falloff profile with the reference implementation, and added support for focal shift adjustments to dynamically warp the crease width and sharpness.
 - **Renderer**: Fixed armature rendering in the SSAO pre-pass by creating a dedicated `armature_normals.frag` shader and drawing the armature in the normal/depth targets, resolving dark outlines and occlusion visual artifacts around armature elements.
 - **Renderer**: Transitioned armature spheres and cylinders to smooth-shaded views with front-facing normal alignment to improve three-dimensional definition.
 - **Renderer**: Brightened armature nodes and links default colors and added a minimum ambient factor to prevent the armature from turning pitch-black under dark environmental maps and matcaps.
