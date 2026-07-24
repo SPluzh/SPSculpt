@@ -1815,7 +1815,7 @@ void AngleRenderer::initArmatureGeometry() {
         }
         faces = newFaces;
     }
-    std::vector<uint32_t> sphereIndices = faces;
+    sphereIndices = faces;
 
     for (const auto& v : verts) {
         sphereData.push_back(v.x); sphereData.push_back(v.y); sphereData.push_back(v.z);
