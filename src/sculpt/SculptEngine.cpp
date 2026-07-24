@@ -1646,7 +1646,6 @@ int strokeDamStandard(
     if (negative) {
         brushFactor = -brushFactor;
     }
-    float pinchFactorBase = deformIntensity * 2.0f;
     int writeIdx = 0;
 
     for (int i = 0; i < nbIVerts; ++i) {
@@ -1700,11 +1699,10 @@ int strokeDamStandard(
 
         float stamp = getStampProfile(fallOff);
         float brushModifier = stamp * brushFactor;
-        float pinchFactor = stamp * pinchFactorBase;
 
-        verts[ind] = vx + dx * pinchFactor + anx * brushModifier;
-        verts[ind + 1] = vy + dy * pinchFactor + any * brushModifier;
-        verts[ind + 2] = vz + dz * pinchFactor + anz * brushModifier;
+        verts[ind] = vx + anx * brushModifier;
+        verts[ind + 1] = vy + any * brushModifier;
+        verts[ind + 2] = vz + anz * brushModifier;
 
         iVerts[writeIdx++] = id;
     }

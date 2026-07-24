@@ -260,14 +260,39 @@ int main(int argc, char* argv[]) {
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
 
-    int width = 1280;
-    int height = 720;
+    GuiManager gui;
+    gui.loadSettings("gui_settings.cfg");
+
+    int width = gui.getWindowWidth();
+    int height = gui.getWindowHeight();
+    int posX = gui.getWindowX();
+    int posY = gui.getWindowY();
+    bool startMaximized = gui.getWindowMaximized();
+
+    // Verify window placement to avoid opening off-screen (e.g. disconnected monitor)
+    SDL_Rect winRect = { posX, posY, width, height };
+    bool intersects = false;
+    int numDisplays = SDL_GetNumVideoDisplays();
+    for (int i = 0; i < numDisplays; ++i) {
+        SDL_Rect displayRect;
+        if (SDL_GetDisplayBounds(i, &displayRect) == 0) {
+            SDL_Rect intersection;
+            if (SDL_IntersectRect(&winRect, &displayRect, &intersection)) {
+                intersects = true;
+                break;
+            }
+        }
+    }
+    if (!intersects && posX != SDL_WINDOWPOS_CENTERED && posX != SDL_WINDOWPOS_UNDEFINED) {
+        posX = SDL_WINDOWPOS_CENTERED;
+        posY = SDL_WINDOWPOS_CENTERED;
+    }
 
     SDL_Window* window = SDL_CreateWindow(
         "SculptSP Native Engine",
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+        posX, posY,
         width, height,
-        SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI
+        SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI | (startMaximized ? SDL_WINDOW_MAXIMIZED : 0)
     );
 
     if (!window) {
@@ -275,6 +300,9 @@ int main(int argc, char* argv[]) {
         SDL_Quit();
         return -1;
     }
+
+    // Retrieve actual size in case the window started maximized or OS adjusted it
+    SDL_GetWindowSize(window, &width, &height);
 
     SDL_GLContext glContext = SDL_GL_CreateContext(window);
     if (!glContext) {
@@ -327,9 +355,7 @@ int main(int argc, char* argv[]) {
     BrushPresetManager::instance().loadDefaults();
     SculptManager sculpt;
     sculpt.loadSettings("brush_settings.cfg");
-    GuiManager gui;
     gui.init(window, glContext);
-    gui.loadSettings("gui_settings.cfg");
     HotkeyDispatcher dispatcher;
 
 #ifdef _WIN32
@@ -377,15 +403,39 @@ int main(int argc, char* argv[]) {
                      SDL_GL_GetDrawableSize(window, &drawableW, &drawableH);
                      float currentDpiScale = (width > 0) ? ((float)drawableW / (float)width) : 1.0f;
                      renderer.resize(drawableW, drawableH, currentDpiScale);
-                    if (scene.getSplitMode() != Scene::SplitMode::OFF) {
-                        int halfW = width / 2;
-                        scene.getCamera().onResize(halfW, height);
-                        if (scene.getCameraRight()) {
-                            scene.getCameraRight()->onResize(width - halfW, height);
-                        }
-                    } else {
-                        scene.getCamera().onResize(width, height);
-                    }
+                     if (scene.getSplitMode() != Scene::SplitMode::OFF) {
+                         int halfW = width / 2;
+                         scene.getCamera().onResize(halfW, height);
+                         if (scene.getCameraRight()) {
+                             scene.getCameraRight()->onResize(width - halfW, height);
+                         }
+                     } else {
+                         scene.getCamera().onResize(width, height);
+                     }
+
+                     Uint32 flags = SDL_GetWindowFlags(window);
+                     bool isMax = (flags & SDL_WINDOW_MAXIMIZED) != 0;
+                     int wx, wy;
+                     SDL_GetWindowPosition(window, &wx, &wy);
+                     gui.updateWindowBounds(wx, wy, width, height, isMax);
+                } else if (event.window.event == SDL_WINDOWEVENT_MOVED) {
+                     int wx = event.window.data1;
+                     int wy = event.window.data2;
+                     Uint32 flags = SDL_GetWindowFlags(window);
+                     bool isMax = (flags & SDL_WINDOW_MAXIMIZED) != 0;
+                     int ww, wh;
+                     SDL_GetWindowSize(window, &ww, &wh);
+                     gui.updateWindowBounds(wx, wy, ww, wh, isMax);
+                } else if (event.window.event == SDL_WINDOWEVENT_MAXIMIZED) {
+                     int wx, wy, ww, wh;
+                     SDL_GetWindowPosition(window, &wx, &wy);
+                     SDL_GetWindowSize(window, &ww, &wh);
+                     gui.updateWindowBounds(wx, wy, ww, wh, true);
+                } else if (event.window.event == SDL_WINDOWEVENT_RESTORED) {
+                     int wx, wy, ww, wh;
+                     SDL_GetWindowPosition(window, &wx, &wy);
+                     SDL_GetWindowSize(window, &ww, &wh);
+                     gui.updateWindowBounds(wx, wy, ww, wh, false);
                 }
             } else {
                 // If split viewport is active, determine active viewport based on the event mouse coordinates

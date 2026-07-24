@@ -59,6 +59,13 @@ private:
     bool m_pendingUiScaleRefresh = false;
     SDL_Window* m_window = nullptr;
 
+    // Window settings
+    int m_winWidth = 1280;
+    int m_winHeight = 720;
+    int m_winX = SDL_WINDOWPOS_CENTERED;
+    int m_winY = SDL_WINDOWPOS_CENTERED;
+    bool m_winMaximized = false;
+
     void rebuildFontsAndStyles();
     float getUiScale() const { return m_dpiScale * m_uiScale; }
 
@@ -147,6 +154,22 @@ public:
         m_modalStartMouseY = startY;
     }
     void drawModalIndicatorHUD(SculptManager& sculpt, Scene& scene);
+
+    int getWindowWidth() const { return m_winWidth; }
+    int getWindowHeight() const { return m_winHeight; }
+    int getWindowX() const { return m_winX; }
+    int getWindowY() const { return m_winY; }
+    bool getWindowMaximized() const { return m_winMaximized; }
+
+    void updateWindowBounds(int x, int y, int w, int h, bool maximized) {
+        m_winMaximized = maximized;
+        if (!maximized) {
+            m_winX = x;
+            m_winY = y;
+            m_winWidth = w;
+            m_winHeight = h;
+        }
+    }
 
     // Context popup request
     bool m_openContextPopup = false;

@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.4]
+- **Settings**: Added automatic saving and restoring of the window size, position, and maximized state to `gui_settings.cfg` to persist user window preferences across sessions.
+- **Brushes**: Removed the hardcoded pinch deformation effect from the Dam Standard brush (`BRUSH_DAMSTANDARD`), leaving only the sharp normal crease displacement.
 - **UI**: Added a user-accessible "UI Scale" option to the new "Options" menu in the main menu bar, allowing users to scale the entire interface from 0.5x up to 2.5x.
 - **UI**: Implemented dynamic font and style scaling, allowing scaling adjustments to update immediately in real-time without requiring an application restart.
 - **Settings**: Saved custom scaling preferences to the local configuration file to automatically persist adjustments across application restarts.

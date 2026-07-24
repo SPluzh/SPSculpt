@@ -3416,6 +3416,15 @@ void GuiManager::drawModalIndicatorHUD(SculptManager& sculpt, Scene& scene) {
 
 
 bool GuiManager::saveSettings(const std::string& filepath) {
+    if (m_window) {
+        Uint32 flags = SDL_GetWindowFlags(m_window);
+        m_winMaximized = (flags & SDL_WINDOW_MAXIMIZED) != 0;
+        if (!m_winMaximized) {
+            SDL_GetWindowSize(m_window, &m_winWidth, &m_winHeight);
+            SDL_GetWindowPosition(m_window, &m_winX, &m_winY);
+        }
+    }
+
     std::ofstream out(filepath);
     if (!out.is_open()) {
         std::cerr << "Failed to open GUI settings file for writing: " << filepath << std::endl;
@@ -3441,6 +3450,13 @@ bool GuiManager::saveSettings(const std::string& filepath) {
 
     out << "[General]\n";
     out << "uiScaleMultiplier=" << m_uiScale << "\n";
+
+    out << "[Window]\n";
+    out << "width=" << m_winWidth << "\n";
+    out << "height=" << m_winHeight << "\n";
+    out << "x=" << m_winX << "\n";
+    out << "y=" << m_winY << "\n";
+    out << "maximized=" << (m_winMaximized ? "true" : "false") << "\n";
 
     std::cout << "Successfully saved GUI panel settings to: " << filepath << std::endl;
     return true;
@@ -3519,6 +3535,31 @@ bool GuiManager::loadSettings(const std::string& filepath) {
             if (m_uiScale < 0.5f) m_uiScale = 0.5f;
             if (m_uiScale > 2.5f) m_uiScale = 2.5f;
         }
+    }
+
+    auto itWin = sections.find("Window");
+    if (itWin != sections.end()) {
+        const auto& params = itWin->second;
+        auto getIntParam = [&](const std::string& key, int& outVal) {
+            auto it = params.find(key);
+            if (it != params.end()) {
+                try {
+                    outVal = std::stoi(it->second);
+                } catch (...) {}
+            }
+        };
+        auto getBoolParam = [&](const std::string& key, bool& outVal) {
+            auto it = params.find(key);
+            if (it != params.end()) {
+                outVal = (it->second == "true" || it->second == "1");
+            }
+        };
+
+        getIntParam("width", m_winWidth);
+        getIntParam("height", m_winHeight);
+        getIntParam("x", m_winX);
+        getIntParam("y", m_winY);
+        getBoolParam("maximized", m_winMaximized);
     }
 
     if (m_imguiInitialized) {
