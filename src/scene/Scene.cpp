@@ -357,9 +357,9 @@ static void generateUVSphere(
             vertices.push_back(y);
             vertices.push_back(z);
 
-            colors.push_back(0.72f);
-            colors.push_back(0.52f);
-            colors.push_back(0.45f);
+            colors.push_back(1.0f);
+            colors.push_back(1.0f);
+            colors.push_back(1.0f);
 
             normals.push_back(x / radius);
             normals.push_back(y / radius);
@@ -460,9 +460,9 @@ static void generateGeosphere(
         vertices.push_back(v.y);
         vertices.push_back(v.z);
 
-        colors.push_back(0.72f);
-        colors.push_back(0.52f);
-        colors.push_back(0.45f);
+        colors.push_back(1.0f);
+        colors.push_back(1.0f);
+        colors.push_back(1.0f);
 
         glm::vec3 n = glm::normalize(v);
         normals.push_back(n.x);
@@ -528,9 +528,9 @@ static void generateSubdividedCube(
                 vertices.push_back(pos.y);
                 vertices.push_back(pos.z);
 
-                colors.push_back(0.72f);
-                colors.push_back(0.52f);
-                colors.push_back(0.45f);
+                colors.push_back(1.0f);
+                colors.push_back(1.0f);
+                colors.push_back(1.0f);
 
                 normals.push_back(normal.x);
                 normals.push_back(normal.y);
@@ -584,9 +584,9 @@ static void generateCylinder(
             vertices.push_back(y);
             vertices.push_back(z);
 
-            colors.push_back(0.72f);
-            colors.push_back(0.52f);
-            colors.push_back(0.45f);
+            colors.push_back(1.0f);
+            colors.push_back(1.0f);
+            colors.push_back(1.0f);
 
             float nx = std::sin(u);
             float nz = std::cos(u);
@@ -617,9 +617,9 @@ static void generateCylinder(
         vertices.push_back(heightHalf);
         vertices.push_back(0.0f);
 
-        colors.push_back(0.72f);
-        colors.push_back(0.52f);
-        colors.push_back(0.45f);
+        colors.push_back(1.0f);
+        colors.push_back(1.0f);
+        colors.push_back(1.0f);
 
         normals.push_back(0.0f);
         normals.push_back(1.0f);
@@ -640,9 +640,9 @@ static void generateCylinder(
         vertices.push_back(-heightHalf);
         vertices.push_back(0.0f);
 
-        colors.push_back(0.72f);
-        colors.push_back(0.52f);
-        colors.push_back(0.45f);
+        colors.push_back(1.0f);
+        colors.push_back(1.0f);
+        colors.push_back(1.0f);
 
         normals.push_back(0.0f);
         normals.push_back(-1.0f);
@@ -684,9 +684,9 @@ static void generateTorus(
             vertices.push_back(y);
             vertices.push_back(z);
 
-            colors.push_back(0.72f);
-            colors.push_back(0.52f);
-            colors.push_back(0.45f);
+            colors.push_back(1.0f);
+            colors.push_back(1.0f);
+            colors.push_back(1.0f);
 
             float cx = radiusOut * std::cos(u);
             float cz = radiusOut * std::sin(u);
@@ -728,9 +728,9 @@ static void generateTorus(
         vertices.push_back(0.0f);
         vertices.push_back(0.0f);
 
-        colors.push_back(0.72f);
-        colors.push_back(0.52f);
-        colors.push_back(0.45f);
+        colors.push_back(1.0f);
+        colors.push_back(1.0f);
+        colors.push_back(1.0f);
 
         normals.push_back(-1.0f);
         normals.push_back(0.0f);
@@ -749,9 +749,9 @@ static void generateTorus(
         vertices.push_back(0.0f);
         vertices.push_back(radiusOut * std::sin(arc));
 
-        colors.push_back(0.72f);
-        colors.push_back(0.52f);
-        colors.push_back(0.45f);
+        colors.push_back(1.0f);
+        colors.push_back(1.0f);
+        colors.push_back(1.0f);
 
         normals.push_back(std::cos(arc));
         normals.push_back(0.0f);

@@ -3,6 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.3]
+- **Fix**: Resolved an issue where enabling "Use Vertex Colors" caused newly created primitives (Sphere, Cube, Cylinder, Torus) to turn brown. Changed the default vertex color initialization on generated primitives from the default albedo brown (0.72, 0.52, 0.45) to white (1.0, 1.0, 1.0) to serve as a clean, blank canvas matching imported models.
 - **UI**: Added the "Environment" option to the background type settings in the Rendering Quality panel, allowing the PBR environment panorama to be displayed as the viewport background.
 - **Fix**: Resolved visual stripe, seam, and projection artifacts on PBR-rendered models and the background by enabling vertical Y-flipping on loaded environment maps, matcaps, and custom textures to match the original WebGL alignment.
 - **Hotkey**: Mapped the 'D' hotkey to adjust the Paint brush's **Hardness** parameter instead of the default Focal Shift when the Paint tool is active. The modal viewport HUD is also updated to read "Hardness" and showcase the dynamic percentage change during drag operations.
