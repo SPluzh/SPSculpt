@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 - **UI**: Scaled the progress bar height in the remeshing progress modal.
 - **UI**: Scaled item widths in the floating island HUD layout.
 - **UI**: Increased the mouse drag sensitivity when adjusting brush radius via the hotkey modal to make brush size changes much faster.
+- **UI**: Made the main menu bar background transparent, showing the viewport underneath, while keeping dropdown popups and menu active/hover states styled with opaque backgrounds.
 
 
 ## [1.2.3]

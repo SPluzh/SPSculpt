@@ -245,6 +245,8 @@ void GuiManager::rebuildFontsAndStyles() {
     ImVec4 tealAccentActive = ImVec4(0.00f, 0.39f, 0.30f, 1.00f);
     
     style.Colors[ImGuiCol_WindowBg] = ImVec4(0.08f, 0.09f, 0.10f, 0.95f);
+    style.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+    style.Colors[ImGuiCol_PopupBg] = ImVec4(0.08f, 0.09f, 0.10f, 0.98f);
     style.Colors[ImGuiCol_Border] = ImVec4(0.18f, 0.20f, 0.22f, 0.60f);
     style.Colors[ImGuiCol_Header] = ImVec4(0.01f, 0.52f, 0.45f, 0.35f);
     style.Colors[ImGuiCol_HeaderHovered] = tealAccentHover;
