@@ -3,6 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.3]
+- **UI**: Added the "Environment" option to the background type settings in the Rendering Quality panel, allowing the PBR environment panorama to be displayed as the viewport background.
 - **Fix**: Resolved visual stripe, seam, and projection artifacts on PBR-rendered models and the background by enabling vertical Y-flipping on loaded environment maps, matcaps, and custom textures to match the original WebGL alignment.
 - **Hotkey**: Mapped the 'D' hotkey to adjust the Paint brush's **Hardness** parameter instead of the default Focal Shift when the Paint tool is active. The modal viewport HUD is also updated to read "Hardness" and showcase the dynamic percentage change during drag operations.
 - **Fix**: Added real-time viewport mesh and brush cursor previews when modifying paint brush settings. While interacting with the Paint color, roughness, or metalness controls in the UI, the renderer temporarily suspends vertex attribute rendering to show a full-mesh preview of the selected paint properties, immediately reverting back once the interaction finishes. Additionally, the brush cursor circle and dot now draw using the active paint color when the Paint tool is selected.

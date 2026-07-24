@@ -1363,11 +1363,12 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             }
 
             if (showBg) {
-                const char* bgTypes[] = { "Image", "Ambient env" };
+                const char* bgTypes[] = { "Image", "Environment", "Ambient env" };
                 int bgType = renderer.getBackgroundType();
-                int selectedIdx = (bgType == 2) ? 1 : 0;
+                int selectedIdx = bgType;
+                if (selectedIdx < 0 || selectedIdx > 2) selectedIdx = 0;
                 if (ImGui::Combo("Type##bg", &selectedIdx, bgTypes, IM_ARRAYSIZE(bgTypes))) {
-                    renderer.setBackgroundType((selectedIdx == 1) ? 2 : 0);
+                    renderer.setBackgroundType(selectedIdx);
                 }
 
                 if (bgType == 1) { // Environment
