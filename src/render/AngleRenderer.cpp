@@ -2114,7 +2114,7 @@ void AngleRenderer::loadEnvironmentTexture(int idx) {
     unsigned char* data = nullptr;
     std::string loadedPath;
 
-    stbi_set_flip_vertically_on_load(false);
+    stbi_set_flip_vertically_on_load(true);
     for (const auto& path : searchPaths) {
         data = stbi_load(path.c_str(), &width, &height, &channels, 4);
         if (data) {
@@ -2257,7 +2257,7 @@ void AngleRenderer::initMatcaps() {
         unsigned char* data = nullptr;
         std::string loadedPath;
 
-        stbi_set_flip_vertically_on_load(false);
+        stbi_set_flip_vertically_on_load(true);
         for (const auto& path : searchPaths) {
             data = stbi_load(path.c_str(), &width, &height, &channels, 4);
             if (data) {
@@ -2322,7 +2322,7 @@ void AngleRenderer::loadBackgroundTexture(const std::string& path) {
     }
     
     int width = 0, height = 0, channels = 0;
-    stbi_set_flip_vertically_on_load(false);
+    stbi_set_flip_vertically_on_load(true);
     unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, 4);
     if (!data) {
         std::cerr << "Failed to load background image: " << path << std::endl;
@@ -2377,7 +2377,7 @@ GLint AngleRenderer::getCachedUniformLocation(GLuint program, const char* name) 
 
 void AngleRenderer::importMatcap(const std::string& name, const std::string& path) {
     int width = 0, height = 0, channels = 0;
-    stbi_set_flip_vertically_on_load(false);
+    stbi_set_flip_vertically_on_load(true);
     unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, 4);
     if (!data) {
         std::cerr << "Failed to load matcap image: " << path << std::endl;

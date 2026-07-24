@@ -3,6 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.3]
+- **Fix**: Resolved visual stripe, seam, and projection artifacts on PBR-rendered models and the background by enabling vertical Y-flipping on loaded environment maps, matcaps, and custom textures to match the original WebGL alignment.
 - **Hotkey**: Mapped the 'D' hotkey to adjust the Paint brush's **Hardness** parameter instead of the default Focal Shift when the Paint tool is active. The modal viewport HUD is also updated to read "Hardness" and showcase the dynamic percentage change during drag operations.
 - **Fix**: Added real-time viewport mesh and brush cursor previews when modifying paint brush settings. While interacting with the Paint color, roughness, or metalness controls in the UI, the renderer temporarily suspends vertex attribute rendering to show a full-mesh preview of the selected paint properties, immediately reverting back once the interaction finishes. Additionally, the brush cursor circle and dot now draw using the active paint color when the Paint tool is selected.
 - **Fix**: Resolved an issue where using the "Paint All" (flood-fill) option did not redraw or update the viewport color immediately. This was fixed by setting the color and material dirty flags rather than the vertex flag, prompting the renderer to upload the updated buffers instantly.

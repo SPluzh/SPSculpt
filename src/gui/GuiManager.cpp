@@ -1330,6 +1330,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGui::SameLine();
             if (ImGui::Button("Import UV##PBR")) {
                 int w = 0, h = 0, ch = 0;
+                stbi_set_flip_vertically_on_load(true);
                 unsigned char* data = stbi_load(texturePath, &w, &h, &ch, 4);
                 if (data) {
                     if (renderer.getTextureId() != 0) {

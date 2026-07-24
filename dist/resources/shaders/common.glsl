@@ -23,7 +23,7 @@ vec3 getAlignedNormal() {
         return getBevelNormal();
     }
     vec3 N = normalize(vNormal);
-    vec3 flatNormal = normalize(cross(dFdy(vVertex), dFdx(vVertex)));
+    vec3 flatNormal = -normalize(cross(dFdy(vVertex), dFdx(vVertex)));
     if (dot(N, flatNormal) < 0.0) {
         return -N;
     }
@@ -34,7 +34,7 @@ vec3 getNormal() {
     if (uBevelEnabled == 1) {
         return getBevelNormal();
     }
-    return uFlat == 0 ? getAlignedNormal() : normalize(cross(dFdy(vVertex), dFdx(vVertex)));
+    return uFlat == 0 ? getAlignedNormal() : -normalize(cross(dFdy(vVertex), dFdx(vVertex)));
 }
 
 vec3 sRGBToLinear(const in vec3 col) {

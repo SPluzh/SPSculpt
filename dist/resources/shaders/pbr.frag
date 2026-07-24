@@ -51,8 +51,8 @@ vec2 directionToUV(const in vec3 dir) {
 vec3 texturePanoramaLod(const in vec3 direction, const in float rLinear) {
   float lod = rLinear * (LIMIT_LOD - 1.0);
   vec2 uvBase = directionToUV(direction);
-  return decodeLUV(mix(texture(uTexture0, toUVMipmap(floor(lod), uvBase)),
-                       texture(uTexture0, toUVMipmap(ceil(lod), uvBase)),
+  return decodeLUV(mix(textureLod(uTexture0, toUVMipmap(floor(lod), uvBase), 0.0),
+                       textureLod(uTexture0, toUVMipmap(ceil(lod), uvBase), 0.0),
                        fract(lod)));
 }
 vec3 integrateBRDFApprox(const in vec3 specular, float roughness, float NoV) {

@@ -20,7 +20,7 @@ vec4 encodeRGBM(const in vec3 col) {
 void main() {
   // Calculate flat normal using screen-space derivatives
   // Note: cross(dFdy, dFdx) provides the correctly inverted normal needed for the matcap mapping
-  vec3 normal = normalize(cross(dFdy(vVertex), dFdx(vVertex)));
+  vec3 normal = -normalize(cross(dFdy(vVertex), dFdx(vVertex)));
   vec3 nm_z = normalize(vVertexPres);
   vec3 nm_x = vec3(-nm_z.z, 0.0, nm_z.x);
   vec3 nm_y = cross(nm_x, nm_z);
