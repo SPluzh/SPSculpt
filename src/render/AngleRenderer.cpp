@@ -204,65 +204,7 @@ bool AngleRenderer::init(int width, int height) {
     m_bevelPrepassProgram = loadAndCompileProgram("bevel_prepass.vert", "bevel_prepass.frag");
     m_bevelFilterProgram = loadAndCompileProgram("bevel.vert", "bevel.frag");
 
-    const char* armVert = R"(#version 300 es
-layout(location = 0) in vec3 aVertex;
-layout(location = 1) in vec3 aNormal;
-uniform mat4 uMVP;
-uniform mat4 uMV;
-uniform mat3 uN;
-uniform float uRadiusTop;
-uniform float uRadiusBottom;
-out vec3 vVertex;
-out vec3 vVertexPres;
-out vec3 vNormal;
-void main() {
-  vec3 pos = aVertex;
-  float u = pos.z; // cylinder Z goes 0 to 1
-  float radius = mix(uRadiusBottom, uRadiusTop, u);
-  pos.x *= radius;
-  pos.y *= radius;
-  vec3 norm = aNormal;
-  if (uRadiusTop != uRadiusBottom && abs(norm.z) < 0.9) {
-    float slope = (uRadiusTop - uRadiusBottom); 
-    norm = vec3(aNormal.x, aNormal.y, -slope);
-    norm = normalize(norm);
-  }
-  vNormal = normalize(uN * norm);
-  vec4 v = uMV * vec4(pos, 1.0);
-  vVertex = vec3(v);
-  vVertexPres = vVertex / max(1.0, abs(uMV[3][2]));
-  gl_Position = uMVP * vec4(pos, 1.0);
-}
-)";
-
-    const char* armFrag = R"(#version 300 es
-precision highp float;
-uniform sampler2D uTexture0;
-uniform vec3 uColor;
-uniform float uSelected;
-in vec3 vVertex;
-in vec3 vVertexPres;
-in vec3 vNormal;
-out vec4 fragColor;
-vec3 sRGBToLinear(vec3 color) { return pow(color, vec3(2.2)); }
-void main() {
-  vec3 normal = normalize(gl_FrontFacing ? vNormal : -vNormal);
-  vec3 nm_z = normalize(vVertexPres);
-  vec3 nm_x = vec3(-nm_z.z, 0.0, nm_z.x);
-  vec3 nm_y = cross(nm_x, nm_z);
-  vec2 texCoord = 0.5 + 0.5 * vec2(dot(normal, nm_x), dot(normal, nm_y));
-  vec3 matcapColor = sRGBToLinear(texture(uTexture0, texCoord).rgb);
-  vec3 baseColor = matcapColor * sRGBToLinear(uColor);
-  if (uSelected > 0.5) {
-    baseColor = mix(baseColor, vec3(1.0, 1.0, 0.0), 0.3) + vec3(0.2, 0.2, 0.0);
-  }
-  fragColor = vec4(baseColor, 1.0);
-}
-)";
-    GLuint vs = compileShader(GL_VERTEX_SHADER, armVert);
-    GLuint fs = compileShader(GL_FRAGMENT_SHADER, armFrag);
-    m_armatureProgram = linkProgram(vs, fs);
-
+    m_armatureProgram = loadAndCompileProgram("armature.vert", "armature.frag");
     // Check if critical shader programs failed to load/link
     if (!m_bgProgram || !m_selectionProgram || !m_refImageProgram || !m_wireframeProgram ||
         !m_flatProgram || !m_matcapProgram || !m_pbrProgram || !m_wetClayProgram ||
