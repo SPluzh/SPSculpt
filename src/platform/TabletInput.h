@@ -2,6 +2,8 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <atomic>
+#include <vector>
+#include <string>
 #include "TabletInputWinTab.h"
 
 enum class TabletMode { NONE, WININK, WINTAB };
@@ -30,10 +32,31 @@ public:
 
     // --- General Interface ---
     float getPressure() const;
+    float getPressureRaw() const;
     float getTiltX() const;
     float getTiltY() const;
     bool  isPenDown() const;
     bool  isAvailable() const;
+
+    // --- Pressure Curve ---
+    struct CurvePoint {
+        float x;
+        float y;
+    };
+    std::vector<CurvePoint> getPressureCurve() const { return _pressureCurve; }
+    void setPressureCurve(const std::vector<CurvePoint>& points) { _pressureCurve = points; }
+    float evaluateCurve(float x) const;
+    std::string getPressureCurveString() const;
+    void setPressureCurveFromString(const std::string& str);
+    enum class InterpolationType {
+        LINEAR = 0,
+        MONOTONE_SPLINE = 1,
+        CATMULL_ROM = 2
+    };
+    InterpolationType getInterpolationType() const { return _interpolationType.load(); }
+    void setInterpolationType(InterpolationType type) { _interpolationType.store(type); }
+    bool isSplineEnabled() const { return _interpolationType.load() != InterpolationType::LINEAR; }
+    void setSplineEnabled(bool enable) { _interpolationType.store(enable ? InterpolationType::MONOTONE_SPLINE : InterpolationType::LINEAR); }
 
     // Toggles for Sculpting
     bool isPressureEnabled() const { return _usePressure; }
@@ -113,6 +136,8 @@ private:
     std::atomic<bool> _usePressureCursor{true};
     std::atomic<bool> _useTilt{true};
     std::atomic<uint32_t> _lastPenTime{0};
+    std::atomic<InterpolationType> _interpolationType{InterpolationType::LINEAR};
+    std::vector<CurvePoint> _pressureCurve = {{0.0f, 0.0f}, {1.0f, 1.0f}};
 };
 
 extern TabletInput g_tablet;

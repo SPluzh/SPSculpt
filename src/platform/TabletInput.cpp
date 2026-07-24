@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cmath>
+#include <algorithm>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -260,8 +261,7 @@ TabletMode TabletInput::getActiveMode() const {
     return TabletMode::NONE;
 }
 
-float TabletInput::getPressure() const {
-    if (!_usePressure) return 1.0f;
+float TabletInput::getPressureRaw() const {
     TabletMode mode = getActiveMode();
     if (mode == TabletMode::WINTAB) {
         return _pressure.load();
@@ -269,6 +269,11 @@ float TabletInput::getPressure() const {
         return _inkPressure.load();
     }
     return 1.0f;
+}
+
+float TabletInput::getPressure() const {
+    if (!_usePressure) return 1.0f;
+    return evaluateCurve(getPressureRaw());
 }
 
 float TabletInput::getTiltX() const {
@@ -321,6 +326,181 @@ TabletInput::DiagInfo TabletInput::getDiagInfo() const {
     di.activeMode = getActiveMode();
     di.isPenActive = isPenActive();
     return di;
+}
+
+float TabletInput::evaluateCurve(float x) const {
+    if (_pressureCurve.empty()) return x;
+    x = x < 0.0f ? 0.0f : (x > 1.0f ? 1.0f : x);
+    if (x <= _pressureCurve.front().x) return _pressureCurve.front().y;
+    if (x >= _pressureCurve.back().x) return _pressureCurve.back().y;
+
+    size_t n = _pressureCurve.size();
+    if (n < 2) return x;
+
+    // Find the segment containing x
+    size_t idx = 0;
+    for (size_t i = 0; i < n - 1; ++i) {
+        if (x >= _pressureCurve[i].x && x <= _pressureCurve[i + 1].x) {
+            idx = i;
+            break;
+        }
+    }
+
+    InterpolationType type = _interpolationType.load();
+
+    if (type == InterpolationType::LINEAR) {
+        // Piecewise linear interpolation
+        const auto& p1 = _pressureCurve[idx];
+        const auto& p2 = _pressureCurve[idx + 1];
+        if (p2.x - p1.x < 1e-5f) return p1.y;
+        float t = (x - p1.x) / (p2.x - p1.x);
+        return p1.y + t * (p2.y - p1.y);
+    } else if (type == InterpolationType::MONOTONE_SPLINE) {
+        // Monotone Cubic Hermite Spline interpolation (Fritsch-Carlson algorithm)
+        // 1. Calculate secant slopes m_i
+        std::vector<float> m(n - 1, 0.0f);
+        for (size_t i = 0; i < n - 1; ++i) {
+            float dx = _pressureCurve[i + 1].x - _pressureCurve[i].x;
+            m[i] = dx > 1e-5f ? (_pressureCurve[i + 1].y - _pressureCurve[i].y) / dx : 0.0f;
+        }
+
+        // 2. Initialize tangents d_i as average of secants
+        std::vector<float> d(n, 0.0f);
+        for (size_t i = 1; i < n - 1; ++i) {
+            d[i] = 0.5f * (m[i - 1] + m[i]);
+        }
+        d[0] = m[0];
+        d[n - 1] = m[n - 2];
+
+        // 3. Apply monotonicity constraints
+        for (size_t i = 0; i < n - 1; ++i) {
+            if (std::abs(m[i]) < 1e-5f) {
+                d[i] = 0.0f;
+                d[i + 1] = 0.0f;
+            } else {
+                float a = d[i] / m[i];
+                float b = d[i + 1] / m[i];
+                float h = a * a + b * b;
+                if (h > 9.0f) {
+                    float t_factor = 3.0f / std::sqrt(h);
+                    d[i] = t_factor * a * m[i];
+                    d[i + 1] = t_factor * b * m[i];
+                }
+            }
+        }
+
+        // 4. Evaluate spline for the selected segment
+        const auto& p1 = _pressureCurve[idx];
+        const auto& p2 = _pressureCurve[idx + 1];
+        float h_x = p2.x - p1.x;
+        if (h_x < 1e-5f) return p1.y;
+        
+        float t = (x - p1.x) / h_x;
+        float t2 = t * t;
+        float t3 = t2 * t;
+
+        // Hermite basis functions
+        float h00 = 2.0f * t3 - 3.0f * t2 + 1.0f;
+        float h10 = t3 - 2.0f * t2 + t;
+        float h01 = -2.0f * t3 + 3.0f * t2;
+        float h11 = t3 - t2;
+
+        float val = h00 * p1.y + h10 * h_x * d[idx] + h01 * p2.y + h11 * h_x * d[idx + 1];
+        return val < 0.0f ? 0.0f : (val > 1.0f ? 1.0f : val);
+    } else if (type == InterpolationType::CATMULL_ROM) {
+        // Centripetal Catmull-Rom Spline
+        // Interpolate over segment idx (between P_idx and P_{idx+1})
+        auto evaluateSegment = [&](int i, float t) -> CurvePoint {
+            CurvePoint cp1 = _pressureCurve[i];
+            CurvePoint cp2 = _pressureCurve[i + 1];
+            CurvePoint cp0 = (i > 0) ? _pressureCurve[i - 1] : CurvePoint{ 2.0f * cp1.x - cp2.x, 2.0f * cp1.y - cp2.y };
+            CurvePoint cp3 = (i < (int)n - 2) ? _pressureCurve[i + 2] : CurvePoint{ 2.0f * cp2.x - cp1.x, 2.0f * cp2.y - cp1.y };
+
+            auto getT = [&](float tPrev, const CurvePoint& pA, const CurvePoint& pB) -> float {
+                float dx = pB.x - pA.x;
+                float dy = pB.y - pA.y;
+                float dist = std::sqrt(dx * dx + dy * dy);
+                return tPrev + std::sqrt(dist); // alpha = 0.5 (centripetal)
+            };
+
+            float t0 = 0.0f;
+            float t1 = getT(t0, cp0, cp1);
+            float t2 = getT(t1, cp1, cp2);
+            float t3 = getT(t2, cp2, cp3);
+
+            // Parameter value on the interval [t1, t2]
+            float valT = t1 + t * (t2 - t1);
+
+            auto interpolate = [&](const CurvePoint& pA, const CurvePoint& pB, float tA, float tB, float currT) -> CurvePoint {
+                if (std::abs(tB - tA) < 1e-5f) return pA;
+                float f = (currT - tA) / (tB - tA);
+                return { pA.x + f * (pB.x - pA.x), pA.y + f * (pB.y - pA.y) };
+            };
+
+            CurvePoint a1 = interpolate(cp0, cp1, t0, t1, valT);
+            CurvePoint a2 = interpolate(cp1, cp2, t1, t2, valT);
+            CurvePoint a3 = interpolate(cp2, cp3, t2, t3, valT);
+
+            CurvePoint b1 = interpolate(a1, a2, t0, t2, valT);
+            CurvePoint b2 = interpolate(a2, a3, t1, t3, valT);
+
+            return interpolate(b1, b2, t1, t2, valT);
+        };
+
+        // Binary search parameter t in [0, 1] to match input x
+        float low = 0.0f;
+        float high = 1.0f;
+        float resY = _pressureCurve[idx].y;
+        for (int iter = 0; iter < 16; ++iter) {
+            float mid = 0.5f * (low + high);
+            CurvePoint pt = evaluateSegment(idx, mid);
+            resY = pt.y;
+            if (pt.x < x) {
+                low = mid;
+            } else {
+                high = mid;
+            }
+        }
+        return resY < 0.0f ? 0.0f : (resY > 1.0f ? 1.0f : resY);
+    }
+    return x;
+}
+
+std::string TabletInput::getPressureCurveString() const {
+    std::string s;
+    for (size_t i = 0; i < _pressureCurve.size(); ++i) {
+        if (i > 0) s += ";";
+        s += std::to_string(_pressureCurve[i].x) + "," + std::to_string(_pressureCurve[i].y);
+    }
+    return s;
+}
+
+void TabletInput::setPressureCurveFromString(const std::string& str) {
+    if (str.empty()) return;
+    std::vector<CurvePoint> pts;
+    size_t start = 0;
+    while (start < str.size()) {
+        size_t end = str.find(';', start);
+        std::string pair = str.substr(start, end == std::string::npos ? std::string::npos : end - start);
+        size_t comma = pair.find(',');
+        if (comma != std::string::npos) {
+            try {
+                float x = std::stof(pair.substr(0, comma));
+                float y = std::stof(pair.substr(comma + 1));
+                pts.push_back({x, y});
+            } catch (...) {
+                // Ignore parse errors
+            }
+        }
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    if (pts.size() >= 2) {
+        std::sort(pts.begin(), pts.end(), [](const CurvePoint& a, const CurvePoint& b) {
+            return a.x < b.x;
+        });
+        _pressureCurve = pts;
+    }
 }
 
 TabletInput g_tablet;

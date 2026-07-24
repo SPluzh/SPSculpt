@@ -2535,6 +2535,8 @@ bool SculptManager::saveSettings(const std::string& filepath) {
     out << "usePressureSize=" << (g_tablet.isPressureSizeEnabled() ? "true" : "false") << "\n";
     out << "usePressureCursor=" << (g_tablet.isPressureCursorEnabled() ? "true" : "false") << "\n";
     out << "useTilt=" << (g_tablet.isTiltEnabled() ? "true" : "false") << "\n";
+    out << "pressureCurve=" << g_tablet.getPressureCurveString() << "\n";
+    out << "pressureCurveType=" << (int)g_tablet.getInterpolationType() << "\n";
 #endif
     out << "\n";
 
@@ -2665,6 +2667,19 @@ bool SculptManager::loadSettings(const std::string& filepath) {
         it = params.find("useTilt");
         if (it != params.end()) {
             g_tablet.setTiltEnabled(it->second == "true" || it->second == "1");
+        }
+        it = params.find("pressureCurve");
+        if (it != params.end()) {
+            g_tablet.setPressureCurveFromString(it->second);
+        }
+        it = params.find("pressureCurveType");
+        if (it != params.end()) {
+            g_tablet.setInterpolationType((TabletInput::InterpolationType)std::stoi(it->second));
+        } else {
+            it = params.find("useSplineCurve");
+            if (it != params.end()) {
+                g_tablet.setSplineEnabled(it->second == "true" || it->second == "1");
+            }
         }
 #endif
     }

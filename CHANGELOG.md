@@ -3,6 +3,10 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.3]
+- **UI**: Added a customizable Tablet Pressure Curve editor in the Tablet Diagnostics panel, allowing users to interactively map stylus input pressure using custom control points, presets (Linear, Soft, Hard), and real-time visual tracking feedback.
+- **UI**: Added axis labels ("Input (Pen Force)" / "Output (Pressure / Size)") and scale markers (0.0, 1.0) to the pressure curve editor widget.
+- **UI**: Added an "Interpolation Mode" selector (Linear, Monotone Spline, Centripetal Catmull-Rom) to customize the mathematical interpolation of the tablet pressure curve.
+- **Settings**: Serialized the custom pressure curve configuration and selected interpolation mode to the local settings file (with backward-compatibility fallbacks) to automatically persist the adjustments across sculpting sessions.
 - **Brushes**: Added a new "Brush" tool with customizable, parametric stamp shapes (Circle, Polygon, Star, Ring, Rectangle) and real-time controls for sides/points count, aspect ratio/inner radius ratio, stamp rotation angle, edge blur, rotation lock toggle, pen tilt rotation toggle, and a clay deformation mode parameter.
 - **UI**: Added a "Stamp Settings" section to the Tool Specific Settings panel when the Brush tool is active, complete with a "Clay Mode" toggle, "Lock Rotation" toggle, "Use Pen Tilt" toggle, "Stamp Blur" slider, and a live 2D drawing preview of the active stamp shape (including guide lines representing the stamp edge blur boundary) that updates dynamically as settings are adjusted and responds to real-time pen tilt input.
 - **Settings**: Serialized the new parametric stamp settings (stamp type, sides, inner ratio, rotation angle, clay mode, stamp blur, stamp lock rotation, stamp use tilt) to the local brush settings configuration file to persist them across sessions.

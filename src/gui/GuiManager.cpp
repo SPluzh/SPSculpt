@@ -2215,6 +2215,211 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         }
         
         ImGui::Separator();
+        {
+            ImGui::Text("Pressure Curve Editing:");
+            ImGui::TextDisabled("Double-click to add/remove points.");
+            ImGui::TextDisabled("Right-click points to delete.");
+
+            // Presets
+            static int selectedPreset = 0; // 0: Custom, 1: Linear, 2: Soft, 3: Hard
+            const char* presets[] = { "Custom", "Linear", "Soft", "Hard" };
+            if (ImGui::Combo("Curve Preset", &selectedPreset, presets, 4)) {
+                if (selectedPreset == 1) {
+                    g_tablet.setPressureCurve({{0.0f, 0.0f}, {1.0f, 1.0f}});
+                } else if (selectedPreset == 2) {
+                    g_tablet.setPressureCurve({{0.0f, 0.0f}, {0.25f, 0.45f}, {0.5f, 0.75f}, {0.75f, 0.9f}, {1.0f, 1.0f}});
+                } else if (selectedPreset == 3) {
+                    g_tablet.setPressureCurve({{0.0f, 0.0f}, {0.25f, 0.05f}, {0.5f, 0.25f}, {0.75f, 0.6f}, {1.0f, 1.0f}});
+                }
+            }
+
+            int interpMode = (int)g_tablet.getInterpolationType();
+            const char* interpModes[] = { "Linear", "Monotone Spline", "Centripetal Catmull-Rom" };
+            if (ImGui::Combo("Interpolation Mode", &interpMode, interpModes, 3)) {
+                g_tablet.setInterpolationType((TabletInput::InterpolationType)interpMode);
+                selectedPreset = 0; // mark custom / modified
+            }
+
+            // Custom widget rendering
+            ImVec2 curveCanvasSize = ImVec2(240.0f, 240.0f);
+            ImVec2 curveCanvasPos = ImGui::GetCursorScreenPos();
+            ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+            // Canvas background and border
+            drawList->AddRectFilled(curveCanvasPos, ImVec2(curveCanvasPos.x + curveCanvasSize.x, curveCanvasPos.y + curveCanvasSize.y), IM_COL32(18, 18, 22, 255));
+            drawList->AddRect(curveCanvasPos, ImVec2(curveCanvasPos.x + curveCanvasSize.x, curveCanvasPos.y + curveCanvasSize.y), IM_COL32(75, 75, 85, 255));
+
+            // Draw grid
+            for (int i = 1; i < 4; ++i) {
+                float gx = curveCanvasPos.x + curveCanvasSize.x * (0.25f * i);
+                float gy = curveCanvasPos.y + curveCanvasSize.y * (0.25f * i);
+                drawList->AddLine(ImVec2(gx, curveCanvasPos.y), ImVec2(gx, curveCanvasPos.y + curveCanvasSize.y), IM_COL32(45, 45, 55, 255), 1.0f);
+                drawList->AddLine(ImVec2(curveCanvasPos.x, gy), ImVec2(curveCanvasPos.x + curveCanvasSize.x, gy), IM_COL32(45, 45, 55, 255), 1.0f);
+            }
+
+            // Draw axis labels and watermarks
+            drawList->AddText(ImVec2(curveCanvasPos.x + 10.0f, curveCanvasPos.y + 10.0f), IM_COL32(255, 255, 255, 100), "Output (Pressure / Size)");
+            drawList->AddText(ImVec2(curveCanvasPos.x + curveCanvasSize.x - 135.0f, curveCanvasPos.y + curveCanvasSize.y - 22.0f), IM_COL32(255, 255, 255, 100), "Input (Pen Force)");
+
+            // Draw coordinate values
+            drawList->AddText(ImVec2(curveCanvasPos.x + 5.0f, curveCanvasPos.y + 25.0f), IM_COL32(255, 255, 255, 80), "1.0");
+            drawList->AddText(ImVec2(curveCanvasPos.x + 5.0f, curveCanvasPos.y + curveCanvasSize.y - 35.0f), IM_COL32(255, 255, 255, 80), "0.0");
+            drawList->AddText(ImVec2(curveCanvasPos.x + curveCanvasSize.x - 25.0f, curveCanvasPos.y + curveCanvasSize.y - 35.0f), IM_COL32(255, 255, 255, 80), "1.0");
+
+            // Handle interaction and sorting
+            std::vector<TabletInput::CurvePoint> pts = g_tablet.getPressureCurve();
+            
+            auto toScreen = [&](const TabletInput::CurvePoint& p) -> ImVec2 {
+                return ImVec2(curveCanvasPos.x + p.x * curveCanvasSize.x, curveCanvasPos.y + (1.0f - p.y) * curveCanvasSize.y);
+            };
+            
+            auto toCurve = [&](const ImVec2& screenPos) -> TabletInput::CurvePoint {
+                float cx = (screenPos.x - curveCanvasPos.x) / curveCanvasSize.x;
+                float cy = 1.0f - (screenPos.y - curveCanvasPos.y) / curveCanvasSize.y;
+                cx = cx < 0.0f ? 0.0f : (cx > 1.0f ? 1.0f : cx);
+                cy = cy < 0.0f ? 0.0f : (cy > 1.0f ? 1.0f : cy);
+                return { cx, cy };
+            };
+
+            ImGui::InvisibleButton("pressure_curve_canvas", curveCanvasSize);
+            bool canvasHovered = ImGui::IsItemHovered();
+            bool canvasActive = ImGui::IsItemActive();
+            static int draggedIdx = -1;
+
+            if (canvasActive && ImGui::IsMouseDown(0)) {
+                ImVec2 mPos = ImGui::GetIO().MousePos;
+                if (draggedIdx == -1) {
+                    // Find closest point to drag
+                    float bestDist = 15.0f; // tolerance
+                    int bestIdx = -1;
+                    for (int i = 0; i < (int)pts.size(); ++i) {
+                        ImVec2 screenPt = toScreen(pts[i]);
+                        float dx = mPos.x - screenPt.x;
+                        float dy = mPos.y - screenPt.y;
+                        float dist = std::sqrt(dx*dx + dy*dy);
+                        if (dist < bestDist) {
+                            bestDist = dist;
+                            bestIdx = i;
+                        }
+                    }
+                    draggedIdx = bestIdx;
+                }
+
+                if (draggedIdx != -1) {
+                    TabletInput::CurvePoint np = toCurve(mPos);
+                    if (draggedIdx == 0) {
+                        pts[0].y = np.y;
+                    } else if (draggedIdx == (int)pts.size() - 1) {
+                        pts[pts.size() - 1].y = np.y;
+                    } else {
+                        float minX = pts[draggedIdx - 1].x + 0.01f;
+                        float maxX = pts[draggedIdx + 1].x - 0.01f;
+                        pts[draggedIdx].x = np.x < minX ? minX : (np.x > maxX ? maxX : np.x);
+                        pts[draggedIdx].y = np.y;
+                    }
+                    g_tablet.setPressureCurve(pts);
+                    selectedPreset = 0; // custom now
+                }
+            } else {
+                draggedIdx = -1;
+            }
+
+            // Add/remove points on double-click
+            if (canvasHovered && ImGui::IsMouseDoubleClicked(0)) {
+                ImVec2 mPos = ImGui::GetIO().MousePos;
+                int clickedIdx = -1;
+                for (int i = 0; i < (int)pts.size(); ++i) {
+                    ImVec2 screenPt = toScreen(pts[i]);
+                    float dx = mPos.x - screenPt.x;
+                    float dy = mPos.y - screenPt.y;
+                    if (dx*dx + dy*dy < 10.0f * 10.0f) {
+                        clickedIdx = i;
+                        break;
+                    }
+                }
+                if (clickedIdx != -1) {
+                    if (clickedIdx > 0 && clickedIdx < (int)pts.size() - 1) {
+                        pts.erase(pts.begin() + clickedIdx);
+                        g_tablet.setPressureCurve(pts);
+                        selectedPreset = 0;
+                    }
+                } else {
+                    TabletInput::CurvePoint newPt = toCurve(mPos);
+                    pts.push_back(newPt);
+                    std::sort(pts.begin(), pts.end(), [](const TabletInput::CurvePoint& a, const TabletInput::CurvePoint& b) {
+                        return a.x < b.x;
+                    });
+                    g_tablet.setPressureCurve(pts);
+                    selectedPreset = 0;
+                }
+            }
+
+            // Delete point on right click
+            if (canvasHovered && ImGui::IsMouseClicked(1)) {
+                ImVec2 mPos = ImGui::GetIO().MousePos;
+                for (int i = 1; i < (int)pts.size() - 1; ++i) {
+                    ImVec2 screenPt = toScreen(pts[i]);
+                    float dx = mPos.x - screenPt.x;
+                    float dy = mPos.y - screenPt.y;
+                    if (dx*dx + dy*dy < 10.0f * 10.0f) {
+                        pts.erase(pts.begin() + i);
+                        g_tablet.setPressureCurve(pts);
+                        selectedPreset = 0;
+                        break;
+                    }
+                }
+            }
+
+            // Draw curve lines (linear or smooth)
+            if (g_tablet.isSplineEnabled()) {
+                const int numSegments = 100;
+                ImVec2 prevPt = toScreen({ 0.0f, g_tablet.evaluateCurve(0.0f) });
+                for (int s = 1; s <= numSegments; ++s) {
+                    float sx = (float)s / (float)numSegments;
+                    float sy = g_tablet.evaluateCurve(sx);
+                    ImVec2 nextPt = toScreen({ sx, sy });
+                    drawList->AddLine(prevPt, nextPt, IM_COL32(0, 192, 255, 255), 2.5f);
+                    prevPt = nextPt;
+                }
+            } else {
+                for (size_t i = 0; i < pts.size() - 1; ++i) {
+                    drawList->AddLine(toScreen(pts[i]), toScreen(pts[i + 1]), IM_COL32(0, 192, 255, 255), 2.5f);
+                }
+            }
+
+            // Draw point handles
+            ImVec2 mPos = ImGui::GetIO().MousePos;
+            for (int i = 0; i < (int)pts.size(); ++i) {
+                ImVec2 screenPt = toScreen(pts[i]);
+                float dx = mPos.x - screenPt.x;
+                float dy = mPos.y - screenPt.y;
+                bool pCtrlHovered = (dx*dx + dy*dy < 8.0f * 8.0f) && canvasHovered;
+                bool pCtrlDragged = (draggedIdx == i);
+                
+                ImU32 col = (pCtrlDragged || pCtrlHovered) ? IM_COL32(255, 255, 255, 255) : IM_COL32(0, 192, 255, 255);
+                float rad = (pCtrlDragged || pCtrlHovered) ? 6.0f : 4.0f;
+                drawList->AddCircleFilled(screenPt, rad, col);
+                drawList->AddCircle(screenPt, rad + 1.5f, IM_COL32(18, 18, 22, 255), 0, 1.5f);
+            }
+
+            // Real-time position tracking dot
+            if (g_tablet.isAvailable() && g_tablet.isPenActive()) {
+                float rawP = g_tablet.getPressureRaw();
+                float outP = g_tablet.evaluateCurve(rawP);
+                ImVec2 indPos = toScreen({ rawP, outP });
+                drawList->AddLine(ImVec2(indPos.x, curveCanvasPos.y), ImVec2(indPos.x, curveCanvasPos.y + curveCanvasSize.y), IM_COL32(255, 255, 255, 60), 1.0f);
+                drawList->AddLine(ImVec2(curveCanvasPos.x, indPos.y), ImVec2(curveCanvasPos.x + curveCanvasSize.x, indPos.y), IM_COL32(255, 255, 255, 60), 1.0f);
+                drawList->AddCircleFilled(indPos, 6.0f, IM_COL32(255, 128, 0, 255));
+                drawList->AddCircle(indPos, 8.0f, IM_COL32(255, 255, 255, 200), 0, 1.5f);
+            }
+
+            if (ImGui::Button("Reset Curve to Linear")) {
+                g_tablet.setPressureCurve({{0.0f, 0.0f}, {1.0f, 1.0f}});
+                selectedPreset = 1;
+            }
+        }
+
+        ImGui::Separator();
         ImGui::Text("Live Pressure Test (Draw below):");
         
         struct TestPoint {
