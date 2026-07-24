@@ -697,6 +697,11 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         tool->setMode((ArmatureMode)mode);
                         
                         ImGui::Separator();
+                        int res = tool->getResolution();
+                        if (ImGui::SliderInt("Resolution", &res, 16, 256)) {
+                            tool->setResolution(res);
+                        }
+
                         if (ImGui::Button("Create Mesh", ImVec2(-1, 26))) {
                             tool->createMesh(scene);
                         }

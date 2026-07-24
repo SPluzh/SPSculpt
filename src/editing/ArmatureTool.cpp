@@ -610,8 +610,21 @@ void ArmatureTool::createMesh(Scene& scene) {
     float minCoords[3] = { bbox[0] - padding, bbox[1] - padding, bbox[2] - padding };
     float maxCoords[3] = { bbox[3] + padding, bbox[4] + padding, bbox[5] + padding };
 
+    // Make cubic to prevent SDF stretching
+    float dX = maxCoords[0] - minCoords[0];
+    float dY = maxCoords[1] - minCoords[1];
+    float dZ = maxCoords[2] - minCoords[2];
+    float maxD = std::max({dX, dY, dZ});
+
+    minCoords[0] -= (maxD - dX) * 0.5f;
+    minCoords[1] -= (maxD - dY) * 0.5f;
+    minCoords[2] -= (maxD - dZ) * 0.5f;
+    maxCoords[0] += (maxD - dX) * 0.5f;
+    maxCoords[1] += (maxD - dY) * 0.5f;
+    maxCoords[2] += (maxD - dZ) * 0.5f;
+
     // 2. Evaluate SDF
-    int resolution = 64;
+    int resolution = m_resolution;
     int total = resolution * resolution * resolution;
     std::vector<float> distanceField(total);
 

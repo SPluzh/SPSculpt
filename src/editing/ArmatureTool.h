@@ -41,6 +41,9 @@ public:
     void setMode(ArmatureMode mode) { m_mode = mode; }
     ArmatureMode getMode() const { return m_mode; }
 
+    int getResolution() const { return m_resolution; }
+    void setResolution(int res) { m_resolution = res; }
+
     ArmatureGraph* getGraph(Scene& scene);
     const ArmatureGraph* getGraph(const Scene& scene) const;
 
@@ -59,6 +62,7 @@ private:
     ArmatureNode* m_activeNode = nullptr;
     bool m_isDragging = false;
     ArmatureMode m_dragMode = ArmatureMode::DRAW;
+    int m_resolution = 64;
 
     float m_screenZ = 0.0f;
     float m_startRadius = 1.0f;
