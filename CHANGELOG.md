@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.3]
+- **UI**: Added a compact, draggable Floating Island HUD panel at the top of the viewport providing quick access to essential controls (Undo, Redo, Symmetry toggle, Brush size/strength sliders, and active brush selection).
+- **UI**: Integrated Lucide vector icons into the user interface (including the floating HUD and the outliner) by configuring the ImGui font atlas to load and merge the embedded Lucide font with vertical alignment adjustments.
 - **UI**: Added a customizable Tablet Pressure Curve editor in the Tablet Diagnostics panel, allowing users to interactively map stylus input pressure using custom control points, presets (Linear, Soft, Hard), and real-time visual tracking feedback.
 - **UI**: Added axis labels ("Input (Pen Force)" / "Output (Pressure / Size)") and scale markers (0.0, 1.0) to the pressure curve editor widget.
 - **UI**: Added an "Interpolation Mode" selector (Linear, Monotone Spline, Centripetal Catmull-Rom) to customize the mathematical interpolation of the tablet pressure curve.

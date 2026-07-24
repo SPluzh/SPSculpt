@@ -6,6 +6,8 @@
 #include "brushes/BrushPresetManager.h"
 #include "editing/ArmatureTool.h"
 #include <imgui.h>
+#include "gui/IconsLucide.h"
+#include "gui/lucide_font.h"
 #include <imgui_internal.h>
 #include <imgui_impl_sdl2.h>
 #include <imgui_impl_opengl3.h>
@@ -183,6 +185,18 @@ void GuiManager::init(SDL_Window* window, SDL_GLContext glContext) {
     ImGuiIO& io = ImGui::GetIO(); (void)io;
     // io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
 
+    // Load default font first
+    io.Fonts->AddFontDefault();
+
+    // Configure and merge Lucide icon font
+    ImFontConfig font_cfg;
+    font_cfg.MergeMode = true;
+    font_cfg.PixelSnapH = true;
+    font_cfg.GlyphMinAdvanceX = 13.0f;
+    font_cfg.GlyphOffset = ImVec2(0.0f, 4.0f); // Shift down to align vertically with default font
+    static const ImWchar icon_ranges[] = { 0xe000, 0xf8ff, 0 };
+    io.Fonts->AddFontFromMemoryTTF((void*)lucide_font_data, lucide_font_size, 14.0f, &font_cfg, icon_ranges);
+
     // Setup Dear ImGui style
     ImGui::StyleColorsDark();
     
@@ -328,6 +342,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGui::MenuItem("Reference Images", nullptr, &m_showReferenceImagesPanel);
             ImGui::MenuItem("Navigation Cube", nullptr, &m_showGizmoCube);
             ImGui::MenuItem("Mesh Statistics & FPS", nullptr, &m_showMeshInfo);
+            ImGui::MenuItem("Floating Island HUD", nullptr, &m_showFloatingIsland);
 #ifdef _WIN32
             ImGui::MenuItem("Tablet Diagnostics", nullptr, &m_showTabletDiagPanel);
 #endif
@@ -3041,6 +3056,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         drawModalIndicatorHUD(sculpt, scene);
     }
 
+    drawFloatingIslandHUD(sculpt, scene, renderer);
+
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
@@ -3335,6 +3352,7 @@ bool GuiManager::saveSettings(const std::string& filepath) {
     out << "showGizmoCube=" << (m_showGizmoCube ? "true" : "false") << "\n";
     out << "showMeshInfo=" << (m_showMeshInfo ? "true" : "false") << "\n";
     out << "showTabletDiagPanel=" << (m_showTabletDiagPanel ? "true" : "false") << "\n";
+    out << "showFloatingIsland=" << (m_showFloatingIsland ? "true" : "false") << "\n";
 
     std::cout << "Successfully saved GUI panel settings to: " << filepath << std::endl;
     return true;
@@ -3401,6 +3419,7 @@ bool GuiManager::loadSettings(const std::string& filepath) {
         getBoolParam("showGizmoCube", m_showGizmoCube);
         getBoolParam("showMeshInfo", m_showMeshInfo);
         getBoolParam("showTabletDiagPanel", m_showTabletDiagPanel);
+        getBoolParam("showFloatingIsland", m_showFloatingIsland);
     }
 
     std::cout << "Successfully loaded GUI panel settings from: " << filepath << std::endl;
@@ -3464,4 +3483,141 @@ void GuiManager::takeScreenshot(const Scene& scene, AngleRenderer& renderer) {
         std::cerr << "Failed to write screenshot image file: " << filepath << std::endl;
     }
 }
+
+void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer) {
+    if (!m_showFloatingIsland) return;
+
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImVec2 pos = ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f, viewport->WorkPos.y + 12.0f);
+    ImGui::SetNextWindowPos(pos, ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.0f));
+    
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.09f, 0.10f, 0.90f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.01f, 0.52f, 0.45f, 0.40f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 20.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f, 8.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 0.0f));
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                             ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse |
+                             ImGuiWindowFlags_AlwaysAutoResize;
+
+    if (ImGui::Begin("##FloatingIslandHUD", nullptr, flags)) {
+        bool hasUndo = scene.canUndo();
+        bool hasRedo = scene.canRedo();
+
+        if (!hasUndo) ImGui::BeginDisabled();
+        if (ImGui::Button(ICON_LC_UNDO "##hudUndo")) {
+            scene.undo();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Undo (Ctrl+Z)");
+        if (!hasUndo) ImGui::EndDisabled();
+
+        ImGui::SameLine();
+
+        if (!hasRedo) ImGui::BeginDisabled();
+        if (ImGui::Button(ICON_LC_REDO "##hudRedo")) {
+            scene.redo();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Redo (Ctrl+Y)");
+        if (!hasRedo) ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        ImGui::TextDisabled("|");
+        ImGui::SameLine();
+
+        bool useSym = sculpt.getUseSym();
+        int symAxis = sculpt.getSymAxis();
+        const char* axisNames[] = { "X", "Y", "Z" };
+
+        if (useSym) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+
+        if (ImGui::Button(ICON_LC_SPLIT " Symmetry##hudSym")) {
+            sculpt.setUseSym(!useSym);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Symmetry");
+
+        if (useSym) {
+            ImGui::PopStyleColor(3);
+        }
+
+        ImGui::SameLine();
+        
+        ImGui::PushItemWidth(45.0f);
+        if (ImGui::BeginCombo("##hudSymAxis", axisNames[symAxis], ImGuiComboFlags_NoArrowButton)) {
+            for (int i = 0; i < 3; i++) {
+                bool isSelected = (symAxis == i);
+                if (ImGui::Selectable(axisNames[i], isSelected)) {
+                    sculpt.setSymAxis(i);
+                }
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::PopItemWidth();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Symmetry Axis");
+
+        ImGui::SameLine();
+        ImGui::TextDisabled("|");
+        ImGui::SameLine();
+
+        float radius = sculpt.getBrushRadius();
+        float intensity = sculpt.getBrushIntensity();
+
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("Size");
+        ImGui::SameLine();
+        ImGui::PushItemWidth(80.0f);
+        if (ImGui::SliderFloat("##hudRadius", &radius, 1.0f, 500.0f, "%.0f px")) {
+            sculpt.setBrushRadius(radius);
+        }
+        ImGui::PopItemWidth();
+
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("Strength");
+        ImGui::SameLine();
+        ImGui::PushItemWidth(80.0f);
+        if (ImGui::SliderFloat("##hudIntensity", &intensity, 0.0f, 1.0f, "%.2f")) {
+            sculpt.setBrushIntensity(intensity);
+        }
+        ImGui::PopItemWidth();
+
+        ImGui::SameLine();
+        ImGui::TextDisabled("|");
+        ImGui::SameLine();
+
+        BrushType currentBrush = sculpt.getBrush();
+        const char* brushName = getBrushNameLocal(currentBrush);
+        
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text(ICON_LC_BRUSH);
+        ImGui::SameLine();
+        
+        ImGui::PushItemWidth(100.0f);
+        if (ImGui::BeginCombo("##hudBrushType", brushName)) {
+            const char* tools[] = { 
+                "Flatten", "Smooth", "Inflate", "Pinch", "Crease", "V-Tool", "Move", "Drag", "Elastic", 
+                "Mask", "Paint", "Twist", "Local Scale", "Clay", "Clay Buildup", "Dam Standard", "Square Brush", "Visibility", "Mask Gradient Blur",
+                "Measure", "Divider", "Transform", "Armature Spheres", "Brush"
+            };
+            for (int i = 0; i < BRUSH_COUNT; i++) {
+                bool isSelected = (currentBrush == (BrushType)i);
+                if (ImGui::Selectable(tools[i], isSelected)) {
+                    sculpt.setBrush((BrushType)i);
+                }
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::PopItemWidth();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select Active Sculpting Brush");
+    }
+    ImGui::End();
+
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor(2);
+}
+
 

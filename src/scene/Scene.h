@@ -105,6 +105,8 @@ public:
     void undo();
     void redo();
     void clearHistory();
+    bool canUndo() const { return !m_undoStack.empty(); }
+    bool canRedo() const { return !m_redoStack.empty(); }
 
     // Reference Images
     std::vector<ReferenceImage>& getReferenceImages() { return m_refImages; }
