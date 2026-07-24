@@ -1792,22 +1792,30 @@ void AngleRenderer::initArmatureGeometry() {
     
     // We will do flat shading or smooth shading? 
     // Matcap expects smooth shading, so we can just use vertices as normals.
-    // Subdivide once
+    // Subdivide twice for smoother spheres
+    int subdivisions = 2;
+    std::vector<glm::vec3> verts = baseVerts;
+    std::vector<uint32_t> faces = baseFaces;
+    
     auto getMid = [&](int i1, int i2, std::vector<glm::vec3>& verts) {
         glm::vec3 m = glm::normalize(verts[i1] + verts[i2]);
         verts.push_back(m);
         return (uint32_t)(verts.size() - 1);
     };
 
-    std::vector<glm::vec3> verts = baseVerts;
-    for (size_t i = 0; i < baseFaces.size(); i += 3) {
-        uint32_t v1 = baseFaces[i], v2 = baseFaces[i+1], v3 = baseFaces[i+2];
-        uint32_t a = getMid(v1, v2, verts);
-        uint32_t b = getMid(v2, v3, verts);
-        uint32_t c = getMid(v3, v1, verts);
-        
-        sphereIndices.insert(sphereIndices.end(), {v1, a, c, v2, b, a, v3, c, b, a, b, c});
+    for (int s = 0; s < subdivisions; ++s) {
+        std::vector<uint32_t> newFaces;
+        for (size_t i = 0; i < faces.size(); i += 3) {
+            uint32_t v1 = faces[i], v2 = faces[i+1], v3 = faces[i+2];
+            uint32_t a = getMid(v1, v2, verts);
+            uint32_t b = getMid(v2, v3, verts);
+            uint32_t c = getMid(v3, v1, verts);
+            
+            newFaces.insert(newFaces.end(), {v1, a, c, v2, b, a, v3, c, b, a, b, c});
+        }
+        faces = newFaces;
     }
+    std::vector<uint32_t> sphereIndices = faces;
 
     for (const auto& v : verts) {
         sphereData.push_back(v.x); sphereData.push_back(v.y); sphereData.push_back(v.z);
@@ -1835,7 +1843,7 @@ void AngleRenderer::initArmatureGeometry() {
     // 2. Cylinder Geometry (Octagonal prism mapping Z=0 to Z=1)
     std::vector<float> cylData;
     std::vector<uint32_t> cylIndices;
-    const int segments = 8;
+    const int segments = 16;
     for (int i = 0; i <= segments; ++i) {
         float angle = (float)i / segments * 2.0f * (float)M_PI;
         float x = std::cos(angle);
