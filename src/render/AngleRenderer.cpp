@@ -1,5 +1,6 @@
 #include "render/AngleRenderer.h"
 #include <iostream>
+#include <random>
 #include <cmath>
 #include <cstring>
 #include <algorithm>
@@ -39,6 +40,11 @@ AngleRenderer::~AngleRenderer() {
     if (m_normalProgram) glDeleteProgram(m_normalProgram);
     if (m_bevelPrepassProgram) glDeleteProgram(m_bevelPrepassProgram);
     if (m_bevelFilterProgram) glDeleteProgram(m_bevelFilterProgram);
+    if (m_ssaoNormalsProgram) glDeleteProgram(m_ssaoNormalsProgram);
+    if (m_ssaoProgram) glDeleteProgram(m_ssaoProgram);
+    if (m_ssaoBlurProgram) glDeleteProgram(m_ssaoBlurProgram);
+    if (m_armatureProgram) glDeleteProgram(m_armatureProgram);
+    if (m_armatureNormalsProgram) glDeleteProgram(m_armatureNormalsProgram);
 
     if (m_bgVao) glDeleteVertexArrays(1, &m_bgVao);
     if (m_bgVbo) glDeleteBuffers(1, &m_bgVbo);
@@ -57,6 +63,7 @@ AngleRenderer::~AngleRenderer() {
     if (m_lassoVbo) glDeleteBuffers(1, &m_lassoVbo);
 
     if (m_envTexture) glDeleteTextures(1, &m_envTexture);
+    if (m_ssaoNoiseTexture) glDeleteTextures(1, &m_ssaoNoiseTexture);
 
     if (m_armatureSphereVao) glDeleteVertexArrays(1, &m_armatureSphereVao);
     if (m_armatureSphereVbo) glDeleteBuffers(1, &m_armatureSphereVbo);
@@ -80,6 +87,9 @@ AngleRenderer::~AngleRenderer() {
     m_rttComposite.release();
     m_rttPrepass.release();
     m_rttBevel.release();
+    m_rttNormals.release();
+    m_rttSsao.release();
+    m_rttSsaoBlur.release();
 }
 
 GLuint AngleRenderer::compileShader(GLenum type, const std::string& source) {
@@ -205,11 +215,17 @@ bool AngleRenderer::init(int width, int height) {
     m_bevelFilterProgram = loadAndCompileProgram("bevel.vert", "bevel.frag");
 
     m_armatureProgram = loadAndCompileProgram("armature.vert", "armature.frag");
+    m_armatureNormalsProgram = loadAndCompileProgram("armature.vert", "armature_normals.frag");
+    m_ssaoNormalsProgram = loadAndCompileProgram("normal.vert", "ssao_normals.frag");
+    m_ssaoProgram = loadAndCompileProgram("merge.vert", "ssao.frag");
+    m_ssaoBlurProgram = loadAndCompileProgram("merge.vert", "ssao_blur.frag");
+
     // Check if critical shader programs failed to load/link
     if (!m_bgProgram || !m_selectionProgram || !m_refImageProgram || !m_wireframeProgram ||
         !m_flatProgram || !m_matcapProgram || !m_pbrProgram || !m_wetClayProgram ||
         !m_normalProgram || !m_voxelCheckerProgram || !m_mergeProgram || !m_fxaaProgram ||
-        !m_viewport2DProgram || !m_contourProgram || !m_bevelPrepassProgram || !m_bevelFilterProgram) {
+        !m_viewport2DProgram || !m_contourProgram || !m_bevelPrepassProgram || !m_bevelFilterProgram ||
+        !m_ssaoNormalsProgram || !m_ssaoProgram || !m_ssaoBlurProgram || !m_armatureProgram || !m_armatureNormalsProgram) {
         std::cerr << "Error: One or more shader programs failed to compile and link." << std::endl;
         return false;
     }
@@ -302,6 +318,8 @@ bool AngleRenderer::init(int width, int height) {
     // D. Initialize Grid
     initGrid();
     initArmatureGeometry();
+    initSsaoKernel();
+    initSsaoNoiseTexture();
 
     // E. Initialize environments presets
     initEnvironments();
@@ -316,6 +334,9 @@ bool AngleRenderer::init(int width, int height) {
     m_rttComposite.init(width, height, true, m_rttOpaque.depth);
     m_rttPrepass.init(width, height, true, 0, true);
     m_rttBevel.init(width, height, false);
+    m_rttNormals.init(width, height, true, 0, false);
+    m_rttSsao.init(width, height, false);
+    m_rttSsaoBlur.init(width, height, false);
 
     return true;
 }
@@ -332,6 +353,9 @@ void AngleRenderer::resize(int width, int height) {
     m_rttComposite.resize(width, height);
     m_rttPrepass.resize(width, height);
     m_rttBevel.resize(width, height);
+    m_rttNormals.resize(width, height);
+    m_rttSsao.resize(width, height);
+    m_rttSsaoBlur.resize(width, height);
 
     updateBackgroundGeometry();
 }
@@ -585,6 +609,85 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
     renderScenePass(scene, 3); // 3 = Background & Grid
     renderScenePass(scene, 1); // 1 = Opaque geometry
 
+    // 2b. SSAO Pass
+    if (m_useSsao) {
+        // A. Normals pre-pass
+        glBindFramebuffer(GL_FRAMEBUFFER, m_rttNormals.fbo);
+        glViewport(0, 0, m_width, m_height);
+        glClearColor(0.5f, 0.5f, 1.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        renderScenePass(scene, 5); // 5 = Normals pre-pass
+        
+        // B. SSAO Calculation Pass
+        glBindFramebuffer(GL_FRAMEBUFFER, m_rttSsao.fbo);
+        glViewport(0, 0, m_width, m_height);
+        glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_CULL_FACE);
+        glUseProgram(m_ssaoProgram);
+        
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, m_rttOpaque.depth);
+        glUniform1i(glGetUniformLocation(m_ssaoProgram, "uDepthTex"), 0);
+        
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, m_rttNormals.texture);
+        glUniform1i(glGetUniformLocation(m_ssaoProgram, "uNormalsTex"), 1);
+        
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, m_ssaoNoiseTexture);
+        glUniform1i(glGetUniformLocation(m_ssaoProgram, "uNoiseTex"), 2);
+        
+        const Camera* camLeft = scene.getCameraByIndex(0);
+        if (!camLeft) camLeft = &scene.getCamera();
+        const Camera* camRight = scene.getCameraByIndex(1);
+        if (!camRight) camRight = camLeft;
+        
+        glm::mat4 projection[2];
+        projection[0] = camLeft->getProjMatrix();
+        projection[1] = camRight->getProjMatrix();
+        
+        glm::mat4 invProjection[2];
+        invProjection[0] = glm::inverse(projection[0]);
+        invProjection[1] = glm::inverse(projection[1]);
+        
+        glUniformMatrix4fv(glGetUniformLocation(m_ssaoProgram, "uProjection"), 2, GL_FALSE, glm::value_ptr(projection[0]));
+        glUniformMatrix4fv(glGetUniformLocation(m_ssaoProgram, "uInvProjection"), 2, GL_FALSE, glm::value_ptr(invProjection[0]));
+        glUniform1i(glGetUniformLocation(m_ssaoProgram, "uSplitMode"), m_splitMode ? 1 : 0);
+        
+        glUniform3fv(glGetUniformLocation(m_ssaoProgram, "uSamples"), 64, glm::value_ptr(m_ssaoKernel[0]));
+        glUniform2f(glGetUniformLocation(m_ssaoProgram, "uNoiseScale"), m_width / 4.0f, m_height / 4.0f);
+        glUniform1f(glGetUniformLocation(m_ssaoProgram, "uRadius"), m_ssaoRadius);
+        glUniform1f(glGetUniformLocation(m_ssaoProgram, "uBias"), m_ssaoBias);
+        
+        glBindVertexArray(m_fsqVao);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glBindVertexArray(0);
+        
+        // C. Bilateral Blur Pass
+        glBindFramebuffer(GL_FRAMEBUFFER, m_rttSsaoBlur.fbo);
+        glViewport(0, 0, m_width, m_height);
+        glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glUseProgram(m_ssaoBlurProgram);
+        
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, m_rttSsao.texture);
+        glUniform1i(glGetUniformLocation(m_ssaoBlurProgram, "uSsaoTex"), 0);
+        
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, m_rttOpaque.depth);
+        glUniform1i(glGetUniformLocation(m_ssaoBlurProgram, "uDepthTex"), 1);
+        
+        glBindVertexArray(m_fsqVao);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glBindVertexArray(0);
+        
+        glEnable(GL_DEPTH_TEST);
+    }
+
     // 3. Transparent Pass
     glBindFramebuffer(GL_FRAMEBUFFER, m_rttTransparent.fbo);
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
@@ -807,6 +910,21 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
         for (auto* mesh : scene.getMeshes()) {
             if (mesh->isVisible(viewportIdx)) {
                 drawMeshPrepass(mesh, scene, camera);
+            }
+        }
+    } else if (passType == 5) {
+        // Normals pre-pass for SSAO
+        for (auto* mesh : scene.getMeshes()) {
+            if (mesh->isVisible(viewportIdx)) {
+                if (mesh->isArmature && mesh->armatureGraph) {
+                    if (mesh == scene.getSelected()) {
+                        drawArmature(*mesh->armatureGraph, camera, m_armatureSelectedNode, m_armatureHoveredParent, m_armatureHoveredChild, m_armatureHasSymmetry, true);
+                    } else {
+                        drawArmature(*mesh->armatureGraph, camera, nullptr, nullptr, nullptr, m_armatureHasSymmetry, true);
+                    }
+                } else {
+                    drawMeshNormals(mesh, scene, camera);
+                }
             }
         }
     }
@@ -1660,26 +1778,30 @@ void AngleRenderer::drawGrid(const Scene& scene, const Camera& camera) {
     glDisable(GL_BLEND);
 }
 
-void AngleRenderer::drawArmature(const ArmatureGraph& graph, const Camera& camera, void* selectedNodePtr, void* hoveredParentPtr, void* hoveredChildPtr, bool hasSymmetry) {
+void AngleRenderer::drawArmature(const ArmatureGraph& graph, const Camera& camera, void* selectedNodePtr, void* hoveredParentPtr, void* hoveredChildPtr, bool hasSymmetry, bool normalsPass) {
     if (m_armatureSphereIndicesCount == 0 || m_armatureCylIndicesCount == 0) return;
-    if (m_armatureProgram == 0) return;
+    
+    GLuint program = normalsPass ? m_armatureNormalsProgram : m_armatureProgram;
+    if (program == 0) return;
     
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
     
-    glUseProgram(m_armatureProgram);
+    glUseProgram(program);
     
-    glActiveTexture(GL_TEXTURE0);
-    int matcapTexId = 0;
-    if (m_matcapIdx >= 0 && m_matcapIdx < static_cast<int>(m_matcaps.size()) && m_matcaps[m_matcapIdx].textureId != 0) {
-        matcapTexId = m_matcaps[m_matcapIdx].textureId;
-    } else if (!m_matcaps.empty() && m_matcaps[0].textureId != 0) {
-        matcapTexId = m_matcaps[0].textureId;
+    if (!normalsPass) {
+        glActiveTexture(GL_TEXTURE0);
+        int matcapTexId = 0;
+        if (m_matcapIdx >= 0 && m_matcapIdx < static_cast<int>(m_matcaps.size()) && m_matcaps[m_matcapIdx].textureId != 0) {
+            matcapTexId = m_matcaps[m_matcapIdx].textureId;
+        } else if (!m_matcaps.empty() && m_matcaps[0].textureId != 0) {
+            matcapTexId = m_matcaps[0].textureId;
+        }
+        glBindTexture(GL_TEXTURE_2D, matcapTexId);
+        glUniform1i(glGetUniformLocation(program, "uTexture0"), 0);
     }
-    glBindTexture(GL_TEXTURE_2D, matcapTexId);
-    glUniform1i(glGetUniformLocation(m_armatureProgram, "uTexture0"), 0);
 
     glm::mat4 proj = camera.getProjMatrix();
     glm::mat4 view = camera.getViewMatrix();
@@ -1695,13 +1817,15 @@ void AngleRenderer::drawArmature(const ArmatureGraph& graph, const Camera& camer
         glm::mat4 mvp = proj * mv;
         glm::mat3 n = glm::transpose(glm::inverse(glm::mat3(mv)));
         
-        glUniformMatrix4fv(glGetUniformLocation(m_armatureProgram, "uMV"), 1, GL_FALSE, glm::value_ptr(mv));
-        glUniformMatrix4fv(glGetUniformLocation(m_armatureProgram, "uMVP"), 1, GL_FALSE, glm::value_ptr(mvp));
-        glUniformMatrix3fv(glGetUniformLocation(m_armatureProgram, "uN"), 1, GL_FALSE, glm::value_ptr(n));
-        glUniform1f(glGetUniformLocation(m_armatureProgram, "uRadiusTop"), rTop);
-        glUniform1f(glGetUniformLocation(m_armatureProgram, "uRadiusBottom"), rBot);
-        glUniform3fv(glGetUniformLocation(m_armatureProgram, "uColor"), 1, glm::value_ptr(color));
-        glUniform1f(glGetUniformLocation(m_armatureProgram, "uSelected"), selected ? 1.0f : 0.0f);
+        glUniformMatrix4fv(glGetUniformLocation(program, "uMV"), 1, GL_FALSE, glm::value_ptr(mv));
+        glUniformMatrix4fv(glGetUniformLocation(program, "uMVP"), 1, GL_FALSE, glm::value_ptr(mvp));
+        glUniformMatrix3fv(glGetUniformLocation(program, "uN"), 1, GL_FALSE, glm::value_ptr(n));
+        glUniform1f(glGetUniformLocation(program, "uRadiusTop"), rTop);
+        glUniform1f(glGetUniformLocation(program, "uRadiusBottom"), rBot);
+        if (!normalsPass) {
+            glUniform3fv(glGetUniformLocation(program, "uColor"), 1, glm::value_ptr(color));
+            glUniform1f(glGetUniformLocation(program, "uSelected"), selected ? 1.0f : 0.0f);
+        }
         
         glBindVertexArray(vao);
         glDrawElements(GL_TRIANGLES, indices, GL_UNSIGNED_INT, nullptr);
@@ -1722,9 +1846,9 @@ void AngleRenderer::drawArmature(const ArmatureGraph& graph, const Camera& camer
 
         glm::vec3 color;
         if (isOnSymPlane) {
-            color = isSelected ? glm::vec3(0.8f, 0.1f, 0.9f) : glm::vec3(0.55f, 0.15f, 0.75f);
+            color = isSelected ? glm::vec3(0.8f, 0.1f, 0.9f) : glm::vec3(0.75f, 0.35f, 0.95f);
         } else {
-            color = isSelected ? glm::vec3(0.8f, 0.1f, 0.1f) : glm::vec3(0.25f, 0.25f, 0.25f);
+            color = isSelected ? glm::vec3(0.8f, 0.1f, 0.1f) : glm::vec3(0.5f, 0.5f, 0.5f);
         }
         
         glm::mat4 model = glm::translate(glm::mat4(1.0f), node->position);
@@ -1761,7 +1885,7 @@ void AngleRenderer::drawArmature(const ArmatureGraph& graph, const Camera& camer
                     }
                 }
                 
-                drawObject(m_armatureCylVao, m_armatureCylIndicesCount, cmodel, node->radius, child->radius, glm::vec3(0.4f, 0.4f, 0.4f), linkHovered);
+                drawObject(m_armatureCylVao, m_armatureCylIndicesCount, cmodel, node->radius, child->radius, glm::vec3(0.6f, 0.6f, 0.6f), linkHovered);
             }
         }
     }
@@ -1961,6 +2085,17 @@ void AngleRenderer::drawFullscreenMerge(const Scene& scene) {
 
     glUniform1i(glGetUniformLocation(m_mergeProgram, "uFilmic"), m_filmic ? 1 : 0);
 
+    // Pass SSAO parameters
+    glActiveTexture(GL_TEXTURE4);
+    if (m_useSsao) {
+        glBindTexture(GL_TEXTURE_2D, m_rttSsaoBlur.texture);
+    } else {
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+    glUniform1i(glGetUniformLocation(m_mergeProgram, "uSsaoTexture"), 4);
+    glUniform1i(glGetUniformLocation(m_mergeProgram, "uSsaoEnabled"), m_useSsao ? 1 : 0);
+    glUniform1f(glGetUniformLocation(m_mergeProgram, "uSsaoIntensity"), m_ssaoIntensity);
+
     glBindVertexArray(m_fsqVao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glBindVertexArray(0);
@@ -1982,6 +2117,7 @@ void AngleRenderer::drawFullscreenFxaa() {
 
     glm::vec2 invSize(1.0f / m_width, 1.0f / m_height);
     glUniform2fv(glGetUniformLocation(m_fxaaProgram, "uInvSize"), 1, &invSize[0]);
+    glUniform1i(glGetUniformLocation(m_fxaaProgram, "uEnabled"), m_useFxaa ? 1 : 0);
 
     glBindVertexArray(m_fsqVao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -2397,3 +2533,103 @@ void AngleRenderer::importMatcap(const std::string& name, const std::string& pat
     stbi_image_free(data);
     m_matcaps.push_back(preset);
 }
+
+void AngleRenderer::initSsaoKernel() {
+    m_ssaoKernel.clear();
+    std::default_random_engine generator(12345);
+    std::uniform_real_distribution<float> randomFloats(0.0f, 1.0f);
+    
+    for (unsigned int i = 0; i < 64; ++i) {
+        glm::vec3 sample(
+            randomFloats(generator) * 2.0f - 1.0f,
+            randomFloats(generator) * 2.0f - 1.0f,
+            randomFloats(generator)
+        );
+        sample = glm::normalize(sample);
+        sample *= randomFloats(generator);
+        
+        // Scale samples to cluster them close to the origin
+        float scale = (float)i / 64.0f;
+        scale = glm::mix(0.1f, 1.0f, scale * scale);
+        sample *= scale;
+        m_ssaoKernel.push_back(sample);
+    }
+}
+
+void AngleRenderer::initSsaoNoiseTexture() {
+    std::default_random_engine generator(54321);
+    std::uniform_real_distribution<float> randomFloats(0.0f, 1.0f);
+    std::vector<glm::vec4> ssaoNoise;
+    for (unsigned int i = 0; i < 16; i++) {
+        float nx = randomFloats(generator) * 2.0f - 1.0f;
+        float ny = randomFloats(generator) * 2.0f - 1.0f;
+        float len = std::sqrt(nx * nx + ny * ny);
+        if (len > 0.0001f) {
+            nx /= len;
+            ny /= len;
+        } else {
+            nx = 1.0f;
+            ny = 0.0f;
+        }
+        ssaoNoise.push_back(glm::vec4(nx, ny, 0.0f, 1.0f));
+    }
+    
+    glGenTextures(1, &m_ssaoNoiseTexture);
+    glBindTexture(GL_TEXTURE_2D, m_ssaoNoiseTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, 4, 4, 0, GL_RGBA, GL_FLOAT, ssaoNoise.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+void AngleRenderer::drawMeshNormals(Mesh* mesh, const Scene& scene, const Camera& camera) {
+    auto it = m_meshBuffers.find(mesh);
+    if (it == m_meshBuffers.end() || it->second->triIndexCount == 0) return;
+    auto& bufs = it->second;
+
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDisable(GL_CULL_FACE);
+
+    if (m_ssaoNormalsProgram == 0) return;
+    glUseProgram(m_ssaoNormalsProgram);
+
+    mesh->updateMatrices(camera);
+
+    glUniformMatrix4fv(glGetUniformLocation(m_ssaoNormalsProgram, "uMV"), 1, GL_FALSE, glm::value_ptr(mesh->mvMatrix));
+    glUniformMatrix4fv(glGetUniformLocation(m_ssaoNormalsProgram, "uMVP"), 1, GL_FALSE, glm::value_ptr(mesh->mvpMatrix));
+    glUniformMatrix3fv(glGetUniformLocation(m_ssaoNormalsProgram, "uN"), 1, GL_FALSE, glm::value_ptr(mesh->nMatrix));
+    glUniformMatrix4fv(glGetUniformLocation(m_ssaoNormalsProgram, "uEM"), 1, GL_FALSE, glm::value_ptr(mesh->editMatrix));
+    glUniformMatrix3fv(glGetUniformLocation(m_ssaoNormalsProgram, "uEN"), 1, GL_FALSE, glm::value_ptr(mesh->enMatrix));
+    glUniform1i(glGetUniformLocation(m_ssaoNormalsProgram, "uFlat"), m_flatShading ? 1 : 0);
+
+    glUniform1i(glGetUniformLocation(m_ssaoNormalsProgram, "uBevelEnabled"), m_bevelEnabled ? 1 : 0);
+    if (m_bevelEnabled) {
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, m_rttBevel.texture);
+        glUniform1i(glGetUniformLocation(m_ssaoNormalsProgram, "uBevelNormalMap"), 1);
+        glUniform2f(glGetUniformLocation(m_ssaoNormalsProgram, "uInvViewportSize"), 1.0f / m_width, 1.0f / m_height);
+    }
+
+    glBindVertexArray(bufs->vao);
+
+    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(1);
+
+    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
+    glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(3);
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
+    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
+
+    glBindVertexArray(0);
+}
+

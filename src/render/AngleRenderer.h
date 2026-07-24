@@ -65,6 +65,16 @@ public:
     void deleteBackgroundTexture();
     void setFilmic(bool filmic) { m_filmic = filmic; }
     bool getFilmic() const { return m_filmic; }
+    void setUseFxaa(bool enable) { m_useFxaa = enable; }
+    bool getUseFxaa() const { return m_useFxaa; }
+    void setUseSsao(bool enable) { m_useSsao = enable; }
+    bool getUseSsao() const { return m_useSsao; }
+    void setSsaoRadius(float radius) { m_ssaoRadius = radius; }
+    float getSsaoRadius() const { return m_ssaoRadius; }
+    void setSsaoBias(float bias) { m_ssaoBias = bias; }
+    float getSsaoBias() const { return m_ssaoBias; }
+    void setSsaoIntensity(float intensity) { m_ssaoIntensity = intensity; }
+    float getSsaoIntensity() const { return m_ssaoIntensity; }
     void setBevelEnabled(bool enabled) { m_bevelEnabled = enabled; }
     bool getBevelEnabled() const { return m_bevelEnabled; }
     void setBevelRadius(float radius) { m_bevelRadius = radius; }
@@ -193,7 +203,7 @@ public:
 
     void setLassoParameters(bool active, const std::vector<glm::vec2>& points, bool altMode, bool isMaskLasso);
 
-    void drawArmature(const ArmatureGraph& graph, const Camera& camera, void* selectedNode = nullptr, void* hoveredParent = nullptr, void* hoveredChild = nullptr, bool hasSymmetry = false);
+    void drawArmature(const ArmatureGraph& graph, const Camera& camera, void* selectedNode = nullptr, void* hoveredParent = nullptr, void* hoveredChild = nullptr, bool hasSymmetry = false, bool normalsPass = false);
 
     // Armature tool state for rendering
     void* m_armatureSelectedNode = nullptr;
@@ -227,6 +237,7 @@ private:
     void drawMesh(Mesh* mesh, const Scene& scene); // Keep for compatibility
     void drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& camera);
     void drawMeshPrepass(Mesh* mesh, const Scene& scene, const Camera& camera);
+    void drawMeshNormals(Mesh* mesh, const Scene& scene, const Camera& camera);
     void drawMeshFlatColor(Mesh* mesh, const Scene& scene, const Camera& camera, const glm::vec4& color);
     void drawVoxelPreview(const Scene& scene, const Camera& camera, int viewportIdx);
     void drawWireframe(Mesh* mesh, const Scene& scene, const Camera& camera);
@@ -236,6 +247,8 @@ private:
 
     void initGrid();
     void initArmatureGeometry();
+    void initSsaoKernel();
+    void initSsaoNoiseTexture();
     void drawGrid(const Scene& scene, const Camera& camera);
     void drawFullscreenMerge(const Scene& scene);
     void drawFullscreenFxaa();
@@ -304,6 +317,10 @@ private:
     GLuint m_bevelPrepassProgram = 0;
     GLuint m_bevelFilterProgram = 0;
     GLuint m_armatureProgram = 0;
+    GLuint m_armatureNormalsProgram = 0;
+    GLuint m_ssaoNormalsProgram = 0;
+    GLuint m_ssaoProgram = 0;
+    GLuint m_ssaoBlurProgram = 0;
 
     // RTT Targets
     RenderTarget m_rttContour;
@@ -313,6 +330,9 @@ private:
     RenderTarget m_rttComposite;
     RenderTarget m_rttPrepass;
     RenderTarget m_rttBevel;
+    RenderTarget m_rttNormals;
+    RenderTarget m_rttSsao;
+    RenderTarget m_rttSsaoBlur;
 
     // Fullscreen quad
     GLuint m_fsqVao = 0;
@@ -324,6 +344,15 @@ private:
     int m_gridLineCount = 0;
 
     // Settings
+    bool m_useFxaa = true;
+    bool m_useSsao = true;
+    float m_ssaoRadius = 0.5f;
+    float m_ssaoBias = 0.025f;
+    float m_ssaoIntensity = 1.0f;
+
+    std::vector<glm::vec3> m_ssaoKernel;
+    GLuint m_ssaoNoiseTexture = 0;
+
     int m_backgroundType = 0;
     float m_bgBlur = 0.0f;
     bool m_filmic = false;

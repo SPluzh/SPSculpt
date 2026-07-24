@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.3]
+- **Renderer**: Fixed armature rendering in the SSAO pre-pass by creating a dedicated `armature_normals.frag` shader and drawing the armature in the normal/depth targets, resolving dark outlines and occlusion visual artifacts around armature elements.
+- **Renderer**: Transitioned armature spheres and cylinders to smooth-shaded views with front-facing normal alignment to improve three-dimensional definition.
+- **Renderer**: Brightened armature nodes and links default colors and added a minimum ambient factor to prevent the armature from turning pitch-black under dark environmental maps and matcaps.
+- **Renderer**: Added Screen Space Ambient Occlusion (SSAO) to enhance 3D visual depth and shadowing fidelity in the viewport.
+- **Renderer**: Added Fast Approximate Anti-Aliasing (FXAA) to reduce jagged edges and smooth viewport rendering.
+- **UI**: Added SSAO and FXAA toggle controls along with sliders for adjusting SSAO radius, bias, and intensity in the Rendering Quality panel.
+- **Settings**: Serialized the new SSAO and FXAA parameters to the local rendering settings file to persist them across sessions.
 - **Fix**: Resolved an issue where enabling "Use Vertex Colors" caused newly created primitives (Sphere, Cube, Cylinder, Torus) to turn brown. Changed the default vertex color initialization on generated primitives from the default albedo brown (0.72, 0.52, 0.45) to white (1.0, 1.0, 1.0) to serve as a clean, blank canvas matching imported models.
 - **UI**: Added the "Environment" option to the background type settings in the Rendering Quality panel, allowing the PBR environment panorama to be displayed as the viewport background.
 - **Fix**: Resolved visual stripe, seam, and projection artifacts on PBR-rendered models and the background by enabling vertical Y-flipping on loaded environment maps, matcaps, and custom textures to match the original WebGL alignment.

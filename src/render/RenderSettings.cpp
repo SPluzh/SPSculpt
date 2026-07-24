@@ -67,6 +67,11 @@ bool RenderSettings::save(const std::string& filepath, const AngleRenderer& rend
     out << "bevelRadius=" << renderer.getBevelRadius() << "\n";
     out << "bevelStrength=" << renderer.getBevelStrength() << "\n";
     out << "bevelScaleWithDistance=" << (renderer.getBevelScaleWithDistance() ? "true" : "false") << "\n";
+    out << "useFxaa=" << (renderer.getUseFxaa() ? "true" : "false") << "\n";
+    out << "useSsao=" << (renderer.getUseSsao() ? "true" : "false") << "\n";
+    out << "ssaoRadius=" << renderer.getSsaoRadius() << "\n";
+    out << "ssaoBias=" << renderer.getSsaoBias() << "\n";
+    out << "ssaoIntensity=" << renderer.getSsaoIntensity() << "\n";
 
     const Camera* mainCam = scene.getCameraByIndex(0);
     if (mainCam) {
@@ -297,6 +302,26 @@ bool RenderSettings::load(const std::string& filepath, AngleRenderer& renderer, 
         it = params.find("bevelScaleWithDistance");
         if (it != params.end()) {
             renderer.setBevelScaleWithDistance(it->second == "true" || it->second == "1");
+        }
+        it = params.find("useFxaa");
+        if (it != params.end()) {
+            renderer.setUseFxaa(it->second == "true" || it->second == "1");
+        }
+        it = params.find("useSsao");
+        if (it != params.end()) {
+            renderer.setUseSsao(it->second == "true" || it->second == "1");
+        }
+        it = params.find("ssaoRadius");
+        if (it != params.end()) {
+            renderer.setSsaoRadius(safe_stof(it->second, 0.5f));
+        }
+        it = params.find("ssaoBias");
+        if (it != params.end()) {
+            renderer.setSsaoBias(safe_stof(it->second, 0.025f));
+        }
+        it = params.find("ssaoIntensity");
+        if (it != params.end()) {
+            renderer.setSsaoIntensity(safe_stof(it->second, 1.0f));
         }
 
         it = params.find("useVertexColors");

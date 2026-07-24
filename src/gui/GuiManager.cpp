@@ -1264,6 +1264,32 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             renderer.setFilmic(filmic);
         }
 
+        bool useFxaa = renderer.getUseFxaa();
+        if (ImGui::Checkbox("FXAA Anti-aliasing", &useFxaa)) {
+            renderer.setUseFxaa(useFxaa);
+        }
+
+        bool useSsao = renderer.getUseSsao();
+        if (ImGui::Checkbox("SSAO Ambient Occlusion", &useSsao)) {
+            renderer.setUseSsao(useSsao);
+        }
+        if (useSsao) {
+            ImGui::Indent();
+            float ssaoRad = renderer.getSsaoRadius();
+            if (ImGui::SliderFloat("SSAO Radius", &ssaoRad, 0.05f, 2.0f, "%.2f")) {
+                renderer.setSsaoRadius(ssaoRad);
+            }
+            float ssaoBias = renderer.getSsaoBias();
+            if (ImGui::SliderFloat("SSAO Bias", &ssaoBias, 0.001f, 0.2f, "%.3f")) {
+                renderer.setSsaoBias(ssaoBias);
+            }
+            float ssaoInt = renderer.getSsaoIntensity();
+            if (ImGui::SliderFloat("SSAO Intensity", &ssaoInt, 0.0f, 3.0f, "%.2f")) {
+                renderer.setSsaoIntensity(ssaoInt);
+            }
+            ImGui::Unindent();
+        }
+
         bool showContour = renderer.getShowContour();
         if (ImGui::Checkbox("Show Selection Outline", &showContour)) {
             renderer.setShowContour(showContour);
