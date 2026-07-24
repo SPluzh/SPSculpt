@@ -363,7 +363,14 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     ImGui::NewFrame();
 
     // 1. Main Menu Bar
-    if (ImGui::BeginMainMenuBar()) {
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    bool menuBarOpen = ImGui::BeginMainMenuBar();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+
+    if (menuBarOpen) {
         if (ImGui::BeginMenu("File")) {
             if (ImGui::MenuItem("Load Default Sphere")) {
                 scene.loadDefaultSphere();
