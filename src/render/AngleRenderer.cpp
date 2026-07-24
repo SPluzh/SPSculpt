@@ -1792,8 +1792,8 @@ void AngleRenderer::initArmatureGeometry() {
     
     // We will do flat shading or smooth shading? 
     // Matcap expects smooth shading, so we can just use vertices as normals.
-    // Subdivide twice for smoother spheres
-    int subdivisions = 2;
+    // Subdivide three times for even smoother spheres
+    int subdivisions = 3;
     std::vector<glm::vec3> verts = baseVerts;
     std::vector<uint32_t> faces = baseFaces;
     
@@ -1843,7 +1843,7 @@ void AngleRenderer::initArmatureGeometry() {
     // 2. Cylinder Geometry (Octagonal prism mapping Z=0 to Z=1)
     std::vector<float> cylData;
     std::vector<uint32_t> cylIndices;
-    const int segments = 16;
+    const int segments = 32;
     for (int i = 0; i <= segments; ++i) {
         float angle = (float)i / segments * 2.0f * (float)M_PI;
         float x = std::cos(angle);
