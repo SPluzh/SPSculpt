@@ -2570,19 +2570,19 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         float dy = pB.y - pA.y;
         float len = std::sqrt(dx * dx + dy * dy);
         if (len > 0.0f) {
-            float step = 10.0f;
+            float step = 10.0f * scale;
             int numSteps = (int)(len / step);
             float ux = dx / len;
             float uy = dy / len;
             for (int i = 0; i < numSteps; ++i) {
                 float tStart = i * step;
-                float tEnd = tStart + 5.0f;
+                float tEnd = tStart + 5.0f * scale;
                 if (tEnd > len) tEnd = len;
                 drawList->AddLine(
                     ImVec2(pA.x + ux * tStart, pA.y + uy * tStart),
                     ImVec2(pA.x + ux * tEnd, pA.y + uy * tEnd),
                     IM_COL32(0, 229, 255, 255),
-                    2.0f
+                    2.0f * scale
                 );
             }
         }
@@ -2591,14 +2591,14 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         float distA = std::sqrt((mousePos.x - pA.x) * (mousePos.x - pA.x) + (mousePos.y - pA.y) * (mousePos.y - pA.y));
         float distB = std::sqrt((mousePos.x - pB.x) * (mousePos.x - pB.x) + (mousePos.y - pB.y) * (mousePos.y - pB.y));
 
-        float radA = (distA < 20.0f) ? 12.0f : 8.0f;
-        float radB = (distB < 20.0f) ? 12.0f : 8.0f;
+        float radA = (distA < 20.0f * scale) ? 12.0f * scale : 8.0f * scale;
+        float radB = (distB < 20.0f * scale) ? 12.0f * scale : 8.0f * scale;
 
         drawList->AddCircleFilled(pA, radA, IM_COL32(255, 255, 255, 255));
-        drawList->AddCircle(pA, radA, IM_COL32(0, 229, 255, 255), 0, 2.0f);
+        drawList->AddCircle(pA, radA, IM_COL32(0, 229, 255, 255), 0, 2.0f * scale);
 
         drawList->AddCircleFilled(pB, radB, IM_COL32(0, 229, 255, 255));
-        drawList->AddCircle(pB, radB, IM_COL32(255, 255, 255, 255), 0, 2.0f);
+        drawList->AddCircle(pB, radB, IM_COL32(255, 255, 255, 255), 0, 2.0f * scale);
     }
 
     // 10. Measure / Divider Overlays
@@ -2681,35 +2681,40 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 glm::vec3 worldMid = (worldA + worldB) * 0.5f;
                 float ppuMid = getPixelsPerUnit(worldMid, camera);
                 strokeWidth = (isReference ? 0.11f : 0.075f) * ppuMid;
-                strokeWidth = glm::clamp(strokeWidth, 0.25f, 5.0f);
+                strokeWidth = glm::clamp(strokeWidth, 0.25f * scale, 5.0f * scale);
 
                 float ppuA = getPixelsPerUnit(worldA, camera);
                 rA = (isReference ? 0.35f : 0.28f) * ppuA;
-                rA = glm::clamp(rA, 1.0f, 15.0f);
+                rA = glm::clamp(rA, 1.0f * scale, 15.0f * scale);
 
                 float ppuB = getPixelsPerUnit(worldB, camera);
                 rB = (isReference ? 0.35f : 0.28f) * ppuB;
-                rB = glm::clamp(rB, 1.0f, 15.0f);
+                rB = glm::clamp(rB, 1.0f * scale, 15.0f * scale);
 
                 rDiv = 0.2f * ppuMid;
-                rDiv = glm::clamp(rDiv, 0.8f, 10.0f);
+                rDiv = glm::clamp(rDiv, 0.8f * scale, 10.0f * scale);
+            } else {
+                strokeWidth *= scale;
+                rA *= scale;
+                rB *= scale;
+                rDiv *= scale;
             }
 
-            if (isHoveredA) rA = std::max(8.0f, rA * 1.6f);
-            if (isHoveredB) rB = std::max(8.0f, rB * 1.6f);
+            if (isHoveredA) rA = std::max(8.0f * scale, rA * 1.6f);
+            if (isHoveredB) rB = std::max(8.0f * scale, rB * 1.6f);
 
             // 1. Line
             if (isPreview) {
                 ImVec2 d = ImVec2(posB.x - posA.x, posB.y - posA.y);
                 float len = std::sqrt(d.x * d.x + d.y * d.y);
                 if (len > 0.0f) {
-                    float step = 10.0f;
+                    float step = 10.0f * scale;
                     int numSteps = (int)(len / step);
                     float ux = d.x / len;
                     float uy = d.y / len;
                     for (int i = 0; i < numSteps; ++i) {
                         float tStart = i * step;
-                        float tEnd = tStart + 5.0f;
+                        float tEnd = tStart + 5.0f * scale;
                         if (tEnd > len) tEnd = len;
                         drawList->AddLine(
                             ImVec2(posA.x + ux * tStart, posA.y + uy * tStart),
@@ -2734,7 +2739,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         ImU32 fillCol = isPreview ? IM_COL32(255, 255, 255, 102) : IM_COL32(255, 255, 255, 255);
                         ImU32 strokeCol = isPreview ? IM_COL32(26, 26, 26, 102) : IM_COL32(26, 26, 26, 255);
                         drawList->AddCircleFilled(divPos, rDiv, fillCol);
-                        drawList->AddCircle(divPos, rDiv, strokeCol, 0, 1.0f);
+                        drawList->AddCircle(divPos, rDiv, strokeCol, 0, 1.0f * scale);
                     }
                 }
             } else {
@@ -2745,19 +2750,19 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         glm::vec3 tickWorld = glm::mix(worldA, worldB, t);
                         glm::vec3 tickScreen = camera.project(tickWorld);
                         ImVec2 tickPos(tickScreen.x, tickScreen.y);
-                        drawList->AddCircleFilled(tickPos, 2.5f, IM_COL32(255, 255, 255, 255));
-                        drawList->AddCircle(tickPos, 2.5f, color, 0, 1.0f);
+                        drawList->AddCircleFilled(tickPos, 2.5f * scale, IM_COL32(255, 255, 255, 255));
+                        drawList->AddCircle(tickPos, 2.5f * scale, color, 0, 1.0f * scale);
                     }
                 }
             }
 
             // 3. Endpoint shapes
             ImU32 strokeA = isHoveredA ? IM_COL32(0, 229, 255, 255) : IM_COL32(26, 26, 26, 255);
-            float swA = isHoveredA ? 2.5f : 1.2f;
+            float swA = isHoveredA ? 2.5f * scale : 1.2f * scale;
             drawEndpointShape(drawList, posA, rA, seg.vertA.type, color, strokeA, swA);
 
             ImU32 strokeB = isHoveredB ? IM_COL32(0, 229, 255, 255) : IM_COL32(26, 26, 26, 255);
-            float swB = isHoveredB ? 2.5f : 1.2f;
+            float swB = isHoveredB ? 2.5f * scale : 1.2f * scale;
             drawEndpointShape(drawList, posB, rB, seg.vertB.type, color, strokeB, swB);
 
             // 4. Text Label (Measure tool only)
@@ -2774,15 +2779,15 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 }
 
                 ImVec2 labelSize = ImGui::CalcTextSize(label);
-                float textWidth = labelSize.x + 12.0f;
-                float textHeight = labelSize.y + 6.0f;
+                float textWidth = labelSize.x + 12.0f * scale;
+                float textHeight = labelSize.y + 6.0f * scale;
 
-                ImVec2 midPos((posA.x + posB.x) * 0.5f, (posA.y + posB.y) * 0.5f - 10.0f);
+                ImVec2 midPos((posA.x + posB.x) * 0.5f, (posA.y + posB.y) * 0.5f - 10.0f * scale);
                 ImVec2 minRect(midPos.x - textWidth * 0.5f, midPos.y - textHeight * 0.5f);
                 ImVec2 maxRect(midPos.x + textWidth * 0.5f, midPos.y + textHeight * 0.5f);
 
-                drawList->AddRectFilled(minRect, maxRect, IM_COL32(20, 20, 20, 217), 4.0f);
-                drawList->AddRect(minRect, maxRect, color, 4.0f, 0, 1.0f);
+                drawList->AddRectFilled(minRect, maxRect, IM_COL32(20, 20, 20, 217), 4.0f * scale);
+                drawList->AddRect(minRect, maxRect, color, 4.0f * scale, 0, 1.0f * scale);
 
                 ImVec2 textPos(midPos.x - labelSize.x * 0.5f, midPos.y - labelSize.y * 0.5f);
                 drawList->AddText(textPos, IM_COL32(255, 255, 255, 255), label);
@@ -3088,14 +3093,14 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             if (isPointOverImGuiWindow(p)) return;
 
             // Draw center dot
-            drawList->AddCircleFilled(p, 2.0f, pivotColor);
+            drawList->AddCircleFilled(p, 2.0f * scale, pivotColor);
             // Draw outer ring
-            drawList->AddCircle(p, 6.0f, pivotColor, 0, 1.0f);
+            drawList->AddCircle(p, 6.0f * scale, pivotColor, 0, 1.0f * scale);
             // Draw crosshair ticks
-            drawList->AddLine(ImVec2(p.x - 10.0f, p.y), ImVec2(p.x - 6.0f, p.y), pivotColor, 1.0f);
-            drawList->AddLine(ImVec2(p.x + 6.0f, p.y), ImVec2(p.x + 10.0f, p.y), pivotColor, 1.0f);
-            drawList->AddLine(ImVec2(p.x, p.y - 10.0f), ImVec2(p.x, p.y - 6.0f), pivotColor, 1.0f);
-            drawList->AddLine(ImVec2(p.x, p.y + 6.0f), ImVec2(p.x, p.y + 10.0f), pivotColor, 1.0f);
+            drawList->AddLine(ImVec2(p.x - 10.0f * scale, p.y), ImVec2(p.x - 6.0f * scale, p.y), pivotColor, 1.0f * scale);
+            drawList->AddLine(ImVec2(p.x + 6.0f * scale, p.y), ImVec2(p.x + 10.0f * scale, p.y), pivotColor, 1.0f * scale);
+            drawList->AddLine(ImVec2(p.x, p.y - 10.0f * scale), ImVec2(p.x, p.y - 6.0f * scale), pivotColor, 1.0f * scale);
+            drawList->AddLine(ImVec2(p.x, p.y + 6.0f * scale), ImVec2(p.x, p.y + 10.0f * scale), pivotColor, 1.0f * scale);
         };
 
         if (!renderer.getSplitMode()) {
@@ -3310,7 +3315,7 @@ void GuiManager::drawRemeshProgressModal() {
         float progressFloat = (float)progress / 100.0f;
         char buf[32];
         sprintf(buf, "%d%%", progress);
-        ImGui::ProgressBar(progressFloat, ImVec2(-1.0f, 26.0f), buf);
+        ImGui::ProgressBar(progressFloat, ImVec2(-1.0f, 26.0f * scale), buf);
 
         ImGui::EndPopup();
     }
@@ -3370,9 +3375,9 @@ void GuiManager::drawModalIndicatorHUD(SculptManager& sculpt, Scene& scene) {
     ImGui::SetNextWindowBgAlpha(0.85f);
 
     // Style overrides for floating indicator card
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 8.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 6.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f * scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f * scale, 8.0f * scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 6.0f * scale));
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | 
                              ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | 
@@ -3380,7 +3385,7 @@ void GuiManager::drawModalIndicatorHUD(SculptManager& sculpt, Scene& scene) {
                              ImGuiWindowFlags_AlwaysAutoResize;
 
     if (ImGui::Begin("##ModalIndicatorHUD", nullptr, flags)) {
-        float width = 150.0f; // matches min-width of 150px
+        float width = 150.0f * scale; // matches min-width of 150px
         
         float posX = ImGui::GetCursorPosX();
         ImGui::Text("%s", label);
@@ -3392,7 +3397,7 @@ void GuiManager::drawModalIndicatorHUD(SculptManager& sculpt, Scene& scene) {
         // Render sleek progress bar
         ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.01f, 0.52f, 0.45f, 1.00f)); // Teal Accent
         ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(1.0f, 1.0f, 1.0f, 0.2f)); // Track
-        ImGui::ProgressBar(std::max(0.0f, std::min(1.0f, fraction)), ImVec2(width, 5.0f), "");
+        ImGui::ProgressBar(std::max(0.0f, std::min(1.0f, fraction)), ImVec2(width, 5.0f * scale), "");
         ImGui::PopStyleColor(2);
     }
     ImGui::End();
@@ -3636,7 +3641,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
 
         ImGui::SameLine();
         
-        ImGui::PushItemWidth(45.0f);
+        ImGui::PushItemWidth(45.0f * scale);
         if (ImGui::BeginCombo("##hudSymAxis", axisNames[symAxis], ImGuiComboFlags_NoArrowButton)) {
             for (int i = 0; i < 3; i++) {
                 bool isSelected = (symAxis == i);
@@ -3659,7 +3664,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         ImGui::AlignTextToFramePadding();
         ImGui::Text("Size");
         ImGui::SameLine();
-        ImGui::PushItemWidth(80.0f);
+        ImGui::PushItemWidth(80.0f * scale);
         if (ImGui::SliderFloat("##hudRadius", &radius, 1.0f, 500.0f, "%.0f px")) {
             sculpt.setBrushRadius(radius);
         }
@@ -3669,7 +3674,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         ImGui::AlignTextToFramePadding();
         ImGui::Text("Strength");
         ImGui::SameLine();
-        ImGui::PushItemWidth(80.0f);
+        ImGui::PushItemWidth(80.0f * scale);
         if (ImGui::SliderFloat("##hudIntensity", &intensity, 0.0f, 1.0f, "%.2f")) {
             sculpt.setBrushIntensity(intensity);
         }
@@ -3686,7 +3691,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         ImGui::Text(ICON_LC_BRUSH);
         ImGui::SameLine();
         
-        ImGui::PushItemWidth(100.0f);
+        ImGui::PushItemWidth(100.0f * scale);
         if (ImGui::BeginCombo("##hudBrushType", brushName)) {
             const char* tools[] = { 
                 "Flatten", "Smooth", "Inflate", "Pinch", "Crease", "V-Tool", "Move", "Drag", "Elastic", 

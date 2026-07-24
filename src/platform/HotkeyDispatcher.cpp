@@ -45,7 +45,7 @@ bool HotkeyDispatcher::processEvent(const SDL_Event& event, SculptManager& sculp
             if (deltaX != 0) {
                 switch (m_modalMode) {
                     case ModalMode::RADIUS: {
-                        float r = sculpt.getBrushRadius() + deltaX * 0.25f;
+                        float r = sculpt.getBrushRadius() + deltaX * 1.5f;
                         sculpt.setBrushRadius(std::max(0.5f, std::min(500.0f, r)));
                         break;
                     }

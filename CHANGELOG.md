@@ -8,6 +8,10 @@ All notable changes to this project will be documented in this file.
 - **Settings**: Saved custom scaling preferences to the local configuration file to automatically persist adjustments across application restarts.
 - **Fix**: Resolved stability issues and application crashes when modifying the interface scale or loading GUI settings.
 - **Fix**: Resolved erratic slider dragging behavior when adjusting the interface scale, allowing smooth and precise scaling adjustments.
+- **UI**: Scaled the sizes, padding, and rounding of floating HUD overlays, modal indicators, and brush-related viewport overlay drawings when the UI scale changes.
+- **UI**: Scaled the progress bar height in the remeshing progress modal.
+- **UI**: Scaled item widths in the floating island HUD layout.
+- **UI**: Increased the mouse drag sensitivity when adjusting brush radius via the hotkey modal to make brush size changes much faster.
 
 
 ## [1.2.3]
