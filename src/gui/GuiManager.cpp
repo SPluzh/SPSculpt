@@ -701,7 +701,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             tool->createMesh(scene);
                         }
                         if (ImGui::Button("Clear Graph", ImVec2(-1, 26))) {
-                            tool->getGraph().clear();
+                            auto* graph = tool->getGraph(scene);
+                            if (graph) graph->clear();
                         }
                     }
                 }
@@ -2245,14 +2246,17 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         }
     }
 
-    if (sculpt.getBrush() == BRUSH_ARMATURE_SPHERES) {
-        if (auto* tool = sculpt.getArmatureTool()) {
-            renderer.drawArmature(tool->getGraph(), scene.getCamera(), 
-                tool->getSelectedNode(), tool->getHoveredLinkParent(), tool->getHoveredLinkChild(), sculpt.getUseSym());
-        }
-    }
+
 
     // 11. Transform Gizmo (ImGuizmo)
+    if (sculpt.getBrush() == BRUSH_ARMATURE_SPHERES) {
+        if (auto* tool = sculpt.getArmatureTool()) {
+            renderer.setArmatureState(tool->getSelectedNode(), tool->getHoveredLinkParent(), tool->getHoveredLinkChild(), sculpt.getUseSym());
+        }
+    } else {
+        renderer.setArmatureState(nullptr, nullptr, nullptr, sculpt.getUseSym());
+    }
+
     if (sculpt.getBrush() == BRUSH_TRANSFORM) {
         Mesh* selectedMesh = scene.getSelected();
         const Camera& camera = scene.getCamera();

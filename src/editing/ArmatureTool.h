@@ -30,19 +30,19 @@ public:
     ArmatureTool(SculptManager& sculptManager);
     ~ArmatureTool() = default;
 
-    void onActivate();
+    void onActivate(Scene& scene);
     void onDeactivate();
 
-    void preUpdate(const Camera& camera, float mouseX, float mouseY, bool isCtrl, bool isAlt);
-    bool start(const Camera& camera, float mouseX, float mouseY, bool isCtrl, bool isAlt);
-    void update(const Camera& camera, float mouseX, float mouseY);
-    void end();
+    void preUpdate(Scene& scene, const Camera& camera, float mouseX, float mouseY, bool isCtrl, bool isAlt);
+    bool start(Scene& scene, const Camera& camera, float mouseX, float mouseY, bool isCtrl, bool isAlt);
+    void update(Scene& scene, const Camera& camera, float mouseX, float mouseY);
+    void end(Scene& scene);
 
     void setMode(ArmatureMode mode) { m_mode = mode; }
     ArmatureMode getMode() const { return m_mode; }
 
-    ArmatureGraph& getGraph() { return m_graph; }
-    const ArmatureGraph& getGraph() const { return m_graph; }
+    ArmatureGraph* getGraph(Scene& scene);
+    const ArmatureGraph* getGraph(const Scene& scene) const;
 
     ArmatureNode* getSelectedNode() const { return m_selectedNode; }
     ArmatureNode* getHoveredLinkParent() const { return m_hoveredLinkParent; }
@@ -54,7 +54,6 @@ public:
 
 private:
     SculptManager& m_sculptManager;
-    ArmatureGraph m_graph;
     ArmatureMode m_mode = ArmatureMode::DRAW;
 
     ArmatureNode* m_activeNode = nullptr;
@@ -77,7 +76,7 @@ private:
     std::unordered_map<uint32_t, glm::vec3> m_initialPositions;
 
     void clearHoverAndSelection();
-    void pushHistoryState();
+    void pushHistoryState(Scene& scene);
 
     glm::vec3 getSymmetricPosition(const glm::vec3& pos) const;
     float getDistanceToSymmetryPlane(const glm::vec3& pos) const;
@@ -86,7 +85,7 @@ private:
 
     float intersectRaySphere(const glm::vec3& rayOrigin, const glm::vec3& rayDir, const glm::vec3& center, float radius) const;
     bool intersectLink(const glm::vec3& rayOrigin, const glm::vec3& rayDir, ArmatureNode* parent, ArmatureNode* child, ArmatureHitResult& outRes) const;
-    ArmatureHitResult hitTest(const glm::vec3& rayOrigin, const glm::vec3& rayDir) const;
+    ArmatureHitResult hitTest(const Scene& scene, const glm::vec3& rayOrigin, const glm::vec3& rayDir) const;
 
     Mesh* getActiveMesh() const;
 };

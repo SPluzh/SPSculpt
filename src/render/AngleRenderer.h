@@ -195,6 +195,20 @@ public:
 
     void drawArmature(const ArmatureGraph& graph, const Camera& camera, void* selectedNode = nullptr, void* hoveredParent = nullptr, void* hoveredChild = nullptr, bool hasSymmetry = false);
 
+    // Armature tool state for rendering
+    void* m_armatureSelectedNode = nullptr;
+    void* m_armatureHoveredParent = nullptr;
+    void* m_armatureHoveredChild = nullptr;
+    bool m_armatureHasSymmetry = false;
+
+    void setArmatureState(void* selectedNode, void* hoveredParent, void* hoveredChild, bool hasSymmetry) {
+        m_armatureSelectedNode = selectedNode;
+        m_armatureHoveredParent = hoveredParent;
+        m_armatureHoveredChild = hoveredChild;
+        m_armatureHasSymmetry = hasSymmetry;
+    }
+
+
     // Shader compilation helpers
     GLuint compileShader(GLenum type, const std::string& source);
     GLuint linkProgram(GLuint vs, GLuint fs);

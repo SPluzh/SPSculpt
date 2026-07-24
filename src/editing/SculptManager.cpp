@@ -1398,7 +1398,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             }
 
             if (m_currentBrush == BRUSH_ARMATURE_SPHERES) {
-                if (m_armatureTool->start(camera, (float)mouseX, (float)mouseY, mod & KMOD_CTRL, mod & KMOD_ALT)) {
+                if (m_armatureTool->start(scene, camera, (float)mouseX, (float)mouseY, mod & KMOD_CTRL, mod & KMOD_ALT)) {
                     // Handled
                 }
                 return; // Return anyway, we don't want standard sculpting
@@ -1681,7 +1681,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
         if (m_currentBrush == BRUSH_ARMATURE_SPHERES) {
             if (event.button.button == SDL_BUTTON_LEFT) {
-                m_armatureTool->end();
+                m_armatureTool->end(scene);
             }
             return;
         }
@@ -2084,7 +2084,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             if (m_cameraController.isDragging()) {
                 m_cameraController.handleEvent(event, camera, scene.getMeshes());
             } else {
-                m_armatureTool->update(camera, (float)mouseX, (float)mouseY);
+                m_armatureTool->update(scene, camera, (float)mouseX, (float)mouseY);
             }
             return;
         }
@@ -2216,7 +2216,7 @@ void SculptManager::processFrame(Scene& scene) {
         SDL_Keymod mod = SDL_GetModState();
 
         if (activeBrush == BRUSH_ARMATURE_SPHERES) {
-            m_armatureTool->preUpdate(scene.getCamera(), (float)m_rawMouseX, (float)m_rawMouseY, (mod & KMOD_CTRL) != 0, (mod & KMOD_ALT) != 0);
+            m_armatureTool->preUpdate(scene, scene.getCamera(), (float)m_rawMouseX, (float)m_rawMouseY, (mod & KMOD_CTRL) != 0, (mod & KMOD_ALT) != 0);
         }
         if ((mod & KMOD_CTRL) && (mod & KMOD_SHIFT)) {
             activeBrush = BRUSH_VISIBILITY;

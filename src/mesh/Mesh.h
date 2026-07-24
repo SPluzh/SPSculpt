@@ -7,10 +7,16 @@
 #include <glm/gtc/type_ptr.hpp>
 #include "mesh/Octree.h"
 
+#include "sculpt/ArmatureGraph.h"
+
 class Camera;
 
 class Mesh {
 public:
+    // Armature support
+    bool isArmature = false;
+    std::unique_ptr<ArmatureGraph> armatureGraph;
+
     // Geometry
     std::vector<float>    verts;        // nbVerts * 3
     std::vector<float>    normals;      // nbVerts * 3

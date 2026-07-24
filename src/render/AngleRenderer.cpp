@@ -256,7 +256,7 @@ void main() {
   if (uSelected > 0.5) {
     baseColor = mix(baseColor, vec3(1.0, 1.0, 0.0), 0.3) + vec3(0.2, 0.2, 0.0);
   }
-  fragColor = vec4(pow(baseColor, vec3(1.0/2.2)), 1.0);
+  fragColor = vec4(baseColor, 1.0);
 }
 )";
     GLuint vs = compileShader(GL_VERTEX_SHADER, armVert);
@@ -822,9 +822,17 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
         // Opaque meshes (alpha == 1.0)
         for (auto* mesh : scene.getMeshes()) {
             if (mesh->isVisible(viewportIdx) && m_alpha == 1.0f) {
-                drawMeshSolid(mesh, scene, camera);
-                if (m_showWireframe) {
-                    drawWireframe(mesh, scene, camera);
+                if (mesh->isArmature && mesh->armatureGraph) {
+                    if (mesh == scene.getSelected()) {
+                        drawArmature(*mesh->armatureGraph, camera, m_armatureSelectedNode, m_armatureHoveredParent, m_armatureHoveredChild, m_armatureHasSymmetry);
+                    } else {
+                        drawArmature(*mesh->armatureGraph, camera, nullptr, nullptr, nullptr, m_armatureHasSymmetry);
+                    }
+                } else {
+                    drawMeshSolid(mesh, scene, camera);
+                    if (m_showWireframe) {
+                        drawWireframe(mesh, scene, camera);
+                    }
                 }
             }
         }
@@ -835,9 +843,17 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
         // Transparent meshes (alpha < 1.0)
         for (auto* mesh : scene.getMeshes()) {
             if (mesh->isVisible(viewportIdx) && m_alpha < 1.0f) {
-                drawMeshSolid(mesh, scene, camera);
-                if (m_showWireframe) {
-                    drawWireframe(mesh, scene, camera);
+                if (mesh->isArmature && mesh->armatureGraph) {
+                    if (mesh == scene.getSelected()) {
+                        drawArmature(*mesh->armatureGraph, camera, m_armatureSelectedNode, m_armatureHoveredParent, m_armatureHoveredChild, m_armatureHasSymmetry);
+                    } else {
+                        drawArmature(*mesh->armatureGraph, camera, nullptr, nullptr, nullptr, m_armatureHasSymmetry);
+                    }
+                } else {
+                    drawMeshSolid(mesh, scene, camera);
+                    if (m_showWireframe) {
+                        drawWireframe(mesh, scene, camera);
+                    }
                 }
             }
         }

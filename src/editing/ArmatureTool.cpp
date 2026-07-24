@@ -7,13 +7,53 @@ ArmatureTool::ArmatureTool(SculptManager& sculptManager)
     : m_sculptManager(sculptManager) {
 }
 
-void ArmatureTool::onActivate() {
-    if (m_graph.getNodes().empty()) {
+ArmatureGraph* ArmatureTool::getGraph(Scene& scene) {
+    Mesh* active = scene.getSelected();
+    if (active && active->isArmature) {
+        return active->armatureGraph.get();
+    }
+    return nullptr;
+}
+
+const ArmatureGraph* ArmatureTool::getGraph(const Scene& scene) const {
+    Mesh* active = scene.getSelected();
+    if (active && active->isArmature) {
+        return active->armatureGraph.get();
+    }
+    return nullptr;
+}
+
+
+void ArmatureTool::onActivate(Scene& scene) {
+    auto* graph = getGraph(scene);
+    if (!graph) {
+        // Find existing armature first
+        Mesh* existingArmature = nullptr;
+        for (Mesh* m : scene.getMeshes()) {
+            if (m->isArmature) {
+                existingArmature = m;
+                break;
+            }
+        }
+        
+        if (existingArmature) {
+            scene.selectMesh(existingArmature);
+            graph = existingArmature->armatureGraph.get();
+        } else {
+            Mesh* newMesh = new Mesh();
+            newMesh->isArmature = true;
+            newMesh->armatureGraph = std::make_unique<ArmatureGraph>();
+            newMesh->outlinerName = "Armature";
+            scene.addMesh(newMesh);
+            scene.selectMesh(newMesh);
+            graph = newMesh->armatureGraph.get();
+        }
+    }
+    if (graph->getNodes().empty()) {
         glm::vec3 origin(0.0f);
-        // We'll place it near center
-        m_historyState = m_graph.serialize();
-        m_graph.addRoot(origin, 2.5f);
-        pushHistoryState();
+        m_historyState = graph->serialize();
+        graph->addRoot(origin, 2.5f);
+        pushHistoryState(scene);
     }
 }
 
@@ -27,9 +67,11 @@ void ArmatureTool::clearHoverAndSelection() {
     m_hoveredLinkChild = nullptr;
 }
 
-void ArmatureTool::pushHistoryState() {
+void ArmatureTool::pushHistoryState(Scene& scene) {
     if (m_historyState.empty()) return;
-    std::string after = m_graph.serialize();
+    auto* graph = getGraph(scene);
+    if (!graph) return;
+    std::string after = graph->serialize();
     if (m_historyState != after) {
         // TODO: integrate with StateManager
     }
@@ -123,11 +165,14 @@ bool ArmatureTool::intersectLink(const glm::vec3& rayOrigin, const glm::vec3& ra
     return false;
 }
 
-ArmatureHitResult ArmatureTool::hitTest(const glm::vec3& rayOrigin, const glm::vec3& rayDir) const {
+ArmatureHitResult ArmatureTool::hitTest(const Scene& scene, const glm::vec3& rayOrigin, const glm::vec3& rayDir) const {
     ArmatureHitResult res;
+    auto* graph = getGraph(scene);
+    if (!graph) return res;
+
     float minDist = 1e9f;
 
-    const auto& nodes = m_graph.getNodes();
+    const auto& nodes = graph->getNodes();
 
     // In DRAW mode, hit test only against nodes.
     // In INSERT mode, hit test only against links.
@@ -166,7 +211,10 @@ ArmatureHitResult ArmatureTool::hitTest(const glm::vec3& rayOrigin, const glm::v
     return res;
 }
 
-void ArmatureTool::preUpdate(const Camera& camera, float mouseX, float mouseY, bool isCtrl, bool isAlt) {
+void ArmatureTool::preUpdate(Scene& scene, const Camera& camera, float mouseX, float mouseY, bool isCtrl, bool isAlt) {
+    auto* graph = getGraph(scene);
+    if (!graph) return;
+
     if (isCtrl || isAlt) {
         clearHoverAndSelection();
         return;
@@ -183,7 +231,7 @@ void ArmatureTool::preUpdate(const Camera& camera, float mouseX, float mouseY, b
     glm::vec3 vFar = camera.unproject(mouseX, mouseY, 0.1f);
     glm::vec3 rayDir = glm::normalize(vFar - vNear);
 
-    ArmatureHitResult hit = hitTest(vNear, rayDir);
+    ArmatureHitResult hit = hitTest(scene, vNear, rayDir);
     if (hit.type == ArmatureHitResult::NODE) {
         m_selectedNode = hit.node;
         m_hoveredLinkParent = nullptr;
@@ -199,8 +247,32 @@ void ArmatureTool::preUpdate(const Camera& camera, float mouseX, float mouseY, b
     }
 }
 
-bool ArmatureTool::start(const Camera& camera, float mouseX, float mouseY, bool isCtrl, bool isAlt) {
-    m_historyState = m_graph.serialize();
+bool ArmatureTool::start(Scene& scene, const Camera& camera, float mouseX, float mouseY, bool isCtrl, bool isAlt) {
+    auto* graph = getGraph(scene);
+    if (!graph) {
+        Mesh* existingArmature = nullptr;
+        for (Mesh* m : scene.getMeshes()) {
+            if (m->isArmature) {
+                existingArmature = m;
+                break;
+            }
+        }
+        
+        if (existingArmature) {
+            scene.selectMesh(existingArmature);
+            graph = existingArmature->armatureGraph.get();
+        } else {
+            Mesh* newMesh = new Mesh();
+            newMesh->isArmature = true;
+            newMesh->armatureGraph = std::make_unique<ArmatureGraph>();
+            newMesh->outlinerName = "Armature";
+            scene.addMesh(newMesh);
+            scene.selectMesh(newMesh);
+            graph = newMesh->armatureGraph.get();
+        }
+    }
+    m_historyState = graph->serialize();
+
 
     if (isAlt) {
         m_historyState.clear();
@@ -211,7 +283,7 @@ bool ArmatureTool::start(const Camera& camera, float mouseX, float mouseY, bool 
     glm::vec3 vFar = camera.unproject(mouseX, mouseY, 0.1f);
     glm::vec3 rayDir = glm::normalize(vFar - vNear);
 
-    ArmatureHitResult hit = hitTest(vNear, rayDir);
+    ArmatureHitResult hit = hitTest(scene, vNear, rayDir);
 
     if (isCtrl) {
         if (hit.type == ArmatureHitResult::NODE) {
@@ -219,11 +291,11 @@ bool ArmatureTool::start(const Camera& camera, float mouseX, float mouseY, bool 
                 ArmatureNode* partner = hit.node->symmetryPartner;
                 hit.node->symmetryPartner = nullptr;
                 partner->symmetryPartner = nullptr;
-                m_graph.removeNode(partner);
+                graph->removeNode(partner);
             }
-            m_graph.removeNode(hit.node);
+            graph->removeNode(hit.node);
             m_selectedNode = nullptr;
-            pushHistoryState();
+            pushHistoryState(scene);
             return true;
         }
         m_historyState.clear();
@@ -233,20 +305,20 @@ bool ArmatureTool::start(const Camera& camera, float mouseX, float mouseY, bool 
     bool isSym = m_sculptManager.getUseSym();
 
     if (m_mode == ArmatureMode::DRAW) {
-        if (m_graph.getNodes().empty()) {
+        if (graph->getNodes().empty()) {
             glm::vec3 hitPoint = camera.getPivot();
             if (isSym) hitPoint = snapToSymmetryPlane(hitPoint);
-            m_graph.addRoot(hitPoint, 2.5f);
+            graph->addRoot(hitPoint, 2.5f);
             return true;
         }
 
         if (hit.type == ArmatureHitResult::NODE) {
             ArmatureNode* parent = hit.node;
             float newRadius = parent->radius * 0.7f;
-            ArmatureNode* child = m_graph.addChild(parent, parent->position, newRadius);
+            ArmatureNode* child = graph->addChild(parent, parent->position, newRadius);
 
             if (isSym && parent->symmetryPartner && parent->symmetryPartner != parent) {
-                ArmatureNode* partnerChild = m_graph.addChild(parent->symmetryPartner, parent->symmetryPartner->position, newRadius);
+                ArmatureNode* partnerChild = graph->addChild(parent->symmetryPartner, parent->symmetryPartner->position, newRadius);
                 child->symmetryPartner = partnerChild;
                 partnerChild->symmetryPartner = child;
             }
@@ -260,13 +332,13 @@ bool ArmatureTool::start(const Camera& camera, float mouseX, float mouseY, bool 
         if (hit.type == ArmatureHitResult::LINK) {
             ArmatureNode* parent = hit.linkParent;
             ArmatureNode* child = hit.linkChild;
-            ArmatureNode* newNode = m_graph.insertOnLink(parent, child, hit.position, hit.radius);
+            ArmatureNode* newNode = graph->insertOnLink(parent, child, hit.position, hit.radius);
 
             if (isSym && parent->symmetryPartner && child->symmetryPartner) {
                 ArmatureNode* pParent = parent->symmetryPartner;
                 ArmatureNode* pChild = child->symmetryPartner;
                 glm::vec3 symPos = getSymmetricPosition(hit.position);
-                ArmatureNode* pNewNode = m_graph.insertOnLink(pParent, pChild, symPos, hit.radius);
+                ArmatureNode* pNewNode = graph->insertOnLink(pParent, pChild, symPos, hit.radius);
                 newNode->symmetryPartner = pNewNode;
                 pNewNode->symmetryPartner = newNode;
             }
@@ -304,11 +376,11 @@ bool ArmatureTool::start(const Camera& camera, float mouseX, float mouseY, bool 
             m_startMouseY = mouseY;
 
             m_initialPositions.clear();
-            auto desc = m_graph.getDescendants(m_activeNode);
+            auto desc = graph->getDescendants(m_activeNode);
             for (auto* d : desc) m_initialPositions[d->id] = d->position;
 
             if (m_activeNode->symmetryPartner) {
-                auto pDesc = m_graph.getDescendants(m_activeNode->symmetryPartner);
+                auto pDesc = graph->getDescendants(m_activeNode->symmetryPartner);
                 for (auto* d : pDesc) m_initialPositions[d->id] = d->position;
             }
             return true;
@@ -319,7 +391,10 @@ bool ArmatureTool::start(const Camera& camera, float mouseX, float mouseY, bool 
     return false;
 }
 
-void ArmatureTool::update(const Camera& camera, float mouseX, float mouseY) {
+void ArmatureTool::update(Scene& scene, const Camera& camera, float mouseX, float mouseY) {
+    auto* graph = getGraph(scene);
+    if (!graph) return;
+
     if (!m_isDragging || !m_activeNode) return;
 
     bool isSym = m_sculptManager.getUseSym();
@@ -337,7 +412,7 @@ void ArmatureTool::update(const Camera& camera, float mouseX, float mouseY) {
                     if (getDistanceToSymmetryPlane(m_activeNode->position) > getSymmetrySnapThreshold()) {
                         ArmatureNode* partnerParent = parent->symmetryPartner ? parent->symmetryPartner : parent;
                         glm::vec3 symPos = getSymmetricPosition(m_activeNode->position);
-                        ArmatureNode* pChild = m_graph.addChild(partnerParent, symPos, m_activeNode->radius);
+                        ArmatureNode* pChild = graph->addChild(partnerParent, symPos, m_activeNode->radius);
                         m_activeNode->symmetryPartner = pChild;
                         pChild->symmetryPartner = m_activeNode;
                     } else {
@@ -348,7 +423,7 @@ void ArmatureTool::update(const Camera& camera, float mouseX, float mouseY) {
                         ArmatureNode* partner = m_activeNode->symmetryPartner;
                         m_activeNode->symmetryPartner = nullptr;
                         partner->symmetryPartner = nullptr;
-                        m_graph.mergeNodes(partner, m_activeNode);
+                        graph->mergeNodes(partner, m_activeNode);
                         m_activeNode->position = snapToSymmetryPlane(m_activeNode->position);
                     } else {
                         ArmatureNode* partner = m_activeNode->symmetryPartner;
@@ -372,7 +447,7 @@ void ArmatureTool::update(const Camera& camera, float mouseX, float mouseY) {
                         ArmatureNode* partner = m_activeNode->symmetryPartner;
                         m_activeNode->symmetryPartner = nullptr;
                         partner->symmetryPartner = nullptr;
-                        m_graph.mergeNodes(partner, m_activeNode);
+                        graph->mergeNodes(partner, m_activeNode);
                         m_activeNode->position = snapToSymmetryPlane(m_activeNode->position);
                     } else {
                         m_activeNode->symmetryPartner->position = getSymmetricPosition(m_activeNode->position);
@@ -403,7 +478,7 @@ void ArmatureTool::update(const Camera& camera, float mouseX, float mouseY) {
         glm::quat qY = glm::angleAxis(angleY, camRight);
         glm::quat q = qX * qY;
 
-        auto desc = m_graph.getDescendants(m_activeNode);
+        auto desc = graph->getDescendants(m_activeNode);
         std::vector<ArmatureNode*> rotated;
 
         for (auto* d : desc) {
@@ -428,7 +503,7 @@ void ArmatureTool::update(const Camera& camera, float mouseX, float mouseY) {
 
             if (m_activeNode->symmetryPartner) {
                 ArmatureNode* pNode = m_activeNode->symmetryPartner;
-                auto pDesc = m_graph.getDescendants(pNode);
+                auto pDesc = graph->getDescendants(pNode);
                 for (auto* d : pDesc) {
                     if (d->symmetryPartner) {
                         d->position = getSymmetricPosition(d->symmetryPartner->position);
@@ -444,9 +519,16 @@ void ArmatureTool::update(const Camera& camera, float mouseX, float mouseY) {
     }
 }
 
-void ArmatureTool::end() {
+void ArmatureTool::end(Scene& scene) {
+    auto* graph = getGraph(scene);
+    if (!graph) {
+        m_isDragging = false;
+        m_activeNode = nullptr;
+        return;
+    }
+
     if ((m_dragMode == ArmatureMode::DRAW || m_dragMode == ArmatureMode::MOVE) && m_activeNode) {
-        const auto& nodes = m_graph.getNodes();
+        const auto& nodes = graph->getNodes();
         ArmatureNode* minNode = nullptr;
         float minDist = 1e9f;
 
@@ -475,16 +557,16 @@ void ArmatureTool::end() {
             if (mergePartners) {
                 m_activeNode->symmetryPartner = nullptr;
                 partner->symmetryPartner = nullptr;
-                m_graph.mergeNodes(partner, m_activeNode);
+                graph->mergeNodes(partner, m_activeNode);
                 m_activeNode->position = snapToSymmetryPlane(m_activeNode->position);
             } else {
                 bool activeHasPartner = (m_activeNode->symmetryPartner != nullptr);
                 bool minHasPartner = (minNode->symmetryPartner != nullptr);
                 if (activeHasPartner == minHasPartner && minDist < threshold) {
                     if (m_activeNode->symmetryPartner && minNode->symmetryPartner) {
-                        m_graph.mergeNodes(m_activeNode->symmetryPartner, minNode->symmetryPartner);
+                        graph->mergeNodes(m_activeNode->symmetryPartner, minNode->symmetryPartner);
                     }
-                    m_graph.mergeNodes(m_activeNode, minNode);
+                    graph->mergeNodes(m_activeNode, minNode);
                 }
             }
         }
@@ -492,7 +574,7 @@ void ArmatureTool::end() {
 
     m_isDragging = false;
     m_activeNode = nullptr;
-    pushHistoryState();
+    pushHistoryState(scene);
 }
 
 #include "sculpt/Remesh.h"
@@ -500,7 +582,9 @@ void ArmatureTool::end() {
 #include <limits>
 
 void ArmatureTool::createMesh(Scene& scene) {
-    const auto& nodes = m_graph.getNodes();
+    auto* graph = getGraph(scene);
+    if (!graph) return;
+    const auto& nodes = graph->getNodes();
     if (nodes.empty()) return;
 
     // 1. Calculate bounding box of all nodes
