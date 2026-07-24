@@ -25,7 +25,9 @@ enum BrushType {
     BRUSH_MEASURE,
     BRUSH_DIVIDER,
     BRUSH_TRANSFORM,
-    BRUSH_ARMATURE_SPHERES
+    BRUSH_ARMATURE_SPHERES,
+    BRUSH_BRUSH,
+    BRUSH_COUNT
 };
 
 enum class ModalMode {

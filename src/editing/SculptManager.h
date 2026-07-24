@@ -76,6 +76,15 @@ struct BrushSettings {
     bool pressureRadius = false;
     bool useGlobalPressure = false;
     FalloffCurve falloff;
+
+    // Parametric stamp settings
+    int stampType = 0; // 0 = Circle, 1 = Polygon, 2 = Star, 3 = Ring, 4 = Rectangle
+    int stampSides = 5;
+    float stampInnerRatio = 0.5f;
+    float stampAngle = 0.0f; // in degrees
+    float stampBlur = 0.0f;  // edge blur, 0.0 to 1.0
+    bool stampLockRotation = false;
+    bool stampUseTilt = false;
 };
 
 struct MeasurementAnchor {
@@ -94,7 +103,7 @@ struct MeasurementSegment {
 class SculptManager {
 private:
     BrushType m_currentBrush = BRUSH_MOVE;
-    BrushSettings m_brushSettings[23]; // Increased from 22
+    BrushSettings m_brushSettings[32]; // Increased to 32 to support BRUSH_COUNT safely
 
     std::unique_ptr<ArmatureTool> m_armatureTool;
 

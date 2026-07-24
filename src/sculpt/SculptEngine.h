@@ -253,6 +253,21 @@ int strokeSquareBrush(
     const float* alphaLookAt, bool alphaXSym
 );
 
+int strokeBrush(
+    float* verts,
+    const float* vertProxy,
+    const float* materials,
+    uint32_t* iVerts, int nbIVerts,
+    float cx, float cy, float cz,
+    float ax, float ay, float az,
+    float anx, float any, float anz,
+    float radius, float intensity,
+    bool negative, bool clay,
+    float focalShift, bool focalShiftFalloff,
+    int stampType, int stampSides, float stampInnerRatio, float stampAngle, float stampBlur,
+    const float* alphaLookAt, bool alphaXSym
+);
+
 
 int blurMask(
     const uint32_t* iVerts, int nbIVerts,

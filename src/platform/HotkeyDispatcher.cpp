@@ -229,7 +229,7 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
     
     if (isDown) {
         switch (action) {
-            case HKAction::ToolBrush: sculpt.setBrush(BRUSH_FLATTEN); break;
+            case HKAction::ToolBrush: sculpt.setBrush(BRUSH_BRUSH); break;
             case HKAction::ToolInflate: sculpt.setBrush(BRUSH_INFLATE); break;
             case HKAction::ToolSmooth: sculpt.setBrush(BRUSH_SMOOTH); break;
             case HKAction::ToolFlatten: sculpt.setBrush(BRUSH_FLATTEN); break;

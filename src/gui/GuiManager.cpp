@@ -164,6 +164,7 @@ static const char* getBrushNameLocal(BrushType brush) {
         case BRUSH_DIVIDER:  return "Divider";
         case BRUSH_TRANSFORM: return "Transform";
         case BRUSH_ARMATURE_SPHERES: return "Armature Spheres";
+        case BRUSH_BRUSH:     return "Brush";
     }
     return "Unknown";
 }
@@ -344,10 +345,10 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         const char* tools[] = { 
             "Flatten", "Smooth", "Inflate", "Pinch", "Crease", "V-Tool", "Move", "Drag", "Elastic", 
             "Mask", "Paint", "Twist", "Local Scale", "Clay", "Clay Buildup", "Dam Standard", "Square Brush", "Visibility", "Mask Gradient Blur",
-            "Measure", "Divider", "Transform", "Armature Spheres"
+            "Measure", "Divider", "Transform", "Armature Spheres", "Brush"
         };
         BrushType current = sculpt.getBrush();
-        for (int i = 0; i < 23; i++) {
+        for (int i = 0; i < BRUSH_COUNT; i++) {
             bool selected = (current == (BrushType)i);
             if (selected) {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_HeaderActive]);
@@ -526,7 +527,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                  brushType == BRUSH_SQUAREBRUSH || brushType == BRUSH_PAINT || 
                                  brushType == BRUSH_MASK || brushType == BRUSH_MASK_GRADIENT_BLUR ||
                                  brushType == BRUSH_MEASURE || brushType == BRUSH_DIVIDER ||
-                                 brushType == BRUSH_TRANSFORM || brushType == BRUSH_ARMATURE_SPHERES);
+                                 brushType == BRUSH_TRANSFORM || brushType == BRUSH_ARMATURE_SPHERES ||
+                                 brushType == BRUSH_BRUSH);
 
         if (hasSpecialParams) {
             if (ImGui::CollapsingHeader("Tool Specific Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -548,6 +550,247 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Allows the brush to build up stroke details on overlap");
                     
                     ImGui::Checkbox("Lock Position", &settings.lockPosition);
+                }
+                else if (brushType == BRUSH_BRUSH) {
+                    ImGui::Checkbox("Clay Mode", &settings.clay);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fills or cuts towards a flat surface instead of displacing vertices along normal");
+
+                    ImGui::Checkbox("Lock Rotation", &settings.stampLockRotation);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keeps the stamp rotation fixed relative to screen space instead of aligning with stroke direction");
+
+                    ImGui::Checkbox("Use Pen Tilt", &settings.stampUseTilt);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Controls the stamp rotation angle using the pen's tilt direction");
+
+                    const char* stampTypes[] = { "Circle", "Polygon", "Star", "Ring", "Rectangle" };
+                    ImGui::Combo("Stamp Type", &settings.stampType, stampTypes, IM_ARRAYSIZE(stampTypes));
+                    
+                    if (settings.stampType == 1 || settings.stampType == 2) {
+                        ImGui::SliderInt("Stamp Sides", &settings.stampSides, 3, 12);
+                    }
+                    if (settings.stampType == 2 || settings.stampType == 3) {
+                        ImGui::SliderFloat("Inner Ratio", &settings.stampInnerRatio, 0.05f, 0.95f, "%.2f");
+                    }
+                    else if (settings.stampType == 4) {
+                        ImGui::SliderFloat("Aspect Ratio", &settings.stampInnerRatio, 0.05f, 1.00f, "%.2f");
+                    }
+                    ImGui::SliderFloat("Stamp Angle", &settings.stampAngle, -180.0f, 180.0f, "%.1f°");
+                    ImGui::SliderFloat("Stamp Blur", &settings.stampBlur, 0.0f, 1.0f, "%.2f");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Parametrically blurs the edges of the stamp shape");
+
+                    // 2D Draw Preview!
+                    ImGui::Spacing();
+                    ImGui::Text("Stamp Shape Preview:");
+                    ImDrawList* drawList = ImGui::GetWindowDrawList();
+                    ImVec2 curPos = ImGui::GetCursorScreenPos();
+                    float size = 80.0f;
+                    ImVec2 center = ImVec2(curPos.x + size * 0.5f, curPos.y + size * 0.5f);
+                    
+                    // Draw a background box
+                    drawList->AddRectFilled(curPos, ImVec2(curPos.x + size, curPos.y + size), IM_COL32(30, 30, 30, 255), 4.0f);
+                    drawList->AddRect(curPos, ImVec2(curPos.x + size, curPos.y + size), IM_COL32(60, 60, 60, 255), 4.0f, 0, 1.5f);
+                    
+                    // Generate points for the shape preview
+                    std::vector<ImVec2> pts;
+                    float rOut = size * 0.4f;
+                    float rIn = rOut * settings.stampInnerRatio;
+                    float finalAngle = settings.stampAngle;
+#ifdef _WIN32
+                    if (settings.stampUseTilt && g_tablet.isAvailable() && g_tablet.isPenActive() && g_tablet.isTiltEnabled()) {
+                        float tx = g_tablet.getTiltX();
+                        float ty = g_tablet.getTiltY();
+                        if (tx * tx + ty * ty > 1.0f) {
+                            finalAngle += std::atan2(ty, tx) * (180.0f / 3.1415926535f);
+                        }
+                    }
+#endif
+                    float angleRad = finalAngle * (3.14159265f / 180.0f);
+                    float cosA = std::cos(angleRad);
+                    float sinA = std::sin(angleRad);
+                    
+                    if (settings.stampType == 0) { // Circle
+                        float rCore = rOut * (1.0f - settings.stampBlur);
+                        drawList->AddCircleFilled(center, rCore, IM_COL32(0, 220, 255, 200), 32);
+                        if (settings.stampBlur > 0.01f) {
+                            int steps = 15;
+                            float blurWidth = rOut * settings.stampBlur;
+                            float thick = blurWidth / steps;
+                            for (int j = 0; j < steps; ++j) {
+                                float r = rCore + (j + 0.5f) * thick;
+                                float t = (float)j / steps;
+                                int alpha = (int)(200.0f * (1.0f - t));
+                                drawList->AddCircle(center, r, IM_COL32(0, 220, 255, alpha), 32, thick + 0.5f);
+                            }
+                        }
+                        drawList->AddCircle(center, rOut, IM_COL32(255, 255, 255, 255), 32, 2.0f);
+                        if (settings.stampBlur > 0.01f) {
+                            drawList->AddCircle(center, rCore, IM_COL32(255, 255, 255, 120), 32, 1.0f);
+                        }
+                    }
+                    else if (settings.stampType == 1) { // Polygon
+                        int sides = std::max(3, settings.stampSides);
+                        for (int s = 0; s < sides; ++s) {
+                            float a = angleRad + s * (2.0f * 3.14159265f / sides);
+                            pts.push_back(ImVec2(center.x + rOut * std::cos(a), center.y + rOut * std::sin(a)));
+                        }
+                        
+                        // Solid core
+                        std::vector<ImVec2> corePts;
+                        float coreScale = 1.0f - settings.stampBlur;
+                        for (const auto& p : pts) {
+                            float dx = p.x - center.x;
+                            float dy = p.y - center.y;
+                            corePts.push_back(ImVec2(center.x + dx * coreScale, center.y + dy * coreScale));
+                        }
+                        drawList->AddConvexPolyFilled(corePts.data(), (int)corePts.size(), IM_COL32(0, 220, 255, 200));
+                        
+                        // Blur region
+                        if (settings.stampBlur > 0.01f) {
+                            int steps = 15;
+                            float thick = (rOut * settings.stampBlur) / steps;
+                            for (int j = 0; j < steps; ++j) {
+                                float t = (float)j / steps;
+                                float scale = coreScale + t * settings.stampBlur;
+                                std::vector<ImVec2> stepPts;
+                                for (const auto& p : pts) {
+                                    float dx = p.x - center.x;
+                                    float dy = p.y - center.y;
+                                    stepPts.push_back(ImVec2(center.x + dx * scale, center.y + dy * scale));
+                                }
+                                int alpha = (int)(200.0f * (1.0f - t));
+                                drawList->AddPolyline(stepPts.data(), (int)stepPts.size(), IM_COL32(0, 220, 255, alpha), ImDrawFlags_Closed, thick + 0.5f);
+                            }
+                        }
+                        
+                        drawList->AddPolyline(pts.data(), (int)pts.size(), IM_COL32(255, 255, 255, 255), ImDrawFlags_Closed, 2.0f);
+                        if (settings.stampBlur > 0.01f) {
+                            drawList->AddPolyline(corePts.data(), (int)corePts.size(), IM_COL32(255, 255, 255, 120), ImDrawFlags_Closed, 1.0f);
+                        }
+                    }
+                    else if (settings.stampType == 2) { // Star
+                        int sides = std::max(2, settings.stampSides);
+                        for (int s = 0; s < sides * 2; ++s) {
+                            float r = (s % 2 == 0) ? rOut : rIn;
+                            float a = angleRad + s * (3.14159265f / sides);
+                            pts.push_back(ImVec2(center.x + r * std::cos(a), center.y + r * std::sin(a)));
+                        }
+                        
+                        // Solid core
+                        std::vector<ImVec2> corePts;
+                        float coreScale = 1.0f - settings.stampBlur;
+                        for (const auto& p : pts) {
+                            float dx = p.x - center.x;
+                            float dy = p.y - center.y;
+                            corePts.push_back(ImVec2(center.x + dx * coreScale, center.y + dy * coreScale));
+                        }
+                        drawList->AddConvexPolyFilled(corePts.data(), (int)corePts.size(), IM_COL32(0, 220, 255, 200));
+                        
+                        // Blur region
+                        if (settings.stampBlur > 0.01f) {
+                            int steps = 15;
+                            float thick = (rOut * settings.stampBlur) / steps;
+                            for (int j = 0; j < steps; ++j) {
+                                float t = (float)j / steps;
+                                float scale = coreScale + t * settings.stampBlur;
+                                std::vector<ImVec2> stepPts;
+                                for (const auto& p : pts) {
+                                    float dx = p.x - center.x;
+                                    float dy = p.y - center.y;
+                                    stepPts.push_back(ImVec2(center.x + dx * scale, center.y + dy * scale));
+                                }
+                                int alpha = (int)(200.0f * (1.0f - t));
+                                drawList->AddPolyline(stepPts.data(), (int)stepPts.size(), IM_COL32(0, 220, 255, alpha), ImDrawFlags_Closed, thick + 0.5f);
+                            }
+                        }
+                        
+                        drawList->AddPolyline(pts.data(), (int)pts.size(), IM_COL32(255, 255, 255, 255), ImDrawFlags_Closed, 2.0f);
+                        if (settings.stampBlur > 0.01f) {
+                            drawList->AddPolyline(corePts.data(), (int)corePts.size(), IM_COL32(255, 255, 255, 120), ImDrawFlags_Closed, 1.0f);
+                        }
+                    }
+                    else if (settings.stampType == 3) { // Ring
+                        float blurWidth = (rOut - rIn) * 0.5f * settings.stampBlur;
+                        float rOutCore = rOut - blurWidth;
+                        float rInCore = rIn + blurWidth;
+                        
+                        drawList->AddCircleFilled(center, rOutCore, IM_COL32(0, 220, 255, 200), 32);
+                        drawList->AddCircleFilled(center, rInCore, IM_COL32(30, 30, 30, 255), 32);
+                        
+                        if (blurWidth > 0.01f) {
+                            int steps = 15;
+                            float thick = blurWidth / steps;
+                            // Outer blur
+                            for (int j = 0; j < steps; ++j) {
+                                float r = rOutCore + (j + 0.5f) * thick;
+                                float t = (float)j / steps;
+                                int alpha = (int)(200.0f * (1.0f - t));
+                                drawList->AddCircle(center, r, IM_COL32(0, 220, 255, alpha), 32, thick + 0.5f);
+                            }
+                            // Inner blur
+                            for (int j = 0; j < steps; ++j) {
+                                float r = rInCore - (j + 0.5f) * thick;
+                                float t = (float)j / steps;
+                                int alpha = (int)(255.0f * t);
+                                drawList->AddCircle(center, r, IM_COL32(30, 30, 30, alpha), 32, thick + 0.5f);
+                            }
+                        }
+                        
+                        drawList->AddCircle(center, rOut, IM_COL32(255, 255, 255, 255), 32, 2.0f);
+                        drawList->AddCircle(center, rIn, IM_COL32(255, 255, 255, 255), 32, 1.5f);
+                        if (settings.stampBlur > 0.01f) {
+                            drawList->AddCircle(center, rOutCore, IM_COL32(255, 255, 255, 120), 32, 1.0f);
+                            drawList->AddCircle(center, rInCore, IM_COL32(255, 255, 255, 120), 32, 1.0f);
+                        }
+                    }
+                    else if (settings.stampType == 4) { // Rectangle
+                        float w = rOut;
+                        float h = rOut * settings.stampInnerRatio;
+                        ImVec2 corners[4] = {
+                            ImVec2(-w, -h),
+                            ImVec2(w, -h),
+                            ImVec2(w, h),
+                            ImVec2(-w, h)
+                        };
+                        for (int k = 0; k < 4; ++k) {
+                            float rx = corners[k].x * cosA - corners[k].y * sinA;
+                            float ry = corners[k].x * sinA + corners[k].y * cosA;
+                            pts.push_back(ImVec2(center.x + rx, center.y + ry));
+                        }
+                        
+                        // Solid core
+                        std::vector<ImVec2> corePts;
+                        float coreScale = 1.0f - settings.stampBlur;
+                        for (const auto& p : pts) {
+                            float dx = p.x - center.x;
+                            float dy = p.y - center.y;
+                            corePts.push_back(ImVec2(center.x + dx * coreScale, center.y + dy * coreScale));
+                        }
+                        drawList->AddConvexPolyFilled(corePts.data(), (int)corePts.size(), IM_COL32(0, 220, 255, 200));
+                        
+                        // Blur region
+                        if (settings.stampBlur > 0.01f) {
+                            int steps = 15;
+                            float thick = (rOut * settings.stampBlur) / steps;
+                            for (int j = 0; j < steps; ++j) {
+                                float t = (float)j / steps;
+                                float scale = coreScale + t * settings.stampBlur;
+                                std::vector<ImVec2> stepPts;
+                                for (const auto& p : pts) {
+                                    float dx = p.x - center.x;
+                                    float dy = p.y - center.y;
+                                    stepPts.push_back(ImVec2(center.x + dx * scale, center.y + dy * scale));
+                                }
+                                int alpha = (int)(200.0f * (1.0f - t));
+                                drawList->AddPolyline(stepPts.data(), (int)stepPts.size(), IM_COL32(0, 220, 255, alpha), ImDrawFlags_Closed, thick + 0.5f);
+                            }
+                        }
+                        
+                        drawList->AddPolyline(pts.data(), (int)pts.size(), IM_COL32(255, 255, 255, 255), ImDrawFlags_Closed, 2.0f);
+                        if (settings.stampBlur > 0.01f) {
+                            drawList->AddPolyline(corePts.data(), (int)corePts.size(), IM_COL32(255, 255, 255, 120), ImDrawFlags_Closed, 1.0f);
+                        }
+                    }
+                    
+                    ImGui::Dummy(ImVec2(size, size));
                 }
                 else if (brushType == BRUSH_PAINT) {
                     ImGui::ColorEdit3("Albedo (Color)", &settings.paintColor.r);

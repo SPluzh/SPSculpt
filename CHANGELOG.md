@@ -3,6 +3,9 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.3]
+- **Brushes**: Added a new "Brush" tool with customizable, parametric stamp shapes (Circle, Polygon, Star, Ring, Rectangle) and real-time controls for sides/points count, aspect ratio/inner radius ratio, stamp rotation angle, edge blur, rotation lock toggle, pen tilt rotation toggle, and a clay deformation mode parameter.
+- **UI**: Added a "Stamp Settings" section to the Tool Specific Settings panel when the Brush tool is active, complete with a "Clay Mode" toggle, "Lock Rotation" toggle, "Use Pen Tilt" toggle, "Stamp Blur" slider, and a live 2D drawing preview of the active stamp shape (including guide lines representing the stamp edge blur boundary) that updates dynamically as settings are adjusted and responds to real-time pen tilt input.
+- **Settings**: Serialized the new parametric stamp settings (stamp type, sides, inner ratio, rotation angle, clay mode, stamp blur, stamp lock rotation, stamp use tilt) to the local brush settings configuration file to persist them across sessions.
 - **Brushes**: Changed the Clay Buildup brush stamp shape from circular to a procedurally generated square to match ZBrush reference aesthetics and sculpting characteristics. Added support for stamp rotation aligning with the stroke movement direction to match the reference JS implementation.
 - **Brushes**: Fixed the incorrect behavior of the DamStandard brush by aligning its stroke intensity and falloff profile with the reference implementation, and added support for focal shift adjustments to dynamically warp the crease width and sharpness.
 - **Renderer**: Fixed armature rendering in the SSAO pre-pass by creating a dedicated `armature_normals.frag` shader and drawing the armature in the normal/depth targets, resolving dark outlines and occlusion visual artifacts around armature elements.

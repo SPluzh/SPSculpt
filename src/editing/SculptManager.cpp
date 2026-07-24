@@ -160,7 +160,7 @@ SculptManager::~SculptManager() = default;
 SculptManager::SculptManager() {
     m_armatureTool = std::make_unique<ArmatureTool>(*this);
     // Initialise all brushes with baseline defaults
-    for (int i = 0; i < 22; ++i) {
+    for (int i = 0; i < BRUSH_COUNT; ++i) {
         m_brushSettings[i].radius = 50.0f;
         m_brushSettings[i].intensity = 0.5f;
         m_brushSettings[i].focalShift = 0.0f;
@@ -252,6 +252,14 @@ SculptManager::SculptManager() {
     m_brushSettings[BRUSH_MEASURE].culling = false;
     m_brushSettings[BRUSH_DIVIDER].culling = false;
     m_brushSettings[BRUSH_TRANSFORM].culling = false;
+
+    m_brushSettings[BRUSH_BRUSH].radius = 50.0f;
+    m_brushSettings[BRUSH_BRUSH].intensity = 0.5f;
+    m_brushSettings[BRUSH_BRUSH].culling = true;
+    m_brushSettings[BRUSH_BRUSH].accumulate = true;
+    m_brushSettings[BRUSH_BRUSH].stampBlur = 0.0f;
+    m_brushSettings[BRUSH_BRUSH].stampLockRotation = false;
+    m_brushSettings[BRUSH_BRUSH].stampUseTilt = false;
 }
 
 int SculptManager::doStrokePass(
@@ -805,6 +813,111 @@ int SculptManager::doStrokePass(
                 negative,
                 getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
                 1.0f, 1.0f, localRadius * 0.70710678f,
+                alphaLookAt, false
+            );
+            break;
+        }
+        case BRUSH_BRUSH: {
+            glm::vec3 areaCenter = currentIntersection;
+            glm::vec3 areaNormal = currentIntersectionNormal;
+            std::vector<float> areaResults(7, 0.0f);
+            computeAreaNormalAndCenter(
+                mesh->verts.data(),
+                mesh->normals.data(),
+                mesh->materials.data(),
+                pickedVertices.data(),
+                pickedVertices.size(),
+                areaResults.data()
+            );
+            if (areaResults[6] > 0.0f) {
+                areaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
+                areaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
+            }
+
+            if (getCurrentSettings().clay) {
+                float off = localRadius * 0.1f;
+                areaCenter += areaNormal * (negative ? -off : off);
+            }
+
+            glm::vec3 strokeDir(0.0f);
+            bool hasStrokeDir = false;
+
+            if (getCurrentSettings().stampLockRotation) {
+                glm::mat4 invMeshMatrix = glm::inverse(mesh->matrix);
+                glm::mat4 camWorld = glm::inverse(scene.getCamera().getViewMatrix());
+                glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
+                strokeDir = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
+                m_alphaOrigin = currentIntersection;
+                m_hasAlphaOrigin = true;
+            }
+            else if (m_firstStrokeFrame || !m_hasAlphaOrigin) {
+                m_alphaOrigin = currentIntersection;
+                m_hasAlphaOrigin = true;
+
+                // Fallback to screen-space alignment
+                glm::mat4 invMeshMatrix = glm::inverse(mesh->matrix);
+                glm::mat4 camWorld = glm::inverse(scene.getCamera().getViewMatrix());
+                glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
+                strokeDir = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
+            } else {
+                glm::vec3 movement = currentIntersection - m_alphaOrigin;
+                float movementLen = glm::length(movement);
+                if (movementLen > 1e-7f) {
+                    glm::vec3 movementDir = movement / movementLen;
+                    strokeDir = movementDir - areaNormal * glm::dot(movementDir, areaNormal);
+                    float strokeDirLen = glm::length(strokeDir);
+                    if (strokeDirLen > 1e-7f) {
+                        strokeDir = strokeDir / strokeDirLen;
+                        hasStrokeDir = true;
+                    }
+                }
+
+                if (!hasStrokeDir) {
+                    glm::mat4 invMeshMatrix = glm::inverse(mesh->matrix);
+                    glm::mat4 camWorld = glm::inverse(scene.getCamera().getViewMatrix());
+                    glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
+                    strokeDir = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
+                }
+
+                m_alphaOrigin = currentIntersection;
+            }
+
+            glm::vec3 eye = m_alphaOrigin;
+            glm::vec3 nor = m_alphaOrigin + areaNormal * localRadius;
+            glm::mat4 lookAtMat = glm::lookAt(eye, nor, strokeDir);
+
+            float alphaLookAt[16];
+            std::memcpy(alphaLookAt, &lookAtMat[0][0], 16 * sizeof(float));
+
+            float finalAngle = getCurrentSettings().stampAngle;
+#ifdef _WIN32
+            if (getCurrentSettings().stampUseTilt && g_tablet.isAvailable() && g_tablet.isPenActive() && g_tablet.isTiltEnabled()) {
+                float tx = g_tablet.getTiltX();
+                float ty = g_tablet.getTiltY();
+                if (tx * tx + ty * ty > 1.0f) {
+                    float tiltAngle = std::atan2(ty, tx) * (180.0f / 3.1415926535f);
+                    finalAngle += tiltAngle;
+                }
+            }
+#endif
+
+            deformedCount = strokeBrush(
+                mesh->verts.data(),
+                mesh->vertProxy.data(),
+                mesh->materials.data(),
+                pickedVertices.data(),
+                pickedVertices.size(),
+                currentIntersection.x, currentIntersection.y, currentIntersection.z,
+                areaCenter.x, areaCenter.y, areaCenter.z,
+                areaNormal.x, areaNormal.y, areaNormal.z,
+                localRadius, intensity,
+                negative, getCurrentSettings().clay,
+                getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
+                getCurrentSettings().stampType,
+                getCurrentSettings().stampSides,
+                getCurrentSettings().stampInnerRatio,
+                finalAngle,
+                getCurrentSettings().stampBlur,
                 alphaLookAt, false
             );
             break;
@@ -2378,7 +2491,7 @@ bool SculptManager::saveSettings(const std::string& filepath) {
         return false;
     }
 
-    for (int i = 0; i < 22; ++i) {
+    for (int i = 0; i < BRUSH_COUNT; ++i) {
         out << "[Brush_" << i << "]\n";
         out << "radius=" << m_brushSettings[i].radius << "\n";
         out << "intensity=" << m_brushSettings[i].intensity << "\n";
@@ -2404,7 +2517,14 @@ bool SculptManager::saveSettings(const std::string& filepath) {
         out << "maskSharpenBlurIterations=" << m_brushSettings[i].maskSharpenBlurIterations << "\n";
         out << "maskSharpenFactor=" << m_brushSettings[i].maskSharpenFactor << "\n";
         out << "maskExtractThickness=" << m_brushSettings[i].maskExtractThickness << "\n";
-        out << "blurMaskedOnly=" << (m_brushSettings[i].blurMaskedOnly ? "true" : "false") << "\n\n";
+        out << "blurMaskedOnly=" << (m_brushSettings[i].blurMaskedOnly ? "true" : "false") << "\n";
+        out << "stampType=" << m_brushSettings[i].stampType << "\n";
+        out << "stampSides=" << m_brushSettings[i].stampSides << "\n";
+        out << "stampInnerRatio=" << m_brushSettings[i].stampInnerRatio << "\n";
+        out << "stampAngle=" << m_brushSettings[i].stampAngle << "\n";
+        out << "stampBlur=" << m_brushSettings[i].stampBlur << "\n";
+        out << "stampLockRotation=" << (m_brushSettings[i].stampLockRotation ? "true" : "false") << "\n";
+        out << "stampUseTilt=" << (m_brushSettings[i].stampUseTilt ? "true" : "false") << "\n\n";
     }
 
     out << "[General]\n";
@@ -2452,7 +2572,7 @@ bool SculptManager::loadSettings(const std::string& filepath) {
         }
     }
 
-    for (int i = 0; i < 22; ++i) {
+    for (int i = 0; i < BRUSH_COUNT; ++i) {
         std::string sectionName = "Brush_" + std::to_string(i);
         auto itSection = sections.find(sectionName);
         if (itSection != sections.end()) {
@@ -2508,6 +2628,13 @@ bool SculptManager::loadSettings(const std::string& filepath) {
             getParam("maskSharpenFactor", m_brushSettings[i].maskSharpenFactor, [](const std::string& s) { return safe_stof(s, 1.0f); });
             getParam("maskExtractThickness", m_brushSettings[i].maskExtractThickness, [](const std::string& s) { return safe_stof(s, 0.05f); });
             getBoolParam("blurMaskedOnly", m_brushSettings[i].blurMaskedOnly);
+            getParam("stampType", m_brushSettings[i].stampType, [](const std::string& s) { return safe_stoi(s, 0); });
+            getParam("stampSides", m_brushSettings[i].stampSides, [](const std::string& s) { return safe_stoi(s, 5); });
+            getParam("stampInnerRatio", m_brushSettings[i].stampInnerRatio, [](const std::string& s) { return safe_stof(s, 0.5f); });
+            getParam("stampAngle", m_brushSettings[i].stampAngle, [](const std::string& s) { return safe_stof(s, 0.0f); });
+            getParam("stampBlur", m_brushSettings[i].stampBlur, [](const std::string& s) { return safe_stof(s, 0.0f); });
+            getBoolParam("stampLockRotation", m_brushSettings[i].stampLockRotation);
+            getBoolParam("stampUseTilt", m_brushSettings[i].stampUseTilt);
         }
     }
 
@@ -2693,7 +2820,7 @@ void SculptManager::applyPreset(const BrushPreset& preset) {
     BrushType targetBrush = m_currentBrush;
     switch (preset.deformMode) {
         case DeformMode::Normal:
-            targetBrush = BRUSH_SQUAREBRUSH;
+            targetBrush = BRUSH_BRUSH;
             break;
         case DeformMode::Clay:
             if (!preset.accumulate) {
