@@ -121,6 +121,9 @@ private:
     int m_lastStrokeX = 0;
     int m_lastStrokeY = 0;
 
+    glm::vec3 m_alphaOrigin{0.0f};
+    bool      m_hasAlphaOrigin = false;
+
     int m_mouseDownX = 0;
     int m_mouseDownY = 0;
 
