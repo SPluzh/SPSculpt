@@ -1082,3 +1082,48 @@ RemeshResult doRemesh(
     sculpt_log("[C++ doRemesh] Reconstructed. output verts: %d, faces: %d\n", (int)(r.vertices.size() / 3), (int)(r.faces.size() / 4));
     return r;
 }
+
+RemeshResult doSurfaceNetsFromSDF(
+    int resolution, 
+    const float* minCoords, 
+    const float* maxCoords, 
+    const float* distanceField,
+    const float* uniformColor,
+    const float* uniformMaterial,
+    std::function<void(int stage, int progress)> onProgress
+) {
+    VoxelGrid voxels;
+    voxels.dims[0] = resolution;
+    voxels.dims[1] = resolution;
+    voxels.dims[2] = resolution;
+    voxels.step = (maxCoords[0] - minCoords[0]) / (resolution - 1);
+    
+    voxels.minCoord[0] = minCoords[0];
+    voxels.minCoord[1] = minCoords[1];
+    voxels.minCoord[2] = minCoords[2];
+    voxels.maxCoord[0] = maxCoords[0];
+    voxels.maxCoord[1] = maxCoords[1];
+    voxels.maxCoord[2] = maxCoords[2];
+    
+    int datalen = resolution * resolution * resolution;
+    voxels.distanceField.assign(distanceField, distanceField + datalen);
+    
+    voxels.hasColorField = false;
+    voxels.hasMaterialField = false;
+    voxels.uniformColor[0] = uniformColor[0];
+    voxels.uniformColor[1] = uniformColor[1];
+    voxels.uniformColor[2] = uniformColor[2];
+    voxels.uniformMaterial[0] = uniformMaterial[0];
+    voxels.uniformMaterial[1] = uniformMaterial[1];
+    voxels.uniformMaterial[2] = uniformMaterial[2];
+    
+    RemeshResult r = surfaceNetsReconstruct(voxels, false, onProgress);
+    
+    for (size_t i = 0; i < r.vertices.size(); i += 3) {
+        r.vertices[i]     = voxels.minCoord[0] + r.vertices[i] * voxels.step;
+        r.vertices[i + 1] = voxels.minCoord[1] + r.vertices[i + 1] * voxels.step;
+        r.vertices[i + 2] = voxels.minCoord[2] + r.vertices[i + 2] * voxels.step;
+    }
+    
+    return r;
+}

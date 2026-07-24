@@ -102,6 +102,8 @@ add_executable(sculptsp
     src/editing/SculptManager.cpp
     src/editing/CameraController.cpp
     src/editing/BrushCursor.cpp
+    src/editing/ArmatureTool.cpp
+    src/sculpt/ArmatureGraph.cpp
     # brushes
     src/brushes/BrushPreset.cpp
     src/brushes/BrushPresetManager.cpp

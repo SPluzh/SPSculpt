@@ -27,3 +27,12 @@ RemeshResult doRemesh(
     bool hasMaterials,
     std::function<void(int stage, int progress)> onProgress = nullptr
 );
+RemeshResult doSurfaceNetsFromSDF(
+    int resolution, 
+    const float* minCoords, 
+    const float* maxCoords, 
+    const float* distanceField,
+    const float* uniformColor,
+    const float* uniformMaterial,
+    std::function<void(int stage, int progress)> onProgress = nullptr
+);

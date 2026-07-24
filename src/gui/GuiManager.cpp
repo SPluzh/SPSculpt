@@ -4,6 +4,7 @@
 #include "editing/BrushCursor.h"
 #include "files/FileManager.h"
 #include "brushes/BrushPresetManager.h"
+#include "editing/ArmatureTool.h"
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <imgui_impl_sdl2.h>
@@ -162,6 +163,7 @@ static const char* getBrushNameLocal(BrushType brush) {
         case BRUSH_MEASURE:  return "Measure";
         case BRUSH_DIVIDER:  return "Divider";
         case BRUSH_TRANSFORM: return "Transform";
+        case BRUSH_ARMATURE_SPHERES: return "Armature Spheres";
     }
     return "Unknown";
 }
@@ -342,10 +344,10 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         const char* tools[] = { 
             "Flatten", "Smooth", "Inflate", "Pinch", "Crease", "V-Tool", "Move", "Drag", "Elastic", 
             "Mask", "Paint", "Twist", "Local Scale", "Clay", "Clay Buildup", "Dam Standard", "Square Brush", "Visibility", "Mask Gradient Blur",
-            "Measure", "Divider", "Transform"
+            "Measure", "Divider", "Transform", "Armature Spheres"
         };
         BrushType current = sculpt.getBrush();
-        for (int i = 0; i < 22; i++) {
+        for (int i = 0; i < 23; i++) {
             bool selected = (current == (BrushType)i);
             if (selected) {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_HeaderActive]);
@@ -524,7 +526,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                  brushType == BRUSH_SQUAREBRUSH || brushType == BRUSH_PAINT || 
                                  brushType == BRUSH_MASK || brushType == BRUSH_MASK_GRADIENT_BLUR ||
                                  brushType == BRUSH_MEASURE || brushType == BRUSH_DIVIDER ||
-                                 brushType == BRUSH_TRANSFORM);
+                                 brushType == BRUSH_TRANSFORM || brushType == BRUSH_ARMATURE_SPHERES);
 
         if (hasSpecialParams) {
             if (ImGui::CollapsingHeader("Tool Specific Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -680,6 +682,26 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             scene.pushHistoryState();
                             selectedMesh->matrix = glm::mat4(1.0f);
                             selectedMesh->isDirty = true;
+                        }
+                    }
+                }
+                else if (brushType == BRUSH_ARMATURE_SPHERES) {
+                    ArmatureTool* tool = sculpt.getArmatureTool();
+                    if (tool) {
+                        int mode = (int)tool->getMode();
+                        ImGui::RadioButton("Draw", &mode, 0); ImGui::SameLine();
+                        ImGui::RadioButton("Insert", &mode, 1); ImGui::SameLine();
+                        ImGui::RadioButton("Move", &mode, 2);
+                        ImGui::RadioButton("Scale", &mode, 3); ImGui::SameLine();
+                        ImGui::RadioButton("Rotate", &mode, 4);
+                        tool->setMode((ArmatureMode)mode);
+                        
+                        ImGui::Separator();
+                        if (ImGui::Button("Create Mesh", ImVec2(-1, 26))) {
+                            tool->createMesh(scene);
+                        }
+                        if (ImGui::Button("Clear Graph", ImVec2(-1, 26))) {
+                            tool->getGraph().clear();
                         }
                     }
                 }
@@ -903,6 +925,13 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         if (ImGui::Button("Clear Tools", ImVec2(-1, 0))) {
             sculpt.clearMeasurements();
         }
+
+        bool isArmatureActive = (sculpt.getBrush() == BRUSH_ARMATURE_SPHERES);
+        if (isArmatureActive) ImGui::PushStyleColor(ImGuiCol_Button, tealActive);
+        if (ImGui::Button("Armature Spheres", ImVec2(-1, 0))) {
+            sculpt.setTool(BRUSH_ARMATURE_SPHERES);
+        }
+        if (isArmatureActive) ImGui::PopStyleColor();
 
         if (isMeasureActive) {
             bool useDist = sculpt.getMeasureUseDistanceThickness();
@@ -2048,10 +2077,10 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         float referenceLength = 0.0f;
         const auto& segments = isDivider ? sculpt.getDividerSegments() : sculpt.getMeasureSegments();
         if (!isDivider) {
-            for (const auto& s : segments) {
-                if (s.isReference) {
-                    glm::vec3 worldA = SculptManager::getAnchorWorldPos(s.vertA);
-                    glm::vec3 worldB = SculptManager::getAnchorWorldPos(s.vertB);
+            for (const auto& seg : segments) {
+                if (seg.isReference) {
+                    glm::vec3 worldA = sculpt.getAnchorWorldPos(seg.vertA);
+                    glm::vec3 worldB = sculpt.getAnchorWorldPos(seg.vertB);
                     referenceLength = glm::distance(worldA, worldB);
                     break;
                 }
@@ -2213,6 +2242,13 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 isPendingRef = !hasRef;
             }
             drawSeg(pendingSeg, isPendingRef, true);
+        }
+    }
+
+    if (sculpt.getBrush() == BRUSH_ARMATURE_SPHERES) {
+        if (auto* tool = sculpt.getArmatureTool()) {
+            renderer.drawArmature(tool->getGraph(), scene.getCamera(), 
+                tool->getSelectedNode(), tool->getHoveredLinkParent(), tool->getHoveredLinkChild(), sculpt.getUseSym());
         }
     }
 

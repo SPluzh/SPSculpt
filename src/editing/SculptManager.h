@@ -10,6 +10,8 @@
 
 #include "brushes/BrushPreset.h"
 
+class ArmatureTool;
+
 struct BrushSettings {
     float radius = 50.0f;
     float intensity = 0.5f;
@@ -92,7 +94,9 @@ struct MeasurementSegment {
 class SculptManager {
 private:
     BrushType m_currentBrush = BRUSH_MOVE;
-    BrushSettings m_brushSettings[22];
+    BrushSettings m_brushSettings[23]; // Increased from 22
+
+    std::unique_ptr<ArmatureTool> m_armatureTool;
 
     CameraController m_cameraController;
     bool m_isSculpting = false;
@@ -126,7 +130,7 @@ private:
 
 public:
     SculptManager();
-    ~SculptManager() = default;
+    ~SculptManager();
 
     void handleEvent(const SDL_Event& event, Scene& scene);
     void processFrame(Scene& scene);
@@ -266,6 +270,8 @@ public:
 
     void applyPreset(const BrushPreset& preset);
     void applyActivePreset();
+
+    ArmatureTool* getArmatureTool() const { return m_armatureTool.get(); }
 
 private:
     float m_stylusPressure = 1.0f;

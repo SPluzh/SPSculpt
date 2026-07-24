@@ -12,6 +12,7 @@
 class Mesh;
 class Scene;
 class Camera;
+class ArmatureGraph;
 
 struct MeshRenderBuffers {
     GLuint vao = 0;
@@ -192,6 +193,8 @@ public:
 
     void setLassoParameters(bool active, const std::vector<glm::vec2>& points, bool altMode, bool isMaskLasso);
 
+    void drawArmature(const ArmatureGraph& graph, const Camera& camera, void* selectedNode = nullptr, void* hoveredParent = nullptr, void* hoveredChild = nullptr, bool hasSymmetry = false);
+
     // Shader compilation helpers
     GLuint compileShader(GLenum type, const std::string& source);
     GLuint linkProgram(GLuint vs, GLuint fs);
@@ -218,6 +221,7 @@ private:
     void drawLasso();
 
     void initGrid();
+    void initArmatureGeometry();
     void drawGrid(const Scene& scene, const Camera& camera);
     void drawFullscreenMerge(const Scene& scene);
     void drawFullscreenFxaa();
@@ -285,6 +289,7 @@ private:
     GLuint m_normalProgram = 0;
     GLuint m_bevelPrepassProgram = 0;
     GLuint m_bevelFilterProgram = 0;
+    GLuint m_armatureProgram = 0;
 
     // RTT Targets
     RenderTarget m_rttContour;
@@ -373,6 +378,16 @@ private:
     GLuint m_dotVbo = 0;
 
     // GPU buffers cache for meshes
+    GLuint m_armatureSphereVao = 0;
+    GLuint m_armatureSphereVbo = 0;
+    GLuint m_armatureSphereEbo = 0;
+    int m_armatureSphereIndicesCount = 0;
+
+    GLuint m_armatureCylVao = 0;
+    GLuint m_armatureCylVbo = 0;
+    GLuint m_armatureCylEbo = 0;
+    int m_armatureCylIndicesCount = 0;
+
     std::unordered_map<const Mesh*, std::unique_ptr<MeshRenderBuffers>> m_meshBuffers;
 
     // Uniform locations cache

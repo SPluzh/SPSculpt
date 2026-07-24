@@ -2,6 +2,7 @@
 #include "brushes/BrushPresetManager.h"
 #include "sculpt/SculptEngine.h"
 #include "mesh/NormalCalc.h"
+#include "editing/ArmatureTool.h"
 #ifdef _WIN32
 #include "platform/TabletInput.h"
 #endif
@@ -153,7 +154,10 @@ static void filterCullingVertices(
     pickedVertices = std::move(front);
 }
 
+SculptManager::~SculptManager() = default;
+
 SculptManager::SculptManager() {
+    m_armatureTool = std::make_unique<ArmatureTool>(*this);
     // Initialise all brushes with baseline defaults
     for (int i = 0; i < 22; ++i) {
         m_brushSettings[i].radius = 50.0f;
@@ -1393,6 +1397,13 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 return;
             }
 
+            if (m_currentBrush == BRUSH_ARMATURE_SPHERES) {
+                if (m_armatureTool->start(camera, (float)mouseX, (float)mouseY, mod & KMOD_CTRL, mod & KMOD_ALT)) {
+                    // Handled
+                }
+                return; // Return anyway, we don't want standard sculpting
+            }
+
             bool isVisibilityTool = (m_currentBrush == BRUSH_VISIBILITY);
             bool isLassoMode = (mod & KMOD_CTRL) && (mod & KMOD_SHIFT);
 
@@ -1604,6 +1615,11 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             }
         }
     } else if (event.type == SDL_MOUSEBUTTONUP) {
+        if (event.button.button == SDL_BUTTON_MIDDLE || event.button.button == SDL_BUTTON_RIGHT) {
+            m_cameraController.handleEvent(event, camera, scene.getMeshes());
+            return;
+        }
+
         if ((m_currentBrush == BRUSH_MEASURE || m_currentBrush == BRUSH_DIVIDER) && event.button.button == SDL_BUTTON_LEFT) {
             float mouseX = (float)event.button.x;
             float mouseY = (float)event.button.y;
@@ -1660,6 +1676,13 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
         if (m_currentBrush == BRUSH_TRANSFORM) {
             m_cameraController.handleEvent(event, camera, scene.getMeshes());
+            return;
+        }
+
+        if (m_currentBrush == BRUSH_ARMATURE_SPHERES) {
+            if (event.button.button == SDL_BUTTON_LEFT) {
+                m_armatureTool->end();
+            }
             return;
         }
 
@@ -2057,6 +2080,15 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             return;
         }
 
+        if (m_currentBrush == BRUSH_ARMATURE_SPHERES) {
+            if (m_cameraController.isDragging()) {
+                m_cameraController.handleEvent(event, camera, scene.getMeshes());
+            } else {
+                m_armatureTool->update(camera, (float)mouseX, (float)mouseY);
+            }
+            return;
+        }
+
         if (m_currentBrush == BRUSH_MASK_GRADIENT_BLUR && mesh && m_gradActive && m_gradActivePoint != '\0') {
             glm::vec2 mousePos((float)mouseX, (float)mouseY);
             if (m_gradActivePoint == 'A') {
@@ -2182,6 +2214,10 @@ void SculptManager::processFrame(Scene& scene) {
         // Resolve dynamic brush modifier swap (Shift->Smooth, Ctrl->Mask, Ctrl+Shift->Visibility)
         BrushType activeBrush = m_currentBrush;
         SDL_Keymod mod = SDL_GetModState();
+
+        if (activeBrush == BRUSH_ARMATURE_SPHERES) {
+            m_armatureTool->preUpdate(scene.getCamera(), (float)m_rawMouseX, (float)m_rawMouseY, (mod & KMOD_CTRL) != 0, (mod & KMOD_ALT) != 0);
+        }
         if ((mod & KMOD_CTRL) && (mod & KMOD_SHIFT)) {
             activeBrush = BRUSH_VISIBILITY;
         } else if (mod & KMOD_SHIFT) {

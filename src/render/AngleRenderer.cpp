@@ -9,6 +9,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include "scene/Scene.h"
 #include "mesh/Mesh.h"
+#include "sculpt/ArmatureGraph.h"
 #include "common/Logger.h"
 #include "../third_party/stb_image.h"
 
@@ -56,6 +57,14 @@ AngleRenderer::~AngleRenderer() {
     if (m_lassoVbo) glDeleteBuffers(1, &m_lassoVbo);
 
     if (m_envTexture) glDeleteTextures(1, &m_envTexture);
+
+    if (m_armatureSphereVao) glDeleteVertexArrays(1, &m_armatureSphereVao);
+    if (m_armatureSphereVbo) glDeleteBuffers(1, &m_armatureSphereVbo);
+    if (m_armatureSphereEbo) glDeleteBuffers(1, &m_armatureSphereEbo);
+
+    if (m_armatureCylVao) glDeleteVertexArrays(1, &m_armatureCylVao);
+    if (m_armatureCylVbo) glDeleteBuffers(1, &m_armatureCylVbo);
+    if (m_armatureCylEbo) glDeleteBuffers(1, &m_armatureCylEbo);
 
     for (const auto& matcap : m_matcaps) {
         if (matcap.textureId) {
@@ -195,6 +204,65 @@ bool AngleRenderer::init(int width, int height) {
     m_bevelPrepassProgram = loadAndCompileProgram("bevel_prepass.vert", "bevel_prepass.frag");
     m_bevelFilterProgram = loadAndCompileProgram("bevel.vert", "bevel.frag");
 
+    const char* armVert = R"(#version 300 es
+layout(location = 0) in vec3 aVertex;
+layout(location = 1) in vec3 aNormal;
+uniform mat4 uMVP;
+uniform mat4 uMV;
+uniform mat3 uN;
+uniform float uRadiusTop;
+uniform float uRadiusBottom;
+out vec3 vVertex;
+out vec3 vVertexPres;
+out vec3 vNormal;
+void main() {
+  vec3 pos = aVertex;
+  float u = pos.z; // cylinder Z goes 0 to 1
+  float radius = mix(uRadiusBottom, uRadiusTop, u);
+  pos.x *= radius;
+  pos.y *= radius;
+  vec3 norm = aNormal;
+  if (uRadiusTop != uRadiusBottom && abs(norm.z) < 0.9) {
+    float slope = (uRadiusTop - uRadiusBottom); 
+    norm = vec3(aNormal.x, aNormal.y, -slope);
+    norm = normalize(norm);
+  }
+  vNormal = normalize(uN * norm);
+  vec4 v = uMV * vec4(pos, 1.0);
+  vVertex = vec3(v);
+  vVertexPres = vVertex / max(1.0, abs(uMV[3][2]));
+  gl_Position = uMVP * vec4(pos, 1.0);
+}
+)";
+
+    const char* armFrag = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTexture0;
+uniform vec3 uColor;
+uniform float uSelected;
+in vec3 vVertex;
+in vec3 vVertexPres;
+in vec3 vNormal;
+out vec4 fragColor;
+vec3 sRGBToLinear(vec3 color) { return pow(color, vec3(2.2)); }
+void main() {
+  vec3 normal = normalize(gl_FrontFacing ? vNormal : -vNormal);
+  vec3 nm_z = normalize(vVertexPres);
+  vec3 nm_x = vec3(-nm_z.z, 0.0, nm_z.x);
+  vec3 nm_y = cross(nm_x, nm_z);
+  vec2 texCoord = 0.5 + 0.5 * vec2(dot(normal, nm_x), dot(normal, nm_y));
+  vec3 matcapColor = sRGBToLinear(texture(uTexture0, texCoord).rgb);
+  vec3 baseColor = matcapColor * sRGBToLinear(uColor);
+  if (uSelected > 0.5) {
+    baseColor = mix(baseColor, vec3(1.0, 1.0, 0.0), 0.3) + vec3(0.2, 0.2, 0.0);
+  }
+  fragColor = vec4(pow(baseColor, vec3(1.0/2.2)), 1.0);
+}
+)";
+    GLuint vs = compileShader(GL_VERTEX_SHADER, armVert);
+    GLuint fs = compileShader(GL_FRAGMENT_SHADER, armFrag);
+    m_armatureProgram = linkProgram(vs, fs);
+
     // Check if critical shader programs failed to load/link
     if (!m_bgProgram || !m_selectionProgram || !m_refImageProgram || !m_wireframeProgram ||
         !m_flatProgram || !m_matcapProgram || !m_pbrProgram || !m_wetClayProgram ||
@@ -291,6 +359,7 @@ bool AngleRenderer::init(int width, int height) {
 
     // D. Initialize Grid
     initGrid();
+    initArmatureGeometry();
 
     // E. Initialize environments presets
     initEnvironments();
@@ -1631,6 +1700,221 @@ void AngleRenderer::drawGrid(const Scene& scene, const Camera& camera) {
     glBindVertexArray(0);
 
     glDisable(GL_BLEND);
+}
+
+void AngleRenderer::drawArmature(const ArmatureGraph& graph, const Camera& camera, void* selectedNodePtr, void* hoveredParentPtr, void* hoveredChildPtr, bool hasSymmetry) {
+    if (m_armatureSphereIndicesCount == 0 || m_armatureCylIndicesCount == 0) return;
+    if (m_armatureProgram == 0) return;
+    
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+    
+    glUseProgram(m_armatureProgram);
+    
+    glActiveTexture(GL_TEXTURE0);
+    int matcapTexId = 0;
+    if (m_matcapIdx >= 0 && m_matcapIdx < static_cast<int>(m_matcaps.size()) && m_matcaps[m_matcapIdx].textureId != 0) {
+        matcapTexId = m_matcaps[m_matcapIdx].textureId;
+    } else if (!m_matcaps.empty() && m_matcaps[0].textureId != 0) {
+        matcapTexId = m_matcaps[0].textureId;
+    }
+    glBindTexture(GL_TEXTURE_2D, matcapTexId);
+    glUniform1i(glGetUniformLocation(m_armatureProgram, "uTexture0"), 0);
+
+    glm::mat4 proj = camera.getProjMatrix();
+    glm::mat4 view = camera.getViewMatrix();
+    
+    const auto& nodes = graph.getNodes();
+    
+    ArmatureNode* selectedNode = static_cast<ArmatureNode*>(selectedNodePtr);
+    ArmatureNode* hoveredParent = static_cast<ArmatureNode*>(hoveredParentPtr);
+    ArmatureNode* hoveredChild = static_cast<ArmatureNode*>(hoveredChildPtr);
+
+    auto drawObject = [&](GLuint vao, int indices, const glm::mat4& model, float rBot, float rTop, const glm::vec3& color, bool selected) {
+        glm::mat4 mv = view * model;
+        glm::mat4 mvp = proj * mv;
+        glm::mat3 n = glm::transpose(glm::inverse(glm::mat3(mv)));
+        
+        glUniformMatrix4fv(glGetUniformLocation(m_armatureProgram, "uMV"), 1, GL_FALSE, glm::value_ptr(mv));
+        glUniformMatrix4fv(glGetUniformLocation(m_armatureProgram, "uMVP"), 1, GL_FALSE, glm::value_ptr(mvp));
+        glUniformMatrix3fv(glGetUniformLocation(m_armatureProgram, "uN"), 1, GL_FALSE, glm::value_ptr(n));
+        glUniform1f(glGetUniformLocation(m_armatureProgram, "uRadiusTop"), rTop);
+        glUniform1f(glGetUniformLocation(m_armatureProgram, "uRadiusBottom"), rBot);
+        glUniform3fv(glGetUniformLocation(m_armatureProgram, "uColor"), 1, glm::value_ptr(color));
+        glUniform1f(glGetUniformLocation(m_armatureProgram, "uSelected"), selected ? 1.0f : 0.0f);
+        
+        glBindVertexArray(vao);
+        glDrawElements(GL_TRIANGLES, indices, GL_UNSIGNED_INT, nullptr);
+    };
+
+    for (const auto& nodePtr : nodes) {
+        auto* node = nodePtr.get();
+        if (!node) continue;
+        
+        // Sphere Colors (like JS)
+        bool isSelected = (node == selectedNode) || (hasSymmetry && selectedNode && node == selectedNode->symmetryPartner);
+        bool isOnSymPlane = false;
+        if (hasSymmetry) {
+            float dist = std::abs(glm::dot(node->position - m_planeOrigin, m_planeNormal));
+            float threshold = std::max(0.08f, 0.15f * node->radius);
+            if (dist <= threshold) isOnSymPlane = true;
+        }
+
+        glm::vec3 color;
+        if (isOnSymPlane) {
+            color = isSelected ? glm::vec3(0.8f, 0.1f, 0.9f) : glm::vec3(0.55f, 0.15f, 0.75f);
+        } else {
+            color = isSelected ? glm::vec3(0.8f, 0.1f, 0.1f) : glm::vec3(0.25f, 0.25f, 0.25f);
+        }
+        
+        glm::mat4 model = glm::translate(glm::mat4(1.0f), node->position);
+        model = glm::scale(model, glm::vec3(node->radius));
+        drawObject(m_armatureSphereVao, m_armatureSphereIndicesCount, model, 1.0f, 1.0f, color, false);
+        
+        // Draw Cylinders
+        for (auto* child : node->children) {
+            if (child) {
+                glm::vec3 dir = child->position - node->position;
+                float len = glm::length(dir);
+                if (len < 0.0001f) continue;
+                dir /= len;
+                
+                glm::vec3 up(0, 0, 1);
+                if (std::abs(glm::dot(dir, up)) > 0.99f) up = glm::vec3(1, 0, 0);
+                glm::vec3 right = glm::normalize(glm::cross(up, dir));
+                up = glm::cross(dir, right);
+                
+                glm::mat4 rot(1.0f);
+                rot[0] = glm::vec4(right, 0);
+                rot[1] = glm::vec4(up, 0);
+                rot[2] = glm::vec4(dir, 0);
+                
+                glm::mat4 cmodel = glm::translate(glm::mat4(1.0f), node->position);
+                cmodel = cmodel * rot;
+                cmodel = glm::scale(cmodel, glm::vec3(1.0f, 1.0f, len));
+                
+                bool linkHovered = false;
+                if (hoveredParent == node && hoveredChild == child) linkHovered = true;
+                if (hasSymmetry && node->symmetryPartner && child->symmetryPartner) {
+                    if (hoveredParent == node->symmetryPartner && hoveredChild == child->symmetryPartner) {
+                        linkHovered = true;
+                    }
+                }
+                
+                drawObject(m_armatureCylVao, m_armatureCylIndicesCount, cmodel, node->radius, child->radius, glm::vec3(0.4f, 0.4f, 0.4f), linkHovered);
+            }
+        }
+    }
+    
+    glBindVertexArray(0);
+    glDisable(GL_CULL_FACE);
+}
+
+void AngleRenderer::initArmatureGeometry() {
+    // 1. Sphere Geometry (Icosahedron subdivided once)
+    float t = (1.0f + std::sqrt(5.0f)) / 2.0f;
+    std::vector<glm::vec3> baseVerts = {
+        {-1,  t,  0}, { 1,  t,  0}, {-1, -t,  0}, { 1, -t,  0},
+        { 0, -1,  t}, { 0,  1,  t}, { 0, -1, -t}, { 0,  1, -t},
+        { t,  0, -1}, { t,  0,  1}, {-t,  0, -1}, {-t,  0,  1}
+    };
+    for (auto& v : baseVerts) v = glm::normalize(v);
+
+    std::vector<uint32_t> baseFaces = {
+        0, 11, 5,   0, 5, 1,    0, 1, 7,    0, 7, 10,   0, 10, 11,
+        1, 5, 9,    5, 11, 4,   11, 10, 2,  10, 7, 6,   7, 1, 8,
+        3, 9, 4,    3, 4, 2,    3, 2, 6,    3, 6, 8,    3, 8, 9,
+        4, 9, 5,    2, 4, 11,   6, 2, 10,   8, 6, 7,    9, 8, 1
+    };
+
+    std::vector<float> sphereData;
+    std::vector<uint32_t> sphereIndices;
+    
+    // We will do flat shading or smooth shading? 
+    // Matcap expects smooth shading, so we can just use vertices as normals.
+    // Subdivide once
+    auto getMid = [&](int i1, int i2, std::vector<glm::vec3>& verts) {
+        glm::vec3 m = glm::normalize(verts[i1] + verts[i2]);
+        verts.push_back(m);
+        return (uint32_t)(verts.size() - 1);
+    };
+
+    std::vector<glm::vec3> verts = baseVerts;
+    for (size_t i = 0; i < baseFaces.size(); i += 3) {
+        uint32_t v1 = baseFaces[i], v2 = baseFaces[i+1], v3 = baseFaces[i+2];
+        uint32_t a = getMid(v1, v2, verts);
+        uint32_t b = getMid(v2, v3, verts);
+        uint32_t c = getMid(v3, v1, verts);
+        
+        sphereIndices.insert(sphereIndices.end(), {v1, a, c, v2, b, a, v3, c, b, a, b, c});
+    }
+
+    for (const auto& v : verts) {
+        sphereData.push_back(v.x); sphereData.push_back(v.y); sphereData.push_back(v.z);
+        sphereData.push_back(v.x); sphereData.push_back(v.y); sphereData.push_back(v.z);
+    }
+
+    m_armatureSphereIndicesCount = sphereIndices.size();
+    glGenVertexArrays(1, &m_armatureSphereVao);
+    glGenBuffers(1, &m_armatureSphereVbo);
+    glGenBuffers(1, &m_armatureSphereEbo);
+
+    glBindVertexArray(m_armatureSphereVao);
+    glBindBuffer(GL_ARRAY_BUFFER, m_armatureSphereVbo);
+    glBufferData(GL_ARRAY_BUFFER, sphereData.size() * sizeof(float), sphereData.data(), GL_STATIC_DRAW);
+    
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_armatureSphereEbo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sphereIndices.size() * sizeof(uint32_t), sphereIndices.data(), GL_STATIC_DRAW);
+
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
+    glBindVertexArray(0);
+
+    // 2. Cylinder Geometry (Octagonal prism mapping Z=0 to Z=1)
+    std::vector<float> cylData;
+    std::vector<uint32_t> cylIndices;
+    const int segments = 8;
+    for (int i = 0; i <= segments; ++i) {
+        float angle = (float)i / segments * 2.0f * (float)M_PI;
+        float x = std::cos(angle);
+        float y = std::sin(angle);
+        // bottom vertex (z=0)
+        cylData.push_back(x); cylData.push_back(y); cylData.push_back(0.0f);
+        cylData.push_back(x); cylData.push_back(y); cylData.push_back(0.0f); // normal
+        // top vertex (z=1)
+        cylData.push_back(x); cylData.push_back(y); cylData.push_back(1.0f);
+        cylData.push_back(x); cylData.push_back(y); cylData.push_back(0.0f); // normal
+    }
+
+    for (int i = 0; i < segments; ++i) {
+        uint32_t b1 = i * 2;
+        uint32_t t1 = i * 2 + 1;
+        uint32_t b2 = (i + 1) * 2;
+        uint32_t t2 = (i + 1) * 2 + 1;
+        cylIndices.insert(cylIndices.end(), {b1, b2, t1, b2, t2, t1});
+    }
+
+    m_armatureCylIndicesCount = cylIndices.size();
+    glGenVertexArrays(1, &m_armatureCylVao);
+    glGenBuffers(1, &m_armatureCylVbo);
+    glGenBuffers(1, &m_armatureCylEbo);
+
+    glBindVertexArray(m_armatureCylVao);
+    glBindBuffer(GL_ARRAY_BUFFER, m_armatureCylVbo);
+    glBufferData(GL_ARRAY_BUFFER, cylData.size() * sizeof(float), cylData.data(), GL_STATIC_DRAW);
+    
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_armatureCylEbo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, cylIndices.size() * sizeof(uint32_t), cylIndices.data(), GL_STATIC_DRAW);
+
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
+    glBindVertexArray(0);
 }
 
 void AngleRenderer::initGrid() {
