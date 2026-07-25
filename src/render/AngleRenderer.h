@@ -38,6 +38,11 @@ struct MeshRenderBuffers {
     }
 };
 
+enum class RenderMode {
+    PBR = 0,
+    SSPT = 1
+};
+
 class AngleRenderer {
 public:
     AngleRenderer();
@@ -47,6 +52,20 @@ public:
     void resize(int width, int height, float dpiScale = 1.0f);
     int getWidth() const { return m_width; }
     int getHeight() const { return m_height; }
+
+    void setRenderMode(RenderMode mode) { m_renderMode = mode; resetAccumulation(); }
+    RenderMode getRenderMode() const { return m_renderMode; }
+    void resetAccumulation() { m_accumFrameCount = 0; }
+
+    void setUseShadows(bool enable) { m_shadowEnabled = enable; }
+    bool getUseShadows() const { return m_shadowEnabled; }
+
+    void setUseSsr(bool enable) { m_useSsr = enable; }
+    bool getUseSsr() const { return m_useSsr; }
+    void setSsrIntensity(float intensity) { m_ssrIntensity = intensity; }
+    float getSsrIntensity() const { return m_ssrIntensity; }
+    void setSsrMaxDistance(float dist) { m_ssrMaxDistance = dist; }
+    float getSsrMaxDistance() const { return m_ssrMaxDistance; }
     
     // Core render loop called from JS requestAnimationFrame or SDL main loop
     void render(const Scene& scene, unsigned int targetFbo = 0);
@@ -260,6 +279,7 @@ private:
 
     void renderScenePass(const Scene& scene, int passType);
     void drawPassGeometry(const Scene& scene, int passType, const Camera& camera, int viewportIdx);
+    void drawMeshGBuffer(Mesh* mesh, const Scene& scene, const Camera& camera);
 
     int m_width = 0;
     int m_height = 0;
@@ -322,6 +342,12 @@ private:
     GLuint m_ssaoNormalsProgram = 0;
     GLuint m_ssaoProgram = 0;
     GLuint m_ssaoBlurProgram = 0;
+    GLuint m_shadowProgram = 0;
+    GLuint m_ssrProgram = 0;
+    GLuint m_gbufferProgram = 0;
+    GLuint m_ssptProgram = 0;
+    GLuint m_svgfTemporalProgram = 0;
+    GLuint m_svgfSpatialProgram = 0;
 
     // RTT Targets
     RenderTarget m_rttContour;
@@ -334,6 +360,24 @@ private:
     RenderTarget m_rttNormals;
     RenderTarget m_rttSsao;
     RenderTarget m_rttSsaoBlur;
+    RenderTarget m_rttShadow;
+    RenderTarget m_rttSsr;
+    RenderTarget m_rttAccumA;
+    RenderTarget m_rttAccumB;
+    RenderTarget m_rttSvgfA;
+    RenderTarget m_rttSvgfB;
+
+    RenderMode m_renderMode = RenderMode::PBR;
+    bool m_shadowEnabled = true;
+    bool m_useSsr = false;
+    float m_ssrIntensity = 0.5f;
+    float m_ssrMaxDistance = 10.0f;
+    glm::mat4 m_shadowLightMVP{1.0f};
+    static constexpr int SHADOW_MAP_SIZE = 2048;
+
+    bool m_accumPing = true;
+    int m_accumFrameCount = 0;
+    int m_frameIndex = 0;
 
     // Fullscreen quad
     GLuint m_fsqVao = 0;

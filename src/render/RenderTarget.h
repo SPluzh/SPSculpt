@@ -12,6 +12,8 @@ struct RenderTarget {
     bool depthAsTexture = false;
 
     bool init(int w, int h, bool hasDepth = true, GLuint sharedDepth = 0, bool depthAsTexture = false);
+    bool initDepthOnly(int w, int h);
+    bool initFloat(int w, int h, bool hasDepth = false);
     void resize(int w, int h);
     void release();
 };

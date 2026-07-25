@@ -7,7 +7,40 @@
 #include "files/MeshUtils.h"
 #include "common/Constants.h"
 
-Scene::Scene() {}
+Scene::Scene() {
+    LightSource mainLight;
+    mainLight.name = "Main Light";
+    mainLight.type = LightType::DIRECTIONAL;
+    mainLight.direction = glm::normalize(glm::vec3(-0.5f, -0.8f, -1.0f));
+    mainLight.position = glm::vec3(0.0f, 10.0f, 10.0f);
+    mainLight.color = glm::vec3(1.0f, 1.0f, 1.0f);
+    mainLight.intensity = 1.0f;
+    mainLight.castShadow = true;
+    mainLight.enabled = true;
+    m_lights.push_back(mainLight);
+}
+
+void Scene::addLight(LightType type) {
+    LightSource L;
+    L.type = type;
+    L.name = "Light " + std::to_string(m_lights.size() + 1);
+    if (type == LightType::DIRECTIONAL) {
+        L.direction = glm::normalize(glm::vec3(-0.3f, -1.0f, -0.5f));
+    } else {
+        L.position = glm::vec3(0.0f, 5.0f, 5.0f);
+    }
+    m_lights.push_back(L);
+}
+
+void Scene::addLight(const LightSource& light) {
+    m_lights.push_back(light);
+}
+
+void Scene::removeLight(size_t index) {
+    if (index < m_lights.size()) {
+        m_lights.erase(m_lights.begin() + index);
+    }
+}
 
 Scene::~Scene() {
     clear();

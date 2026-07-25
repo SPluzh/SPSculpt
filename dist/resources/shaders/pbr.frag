@@ -2,6 +2,27 @@
 precision highp float;
 
 #define LIMIT_LOD 5.0
+#define MAX_LIGHTS 8
+
+struct Light {
+    vec3  position;
+    vec3  direction;
+    vec3  color;
+    float intensity;
+    float range;
+    float innerCos;
+    float outerCos;
+    int   type;        // 0=directional, 1=point, 2=spot
+    int   castShadow;
+    int   enabled;
+};
+
+uniform Light uLights[MAX_LIGHTS];
+uniform int   uNumLights;
+
+uniform highp sampler2DShadow uShadowMap;
+uniform mat4 uLightMVP;
+uniform int  uShadowEnabled;
 
 uniform sampler2D uTexture0;
 uniform float uExposure;
@@ -89,26 +110,117 @@ vec3 computeIBL_UE4(const in vec3 N, const in vec3 V, const in vec3 albedo, cons
   color += approximateSpecularIBL(specular, roughness, N, V);
   return color;
 }
+
+float D_GGX(float NoH, float roughness) {
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float NoH2 = NoH * NoH;
+    float num = a2;
+    float denom = (NoH2 * (a2 - 1.0) + 1.0);
+    denom = PI * denom * denom;
+    return num / max(denom, 0.00001);
+}
+
+float V_SmithGGXCorrelated(float NoV, float NoL, float roughness) {
+    float a = roughness * roughness;
+    float GGXV = NoL * (NoV * (1.0 - a) + a);
+    float GGXL = NoV * (NoL * (1.0 - a) + a);
+    return 0.5 / max(GGXV + GGXL, 0.00001);
+}
+
+vec3 F_Schlick(float VoH, vec3 f0) {
+    return f0 + (1.0 - f0) * pow(clamp(1.0 - VoH, 0.0, 1.0), 5.0);
+}
+
+float PCF(vec3 viewPos) {
+    vec4 lp = uLightMVP * vec4(viewPos, 1.0);
+    vec3 projCoords = lp.xyz / lp.w;
+    projCoords = projCoords * 0.5 + 0.5;
+    if (projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0 || projCoords.z > 1.0) {
+        return 1.0;
+    }
+    float shadow = 0.0;
+    vec2 texelSize = vec2(1.0 / 2048.0);
+    for (int x = -1; x <= 1; ++x) {
+        for (int y = -1; y <= 1; ++y) {
+            shadow += texture(uShadowMap, vec3(projCoords.xy + vec2(x, y) * texelSize, projCoords.z - 0.002));
+        }
+    }
+    return shadow / 9.0;
+}
+
 void main() {
     vec3 normal = getNormal();
-    float roughness = max(0.0001, (uRoughness >= 0.0 ? uRoughness : vMaterial.x));
+    float roughness = max(0.001, (uRoughness >= 0.0 ? uRoughness : vMaterial.x));
     float metallic = (uMetallic >= 0.0 ? uMetallic : vMaterial.y);
     vec3 rawColor = (uAlbedo.r >= 0.0 ? uAlbedo : vColor);
     vec3 linColor = sRGBToLinear(rawColor);
     vec3 albedo = linColor * (1.0 - metallic);
     vec3 specular = mix(vec3(0.04), linColor, metallic);
+    vec3 viewDir = -normalize(vVertex);
     vec3 color = vec3(0.0);
+
     if (uUseTexture == 1) {
-        color = uExposure * computeIBL_UE4(normal, -normalize(vVertex), albedo, roughness, specular);
+        color = uExposure * computeIBL_UE4(normal, viewDir, albedo, roughness, specular);
+    } else {
+        color = albedo * 0.15;
+    }
+
+    if (uNumLights > 0) {
+        for (int i = 0; i < uNumLights; ++i) {
+            if (uLights[i].enabled == 0) continue;
+
+            vec3 L;
+            float attenuation = 1.0;
+
+            if (uLights[i].type == 0) {
+                L = -normalize(uLights[i].direction);
+            } else {
+                vec3 lightVec = uLights[i].position - vVertex;
+                float dist = length(lightVec);
+                L = normalize(lightVec);
+                attenuation = clamp(1.0 - (dist / max(0.01, uLights[i].range)), 0.0, 1.0);
+                attenuation *= attenuation;
+
+                if (uLights[i].type == 2) {
+                    float cosAngle = dot(-L, normalize(uLights[i].direction));
+                    float spotAtten = clamp((cosAngle - uLights[i].outerCos) / max(0.0001, uLights[i].innerCos - uLights[i].outerCos), 0.0, 1.0);
+                    attenuation *= spotAtten;
+                }
+            }
+
+            float NoL = max(dot(normal, L), 0.0);
+            if (NoL > 0.0) {
+                vec3 H = normalize(viewDir + L);
+                float NoH = max(dot(normal, H), 0.0);
+                float NoV = max(dot(normal, viewDir), 0.0);
+                float VoH = max(dot(viewDir, H), 0.0);
+
+                float D = D_GGX(NoH, roughness);
+                float Vis = V_SmithGGXCorrelated(NoV, NoL, roughness);
+                vec3 F = F_Schlick(VoH, specular);
+
+                vec3 specBRDF = D * Vis * F;
+                vec3 diffBRDF = (vec3(1.0) - F) * (1.0 - metallic) * (albedo / PI);
+
+                float shadowFactor = 1.0;
+                if (uShadowEnabled == 1 && uLights[i].castShadow == 1 && uLights[i].type == 0) {
+                    shadowFactor = PCF(vVertex);
+                }
+
+                vec3 lightContrib = (diffBRDF + specBRDF) * uLights[i].color * uLights[i].intensity * NoL * attenuation * shadowFactor;
+                color += lightContrib;
+            }
+        }
     } else {
         vec3 lightDir = normalize(vec3(0.5, 0.8, 1.0));
-        vec3 viewDir = -normalize(vVertex);
         vec3 halfDir = normalize(lightDir + viewDir);
         float NdotL = max(dot(normal, lightDir), 0.0);
         float NdotH = max(dot(normal, halfDir), 0.0);
         vec3 diff = albedo * NdotL * 0.8;
         vec3 specVal = specular * pow(NdotH, 32.0) * 0.5;
-        color = diff + specVal + albedo * 0.15;
+        color += diff + specVal;
     }
+
     fragColor = encodeFragColor(color, uAlpha);
 }

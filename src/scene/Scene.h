@@ -5,6 +5,8 @@
 #include "scene/Camera.h"
 #include "render/ReferenceImage.h"
 
+#include "scene/LightSource.h"
+
 struct MeshState {
     std::vector<float> verts;
     std::vector<float> colors;
@@ -112,12 +114,20 @@ public:
     void addReferenceImage(const std::string& path);
     void removeReferenceImage(size_t index);
 
+    // Light Sources
+    std::vector<LightSource>& getLights() { return m_lights; }
+    const std::vector<LightSource>& getLights() const { return m_lights; }
+    void addLight(LightType type = LightType::DIRECTIONAL);
+    void addLight(const LightSource& light);
+    void removeLight(size_t index);
+
     bool getVoxelPreview() const { return m_voxelPreview; }
     float getVoxelStep() const { return m_voxelStep; }
     const std::vector<Mesh*>& getVoxelMeshes() const { return m_voxelMeshes; }
     void updateVoxelPreview(float step, const std::vector<Mesh*>& meshes);
 
 private:
+    std::vector<LightSource> m_lights;
     std::vector<ReferenceImage> m_refImages;
     SplitMode m_splitMode = SplitMode::OFF;
     int m_activeViewport = 0;

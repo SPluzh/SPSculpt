@@ -45,6 +45,12 @@ AngleRenderer::~AngleRenderer() {
     if (m_ssaoBlurProgram) glDeleteProgram(m_ssaoBlurProgram);
     if (m_armatureProgram) glDeleteProgram(m_armatureProgram);
     if (m_armatureNormalsProgram) glDeleteProgram(m_armatureNormalsProgram);
+    if (m_shadowProgram) glDeleteProgram(m_shadowProgram);
+    if (m_ssrProgram) glDeleteProgram(m_ssrProgram);
+    if (m_gbufferProgram) glDeleteProgram(m_gbufferProgram);
+    if (m_ssptProgram) glDeleteProgram(m_ssptProgram);
+    if (m_svgfTemporalProgram) glDeleteProgram(m_svgfTemporalProgram);
+    if (m_svgfSpatialProgram) glDeleteProgram(m_svgfSpatialProgram);
 
     if (m_bgVao) glDeleteVertexArrays(1, &m_bgVao);
     if (m_bgVbo) glDeleteBuffers(1, &m_bgVbo);
@@ -90,6 +96,12 @@ AngleRenderer::~AngleRenderer() {
     m_rttNormals.release();
     m_rttSsao.release();
     m_rttSsaoBlur.release();
+    m_rttShadow.release();
+    m_rttSsr.release();
+    m_rttAccumA.release();
+    m_rttAccumB.release();
+    m_rttSvgfA.release();
+    m_rttSvgfB.release();
 }
 
 GLuint AngleRenderer::compileShader(GLenum type, const std::string& source) {
@@ -219,13 +231,20 @@ bool AngleRenderer::init(int width, int height) {
     m_ssaoNormalsProgram = loadAndCompileProgram("normal.vert", "ssao_normals.frag");
     m_ssaoProgram = loadAndCompileProgram("merge.vert", "ssao.frag");
     m_ssaoBlurProgram = loadAndCompileProgram("merge.vert", "ssao_blur.frag");
+    m_shadowProgram = loadAndCompileProgram("shadow.vert", "shadow.frag");
+    m_ssrProgram = loadAndCompileProgram("merge.vert", "ssr.frag");
+    m_gbufferProgram = loadAndCompileProgram("gbuffer.vert", "gbuffer.frag");
+    m_ssptProgram = loadAndCompileProgram("merge.vert", "sspt.frag");
+    m_svgfTemporalProgram = loadAndCompileProgram("merge.vert", "svgf_temporal.frag");
+    m_svgfSpatialProgram = loadAndCompileProgram("merge.vert", "svgf_spatial.frag");
 
     // Check if critical shader programs failed to load/link
     if (!m_bgProgram || !m_selectionProgram || !m_refImageProgram || !m_wireframeProgram ||
         !m_flatProgram || !m_matcapProgram || !m_pbrProgram || !m_wetClayProgram ||
         !m_normalProgram || !m_voxelCheckerProgram || !m_mergeProgram || !m_fxaaProgram ||
         !m_viewport2DProgram || !m_contourProgram || !m_bevelPrepassProgram || !m_bevelFilterProgram ||
-        !m_ssaoNormalsProgram || !m_ssaoProgram || !m_ssaoBlurProgram || !m_armatureProgram || !m_armatureNormalsProgram) {
+        !m_ssaoNormalsProgram || !m_ssaoProgram || !m_ssaoBlurProgram || !m_armatureProgram || !m_armatureNormalsProgram ||
+        !m_shadowProgram || !m_ssrProgram) {
         std::cerr << "Error: One or more shader programs failed to compile and link." << std::endl;
         return false;
     }
@@ -337,6 +356,12 @@ bool AngleRenderer::init(int width, int height) {
     m_rttNormals.init(width, height, true, 0, false);
     m_rttSsao.init(width, height, false);
     m_rttSsaoBlur.init(width, height, false);
+    m_rttShadow.initDepthOnly(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+    m_rttSsr.init(width, height, false);
+    m_rttAccumA.initFloat(width, height, false);
+    m_rttAccumB.initFloat(width, height, false);
+    m_rttSvgfA.initFloat(width, height, false);
+    m_rttSvgfB.initFloat(width, height, false);
 
     return true;
 }
@@ -357,6 +382,11 @@ void AngleRenderer::resize(int width, int height, float dpiScale) {
     m_rttNormals.resize(width, height);
     m_rttSsao.resize(width, height);
     m_rttSsaoBlur.resize(width, height);
+    m_rttSsr.resize(width, height);
+    m_rttAccumA.resize(width, height);
+    m_rttAccumB.resize(width, height);
+    m_rttSvgfA.resize(width, height);
+    m_rttSvgfB.resize(width, height);
 
     updateBackgroundGeometry();
 }
@@ -510,6 +540,48 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
     // 0. Ensure all mesh dirty buffers are uploaded first (must run on the active GL thread/context)
     for (auto* mesh : scene.getMeshes()) {
         uploadIfDirty(mesh);
+    }
+
+    // 0a. Shadow Map Pass
+    if (m_shadowEnabled) {
+        int shadowLightIdx = -1;
+        const auto& lights = scene.getLights();
+        for (int i = 0; i < (int)lights.size(); ++i) {
+            if (lights[i].enabled && lights[i].castShadow && lights[i].type == LightType::DIRECTIONAL) {
+                shadowLightIdx = i;
+                break;
+            }
+        }
+        if (shadowLightIdx >= 0) {
+            glm::vec3 lightDir = glm::normalize(lights[shadowLightIdx].direction);
+            glm::mat4 lightView = glm::lookAt(-lightDir * 50.0f, glm::vec3(0.0f), glm::vec3(0, 1, 0));
+            glm::mat4 lightProj = glm::ortho(-30.0f, 30.0f, -30.0f, 30.0f, 0.1f, 200.0f);
+            m_shadowLightMVP = lightProj * lightView;
+
+            glBindFramebuffer(GL_FRAMEBUFFER, m_rttShadow.fbo);
+            glViewport(0, 0, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+            glClear(GL_DEPTH_BUFFER_BIT);
+            glEnable(GL_DEPTH_TEST);
+
+            if (m_shadowProgram) {
+                glUseProgram(m_shadowProgram);
+                for (auto* mesh : scene.getMeshes()) {
+                    if (mesh->isVisible(0)) {
+                        mesh->updateMatrices(scene.getCamera());
+                        glm::mat4 mvp = m_shadowLightMVP * mesh->matrix;
+                        glUniformMatrix4fv(glGetUniformLocation(m_shadowProgram, "uLightMVP"), 1, GL_FALSE, glm::value_ptr(mvp));
+                        glUniformMatrix4fv(glGetUniformLocation(m_shadowProgram, "uEM"), 1, GL_FALSE, glm::value_ptr(mesh->editMatrix));
+                        auto it = m_meshBuffers.find(mesh);
+                        if (it != m_meshBuffers.end() && it->second->triIndexCount > 0) {
+                            glBindVertexArray(it->second->vao);
+                            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, it->second->eboTriangles);
+                            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(it->second->triIndexCount), GL_UNSIGNED_INT, nullptr);
+                            glBindVertexArray(0);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // 0b. Bevel Pre-pass and Filtering
@@ -687,6 +759,158 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
         glBindVertexArray(0);
         
         glEnable(GL_DEPTH_TEST);
+    }
+
+    // 2c. SSR Pass
+    if (m_useSsr && m_renderMode == RenderMode::PBR && m_ssrProgram) {
+        glBindFramebuffer(GL_FRAMEBUFFER, m_rttSsr.fbo);
+        glViewport(0, 0, m_width, m_height);
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_CULL_FACE);
+        glUseProgram(m_ssrProgram);
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, m_rttOpaque.texture);
+        glUniform1i(glGetUniformLocation(m_ssrProgram, "uColorTex"), 0);
+
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, m_rttOpaque.depth);
+        glUniform1i(glGetUniformLocation(m_ssrProgram, "uDepthTex"), 1);
+
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, m_rttNormals.texture);
+        glUniform1i(glGetUniformLocation(m_ssrProgram, "uNormalsTex"), 2);
+
+        const Camera* cam = scene.getCameraByIndex(0);
+        if (!cam) cam = &scene.getCamera();
+
+        glm::mat4 proj = cam->getProjMatrix();
+        glm::mat4 invProj = glm::inverse(proj);
+
+        glUniformMatrix4fv(glGetUniformLocation(m_ssrProgram, "uProjection"), 1, GL_FALSE, glm::value_ptr(proj));
+        glUniformMatrix4fv(glGetUniformLocation(m_ssrProgram, "uInvProjection"), 1, GL_FALSE, glm::value_ptr(invProj));
+        glUniform1f(glGetUniformLocation(m_ssrProgram, "uMaxDistance"), m_ssrMaxDistance);
+        glUniform1f(glGetUniformLocation(m_ssrProgram, "uIntensity"), m_ssrIntensity);
+        glUniform1i(glGetUniformLocation(m_ssrProgram, "uSplitMode"), m_splitMode ? 1 : 0);
+
+        glBindVertexArray(m_fsqVao);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glBindVertexArray(0);
+
+        glEnable(GL_DEPTH_TEST);
+    }
+
+    // 2d. Screen-Space Path Tracing (SSPT) Pass
+    if (m_renderMode == RenderMode::SSPT && m_ssptProgram) {
+        glBindFramebuffer(GL_FRAMEBUFFER, m_rttNormals.fbo);
+        glViewport(0, 0, m_width, m_height);
+        glClearColor(0.5f, 0.5f, 1.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        renderScenePass(scene, 6); // G-Buffer pass
+
+        RenderTarget& currentAccum = m_accumPing ? m_rttAccumA : m_rttAccumB;
+        RenderTarget& prevAccum = m_accumPing ? m_rttAccumB : m_rttAccumA;
+
+        m_accumFrameCount++;
+        m_frameIndex++;
+
+        glBindFramebuffer(GL_FRAMEBUFFER, currentAccum.fbo);
+        glViewport(0, 0, m_width, m_height);
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_CULL_FACE);
+
+        glUseProgram(m_ssptProgram);
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, m_rttOpaque.texture);
+        glUniform1i(glGetUniformLocation(m_ssptProgram, "uGAlbedo"), 0);
+
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, m_rttNormals.texture);
+        glUniform1i(glGetUniformLocation(m_ssptProgram, "uGNormal"), 1);
+
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, m_rttOpaque.depth);
+        glUniform1i(glGetUniformLocation(m_ssptProgram, "uDepthTex"), 2);
+
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D, prevAccum.texture);
+        glUniform1i(glGetUniformLocation(m_ssptProgram, "uPrevAccum"), 3);
+
+        const Camera* cam = scene.getCameraByIndex(0);
+        if (!cam) cam = &scene.getCamera();
+
+        glm::mat4 proj = cam->getProjMatrix();
+        glm::mat4 invProj = glm::inverse(proj);
+        glm::mat4 view = cam->getViewMatrix();
+        glm::mat4 invView = glm::inverse(view);
+
+        glUniformMatrix4fv(glGetUniformLocation(m_ssptProgram, "uProjection"), 1, GL_FALSE, glm::value_ptr(proj));
+        glUniformMatrix4fv(glGetUniformLocation(m_ssptProgram, "uInvProjection"), 1, GL_FALSE, glm::value_ptr(invProj));
+        glUniformMatrix4fv(glGetUniformLocation(m_ssptProgram, "uView"), 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(glGetUniformLocation(m_ssptProgram, "uInvView"), 1, GL_FALSE, glm::value_ptr(invView));
+        glUniform3fv(glGetUniformLocation(m_ssptProgram, "uSPH"), 9, m_sph);
+        glUniform1i(glGetUniformLocation(m_ssptProgram, "uFrameIndex"), m_frameIndex);
+        glUniform1i(glGetUniformLocation(m_ssptProgram, "uAccumCount"), m_accumFrameCount);
+
+        glBindVertexArray(m_fsqVao);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glBindVertexArray(0);
+
+        if (m_svgfTemporalProgram) {
+            glBindFramebuffer(GL_FRAMEBUFFER, m_rttSvgfA.fbo);
+            glViewport(0, 0, m_width, m_height);
+            glUseProgram(m_svgfTemporalProgram);
+
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, currentAccum.texture);
+            glUniform1i(glGetUniformLocation(m_svgfTemporalProgram, "uCurrentTex"), 0);
+
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, prevAccum.texture);
+            glUniform1i(glGetUniformLocation(m_svgfTemporalProgram, "uPrevAccumTex"), 1);
+
+            glUniform1i(glGetUniformLocation(m_svgfTemporalProgram, "uFrameCount"), m_accumFrameCount);
+
+            glBindVertexArray(m_fsqVao);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+            glBindVertexArray(0);
+        }
+
+        if (m_svgfSpatialProgram) {
+            glBindFramebuffer(GL_FRAMEBUFFER, m_rttSvgfB.fbo);
+            glViewport(0, 0, m_width, m_height);
+            glUseProgram(m_svgfSpatialProgram);
+
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, m_rttSvgfA.texture);
+            glUniform1i(glGetUniformLocation(m_svgfSpatialProgram, "uInputTex"), 0);
+
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, m_rttNormals.texture);
+            glUniform1i(glGetUniformLocation(m_svgfSpatialProgram, "uNormalTex"), 1);
+
+            glActiveTexture(GL_TEXTURE2);
+            glBindTexture(GL_TEXTURE_2D, m_rttOpaque.depth);
+            glUniform1i(glGetUniformLocation(m_svgfSpatialProgram, "uDepthTex"), 2);
+
+            glUniform2f(glGetUniformLocation(m_svgfSpatialProgram, "uTexelSize"), 1.0f / m_width, 1.0f / m_height);
+            glUniform1i(glGetUniformLocation(m_svgfSpatialProgram, "uStepSize"), 1);
+
+            glBindVertexArray(m_fsqVao);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+            glBindVertexArray(0);
+        }
+
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, m_rttSvgfB.fbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_rttOpaque.fbo);
+        glBlitFramebuffer(0, 0, m_width, m_height, 0, 0, m_width, m_height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        m_accumPing = !m_accumPing;
     }
 
     // 3. Transparent Pass
@@ -932,6 +1156,13 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
                 }
             }
         }
+    } else if (passType == 6) {
+        // G-Buffer pass
+        for (auto* mesh : scene.getMeshes()) {
+            if (mesh->isVisible(viewportIdx)) {
+                drawMeshGBuffer(mesh, scene, camera);
+            }
+        }
     }
 }
 
@@ -1076,6 +1307,37 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
         glUniform1i(glGetUniformLocation(program, "uTexture0"), 0);
         glUniform2f(glGetUniformLocation(program, "uEnvSize"), (float)m_envWidth, (float)m_envHeight);
         glUniform1i(glGetUniformLocation(program, "uUseTexture"), (m_textureId != 0 || m_envTexture != 0) ? 1 : 0);
+
+        const auto& lights = scene.getLights();
+        int numLights = std::min((int)lights.size(), 8);
+        glUniform1i(glGetUniformLocation(program, "uNumLights"), numLights);
+
+        glm::mat4 viewMatrix = camera.getViewMatrix();
+
+        for (int i = 0; i < numLights; ++i) {
+            const auto& L = lights[i];
+            std::string base = "uLights[" + std::to_string(i) + "].";
+
+            glm::vec3 viewPos = glm::vec3(viewMatrix * glm::vec4(L.position, 1.0f));
+            glm::vec3 viewDir = glm::normalize(glm::vec3(viewMatrix * glm::vec4(L.direction, 0.0f)));
+
+            glUniform3fv(glGetUniformLocation(program, (base + "position").c_str()), 1, glm::value_ptr(viewPos));
+            glUniform3fv(glGetUniformLocation(program, (base + "direction").c_str()), 1, glm::value_ptr(viewDir));
+            glUniform3fv(glGetUniformLocation(program, (base + "color").c_str()), 1, glm::value_ptr(L.color));
+            glUniform1f(glGetUniformLocation(program, (base + "intensity").c_str()), L.intensity);
+            glUniform1f(glGetUniformLocation(program, (base + "range").c_str()), L.range);
+            glUniform1f(glGetUniformLocation(program, (base + "innerCos").c_str()), std::cos(glm::radians(L.innerAngle)));
+            glUniform1f(glGetUniformLocation(program, (base + "outerCos").c_str()), std::cos(glm::radians(L.outerAngle)));
+            glUniform1i(glGetUniformLocation(program, (base + "type").c_str()), (int)L.type);
+            glUniform1i(glGetUniformLocation(program, (base + "castShadow").c_str()), L.castShadow ? 1 : 0);
+            glUniform1i(glGetUniformLocation(program, (base + "enabled").c_str()), L.enabled ? 1 : 0);
+        }
+
+        glUniform1i(glGetUniformLocation(program, "uShadowEnabled"), m_shadowEnabled ? 1 : 0);
+        glUniformMatrix4fv(glGetUniformLocation(program, "uLightMVP"), 1, GL_FALSE, glm::value_ptr(m_shadowLightMVP));
+        glActiveTexture(GL_TEXTURE4);
+        glBindTexture(GL_TEXTURE_2D, m_rttShadow.depth);
+        glUniform1i(glGetUniformLocation(program, "uShadowMap"), 4);
     } else if (m_shaderType == 1) {
         glUniform1i(glGetUniformLocation(program, "uTexture0"), 0);
         bool hasMatcap = (m_textureId != 0) || (m_matcapIdx >= 0 && m_matcapIdx < static_cast<int>(m_matcaps.size()) && m_matcaps[m_matcapIdx].textureId != 0);
@@ -2101,6 +2363,16 @@ void AngleRenderer::drawFullscreenMerge(const Scene& scene) {
     glUniform1i(glGetUniformLocation(m_mergeProgram, "uSsaoEnabled"), m_useSsao ? 1 : 0);
     glUniform1f(glGetUniformLocation(m_mergeProgram, "uSsaoIntensity"), m_ssaoIntensity);
 
+    glActiveTexture(GL_TEXTURE5);
+    if (m_useSsr && m_renderMode == RenderMode::PBR) {
+        glBindTexture(GL_TEXTURE_2D, m_rttSsr.texture);
+    } else {
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+    glUniform1i(glGetUniformLocation(m_mergeProgram, "uSsrTexture"), 5);
+    glUniform1i(glGetUniformLocation(m_mergeProgram, "uSsrEnabled"), (m_useSsr && m_renderMode == RenderMode::PBR) ? 1 : 0);
+    glUniform1f(glGetUniformLocation(m_mergeProgram, "uSsrIntensity"), m_ssrIntensity);
+
     glBindVertexArray(m_fsqVao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glBindVertexArray(0);
@@ -2627,6 +2899,58 @@ void AngleRenderer::drawMeshNormals(Mesh* mesh, const Scene& scene, const Camera
     glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(1);
+
+    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
+    glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(3);
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
+    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
+
+    glBindVertexArray(0);
+}
+
+void AngleRenderer::drawMeshGBuffer(Mesh* mesh, const Scene& scene, const Camera& camera) {
+    auto it = m_meshBuffers.find(mesh);
+    if (it == m_meshBuffers.end() || it->second->triIndexCount == 0) return;
+    auto& bufs = it->second;
+
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDisable(GL_CULL_FACE);
+
+    if (m_gbufferProgram == 0) return;
+    glUseProgram(m_gbufferProgram);
+
+    mesh->updateMatrices(camera);
+
+    glUniformMatrix4fv(glGetUniformLocation(m_gbufferProgram, "uMV"), 1, GL_FALSE, glm::value_ptr(mesh->mvMatrix));
+    glUniformMatrix4fv(glGetUniformLocation(m_gbufferProgram, "uMVP"), 1, GL_FALSE, glm::value_ptr(mesh->mvpMatrix));
+    glUniformMatrix3fv(glGetUniformLocation(m_gbufferProgram, "uN"), 1, GL_FALSE, glm::value_ptr(mesh->nMatrix));
+    glUniformMatrix4fv(glGetUniformLocation(m_gbufferProgram, "uEM"), 1, GL_FALSE, glm::value_ptr(mesh->editMatrix));
+    glUniformMatrix3fv(glGetUniformLocation(m_gbufferProgram, "uEN"), 1, GL_FALSE, glm::value_ptr(mesh->enMatrix));
+
+    float effectiveAlbedo[3] = { m_albedo[0], m_albedo[1], m_albedo[2] };
+    if (m_useVertexColors) {
+        effectiveAlbedo[0] = -1.0f;
+    }
+    glUniform3fv(glGetUniformLocation(m_gbufferProgram, "uAlbedo"), 1, &effectiveAlbedo[0]);
+    glUniform1f(glGetUniformLocation(m_gbufferProgram, "uRoughness"), m_useVertexMaterials ? -1.0f : m_roughness);
+    glUniform1f(glGetUniformLocation(m_gbufferProgram, "uMetallic"), m_useVertexMaterials ? -1.0f : m_metallic);
+
+    glBindVertexArray(bufs->vao);
+
+    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(1);
+
+    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboColors);
+    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(2);
 
     glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
     glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);

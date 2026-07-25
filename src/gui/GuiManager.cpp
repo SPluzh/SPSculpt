@@ -1637,6 +1637,103 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGui::Unindent();
         }
 
+        ImGui::Separator();
+        ImGui::Text("Advanced GPU Pipeline:");
+
+        int renderMode = (int)renderer.getRenderMode();
+        const char* renderModes[] = { "Real-time PBR", "Progressive Path Tracing (SSPT)" };
+        if (ImGui::Combo("Engine Mode", &renderMode, renderModes, 2)) {
+            renderer.setRenderMode((RenderMode)renderMode);
+        }
+
+        bool shadowEnabled = renderer.getUseShadows();
+        if (ImGui::Checkbox("Shadow Mapping", &shadowEnabled)) {
+            renderer.setUseShadows(shadowEnabled);
+        }
+
+        bool useSsr = renderer.getUseSsr();
+        if (ImGui::Checkbox("Screen Space Reflections (SSR)", &useSsr)) {
+            renderer.setUseSsr(useSsr);
+        }
+        if (useSsr) {
+            ImGui::Indent();
+            float ssrIntensity = renderer.getSsrIntensity();
+            if (ImGui::SliderFloat("SSR Intensity", &ssrIntensity, 0.0f, 2.0f, "%.2f")) {
+                renderer.setSsrIntensity(ssrIntensity);
+            }
+            ImGui::Unindent();
+        }
+
+        ImGui::Separator();
+        if (ImGui::TreeNode("Light Source Management")) {
+            auto& lights = const_cast<Scene&>(scene).getLights();
+            if (ImGui::Button("Add Light", ImVec2(100, 24))) {
+                LightSource newLight;
+                newLight.name = "Light " + std::to_string(lights.size() + 1);
+                newLight.type = LightType::POINT;
+                newLight.position = glm::vec3(0.0f, 10.0f, 10.0f);
+                newLight.color = glm::vec3(1.0f, 1.0f, 1.0f);
+                newLight.intensity = 2.0f;
+                const_cast<Scene&>(scene).addLight(newLight);
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("(Max 8 lights)");
+
+            int lightToRemove = -1;
+            for (size_t i = 0; i < lights.size(); ++i) {
+                auto& L = lights[i];
+                std::string label = L.name + "##light_" + std::to_string(i);
+                if (ImGui::TreeNode(label.c_str())) {
+                    ImGui::Checkbox("Enabled", &L.enabled);
+                    ImGui::SameLine();
+                    ImGui::Checkbox("Cast Shadow", &L.castShadow);
+
+                    int lType = (int)L.type;
+                    const char* lTypeNames[] = { "Directional", "Point", "Spot" };
+                    if (ImGui::Combo("Type", &lType, lTypeNames, 3)) {
+                        L.type = (LightType)lType;
+                    }
+
+                    if (L.type == LightType::DIRECTIONAL) {
+                        ImGui::SliderFloat3("Direction", glm::value_ptr(L.direction), -1.0f, 1.0f);
+                        if (glm::length(L.direction) > 0.001f) {
+                            L.direction = glm::normalize(L.direction);
+                        }
+                    } else {
+                        ImGui::DragFloat3("Position", glm::value_ptr(L.position), 0.5f);
+                        if (L.type == LightType::SPOT) {
+                            ImGui::SliderFloat3("Direction", glm::value_ptr(L.direction), -1.0f, 1.0f);
+                            if (glm::length(L.direction) > 0.001f) {
+                                L.direction = glm::normalize(L.direction);
+                            }
+                            ImGui::SliderFloat("Inner Angle", &L.innerAngle, 1.0f, 89.0f);
+                            ImGui::SliderFloat("Outer Angle", &L.outerAngle, L.innerAngle, 89.0f);
+                        }
+                        ImGui::SliderFloat("Range", &L.range, 1.0f, 100.0f);
+                    }
+
+                    ImGui::ColorEdit3("Color", glm::value_ptr(L.color));
+                    ImGui::SliderFloat("Intensity", &L.intensity, 0.0f, 20.0f);
+
+                    if (lights.size() > 1) {
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.2f, 0.2f, 1.0f));
+                        if (ImGui::Button("Remove Light")) {
+                            lightToRemove = (int)i;
+                        }
+                        ImGui::PopStyleColor();
+                    }
+
+                    ImGui::TreePop();
+                }
+            }
+
+            if (lightToRemove >= 0) {
+                const_cast<Scene&>(scene).removeLight(lightToRemove);
+            }
+
+            ImGui::TreePop();
+        }
+
         bool showContour = renderer.getShowContour();
         if (ImGui::Checkbox("Show Selection Outline", &showContour)) {
             renderer.setShowContour(showContour);
