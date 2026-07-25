@@ -1940,7 +1940,20 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
         if (m_isLassoActive) {
             m_isLassoActive = false;
-            if (m_lassoPoints.size() >= 3 && mesh) {
+
+            float maxDragDistSq = 0.0f;
+            glm::vec2 startPt((float)m_mouseDownX, (float)m_mouseDownY);
+            for (const auto& pt : m_lassoPoints) {
+                glm::vec2 diff = pt - startPt;
+                float d2 = glm::dot(diff, diff);
+                if (d2 > maxDragDistSq) maxDragDistSq = d2;
+            }
+            float maxDragDist = std::sqrt(maxDragDistSq);
+
+            const float LASSO_DRAG_THRESHOLD = 8.0f; // Threshold in pixels to distinguish click vs lasso drag
+            bool isRealDrag = (m_lassoPoints.size() >= 3) && (maxDragDist >= LASSO_DRAG_THRESHOLD);
+
+            if (isRealDrag && mesh) {
                 std::vector<uint32_t> selectedVertices = getVerticesInLasso(mesh, camera);
                 if (m_isMaskLasso) {
                     scene.pushHistoryState();
@@ -1974,8 +1987,8 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                         mesh->isDirty = true;
                     }
                 }
-            } else if (m_lassoPoints.size() < 3) {
-                // Click action
+            } else {
+                // Click action (or micro-drag gesture under threshold)
                 Ray ray = camera.getRay((float)event.button.x, (float)event.button.y);
                 bool hitMesh = false;
                 uint32_t closestVert = 0xffffffff;
@@ -2056,6 +2069,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
                 if (m_isMaskLasso) {
                     if (!hitMesh && mesh) {
+                        std::cout << "[MaskClick] Canvas Ctrl+Click detected (maxDragDist=" << maxDragDist << "px). Inverting mask..." << std::endl;
                         scene.pushHistoryState();
                         invertMask(mesh);
                     } else if (hitMesh && mesh) {
@@ -2093,7 +2107,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             m_hasAnyValidIntersection = false;
             int dragDistX = std::abs(event.button.x - m_mouseDownX);
             int dragDistY = std::abs(event.button.y - m_mouseDownY);
-            bool wasClick = (dragDistX <= 3 && dragDistY <= 3);
+            bool wasClick = (dragDistX <= 8 && dragDistY <= 8);
 
             if (wasClick && (m_currentBrush == BRUSH_MASK || (SDL_GetModState() & KMOD_CTRL)) && mesh) {
                 std::cout << "[MaskClick] Ctrl+Click mask action detected. Undoing initial click stroke..." << std::endl;
