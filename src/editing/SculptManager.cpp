@@ -1453,7 +1453,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
         if (event.button.button == SDL_BUTTON_LEFT) {
             SDL_Keymod mod = SDL_GetModState();
 
-            if (mod & KMOD_ALT) {
+            if ((mod & KMOD_ALT) && !(mod & KMOD_CTRL)) {
                 float minT = std::numeric_limits<float>::infinity();
                 Mesh* closestMesh = nullptr;
 
