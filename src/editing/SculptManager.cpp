@@ -1971,8 +1971,8 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     }
                     mesh->isDirty = true;
                 } else {
+                    scene.pushHistoryState();
                     if (!selectedVertices.empty()) {
-                        scene.pushHistoryState();
                         bool hideUnselected = !m_lassoAlt;
                         if (hideUnselected) {
                             std::fill(mesh->vertVisible.begin(), mesh->vertVisible.end(), 0);
@@ -1984,8 +1984,11 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                                 mesh->vertVisible[vid] = 0;
                             }
                         }
-                        mesh->isDirty = true;
+                    } else {
+                        // Ctrl + Shift + Click Drag on empty space -> clear hiding (show all)
+                        std::fill(mesh->vertVisible.begin(), mesh->vertVisible.end(), 1);
                     }
+                    mesh->isDirty = true;
                 }
             } else {
                 // Click action (or micro-drag gesture under threshold)
@@ -2090,8 +2093,11 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     }
                 } else {
                     if (!hitMesh && mesh) {
+                        std::cout << "[VisibilityClick] Canvas Ctrl+Shift+Click detected (maxDragDist=" << maxDragDist << "px). Inverting visibility..." << std::endl;
                         scene.pushHistoryState();
-                        std::fill(mesh->vertVisible.begin(), mesh->vertVisible.end(), 1);
+                        for (size_t i = 0; i < mesh->vertVisible.size(); ++i) {
+                            mesh->vertVisible[i] = mesh->vertVisible[i] ? 0 : 1;
+                        }
                         mesh->isDirty = true;
                     }
                 }
