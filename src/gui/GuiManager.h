@@ -42,6 +42,7 @@ private:
     bool m_showGizmoCube = true;
     bool m_showMeshInfo = true;
     bool m_showTabletDiagPanel = false;
+    bool m_showUndoDiagPanel = false;
     bool m_showFloatingIsland = true;
 
     // FPS calculation variables
@@ -102,6 +103,7 @@ private:
     bool m_savedUseVertexMaterials = false;
     void takeScreenshot(const Scene& scene, AngleRenderer& renderer);
     void drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer);
+    void drawUndoDiagPanel(Scene& scene);
 
 public:
     GuiManager();
@@ -131,6 +133,7 @@ public:
     void toggleReferenceImagesPanel() { m_showReferenceImagesPanel = !m_showReferenceImagesPanel; }
     void toggleGizmoCube() { m_showGizmoCube = !m_showGizmoCube; }
     void toggleMeshInfo() { m_showMeshInfo = !m_showMeshInfo; }
+    void toggleUndoDiagPanel() { m_showUndoDiagPanel = !m_showUndoDiagPanel; }
     void toggleFloatingIsland() { m_showFloatingIsland = !m_showFloatingIsland; }
 
     bool getShowTopologyPanel() const { return m_showTopologyPanel; }

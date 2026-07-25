@@ -134,35 +134,37 @@ void Scene::restoreState(const HistoryState& hs) {
     }
 }
 
-void Scene::pushHistoryState() {
-    m_redoStack.clear();
-    m_undoStack.push_back(saveCurrentState());
-    if (m_undoStack.size() > m_maxHistoryStates) {
-        m_undoStack.erase(m_undoStack.begin());
+#include "editing/undo/UndoManager.h"
+
+Mesh* Scene::getMeshById(uint32_t id) const {
+    for (auto* m : m_meshes) {
+        if (m && m->m_id == id) return m;
     }
+    return nullptr;
+}
+
+void Scene::pushHistoryState() {
+    g_undoManager.pushLegacyState(*this);
 }
 
 void Scene::undo() {
-    if (m_undoStack.empty()) return;
-    m_redoStack.push_back(saveCurrentState());
-    
-    HistoryState prevState = m_undoStack.back();
-    m_undoStack.pop_back();
-    restoreState(prevState);
+    g_undoManager.undo(*this);
 }
 
 void Scene::redo() {
-    if (m_redoStack.empty()) return;
-    m_undoStack.push_back(saveCurrentState());
-    
-    HistoryState nextState = m_redoStack.back();
-    m_redoStack.pop_back();
-    restoreState(nextState);
+    g_undoManager.redo(*this);
 }
 
 void Scene::clearHistory() {
-    m_undoStack.clear();
-    m_redoStack.clear();
+    g_undoManager.clear();
+}
+
+bool Scene::canUndo() const {
+    return g_undoManager.canUndo();
+}
+
+bool Scene::canRedo() const {
+    return g_undoManager.canRedo();
 }
 
 void Scene::addMesh(Mesh* m) {

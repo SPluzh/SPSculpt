@@ -40,14 +40,12 @@ private:
     int m_selectedIdx = -1;
     Camera m_camera;
 
-    std::vector<HistoryState> m_undoStack;
-    std::vector<HistoryState> m_redoStack;
-    size_t m_maxHistoryStates = 30;
-
+    friend class UndoManager;
     HistoryState saveCurrentState() const;
     void restoreState(const HistoryState& state);
 
 public:
+    Mesh* getMeshById(uint32_t id) const;
     enum class SplitMode {
         OFF = 0,
         MIRROR = 1,
@@ -105,8 +103,8 @@ public:
     void undo();
     void redo();
     void clearHistory();
-    bool canUndo() const { return !m_undoStack.empty(); }
-    bool canRedo() const { return !m_redoStack.empty(); }
+    bool canUndo() const;
+    bool canRedo() const;
 
     // Reference Images
     std::vector<ReferenceImage>& getReferenceImages() { return m_refImages; }

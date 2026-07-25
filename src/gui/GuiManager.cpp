@@ -5,6 +5,7 @@
 #include "files/FileManager.h"
 #include "brushes/BrushPresetManager.h"
 #include "editing/ArmatureTool.h"
+#include "editing/undo/UndoManager.h"
 #include <imgui.h>
 #include "gui/IconsLucide.h"
 #include "gui/lucide_font.h"
@@ -409,6 +410,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGui::MenuItem("Reference Images", nullptr, &m_showReferenceImagesPanel);
             ImGui::MenuItem("Navigation Cube", nullptr, &m_showGizmoCube);
             ImGui::MenuItem("Mesh Statistics & FPS", nullptr, &m_showMeshInfo);
+            ImGui::MenuItem("Undo Diagnostics", nullptr, &m_showUndoDiagPanel);
             ImGui::MenuItem("Floating Island HUD", nullptr, &m_showFloatingIsland);
 #ifdef _WIN32
             ImGui::MenuItem("Tablet Diagnostics", nullptr, &m_showTabletDiagPanel);
@@ -2570,6 +2572,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     }
 #endif
 
+    drawUndoDiagPanel(scene);
+
     if (sculpt.getBrush() == BRUSH_MASK_GRADIENT_BLUR && sculpt.getGradActive()) {
         ImDrawList* drawList = ImGui::GetForegroundDrawList();
         ImVec2 pA = ImVec2(sculpt.getGradPointA().x, sculpt.getGradPointA().y);
@@ -3763,6 +3767,44 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
 
     ImGui::PopStyleVar(3);
     ImGui::PopStyleColor(2);
+}
+
+void GuiManager::drawUndoDiagPanel(Scene& scene) {
+    if (!m_showUndoDiagPanel) return;
+
+    ImGui::Begin("Undo System Diagnostics", &m_showUndoDiagPanel, ImGuiWindowFlags_AlwaysAutoResize);
+
+    size_t memBytes = g_undoManager.getTotalMemoryUsage();
+    double memMB = (double)memBytes / (1024.0 * 1024.0);
+    double maxMemMB = (double)g_undoManager.getMaxMemory() / (1024.0 * 1024.0);
+
+    ImGui::Text("Memory Usage: %.2f MB / %.0f MB", memMB, maxMemMB);
+    float progress = (float)(memBytes / (double)g_undoManager.getMaxMemory());
+    if (progress < 0.0f) progress = 0.0f;
+    if (progress > 1.0f) progress = 1.0f;
+    ImGui::ProgressBar(progress, ImVec2(-1, 0));
+
+    ImGui::Separator();
+    ImGui::Text("Undo Stack Count: %zu / %zu", g_undoManager.getUndoCount(), g_undoManager.getMaxEntries());
+    if (g_undoManager.canUndo()) {
+        ImGui::Text("Next Undo: %s", g_undoManager.getUndoDescription().c_str());
+    } else {
+        ImGui::TextDisabled("Next Undo: None");
+    }
+
+    ImGui::Text("Redo Stack Count: %zu", g_undoManager.getRedoCount());
+    if (g_undoManager.canRedo()) {
+        ImGui::Text("Next Redo: %s", g_undoManager.getRedoDescription().c_str());
+    } else {
+        ImGui::TextDisabled("Next Redo: None");
+    }
+
+    ImGui::Separator();
+    if (ImGui::Button("Clear History")) {
+        g_undoManager.clear();
+    }
+
+    ImGui::End();
 }
 
 
