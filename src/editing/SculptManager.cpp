@@ -3,6 +3,8 @@
 #include "sculpt/SculptEngine.h"
 #include "mesh/NormalCalc.h"
 #include "editing/ArmatureTool.h"
+#include "editing/undo/UndoManager.h"
+#include "common/Logger.h"
 #include <glm/gtc/matrix_transform.hpp>
 #ifdef _WIN32
 #include "platform/TabletInput.h"
@@ -14,6 +16,7 @@
 #include <iostream>
 #include <limits>
 #include <cmath>
+
 
 static bool rayTriangleIntersect(
     const glm::vec3& rayOrigin, const glm::vec3& rayDir,
@@ -1179,6 +1182,13 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             m_cachedAreaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
         }
 
+        bool strokeAffectsColors = (activeBrush == BRUSH_PAINT && getCurrentSettings().writeAlbedo);
+        bool strokeAffectsMaterials = (activeBrush == BRUSH_PAINT && (getCurrentSettings().writeRoughness || getCurrentSettings().writeMetalness)) ||
+                                       (activeBrush == BRUSH_MASK || activeBrush == BRUSH_MASK_GRADIENT_BLUR);
+
+        // Record initial vertices before modification for primary pass
+        g_undoManager.recordAffectedVertices(scene, mesh->m_id, pickedVertices, strokeAffectsColors, strokeAffectsMaterials);
+
         // Primary pass
         doStrokePass(
             scene,
@@ -1269,6 +1279,9 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 else if (m_symAxis == 1) symIntersectionNormal.y = -symIntersectionNormal.y;
                 else if (m_symAxis == 2) symIntersectionNormal.z = -symIntersectionNormal.z;
 
+                // Record initial vertices before modification for symmetry pass
+                g_undoManager.recordAffectedVertices(scene, mesh->m_id, symVerts, strokeAffectsColors, strokeAffectsMaterials);
+
                 doStrokePass(
                     scene,
                     mesh,
@@ -1287,6 +1300,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             }
         }
     }
+
     m_firstStrokeFrame = false;
 }
 
@@ -1753,7 +1767,11 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             }
 
             if (hitMesh) {
-                scene.pushHistoryState();
+                bool strokeAffectsColors = (m_currentBrush == BRUSH_PAINT && getCurrentSettings().writeAlbedo);
+                bool strokeAffectsMaterials = (m_currentBrush == BRUSH_PAINT && (getCurrentSettings().writeRoughness || getCurrentSettings().writeMetalness)) ||
+                                               (m_currentBrush == BRUSH_MASK || m_currentBrush == BRUSH_MASK_GRADIENT_BLUR);
+                g_undoManager.beginSculptStroke(scene, mesh->m_id, {}, strokeAffectsColors, strokeAffectsMaterials, "Sculpt Stroke");
+
                 m_isSculpting = true;
                 m_currentIntersectionValid = true;
                 m_firstStrokeFrame = true;
@@ -2116,17 +2134,18 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             bool wasClick = (dragDistX <= 8 && dragDistY <= 8);
 
             if (wasClick && (m_currentBrush == BRUSH_MASK || (SDL_GetModState() & KMOD_CTRL)) && mesh) {
-                std::cout << "[MaskClick] Ctrl+Click mask action detected. Undoing initial click stroke..." << std::endl;
-                // Undo the tiny stroke we started on mouse down
-                scene.undo();
+                sculpt_log("[MaskClick] Ctrl+Click mask action detected. Undoing initial click stroke...\n");
+                g_undoManager.endSculptStroke(scene);
+                if (g_undoManager.canUndo()) {
+                    g_undoManager.undo(scene);
+                }
 
-                // CRITICAL FIX: scene.undo() recreates Mesh instances, invalidating the local 'mesh' pointer!
+                // Mesh pointer stays valid when using delta UndoManager, but re-get just in case
                 mesh = scene.getSelected();
                 if (!mesh) {
-                    std::cout << "[MaskClick] Error: Selected mesh is null after undo!" << std::endl;
+                    sculpt_log("[MaskClick] Error: Selected mesh is null after undo!\n");
                     return;
                 }
-                std::cout << "[MaskClick] Restored mesh pointer after undo: nbVerts=" << mesh->nbVerts << std::endl;
 
                 // Compute click action on the mesh at click coordinate
                 Ray ray = camera.getRay((float)event.button.x, (float)event.button.y);
@@ -2210,10 +2229,9 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     bool ctrlKey = (mod & KMOD_CTRL) != 0;
                     bool altKey = (mod & KMOD_ALT) != 0;
 
-                    std::cout << "[MaskClick] Ray hit mesh. closestVert=" << closestVert << " bestMask=" << bestMask << std::endl;
+                    sculpt_log("[MaskClick] Ray hit mesh. closestVert=%u bestMask=%.2f\n", closestVert, bestMask);
                     scene.pushHistoryState();
 
-                    // Re-fetch mesh pointer after pushing history state just to be 100% safe
                     mesh = scene.getSelected();
                     if (!mesh) return;
 
@@ -2227,13 +2245,15 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                         sharpenMask(mesh);
                     }
                 } else {
-                    std::cout << "[MaskClick] Ray missed mesh. Inverting mask..." << std::endl;
+                    sculpt_log("[MaskClick] Ray missed mesh. Inverting mask...\n");
                     scene.pushHistoryState();
                     mesh = scene.getSelected();
                     if (mesh) {
                         invertMask(mesh);
                     }
                 }
+            } else {
+                g_undoManager.endSculptStroke(scene);
             }
         }
         m_cameraController.handleEvent(event, camera, scene.getMeshes());

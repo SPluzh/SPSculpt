@@ -2,6 +2,7 @@
 #include "scene/Scene.h"
 #include "mesh/Mesh.h"
 #include "mesh/NormalCalc.h"
+#include "common/Logger.h"
 #include <algorithm>
 #include <unordered_set>
 
@@ -25,6 +26,7 @@ void UndoManager::beginSculptStroke(Scene& scene,
         m_activeSculptEntry->description = description;
         m_activeMeshDeltaMap.clear();
         s_recordedVertSets.clear();
+        sculpt_log_lvl(LogLevel::Debug, "[Undo] Begin sculpt stroke: '%s'\n", description.c_str());
     }
     recordAffectedVertices(scene, meshId, affectedVerts, affectsColors, affectsMaterials);
 }
@@ -86,10 +88,12 @@ void UndoManager::endSculptStroke(Scene& scene) {
     if (!m_activeSculptEntry) return;
 
     bool hasAnyChange = false;
+    size_t totalRecordedVerts = 0;
     for (auto& delta : m_activeSculptEntry->deltas) {
         Mesh* mesh = scene.getMeshById(delta.meshId);
         if (!mesh) continue;
 
+        totalRecordedVerts += delta.indices.size();
         delta.nextVerts.clear();
         delta.nextVerts.reserve(delta.indices.size() * 3);
         if (delta.hasColors) {
@@ -126,8 +130,11 @@ void UndoManager::endSculptStroke(Scene& scene) {
     }
 
     if (hasAnyChange && !m_activeSculptEntry->deltas.empty()) {
+        sculpt_log_lvl(LogLevel::Info, "[Undo] Sculpt stroke completed: '%s' (%zu verts recorded, size: %.2f KB)\n",
+                       m_activeSculptEntry->description.c_str(), totalRecordedVerts, m_activeSculptEntry->getMemoryUsage() / 1024.0f);
         pushEntry(std::move(m_activeSculptEntry));
     } else {
+        sculpt_log_lvl(LogLevel::Debug, "[Undo] Sculpt stroke canceled or no changes detected\n");
         m_activeSculptEntry.reset();
     }
 
@@ -165,6 +172,8 @@ void UndoManager::pushTopologyChange(Scene& scene,
     operation();
 
     entry->after = scene.saveCurrentState();
+    sculpt_log_lvl(LogLevel::Info, "[Undo] Topology change pushed: '%s' (size: %.2f MB)\n",
+                   description.c_str(), entry->getMemoryUsage() / (1024.0f * 1024.0f));
     pushEntry(std::move(entry));
 }
 
@@ -178,6 +187,7 @@ void UndoManager::pushMetaChange(Scene& scene,
     operation();
 
     entry->after = scene.saveCurrentState();
+    sculpt_log_lvl(LogLevel::Info, "[Undo] Meta change pushed: '%s'\n", description.c_str());
     pushEntry(std::move(entry));
 }
 
@@ -189,16 +199,22 @@ void UndoManager::pushEntry(std::unique_ptr<UndoEntry> entry) {
     m_redoStack.clear();
     m_undoStack.push_back(std::move(entry));
     trimToMemoryLimit();
+    sculpt_log_lvl(LogLevel::Debug, "[Undo] Stack size: %zu undo, %zu redo (total mem: %.2f MB)\n",
+                   m_undoStack.size(), m_redoStack.size(), getTotalMemoryUsage() / (1024.0f * 1024.0f));
 }
 
 void UndoManager::trimToMemoryLimit() {
     while (m_undoStack.size() > m_maxEntries) {
+        sculpt_log_lvl(LogLevel::Warning, "[Undo] Trimming stack due to maxEntries limit (%zu entries)\n", m_maxEntries);
         m_undoStack.pop_front();
     }
     while (getTotalMemoryUsage() > m_maxMemory && !m_undoStack.empty()) {
+        sculpt_log_lvl(LogLevel::Warning, "[Undo] Trimming stack due to maxMemory limit (%.2f MB / %.2f MB)\n",
+                       getTotalMemoryUsage() / (1024.0f * 1024.0f), m_maxMemory / (1024.0f * 1024.0f));
         m_undoStack.pop_front();
     }
 }
+
 
 size_t UndoManager::getTotalMemoryUsage() const {
     size_t total = 0;
@@ -306,23 +322,32 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
 }
 
 void UndoManager::undo(Scene& scene) {
-    if (m_undoStack.empty()) return;
+    if (m_undoStack.empty()) {
+        sculpt_log_lvl(LogLevel::Warning, "[Undo] Nothing to undo!\n");
+        return;
+    }
 
     auto entry = std::move(m_undoStack.back());
     m_undoStack.pop_back();
 
+    sculpt_log_lvl(LogLevel::Info, "[Undo] Executing UNDO: '%s'\n", entry->getDescription().c_str());
     applyEntry(entry.get(), scene, true);
 
     m_redoStack.push_back(std::move(entry));
 }
 
 void UndoManager::redo(Scene& scene) {
-    if (m_redoStack.empty()) return;
+    if (m_redoStack.empty()) {
+        sculpt_log_lvl(LogLevel::Warning, "[Undo] Nothing to redo!\n");
+        return;
+    }
 
     auto entry = std::move(m_redoStack.back());
     m_redoStack.pop_back();
 
+    sculpt_log_lvl(LogLevel::Info, "[Undo] Executing REDO: '%s'\n", entry->getDescription().c_str());
     applyEntry(entry.get(), scene, false);
 
     m_undoStack.push_back(std::move(entry));
 }
+

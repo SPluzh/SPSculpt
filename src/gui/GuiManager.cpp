@@ -410,7 +410,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGui::MenuItem("Reference Images", nullptr, &m_showReferenceImagesPanel);
             ImGui::MenuItem("Navigation Cube", nullptr, &m_showGizmoCube);
             ImGui::MenuItem("Mesh Statistics & FPS", nullptr, &m_showMeshInfo);
-            ImGui::MenuItem("Undo Diagnostics", nullptr, &m_showUndoDiagPanel);
+            ImGui::MenuItem("Undo History", nullptr, &m_showUndoDiagPanel);
+            ImGui::MenuItem("Debug Log", nullptr, &m_showDebugLogPanel);
             ImGui::MenuItem("Floating Island HUD", nullptr, &m_showFloatingIsland);
 #ifdef _WIN32
             ImGui::MenuItem("Tablet Diagnostics", nullptr, &m_showTabletDiagPanel);
@@ -2580,8 +2581,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     }
 #endif
 
-    drawUndoDiagPanel(scene);
-
     if (sculpt.getBrush() == BRUSH_MASK_GRADIENT_BLUR && sculpt.getGradActive()) {
         ImDrawList* drawList = ImGui::GetForegroundDrawList();
         ImVec2 pA = ImVec2(sculpt.getGradPointA().x, sculpt.getGradPointA().y);
@@ -3152,6 +3151,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     }
 
     drawFloatingIslandHUD(sculpt, scene, renderer);
+    drawUndoDiagPanel(scene);
+    drawDebugLogPanel();
 
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
@@ -3458,6 +3459,8 @@ bool GuiManager::saveSettings(const std::string& filepath) {
     out << "showGizmoCube=" << (m_showGizmoCube ? "true" : "false") << "\n";
     out << "showMeshInfo=" << (m_showMeshInfo ? "true" : "false") << "\n";
     out << "showTabletDiagPanel=" << (m_showTabletDiagPanel ? "true" : "false") << "\n";
+    out << "showUndoDiagPanel=" << (m_showUndoDiagPanel ? "true" : "false") << "\n";
+    out << "showDebugLogPanel=" << (m_showDebugLogPanel ? "true" : "false") << "\n";
     out << "showFloatingIsland=" << (m_showFloatingIsland ? "true" : "false") << "\n";
 
     out << "[General]\n";
@@ -3535,6 +3538,8 @@ bool GuiManager::loadSettings(const std::string& filepath) {
         getBoolParam("showGizmoCube", m_showGizmoCube);
         getBoolParam("showMeshInfo", m_showMeshInfo);
         getBoolParam("showTabletDiagPanel", m_showTabletDiagPanel);
+        getBoolParam("showUndoDiagPanel", m_showUndoDiagPanel);
+        getBoolParam("showDebugLogPanel", m_showDebugLogPanel);
         getBoolParam("showFloatingIsland", m_showFloatingIsland);
     }
 
@@ -3780,39 +3785,161 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
 void GuiManager::drawUndoDiagPanel(Scene& scene) {
     if (!m_showUndoDiagPanel) return;
 
-    ImGui::Begin("Undo System Diagnostics", &m_showUndoDiagPanel, ImGuiWindowFlags_AlwaysAutoResize);
+    float scale = getUiScale();
+    ImGui::SetNextWindowSize(ImVec2(360.0f * scale, 420.0f * scale), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Undo History", &m_showUndoDiagPanel)) {
+        ImGui::End();
+        return;
+    }
+
+    // Header action buttons
+    bool canUndo = g_undoManager.canUndo();
+    bool canRedo = g_undoManager.canRedo();
+
+    if (!canUndo) ImGui::BeginDisabled();
+    if (ImGui::Button(ICON_LC_UNDO " Undo")) {
+        g_undoManager.undo(scene);
+    }
+    if (!canUndo) ImGui::EndDisabled();
+
+    ImGui::SameLine();
+    if (!canRedo) ImGui::BeginDisabled();
+    if (ImGui::Button(ICON_LC_REDO " Redo")) {
+        g_undoManager.redo(scene);
+    }
+    if (!canRedo) ImGui::EndDisabled();
+
+    ImGui::SameLine();
+    if (ImGui::Button(ICON_LC_TRASH_2 " Clear")) {
+        g_undoManager.clear();
+    }
 
     size_t memBytes = g_undoManager.getTotalMemoryUsage();
     double memMB = (double)memBytes / (1024.0 * 1024.0);
     double maxMemMB = (double)g_undoManager.getMaxMemory() / (1024.0 * 1024.0);
 
-    ImGui::Text("Memory Usage: %.2f MB / %.0f MB", memMB, maxMemMB);
+    ImGui::Separator();
+    ImGui::Text("Memory: %.2f MB / %.0f MB", memMB, maxMemMB);
     float progress = (float)(memBytes / (double)g_undoManager.getMaxMemory());
     if (progress < 0.0f) progress = 0.0f;
     if (progress > 1.0f) progress = 1.0f;
-    ImGui::ProgressBar(progress, ImVec2(-1, 0));
+    ImGui::ProgressBar(progress, ImVec2(-1, 6.0f * scale));
 
     ImGui::Separator();
-    ImGui::Text("Undo Stack Count: %zu / %zu", g_undoManager.getUndoCount(), g_undoManager.getMaxEntries());
-    if (g_undoManager.canUndo()) {
-        ImGui::Text("Next Undo: %s", g_undoManager.getUndoDescription().c_str());
-    } else {
-        ImGui::TextDisabled("Next Undo: None");
-    }
 
-    ImGui::Text("Redo Stack Count: %zu", g_undoManager.getRedoCount());
-    if (g_undoManager.canRedo()) {
-        ImGui::Text("Next Redo: %s", g_undoManager.getRedoDescription().c_str());
-    } else {
-        ImGui::TextDisabled("Next Redo: None");
-    }
+    const auto& undoStack = g_undoManager.getUndoStack();
+    const auto& redoStack = g_undoManager.getRedoStack();
 
-    ImGui::Separator();
-    if (ImGui::Button("Clear History")) {
-        g_undoManager.clear();
+    ImGui::Text("Undo Entries: %zu | Redo Entries: %zu", undoStack.size(), redoStack.size());
+
+    if (ImGui::BeginChild("UndoHistoryList", ImVec2(0, 0), true)) {
+        // Render Active Undo Stack items
+        for (int i = 0; i < (int)undoStack.size(); ++i) {
+            const auto& entry = undoStack[i];
+            bool isCurrentTop = (i == (int)undoStack.size() - 1);
+
+            std::string label = (isCurrentTop ? "-> [" : "   [") + std::to_string(i + 1) + "] " + entry->getDescription();
+            size_t entryMem = entry->getMemoryUsage();
+            std::string sizeStr = (entryMem >= 1024 * 1024) ? 
+                (std::to_string(entryMem / (1024 * 1024)) + " MB") : 
+                (std::to_string(entryMem / 1024) + " KB");
+
+            if (isCurrentTop) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 0.95f, 0.4f, 1.0f));
+            }
+
+            ImGui::PushID(i);
+            if (ImGui::Selectable(label.c_str(), isCurrentTop)) {
+                int stepsToUndo = (int)undoStack.size() - 1 - i;
+                for (int s = 0; s < stepsToUndo; ++s) {
+                    g_undoManager.undo(scene);
+                }
+            }
+            if (ImGui::IsItemHovered()) {
+                const char* typeStr = (entry->getType() == UndoEntryType::Sculpt) ? "Delta Sculpt" :
+                                      (entry->getType() == UndoEntryType::Topology) ? "Topology Snapshot" : "Meta Snapshot";
+                ImGui::SetTooltip("Size: %s | Type: %s\nClick to jump to this undo state", sizeStr.c_str(), typeStr);
+            }
+            ImGui::PopID();
+
+            if (isCurrentTop) {
+                ImGui::PopStyleColor();
+            }
+        }
+
+        // Render Redo Stack items
+        if (!redoStack.empty()) {
+            ImGui::Separator();
+            ImGui::TextDisabled("--- REDO STACK ---");
+
+            for (int i = (int)redoStack.size() - 1; i >= 0; --i) {
+                const auto& entry = redoStack[i];
+                std::string label = "   (Redo) " + entry->getDescription();
+
+                ImGui::PushID(1000000 + i);
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+                if (ImGui::Selectable(label.c_str(), false)) {
+                    int stepsToRedo = (int)redoStack.size() - i;
+                    for (int s = 0; s < stepsToRedo; ++s) {
+                        g_undoManager.redo(scene);
+                    }
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Click to redo to this step");
+                }
+                ImGui::PopStyleColor();
+                ImGui::PopID();
+            }
+        }
+
+        ImGui::EndChild();
     }
 
     ImGui::End();
 }
+
+void GuiManager::drawDebugLogPanel() {
+    if (!m_showDebugLogPanel) return;
+
+    float scale = getUiScale();
+    ImGui::SetNextWindowSize(ImVec2(550.0f * scale, 320.0f * scale), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Debug Log", &m_showDebugLogPanel)) {
+        ImGui::End();
+        return;
+    }
+
+    if (ImGui::Button(ICON_LC_TRASH_2 " Clear Log")) {
+        Logger::instance().clear();
+    }
+    ImGui::SameLine();
+    static bool autoScroll = true;
+    ImGui::Checkbox("Auto-scroll", &autoScroll);
+
+    ImGui::Separator();
+
+    if (ImGui::BeginChild("LogRegion", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar)) {
+        const auto& entries = Logger::instance().getEntries();
+        for (const auto& entry : entries) {
+            ImVec4 color;
+            switch (entry.level) {
+                case LogLevel::Debug:   color = ImVec4(0.65f, 0.65f, 0.65f, 1.0f); break;
+                case LogLevel::Info:    color = ImVec4(0.85f, 0.95f, 1.0f, 1.0f); break;
+                case LogLevel::Warning: color = ImVec4(1.0f, 0.85f, 0.2f, 1.0f); break;
+                case LogLevel::Error:   color = ImVec4(1.0f, 0.35f, 0.35f, 1.0f); break;
+            }
+            ImGui::PushStyleColor(ImGuiCol_Text, color);
+            ImGui::Text("[%s] %s", entry.timestamp.c_str(), entry.message.c_str());
+            ImGui::PopStyleColor();
+        }
+
+        if (autoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
+            ImGui::SetScrollHereY(1.0f);
+        }
+        ImGui::EndChild();
+    }
+
+    ImGui::End();
+}
+
 
 
