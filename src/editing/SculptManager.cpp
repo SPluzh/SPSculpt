@@ -1950,7 +1950,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                         for (uint32_t vid : selectedVertices) {
                             materials[vid * 3 + 2] = maskVal;
                         }
-                        mesh->isVertexDirty = true;
+                        mesh->isMaterialDirty = true;
                         mesh->dirtyVertMin = 0;
                         mesh->dirtyVertMax = mesh->nbVerts - 1;
                     } else {
@@ -2095,9 +2095,18 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             int dragDistY = std::abs(event.button.y - m_mouseDownY);
             bool wasClick = (dragDistX <= 3 && dragDistY <= 3);
 
-            if (wasClick && m_currentBrush == BRUSH_MASK && mesh) {
+            if (wasClick && (m_currentBrush == BRUSH_MASK || (SDL_GetModState() & KMOD_CTRL)) && mesh) {
+                std::cout << "[MaskClick] Ctrl+Click mask action detected. Undoing initial click stroke..." << std::endl;
                 // Undo the tiny stroke we started on mouse down
                 scene.undo();
+
+                // CRITICAL FIX: scene.undo() recreates Mesh instances, invalidating the local 'mesh' pointer!
+                mesh = scene.getSelected();
+                if (!mesh) {
+                    std::cout << "[MaskClick] Error: Selected mesh is null after undo!" << std::endl;
+                    return;
+                }
+                std::cout << "[MaskClick] Restored mesh pointer after undo: nbVerts=" << mesh->nbVerts << std::endl;
 
                 // Compute click action on the mesh at click coordinate
                 Ray ray = camera.getRay((float)event.button.x, (float)event.button.y);
@@ -2181,7 +2190,13 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     bool ctrlKey = (mod & KMOD_CTRL) != 0;
                     bool altKey = (mod & KMOD_ALT) != 0;
 
+                    std::cout << "[MaskClick] Ray hit mesh. closestVert=" << closestVert << " bestMask=" << bestMask << std::endl;
                     scene.pushHistoryState();
+
+                    // Re-fetch mesh pointer after pushing history state just to be 100% safe
+                    mesh = scene.getSelected();
+                    if (!mesh) return;
+
                     if (bestMask < 1.0f) {
                         if (ctrlKey && altKey) {
                             sharpenMask(mesh);
@@ -2190,6 +2205,13 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                         }
                     } else {
                         sharpenMask(mesh);
+                    }
+                } else {
+                    std::cout << "[MaskClick] Ray missed mesh. Inverting mask..." << std::endl;
+                    scene.pushHistoryState();
+                    mesh = scene.getSelected();
+                    if (mesh) {
+                        invertMask(mesh);
                     }
                 }
             }
@@ -2690,30 +2712,51 @@ bool SculptManager::loadSettings(const std::string& filepath) {
 
 void SculptManager::clearMask(Mesh* mesh) {
     if (!mesh) return;
+    if (mesh->materials.size() < (size_t)mesh->nbVerts * 3) return;
     float* materials = mesh->materials.data();
     int nbVerts = mesh->nbVerts;
     for (int i = 0; i < nbVerts; ++i) {
         materials[i * 3 + 2] = 1.0f;
     }
-    mesh->isVertexDirty = true;
+    mesh->isMaterialDirty = true;
     mesh->dirtyVertMin = 0;
     mesh->dirtyVertMax = nbVerts - 1;
 }
 
 void SculptManager::invertMask(Mesh* mesh) {
+    std::cout << "[MaskInvert] Inverting mask for mesh " << mesh << " (nbVerts=" << (mesh ? mesh->nbVerts : 0) << ")..." << std::endl;
     if (!mesh) return;
+    if (mesh->materials.size() < (size_t)mesh->nbVerts * 3) return;
     float* materials = mesh->materials.data();
     int nbVerts = mesh->nbVerts;
     for (int i = 0; i < nbVerts; ++i) {
         materials[i * 3 + 2] = 1.0f - materials[i * 3 + 2];
     }
-    mesh->isVertexDirty = true;
+    mesh->isMaterialDirty = true;
     mesh->dirtyVertMin = 0;
     mesh->dirtyVertMax = nbVerts - 1;
+    std::cout << "[MaskInvert] Mask inverted successfully." << std::endl;
 }
 
 void SculptManager::blurMask(Mesh* mesh) {
-    if (!mesh) return;
+    std::cout << "[MaskBlur] Call blurMask(mesh=" << mesh << ")..." << std::endl;
+    if (!mesh) {
+        std::cout << "[MaskBlur] Error: mesh is null!" << std::endl;
+        return;
+    }
+    if (mesh->nbVerts <= 0) {
+        std::cout << "[MaskBlur] Error: mesh->nbVerts <= 0 (" << mesh->nbVerts << ")" << std::endl;
+        return;
+    }
+    if (mesh->materials.size() < (size_t)mesh->nbVerts * 3) {
+        std::cout << "[MaskBlur] Error: materials array size mismatch! size=" << mesh->materials.size() << " expected=" << (mesh->nbVerts * 3) << std::endl;
+        return;
+    }
+    if (mesh->vrvStartCount.empty() || mesh->vertRingVert.empty()) {
+        std::cout << "[MaskBlur] Error: topology empty! vrvStartCount.size=" << mesh->vrvStartCount.size() << " vertRingVert.size=" << mesh->vertRingVert.size() << std::endl;
+        return;
+    }
+
     float* mAr = mesh->materials.data();
     int nbVerts = mesh->nbVerts;
 
@@ -2724,11 +2767,16 @@ void SculptManager::blurMask(Mesh* mesh) {
             iVerts.push_back(i);
         }
     }
+    std::cout << "[MaskBlur] Initial masked verts count: " << iVerts.size() << " / " << nbVerts << std::endl;
     if (iVerts.empty()) return;
 
     int iterations = m_brushSettings[m_currentBrush].maskSharpenBlurIterations;
+    if (iterations <= 0) iterations = 1;
+
     std::vector<uint8_t> visited(nbVerts, 0);
-    for (uint32_t v : iVerts) visited[v] = 1;
+    for (uint32_t v : iVerts) {
+        if (v < (uint32_t)nbVerts) visited[v] = 1;
+    }
 
     std::vector<uint32_t> queue = iVerts;
     size_t head = 0;
@@ -2736,11 +2784,16 @@ void SculptManager::blurMask(Mesh* mesh) {
         size_t size = queue.size();
         while (head < size) {
             uint32_t id = queue[head++];
+            if (id >= (uint32_t)nbVerts) continue;
+            if (id * 2 + 1 >= mesh->vrvStartCount.size()) continue;
+
             uint32_t start = mesh->vrvStartCount[id * 2];
             uint32_t count = mesh->vrvStartCount[id * 2 + 1];
+            if (start + count > mesh->vertRingVert.size()) continue;
+
             for (uint32_t j = start; j < start + count; ++j) {
                 uint32_t neighbor = mesh->vertRingVert[j];
-                if (!visited[neighbor]) {
+                if (neighbor < (uint32_t)nbVerts && !visited[neighbor]) {
                     visited[neighbor] = 1;
                     queue.push_back(neighbor);
                 }
@@ -2748,23 +2801,31 @@ void SculptManager::blurMask(Mesh* mesh) {
         }
     }
     iVerts = queue;
+    std::cout << "[MaskBlur] Expanded queue size: " << iVerts.size() << ", invoking ::blurMask..." << std::endl;
 
-    ::blurMask(
+    int processed = ::blurMask(
         iVerts.data(), (int)iVerts.size(),
         mesh->vrvStartCount.data(),
         mesh->vertRingVert.data(),
-        mesh->vertOnEdge.data(),
+        mesh->vertOnEdge.empty() ? nullptr : mesh->vertOnEdge.data(),
         iterations,
-        mAr
+        mAr,
+        3, // stride (materials contains 3 floats per vertex)
+        2  // offset (mask is at index 2)
     );
+    std::cout << "[MaskBlur] ::blurMask finished. Processed: " << processed << " vertices." << std::endl;
 
-    mesh->isVertexDirty = true;
+    mesh->isMaterialDirty = true;
     mesh->dirtyVertMin = 0;
     mesh->dirtyVertMax = nbVerts - 1;
 }
 
 void SculptManager::sharpenMask(Mesh* mesh) {
-    if (!mesh) return;
+    std::cout << "[MaskSharpen] Call sharpenMask(mesh=" << mesh << ")..." << std::endl;
+    if (!mesh || mesh->nbVerts <= 0) return;
+    if (mesh->materials.size() < (size_t)mesh->nbVerts * 3) return;
+    if (mesh->vrvStartCount.empty() || mesh->vertRingVert.empty()) return;
+
     float* mAr = mesh->materials.data();
     int nbVerts = mesh->nbVerts;
 
@@ -2775,11 +2836,16 @@ void SculptManager::sharpenMask(Mesh* mesh) {
             iVerts.push_back(i);
         }
     }
+    std::cout << "[MaskSharpen] Initial masked verts count: " << iVerts.size() << " / " << nbVerts << std::endl;
     if (iVerts.empty()) return;
 
     int iterations = m_brushSettings[m_currentBrush].maskSharpenBlurIterations;
+    if (iterations <= 0) iterations = 1;
+
     std::vector<uint8_t> visited(nbVerts, 0);
-    for (uint32_t v : iVerts) visited[v] = 1;
+    for (uint32_t v : iVerts) {
+        if (v < (uint32_t)nbVerts) visited[v] = 1;
+    }
 
     std::vector<uint32_t> queue = iVerts;
     size_t head = 0;
@@ -2787,11 +2853,16 @@ void SculptManager::sharpenMask(Mesh* mesh) {
         size_t size = queue.size();
         while (head < size) {
             uint32_t id = queue[head++];
+            if (id >= (uint32_t)nbVerts) continue;
+            if (id * 2 + 1 >= mesh->vrvStartCount.size()) continue;
+
             uint32_t start = mesh->vrvStartCount[id * 2];
             uint32_t count = mesh->vrvStartCount[id * 2 + 1];
+            if (start + count > mesh->vertRingVert.size()) continue;
+
             for (uint32_t j = start; j < start + count; ++j) {
                 uint32_t neighbor = mesh->vertRingVert[j];
-                if (!visited[neighbor]) {
+                if (neighbor < (uint32_t)nbVerts && !visited[neighbor]) {
                     visited[neighbor] = 1;
                     queue.push_back(neighbor);
                 }
@@ -2810,9 +2881,11 @@ void SculptManager::sharpenMask(Mesh* mesh) {
         iVerts.data(), nbActiveVerts,
         mesh->vrvStartCount.data(),
         mesh->vertRingVert.data(),
-        mesh->vertOnEdge.data(),
+        mesh->vertOnEdge.empty() ? nullptr : mesh->vertOnEdge.data(),
         iterations,
-        mAr
+        mAr,
+        3, // stride
+        2  // offset
     );
 
     float factor = m_brushSettings[m_currentBrush].maskSharpenFactor;
@@ -2826,7 +2899,7 @@ void SculptManager::sharpenMask(Mesh* mesh) {
         mAr[idm] = val;
     }
 
-    mesh->isVertexDirty = true;
+    mesh->isMaterialDirty = true;
     mesh->dirtyVertMin = 0;
     mesh->dirtyVertMax = nbVerts - 1;
 }

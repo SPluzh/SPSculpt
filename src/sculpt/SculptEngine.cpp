@@ -1478,10 +1478,12 @@ int blurMask(
     const uint32_t* vertRingVert,
     const uint8_t* vertOnEdge,
     int iterations,
-    float* tempMasks
+    float* tempMasks,
+    int stride,
+    int offset
 ) {
 
-    if (nbIVerts <= 0 || iterations <= 0) return 0;
+    if (nbIVerts <= 0 || iterations <= 0 || !iVerts || !vrvStartCount || !vertRingVert || !tempMasks) return 0;
 
     std::vector<float> smoothMasks(nbIVerts);
 
@@ -1492,17 +1494,17 @@ int blurMask(
             uint32_t count = vrvStartCount[id * 2 + 1];
 
             if (count <= 2) {
-                smoothMasks[i] = tempMasks[id];
+                smoothMasks[i] = tempMasks[id * stride + offset];
                 continue;
             }
 
             float sumMask = 0.0f;
-            if (vertOnEdge[id] == 1) {
+            if (vertOnEdge && vertOnEdge[id] == 1) {
                 int nbVertEdge = 0;
                 for (uint32_t j = start; j < start + count; ++j) {
                     uint32_t idv = vertRingVert[j];
                     if (vertOnEdge[idv] == 1) {
-                        sumMask += tempMasks[idv];
+                        sumMask += tempMasks[idv * stride + offset];
                         ++nbVertEdge;
                     }
                 }
@@ -1515,14 +1517,14 @@ int blurMask(
 
             for (uint32_t j = start; j < start + count; ++j) {
                 uint32_t idv = vertRingVert[j];
-                sumMask += tempMasks[idv];
+                sumMask += tempMasks[idv * stride + offset];
             }
             smoothMasks[i] = sumMask / count;
         }
 
         for (int i = 0; i < nbIVerts; ++i) {
             uint32_t id = iVerts[i];
-            tempMasks[id] = smoothMasks[i];
+            tempMasks[id * stride + offset] = smoothMasks[i];
         }
     }
     return nbIVerts;

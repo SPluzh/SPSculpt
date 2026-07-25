@@ -275,7 +275,9 @@ int blurMask(
     const uint32_t* vertRingVert,
     const uint8_t* vertOnEdge,
     int iterations,
-    float* tempMasks
+    float* tempMasks,
+    int stride = 1,
+    int offset = 0
 );
 
 int applyGradientMask(
