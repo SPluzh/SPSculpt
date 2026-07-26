@@ -3056,7 +3056,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
             bool cameraDragging = sculpt.getCameraController().isDragging();
             ImGuizmo::Enable(!cameraDragging);
-            ImGuizmo::SetGizmoSizeClipSpace(0.20f);
+            ImGuizmo::SetGizmoSizeClipSpace(0.10f);
 
             glm::mat4 view = camera.getViewMatrix();
             glm::mat4 proj = camera.getProjMatrix();
@@ -3087,13 +3087,13 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             style.Colors[ImGuizmo::PLANE_Z] = ImVec4(0.2f, 0.2f, 0.7f, 0.38f);
             style.Colors[ImGuizmo::SELECTION] = ImVec4(1.0f, 1.0f, 0.4f, 1.0f);
             style.Colors[ImGuizmo::INACTIVE] = ImVec4(0.4f, 0.4f, 0.4f, 0.54f);
-            style.TranslationLineThickness = 3.5f;
-            style.TranslationLineArrowSize = 10.0f;
-            style.RotationLineThickness = 3.5f;
-            style.RotationOuterLineThickness = 4.0f;
-            style.ScaleLineThickness = 3.5f;
-            style.ScaleLineCircleSize = 9.0f;
-            style.CenterCircleSize = 9.0f;
+            style.TranslationLineThickness = 1.75f;
+            style.TranslationLineArrowSize = 5.0f;
+            style.RotationLineThickness = 1.75f;
+            style.RotationOuterLineThickness = 2.0f;
+            style.ScaleLineThickness = 1.75f;
+            style.ScaleLineCircleSize = 4.5f;
+            style.CenterCircleSize = 4.5f;
 
             // Draw and manipulate gizmo
             if (ImGuizmo::Manipulate(

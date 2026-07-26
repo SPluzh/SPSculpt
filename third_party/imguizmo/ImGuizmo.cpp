@@ -47,7 +47,7 @@ namespace IMGUIZMO_NAMESPACE
    static const float ZPI = 3.14159265358979323846f;
    static const float RAD2DEG = (180.f / ZPI);
    static const float DEG2RAD = (ZPI / 180.f);
-   const float screenRotateSize = 0.07f;
+   const float screenRotateSize = 0.035f;
    // scale a bit so translate axis do not touch when in universal
    const float rotationDisplayFactor = 0.85f;
 
@@ -777,7 +777,7 @@ namespace IMGUIZMO_NAMESPACE
       ImVector<ViewManipulateState> mViewManipulateStates;
 
       bool mAllowAxisFlip = false;
-      float mGizmoSizeClipSpace = 0.20f;
+      float mGizmoSizeClipSpace = 0.10f;
 
       inline ImGuiID GetCurrentID()
       {
@@ -1559,7 +1559,7 @@ namespace IMGUIZMO_NAMESPACE
       }
 
       // draw yellow universal scale cube in center
-      float squareR = 18.0f;
+      float squareR = 9.0f;
       ImVec2 centerC = gContext.mScreenSquareCenter;
       ImU32 yellowCol = (type == MT_SCALE_XYZ) ? GetColorU32(SELECTION) : IM_COL32(245, 205, 45, 255);
       drawList->AddRectFilled(ImVec2(centerC.x - squareR, centerC.y - squareR), ImVec2(centerC.x + squareR, centerC.y + squareR), yellowCol, 2.0f);
@@ -1648,7 +1648,7 @@ namespace IMGUIZMO_NAMESPACE
       }
 
       // draw yellow universal scale cube in center
-      float squareR = 20.0f;
+      float squareR = 10.0f;
       ImVec2 centerC = gContext.mScreenSquareCenter;
       ImU32 yellowCol = (type == MT_SCALE_XYZ) ? GetColorU32(SELECTION) : IM_COL32(245, 205, 45, 255);
       drawList->AddRectFilled(ImVec2(centerC.x - squareR, centerC.y - squareR), ImVec2(centerC.x + squareR, centerC.y + squareR), yellowCol, 2.0f);
@@ -1752,7 +1752,7 @@ namespace IMGUIZMO_NAMESPACE
       }
 
       // Draw corner brackets for planeW camera translation indicator
-      float R_draw = (gContext.mRadiusSquareCenter > 1.0f) ? (gContext.mRadiusSquareCenter * 1.15f) : 65.0f;
+      float R_draw = (gContext.mRadiusSquareCenter > 1.0f) ? (gContext.mRadiusSquareCenter * 1.15f) : 32.5f;
       float d_draw = R_draw * 0.35f;
       ImVec2 C_draw = gContext.mScreenSquareCenter;
       ImU32 bgCol = (type == MT_MOVE_SCREEN) ? IM_COL32(255, 255, 255, 36) : IM_COL32(255, 255, 255, 12);
@@ -2179,7 +2179,7 @@ namespace IMGUIZMO_NAMESPACE
       // universal
 
       vec_t deltaScreen = { io.MousePos.x - gContext.mScreenSquareCenter.x, io.MousePos.y - gContext.mScreenSquareCenter.y, 0.f, 0.f };
-      if ((Contains(op, SCALEU) || Contains(op, SCALE)) && (fabsf(deltaScreen.x) <= 36.0f && fabsf(deltaScreen.y) <= 36.0f))
+      if ((Contains(op, SCALEU) || Contains(op, SCALE)) && (fabsf(deltaScreen.x) <= 18.0f && fabsf(deltaScreen.y) <= 18.0f))
       {
          type = MT_SCALE_XYZ;
       }
@@ -2295,8 +2295,8 @@ namespace IMGUIZMO_NAMESPACE
       MOVETYPE type = MT_NONE;
 
       // screen (corner brackets picking for planeW)
-      float R_pick = (gContext.mRadiusSquareCenter > 1.0f) ? (gContext.mRadiusSquareCenter * 1.15f) : 65.0f;
-      float cornerPickRadiusSqr = 16.0f * 16.0f;
+      float R_pick = (gContext.mRadiusSquareCenter > 1.0f) ? (gContext.mRadiusSquareCenter * 1.15f) : 32.5f;
+      float cornerPickRadiusSqr = 10.0f * 10.0f;
       ImVec2 C_pick = gContext.mScreenSquareCenter;
       ImVec2 corners[4] = {
          ImVec2(C_pick.x - R_pick, C_pick.y - R_pick),
