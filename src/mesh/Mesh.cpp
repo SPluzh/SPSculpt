@@ -193,6 +193,7 @@ void Mesh::allocate(int nbV, int nbF, int nbRF, int nbRV) {
     }
     vertProxy.resize(nbVerts * 3);
     vertVisible.assign(nbVerts, 1);
+    faceVisible.assign(nbFaces, 1);
 
     faceNormals.resize(nbFaces * 3, 0.0f);
     faceBoxes.resize(nbFaces * 6, 0.0f);
@@ -227,6 +228,9 @@ void Mesh::postInit() {
 
     if (vertVisible.size() != (size_t)nbVerts) {
         vertVisible.assign(nbVerts, 1);
+    }
+    if (faceVisible.size() != (size_t)nbFaces) {
+        faceVisible.assign(nbFaces, 1);
     }
 
     faceNormals.resize(nbFaces * 3, 0.0f);

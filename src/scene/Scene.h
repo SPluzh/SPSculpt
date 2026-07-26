@@ -19,6 +19,7 @@ struct MeshState {
     std::vector<uint32_t> vertRingVert;
     std::vector<uint8_t> vertOnEdge;
     std::vector<uint8_t> vertVisible;
+    std::vector<uint8_t> faceVisible;
     int nbVerts = 0;
     int nbFaces = 0;
 

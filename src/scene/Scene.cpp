@@ -110,6 +110,7 @@ HistoryState Scene::saveCurrentState() const {
         ms.vertRingVert = m->vertRingVert;
         ms.vertOnEdge = m->vertOnEdge;
         ms.vertVisible = m->vertVisible;
+        ms.faceVisible = m->faceVisible;
         ms.nbVerts = m->nbVerts;
         ms.nbFaces = m->nbFaces;
         
@@ -146,6 +147,7 @@ void Scene::restoreState(const HistoryState& hs) {
         m->vertRingVert = ms.vertRingVert;
         m->vertOnEdge = ms.vertOnEdge;
         m->vertVisible = ms.vertVisible;
+        m->faceVisible = ms.faceVisible;
         m->nbVerts = ms.nbVerts;
         m->nbFaces = ms.nbFaces;
 

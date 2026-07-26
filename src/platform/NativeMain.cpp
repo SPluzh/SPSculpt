@@ -468,7 +468,7 @@ int main(int argc, char* argv[]) {
 
                 ImGui_ImplSDL2_ProcessEvent(&event);
 
-                bool handledByHotkey = dispatcher.processEvent(eventCopy, sculpt, scene, gui);
+                bool handledByHotkey = dispatcher.processEvent(eventCopy, sculpt, scene, gui, &renderer);
 
                 if (!handledByHotkey) {
                     ImGuiIO& io = ImGui::GetIO();

@@ -1,4 +1,5 @@
 #include "platform/HotkeyDispatcher.h"
+#include "render/AngleRenderer.h"
 #include <imgui.h>
 #include <algorithm>
 #include <cmath>
@@ -10,10 +11,10 @@ HotkeyDispatcher::HotkeyDispatcher()
     , m_shiftActive(false)
     , m_ctrlActive(false) {}
 
-bool HotkeyDispatcher::processEvent(const SDL_Event& event, SculptManager& sculpt, Scene& scene, GuiManager& gui) {
+bool HotkeyDispatcher::processEvent(const SDL_Event& event, SculptManager& sculpt, Scene& scene, GuiManager& gui, AngleRenderer* renderer) {
     if (gui.isRemeshRunning()) {
         if (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) {
-            updateModifiers(event, sculpt);
+            updateModifiers(event, sculpt, scene, renderer);
         }
         return true; // Consume event without acting
     }
@@ -28,7 +29,7 @@ bool HotkeyDispatcher::processEvent(const SDL_Event& event, SculptManager& sculp
                 return false;
         }
 
-        updateModifiers(event, sculpt);
+        updateModifiers(event, sculpt, scene, renderer);
 
         bool ctrlPressed = (event.key.keysym.mod & KMOD_CTRL) != 0;
         bool altPressed = (event.key.keysym.mod & KMOD_ALT) != 0;
@@ -97,7 +98,7 @@ bool HotkeyDispatcher::processEvent(const SDL_Event& event, SculptManager& sculp
     return false;
 }
 
-void HotkeyDispatcher::updateModifiers(const SDL_Event& event, SculptManager& sculpt) {
+void HotkeyDispatcher::updateModifiers(const SDL_Event& event, SculptManager& sculpt, Scene& scene, AngleRenderer* renderer) {
     if (event.type == SDL_KEYDOWN) {
         if (event.key.keysym.sym == SDLK_LSHIFT || event.key.keysym.sym == SDLK_RSHIFT) {
             if (!m_shiftActive) {
@@ -108,6 +109,10 @@ void HotkeyDispatcher::updateModifiers(const SDL_Event& event, SculptManager& sc
                 } else {
                     sculpt.getSettings(BRUSH_VISIBILITY).radius = sculpt.getSettings(m_prevBrush).radius;
                     sculpt.setBrush(BRUSH_VISIBILITY);
+                    Mesh* selected = scene.getSelected();
+                    if (selected && renderer && !sculpt.getPolyGroupTool().getAllGroupIDs(selected).empty()) {
+                        renderer->setShowPolyGroups(true);
+                    }
                 }
                 m_shiftActive = true;
             }
@@ -120,6 +125,10 @@ void HotkeyDispatcher::updateModifiers(const SDL_Event& event, SculptManager& sc
                 } else {
                     sculpt.getSettings(BRUSH_VISIBILITY).radius = sculpt.getSettings(m_prevBrush).radius;
                     sculpt.setBrush(BRUSH_VISIBILITY);
+                    Mesh* selected = scene.getSelected();
+                    if (selected && renderer && !sculpt.getPolyGroupTool().getAllGroupIDs(selected).empty()) {
+                        renderer->setShowPolyGroups(true);
+                    }
                 }
                 m_ctrlActive = true;
             }

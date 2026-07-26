@@ -36,6 +36,7 @@ public:
     std::vector<uint32_t> vertRingVert;
     std::vector<uint8_t>  vertOnEdge;      // nbVerts
     std::vector<uint8_t>  vertVisible;     // nbVerts
+    std::vector<uint8_t>  faceVisible;     // nbFaces
     std::vector<uint32_t> edges;           // nbEdges (valence per edge)
     std::vector<uint32_t> faceEdges;       // nbFaces * 4 (edge index per face edge)
     std::vector<uint32_t> vertTagFlags;    // nbVerts (tag flags for algorithms)

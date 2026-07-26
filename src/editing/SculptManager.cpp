@@ -2119,29 +2119,64 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     mesh->isDirty = true;
                 } else {
                     scene.pushHistoryState();
+                    if (mesh->faceVisible.size() != (size_t)mesh->nbFaces) {
+                        mesh->faceVisible.assign(mesh->nbFaces, 1);
+                    }
+
                     if (!selectedVertices.empty()) {
+                        std::vector<uint8_t> isVertSel(mesh->nbVerts, 0);
+                        for (uint32_t vid : selectedVertices) {
+                            if (vid < (uint32_t)mesh->nbVerts) isVertSel[vid] = 1;
+                        }
+
                         bool hideUnselected = !m_lassoAlt;
-                        if (hideUnselected) {
-                            std::fill(mesh->vertVisible.begin(), mesh->vertVisible.end(), 0);
-                            for (uint32_t vid : selectedVertices) {
-                                mesh->vertVisible[vid] = 1;
+                        for (int f = 0; f < mesh->nbFaces; ++f) {
+                            uint32_t v0 = mesh->faces[f * 4];
+                            uint32_t v1 = mesh->faces[f * 4 + 1];
+                            uint32_t v2 = mesh->faces[f * 4 + 2];
+                            uint32_t v3 = mesh->faces[f * 4 + 3];
+
+                            bool fSel = isVertSel[v0] && isVertSel[v1] && isVertSel[v2] &&
+                                        (v3 == 0xffffffff || isVertSel[v3]);
+
+                            if (hideUnselected) {
+                                // Isolate lasso selection: only show faces fully selected
+                                mesh->faceVisible[f] = fSel ? 1 : 0;
+                            } else {
+                                // Hide lasso selection: hide faces fully selected
+                                if (fSel) mesh->faceVisible[f] = 0;
                             }
-                        } else {
-                            for (uint32_t vid : selectedVertices) {
-                                mesh->vertVisible[vid] = 0;
+                        }
+
+                        // Synchronize vertVisible from faceVisible
+                        std::fill(mesh->vertVisible.begin(), mesh->vertVisible.end(), 0);
+                        for (int f = 0; f < mesh->nbFaces; ++f) {
+                            if (mesh->faceVisible[f]) {
+                                uint32_t v0 = mesh->faces[f * 4];
+                                uint32_t v1 = mesh->faces[f * 4 + 1];
+                                uint32_t v2 = mesh->faces[f * 4 + 2];
+                                uint32_t v3 = mesh->faces[f * 4 + 3];
+
+                                if (v0 < mesh->vertVisible.size()) mesh->vertVisible[v0] = 1;
+                                if (v1 < mesh->vertVisible.size()) mesh->vertVisible[v1] = 1;
+                                if (v2 < mesh->vertVisible.size()) mesh->vertVisible[v2] = 1;
+                                if (v3 != 0xffffffff && v3 < mesh->vertVisible.size()) mesh->vertVisible[v3] = 1;
                             }
                         }
                     } else {
                         // Ctrl + Shift + Click Drag on empty space -> clear hiding (show all)
+                        std::fill(mesh->faceVisible.begin(), mesh->faceVisible.end(), 1);
                         std::fill(mesh->vertVisible.begin(), mesh->vertVisible.end(), 1);
                     }
                     mesh->isDirty = true;
+                    mesh->isFaceGroupDirty = true;
                 }
             } else {
                 // Click action (or micro-drag gesture under threshold)
                 Ray ray = camera.getRay((float)event.button.x, (float)event.button.y);
                 bool hitMesh = false;
                 uint32_t closestVert = 0xffffffff;
+                uint32_t intersectFaceId = 0xffffffff;
                 float bestMask = 1.0f;
 
                 if (mesh) {
@@ -2155,7 +2190,6 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     );
 
                     float minT = std::numeric_limits<float>::infinity();
-                    uint32_t intersectFaceId = 0xffffffff;
 
                     for (uint32_t faceId : candidateFaces) {
                         if (faceId >= (uint32_t)mesh->nbFaces) continue;
@@ -2163,6 +2197,10 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                         uint32_t v1Id = mesh->faces[faceId * 4 + 1];
                         uint32_t v2Id = mesh->faces[faceId * 4 + 2];
                         uint32_t v3Id = mesh->faces[faceId * 4 + 3];
+
+                        if (mesh->faceVisible.size() == (size_t)mesh->nbFaces && !mesh->faceVisible[faceId]) {
+                            continue;
+                        }
 
                         if (!mesh->vertVisible[v0Id] || !mesh->vertVisible[v1Id] || !mesh->vertVisible[v2Id] || (v3Id != 0xffffffff && !mesh->vertVisible[v3Id])) {
                             continue;
@@ -2236,12 +2274,80 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     }
                 } else {
                     if (!hitMesh && mesh) {
-                        std::cout << "[VisibilityClick] Canvas Ctrl+Shift+Click detected (maxDragDist=" << maxDragDist << "px). Inverting visibility..." << std::endl;
+                        std::cout << "[VisibilityClick] Canvas Ctrl+Shift+Click detected (maxDragDist=" << maxDragDist << "px). Inverting or resetting visibility..." << std::endl;
                         scene.pushHistoryState();
-                        for (size_t i = 0; i < mesh->vertVisible.size(); ++i) {
-                            mesh->vertVisible[i] = mesh->vertVisible[i] ? 0 : 1;
+                        if (mesh->faceVisible.size() != (size_t)mesh->nbFaces) {
+                            mesh->faceVisible.assign(mesh->nbFaces, 1);
+                        }
+                        bool allVisible = true;
+                        for (uint8_t vis : mesh->faceVisible) {
+                            if (!vis) { allVisible = false; break; }
+                        }
+                        if (allVisible) {
+                            for (size_t f = 0; f < mesh->faceVisible.size(); ++f) {
+                                mesh->faceVisible[f] = mesh->faceVisible[f] ? 0 : 1;
+                            }
+                            for (size_t i = 0; i < mesh->vertVisible.size(); ++i) {
+                                mesh->vertVisible[i] = mesh->vertVisible[i] ? 0 : 1;
+                            }
+                        } else {
+                            std::fill(mesh->faceVisible.begin(), mesh->faceVisible.end(), 1);
+                            std::fill(mesh->vertVisible.begin(), mesh->vertVisible.end(), 1);
                         }
                         mesh->isDirty = true;
+                        mesh->isFaceGroupDirty = true;
+                    } else if (hitMesh && mesh && intersectFaceId != 0xffffffff) {
+                        bool hasPolyGroups = (mesh && mesh->faceGroups.size() == (size_t)mesh->nbFaces);
+                        if (hasPolyGroups) {
+                            uint32_t clickedGroupId = m_polyGroupTool.getGroupAtFace(mesh, intersectFaceId);
+                            SDL_Keymod mod = SDL_GetModState();
+                            bool altPressed = m_lassoAlt || ((mod & KMOD_ALT) != 0);
+
+                            scene.pushHistoryState();
+
+                            if (mesh->faceVisible.size() != (size_t)mesh->nbFaces) {
+                                mesh->faceVisible.assign(mesh->nbFaces, 1);
+                            }
+
+                            if (!altPressed) {
+                                // Ctrl + Shift + Click: isolate clicked polygroup (show ONLY clickedGroupId)
+                                std::cout << "[VisibilityClick] Ctrl+Shift+Click on PolyGroup " << clickedGroupId << ". Isolating polygroup..." << std::endl;
+                                for (int f = 0; f < mesh->nbFaces; ++f) {
+                                    uint32_t gid = (mesh->faceGroups.size() > (size_t)f) ? mesh->faceGroups[f] : 0;
+                                    mesh->faceVisible[f] = (gid == clickedGroupId) ? 1 : 0;
+                                }
+                            } else {
+                                // Ctrl + Shift + Alt + Click: hide clicked polygroup (hide clickedGroupId, keeping other currently visible faces)
+                                std::cout << "[VisibilityClick] Ctrl+Shift+Alt+Click on PolyGroup " << clickedGroupId << ". Hiding polygroup..." << std::endl;
+                                for (int f = 0; f < mesh->nbFaces; ++f) {
+                                    uint32_t gid = (mesh->faceGroups.size() > (size_t)f) ? mesh->faceGroups[f] : 0;
+                                    if (gid == clickedGroupId) {
+                                        mesh->faceVisible[f] = 0;
+                                    }
+                                }
+                            }
+
+                            // Synchronize vertVisible from faceVisible:
+                            // Mark vertVisible = 1 for all vertices that belong to ANY visible face
+                            std::vector<uint8_t> newVertVisible(mesh->nbVerts, 0);
+                            for (int f = 0; f < mesh->nbFaces; ++f) {
+                                if (mesh->faceVisible[f]) {
+                                    uint32_t v0 = mesh->faces[f * 4];
+                                    uint32_t v1 = mesh->faces[f * 4 + 1];
+                                    uint32_t v2 = mesh->faces[f * 4 + 2];
+                                    uint32_t v3 = mesh->faces[f * 4 + 3];
+
+                                    if (v0 < newVertVisible.size()) newVertVisible[v0] = 1;
+                                    if (v1 < newVertVisible.size()) newVertVisible[v1] = 1;
+                                    if (v2 < newVertVisible.size()) newVertVisible[v2] = 1;
+                                    if (v3 != 0xffffffff && v3 < newVertVisible.size()) newVertVisible[v3] = 1;
+                                }
+                            }
+
+                            mesh->vertVisible = newVertVisible;
+                            mesh->isDirty = true;
+                            mesh->isFaceGroupDirty = true;
+                        }
                     }
                 }
             }

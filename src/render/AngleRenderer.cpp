@@ -1774,22 +1774,65 @@ void AngleRenderer::generateTriangleIndices(const Mesh* mesh, std::vector<uint32
     outIndices.clear();
     outIndices.reserve(mesh->nbFaces * 6);
     const auto& visible = mesh->vertVisible;
+    const auto& fVisible = mesh->faceVisible;
     bool hasVisibility = !visible.empty();
+    bool hasFaceVis = (fVisible.size() == (size_t)mesh->nbFaces);
+
+    std::vector<uint32_t> vertGroups;
+    if (mesh->faceGroups.size() == (size_t)mesh->nbFaces) {
+        vertGroups.resize(mesh->nbVerts, 0);
+        for (int f = 0; f < mesh->nbFaces; ++f) {
+            if (hasFaceVis && !fVisible[f]) continue;
+            uint32_t gid = mesh->faceGroups[f];
+            for (int k = 0; k < 4; ++k) {
+                uint32_t vid = mesh->faces[f * 4 + k];
+                if (vid != 0xffffffff && vid < (uint32_t)mesh->nbVerts) {
+                    vertGroups[vid] = gid;
+                }
+            }
+        }
+    }
 
     for (int i = 0; i < mesh->nbFaces; ++i) {
-        uint32_t iv1 = mesh->faces[i * 4];
-        uint32_t iv2 = mesh->faces[i * 4 + 1];
-        uint32_t iv3 = mesh->faces[i * 4 + 2];
-        uint32_t iv4 = mesh->faces[i * 4 + 3];
-
-        if (hasVisibility) {
-            if (iv1 >= visible.size() || !visible[iv1]) continue;
-            if (iv2 >= visible.size() || !visible[iv2]) continue;
-            if (iv3 >= visible.size() || !visible[iv3]) continue;
-            if (iv4 != 0xffffffff && (iv4 >= visible.size() || !visible[iv4])) continue;
+        if (hasFaceVis) {
+            if (!fVisible[i]) continue;
+        } else if (hasVisibility) {
+            uint32_t v0 = mesh->faces[i * 4];
+            uint32_t v1 = mesh->faces[i * 4 + 1];
+            uint32_t v2 = mesh->faces[i * 4 + 2];
+            uint32_t v3 = mesh->faces[i * 4 + 3];
+            if (v0 >= visible.size() || !visible[v0]) continue;
+            if (v1 >= visible.size() || !visible[v1]) continue;
+            if (v2 >= visible.size() || !visible[v2]) continue;
+            if (v3 != 0xffffffff && (v3 >= visible.size() || !visible[v3])) continue;
         }
 
-        if (iv4 == 0xffffffff) {
+        uint32_t fVerts[4] = {
+            mesh->faces[i * 4],
+            mesh->faces[i * 4 + 1],
+            mesh->faces[i * 4 + 2],
+            mesh->faces[i * 4 + 3]
+        };
+        int numV = (fVerts[3] == 0xffffffff) ? 3 : 4;
+
+        int startIdx = 0;
+        if (!vertGroups.empty() && mesh->faceGroups.size() == (size_t)mesh->nbFaces) {
+            uint32_t gid = mesh->faceGroups[i];
+            for (int k = 0; k < numV; ++k) {
+                uint32_t vid = fVerts[k];
+                if (vid < vertGroups.size() && vertGroups[vid] == gid) {
+                    startIdx = k;
+                    break;
+                }
+            }
+        }
+
+        uint32_t iv1 = fVerts[startIdx];
+        uint32_t iv2 = fVerts[(startIdx + 1) % numV];
+        uint32_t iv3 = fVerts[(startIdx + 2) % numV];
+        uint32_t iv4 = (numV == 4) ? fVerts[(startIdx + 3) % numV] : 0xffffffff;
+
+        if (numV == 3) {
             outIndices.push_back(iv1);
             outIndices.push_back(iv2);
             outIndices.push_back(iv3);
@@ -1808,22 +1851,30 @@ void AngleRenderer::generateWireframeIndices(const Mesh* mesh, std::vector<uint3
     outEdges.clear();
     outEdges.reserve(mesh->nbFaces * 8);
     const auto& visible = mesh->vertVisible;
+    const auto& fVisible = mesh->faceVisible;
     bool hasVisibility = !visible.empty();
+    bool hasFaceVis = (fVisible.size() == (size_t)mesh->nbFaces);
 
     for (int i = 0; i < mesh->nbFaces; ++i) {
+        if (hasFaceVis) {
+            if (!fVisible[i]) continue;
+        } else if (hasVisibility) {
+            uint32_t v0 = mesh->faces[i * 4];
+            uint32_t v1 = mesh->faces[i * 4 + 1];
+            uint32_t v2 = mesh->faces[i * 4 + 2];
+            uint32_t v3 = mesh->faces[i * 4 + 3];
+            if (v0 >= visible.size() || !visible[v0]) continue;
+            if (v1 >= visible.size() || !visible[v1]) continue;
+            if (v2 >= visible.size() || !visible[v2]) continue;
+            if (v3 != 0xffffffff && (v3 >= visible.size() || !visible[v3])) continue;
+        }
+
         uint32_t iv1 = mesh->faces[i * 4];
         uint32_t iv2 = mesh->faces[i * 4 + 1];
         uint32_t iv3 = mesh->faces[i * 4 + 2];
         uint32_t iv4 = mesh->faces[i * 4 + 3];
         bool isQuad = (iv4 != 0xffffffff);
 
-        if (hasVisibility) {
-            if (iv1 >= visible.size() || !visible[iv1]) continue;
-            if (iv2 >= visible.size() || !visible[iv2]) continue;
-            if (iv3 >= visible.size() || !visible[iv3]) continue;
-            if (isQuad && (iv4 >= visible.size() || !visible[iv4])) continue;
-        }
-        
         outEdges.push_back(iv1);
         outEdges.push_back(iv2);
         outEdges.push_back(iv2);
@@ -1906,12 +1957,30 @@ void AngleRenderer::uploadIfDirty(Mesh* mesh) {
 
         std::vector<uint32_t> vertGroups(mesh->nbVerts, 0);
         if (mesh->faceGroups.size() == (size_t)mesh->nbFaces) {
+            bool hasFaceVis = (mesh->faceVisible.size() == (size_t)mesh->nbFaces);
+            // Pass 1: Assign group IDs from VISIBLE faces first
             for (int f = 0; f < mesh->nbFaces; ++f) {
+                if (hasFaceVis && !mesh->faceVisible[f]) continue;
                 uint32_t gid = mesh->faceGroups[f];
                 for (int k = 0; k < 4; ++k) {
                     uint32_t vid = mesh->faces[f * 4 + k];
                     if (vid != 0xffffffff && vid < (uint32_t)mesh->nbVerts) {
                         vertGroups[vid] = gid;
+                    }
+                }
+            }
+            // Pass 2: Fill hidden faces for unassigned vertices
+            if (hasFaceVis) {
+                for (int f = 0; f < mesh->nbFaces; ++f) {
+                    if (mesh->faceVisible[f]) continue;
+                    uint32_t gid = mesh->faceGroups[f];
+                    for (int k = 0; k < 4; ++k) {
+                        uint32_t vid = mesh->faces[f * 4 + k];
+                        if (vid != 0xffffffff && vid < (uint32_t)mesh->nbVerts) {
+                            if (vertGroups[vid] == 0) {
+                                vertGroups[vid] = gid;
+                            }
+                        }
                     }
                 }
             }
@@ -1944,12 +2013,28 @@ void AngleRenderer::uploadIfDirty(Mesh* mesh) {
         if (mesh->isFaceGroupDirty) {
             std::vector<uint32_t> vertGroups(mesh->nbVerts, 0);
             if (mesh->faceGroups.size() == (size_t)mesh->nbFaces) {
+                bool hasFaceVis = (mesh->faceVisible.size() == (size_t)mesh->nbFaces);
                 for (int f = 0; f < mesh->nbFaces; ++f) {
+                    if (hasFaceVis && !mesh->faceVisible[f]) continue;
                     uint32_t gid = mesh->faceGroups[f];
                     for (int k = 0; k < 4; ++k) {
                         uint32_t vid = mesh->faces[f * 4 + k];
                         if (vid != 0xffffffff && vid < (uint32_t)mesh->nbVerts) {
                             vertGroups[vid] = gid;
+                        }
+                    }
+                }
+                if (hasFaceVis) {
+                    for (int f = 0; f < mesh->nbFaces; ++f) {
+                        if (mesh->faceVisible[f]) continue;
+                        uint32_t gid = mesh->faceGroups[f];
+                        for (int k = 0; k < 4; ++k) {
+                            uint32_t vid = mesh->faces[f * 4 + k];
+                            if (vid != 0xffffffff && vid < (uint32_t)mesh->nbVerts) {
+                                if (vertGroups[vid] == 0) {
+                                    vertGroups[vid] = gid;
+                                }
+                            }
                         }
                     }
                 }

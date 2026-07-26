@@ -25,9 +25,12 @@ void PolyGroupTool::createGroupFromMask(Mesh* mesh, float maskThreshold) {
         bool isMasked1 = (iv1 < (uint32_t)mesh->nbVerts) && (mesh->materials[iv1 * 3 + 2] < maskThreshold);
         bool isMasked2 = (iv2 < (uint32_t)mesh->nbVerts) && (mesh->materials[iv2 * 3 + 2] < maskThreshold);
         bool isMasked3 = (iv3 < (uint32_t)mesh->nbVerts) && (mesh->materials[iv3 * 3 + 2] < maskThreshold);
-        bool isMasked4 = (iv4 != 0xffffffff && iv4 < (uint32_t)mesh->nbVerts) ? (mesh->materials[iv4 * 3 + 2] < maskThreshold) : true;
+        bool isMasked4 = (iv4 != 0xffffffff && iv4 < (uint32_t)mesh->nbVerts) && (mesh->materials[iv4 * 3 + 2] < maskThreshold);
 
-        if (isMasked1 && isMasked2 && isMasked3 && isMasked4) {
+        int maskedCount = (isMasked1 ? 1 : 0) + (isMasked2 ? 1 : 0) + (isMasked3 ? 1 : 0) + (isMasked4 ? 1 : 0);
+        int totalVerts = (iv4 != 0xffffffff) ? 4 : 3;
+
+        if (maskedCount >= (totalVerts + 1) / 2) {
             mesh->faceGroups[f] = nextGid;
             modifiedFaces++;
         }
@@ -181,7 +184,7 @@ std::vector<uint32_t> PolyGroupTool::getAllGroupIDs(const Mesh* mesh) const {
     if (!mesh) return {};
     std::set<uint32_t> uniqueGroups;
     for (uint32_t gid : mesh->faceGroups) {
-        if (gid != 0) uniqueGroups.insert(gid);
+        uniqueGroups.insert(gid);
     }
     return std::vector<uint32_t>(uniqueGroups.begin(), uniqueGroups.end());
 }
