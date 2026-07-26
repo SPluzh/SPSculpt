@@ -1054,6 +1054,9 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     } else if ((SDL_GetModState() & KMOD_CTRL) && m_currentBrush != BRUSH_POLYGROUP) {
         activeBrush = BRUSH_MASK;
     }
+    if (activeBrush != m_currentBrush && (activeBrush == BRUSH_SMOOTH || activeBrush == BRUSH_MASK)) {
+        m_brushSettings[activeBrush].radius = m_brushSettings[m_currentBrush].radius;
+    }
 
     bool isGrabBrush = (activeBrush == BRUSH_MOVE || activeBrush == BRUSH_DRAG || activeBrush == BRUSH_ELASTIC);
 
@@ -1176,7 +1179,10 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         sizeMultiplier = currentPressure;
     }
     float localRadius = (worldRadius / scale) * sizeMultiplier;
-    float intensity = getSettings(activeBrush).intensity * currentPressure;
+    float intensity = getSettings(activeBrush).intensity;
+    if (g_tablet.isPressureEnabled() && activeBrush != BRUSH_MOVE && activeBrush != BRUSH_ELASTIC) {
+        intensity *= currentPressure;
+    }
     float radius2 = localRadius * localRadius;
 
     std::vector<uint32_t> pickedVertices;
@@ -2543,7 +2549,19 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             float strokeDx = (float)(mouseX - m_lastStrokeX);
             float strokeDy = (float)(mouseY - m_lastStrokeY);
             float dist = std::sqrt(strokeDx * strokeDx + strokeDy * strokeDy);
-            float minSpacing = getCurrentSettings().spacing * getCurrentSettings().radius;
+            
+            BrushType activeBrush = m_currentBrush;
+            SDL_Keymod mod = SDL_GetModState();
+            if (mod & KMOD_SHIFT) {
+                activeBrush = BRUSH_SMOOTH;
+            } else if ((mod & KMOD_CTRL) && m_currentBrush != BRUSH_POLYGROUP) {
+                activeBrush = BRUSH_MASK;
+            }
+            if (activeBrush != m_currentBrush && (activeBrush == BRUSH_SMOOTH || activeBrush == BRUSH_MASK)) {
+                m_brushSettings[activeBrush].radius = m_brushSettings[m_currentBrush].radius;
+            }
+            const auto& activeSettings = getSettings(activeBrush);
+            float minSpacing = activeSettings.spacing * activeSettings.radius;
 
             if (minSpacing <= 0.0f) {
                 executeStroke(scene, mesh, camera, (float)mouseX, (float)mouseY, currentPressure);
@@ -2588,11 +2606,15 @@ void SculptManager::processFrame(Scene& scene) {
             activeBrush = BRUSH_MASK;
         }
 
+        if (activeBrush != m_currentBrush && (activeBrush == BRUSH_SMOOTH || activeBrush == BRUSH_MASK || activeBrush == BRUSH_VISIBILITY)) {
+            m_brushSettings[activeBrush].radius = m_brushSettings[m_currentBrush].radius;
+        }
+
         const auto& activeSettings = getSettings(activeBrush);
         m_cursor.update(
             m_rawMouseX, m_rawMouseY,
             scene,
-            getBrushRadius(),
+            activeSettings.radius,
             m_useSym,
             m_symAxis,
             m_isSculpting,

@@ -103,8 +103,10 @@ void HotkeyDispatcher::updateModifiers(const SDL_Event& event, SculptManager& sc
             if (!m_shiftActive) {
                 if (!m_ctrlActive) {
                     m_prevBrush = sculpt.getBrush();
+                    sculpt.getSettings(BRUSH_SMOOTH).radius = sculpt.getSettings(m_prevBrush).radius;
                     sculpt.setBrush(BRUSH_SMOOTH);
                 } else {
+                    sculpt.getSettings(BRUSH_VISIBILITY).radius = sculpt.getSettings(m_prevBrush).radius;
                     sculpt.setBrush(BRUSH_VISIBILITY);
                 }
                 m_shiftActive = true;
@@ -113,8 +115,10 @@ void HotkeyDispatcher::updateModifiers(const SDL_Event& event, SculptManager& sc
             if (!m_ctrlActive) {
                 if (!m_shiftActive) {
                     m_prevBrush = sculpt.getBrush();
+                    sculpt.getSettings(BRUSH_MASK).radius = sculpt.getSettings(m_prevBrush).radius;
                     sculpt.setBrush(BRUSH_MASK);
                 } else {
+                    sculpt.getSettings(BRUSH_VISIBILITY).radius = sculpt.getSettings(m_prevBrush).radius;
                     sculpt.setBrush(BRUSH_VISIBILITY);
                 }
                 m_ctrlActive = true;
@@ -125,6 +129,7 @@ void HotkeyDispatcher::updateModifiers(const SDL_Event& event, SculptManager& sc
             if (m_shiftActive) {
                 m_shiftActive = false;
                 if (m_ctrlActive) {
+                    sculpt.getSettings(BRUSH_MASK).radius = sculpt.getSettings(m_prevBrush).radius;
                     sculpt.setBrush(BRUSH_MASK);
                 } else {
                     sculpt.setBrush(m_prevBrush);
@@ -134,6 +139,7 @@ void HotkeyDispatcher::updateModifiers(const SDL_Event& event, SculptManager& sc
             if (m_ctrlActive) {
                 m_ctrlActive = false;
                 if (m_shiftActive) {
+                    sculpt.getSettings(BRUSH_SMOOTH).radius = sculpt.getSettings(m_prevBrush).radius;
                     sculpt.setBrush(BRUSH_SMOOTH);
                 } else {
                     sculpt.setBrush(m_prevBrush);
