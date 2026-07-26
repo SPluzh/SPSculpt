@@ -1216,8 +1216,8 @@ namespace IMGUIZMO_NAMESPACE
 
       ImVec2 centerSSpace = worldToPos(makeVect(0.f, 0.f), gContext.mMVP);
       gContext.mScreenSquareCenter = centerSSpace;
-      gContext.mScreenSquareMin = ImVec2(centerSSpace.x - 10.f, centerSSpace.y - 10.f);
-      gContext.mScreenSquareMax = ImVec2(centerSSpace.x + 10.f, centerSSpace.y + 10.f);
+      gContext.mScreenSquareMin = ImVec2(centerSSpace.x - 32.f, centerSSpace.y - 32.f);
+      gContext.mScreenSquareMax = ImVec2(centerSSpace.x + 32.f, centerSSpace.y + 32.f);
 
       ComputeCameraRay(gContext.mRayOrigin, gContext.mRayVector);
    }
@@ -1532,8 +1532,8 @@ namespace IMGUIZMO_NAMESPACE
             if (belowAxisLimit)
             {
                bool hasTranslateOnAxis = Contains(op, static_cast<OPERATION>(TRANSLATE_X << i));
-               float markerScale = hasTranslateOnAxis ? 1.4f : 1.0f;
-               ImVec2 baseSSpace = worldToPos(dirAxis * 0.1f * gContext.mScreenFactor, gContext.mMVP);
+               float markerScale = hasTranslateOnAxis ? 1.4f : 0.75f;
+               ImVec2 baseSSpace = worldToPos(dirAxis * 0.45f * gContext.mScreenFactor, gContext.mMVP);
                ImVec2 worldDirSSpaceNoScale = worldToPos(dirAxis * markerScale * gContext.mScreenFactor, gContext.mMVP);
                ImVec2 worldDirSSpace = worldToPos((dirAxis * markerScale * scaleDisplay[i]) * gContext.mScreenFactor, gContext.mMVP);
 
@@ -1559,7 +1559,7 @@ namespace IMGUIZMO_NAMESPACE
       }
 
       // draw yellow universal scale cube in center
-      float squareR = 9.0f;
+      float squareR = 18.0f;
       ImVec2 centerC = gContext.mScreenSquareCenter;
       ImU32 yellowCol = (type == MT_SCALE_XYZ) ? GetColorU32(SELECTION) : IM_COL32(245, 205, 45, 255);
       drawList->AddRectFilled(ImVec2(centerC.x - squareR, centerC.y - squareR), ImVec2(centerC.x + squareR, centerC.y + squareR), yellowCol, 2.0f);
@@ -1648,7 +1648,7 @@ namespace IMGUIZMO_NAMESPACE
       }
 
       // draw yellow universal scale cube in center
-      float squareR = 10.0f;
+      float squareR = 20.0f;
       ImVec2 centerC = gContext.mScreenSquareCenter;
       ImU32 yellowCol = (type == MT_SCALE_XYZ) ? GetColorU32(SELECTION) : IM_COL32(245, 205, 45, 255);
       drawList->AddRectFilled(ImVec2(centerC.x - squareR, centerC.y - squareR), ImVec2(centerC.x + squareR, centerC.y + squareR), yellowCol, 2.0f);
@@ -1706,7 +1706,8 @@ namespace IMGUIZMO_NAMESPACE
             // draw axis
             if (belowAxisLimit && Intersects(op, static_cast<OPERATION>(TRANSLATE_X << i)))
             {
-               ImVec2 baseSSpace = worldToPos(dirAxis * 0.1f * gContext.mScreenFactor, gContext.mMVP);
+               const float startOffset = (Contains(op, SCALE) || Contains(op, SCALEU)) ? 0.35f : 0.1f;
+               ImVec2 baseSSpace = worldToPos(dirAxis * startOffset * gContext.mScreenFactor, gContext.mMVP);
                ImVec2 worldDirSSpace = worldToPos(dirAxis * gContext.mScreenFactor, gContext.mMVP);
 
                drawList->AddLine(baseSSpace, worldDirSSpace, colors[i + 1], gContext.mStyle.TranslationLineThickness);
@@ -2160,8 +2161,8 @@ namespace IMGUIZMO_NAMESPACE
          const float len = IntersectRayPlane(gContext.mRayOrigin, gContext.mRayVector, BuildPlan(gContext.mModelLocal.v.position, dirAxis));
          vec_t posOnPlan = gContext.mRayOrigin + gContext.mRayVector * len;
 
-         const float startOffset = Contains(op, static_cast<OPERATION>(TRANSLATE_X << i)) ? 1.0f : 0.1f;
-         const float endOffset = Contains(op, static_cast<OPERATION>(TRANSLATE_X << i)) ? 1.4f : 1.0f;
+         const float startOffset = Contains(op, static_cast<OPERATION>(TRANSLATE_X << i)) ? 1.0f : 0.45f;
+         const float endOffset = Contains(op, static_cast<OPERATION>(TRANSLATE_X << i)) ? 1.4f : 0.75f;
          const ImVec2 posOnPlanScreen = worldToPos(posOnPlan, gContext.mViewProjection);
          const ImVec2 axisStartOnScreen = worldToPos(gContext.mModelLocal.v.position + dirAxis * gContext.mScreenFactor * startOffset, gContext.mViewProjection);
          const ImVec2 axisEndOnScreen = worldToPos(gContext.mModelLocal.v.position + dirAxis * gContext.mScreenFactor * endOffset, gContext.mViewProjection);
@@ -2178,7 +2179,7 @@ namespace IMGUIZMO_NAMESPACE
       // universal
 
       vec_t deltaScreen = { io.MousePos.x - gContext.mScreenSquareCenter.x, io.MousePos.y - gContext.mScreenSquareCenter.y, 0.f, 0.f };
-      if ((Contains(op, SCALEU) || Contains(op, SCALE)) && (fabsf(deltaScreen.x) <= 12.0f && fabsf(deltaScreen.y) <= 12.0f))
+      if ((Contains(op, SCALEU) || Contains(op, SCALE)) && (fabsf(deltaScreen.x) <= 36.0f && fabsf(deltaScreen.y) <= 36.0f))
       {
          type = MT_SCALE_XYZ;
       }
@@ -2331,7 +2332,8 @@ namespace IMGUIZMO_NAMESPACE
          const float len = IntersectRayPlane(gContext.mRayOrigin, gContext.mRayVector, BuildPlan(gContext.mModel.v.position, dirAxis));
          vec_t posOnPlan = gContext.mRayOrigin + gContext.mRayVector * len;
 
-         const ImVec2 axisStartOnScreen = worldToPos(gContext.mModel.v.position + dirAxis * gContext.mScreenFactor * 0.1f, gContext.mViewProjection) - ImVec2(gContext.mX, gContext.mY);
+         const float startOffset = (Contains(op, SCALE) || Contains(op, SCALEU)) ? 0.35f : 0.1f;
+         const ImVec2 axisStartOnScreen = worldToPos(gContext.mModel.v.position + dirAxis * gContext.mScreenFactor * startOffset, gContext.mViewProjection) - ImVec2(gContext.mX, gContext.mY);
          const ImVec2 axisEndOnScreen = worldToPos(gContext.mModel.v.position + dirAxis * gContext.mScreenFactor, gContext.mViewProjection) - ImVec2(gContext.mX, gContext.mY);
 
          vec_t closestPointOnAxis = PointOnSegment(screenCoord, makeVect(axisStartOnScreen), makeVect(axisEndOnScreen));
