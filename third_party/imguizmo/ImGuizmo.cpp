@@ -47,7 +47,7 @@ namespace IMGUIZMO_NAMESPACE
    static const float ZPI = 3.14159265358979323846f;
    static const float RAD2DEG = (180.f / ZPI);
    static const float DEG2RAD = (ZPI / 180.f);
-   const float screenRotateSize = 0.06f;
+   const float screenRotateSize = 0.07f;
    // scale a bit so translate axis do not touch when in universal
    const float rotationDisplayFactor = 0.85f;
 
@@ -1439,9 +1439,9 @@ namespace IMGUIZMO_NAMESPACE
          }
 
          float radiusAxis = sqrtf((ImLengthSqr(worldToPos(gContext.mModel.v.position, gContext.mViewProjection) - circlePos[0])));
-         if (radiusAxis > gContext.mRadiusSquareCenter)
+         if (radiusAxis * 1.06f > gContext.mRadiusSquareCenter)
          {
-            gContext.mRadiusSquareCenter = radiusAxis;
+            gContext.mRadiusSquareCenter = radiusAxis * 1.06f;
          }
       }
       if(hasRSC && (!gContext.mbUsing || type == MT_ROTATE_SCREEN) && (!isMultipleAxesMasked && isNoAxesMasked))
@@ -1752,7 +1752,7 @@ namespace IMGUIZMO_NAMESPACE
       }
 
       // Draw corner brackets for planeW camera translation indicator
-      float R_draw = (gContext.mRadiusSquareCenter > 1.0f) ? (gContext.mRadiusSquareCenter * 0.70f) : 40.0f;
+      float R_draw = (gContext.mRadiusSquareCenter > 1.0f) ? (gContext.mRadiusSquareCenter * 1.15f) : 65.0f;
       float d_draw = R_draw * 0.35f;
       ImVec2 C_draw = gContext.mScreenSquareCenter;
       ImU32 bgCol = (type == MT_MOVE_SCREEN) ? IM_COL32(255, 255, 255, 36) : IM_COL32(255, 255, 255, 12);
@@ -2295,7 +2295,7 @@ namespace IMGUIZMO_NAMESPACE
       MOVETYPE type = MT_NONE;
 
       // screen (corner brackets picking for planeW)
-      float R_pick = (gContext.mRadiusSquareCenter > 1.0f) ? (gContext.mRadiusSquareCenter * 0.70f) : 40.0f;
+      float R_pick = (gContext.mRadiusSquareCenter > 1.0f) ? (gContext.mRadiusSquareCenter * 1.15f) : 65.0f;
       float cornerPickRadiusSqr = 16.0f * 16.0f;
       ImVec2 C_pick = gContext.mScreenSquareCenter;
       ImVec2 corners[4] = {
