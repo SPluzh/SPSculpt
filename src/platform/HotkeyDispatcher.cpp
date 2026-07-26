@@ -110,8 +110,15 @@ void HotkeyDispatcher::updateModifiers(const SDL_Event& event, SculptManager& sc
                     sculpt.getSettings(BRUSH_VISIBILITY).radius = sculpt.getSettings(m_prevBrush).radius;
                     sculpt.setBrush(BRUSH_VISIBILITY);
                     Mesh* selected = scene.getSelected();
-                    if (selected && renderer && !sculpt.getPolyGroupTool().getAllGroupIDs(selected).empty()) {
-                        renderer->setShowPolyGroups(true);
+                    if (selected && renderer) {
+                        auto groupIDs = sculpt.getPolyGroupTool().getAllGroupIDs(selected);
+                        if (groupIDs.size() > 1) {
+                            if (!m_polyGroupsTemporarilyEnabled) {
+                                m_prevPolyGroupsState = renderer->getShowPolyGroups();
+                                renderer->setShowPolyGroups(true);
+                                m_polyGroupsTemporarilyEnabled = true;
+                            }
+                        }
                     }
                 }
                 m_shiftActive = true;
@@ -126,8 +133,15 @@ void HotkeyDispatcher::updateModifiers(const SDL_Event& event, SculptManager& sc
                     sculpt.getSettings(BRUSH_VISIBILITY).radius = sculpt.getSettings(m_prevBrush).radius;
                     sculpt.setBrush(BRUSH_VISIBILITY);
                     Mesh* selected = scene.getSelected();
-                    if (selected && renderer && !sculpt.getPolyGroupTool().getAllGroupIDs(selected).empty()) {
-                        renderer->setShowPolyGroups(true);
+                    if (selected && renderer) {
+                        auto groupIDs = sculpt.getPolyGroupTool().getAllGroupIDs(selected);
+                        if (groupIDs.size() > 1) {
+                            if (!m_polyGroupsTemporarilyEnabled) {
+                                m_prevPolyGroupsState = renderer->getShowPolyGroups();
+                                renderer->setShowPolyGroups(true);
+                                m_polyGroupsTemporarilyEnabled = true;
+                            }
+                        }
                     }
                 }
                 m_ctrlActive = true;
@@ -156,13 +170,26 @@ void HotkeyDispatcher::updateModifiers(const SDL_Event& event, SculptManager& sc
             }
         }
     }
+
+    if (!(m_shiftActive && m_ctrlActive) && m_polyGroupsTemporarilyEnabled) {
+        if (renderer) {
+            renderer->setShowPolyGroups(m_prevPolyGroupsState);
+        }
+        m_polyGroupsTemporarilyEnabled = false;
+    }
 }
 
-void HotkeyDispatcher::resetModifiers(SculptManager& sculpt) {
+void HotkeyDispatcher::resetModifiers(SculptManager& sculpt, AngleRenderer* renderer) {
     if (m_ctrlActive || m_shiftActive) {
         m_ctrlActive = false;
         m_shiftActive = false;
         sculpt.setBrush(m_prevBrush);
+    }
+    if (m_polyGroupsTemporarilyEnabled) {
+        if (renderer) {
+            renderer->setShowPolyGroups(m_prevPolyGroupsState);
+        }
+        m_polyGroupsTemporarilyEnabled = false;
     }
 }
 

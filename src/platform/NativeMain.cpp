@@ -560,7 +560,7 @@ int main(int argc, char* argv[]) {
         
         bool isRemeshRunning = gui.isRemeshRunning();
         if (wasRemeshRunning && !isRemeshRunning) {
-            dispatcher.resetModifiers(sculpt);
+            dispatcher.resetModifiers(sculpt, &renderer);
         }
         wasRemeshRunning = isRemeshRunning;
 

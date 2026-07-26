@@ -76,7 +76,7 @@ public:
     void updateModifiers(const SDL_Event& event, SculptManager& sculpt, Scene& scene, AngleRenderer* renderer = nullptr);
 
     // Reset all modifier states and restore the original brush if needed
-    void resetModifiers(SculptManager& sculpt);
+    void resetModifiers(SculptManager& sculpt, AngleRenderer* renderer = nullptr);
 
     ModalMode getModalMode() const { return m_modalMode; }
 
@@ -88,4 +88,6 @@ private:
     BrushType m_prevBrush = BRUSH_FLATTEN;
     bool m_shiftActive = false;
     bool m_ctrlActive = false;
+    bool m_polyGroupsTemporarilyEnabled = false;
+    bool m_prevPolyGroupsState = false;
 };

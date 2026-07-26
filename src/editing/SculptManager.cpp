@@ -2274,26 +2274,35 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     }
                 } else {
                     if (!hitMesh && mesh) {
-                        std::cout << "[VisibilityClick] Canvas Ctrl+Shift+Click detected (maxDragDist=" << maxDragDist << "px). Inverting or resetting visibility..." << std::endl;
+                        std::cout << "[VisibilityClick] Canvas Ctrl+Shift+Click detected (maxDragDist=" << maxDragDist << "px). Inverting visibility..." << std::endl;
                         scene.pushHistoryState();
                         if (mesh->faceVisible.size() != (size_t)mesh->nbFaces) {
                             mesh->faceVisible.assign(mesh->nbFaces, 1);
                         }
-                        bool allVisible = true;
-                        for (uint8_t vis : mesh->faceVisible) {
-                            if (!vis) { allVisible = false; break; }
+
+                        // Invert face visibility (0 -> 1, 1 -> 0)
+                        for (size_t f = 0; f < mesh->faceVisible.size(); ++f) {
+                            mesh->faceVisible[f] = mesh->faceVisible[f] ? 0 : 1;
                         }
-                        if (allVisible) {
-                            for (size_t f = 0; f < mesh->faceVisible.size(); ++f) {
-                                mesh->faceVisible[f] = mesh->faceVisible[f] ? 0 : 1;
+
+                        // Synchronize vertVisible from faceVisible:
+                        // Mark vertVisible = 1 for all vertices that belong to ANY visible face
+                        std::vector<uint8_t> newVertVisible(mesh->nbVerts, 0);
+                        for (int f = 0; f < mesh->nbFaces; ++f) {
+                            if (mesh->faceVisible[f]) {
+                                uint32_t v0 = mesh->faces[f * 4];
+                                uint32_t v1 = mesh->faces[f * 4 + 1];
+                                uint32_t v2 = mesh->faces[f * 4 + 2];
+                                uint32_t v3 = mesh->faces[f * 4 + 3];
+
+                                if (v0 < newVertVisible.size()) newVertVisible[v0] = 1;
+                                if (v1 < newVertVisible.size()) newVertVisible[v1] = 1;
+                                if (v2 < newVertVisible.size()) newVertVisible[v2] = 1;
+                                if (v3 != 0xffffffff && v3 < newVertVisible.size()) newVertVisible[v3] = 1;
                             }
-                            for (size_t i = 0; i < mesh->vertVisible.size(); ++i) {
-                                mesh->vertVisible[i] = mesh->vertVisible[i] ? 0 : 1;
-                            }
-                        } else {
-                            std::fill(mesh->faceVisible.begin(), mesh->faceVisible.end(), 1);
-                            std::fill(mesh->vertVisible.begin(), mesh->vertVisible.end(), 1);
                         }
+
+                        mesh->vertVisible = std::move(newVertVisible);
                         mesh->isDirty = true;
                         mesh->isFaceGroupDirty = true;
                     } else if (hitMesh && mesh && intersectFaceId != 0xffffffff) {
