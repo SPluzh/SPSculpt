@@ -3146,28 +3146,30 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 screenPos.x >= 0.0f && screenPos.x <= (float)camera.getWidth() &&
                 screenPos.y >= 0.0f && screenPos.y <= (float)camera.getHeight()) {
                 
-                ImGui::SetNextWindowPos(ImVec2(screenPos.x - 45.0f * scale, screenPos.y - 45.0f * scale), ImGuiCond_Always);
+                ImGui::SetNextWindowPos(ImVec2(screenPos.x + 50.0f * scale, screenPos.y - 120.0f * scale), ImGuiCond_Always);
                 ImGui::SetNextWindowBgAlpha(0.7f);
                 ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | 
                                          ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | 
                                          ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize;
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(3.0f * scale, 3.0f * scale));
                 if (ImGui::Begin("##PivotLockWindow", nullptr, flags)) {
                     bool activeMoving = m_editPivot || ImGui::GetIO().KeyAlt;
                     if (activeMoving) {
                         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.83f, 0.18f, 0.18f, 1.0f));
                         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.25f, 0.25f, 1.0f));
                         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.70f, 0.10f, 0.10f, 1.0f));
-                        if (ImGui::Button(" Unlock Pivot ")) {
+                        if (ImGui::Button(ICON_LC_UNLOCK "##unlock")) {
                             m_editPivot = false;
                         }
                         ImGui::PopStyleColor(3);
                     } else {
-                        if (ImGui::Button(" Lock Pivot ")) {
+                        if (ImGui::Button(ICON_LC_LOCK "##lock")) {
                             m_editPivot = true;
                         }
                     }
                 }
                 ImGui::End();
+                ImGui::PopStyleVar();
             }
         }
     }
