@@ -1486,7 +1486,7 @@ namespace IMGUIZMO_NAMESPACE
          return;
       }
 
-      for (int j = 1; j < 12; j++)
+      for (int j = 1; j < 14; j++)
       {
          ImVec2 baseSSpace2 = worldToPos(axis * 0.05f * (float)(j * 2) * gContext.mScreenFactor, gContext.mMVP);
          ImVec2 worldDirSSpace2 = worldToPos(axis * 0.05f * (float)(j * 2 + 1) * gContext.mScreenFactor, gContext.mMVP);
@@ -1532,7 +1532,7 @@ namespace IMGUIZMO_NAMESPACE
             if (belowAxisLimit)
             {
                bool hasTranslateOnAxis = Contains(op, static_cast<OPERATION>(TRANSLATE_X << i));
-               float markerScale = hasTranslateOnAxis ? 1.6f : 1.2f;
+               float markerScale = hasTranslateOnAxis ? 1.6f : 1.4f;
                ImVec2 baseSSpace = worldToPos(dirAxis * 0.45f * gContext.mScreenFactor, gContext.mMVP);
                ImVec2 worldDirSSpaceNoScale = worldToPos(dirAxis * markerScale * gContext.mScreenFactor, gContext.mMVP);
                ImVec2 worldDirSSpace = worldToPos((dirAxis * markerScale * scaleDisplay[i]) * gContext.mScreenFactor, gContext.mMVP);
@@ -1624,7 +1624,7 @@ namespace IMGUIZMO_NAMESPACE
             if (belowAxisLimit)
             {
                bool hasTranslateOnAxis = Contains(op, static_cast<OPERATION>(TRANSLATE_X << i));
-               float markerScale = hasTranslateOnAxis ? 1.6f : 1.2f;
+               float markerScale = hasTranslateOnAxis ? 1.6f : 1.4f;
                //ImVec2 baseSSpace = worldToPos(dirAxis * 0.1f * gContext.mScreenFactor, gContext.mMVPLocal);
                //ImVec2 worldDirSSpaceNoScale = worldToPos(dirAxis * markerScale * gContext.mScreenFactor, gContext.mMVP);
                ImVec2 worldDirSSpace = worldToPos((dirAxis * markerScale * scaleDisplay[i]) * gContext.mScreenFactor, gContext.mMVPLocal);
@@ -1708,7 +1708,7 @@ namespace IMGUIZMO_NAMESPACE
             {
                const float startOffset = (Contains(op, SCALE) || Contains(op, SCALEU)) ? 0.35f : 0.1f;
                ImVec2 baseSSpace = worldToPos(dirAxis * startOffset * gContext.mScreenFactor, gContext.mMVP);
-               ImVec2 worldDirSSpace = worldToPos(dirAxis * 1.2f * gContext.mScreenFactor, gContext.mMVP);
+               ImVec2 worldDirSSpace = worldToPos(dirAxis * 1.4f * gContext.mScreenFactor, gContext.mMVP);
 
                drawList->AddLine(baseSSpace, worldDirSSpace, colors[i + 1], gContext.mStyle.TranslationLineThickness);
 
@@ -2161,8 +2161,8 @@ namespace IMGUIZMO_NAMESPACE
          const float len = IntersectRayPlane(gContext.mRayOrigin, gContext.mRayVector, BuildPlan(gContext.mModelLocal.v.position, dirAxis));
          vec_t posOnPlan = gContext.mRayOrigin + gContext.mRayVector * len;
 
-         const float startOffset = Contains(op, static_cast<OPERATION>(TRANSLATE_X << i)) ? 1.2f : 0.45f;
-         const float endOffset = Contains(op, static_cast<OPERATION>(TRANSLATE_X << i)) ? 1.6f : 1.2f;
+         const float startOffset = Contains(op, static_cast<OPERATION>(TRANSLATE_X << i)) ? 1.4f : 0.45f;
+         const float endOffset = Contains(op, static_cast<OPERATION>(TRANSLATE_X << i)) ? 1.6f : 1.4f;
          const ImVec2 posOnPlanScreen = worldToPos(posOnPlan, gContext.mViewProjection);
          const ImVec2 axisStartOnScreen = worldToPos(gContext.mModelLocal.v.position + dirAxis * gContext.mScreenFactor * startOffset, gContext.mViewProjection);
          const ImVec2 axisEndOnScreen = worldToPos(gContext.mModelLocal.v.position + dirAxis * gContext.mScreenFactor * endOffset, gContext.mViewProjection);
@@ -2199,7 +2199,7 @@ namespace IMGUIZMO_NAMESPACE
          if (belowAxisLimit)
          {
             bool hasTranslateOnAxis = Contains(op, static_cast<OPERATION>(TRANSLATE_X << i));
-            float markerScale = hasTranslateOnAxis ? 1.6f : 1.2f;
+            float markerScale = hasTranslateOnAxis ? 1.6f : 1.4f;
             //ImVec2 baseSSpace = worldToPos(dirAxis * 0.1f * gContext.mScreenFactor, gContext.mMVPLocal);
             //ImVec2 worldDirSSpaceNoScale = worldToPos(dirAxis * markerScale * gContext.mScreenFactor, gContext.mMVP);
             ImVec2 worldDirSSpace = worldToPos((dirAxis * markerScale) * gContext.mScreenFactor, gContext.mMVPLocal);
@@ -2334,7 +2334,7 @@ namespace IMGUIZMO_NAMESPACE
 
          const float startOffset = (Contains(op, SCALE) || Contains(op, SCALEU)) ? 0.35f : 0.1f;
          const ImVec2 axisStartOnScreen = worldToPos(gContext.mModel.v.position + dirAxis * gContext.mScreenFactor * startOffset, gContext.mViewProjection) - ImVec2(gContext.mX, gContext.mY);
-         const ImVec2 axisEndOnScreen = worldToPos(gContext.mModel.v.position + dirAxis * gContext.mScreenFactor * 1.2f, gContext.mViewProjection) - ImVec2(gContext.mX, gContext.mY);
+         const ImVec2 axisEndOnScreen = worldToPos(gContext.mModel.v.position + dirAxis * gContext.mScreenFactor * 1.4f, gContext.mViewProjection) - ImVec2(gContext.mX, gContext.mY);
 
          vec_t closestPointOnAxis = PointOnSegment(screenCoord, makeVect(axisStartOnScreen), makeVect(axisEndOnScreen));
          if ((closestPointOnAxis - screenCoord).Length() < 12.f && Intersects(op, static_cast<OPERATION>(TRANSLATE_X << i))) // pixel size
