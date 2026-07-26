@@ -36,6 +36,15 @@ uniform float uMetallic;
 uniform float uAlpha;
 uniform int uUseTexture;
 
+// Glass / Transmission uniforms
+uniform float uTransmission;
+uniform float uIor;
+
+// Subsurface Scattering (SSS) uniforms (Intensity, Depth, Color)
+uniform vec3  uSssColor;
+uniform float uSssIntensity;
+uniform float uSssDepth;
+
 in vec3 vVertex;
 in vec3 vNormal;
 in vec3 vColor;
@@ -155,15 +164,40 @@ void main() {
     float metallic = (uMetallic >= 0.0 ? uMetallic : vMaterial.y);
     vec3 rawColor = (uAlbedo.r >= 0.0 ? uAlbedo : vColor);
     vec3 linColor = sRGBToLinear(rawColor);
+    
+    // Glass / Transmission IOR and dielectric specular F0
+    float ior = max(1.0, uIor);
+    float f0_dielectric = 0.04;
+    if (uTransmission > 0.0) {
+        float customF0 = pow((1.0 - ior) / (1.0 + ior), 2.0);
+        f0_dielectric = mix(0.04, customF0, clamp(uTransmission, 0.0, 1.0));
+    }
+    vec3 dielectricSpecular = vec3(f0_dielectric);
+
     vec3 albedo = linColor * (1.0 - metallic);
-    vec3 specular = mix(vec3(0.04), linColor, metallic);
+    vec3 specular = mix(dielectricSpecular, linColor, metallic);
     vec3 viewDir = -normalize(vVertex);
     vec3 color = vec3(0.0);
+
+    float NoV = max(dot(normal, viewDir), 0.0);
+    vec3 F_v = F_Schlick(NoV, specular);
 
     if (uUseTexture == 1) {
         color = uExposure * computeIBL_UE4(normal, viewDir, albedo, roughness, specular);
     } else {
         color = albedo * 0.15;
+    }
+
+    // Glass / Transmission Refraction calculation
+    if (uTransmission > 0.0) {
+        vec3 refrDir = refract(-viewDir, normal, 1.0 / ior);
+        if (length(refrDir) < 0.001) {
+            refrDir = reflect(-viewDir, normal); // Total Internal Reflection
+        }
+        vec3 refrEnv = texturePanoramaLod(uIblTransform * refrDir, roughness) * linColor * uExposure;
+        vec3 specIBL = approximateSpecularIBL(specular, roughness, normal, viewDir) * uExposure;
+        vec3 glassColor = mix(refrEnv, specIBL, F_v);
+        color = mix(color, glassColor, clamp(uTransmission, 0.0, 1.0));
     }
 
     if (uNumLights > 0) {
@@ -189,26 +223,50 @@ void main() {
                 }
             }
 
-            float NoL = max(dot(normal, L), 0.0);
-            if (NoL > 0.0) {
+            float NoL = dot(normal, L);
+            float shadowFactor = 1.0;
+            if (uShadowEnabled == 1 && uLights[i].castShadow == 1 && uLights[i].type == 0) {
+                shadowFactor = PCF(vVertex);
+            }
+
+            // Direct Subsurface Scattering (Translucency & Back-lighting)
+            if (uSssIntensity > 0.0) {
+                float depthVal = max(0.01, uSssDepth);
+                float sssDistortion = 0.3 * depthVal;
+                float sssPower = max(1.0, 4.0 / depthVal);
+                float sssWrap = clamp(0.4 * depthVal, 0.0, 1.0);
+
+                vec3 sssLightDir = L + normal * sssDistortion;
+                float sssDot = max(0.0, dot(-viewDir, sssLightDir));
+                float sssTranslucency = pow(sssDot, sssPower) * uSssIntensity;
+                vec3 sssContrib = uSssColor * sssTranslucency * uLights[i].color * uLights[i].intensity * attenuation * shadowFactor;
+                color += sssContrib;
+            }
+
+            if (NoL > 0.0 || uSssIntensity > 0.0) {
+                float depthVal = max(0.01, uSssDepth);
+                float sssWrap = clamp(0.4 * depthVal, 0.0, 1.0);
+                float effectiveNoL = max(NoL, 0.0);
                 vec3 H = normalize(viewDir + L);
                 float NoH = max(dot(normal, H), 0.0);
-                float NoV = max(dot(normal, viewDir), 0.0);
                 float VoH = max(dot(viewDir, H), 0.0);
 
                 float D = D_GGX(NoH, roughness);
-                float Vis = V_SmithGGXCorrelated(NoV, NoL, roughness);
+                float Vis = V_SmithGGXCorrelated(NoV, effectiveNoL, roughness);
                 vec3 F = F_Schlick(VoH, specular);
 
                 vec3 specBRDF = D * Vis * F;
                 vec3 diffBRDF = (vec3(1.0) - F) * (1.0 - metallic) * (albedo / PI);
 
-                float shadowFactor = 1.0;
-                if (uShadowEnabled == 1 && uLights[i].castShadow == 1 && uLights[i].type == 0) {
-                    shadowFactor = PCF(vVertex);
+                if (uSssIntensity > 0.0) {
+                    float NoL_wrap = max(0.0, (NoL + sssWrap) / (1.0 + sssWrap));
+                    float scatterTerm = smoothstep(0.0, 0.4, NoL_wrap) * (1.0 - smoothstep(0.4, 0.9, NoL_wrap));
+                    vec3 sssDiffColor = mix(albedo, albedo * uSssColor * 2.5, scatterTerm * uSssIntensity);
+                    diffBRDF = (vec3(1.0) - F) * (1.0 - metallic) * (sssDiffColor / PI);
+                    effectiveNoL = NoL_wrap;
                 }
 
-                vec3 lightContrib = (diffBRDF + specBRDF) * uLights[i].color * uLights[i].intensity * NoL * attenuation * shadowFactor;
+                vec3 lightContrib = (diffBRDF + specBRDF) * uLights[i].color * uLights[i].intensity * effectiveNoL * attenuation * shadowFactor;
                 color += lightContrib;
             }
         }

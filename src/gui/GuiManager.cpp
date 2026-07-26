@@ -1794,6 +1794,36 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             }
             ImGui::EndDisabled();
 
+            ImGui::Separator();
+            ImGui::Text("Glass / Transmission Settings:");
+            float transmission = renderer.getTransmission();
+            if (ImGui::SliderFloat("Glass Transmission", &transmission, 0.0f, 1.0f, "%.2f")) {
+                renderer.setTransmission(transmission);
+            }
+            ImGui::BeginDisabled(transmission <= 0.0f);
+            float ior = renderer.getIor();
+            if (ImGui::SliderFloat("Index of Refraction (IOR)", &ior, 1.0f, 2.5f, "%.2f")) {
+                renderer.setIor(ior);
+            }
+            ImGui::EndDisabled();
+
+            ImGui::Separator();
+            ImGui::Text("Subsurface Scattering (SSS):");
+            float sssIntensity = renderer.getSssIntensity();
+            if (ImGui::SliderFloat("SSS Intensity", &sssIntensity, 0.0f, 2.0f, "%.2f")) {
+                renderer.setSssIntensity(sssIntensity);
+            }
+            float sssDepth = renderer.getSssDepth();
+            if (ImGui::SliderFloat("SSS Depth (Radius)", &sssDepth, 0.1f, 5.0f, "%.2f")) {
+                renderer.setSssDepth(sssDepth);
+            }
+            glm::vec3 sssCol = renderer.getSssColor();
+            if (ImGui::ColorEdit3("SSS Color", glm::value_ptr(sssCol))) {
+                renderer.setSssColor(sssCol);
+            }
+
+            ImGui::Separator();
+
             // Import UV texture option
             static char texturePath[256] = "";
             ImGui::InputText("UV Texture Path", texturePath, sizeof(texturePath));

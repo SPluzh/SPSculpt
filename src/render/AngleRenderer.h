@@ -162,6 +162,20 @@ public:
     void setUseVertexMaterials(bool use) { m_useVertexMaterials = use; }
     bool getUseVertexMaterials() const { return m_useVertexMaterials; }
 
+    // Glass parameters
+    float getTransmission() const { return m_transmission; }
+    void setTransmission(float t) { m_transmission = t; }
+    float getIor() const { return m_ior; }
+    void setIor(float ior) { m_ior = ior; }
+
+    // SSS parameters (3 parameters: Intensity, Depth & Color)
+    float getSssIntensity() const { return m_sssIntensity; }
+    void setSssIntensity(float val) { m_sssIntensity = val; }
+    float getSssDepth() const { return m_sssDepth; }
+    void setSssDepth(float val) { m_sssDepth = val; }
+    glm::vec3 getSssColor() const { return m_sssColor; }
+    void setSssColor(const glm::vec3& col) { m_sssColor = col; }
+
     struct EnvironmentPreset {
         std::string name;
         std::string texPath;
@@ -427,6 +441,15 @@ private:
     bool m_hasUV = false;
     bool m_useVertexColors = false;
     bool m_useVertexMaterials = false;
+
+    // Glass parameters
+    float m_transmission = 0.0f;
+    float m_ior = 1.5f;
+
+    // SSS parameters (3 parameters: Intensity, Depth, Color)
+    float m_sssIntensity = 0.0f;
+    float m_sssDepth = 1.0f;
+    glm::vec3 m_sssColor{0.8f, 0.3f, 0.15f};
 
     // Wet clay parameters
     float m_wetClayWetness = 0.6f;

@@ -92,6 +92,11 @@ bool RenderSettings::save(const std::string& filepath, const AngleRenderer& rend
     out << "albedo=" << renderer.getAlbedo()[0] << " " << renderer.getAlbedo()[1] << " " << renderer.getAlbedo()[2] << "\n";
     out << "roughness=" << renderer.getRoughness() << "\n";
     out << "metallic=" << renderer.getMetallic() << "\n";
+    out << "transmission=" << renderer.getTransmission() << "\n";
+    out << "ior=" << renderer.getIor() << "\n";
+    out << "sssColor=" << renderer.getSssColor().r << " " << renderer.getSssColor().g << " " << renderer.getSssColor().b << "\n";
+    out << "sssIntensity=" << renderer.getSssIntensity() << "\n";
+    out << "sssDepth=" << renderer.getSssDepth() << "\n";
     out << "alpha=" << renderer.getAlpha() << "\n\n";
 
     std::cout << "Successfully saved render and shading settings to: " << filepath << std::endl;
@@ -350,6 +355,32 @@ bool RenderSettings::load(const std::string& filepath, AngleRenderer& renderer, 
         if (it != params.end()) {
             renderer.setMetallic(safe_stof(it->second, 0.0f));
         }
+        it = params.find("transmission");
+        if (it != params.end()) {
+            renderer.setTransmission(safe_stof(it->second, 0.0f));
+        }
+        it = params.find("ior");
+        if (it != params.end()) {
+            renderer.setIor(safe_stof(it->second, 1.5f));
+        }
+        it = params.find("sssColor");
+        if (it != params.end()) {
+            std::stringstream ss(it->second);
+            float r, g, b;
+            if (ss >> r >> g >> b) {
+                renderer.setSssColor(glm::vec3(r, g, b));
+            }
+        }
+        it = params.find("sssIntensity");
+        if (it != params.end()) {
+            renderer.setSssIntensity(safe_stof(it->second, 0.0f));
+        }
+        it = params.find("sssDepth");
+        if (it != params.end()) {
+            renderer.setSssDepth(safe_stof(it->second, 1.0f));
+        }
+
+
         it = params.find("alpha");
         if (it != params.end()) {
             renderer.setAlpha(safe_stof(it->second, 1.0f));

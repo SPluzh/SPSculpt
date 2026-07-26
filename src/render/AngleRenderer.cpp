@@ -1308,6 +1308,15 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
         glUniform2f(glGetUniformLocation(program, "uEnvSize"), (float)m_envWidth, (float)m_envHeight);
         glUniform1i(glGetUniformLocation(program, "uUseTexture"), (m_textureId != 0 || m_envTexture != 0) ? 1 : 0);
 
+        // Glass / Transmission uniforms
+        glUniform1f(glGetUniformLocation(program, "uTransmission"), m_transmission);
+        glUniform1f(glGetUniformLocation(program, "uIor"), m_ior);
+
+        // SSS uniforms (3 parameters: Intensity, Depth, Color)
+        glUniform3f(glGetUniformLocation(program, "uSssColor"), m_sssColor.x, m_sssColor.y, m_sssColor.z);
+        glUniform1f(glGetUniformLocation(program, "uSssIntensity"), m_sssIntensity);
+        glUniform1f(glGetUniformLocation(program, "uSssDepth"), m_sssDepth);
+
         const auto& lights = scene.getLights();
         int numLights = std::min((int)lights.size(), 8);
         glUniform1i(glGetUniformLocation(program, "uNumLights"), numLights);
