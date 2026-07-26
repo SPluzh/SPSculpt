@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.4]
+- **Remeshing**: Improved the accuracy of polygroup preservation during voxel remeshing, ensuring sharp, clean boundaries without jagged edges or bleeding on complex models.
+- **Remeshing**: Eliminated polygroup projection leaks across thin geometry parts (such as ears and fingers) during remeshing operations.
 - **Brushes**: Added a "Lock Single PolyGroup" setting (`singlePolyGroup`) to restrict brush influence exclusively to the polygroup targeted under the cursor at the start of a stroke.
 - **UI**: Added a "Lock Single PolyGroup" checkbox with descriptive tooltip under the General Parameters section of the Sculpting Settings panel.
 - **UI**: Repositioned the pivot lock floating button above and to the right of the camera translation square (center handle) and replaced its text label with lock/unlock icons for a cleaner look.

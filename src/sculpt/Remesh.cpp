@@ -246,6 +246,204 @@ static double intersectionRayTriangleEdges(
 }
 
 // ---------------------------------------------------------
+// Spatial Acceleration Structure for PolyGroup Projection
+// ---------------------------------------------------------
+
+struct IndexedTriangle {
+    uint32_t triIndex;
+    uint32_t groupID;
+    double v1[3];
+    double edge1[3];
+    double edge2[3];
+    float normal[3];
+    double a00, a01, a11;
+    float bboxMin[3];
+    float bboxMax[3];
+};
+
+class TriangleSpatialIndex {
+private:
+    float gridMin[3];
+    float cellSize;
+    int dims[3];
+    std::vector<std::vector<uint32_t>> cells;
+    std::vector<IndexedTriangle> m_triangles;
+
+public:
+    void build(const float* verts, int nbVerts, const uint32_t* tris, int nbTris, const uint32_t* faceGroups, float gridStep) {
+        if (nbTris <= 0 || !verts || !tris) return;
+
+        m_triangles.resize(nbTris);
+        float minB[3] = { 1e30f, 1e30f, 1e30f };
+        float maxB[3] = { -1e30f, -1e30f, -1e30f };
+
+        for (int i = 0; i < nbTris; ++i) {
+            uint32_t iv1 = tris[i * 3 + 0] * 3;
+            uint32_t iv2 = tris[i * 3 + 1] * 3;
+            uint32_t iv3 = tris[i * 3 + 2] * 3;
+
+            IndexedTriangle& tri = m_triangles[i];
+            tri.triIndex = (uint32_t)i;
+            tri.groupID = (faceGroups ? faceGroups[i] : 0);
+
+            tri.v1[0] = (double)verts[iv1];
+            tri.v1[1] = (double)verts[iv1 + 1];
+            tri.v1[2] = (double)verts[iv1 + 2];
+
+            double v2_0 = (double)verts[iv2];
+            double v2_1 = (double)verts[iv2 + 1];
+            double v2_2 = (double)verts[iv2 + 2];
+
+            double v3_0 = (double)verts[iv3];
+            double v3_1 = (double)verts[iv3 + 1];
+            double v3_2 = (double)verts[iv3 + 2];
+
+            tri.edge1[0] = v2_0 - tri.v1[0];
+            tri.edge1[1] = v2_1 - tri.v1[1];
+            tri.edge1[2] = v2_2 - tri.v1[2];
+
+            tri.edge2[0] = v3_0 - tri.v1[0];
+            tri.edge2[1] = v3_1 - tri.v1[1];
+            tri.edge2[2] = v3_2 - tri.v1[2];
+
+            float nx = (float)(tri.edge1[1] * tri.edge2[2] - tri.edge1[2] * tri.edge2[1]);
+            float ny = (float)(tri.edge1[2] * tri.edge2[0] - tri.edge1[0] * tri.edge2[2]);
+            float nz = (float)(tri.edge1[0] * tri.edge2[1] - tri.edge1[1] * tri.edge2[0]);
+            float nlen = std::sqrt(nx * nx + ny * ny + nz * nz);
+            if (nlen > 1e-9f) {
+                tri.normal[0] = nx / nlen;
+                tri.normal[1] = ny / nlen;
+                tri.normal[2] = nz / nlen;
+            } else {
+                tri.normal[0] = 0.0f;
+                tri.normal[1] = 0.0f;
+                tri.normal[2] = 1.0f;
+            }
+
+            tri.a00 = tri.edge1[0] * tri.edge1[0] + tri.edge1[1] * tri.edge1[1] + tri.edge1[2] * tri.edge1[2];
+            tri.a01 = tri.edge1[0] * tri.edge2[0] + tri.edge1[1] * tri.edge2[1] + tri.edge1[2] * tri.edge2[2];
+            tri.a11 = tri.edge2[0] * tri.edge2[0] + tri.edge2[1] * tri.edge2[1] + tri.edge2[2] * tri.edge2[2];
+
+            float v1f[3] = { (float)tri.v1[0], (float)tri.v1[1], (float)tri.v1[2] };
+            float v2f[3] = { (float)v2_0, (float)v2_1, (float)v2_2 };
+            float v3f[3] = { (float)v3_0, (float)v3_1, (float)v3_2 };
+
+            tri.bboxMin[0] = std::min({ v1f[0], v2f[0], v3f[0] });
+            tri.bboxMin[1] = std::min({ v1f[1], v2f[1], v3f[1] });
+            tri.bboxMin[2] = std::min({ v1f[2], v2f[2], v3f[2] });
+
+            tri.bboxMax[0] = std::max({ v1f[0], v2f[0], v3f[0] });
+            tri.bboxMax[1] = std::max({ v1f[1], v2f[1], v3f[1] });
+            tri.bboxMax[2] = std::max({ v1f[2], v2f[2], v3f[2] });
+
+            minB[0] = std::min(minB[0], tri.bboxMin[0]);
+            minB[1] = std::min(minB[1], tri.bboxMin[1]);
+            minB[2] = std::min(minB[2], tri.bboxMin[2]);
+
+            maxB[0] = std::max(maxB[0], tri.bboxMax[0]);
+            maxB[1] = std::max(maxB[1], tri.bboxMax[1]);
+            maxB[2] = std::max(maxB[2], tri.bboxMax[2]);
+        }
+
+        cellSize = std::max(gridStep * 3.0f, 1e-4f);
+        float invCellSize = 1.0f / cellSize;
+
+        gridMin[0] = minB[0] - cellSize;
+        gridMin[1] = minB[1] - cellSize;
+        gridMin[2] = minB[2] - cellSize;
+
+        dims[0] = (int)std::ceil((maxB[0] + cellSize - gridMin[0]) * invCellSize);
+        dims[1] = (int)std::ceil((maxB[1] + cellSize - gridMin[1]) * invCellSize);
+        dims[2] = (int)std::ceil((maxB[2] + cellSize - gridMin[2]) * invCellSize);
+
+        dims[0] = std::max(1, dims[0]);
+        dims[1] = std::max(1, dims[1]);
+        dims[2] = std::max(1, dims[2]);
+
+        int totalCells = dims[0] * dims[1] * dims[2];
+        cells.resize(totalCells);
+
+        for (int i = 0; i < nbTris; ++i) {
+            const IndexedTriangle& tri = m_triangles[i];
+            int cxMin = std::max(0, (int)std::floor((tri.bboxMin[0] - gridMin[0]) * invCellSize));
+            int cyMin = std::max(0, (int)std::floor((tri.bboxMin[1] - gridMin[1]) * invCellSize));
+            int czMin = std::max(0, (int)std::floor((tri.bboxMin[2] - gridMin[2]) * invCellSize));
+
+            int cxMax = std::min(dims[0] - 1, (int)std::floor((tri.bboxMax[0] - gridMin[0]) * invCellSize));
+            int cyMax = std::min(dims[1] - 1, (int)std::floor((tri.bboxMax[1] - gridMin[1]) * invCellSize));
+            int czMax = std::min(dims[2] - 1, (int)std::floor((tri.bboxMax[2] - gridMin[2]) * invCellSize));
+
+            for (int z = czMin; z <= czMax; ++z) {
+                for (int y = cyMin; y <= cyMax; ++y) {
+                    for (int x = cxMin; x <= cxMax; ++x) {
+                        int cellIdx = x + y * dims[0] + z * dims[0] * dims[1];
+                        cells[cellIdx].push_back((uint32_t)i);
+                    }
+                }
+            }
+        }
+    }
+
+    uint32_t findClosestPolyGroup(const float point[3], const float quadNormal[3]) const {
+        if (m_triangles.empty()) return 0;
+
+        float invCellSize = 1.0f / cellSize;
+        int cx = (int)std::floor((point[0] - gridMin[0]) * invCellSize);
+        int cy = (int)std::floor((point[1] - gridMin[1]) * invCellSize);
+        int cz = (int)std::floor((point[2] - gridMin[2]) * invCellSize);
+
+        double bestDistSq = 1e30;
+        uint32_t bestGroup = 0;
+        bool foundAligned = false;
+
+        double pointD[3] = { (double)point[0], (double)point[1], (double)point[2] };
+
+        for (int r = 0; r <= 3; ++r) {
+            int xMin = std::max(0, cx - r);
+            int xMax = std::min(dims[0] - 1, cx + r);
+            int yMin = std::max(0, cy - r);
+            int yMax = std::min(dims[1] - 1, cy + r);
+            int zMin = std::max(0, cz - r);
+            int zMax = std::min(dims[2] - 1, cz + r);
+
+            for (int z = zMin; z <= zMax; ++z) {
+                for (int y = yMin; y <= yMax; ++y) {
+                    for (int x = xMin; x <= xMax; ++x) {
+                        int cellIdx = x + y * dims[0] + z * dims[0] * dims[1];
+                        for (uint32_t triIdx : cells[cellIdx]) {
+                            const IndexedTriangle& tri = m_triangles[triIdx];
+                            double dummyClosest[4];
+                            double distSq = distance2PointTriangleEdges(
+                                pointD, tri.edge1, tri.edge2, tri.v1, tri.a00, tri.a01, tri.a11, dummyClosest
+                            );
+
+                            float dotN = quadNormal[0] * tri.normal[0] +
+                                         quadNormal[1] * tri.normal[1] +
+                                         quadNormal[2] * tri.normal[2];
+
+                            if (dotN > 0.0f) {
+                                if (!foundAligned || distSq < bestDistSq) {
+                                    bestDistSq = distSq;
+                                    bestGroup = tri.groupID;
+                                    foundAligned = true;
+                                }
+                            } else if (!foundAligned && distSq < bestDistSq) {
+                                bestDistSq = distSq;
+                                bestGroup = tri.groupID;
+                            }
+                        }
+                    }
+                }
+            }
+            if (foundAligned && bestDistSq < ((double)r * cellSize) * ((double)r * cellSize)) {
+                break;
+            }
+        }
+        return bestGroup;
+    }
+};
+
+// ---------------------------------------------------------
 // Voxelization & Flood Fill
 // ---------------------------------------------------------
 
@@ -1109,10 +1307,7 @@ RemeshResult doRemesh(
         voxels.uniformMaterial[2] = uniformMaterial[2];
     }
 
-    voxels.hasGroupField = hasFaceGroups;
-    if (hasFaceGroups) {
-        voxels.groupField.assign(datalen, 0);
-    }
+    voxels.hasGroupField = false; // PolyGroups are transferred via spatial projection post-reconstruction
 
     // 3. Voxelize
     voxelize(verts, nbVerts, tris, nbTris, colors, materials, faceGroups, voxels, onProgress);
@@ -1132,6 +1327,117 @@ RemeshResult doRemesh(
         r.vertices[i]     = voxels.minCoord[0] + r.vertices[i] * step;
         r.vertices[i + 1] = voxels.minCoord[1] + r.vertices[i + 1] * step;
         r.vertices[i + 2] = voxels.minCoord[2] + r.vertices[i + 2] * step;
+    }
+
+    // 6. PolyGroup Transfer via Direct Spatial Mesh-to-Mesh Projection
+    if (hasFaceGroups && faceGroups && nbTris > 0 && !r.faces.empty()) {
+        size_t numFaces = r.faces.size() / 4;
+        r.faceGroups.resize(numFaces, 0);
+
+        TriangleSpatialIndex spatialIndex;
+        spatialIndex.build(verts, nbVerts, tris, nbTris, faceGroups, step);
+
+        #pragma omp parallel for schedule(static)
+        for (int i = 0; i < (int)numFaces; ++i) {
+            uint32_t idx0 = r.faces[i * 4 + 0];
+            uint32_t idx1 = r.faces[i * 4 + 1];
+            uint32_t idx2 = r.faces[i * 4 + 2];
+            uint32_t idx3 = r.faces[i * 4 + 3];
+
+            size_t nbV = r.vertices.size() / 3;
+            if (idx0 >= nbV || idx1 >= nbV || idx2 >= nbV) {
+                continue;
+            }
+
+            bool isQuad = (idx3 != 0xffffffff && idx3 < nbV);
+            const float* p0 = &r.vertices[idx0 * 3];
+            const float* p1 = &r.vertices[idx1 * 3];
+            const float* p2 = &r.vertices[idx2 * 3];
+
+            float centroid[3];
+            float e1[3] = { p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2] };
+            float e2[3];
+
+            if (isQuad) {
+                const float* p3 = &r.vertices[idx3 * 3];
+                centroid[0] = (p0[0] + p1[0] + p2[0] + p3[0]) * 0.25f;
+                centroid[1] = (p0[1] + p1[1] + p2[1] + p3[1]) * 0.25f;
+                centroid[2] = (p0[2] + p1[2] + p2[2] + p3[2]) * 0.25f;
+                e2[0] = p3[0] - p0[0];
+                e2[1] = p3[1] - p0[1];
+                e2[2] = p3[2] - p0[2];
+            } else {
+                centroid[0] = (p0[0] + p1[0] + p2[0]) * (1.0f / 3.0f);
+                centroid[1] = (p0[1] + p1[1] + p2[1]) * (1.0f / 3.0f);
+                centroid[2] = (p0[2] + p1[2] + p2[2]) * (1.0f / 3.0f);
+                e2[0] = p2[0] - p0[0];
+                e2[1] = p2[1] - p0[1];
+                e2[2] = p2[2] - p0[2];
+            }
+
+            float nx = e1[1] * e2[2] - e1[2] * e2[1];
+            float ny = e1[2] * e2[0] - e1[0] * e2[2];
+            float nz = e1[0] * e2[1] - e1[1] * e2[0];
+            float nlen = std::sqrt(nx * nx + ny * ny + nz * nz);
+            float norm[3] = { 0.0f, 0.0f, 1.0f };
+            if (nlen > 1e-9f) {
+                norm[0] = nx / nlen;
+                norm[1] = ny / nlen;
+                norm[2] = nz / nlen;
+            }
+
+            r.faceGroups[i] = spatialIndex.findClosestPolyGroup(centroid, norm);
+        }
+
+        // Post-processing cleanup: Filter isolated 1-face noise
+        if (numFaces > 0) {
+            std::vector<std::vector<uint32_t>> vertToFaces(r.vertices.size() / 3);
+            for (size_t f = 0; f < numFaces; ++f) {
+                for (int k = 0; k < 4; ++k) {
+                    uint32_t v = r.faces[f * 4 + k];
+                    if (v != 0xffffffff && v < vertToFaces.size()) {
+                        vertToFaces[v].push_back((uint32_t)f);
+                    }
+                }
+            }
+
+            std::vector<uint32_t> cleanedGroups = r.faceGroups;
+            for (size_t f = 0; f < numFaces; ++f) {
+                uint32_t myGroup = r.faceGroups[f];
+                std::unordered_map<uint32_t, int> neighborGroupCounts;
+                int totalNeighborFaces = 0;
+
+                for (int k = 0; k < 4; ++k) {
+                    uint32_t v = r.faces[f * 4 + k];
+                    if (v == 0xffffffff || v >= vertToFaces.size()) continue;
+                    for (uint32_t nFace : vertToFaces[v]) {
+                        if (nFace != f) {
+                            uint32_t nGroup = r.faceGroups[nFace];
+                            neighborGroupCounts[nGroup]++;
+                            totalNeighborFaces++;
+                        }
+                    }
+                }
+
+                if (totalNeighborFaces > 0) {
+                    int myGroupCount = neighborGroupCounts[myGroup];
+                    if (myGroupCount == 0 || (float)myGroupCount / totalNeighborFaces < 0.15f) {
+                        uint32_t bestNeighborGroup = myGroup;
+                        int maxCount = 0;
+                        for (const auto& kv : neighborGroupCounts) {
+                            if (kv.second > maxCount) {
+                                maxCount = kv.second;
+                                bestNeighborGroup = kv.first;
+                            }
+                        }
+                        if (maxCount > 0) {
+                            cleanedGroups[f] = bestNeighborGroup;
+                        }
+                    }
+                }
+            }
+            r.faceGroups = std::move(cleanedGroups);
+        }
     }
 
     if (onProgress) onProgress(2, 100);
