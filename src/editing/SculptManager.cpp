@@ -536,9 +536,9 @@ int SculptManager::doStrokePass(
                 pickedVertices.data(),
                 pickedVertices.size(),
                 currentIntersection.x, currentIntersection.y, currentIntersection.z,
-                localRadius, intensity, getCurrentSettings().hardness,
+                localRadius, intensity, getSettings(activeBrush).hardness,
                 negative,
-                getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
+                getSettings(activeBrush).focalShift, getSettings(activeBrush).focalShiftFalloff,
                 false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
             );
             break;
@@ -1120,7 +1120,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     float hitDepth = glm::distance(cameraPos, worldIntersection);
 
     float worldRadius = 0.0f;
-    float brushRadius = getCurrentSettings().radius;
+    float brushRadius = getSettings(activeBrush).radius;
     if (camera.isOrthographic()) {
         worldRadius = brushRadius * 2.0f * camera.getOrthoZoom();
     } else {
@@ -1139,14 +1139,14 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         sizeMultiplier = currentPressure;
     }
     float localRadius = (worldRadius / scale) * sizeMultiplier;
-    float intensity = getCurrentSettings().intensity * currentPressure;
+    float intensity = getSettings(activeBrush).intensity * currentPressure;
     float radius2 = localRadius * localRadius;
 
     std::vector<uint32_t> pickedVertices;
     if (isGrabBrush && !m_firstStrokeFrame) {
         pickedVertices = m_grabbedVertices;
     } else {
-        if (getCurrentSettings().topoCheck) {
+        if (getSettings(activeBrush).topoCheck) {
             pickedVertices = pickVerticesInSphereTopological(mesh, m_currentIntersection, radius2, intersectFaceId);
         } else {
             pickedVertices = mesh->octree.pickVerticesInSphere(
@@ -1154,7 +1154,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             );
         }
 
-        if (getCurrentSettings().culling) {
+        if (getSettings(activeBrush).culling) {
             filterCullingVertices(pickedVertices, mesh, localRayDir);
         }
 
@@ -1165,7 +1165,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 
     if (!pickedVertices.empty()) {
         bool altPressed = (SDL_GetModState() & KMOD_ALT) != 0;
-        bool negative = getCurrentSettings().negative ^ altPressed;
+        bool negative = getSettings(activeBrush).negative ^ altPressed;
 
         // Cache area normal and center for Clay/Flatten brushes on first frame
         if (m_firstStrokeFrame && (activeBrush == BRUSH_CLAY || activeBrush == BRUSH_CLAYBUILDUP || activeBrush == BRUSH_FLATTEN)) {
@@ -2099,14 +2099,10 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                         bool altKey = (mod & KMOD_ALT) != 0;
 
                         scene.pushHistoryState();
-                        if (bestMask < 1.0f) {
-                            if (ctrlKey && altKey) {
-                                sharpenMask(mesh);
-                            } else {
-                                blurMask(mesh);
-                            }
-                        } else {
+                        if (ctrlKey && altKey) {
                             sharpenMask(mesh);
+                        } else {
+                            blurMask(mesh);
                         }
                     }
                 } else {
@@ -2131,19 +2127,16 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             m_hasAnyValidIntersection = false;
             int dragDistX = std::abs(event.button.x - m_mouseDownX);
             int dragDistY = std::abs(event.button.y - m_mouseDownY);
-            bool wasClick = (dragDistX <= 8 && dragDistY <= 8);
+            bool wasClick = (dragDistX <= 12 && dragDistY <= 12);
 
             if (wasClick && (m_currentBrush == BRUSH_MASK || (SDL_GetModState() & KMOD_CTRL)) && mesh) {
-                sculpt_log("[MaskClick] Ctrl+Click mask action detected. Undoing initial click stroke...\n");
-                g_undoManager.endSculptStroke(scene);
-                if (g_undoManager.canUndo()) {
-                    g_undoManager.undo(scene);
-                }
+                sculpt_log("[MaskClick] Ctrl+Click mask action detected. Canceling active click stroke...\n");
+                g_undoManager.cancelSculptStroke();
 
                 // Mesh pointer stays valid when using delta UndoManager, but re-get just in case
                 mesh = scene.getSelected();
                 if (!mesh) {
-                    sculpt_log("[MaskClick] Error: Selected mesh is null after undo!\n");
+                    sculpt_log("[MaskClick] Error: Selected mesh is null after cancel!\n");
                     return;
                 }
 
@@ -2235,14 +2228,10 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     mesh = scene.getSelected();
                     if (!mesh) return;
 
-                    if (bestMask < 1.0f) {
-                        if (ctrlKey && altKey) {
-                            sharpenMask(mesh);
-                        } else {
-                            blurMask(mesh);
-                        }
-                    } else {
+                    if (ctrlKey && altKey) {
                         sharpenMask(mesh);
+                    } else {
+                        blurMask(mesh);
                     }
                 } else {
                     sculpt_log("[MaskClick] Ray missed mesh. Inverting mask...\n");
@@ -2778,7 +2767,7 @@ void SculptManager::invertMask(Mesh* mesh) {
     std::cout << "[MaskInvert] Mask inverted successfully." << std::endl;
 }
 
-void SculptManager::blurMask(Mesh* mesh) {
+void SculptManager::blurMask(Mesh* mesh, int iterations) {
     std::cout << "[MaskBlur] Call blurMask(mesh=" << mesh << ")..." << std::endl;
     if (!mesh) {
         std::cout << "[MaskBlur] Error: mesh is null!" << std::endl;
@@ -2810,8 +2799,10 @@ void SculptManager::blurMask(Mesh* mesh) {
     std::cout << "[MaskBlur] Initial masked verts count: " << iVerts.size() << " / " << nbVerts << std::endl;
     if (iVerts.empty()) return;
 
-    int iterations = m_brushSettings[m_currentBrush].maskSharpenBlurIterations;
-    if (iterations <= 0) iterations = 1;
+    if (iterations <= 0) {
+        iterations = m_brushSettings[m_currentBrush].maskSharpenBlurIterations;
+    }
+    if (iterations <= 0) iterations = 2;
 
     std::vector<uint8_t> visited(nbVerts, 0);
     for (uint32_t v : iVerts) {
@@ -2860,7 +2851,7 @@ void SculptManager::blurMask(Mesh* mesh) {
     mesh->dirtyVertMax = nbVerts - 1;
 }
 
-void SculptManager::sharpenMask(Mesh* mesh) {
+void SculptManager::sharpenMask(Mesh* mesh, int iterations) {
     std::cout << "[MaskSharpen] Call sharpenMask(mesh=" << mesh << ")..." << std::endl;
     if (!mesh || mesh->nbVerts <= 0) return;
     if (mesh->materials.size() < (size_t)mesh->nbVerts * 3) return;
@@ -2879,8 +2870,10 @@ void SculptManager::sharpenMask(Mesh* mesh) {
     std::cout << "[MaskSharpen] Initial masked verts count: " << iVerts.size() << " / " << nbVerts << std::endl;
     if (iVerts.empty()) return;
 
-    int iterations = m_brushSettings[m_currentBrush].maskSharpenBlurIterations;
-    if (iterations <= 0) iterations = 1;
+    if (iterations <= 0) {
+        iterations = m_brushSettings[m_currentBrush].maskSharpenBlurIterations;
+    }
+    if (iterations <= 0) iterations = 2;
 
     std::vector<uint8_t> visited(nbVerts, 0);
     for (uint32_t v : iVerts) {

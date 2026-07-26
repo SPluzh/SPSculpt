@@ -228,8 +228,8 @@ public:
 
     void clearMask(Mesh* mesh);
     void invertMask(Mesh* mesh);
-    void blurMask(Mesh* mesh);
-    void sharpenMask(Mesh* mesh);
+    void blurMask(Mesh* mesh, int iterations = 2);
+    void sharpenMask(Mesh* mesh, int iterations = 2);
 
     void paintAll(Scene& scene, Mesh* mesh);
     void pickColor(Mesh* mesh, uint32_t faceId, const glm::vec3& interPoint);

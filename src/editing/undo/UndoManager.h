@@ -36,6 +36,7 @@ public:
                                 bool affectsMaterials = true);
 
     void endSculptStroke(Scene& scene);
+    void cancelSculptStroke();
 
     // Helper for direct/atomic sculpt operations
     void pushSculptOperation(Scene& scene,

@@ -1149,7 +1149,7 @@ int strokeMask(
 ) {
 
     float softness = 2.0f * (1.0f - hardness);
-    float maskIntensity = negative ? -intensity : intensity;
+    float maskIntensity = negative ? intensity : -intensity;
     const float radiusSq = radius * radius;
 
     int writeIdx = 0;
@@ -1487,6 +1487,13 @@ int blurMask(
 
     std::vector<float> smoothMasks(nbIVerts);
 
+    float origMin = 1.0f;
+    for (int i = 0; i < nbIVerts; ++i) {
+        uint32_t id = iVerts[i];
+        float val = tempMasks[id * stride + offset];
+        if (val < origMin) origMin = val;
+    }
+
     for (int iter = 0; iter < iterations; ++iter) {
         for (int i = 0; i < nbIVerts; ++i) {
             uint32_t id = iVerts[i];
@@ -1522,9 +1529,22 @@ int blurMask(
             smoothMasks[i] = sumMask / count;
         }
 
+        float iterMin = 1.0f;
+        for (int i = 0; i < nbIVerts; ++i) {
+            if (smoothMasks[i] < iterMin) iterMin = smoothMasks[i];
+        }
+
+        float scale = (iterMin < 1.0f && iterMin > origMin) ? ((1.0f - origMin) / (1.0f - iterMin)) : 1.0f;
+
         for (int i = 0; i < nbIVerts; ++i) {
             uint32_t id = iVerts[i];
-            tempMasks[id * stride + offset] = smoothMasks[i];
+            float val = smoothMasks[i];
+            if (scale > 1.0f && val < 1.0f) {
+                val = origMin + (val - iterMin) * scale;
+                if (val < 0.0f) val = 0.0f;
+                if (val > 1.0f) val = 1.0f;
+            }
+            tempMasks[id * stride + offset] = val;
         }
     }
     return nbIVerts;

@@ -142,6 +142,13 @@ void UndoManager::endSculptStroke(Scene& scene) {
     s_recordedVertSets.clear();
 }
 
+void UndoManager::cancelSculptStroke() {
+    sculpt_log_lvl(LogLevel::Debug, "[Undo] Sculpt stroke canceled\n");
+    m_activeSculptEntry.reset();
+    m_activeMeshDeltaMap.clear();
+    s_recordedVertSets.clear();
+}
+
 void UndoManager::pushSculptOperation(Scene& scene,
                                        uint32_t meshId,
                                        const std::string& description,
