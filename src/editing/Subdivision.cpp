@@ -432,6 +432,20 @@ void fullSubdivision(Mesh& baseMesh, Mesh& newMesh) {
     newMesh.nbVerts = nbVertices;
     newMesh.nbFaces = nbFacesOut;
 
+    if (baseMesh.faceGroups.size() == (size_t)baseMesh.getNbFaces()) {
+        newMesh.faceGroups.resize(nbFacesOut);
+        for (int i = 0; i < baseMesh.getNbFaces(); ++i) {
+            uint32_t gid = baseMesh.faceGroups[i];
+            newMesh.faceGroups[i * 4 + 0] = gid;
+            newMesh.faceGroups[i * 4 + 1] = gid;
+            newMesh.faceGroups[i * 4 + 2] = gid;
+            newMesh.faceGroups[i * 4 + 3] = gid;
+        }
+        newMesh.isFaceGroupDirty = true;
+    } else {
+        newMesh.initFaceGroups();
+    }
+
     sculpt_log("[Subdivision::fullSubdivision] Calling newMesh.postInit()...\n");
     newMesh.postInit();
     sculpt_log("[Subdivision::fullSubdivision] fullSubdivision completed successfully.\n");

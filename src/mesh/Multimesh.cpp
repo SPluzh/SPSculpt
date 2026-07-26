@@ -86,6 +86,12 @@ void Multimesh::setSelection(int s) {
         faceBoxes = current->faceBoxes;
         faceCenters = current->faceCenters;
 
+        faceGroups = current->faceGroups;
+        if (faceGroups.size() != (size_t)nbFaces) {
+            initFaceGroups();
+        }
+        isFaceGroupDirty = true;
+
         octree.build(nbVerts, nbFaces, faceCenters.data(), faceBoxes.data(), verts.data(), faces.data());
 
         sculpt_log("[Multimesh::setSelection] Selected level %d / %zu. nbVerts=%d, nbFaces=%d, nbEdges=%d\n",
@@ -253,6 +259,8 @@ void Multimesh::syncToCurrentMesh() {
         current->materials = materials;
         current->normals = normals;
         current->vertVisible = vertVisible;
+        current->faceGroups = faceGroups;
+        current->isFaceGroupDirty = isFaceGroupDirty;
     }
 }
 
@@ -262,7 +270,28 @@ MeshResolution* Multimesh::lowerLevel() {
 
     syncToCurrentMesh();
     syncVisibility(sel, sel - 1);
-    meshes[sel - 1]->lowerAnalysis(*getCurrentMesh());
+    MeshResolution* cur = getCurrentMesh();
+    MeshResolution* prev = meshes[sel - 1].get();
+    meshes[sel - 1]->lowerAnalysis(*cur);
+
+    if (cur && prev && cur->faceGroups.size() == (size_t)cur->nbFaces) {
+        prev->faceGroups.resize(prev->nbFaces);
+        for (int i = 0; i < prev->nbFaces; ++i) {
+            if (i * 4 + 3 < cur->nbFaces) {
+                uint32_t g0 = cur->faceGroups[i * 4 + 0];
+                uint32_t g1 = cur->faceGroups[i * 4 + 1];
+                uint32_t g2 = cur->faceGroups[i * 4 + 2];
+                uint32_t g3 = cur->faceGroups[i * 4 + 3];
+
+                uint32_t majority = g0;
+                if (g1 == g2 || g1 == g3) majority = g1;
+                else if (g2 == g3) majority = g2;
+                prev->faceGroups[i] = majority;
+            }
+        }
+        prev->isFaceGroupDirty = true;
+    }
+
     setSelection(sel - 1);
     updateResolution();
 
@@ -275,7 +304,24 @@ MeshResolution* Multimesh::higherLevel() {
 
     syncToCurrentMesh();
     syncVisibility(sel, sel + 1);
-    meshes[sel + 1]->higherSynthesis(*getCurrentMesh());
+    MeshResolution* cur = getCurrentMesh();
+    MeshResolution* next = meshes[sel + 1].get();
+    meshes[sel + 1]->higherSynthesis(*cur);
+
+    if (cur && next && cur->faceGroups.size() == (size_t)cur->nbFaces) {
+        next->faceGroups.resize(next->nbFaces);
+        for (int i = 0; i < cur->nbFaces; ++i) {
+            uint32_t gid = cur->faceGroups[i];
+            if (i * 4 + 3 < next->nbFaces) {
+                next->faceGroups[i * 4 + 0] = gid;
+                next->faceGroups[i * 4 + 1] = gid;
+                next->faceGroups[i * 4 + 2] = gid;
+                next->faceGroups[i * 4 + 3] = gid;
+            }
+        }
+        next->isFaceGroupDirty = true;
+    }
+
     setSelection(sel + 1);
     updateResolution();
 

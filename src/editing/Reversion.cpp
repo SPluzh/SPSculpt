@@ -415,6 +415,31 @@ bool computeReverse(MeshResolution& baseMesh, MeshResolution& newMesh) {
     createVertices(baseMesh, newMesh, triFaceOrQuadCenter);
     copyVerticesData(baseMesh, newMesh);
 
+    if (baseMesh.faceGroups.size() == (size_t)baseMesh.getNbFaces()) {
+        int nbFacesDown = newMesh.getNbFaces();
+        newMesh.faceGroups.resize(nbFacesDown, 0);
+        for (int i = 0; i < nbFacesDown; ++i) {
+            int cen = triFaceOrQuadCenter[i];
+            if (cen >= 0 && cen < baseMesh.getNbFaces()) {
+                newMesh.faceGroups[i] = baseMesh.faceGroups[cen];
+            } else if (cen < 0) {
+                uint32_t mid5 = -cen - 1;
+                if (mid5 < (uint32_t)baseMesh.getNbVertices() && !baseMesh.vrfStartCount.empty()) {
+                    uint32_t start = baseMesh.vrfStartCount[mid5 * 2];
+                    if (start < baseMesh.vertRingFace.size()) {
+                        uint32_t fIdx = baseMesh.vertRingFace[start];
+                        if (fIdx < baseMesh.faceGroups.size()) {
+                            newMesh.faceGroups[i] = baseMesh.faceGroups[fIdx];
+                        }
+                    }
+                }
+            }
+        }
+        newMesh.isFaceGroupDirty = true;
+    } else {
+        newMesh.initFaceGroups();
+    }
+
     newMesh.initTopology();
     return true;
 }
