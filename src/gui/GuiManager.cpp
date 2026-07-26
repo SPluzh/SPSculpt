@@ -3167,6 +3167,67 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             m_editPivot = true;
                         }
                     }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip(activeMoving ? "Unlock Pivot (Alt)" : "Lock Pivot (Alt)");
+                    }
+
+                    auto applyTargetMatrix = [&](Mesh* mesh, const glm::mat4& targetMatrix, bool editPivot) {
+                        scene.pushHistoryState();
+                        if (editPivot) {
+                            glm::mat4 deltaLocalMatrix = glm::inverse(mesh->matrix) * targetMatrix;
+                            glm::mat4 deltaLocalMatrixInv = glm::inverse(deltaLocalMatrix);
+                            glm::mat3 enMatrix = glm::transpose(glm::inverse(glm::mat3(deltaLocalMatrixInv)));
+                            for (int i = 0; i < mesh->nbVerts; ++i) {
+                                glm::vec4 pos(mesh->verts[i * 3], mesh->verts[i * 3 + 1], mesh->verts[i * 3 + 2], 1.0f);
+                                glm::vec4 newPos = deltaLocalMatrixInv * pos;
+                                mesh->verts[i * 3]     = newPos.x;
+                                mesh->verts[i * 3 + 1] = newPos.y;
+                                mesh->verts[i * 3 + 2] = newPos.z;
+
+                                glm::vec3 normal(mesh->normals[i * 3], mesh->normals[i * 3 + 1], mesh->normals[i * 3 + 2]);
+                                glm::vec3 newNormal = glm::normalize(enMatrix * normal);
+                                mesh->normals[i * 3]     = newNormal.x;
+                                mesh->normals[i * 3 + 1] = newNormal.y;
+                                mesh->normals[i * 3 + 2] = newNormal.z;
+                            }
+                            mesh->matrix = targetMatrix;
+                            mesh->postInit();
+                            mesh->isDirty = true;
+                        } else {
+                            mesh->matrix = targetMatrix;
+                            mesh->isDirty = true;
+                        }
+                    };
+
+                    ImGui::SameLine();
+                    if (ImGui::Button(ICON_LC_TARGET "##gotoaxis")) {
+                        glm::mat4 targetMatrix = selectedMesh->matrix;
+                        targetMatrix[3] = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+                        applyTargetMatrix(selectedMesh, targetMatrix, activeMoving);
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Go to Axis (Move pivot/mesh to origin)");
+                    }
+
+                    ImGui::SameLine();
+                    if (ImGui::Button(ICON_LC_ROTATE_3D "##resetorient")) {
+                        float sx = glm::length(glm::vec3(selectedMesh->matrix[0]));
+                        float sy = glm::length(glm::vec3(selectedMesh->matrix[1]));
+                        float sz = glm::length(glm::vec3(selectedMesh->matrix[2]));
+                        if (sx < 1e-6f) sx = 1.0f;
+                        if (sy < 1e-6f) sy = 1.0f;
+                        if (sz < 1e-6f) sz = 1.0f;
+
+                        glm::mat4 targetMatrix = glm::mat4(1.0f);
+                        targetMatrix[0] = glm::vec4(sx, 0.0f, 0.0f, 0.0f);
+                        targetMatrix[1] = glm::vec4(0.0f, sy, 0.0f, 0.0f);
+                        targetMatrix[2] = glm::vec4(0.0f, 0.0f, sz, 0.0f);
+                        targetMatrix[3] = selectedMesh->matrix[3];
+                        applyTargetMatrix(selectedMesh, targetMatrix, activeMoving);
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Reset orientation (Align rotation to world axes)");
+                    }
                 }
                 ImGui::End();
                 ImGui::PopStyleVar();
