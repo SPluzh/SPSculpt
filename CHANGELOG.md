@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.4]
+- **Brushes**: Added a "Lock Single PolyGroup" setting (`singlePolyGroup`) to restrict brush influence exclusively to the polygroup targeted under the cursor at the start of a stroke.
+- **UI**: Added a "Lock Single PolyGroup" checkbox with descriptive tooltip under the General Parameters section of the Sculpting Settings panel.
 - **UI**: Repositioned the pivot lock floating button above and to the right of the camera translation square (center handle) and replaced its text label with lock/unlock icons for a cleaner look.
 - **Settings**: Added automatic saving and restoring of the window size, position, and maximized state to `gui_settings.cfg` to persist user window preferences across sessions.
 - **Brushes**: Removed the hardcoded pinch deformation effect from the Dam Standard brush (`BRUSH_DAMSTANDARD`), leaving only the sharp normal crease displacement.

@@ -1131,6 +1131,10 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         m_lastValidIntersection = m_currentIntersection;
         m_lastValidIntersectionNormal = m_currentIntersectionNormal;
         m_hasAnyValidIntersection = true;
+
+        if (m_firstStrokeFrame && intersectFaceId != 0xffffffff && !mesh->faceGroups.empty() && intersectFaceId < (uint32_t)mesh->nbFaces) {
+            m_strokeTargetPolyGroup = mesh->faceGroups[intersectFaceId];
+        }
     }
 
     if (activeBrush == BRUSH_POLYGROUP) {
@@ -1199,6 +1203,10 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 
         if (getSettings(activeBrush).culling) {
             filterCullingVertices(pickedVertices, mesh, localRayDir);
+        }
+
+        if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty()) {
+            filterPolyGroupVertices(pickedVertices, mesh, m_strokeTargetPolyGroup);
         }
 
         if (isGrabBrush) {
@@ -1294,6 +1302,10 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                     else if (m_symAxis == 1) symRayDir.y = -symRayDir.y;
                     else if (m_symAxis == 2) symRayDir.z = -symRayDir.z;
                     filterCullingVertices(symVerts, mesh, symRayDir);
+                }
+
+                if (getCurrentSettings().singlePolyGroup && !mesh->faceGroups.empty() && !symVerts.empty()) {
+                    filterPolyGroupVertices(symVerts, mesh, m_strokeTargetPolyGroup);
                 }
 
                 if (isGrabBrush) {
@@ -3259,6 +3271,7 @@ void SculptManager::applyPreset(const BrushPreset& preset) {
     settings.focalShiftFalloff = preset.focalShiftFalloff;
     settings.negative = preset.negative;
     settings.culling = preset.culling;
+    settings.singlePolyGroup = preset.singlePolyGroup;
     settings.accumulate = preset.accumulate;
     settings.lockPosition = preset.lockPosition;
     settings.idAlpha = preset.idAlpha;
@@ -3399,5 +3412,27 @@ void SculptManager::paintAll(Scene& scene, Mesh* mesh) {
     mesh->dirtyVertMin = 0;
     mesh->dirtyVertMax = nbVerts - 1;
 }
+
+void SculptManager::filterPolyGroupVertices(std::vector<uint32_t>& pickedVertices, const Mesh* mesh, uint32_t targetGroupId) {
+    if (!mesh || mesh->faceGroups.empty() || mesh->faceGroups.size() != (size_t)mesh->nbFaces) return;
+    if (mesh->vrfStartCount.empty() || mesh->vertRingFace.empty()) return;
+
+    pickedVertices.erase(
+        std::remove_if(pickedVertices.begin(), pickedVertices.end(), [&](uint32_t v) {
+            if (v >= (uint32_t)mesh->nbVerts) return true;
+            uint32_t start = mesh->vrfStartCount[v * 2];
+            uint32_t count = mesh->vrfStartCount[v * 2 + 1];
+            for (uint32_t i = 0; i < count; ++i) {
+                uint32_t f = mesh->vertRingFace[start + i];
+                if (f < (uint32_t)mesh->nbFaces && mesh->faceGroups[f] == targetGroupId) {
+                    return false;
+                }
+            }
+            return true;
+        }),
+        pickedVertices.end()
+    );
+}
+
 
 

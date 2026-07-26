@@ -26,6 +26,8 @@ struct BrushSettings {
     bool lockPosition = false;
     int idAlpha = 0; // alpha texture ID
 
+    bool singlePolyGroup = false; // Affect only target polygroup under stroke start
+
     // Brush-specific
     bool clay = true; // For Brush / SquareBrush
     bool tangent = false; // For Smooth (tangential smoothing)
@@ -345,6 +347,9 @@ private:
 
     int m_dividerDivisions = 3; // От 2 до 6
     bool m_measureUseDistanceThickness = true;
+
+    uint32_t m_strokeTargetPolyGroup = 0;
+    void filterPolyGroupVertices(std::vector<uint32_t>& pickedVertices, const Mesh* mesh, uint32_t targetGroupId);
 
     int doStrokePass(
         Scene& scene,

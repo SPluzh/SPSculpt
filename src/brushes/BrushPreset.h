@@ -40,6 +40,7 @@ struct BrushPreset {
     bool  focalShiftFalloff = true;
     bool  negative      = false;
     bool  culling       = false;
+    bool  singlePolyGroup = false;
     bool  accumulate    = false;
     bool  lockPosition  = false;
     bool  altmode       = false;

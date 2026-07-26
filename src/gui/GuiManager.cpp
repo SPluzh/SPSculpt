@@ -606,6 +606,9 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGui::Checkbox("Backface Culling", &settings.culling);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Enable backface culling to avoid painting through surfaces");
 
+            ImGui::Checkbox("Lock Single PolyGroup", &settings.singlePolyGroup);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Limit brush deformation/painting to the PolyGroup under the cursor at stroke start");
+
             // Alpha Texture
             const char* alphas[] = { "None (Sphere)", "Square (Clay)", "Alpha 1", "Alpha 2" };
             ImGui::Combo("Alpha Texture", &settings.idAlpha, alphas, IM_ARRAYSIZE(alphas));
