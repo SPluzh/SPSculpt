@@ -625,7 +625,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                  brushType == BRUSH_MASK || brushType == BRUSH_MASK_GRADIENT_BLUR ||
                                  brushType == BRUSH_MEASURE || brushType == BRUSH_DIVIDER ||
                                  brushType == BRUSH_TRANSFORM || brushType == BRUSH_ARMATURE_SPHERES ||
-                                 brushType == BRUSH_BRUSH);
+                                 brushType == BRUSH_BRUSH || brushType == BRUSH_POLYGROUP);
 
         if (hasSpecialParams) {
             if (ImGui::CollapsingHeader("Tool Specific Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
