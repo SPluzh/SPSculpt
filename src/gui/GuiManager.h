@@ -54,6 +54,7 @@ private:
     // settings
     float m_dyntopoDetail = 100.0f;
     int m_remeshResolution = 150;
+    bool m_remeshKeepPolyGroups = true;
     bool m_imguiInitialized = false;
     bool m_editPivot = false;
     float m_gizmoSize = 0.10f;
@@ -149,6 +150,9 @@ public:
 
     int getRemeshResolution() const { return m_remeshResolution; }
     void setRemeshResolution(int val) { m_remeshResolution = val; }
+
+    bool getRemeshKeepPolyGroups() const { return m_remeshKeepPolyGroups; }
+    void setRemeshKeepPolyGroups(bool val) { m_remeshKeepPolyGroups = val; }
 
     float getGizmoSize() const { return m_gizmoSize; }
     void setGizmoSize(float val) { m_gizmoSize = val; }

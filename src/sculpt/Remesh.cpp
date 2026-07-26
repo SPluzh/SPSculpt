@@ -18,10 +18,12 @@ struct VoxelGrid {
     std::vector<float> distanceField;
     std::vector<uint32_t> colorField;      // packed colors
     std::vector<uint32_t> materialField;   // packed materials
+    std::vector<uint32_t> groupField;      // polygroup IDs
     float uniformColor[3];
     float uniformMaterial[3];
     bool hasColorField = false;
     bool hasMaterialField = false;
+    bool hasGroupField = false;
 };
 
 // ---------------------------------------------------------
@@ -252,6 +254,7 @@ static void voxelize(
     const uint32_t* tris, int nbTris,
     const float* colors,
     const float* materials,
+    const uint32_t* faceGroups,
     VoxelGrid& voxels,
     std::function<void(int stage, int progress)> onProgress = nullptr
 ) {
@@ -364,6 +367,9 @@ static void voxelize(
                             uint8_t g = (uint8_t)(m1[1] * 255.0f + 0.5f);
                             uint8_t b = (uint8_t)(m1[2] * 255.0f + 0.5f);
                             voxels.materialField[n] = ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+                        }
+                        if (voxels.hasGroupField && faceGroups) {
+                            voxels.groupField[n] = faceGroups[iTri];
                         }
                     }
 
@@ -662,6 +668,7 @@ static RemeshResult marchingCubesReconstruct(VoxelGrid& voxels, std::function<vo
     std::vector<uint32_t> edgeVertX((rx - 1) * ry * rz, 0xffffffff);
     std::vector<uint32_t> edgeVertY(rx * (ry - 1) * rz, 0xffffffff);
     std::vector<uint32_t> edgeVertZ(rx * ry * (rz - 1), 0xffffffff);
+    std::vector<uint32_t> vertGroups;
 
     int n = 0;
     float grid[8];
@@ -744,6 +751,13 @@ static RemeshResult marchingCubesReconstruct(VoxelGrid& voxels, std::function<vo
                         res.materials.push_back(tmpM[0]);
                         res.materials.push_back(tmpM[1]);
                         res.materials.push_back(tmpM[2]);
+
+                        if (voxels.hasGroupField) {
+                            int node0 = (x + p0[0]) + (y + p0[1]) * rx + (z + p0[2]) * rxy;
+                            int node1 = (x + p1[0]) + (y + p1[1]) * rx + (z + p1[2]) * rxy;
+                            uint32_t grp = (std::abs(grid[e[0]]) <= std::abs(grid[e[1]])) ? voxels.groupField[node0] : voxels.groupField[node1];
+                            vertGroups.push_back(grp);
+                        }
                     }
                 }
 
@@ -754,6 +768,11 @@ static RemeshResult marchingCubesReconstruct(VoxelGrid& voxels, std::function<vo
                     res.faces.push_back(edges[f[l + 1]]);
                     res.faces.push_back(edges[f[l + 2]]);
                     res.faces.push_back(0xffffffff); // TRI_INDEX
+
+                    if (voxels.hasGroupField && !vertGroups.empty()) {
+                        uint32_t v0 = edges[f[l]];
+                        res.faceGroups.push_back((size_t)v0 < vertGroups.size() ? vertGroups[v0] : 0);
+                    }
                 }
             }
         }
@@ -801,11 +820,14 @@ static const std::vector<uint32_t> snEdgeTable = computeEdgeTable(snCubeEdges);
 
 static uint8_t readScalarValuesSurfaceNets(
     VoxelGrid& voxels, float grid[8], int n,
-    std::vector<float>& outCols, std::vector<float>& outMats
+    std::vector<float>& outCols, std::vector<float>& outMats,
+    std::vector<uint32_t>& outGroups
 ) {
     float c1 = 0.0f, c2 = 0.0f, c3 = 0.0f;
     float m1 = 0.0f, m2 = 0.0f, m3 = 0.0f;
     float invSum = 0.0f;
+    float minAbsDist = std::numeric_limits<float>::infinity();
+    uint32_t closestGroup = 0;
 
     uint8_t mask = 0;
     int g = 0;
@@ -823,7 +845,8 @@ static uint8_t readScalarValuesSurfaceNets(
                 }
                 g++;
                 if (p != std::numeric_limits<float>::infinity()) {
-                    p = std::min(1.0f / std::abs(p), 1e15f);
+                    float absP = std::abs(p);
+                    p = std::min(1.0f / absP, 1e15f);
                     invSum += p;
                     if (voxels.hasColorField) {
                         uint32_t val = voxels.colorField[id];
@@ -836,6 +859,10 @@ static uint8_t readScalarValuesSurfaceNets(
                         m1 += (float)((val >> 16) & 0xff) * p;
                         m2 += (float)((val >> 8) & 0xff) * p;
                         m3 += (float)(val & 0xff) * p;
+                    }
+                    if (voxels.hasGroupField && absP < minAbsDist) {
+                        minAbsDist = absP;
+                        closestGroup = voxels.groupField[id];
                     }
                 }
             }
@@ -863,6 +890,9 @@ static uint8_t readScalarValuesSurfaceNets(
             outMats.push_back(voxels.uniformMaterial[0]);
             outMats.push_back(voxels.uniformMaterial[1]);
             outMats.push_back(voxels.uniformMaterial[2]);
+        }
+        if (voxels.hasGroupField) {
+            outGroups.push_back(closestGroup);
         }
     }
 
@@ -912,7 +942,9 @@ static void interpolateVerticesSurfaceNets(
 
 static void createFaceSurfaceNets(
     uint32_t edgeMask, uint8_t mask, const std::vector<int32_t>& buffer,
-    const int R[3], int m, const int x[3], std::vector<uint32_t>& faces
+    const int R[3], int m, const int x[3], std::vector<uint32_t>& faces,
+    const std::vector<uint32_t>& vertGroups, std::vector<uint32_t>& faceGroups,
+    bool hasGroupField
 ) {
     for (int i = 0; i < 3; ++i) {
         if (!(edgeMask & (1 << i)))
@@ -927,16 +959,33 @@ static void createFaceSurfaceNets(
         int du = R[iu];
         int dv = R[iv];
 
+        int32_t v0, v1, v2, v3;
         if (mask & 1) {
-            faces.push_back(buffer[m]);
-            faces.push_back(buffer[m - du]);
-            faces.push_back(buffer[m - du - dv]);
-            faces.push_back(buffer[m - dv]);
+            v0 = buffer[m];
+            v1 = buffer[m - du];
+            v2 = buffer[m - du - dv];
+            v3 = buffer[m - dv];
         } else {
-            faces.push_back(buffer[m]);
-            faces.push_back(buffer[m - dv]);
-            faces.push_back(buffer[m - du - dv]);
-            faces.push_back(buffer[m - du]);
+            v0 = buffer[m];
+            v1 = buffer[m - dv];
+            v2 = buffer[m - du - dv];
+            v3 = buffer[m - du];
+        }
+        faces.push_back(v0);
+        faces.push_back(v1);
+        faces.push_back(v2);
+        faces.push_back(v3);
+
+        if (hasGroupField && !vertGroups.empty()) {
+            uint32_t g0 = (size_t)v0 < vertGroups.size() ? vertGroups[v0] : 0;
+            uint32_t g1 = (size_t)v1 < vertGroups.size() ? vertGroups[v1] : 0;
+            uint32_t g2 = (size_t)v2 < vertGroups.size() ? vertGroups[v2] : 0;
+            uint32_t g3 = (size_t)v3 < vertGroups.size() ? vertGroups[v3] : 0;
+
+            uint32_t fg = g0;
+            if (g1 == g2 || g1 == g3) fg = g1;
+            else if (g2 == g3) fg = g2;
+            faceGroups.push_back(fg);
         }
     }
 }
@@ -953,6 +1002,7 @@ static RemeshResult surfaceNetsReconstruct(VoxelGrid& voxels, bool block, std::f
     float grid[8];
     int nbBuf = 1;
     std::vector<int32_t> buffer((rx + 1) * (ry + 1) * 2, 0);
+    std::vector<uint32_t> vertGroups;
 
     for (x[2] = 0; x[2] < rz - 1; ++x[2], n += rx, nbBuf ^= 1, R[2] = -R[2]) {
         if (onProgress && (x[2] % 10 == 0)) {
@@ -963,14 +1013,14 @@ static RemeshResult surfaceNetsReconstruct(VoxelGrid& voxels, bool block, std::f
 
         for (x[1] = 0; x[1] < ry - 1; ++x[1], ++n, m += 2) {
             for (x[0] = 0; x[0] < rx - 1; ++x[0], ++n, ++m) {
-                uint8_t mask = readScalarValuesSurfaceNets(voxels, grid, n, res.colors, res.materials);
+                uint8_t mask = readScalarValuesSurfaceNets(voxels, grid, n, res.colors, res.materials, vertGroups);
                 if (mask == 0 || mask == 0xff)
                     continue;
 
                 uint32_t edgeMask = snEdgeTable[mask];
                 buffer[m] = res.vertices.size() / 3;
                 interpolateVerticesSurfaceNets(edgeMask, grid, x, res.vertices, block);
-                createFaceSurfaceNets(edgeMask, mask, buffer, R, m, x, res.faces);
+                createFaceSurfaceNets(edgeMask, mask, buffer, R, m, x, res.faces, vertGroups, res.faceGroups, voxels.hasGroupField);
             }
         }
     }
@@ -986,6 +1036,7 @@ RemeshResult doRemesh(
     const uint32_t* tris, int nbTris,
     const float* colors,
     const float* materials,
+    const uint32_t* faceGroups,
     const float* box,
     float resolution,
     bool block,
@@ -995,10 +1046,11 @@ RemeshResult doRemesh(
     const float* uniformMaterial,
     bool hasColors,
     bool hasMaterials,
+    bool hasFaceGroups,
     std::function<void(int stage, int progress)> onProgress
 ) {
-    sculpt_log("[C++ doRemesh] Start. nbVerts=%d, nbTris=%d, resolution=%.2f, block=%d, smooth=%d, manifold=%d, hasColors=%d, hasMaterials=%d\n",
-               nbVerts, nbTris, resolution, block, smooth, manifold, hasColors, hasMaterials);
+    sculpt_log("[C++ doRemesh] Start. nbVerts=%d, nbTris=%d, resolution=%.2f, block=%d, smooth=%d, manifold=%d, hasColors=%d, hasMaterials=%d, hasFaceGroups=%d\n",
+               nbVerts, nbTris, resolution, block, smooth, manifold, hasColors, hasMaterials, hasFaceGroups);
     if (box) {
         sculpt_log("[C++ doRemesh] box: [%.4f, %.4f, %.4f, %.4f, %.4f, %.4f]\n", box[0], box[1], box[2], box[3], box[4], box[5]);
     } else {
@@ -1057,8 +1109,13 @@ RemeshResult doRemesh(
         voxels.uniformMaterial[2] = uniformMaterial[2];
     }
 
+    voxels.hasGroupField = hasFaceGroups;
+    if (hasFaceGroups) {
+        voxels.groupField.assign(datalen, 0);
+    }
+
     // 3. Voxelize
-    voxelize(verts, nbVerts, tris, nbTris, colors, materials, voxels, onProgress);
+    voxelize(verts, nbVerts, tris, nbTris, colors, materials, faceGroups, voxels, onProgress);
 
     // 4. Flood fill inside/outside
     floodFill(voxels, onProgress);

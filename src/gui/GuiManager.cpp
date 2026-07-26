@@ -1,5 +1,6 @@
 #include "gui/GuiManager.h"
 #include "mesh/Multimesh.h"
+#include "common/Constants.h"
 #include "common/Logger.h"
 #include "render/AngleRenderer.h"
 #include "render/RenderSettings.h"
@@ -1525,6 +1526,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             } else if (ImGui::IsItemDeactivated()) {
                 scene.updateVoxelPreview(0.0f, {});
             }
+
+            ImGui::Checkbox("Keep PolyGroups", &m_remeshKeepPolyGroups);
 
             if (ImGui::Button("Remesh", ImVec2(-1, 0))) {
                 std::cout << "[Topology] Trigger remesh with resolution: " << m_remeshResolution << std::endl;
@@ -3579,6 +3582,21 @@ void GuiManager::performRemesh(Scene& scene) {
     auto faces = MeshUtils::triangulate(*selectedMesh);
     auto colors = selectedMesh->colors;
     auto materials = selectedMesh->materials;
+
+    bool keepGroups = m_remeshKeepPolyGroups && !selectedMesh->faceGroups.empty();
+    std::vector<uint32_t> triFaceGroups;
+    if (keepGroups) {
+        triFaceGroups.reserve(selectedMesh->nbFaces * 2);
+        for (int i = 0; i < selectedMesh->nbFaces; ++i) {
+            uint32_t fg = i < (int)selectedMesh->faceGroups.size() ? selectedMesh->faceGroups[i] : 0;
+            triFaceGroups.push_back(fg);
+            uint32_t v3 = selectedMesh->faces[i * 4 + 3];
+            if (v3 != TRI_INDEX) {
+                triFaceGroups.push_back(fg);
+            }
+        }
+    }
+
     int nbVerts = selectedMesh->nbVerts;
     float bbox[6];
     selectedMesh->computeBbox(bbox);
@@ -3603,6 +3621,8 @@ void GuiManager::performRemesh(Scene& scene) {
         faces = std::move(faces),
         colors = std::move(colors),
         materials = std::move(materials),
+        triFaceGroups = std::move(triFaceGroups),
+        keepGroups,
         nbVerts,
         bboxArr = std::array<float,6>{bbox[0],bbox[1],bbox[2],bbox[3],bbox[4],bbox[5]},
         resolution,
@@ -3618,6 +3638,7 @@ void GuiManager::performRemesh(Scene& scene) {
                 faces.data(), faces.size() / 3,
                 hasColors ? colors.data() : nullptr,
                 hasMaterials ? materials.data() : nullptr,
+                keepGroups ? triFaceGroups.data() : nullptr,
                 bboxArr.data(),
                 resolution,
                 false, // block
@@ -3627,6 +3648,7 @@ void GuiManager::performRemesh(Scene& scene) {
                 uniMatArr.data(),
                 hasColors,
                 hasMaterials,
+                keepGroups,
                 [this](int stage, int pct) {
                     m_remeshAsync.stage = stage;
                     m_remeshAsync.progress = pct;
@@ -3642,9 +3664,10 @@ void GuiManager::performRemesh(Scene& scene) {
 
 void GuiManager::applyRemeshResult(Scene& scene, const RemeshResult& r) {
     sculpt_log("[DEBUG applyRemeshResult] Started applying remesh result.\n");
-    sculpt_log("[DEBUG applyRemeshResult] RemeshResult: verts=%u, faces=%u, colors=%u, materials=%u\n",
+    sculpt_log("[DEBUG applyRemeshResult] RemeshResult: verts=%u, faces=%u, colors=%u, materials=%u, faceGroups=%u\n",
               (unsigned int)r.vertices.size(), (unsigned int)r.faces.size(),
-              (unsigned int)r.colors.size(), (unsigned int)r.materials.size());
+              (unsigned int)r.colors.size(), (unsigned int)r.materials.size(),
+              (unsigned int)r.faceGroups.size());
 
     Mesh* selectedMesh = scene.getSelected();
     if (!selectedMesh) {
@@ -3658,6 +3681,13 @@ void GuiManager::applyRemeshResult(Scene& scene, const RemeshResult& r) {
     selectedMesh->materials = r.materials;
     selectedMesh->nbVerts = r.vertices.size() / 3;
     selectedMesh->nbFaces = r.faces.size() / 4;
+
+    if (m_remeshKeepPolyGroups && !r.faceGroups.empty()) {
+        selectedMesh->faceGroups = r.faceGroups;
+        selectedMesh->isFaceGroupDirty = true;
+    } else {
+        selectedMesh->initFaceGroups();
+    }
 
     sculpt_log("[DEBUG applyRemeshResult] Mesh configuration updated: nbVerts=%d, nbFaces=%d\n",
               selectedMesh->nbVerts, selectedMesh->nbFaces);

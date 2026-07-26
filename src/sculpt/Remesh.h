@@ -7,6 +7,7 @@ struct RemeshResult {
     std::vector<uint32_t> faces;
     std::vector<float> colors;
     std::vector<float> materials;
+    std::vector<uint32_t> faceGroups;
 };
 
 #include <functional>
@@ -16,6 +17,7 @@ RemeshResult doRemesh(
     const uint32_t* tris, int nbTris,
     const float* colors,
     const float* materials,
+    const uint32_t* faceGroups,
     const float* box,              // float[6]
     float resolution,
     bool block,
@@ -25,6 +27,7 @@ RemeshResult doRemesh(
     const float* uniformMaterial,  // float[3]
     bool hasColors,
     bool hasMaterials,
+    bool hasFaceGroups,
     std::function<void(int stage, int progress)> onProgress = nullptr
 );
 RemeshResult doSurfaceNetsFromSDF(
