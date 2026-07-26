@@ -428,6 +428,12 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             if (ImGui::IsItemDeactivatedAfterEdit()) {
                 m_pendingUiScaleRefresh = true;
             }
+
+            ImGui::SetNextItemWidth(120.0f * scale);
+            ImGui::SliderFloat("Gizmo Size", &m_gizmoSize, 0.04f, 0.25f, "%.2f");
+            if (m_gizmoSize < 0.04f) m_gizmoSize = 0.04f;
+            if (m_gizmoSize > 0.25f) m_gizmoSize = 0.25f;
+
             ImGui::EndMenu();
         }
         ImGui::EndMainMenuBar();
@@ -1456,6 +1462,10 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         if (ImGui::SliderFloat("Roll Speed", &roll, 0.1f, 5.0f, "%.1f")) {
             camera.setSpeedRoll(roll);
         }
+
+        ImGui::Separator();
+        ImGui::Text("Gizmo Settings:");
+        ImGui::SliderFloat("Gizmo Size", &m_gizmoSize, 0.04f, 0.25f, "%.2f");
 
         ImGui::Separator();
         ImGui::Text("Snap Views:");
@@ -3053,10 +3063,11 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGuizmo::SetOrthographic(camera.isOrthographic());
             ImGuizmo::SetDrawlist(ImGui::GetForegroundDrawList());
             ImGuizmo::SetRect(0.0f, 0.0f, (float)camera.getWidth(), (float)camera.getHeight());
+            ImGuizmo::AllowAxisFlip(false);
 
             bool cameraDragging = sculpt.getCameraController().isDragging();
             ImGuizmo::Enable(!cameraDragging);
-            ImGuizmo::SetGizmoSizeClipSpace(0.10f);
+            ImGuizmo::SetGizmoSizeClipSpace(m_gizmoSize);
 
             glm::mat4 view = camera.getViewMatrix();
             glm::mat4 proj = camera.getProjMatrix();
@@ -3075,7 +3086,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 draggedPivot = isMovingPivot;
             }
 
-            ImGuizmo::OPERATION op = draggedPivot ? (ImGuizmo::TRANSLATE | ImGuizmo::ROTATE) : ImGuizmo::UNIVERSAL;
+            ImGuizmo::OPERATION op = ImGuizmo::UNIVERSAL;
 
             // Apply custom styling matching legacy JS colors and sizes
             ImGuizmo::Style& style = ImGuizmo::GetStyle();
@@ -3146,7 +3157,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 screenPos.x >= 0.0f && screenPos.x <= (float)camera.getWidth() &&
                 screenPos.y >= 0.0f && screenPos.y <= (float)camera.getHeight()) {
                 
-                ImGui::SetNextWindowPos(ImVec2(screenPos.x + 50.0f * scale, screenPos.y - 120.0f * scale), ImGuiCond_Always);
+                float sizeRatio = m_gizmoSize / 0.10f;
+                ImGui::SetNextWindowPos(ImVec2(screenPos.x + 50.0f * sizeRatio * scale, screenPos.y - 120.0f * sizeRatio * scale), ImGuiCond_Always);
                 ImGui::SetNextWindowBgAlpha(0.7f);
                 ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | 
                                          ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | 
@@ -3726,6 +3738,7 @@ bool GuiManager::saveSettings(const std::string& filepath) {
 
     out << "[General]\n";
     out << "uiScaleMultiplier=" << m_uiScale << "\n";
+    out << "gizmoSize=" << m_gizmoSize << "\n";
 
     out << "[Window]\n";
     out << "width=" << m_winWidth << "\n";
@@ -3812,6 +3825,12 @@ bool GuiManager::loadSettings(const std::string& filepath) {
             m_uiScale = std::stof(it->second);
             if (m_uiScale < 0.5f) m_uiScale = 0.5f;
             if (m_uiScale > 2.5f) m_uiScale = 2.5f;
+        }
+        auto itGizmo = params.find("gizmoSize");
+        if (itGizmo != params.end()) {
+            m_gizmoSize = std::stof(itGizmo->second);
+            if (m_gizmoSize < 0.04f) m_gizmoSize = 0.04f;
+            if (m_gizmoSize > 0.25f) m_gizmoSize = 0.25f;
         }
     }
 

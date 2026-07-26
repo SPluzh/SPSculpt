@@ -736,8 +736,8 @@ namespace IMGUIZMO_NAMESPACE
       bool mBelowPlaneLimit[3];
       float mAxisFactor[3];
 
-      float mAxisLimit=0.0025f;
-      float mPlaneLimit=0.02f;
+      float mAxisLimit=0.0001f;
+      float mPlaneLimit=0.0001f;
 
       // bounds stretching
       vec_t mBoundsPivot;
@@ -1031,7 +1031,7 @@ namespace IMGUIZMO_NAMESPACE
       gContext.mWidth = width;
       gContext.mHeight = height;
       gContext.mXMax = gContext.mX + gContext.mWidth;
-      gContext.mYMax = gContext.mY + gContext.mXMax;
+      gContext.mYMax = gContext.mY + gContext.mHeight;
       gContext.mDisplayRatio = width / height;
    }
 
@@ -1318,8 +1318,6 @@ namespace IMGUIZMO_NAMESPACE
 
          // and store values
          gContext.mAxisFactor[axisIndex] = mulAxis;
-         gContext.mAxisFactor[(axisIndex + 1) % 3] = mulAxisX;
-         gContext.mAxisFactor[(axisIndex + 2) % 3] = mulAxisY;
          gContext.mBelowAxisLimit[axisIndex] = belowAxisLimit;
          gContext.mBelowPlaneLimit[axisIndex] = belowPlaneLimit;
       }
@@ -1416,7 +1414,7 @@ namespace IMGUIZMO_NAMESPACE
             continue;
          }
          const bool usingAxis = (gContext.mbUsing && type == MT_ROTATE_Z - axis);
-         const int circleMul = (hasRSC && !usingAxis) ? 1 : 2;
+         const int circleMul = 2;
 
          ImVec2* circlePos = (ImVec2*)alloca(sizeof(ImVec2) * (circleMul * halfCircleSegmentCount + 1));
          const bool rightHanded = gContext.mProjectionMat.m[2][3] < 0.f;

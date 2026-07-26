@@ -56,6 +56,7 @@ private:
     int m_remeshResolution = 150;
     bool m_imguiInitialized = false;
     bool m_editPivot = false;
+    float m_gizmoSize = 0.10f;
     float m_dpiScale = 1.0f;
     float m_uiScale = 1.0f;
     bool m_pendingUiScaleRefresh = false;
@@ -148,6 +149,9 @@ public:
 
     int getRemeshResolution() const { return m_remeshResolution; }
     void setRemeshResolution(int val) { m_remeshResolution = val; }
+
+    float getGizmoSize() const { return m_gizmoSize; }
+    void setGizmoSize(float val) { m_gizmoSize = val; }
 
     void performRemesh(Scene& scene);
     void applyRemeshResult(Scene& scene, const RemeshResult& r);

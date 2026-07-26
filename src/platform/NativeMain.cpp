@@ -485,7 +485,8 @@ int main(int argc, char* argv[]) {
                             } else if (eventCopy.type == SDL_MOUSEWHEEL) {
                                 isCameraEvent = true;
                             }
-                            if (!isCameraEvent) {
+                            bool isAltClickSettingPivot = (eventCopy.type == SDL_MOUSEBUTTONDOWN && eventCopy.button.button == SDL_BUTTON_LEFT && ((SDL_GetModState() & KMOD_ALT) != 0) && !ImGuizmo::IsUsing());
+                            if (!isCameraEvent && !isAltClickSettingPivot) {
                                 skipSculpt = true;
                             }
                         }
@@ -506,7 +507,10 @@ int main(int argc, char* argv[]) {
                             
                             bool isGizmoHovered = (sculpt.getBrush() == BRUSH_TRANSFORM && (ImGuizmo::IsOver() || ImGuizmo::IsUsing()));
                             if (!(isCameraEvent && isGizmoHovered)) {
-                                skipSculpt = true;
+                                bool isAltClickSettingPivot = (sculpt.getBrush() == BRUSH_TRANSFORM && eventCopy.type == SDL_MOUSEBUTTONDOWN && eventCopy.button.button == SDL_BUTTON_LEFT && ((SDL_GetModState() & KMOD_ALT) != 0) && !ImGuizmo::IsUsing());
+                                if (!isAltClickSettingPivot) {
+                                    skipSculpt = true;
+                                }
                             }
                         }
                     }

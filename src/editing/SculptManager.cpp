@@ -1507,6 +1507,10 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             if ((mod & KMOD_ALT) && !(mod & KMOD_CTRL)) {
                 float minT = std::numeric_limits<float>::infinity();
                 Mesh* closestMesh = nullptr;
+                uint32_t closestFaceId = 0xffffffff;
+                float closestLocalMinT = std::numeric_limits<float>::infinity();
+                glm::vec3 closestLocalRayOrigin{0.0f};
+                glm::vec3 closestLocalRayDir{0.0f};
 
                 Ray ray = camera.getRay((float)mouseX, (float)mouseY);
 
@@ -1524,7 +1528,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     );
 
                     float localMinT = std::numeric_limits<float>::infinity();
-                    bool hitThisMesh = false;
+                    uint32_t localFaceId = 0xffffffff;
 
                     for (uint32_t faceId : candidateFaces) {
                         if (faceId >= (uint32_t)m->nbFaces) continue;
@@ -1546,7 +1550,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                         if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v1, v2, t)) {
                             if (t < localMinT) {
                                 localMinT = t;
-                                hitThisMesh = true;
+                                localFaceId = faceId;
                             }
                         }
 
@@ -1555,18 +1559,22 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                             if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v2, v3, t)) {
                                 if (t < localMinT) {
                                     localMinT = t;
-                                    hitThisMesh = true;
+                                    localFaceId = faceId;
                                 }
                             }
                         }
                     }
 
-                    if (hitThisMesh) {
+                    if (localFaceId != 0xffffffff) {
                         glm::vec3 worldHit = glm::vec3(m->matrix * glm::vec4(localRayOrigin + localMinT * localRayDir, 1.0f));
                         float worldT = glm::distance(ray.origin, worldHit);
                         if (worldT < minT) {
                             minT = worldT;
                             closestMesh = m;
+                            closestFaceId = localFaceId;
+                            closestLocalMinT = localMinT;
+                            closestLocalRayOrigin = localRayOrigin;
+                            closestLocalRayDir = localRayDir;
                         }
                     }
                 }
@@ -1574,8 +1582,83 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 if (closestMesh) {
                     if (closestMesh != scene.getSelected()) {
                         scene.setOrUnsetMesh(closestMesh, false);
-                        return;
                     }
+
+                    if (m_currentBrush == BRUSH_TRANSFORM) {
+                        glm::vec3 localPt = closestLocalRayOrigin + closestLocalMinT * closestLocalRayDir;
+                        glm::vec3 localNormal(0.0f, 0.0f, 1.0f);
+                        if (closestFaceId < (uint32_t)closestMesh->nbFaces && !closestMesh->faceNormals.empty()) {
+                            localNormal = glm::vec3(
+                                closestMesh->faceNormals[closestFaceId * 3],
+                                closestMesh->faceNormals[closestFaceId * 3 + 1],
+                                closestMesh->faceNormals[closestFaceId * 3 + 2]
+                            );
+                        }
+                        if (glm::length(localNormal) < 1e-6f) {
+                            uint32_t v0Id = closestMesh->faces[closestFaceId * 4];
+                            uint32_t v1Id = closestMesh->faces[closestFaceId * 4 + 1];
+                            uint32_t v2Id = closestMesh->faces[closestFaceId * 4 + 2];
+                            glm::vec3 v0(closestMesh->verts[v0Id * 3], closestMesh->verts[v0Id * 3 + 1], closestMesh->verts[v0Id * 3 + 2]);
+                            glm::vec3 v1(closestMesh->verts[v1Id * 3], closestMesh->verts[v1Id * 3 + 1], closestMesh->verts[v1Id * 3 + 2]);
+                            glm::vec3 v2(closestMesh->verts[v2Id * 3], closestMesh->verts[v2Id * 3 + 1], closestMesh->verts[v2Id * 3 + 2]);
+                            localNormal = glm::cross(v1 - v0, v2 - v0);
+                        }
+                        if (glm::length(localNormal) > 1e-6f) {
+                            localNormal = glm::normalize(localNormal);
+                        } else {
+                            localNormal = glm::vec3(0.0f, 0.0f, 1.0f);
+                        }
+
+                        glm::vec3 worldPt = glm::vec3(closestMesh->matrix * glm::vec4(localPt, 1.0f));
+                        glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(closestMesh->matrix)));
+                        glm::vec3 worldNormal = glm::normalize(normalMatrix * localNormal);
+                        if (glm::dot(worldNormal, ray.dir) > 0.0f) {
+                            worldNormal = -worldNormal;
+                        }
+
+                        float sx = glm::length(glm::vec3(closestMesh->matrix[0]));
+                        float sy = glm::length(glm::vec3(closestMesh->matrix[1]));
+                        float sz = glm::length(glm::vec3(closestMesh->matrix[2]));
+                        if (sx < 1e-6f) sx = 1.0f;
+                        if (sy < 1e-6f) sy = 1.0f;
+                        if (sz < 1e-6f) sz = 1.0f;
+
+                        glm::vec3 zAxis = worldNormal;
+                        glm::vec3 up = (std::abs(zAxis.y) < 0.999f) ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(0.0f, 0.0f, 1.0f);
+                        glm::vec3 xAxis = glm::normalize(glm::cross(up, zAxis));
+                        glm::vec3 yAxis = glm::cross(zAxis, xAxis);
+
+                        glm::mat4 targetMatrix(1.0f);
+                        targetMatrix[0] = glm::vec4(xAxis * sx, 0.0f);
+                        targetMatrix[1] = glm::vec4(yAxis * sy, 0.0f);
+                        targetMatrix[2] = glm::vec4(zAxis * sz, 0.0f);
+                        targetMatrix[3] = glm::vec4(worldPt, 1.0f);
+
+                        scene.pushHistoryState();
+
+                        glm::mat4 deltaLocalMatrix = glm::inverse(closestMesh->matrix) * targetMatrix;
+                        glm::mat4 deltaLocalMatrixInv = glm::inverse(deltaLocalMatrix);
+                        glm::mat3 enMatrix = glm::transpose(glm::inverse(glm::mat3(deltaLocalMatrixInv)));
+
+                        for (int i = 0; i < closestMesh->nbVerts; ++i) {
+                            glm::vec4 pos(closestMesh->verts[i * 3], closestMesh->verts[i * 3 + 1], closestMesh->verts[i * 3 + 2], 1.0f);
+                            glm::vec4 newPos = deltaLocalMatrixInv * pos;
+                            closestMesh->verts[i * 3]     = newPos.x;
+                            closestMesh->verts[i * 3 + 1] = newPos.y;
+                            closestMesh->verts[i * 3 + 2] = newPos.z;
+
+                            glm::vec3 normal(closestMesh->normals[i * 3], closestMesh->normals[i * 3 + 1], closestMesh->normals[i * 3 + 2]);
+                            glm::vec3 newNormal = glm::normalize(enMatrix * normal);
+                            closestMesh->normals[i * 3]     = newNormal.x;
+                            closestMesh->normals[i * 3 + 1] = newNormal.y;
+                            closestMesh->normals[i * 3 + 2] = newNormal.z;
+                        }
+
+                        closestMesh->matrix = targetMatrix;
+                        closestMesh->postInit();
+                        closestMesh->isDirty = true;
+                    }
+                    return;
                 } else {
                     return;
                 }
