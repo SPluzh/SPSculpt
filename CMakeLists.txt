@@ -20,15 +20,6 @@ FetchContent_Declare(json
 )
 FetchContent_MakeAvailable(json)
 
-FetchContent_Declare(imguizmo
-    GIT_REPOSITORY https://github.com/CedricGuillemet/ImGuizmo.git
-    GIT_TAG master
-)
-FetchContent_GetProperties(imguizmo)
-if(NOT imguizmo_POPULATED)
-    FetchContent_Populate(imguizmo)
-endif()
-
 add_library(imgui STATIC
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_draw.cpp
@@ -37,12 +28,12 @@ add_library(imgui STATIC
     ${imgui_SOURCE_DIR}/imgui_demo.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl2.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
-    ${imguizmo_SOURCE_DIR}/src/ImGuizmo.cpp
+    ${CMAKE_SOURCE_DIR}/third_party/imguizmo/ImGuizmo.cpp
 )
 target_include_directories(imgui PUBLIC
     ${imgui_SOURCE_DIR}
     ${imgui_SOURCE_DIR}/backends
-    ${imguizmo_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/third_party/imguizmo
 )
 target_compile_definitions(imgui PUBLIC IMGUI_IMPL_OPENGL_ES3)
 
