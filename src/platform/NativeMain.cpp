@@ -477,7 +477,17 @@ int main(int argc, char* argv[]) {
                     // Prioritize ImGuizmo over camera orbit when hovering/interacting with the gizmo
                     if (sculpt.getBrush() == BRUSH_TRANSFORM && (ImGuizmo::IsOver() || ImGuizmo::IsUsing())) {
                         if (!sculpt.getCameraController().isDragging()) {
-                            skipSculpt = true;
+                            bool isCameraEvent = false;
+                            if (eventCopy.type == SDL_MOUSEBUTTONDOWN || eventCopy.type == SDL_MOUSEBUTTONUP) {
+                                if (eventCopy.button.button == SDL_BUTTON_RIGHT || eventCopy.button.button == SDL_BUTTON_MIDDLE) {
+                                    isCameraEvent = true;
+                                }
+                            } else if (eventCopy.type == SDL_MOUSEWHEEL) {
+                                isCameraEvent = true;
+                            }
+                            if (!isCameraEvent) {
+                                skipSculpt = true;
+                            }
                         }
                     }
 
@@ -485,7 +495,19 @@ int main(int argc, char* argv[]) {
                         // Never skip mouse events if the camera controller is actively dragging/navigating,
                         // otherwise mouse up or mouse motion events will be swallowed by ImGui and lock navigation state.
                         if (!sculpt.getCameraController().isDragging()) {
-                            skipSculpt = true;
+                            bool isCameraEvent = false;
+                            if (eventCopy.type == SDL_MOUSEBUTTONDOWN || eventCopy.type == SDL_MOUSEBUTTONUP) {
+                                if (eventCopy.button.button == SDL_BUTTON_RIGHT || eventCopy.button.button == SDL_BUTTON_MIDDLE) {
+                                    isCameraEvent = true;
+                                }
+                            } else if (eventCopy.type == SDL_MOUSEWHEEL) {
+                                isCameraEvent = true;
+                            }
+                            
+                            bool isGizmoHovered = (sculpt.getBrush() == BRUSH_TRANSFORM && (ImGuizmo::IsOver() || ImGuizmo::IsUsing()));
+                            if (!(isCameraEvent && isGizmoHovered)) {
+                                skipSculpt = true;
+                            }
                         }
                     }
                     if (io.WantCaptureKeyboard && (eventCopy.type == SDL_KEYDOWN || eventCopy.type == SDL_KEYUP)) {
