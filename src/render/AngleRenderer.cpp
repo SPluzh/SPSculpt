@@ -1374,6 +1374,15 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
 
     glUniform1i(glGetUniformLocation(program, "uShowPolyGroups"), m_showPolyGroups ? 1 : 0);
 
+    if (program == m_polygroupProgram) {
+        if (bufs->polygroupVao != 0 && bufs->polygroupVertCount > 0) {
+            glBindVertexArray(bufs->polygroupVao);
+            glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(bufs->polygroupVertCount));
+            glBindVertexArray(0);
+        }
+        return;
+    }
+
     glBindVertexArray(bufs->vao);
 
     glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
@@ -1778,21 +1787,6 @@ void AngleRenderer::generateTriangleIndices(const Mesh* mesh, std::vector<uint32
     bool hasVisibility = !visible.empty();
     bool hasFaceVis = (fVisible.size() == (size_t)mesh->nbFaces);
 
-    std::vector<uint32_t> vertGroups;
-    if (mesh->faceGroups.size() == (size_t)mesh->nbFaces) {
-        vertGroups.resize(mesh->nbVerts, 0);
-        for (int f = 0; f < mesh->nbFaces; ++f) {
-            if (hasFaceVis && !fVisible[f]) continue;
-            uint32_t gid = mesh->faceGroups[f];
-            for (int k = 0; k < 4; ++k) {
-                uint32_t vid = mesh->faces[f * 4 + k];
-                if (vid != 0xffffffff && vid < (uint32_t)mesh->nbVerts) {
-                    vertGroups[vid] = gid;
-                }
-            }
-        }
-    }
-
     for (int i = 0; i < mesh->nbFaces; ++i) {
         if (hasFaceVis) {
             if (!fVisible[i]) continue;
@@ -1807,39 +1801,16 @@ void AngleRenderer::generateTriangleIndices(const Mesh* mesh, std::vector<uint32
             if (v3 != 0xffffffff && (v3 >= visible.size() || !visible[v3])) continue;
         }
 
-        uint32_t fVerts[4] = {
-            mesh->faces[i * 4],
-            mesh->faces[i * 4 + 1],
-            mesh->faces[i * 4 + 2],
-            mesh->faces[i * 4 + 3]
-        };
-        int numV = (fVerts[3] == 0xffffffff) ? 3 : 4;
+        uint32_t iv1 = mesh->faces[i * 4];
+        uint32_t iv2 = mesh->faces[i * 4 + 1];
+        uint32_t iv3 = mesh->faces[i * 4 + 2];
+        uint32_t iv4 = mesh->faces[i * 4 + 3];
+        bool isQuad = (iv4 != 0xffffffff);
 
-        int startIdx = 0;
-        if (!vertGroups.empty() && mesh->faceGroups.size() == (size_t)mesh->nbFaces) {
-            uint32_t gid = mesh->faceGroups[i];
-            for (int k = 0; k < numV; ++k) {
-                uint32_t vid = fVerts[k];
-                if (vid < vertGroups.size() && vertGroups[vid] == gid) {
-                    startIdx = k;
-                    break;
-                }
-            }
-        }
-
-        uint32_t iv1 = fVerts[startIdx];
-        uint32_t iv2 = fVerts[(startIdx + 1) % numV];
-        uint32_t iv3 = fVerts[(startIdx + 2) % numV];
-        uint32_t iv4 = (numV == 4) ? fVerts[(startIdx + 3) % numV] : 0xffffffff;
-
-        if (numV == 3) {
-            outIndices.push_back(iv1);
-            outIndices.push_back(iv2);
-            outIndices.push_back(iv3);
-        } else {
-            outIndices.push_back(iv1);
-            outIndices.push_back(iv2);
-            outIndices.push_back(iv3);
+        outIndices.push_back(iv1);
+        outIndices.push_back(iv2);
+        outIndices.push_back(iv3);
+        if (isQuad) {
             outIndices.push_back(iv1);
             outIndices.push_back(iv3);
             outIndices.push_back(iv4);
@@ -1889,6 +1860,122 @@ void AngleRenderer::generateWireframeIndices(const Mesh* mesh, std::vector<uint3
             outEdges.push_back(iv1);
         }
     }
+}
+
+void AngleRenderer::buildPolyGroupBuffers(const Mesh* mesh, MeshRenderBuffers* bufs) {
+    if (!mesh || !bufs) return;
+
+    const auto& fVisible = mesh->faceVisible;
+    bool hasFaceVis = (fVisible.size() == (size_t)mesh->nbFaces);
+    const auto& visible = mesh->vertVisible;
+    bool hasVertVis = !visible.empty();
+    bool hasGroups = (mesh->faceGroups.size() == (size_t)mesh->nbFaces);
+
+    std::vector<float> expandedVerts;
+    std::vector<float> expandedNormals;
+    std::vector<float> expandedMaterials;
+    std::vector<uint32_t> expandedGroups;
+
+    size_t estimatedVerts = mesh->nbFaces * 6;
+    expandedVerts.reserve(estimatedVerts * 3);
+    expandedNormals.reserve(estimatedVerts * 3);
+    expandedMaterials.reserve(estimatedVerts * 3);
+    expandedGroups.reserve(estimatedVerts);
+
+    for (int i = 0; i < mesh->nbFaces; ++i) {
+        if (hasFaceVis) {
+            if (!fVisible[i]) continue;
+        } else if (hasVertVis) {
+            uint32_t v0 = mesh->faces[i * 4];
+            uint32_t v1 = mesh->faces[i * 4 + 1];
+            uint32_t v2 = mesh->faces[i * 4 + 2];
+            uint32_t v3 = mesh->faces[i * 4 + 3];
+            if (v0 >= visible.size() || !visible[v0]) continue;
+            if (v1 >= visible.size() || !visible[v1]) continue;
+            if (v2 >= visible.size() || !visible[v2]) continue;
+            if (v3 != 0xffffffff && (v3 >= visible.size() || !visible[v3])) continue;
+        }
+
+        uint32_t iv0 = mesh->faces[i * 4];
+        uint32_t iv1 = mesh->faces[i * 4 + 1];
+        uint32_t iv2 = mesh->faces[i * 4 + 2];
+        uint32_t iv3 = mesh->faces[i * 4 + 3];
+        bool isQuad = (iv3 != 0xffffffff);
+        uint32_t gid = hasGroups ? mesh->faceGroups[i] : 0;
+
+        auto addVertex = [&](uint32_t vid) {
+            if (vid < (uint32_t)mesh->nbVerts) {
+                expandedVerts.push_back(mesh->verts[vid * 3]);
+                expandedVerts.push_back(mesh->verts[vid * 3 + 1]);
+                expandedVerts.push_back(mesh->verts[vid * 3 + 2]);
+
+                expandedNormals.push_back(mesh->normals[vid * 3]);
+                expandedNormals.push_back(mesh->normals[vid * 3 + 1]);
+                expandedNormals.push_back(mesh->normals[vid * 3 + 2]);
+
+                if (mesh->materials.size() == (size_t)mesh->nbVerts * 3) {
+                    expandedMaterials.push_back(mesh->materials[vid * 3]);
+                    expandedMaterials.push_back(mesh->materials[vid * 3 + 1]);
+                    expandedMaterials.push_back(mesh->materials[vid * 3 + 2]);
+                } else {
+                    expandedMaterials.push_back(0.5f);
+                    expandedMaterials.push_back(0.0f);
+                    expandedMaterials.push_back(1.0f);
+                }
+            } else {
+                expandedVerts.insert(expandedVerts.end(), {0.0f, 0.0f, 0.0f});
+                expandedNormals.insert(expandedNormals.end(), {0.0f, 1.0f, 0.0f});
+                expandedMaterials.insert(expandedMaterials.end(), {0.5f, 0.0f, 1.0f});
+            }
+            expandedGroups.push_back(gid);
+        };
+
+        // Triangle 1: iv0, iv1, iv2
+        addVertex(iv0);
+        addVertex(iv1);
+        addVertex(iv2);
+
+        // Triangle 2 (if quad): iv0, iv2, iv3
+        if (isQuad) {
+            addVertex(iv0);
+            addVertex(iv2);
+            addVertex(iv3);
+        }
+    }
+
+    bufs->polygroupVertCount = expandedGroups.size();
+
+    if (bufs->polygroupVao == 0) {
+        glGenVertexArrays(1, &bufs->polygroupVao);
+        glGenBuffers(1, &bufs->polygroupVboVerts);
+        glGenBuffers(1, &bufs->polygroupVboNormals);
+        glGenBuffers(1, &bufs->polygroupVboMaterials);
+        glGenBuffers(1, &bufs->polygroupVboGroups);
+    }
+
+    glBindVertexArray(bufs->polygroupVao);
+
+    glBindBuffer(GL_ARRAY_BUFFER, bufs->polygroupVboVerts);
+    glBufferData(GL_ARRAY_BUFFER, expandedVerts.size() * sizeof(float), expandedVerts.data(), GL_DYNAMIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    glBindBuffer(GL_ARRAY_BUFFER, bufs->polygroupVboNormals);
+    glBufferData(GL_ARRAY_BUFFER, expandedNormals.size() * sizeof(float), expandedNormals.data(), GL_DYNAMIC_DRAW);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(1);
+
+    glBindBuffer(GL_ARRAY_BUFFER, bufs->polygroupVboMaterials);
+    glBufferData(GL_ARRAY_BUFFER, expandedMaterials.size() * sizeof(float), expandedMaterials.data(), GL_DYNAMIC_DRAW);
+    glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(3);
+
+    glBindBuffer(GL_ARRAY_BUFFER, bufs->polygroupVboGroups);
+    glBufferData(GL_ARRAY_BUFFER, expandedGroups.size() * sizeof(uint32_t), expandedGroups.data(), GL_DYNAMIC_DRAW);
+    glVertexAttribIPointer(5, 1, GL_UNSIGNED_INT, sizeof(uint32_t), (void*)0);
+    glEnableVertexAttribArray(5);
+
+    glBindVertexArray(0);
 }
 
 void AngleRenderer::uploadIfDirty(Mesh* mesh) {
@@ -1958,7 +2045,6 @@ void AngleRenderer::uploadIfDirty(Mesh* mesh) {
         std::vector<uint32_t> vertGroups(mesh->nbVerts, 0);
         if (mesh->faceGroups.size() == (size_t)mesh->nbFaces) {
             bool hasFaceVis = (mesh->faceVisible.size() == (size_t)mesh->nbFaces);
-            // Pass 1: Assign group IDs from VISIBLE faces first
             for (int f = 0; f < mesh->nbFaces; ++f) {
                 if (hasFaceVis && !mesh->faceVisible[f]) continue;
                 uint32_t gid = mesh->faceGroups[f];
@@ -1969,40 +2055,27 @@ void AngleRenderer::uploadIfDirty(Mesh* mesh) {
                     }
                 }
             }
-            // Pass 2: Fill hidden faces for unassigned vertices
-            if (hasFaceVis) {
-                for (int f = 0; f < mesh->nbFaces; ++f) {
-                    if (mesh->faceVisible[f]) continue;
-                    uint32_t gid = mesh->faceGroups[f];
-                    for (int k = 0; k < 4; ++k) {
-                        uint32_t vid = mesh->faces[f * 4 + k];
-                        if (vid != 0xffffffff && vid < (uint32_t)mesh->nbVerts) {
-                            if (vertGroups[vid] == 0) {
-                                vertGroups[vid] = gid;
-                            }
-                        }
-                    }
-                }
-            }
         }
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboFaceGroups);
         glBufferData(GL_ARRAY_BUFFER, vertGroups.size() * sizeof(uint32_t), vertGroups.data(), GL_DYNAMIC_DRAW);
-        mesh->isFaceGroupDirty = false;
         
         std::vector<uint32_t> triIndices;
         generateTriangleIndices(mesh, triIndices);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, triIndices.size() * sizeof(uint32_t), triIndices.data(), GL_STATIC_DRAW);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, triIndices.size() * sizeof(uint32_t), triIndices.data(), GL_DYNAMIC_DRAW);
         bufs->triIndexCount = triIndices.size();
         
         std::vector<uint32_t> wireIndices;
         generateWireframeIndices(mesh, wireIndices);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboWireframe);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, wireIndices.size() * sizeof(uint32_t), wireIndices.data(), GL_STATIC_DRAW);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, wireIndices.size() * sizeof(uint32_t), wireIndices.data(), GL_DYNAMIC_DRAW);
         bufs->wireIndexCount = wireIndices.size();
         
         glBindVertexArray(0);
         bufs->vertCount = mesh->nbVerts;
+
+        buildPolyGroupBuffers(mesh, bufs.get());
+        mesh->isFaceGroupDirty = false;
         
         mesh->isDirty = false;
         mesh->isVertexDirty = false;
@@ -2024,23 +2097,23 @@ void AngleRenderer::uploadIfDirty(Mesh* mesh) {
                         }
                     }
                 }
-                if (hasFaceVis) {
-                    for (int f = 0; f < mesh->nbFaces; ++f) {
-                        if (mesh->faceVisible[f]) continue;
-                        uint32_t gid = mesh->faceGroups[f];
-                        for (int k = 0; k < 4; ++k) {
-                            uint32_t vid = mesh->faces[f * 4 + k];
-                            if (vid != 0xffffffff && vid < (uint32_t)mesh->nbVerts) {
-                                if (vertGroups[vid] == 0) {
-                                    vertGroups[vid] = gid;
-                                }
-                            }
-                        }
-                    }
-                }
             }
             glBindBuffer(GL_ARRAY_BUFFER, bufs->vboFaceGroups);
             glBufferData(GL_ARRAY_BUFFER, vertGroups.size() * sizeof(uint32_t), vertGroups.data(), GL_DYNAMIC_DRAW);
+
+            std::vector<uint32_t> triIndices;
+            generateTriangleIndices(mesh, triIndices);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, triIndices.size() * sizeof(uint32_t), triIndices.data(), GL_DYNAMIC_DRAW);
+            bufs->triIndexCount = triIndices.size();
+
+            std::vector<uint32_t> wireIndices;
+            generateWireframeIndices(mesh, wireIndices);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboWireframe);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, wireIndices.size() * sizeof(uint32_t), wireIndices.data(), GL_DYNAMIC_DRAW);
+            bufs->wireIndexCount = wireIndices.size();
+
+            buildPolyGroupBuffers(mesh, bufs.get());
             mesh->isFaceGroupDirty = false;
         }
         if (mesh->isVertexDirty && mesh->dirtyVertMin <= mesh->dirtyVertMax && mesh->dirtyVertMax < (uint32_t)mesh->nbVerts) {
@@ -2054,6 +2127,10 @@ void AngleRenderer::uploadIfDirty(Mesh* mesh) {
             glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
             glBufferSubData(GL_ARRAY_BUFFER, offset, size,
                             mesh->normals.data() + mesh->dirtyVertMin * 3);
+
+            if (bufs->polygroupVao != 0) {
+                buildPolyGroupBuffers(mesh, bufs.get());
+            }
             
             mesh->isVertexDirty = false;
         }

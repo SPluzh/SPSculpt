@@ -25,6 +25,14 @@ struct MeshRenderBuffers {
     GLuint eboTriangles = 0;
     GLuint eboWireframe = 0;
     
+    // Dedicated expanded VAO/VBOs for PolyGroup rendering
+    GLuint polygroupVao = 0;
+    GLuint polygroupVboVerts = 0;
+    GLuint polygroupVboNormals = 0;
+    GLuint polygroupVboMaterials = 0;
+    GLuint polygroupVboGroups = 0;
+    size_t polygroupVertCount = 0;
+    
     size_t vertCount = 0;
     size_t triIndexCount = 0;
     size_t wireIndexCount = 0;
@@ -38,6 +46,12 @@ struct MeshRenderBuffers {
         if (vboFaceGroups) glDeleteBuffers(1, &vboFaceGroups);
         if (eboTriangles) glDeleteBuffers(1, &eboTriangles);
         if (eboWireframe) glDeleteBuffers(1, &eboWireframe);
+
+        if (polygroupVao) glDeleteVertexArrays(1, &polygroupVao);
+        if (polygroupVboVerts) glDeleteBuffers(1, &polygroupVboVerts);
+        if (polygroupVboNormals) glDeleteBuffers(1, &polygroupVboNormals);
+        if (polygroupVboMaterials) glDeleteBuffers(1, &polygroupVboMaterials);
+        if (polygroupVboGroups) glDeleteBuffers(1, &polygroupVboGroups);
     }
 };
 
@@ -271,6 +285,7 @@ public:
 private:
     void generateTriangleIndices(const Mesh* mesh, std::vector<uint32_t>& outIndices);
     void generateWireframeIndices(const Mesh* mesh, std::vector<uint32_t>& outEdges);
+    void buildPolyGroupBuffers(const Mesh* mesh, MeshRenderBuffers* bufs);
 
     void drawBackground(const Scene& scene, const Camera& camera);
     void updateBackgroundGeometry();
