@@ -168,6 +168,7 @@ static const char* getBrushNameLocal(BrushType brush) {
         case BRUSH_TRANSFORM: return "Transform";
         case BRUSH_ARMATURE_SPHERES: return "Armature Spheres";
         case BRUSH_BRUSH:     return "Brush";
+        case BRUSH_POLYGROUP: return "PolyGroup";
     }
     return "Unknown";
 }
@@ -441,7 +442,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         const char* tools[] = { 
             "Flatten", "Smooth", "Inflate", "Pinch", "Crease", "V-Tool", "Move", "Drag", "Elastic", 
             "Mask", "Paint", "Twist", "Local Scale", "Clay", "Clay Buildup", "Dam Standard", "Square Brush", "Visibility", "Mask Gradient Blur",
-            "Measure", "Divider", "Transform", "Armature Spheres", "Brush"
+            "Measure", "Divider", "Transform", "Armature Spheres", "Brush", "PolyGroup"
         };
         BrushType current = sculpt.getBrush();
         for (int i = 0; i < BRUSH_COUNT; i++) {
@@ -996,6 +997,71 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     ImGui::Separator();
                     ImGui::SliderInt("Blur Iterations", &settings.maskSharpenBlurIterations, 1, 100);
                     ImGui::Checkbox("Blur Masked Only", &settings.blurMaskedOnly);
+                }
+                else if (brushType == BRUSH_POLYGROUP) {
+                    Mesh* selectedMesh = scene.getSelected();
+                    uint32_t currentGid = sculpt.getActiveGroupID();
+
+                    ImGui::Text("Active Group:");
+                    ImGui::SameLine();
+
+                    // Group color swatch preview
+                    float goldenRatio = 0.618033988749895f;
+                    float gh = fmodf((float)currentGid * goldenRatio, 1.0f);
+                    float gr, gg, gb;
+                    ImGui::ColorConvertHSVtoRGB(gh, 0.85f, 0.95f, gr, gg, gb);
+                    ImGui::ColorButton("##groupColorPreview", ImVec4(gr, gg, gb, 1.0f), ImGuiColorEditFlags_NoTooltip, ImVec2(24, 24));
+                    ImGui::SameLine();
+
+                    int activeGid = (int)currentGid;
+                    ImGui::PushItemWidth(70.0f);
+                    if (ImGui::InputInt("##activeGid", &activeGid, 0, 0)) {
+                        if (activeGid < 1) activeGid = 1;
+                        sculpt.setActiveGroupID((uint32_t)activeGid);
+                    }
+                    ImGui::PopItemWidth();
+                    ImGui::SameLine();
+                    if (ImGui::Button("-##decGid")) {
+                        if (currentGid > 1) sculpt.setActiveGroupID(currentGid - 1);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("+##incGid")) {
+                        sculpt.setActiveGroupID(currentGid + 1);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("New Group (+)", ImVec2(100, 24))) {
+                        uint32_t nextId = selectedMesh ? selectedMesh->getNextFreeGroupID() : (currentGid + 1);
+                        sculpt.setActiveGroupID(nextId);
+                    }
+
+                    ImGui::Separator();
+                    ImGui::TextDisabled("Shortcuts:\n - Stroke: Paint active group\n - Alt + Click: Eyedropper / Pick ID\n - Ctrl + Click: Flood Fill component");
+                    ImGui::Separator();
+
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.44f, 0.70f, 1.00f));
+                    if (ImGui::Button("Group From Mask", ImVec2(130, 26))) {
+                        if (selectedMesh) {
+                            scene.pushHistoryState();
+                            selectedMesh = scene.getSelected();
+                            sculpt.getPolyGroupTool().createGroupFromMask(selectedMesh);
+                        }
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Auto Group", ImVec2(130, 26))) {
+                        if (selectedMesh) {
+                            scene.pushHistoryState();
+                            selectedMesh = scene.getSelected();
+                            sculpt.getPolyGroupTool().autoGroupByConnectedComponents(selectedMesh);
+                        }
+                    }
+                    if (ImGui::Button("Clear All Groups", ImVec2(-1, 26))) {
+                        if (selectedMesh) {
+                            scene.pushHistoryState();
+                            selectedMesh = scene.getSelected();
+                            sculpt.getPolyGroupTool().clearAllGroups(selectedMesh);
+                        }
+                    }
+                    ImGui::PopStyleColor();
                 }
                 else if (brushType == BRUSH_MEASURE) {
                     bool useDist = sculpt.getMeasureUseDistanceThickness();
@@ -1573,6 +1639,11 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         bool wire = renderer.getShowWireframe();
         if (ImGui::Checkbox("Show Wireframe", &wire)) {
             renderer.setShowWireframe(wire);
+        }
+        ImGui::SameLine();
+        bool polyGroups = renderer.getShowPolyGroups();
+        if (ImGui::Checkbox("Show PolyGroups", &polyGroups)) {
+            renderer.setShowPolyGroups(polyGroups);
         }
 
         bool flat = renderer.getFlatShading();
@@ -3890,7 +3961,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             const char* tools[] = { 
                 "Flatten", "Smooth", "Inflate", "Pinch", "Crease", "V-Tool", "Move", "Drag", "Elastic", 
                 "Mask", "Paint", "Twist", "Local Scale", "Clay", "Clay Buildup", "Dam Standard", "Square Brush", "Visibility", "Mask Gradient Blur",
-                "Measure", "Divider", "Transform", "Armature Spheres", "Brush"
+                "Measure", "Divider", "Transform", "Armature Spheres", "Brush", "PolyGroup"
             };
             for (int i = 0; i < BRUSH_COUNT; i++) {
                 bool isSelected = (currentBrush == (BrushType)i);

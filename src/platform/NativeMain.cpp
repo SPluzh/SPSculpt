@@ -528,6 +528,7 @@ int main(int argc, char* argv[]) {
         }
         sculpt.getCursor().applyToRenderer(renderer);
         renderer.setLassoParameters(sculpt.isLassoActive(), sculpt.getLassoPoints(), sculpt.getLassoAlt(), sculpt.isMaskLasso());
+        renderer.setActiveBrush(sculpt.getBrush());
         renderer.render(scene);
         gui.render(sculpt, scene, renderer, window);
         

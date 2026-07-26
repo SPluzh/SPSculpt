@@ -101,7 +101,17 @@ static void addMesh(const Mesh* mesh, std::stringstream& ss, int offsets[2], boo
     offsets[0] += nbVertices;
     offsets[1] += nbTexCoords;
 
+    uint32_t currentGroup = 0xffffffff;
+    bool hasGroups = (mesh->faceGroups.size() == (size_t)nbFaces);
+
     for (int i = 0; i < nbFaces; ++i) {
+        if (hasGroups) {
+            uint32_t gid = mesh->faceGroups[i];
+            if (gid != currentGroup) {
+                currentGroup = gid;
+                ss << "g polygroup_" << currentGroup << "\n";
+            }
+        }
         int j = i * 4;
         uint32_t id = fAr[j + 3];
         if (saveUV) {

@@ -3,6 +3,7 @@ layout(location = 0) in vec3 aVertex;
 layout(location = 1) in vec3 aNormal;
 layout(location = 2) in vec3 aColor;
 layout(location = 3) in vec3 aMaterial;
+layout(location = 5) in uint aFaceGroup;
 
 uniform mat4 uMV;
 uniform mat4 uMVP;
@@ -15,11 +16,13 @@ out vec3 vNormal;
 out vec3 vColor;
 out vec3 vMaterial;
 out float vMasking;
+flat out uint vFaceGroup;
 
 void main() {
     vColor = aColor;
     vMaterial = aMaterial;
     vMasking = aMaterial.z;
+    vFaceGroup = aFaceGroup;
     vNormal = mix(aNormal, uEN * aNormal, vMasking);
     vNormal = normalize(uN * vNormal);
     vec4 vertex4 = vec4(aVertex, 1.0);
@@ -27,3 +30,4 @@ void main() {
     vVertex = vec3(uMV * vertex4);
     gl_Position = uMVP * vertex4;
 }
+

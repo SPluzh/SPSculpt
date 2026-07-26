@@ -26,6 +26,7 @@ AngleRenderer::AngleRenderer() {}
 AngleRenderer::~AngleRenderer() {
     if (m_pbrProgram) glDeleteProgram(m_pbrProgram);
     if (m_matcapProgram) glDeleteProgram(m_matcapProgram);
+    if (m_polygroupProgram) glDeleteProgram(m_polygroupProgram);
     if (m_flatProgram) glDeleteProgram(m_flatProgram);
     if (m_wireframeProgram) glDeleteProgram(m_wireframeProgram);
     if (m_bgProgram) glDeleteProgram(m_bgProgram);
@@ -215,6 +216,7 @@ bool AngleRenderer::init(int width, int height) {
     m_wireframeProgram = loadAndCompileProgram("wireframe.vert", "wireframe.frag");
     m_flatProgram = loadAndCompileProgram("flat.vert", "flat.frag");
     m_matcapProgram = loadAndCompileProgram("matcap.vert", "matcap.frag");
+    m_polygroupProgram = loadAndCompileProgram("polygroup.vert", "polygroup.frag");
     m_pbrProgram = loadAndCompileProgram("pbr.vert", "pbr.frag");
     m_wetClayProgram = loadAndCompileProgram("wet_clay.vert", "wet_clay.frag");
     m_normalProgram = loadAndCompileProgram("normal.vert", "normal.frag");
@@ -1236,7 +1238,8 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
     glDisable(GL_CULL_FACE);
 
     GLuint program = m_flatProgram;
-    if (m_shaderType == 0) program = m_pbrProgram;
+    if (m_showPolyGroups || m_activeBrush == BRUSH_POLYGROUP || m_shaderType == 5) program = m_polygroupProgram;
+    else if (m_shaderType == 0) program = m_pbrProgram;
     else if (m_shaderType == 1) program = m_matcapProgram;
     else if (m_shaderType == 2) program = m_wetClayProgram;
     else if (m_shaderType == 3) program = m_normalProgram;
@@ -1369,6 +1372,8 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
         glUniform1i(glGetUniformLocation(program, "uIsPreview"), 0);
     }
 
+    glUniform1i(glGetUniformLocation(program, "uShowPolyGroups"), m_showPolyGroups ? 1 : 0);
+
     glBindVertexArray(bufs->vao);
 
     glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
@@ -1386,6 +1391,12 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
     glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
     glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(3);
+
+    if (bufs->vboFaceGroups) {
+        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboFaceGroups);
+        glVertexAttribIPointer(5, 1, GL_UNSIGNED_INT, sizeof(uint32_t), (void*)0);
+        glEnableVertexAttribArray(5);
+    }
 
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
     glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
@@ -1838,6 +1849,7 @@ void AngleRenderer::uploadIfDirty(Mesh* mesh) {
         glGenBuffers(1, &bufs->vboNormals);
         glGenBuffers(1, &bufs->vboColors);
         glGenBuffers(1, &bufs->vboMaterials);
+        glGenBuffers(1, &bufs->vboFaceGroups);
         glGenBuffers(1, &bufs->eboTriangles);
         glGenBuffers(1, &bufs->eboWireframe);
         mesh->isDirty = true;
@@ -1877,7 +1889,7 @@ void AngleRenderer::uploadIfDirty(Mesh* mesh) {
         mesh->isDirty = true;
     }
 
-    if (mesh->isDirty || bufs->vertCount != (size_t)mesh->nbVerts) {
+    if (mesh->isDirty || bufs->vertCount != (size_t)mesh->nbVerts || mesh->isFaceGroupDirty) {
         glBindVertexArray(bufs->vao);
         
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
@@ -1891,6 +1903,22 @@ void AngleRenderer::uploadIfDirty(Mesh* mesh) {
         
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
         glBufferData(GL_ARRAY_BUFFER, mesh->materials.size() * sizeof(float), mesh->materials.data(), GL_DYNAMIC_DRAW);
+
+        std::vector<uint32_t> vertGroups(mesh->nbVerts, 0);
+        if (mesh->faceGroups.size() == (size_t)mesh->nbFaces) {
+            for (int f = 0; f < mesh->nbFaces; ++f) {
+                uint32_t gid = mesh->faceGroups[f];
+                for (int k = 0; k < 4; ++k) {
+                    uint32_t vid = mesh->faces[f * 4 + k];
+                    if (vid != 0xffffffff && vid < (uint32_t)mesh->nbVerts) {
+                        vertGroups[vid] = gid;
+                    }
+                }
+            }
+        }
+        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboFaceGroups);
+        glBufferData(GL_ARRAY_BUFFER, vertGroups.size() * sizeof(uint32_t), vertGroups.data(), GL_DYNAMIC_DRAW);
+        mesh->isFaceGroupDirty = false;
         
         std::vector<uint32_t> triIndices;
         generateTriangleIndices(mesh, triIndices);
@@ -1913,6 +1941,23 @@ void AngleRenderer::uploadIfDirty(Mesh* mesh) {
         mesh->isMaterialDirty = false;
         mesh->isTopologyDirty = false;
     } else {
+        if (mesh->isFaceGroupDirty) {
+            std::vector<uint32_t> vertGroups(mesh->nbVerts, 0);
+            if (mesh->faceGroups.size() == (size_t)mesh->nbFaces) {
+                for (int f = 0; f < mesh->nbFaces; ++f) {
+                    uint32_t gid = mesh->faceGroups[f];
+                    for (int k = 0; k < 4; ++k) {
+                        uint32_t vid = mesh->faces[f * 4 + k];
+                        if (vid != 0xffffffff && vid < (uint32_t)mesh->nbVerts) {
+                            vertGroups[vid] = gid;
+                        }
+                    }
+                }
+            }
+            glBindBuffer(GL_ARRAY_BUFFER, bufs->vboFaceGroups);
+            glBufferData(GL_ARRAY_BUFFER, vertGroups.size() * sizeof(uint32_t), vertGroups.data(), GL_DYNAMIC_DRAW);
+            mesh->isFaceGroupDirty = false;
+        }
         if (mesh->isVertexDirty && mesh->dirtyVertMin <= mesh->dirtyVertMax && mesh->dirtyVertMax < (uint32_t)mesh->nbVerts) {
             size_t offset = mesh->dirtyVertMin * 3 * sizeof(float);
             size_t size   = (mesh->dirtyVertMax - mesh->dirtyVertMin + 1) * 3 * sizeof(float);

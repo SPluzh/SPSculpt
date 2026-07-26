@@ -103,6 +103,7 @@ HistoryState Scene::saveCurrentState() const {
         ms.colors = m->colors;
         ms.materials = m->materials;
         ms.faces = m->faces;
+        ms.faceGroups = m->faceGroups;
         ms.vrfStartCount = m->vrfStartCount;
         ms.vertRingFace = m->vertRingFace;
         ms.vrvStartCount = m->vrvStartCount;
@@ -137,6 +138,8 @@ void Scene::restoreState(const HistoryState& hs) {
         m->colors = ms.colors;
         m->materials = ms.materials;
         m->faces = ms.faces;
+        m->faceGroups = ms.faceGroups;
+        m->isFaceGroupDirty = true;
         m->vrfStartCount = ms.vrfStartCount;
         m->vertRingFace = ms.vertRingFace;
         m->vrvStartCount = ms.vrvStartCount;

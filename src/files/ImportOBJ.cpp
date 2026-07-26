@@ -31,6 +31,7 @@ static std::vector<std::string> splitByWhitespace(const std::string& str) {
 static void initMeshOBJ(Mesh* mesh,
                         std::vector<float>& vAr,
                         std::vector<uint32_t>& fAr,
+                        std::vector<uint32_t>& fGroupAr,
                         std::vector<float>& cAr,
                         std::vector<float>& mAr,
                         std::vector<float>& texAr,
@@ -44,6 +45,13 @@ static void initMeshOBJ(Mesh* mesh,
     mesh->faces = fAr;
     mesh->nbVerts = nbVerts;
     mesh->nbFaces = nbFaces;
+
+    if (fGroupAr.size() == (size_t)nbFaces) {
+        mesh->faceGroups = fGroupAr;
+        mesh->isFaceGroupDirty = true;
+    } else {
+        mesh->initFaceGroups();
+    }
 
     if (cArMrgb.size() == vAr.size()) {
         mesh->colors = cArMrgb;
@@ -92,6 +100,7 @@ static void initMeshOBJ(Mesh* mesh,
 
     vAr.clear();
     fAr.clear();
+    fGroupAr.clear();
     cAr.clear();
     mAr.clear();
     texAr.clear();
@@ -110,8 +119,10 @@ std::vector<Mesh*> importOBJ(const std::string& data) {
     std::vector<float> mArMat;
     std::vector<float> texAr;
     std::vector<uint32_t> fAr;
+    std::vector<uint32_t> fGroupAr;
     std::vector<uint32_t> uvfAr;
 
+    uint32_t currentGroupId = 0;
     int offsetVertices = 0;
     int offsetTexCoords = 0;
     int nbVertices = 0;
@@ -198,6 +209,7 @@ std::vector<Mesh*> importOBJ(const std::string& data) {
                 fAr.push_back(iv2);
                 fAr.push_back(iv3);
                 fAr.push_back(isQuad ? iv4 : TRI_INDEX);
+                fGroupAr.push_back(currentGroupId);
 
                 if (sp1.size() > 1 && !sp1[1].empty()) {
                     int uv1 = std::stoi(sp1[1]);
@@ -221,6 +233,23 @@ std::vector<Mesh*> importOBJ(const std::string& data) {
                     uvfAr.push_back(iv2);
                     uvfAr.push_back(iv3);
                     uvfAr.push_back(isQuad ? iv4 : TRI_INDEX);
+                }
+            }
+        } else if (firstChar == 'g') {
+            auto split = splitByWhitespace(line);
+            if (split.size() >= 2) {
+                std::string gName = split[1];
+                try {
+                    if (gName.rfind("polygroup_", 0) == 0) {
+                        currentGroupId = (uint32_t)std::stoul(gName.substr(10));
+                    } else if (gName.rfind("group_", 0) == 0) {
+                        currentGroupId = (uint32_t)std::stoul(gName.substr(6));
+                    } else {
+                        currentGroupId = (uint32_t)std::stoul(gName);
+                    }
+                } catch (...) {
+                    size_t h = std::hash<std::string>{}(gName);
+                    currentGroupId = (uint32_t)(h % 1000 + 1);
                 }
             }
         } else if (firstChar == '#') {
@@ -251,7 +280,7 @@ std::vector<Mesh*> importOBJ(const std::string& data) {
             }
         } else if (line.rfind("o ", 0) == 0) {
             if (!meshes.empty()) {
-                initMeshOBJ(meshes.back(), vAr, fAr, cAr, mAr, texAr, uvfAr, cArMrgb, mArMat);
+                initMeshOBJ(meshes.back(), vAr, fAr, fGroupAr, cAr, mAr, texAr, uvfAr, cArMrgb, mArMat);
                 offsetVertices = nbVertices;
                 offsetTexCoords = nbTexCoords;
             }
@@ -262,7 +291,7 @@ std::vector<Mesh*> importOBJ(const std::string& data) {
     if (meshes.empty()) {
         meshes.push_back(new Mesh());
     }
-    initMeshOBJ(meshes.back(), vAr, fAr, cAr, mAr, texAr, uvfAr, cArMrgb, mArMat);
+    initMeshOBJ(meshes.back(), vAr, fAr, fGroupAr, cAr, mAr, texAr, uvfAr, cArMrgb, mArMat);
 
     return meshes;
 }

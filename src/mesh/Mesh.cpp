@@ -3,12 +3,37 @@
 #include <algorithm>
 #include "mesh/NormalCalc.h"
 
+void Mesh::initFaceGroups() {
+    faceGroups.assign(nbFaces, 0);
+    isFaceGroupDirty = true;
+}
+
+uint32_t Mesh::getNextFreeGroupID() const {
+    uint32_t maxId = 0;
+    for (uint32_t gid : faceGroups) {
+        if (gid > maxId) maxId = gid;
+    }
+    return maxId + 1;
+}
+
+void Mesh::setFaceGroup(uint32_t faceIdx, uint32_t gid) {
+    if (faceIdx < (uint32_t)nbFaces) {
+        if (faceGroups.size() != (size_t)nbFaces) {
+            faceGroups.resize(nbFaces, 0);
+        }
+        faceGroups[faceIdx] = gid;
+        isFaceGroupDirty = true;
+    }
+}
+
 void Mesh::allocate(int nbV, int nbF, int nbRF, int nbRV) {
     nbVerts = nbV;
     nbFaces = nbF;
 
     verts.resize(nbVerts * 3);
     faces.resize(nbFaces * 4);
+    faceGroups.assign(nbFaces, 0);
+    isFaceGroupDirty = true;
     vrfStartCount.resize(nbVerts * 2);
     vertRingFace.resize(nbRF);
     vrvStartCount.resize(nbVerts * 2);
@@ -33,6 +58,13 @@ void Mesh::allocate(int nbV, int nbF, int nbRF, int nbRV) {
 
 void Mesh::postInit() {
     vertProxy = verts;
+
+    if (faceGroups.size() != (size_t)nbFaces) {
+        initFaceGroups();
+    } else {
+        isFaceGroupDirty = true;
+    }
+
 
     if (normals.size() != nbVerts * 3) {
         normals.resize(nbVerts * 3, 0.0f);

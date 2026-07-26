@@ -29,6 +29,7 @@ public:
 
     // Topology
     std::vector<uint32_t> faces;           // nbFaces * 4
+    std::vector<uint32_t> faceGroups;      // nbFaces * 1 (GroupID per face)
     std::vector<uint32_t> vrfStartCount;   // nbVerts * 2
     std::vector<uint32_t> vertRingFace;
     std::vector<uint32_t> vrvStartCount;   // nbVerts * 2
@@ -45,9 +46,15 @@ public:
     bool isVertexDirty = false;
     bool isColorDirty = false;
     bool isMaterialDirty = false;
+    bool isFaceGroupDirty = false;
     bool isTopologyDirty = false;
     uint32_t dirtyVertMin = 0;
     uint32_t dirtyVertMax = 0;
+
+    void initFaceGroups();
+    uint32_t getNextFreeGroupID() const;
+    void setFaceGroup(uint32_t faceIdx, uint32_t gid);
+
 
     // SGL/OBJ migration properties
     bool visibleV1 = true;

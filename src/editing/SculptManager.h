@@ -9,6 +9,7 @@
 #include <string>
 
 #include "brushes/BrushPreset.h"
+#include "editing/PolyGroupTool.h"
 
 class ArmatureTool;
 
@@ -140,6 +141,9 @@ private:
     bool m_useSym = false;
     int m_symAxis = 0; // 0=X, 1=Y, 2=Z
 
+    PolyGroupTool m_polyGroupTool;
+    uint32_t m_activeGroupId = 1;
+
 public:
     SculptManager();
     ~SculptManager();
@@ -162,6 +166,11 @@ public:
     const BrushSettings& getCurrentSettings() const { return m_brushSettings[m_currentBrush]; }
     BrushSettings& getSettings(BrushType type) { return m_brushSettings[type]; }
     const BrushSettings& getSettings(BrushType type) const { return m_brushSettings[type]; }
+
+    PolyGroupTool& getPolyGroupTool() { return m_polyGroupTool; }
+    const PolyGroupTool& getPolyGroupTool() const { return m_polyGroupTool; }
+    uint32_t getActiveGroupID() const { return m_activeGroupId; }
+    void setActiveGroupID(uint32_t id) { m_activeGroupId = id; }
 
     BrushType getBrush() const { return m_currentBrush; }
     void setBrush(BrushType brush) { 

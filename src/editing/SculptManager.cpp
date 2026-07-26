@@ -225,6 +225,9 @@ SculptManager::SculptManager() {
     m_brushSettings[BRUSH_PAINT].hardness = 0.7f;
     m_brushSettings[BRUSH_PAINT].culling = true;
 
+    m_brushSettings[BRUSH_POLYGROUP].radius = 60.0f;
+    m_brushSettings[BRUSH_POLYGROUP].culling = true;
+
     m_brushSettings[BRUSH_TWIST].radius = 100.0f;
     m_brushSettings[BRUSH_TWIST].culling = true;
 
@@ -558,6 +561,23 @@ int SculptManager::doStrokePass(
                 getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
                 false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
             );
+            break;
+        }
+        case BRUSH_POLYGROUP: {
+            for (uint32_t v : pickedVertices) {
+                if (v * 2 + 1 < mesh->vrfStartCount.size()) {
+                    uint32_t start = mesh->vrfStartCount[v * 2];
+                    uint32_t count = mesh->vrfStartCount[v * 2 + 1];
+                    for (uint32_t j = start; j < start + count; ++j) {
+                        if (j < mesh->vertRingFace.size()) {
+                            uint32_t f = mesh->vertRingFace[j];
+                            mesh->setFaceGroup(f, m_activeGroupId);
+                        }
+                    }
+                }
+            }
+            mesh->isFaceGroupDirty = true;
+            deformedCount = (int)pickedVertices.size();
             break;
         }
         case BRUSH_TWIST: {
@@ -930,7 +950,7 @@ int SculptManager::doStrokePass(
     }
 
     if (deformedCount > 0) {
-        bool isSculptDeform = (activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_MASK_GRADIENT_BLUR);
+        bool isSculptDeform = (activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_MASK_GRADIENT_BLUR && activeBrush != BRUSH_POLYGROUP);
 
         if (isSculptDeform) {
             if (m_tagFlags.size() < (size_t)mesh->nbFaces) {
@@ -1002,6 +1022,8 @@ int SculptManager::doStrokePass(
             }
         } else if (activeBrush == BRUSH_MASK || activeBrush == BRUSH_MASK_GRADIENT_BLUR) {
             mesh->isMaterialDirty = true;
+        } else if (activeBrush == BRUSH_POLYGROUP) {
+            mesh->isFaceGroupDirty = true;
         } else {
             mesh->isVertexDirty = true;
         }
@@ -1029,7 +1051,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     BrushType activeBrush = m_currentBrush;
     if (SDL_GetModState() & KMOD_SHIFT) {
         activeBrush = BRUSH_SMOOTH;
-    } else if (SDL_GetModState() & KMOD_CTRL) {
+    } else if ((SDL_GetModState() & KMOD_CTRL) && m_currentBrush != BRUSH_POLYGROUP) {
         activeBrush = BRUSH_MASK;
     }
 
@@ -1106,6 +1128,21 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         m_lastValidIntersection = m_currentIntersection;
         m_lastValidIntersectionNormal = m_currentIntersectionNormal;
         m_hasAnyValidIntersection = true;
+    }
+
+    if (activeBrush == BRUSH_POLYGROUP) {
+        if ((SDL_GetModState() & KMOD_ALT) != 0) {
+            if (m_currentIntersectionValid && intersectFaceId != 0xffffffff) {
+                m_activeGroupId = m_polyGroupTool.getGroupAtFace(mesh, intersectFaceId);
+                std::cout << "[PolyGroup] Eyedropper picked Group ID: " << m_activeGroupId << std::endl;
+            }
+            return;
+        } else if ((SDL_GetModState() & KMOD_CTRL) != 0) {
+            if (m_currentIntersectionValid && intersectFaceId != 0xffffffff && m_firstStrokeFrame) {
+                m_polyGroupTool.floodFillGroup(mesh, intersectFaceId, m_activeGroupId);
+            }
+            return;
+        }
     }
 
     if (activeBrush == BRUSH_PAINT && getCurrentSettings().pickColor) {

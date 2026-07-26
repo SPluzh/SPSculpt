@@ -8,6 +8,7 @@
 #include <glm/glm.hpp>
 #include "render/ReferenceImage.h"
 #include "render/RenderTarget.h"
+#include "common/Enums.h"
 
 class Mesh;
 class Scene;
@@ -20,6 +21,7 @@ struct MeshRenderBuffers {
     GLuint vboNormals = 0;
     GLuint vboColors = 0;
     GLuint vboMaterials = 0;
+    GLuint vboFaceGroups = 0;
     GLuint eboTriangles = 0;
     GLuint eboWireframe = 0;
     
@@ -33,6 +35,7 @@ struct MeshRenderBuffers {
         if (vboNormals) glDeleteBuffers(1, &vboNormals);
         if (vboColors) glDeleteBuffers(1, &vboColors);
         if (vboMaterials) glDeleteBuffers(1, &vboMaterials);
+        if (vboFaceGroups) glDeleteBuffers(1, &vboFaceGroups);
         if (eboTriangles) glDeleteBuffers(1, &eboTriangles);
         if (eboWireframe) glDeleteBuffers(1, &eboWireframe);
     }
@@ -110,6 +113,10 @@ public:
     bool getSmoothCursor() const { return m_smoothCursor; }
     void setShowGrid(bool show) { m_showGrid = show; }
     bool getShowGrid() const { return m_showGrid; }
+    void setShowPolyGroups(bool show) { m_showPolyGroups = show; }
+    bool getShowPolyGroups() const { return m_showPolyGroups; }
+    void setActiveBrush(BrushType brush) { m_activeBrush = brush; }
+    BrushType getActiveBrush() const { return m_activeBrush; }
     void setShowSymmetryLine(bool show) { m_showSymmetryLine = show; }
     bool getShowSymmetryLine() const { return m_showSymmetryLine; }
     void setContourColor(const glm::vec4& color) { m_contourColor = color; }
@@ -337,6 +344,7 @@ private:
     // Shader programs
     GLuint m_pbrProgram = 0;
     GLuint m_matcapProgram = 0;
+    GLuint m_polygroupProgram = 0;
     GLuint m_flatProgram = 0;
     GLuint m_wireframeProgram = 0;
     GLuint m_bgProgram = 0;
@@ -430,6 +438,8 @@ private:
     bool m_flatShading = false;
     bool m_darkenUnselected = true;
     bool m_showWireframe = false;
+    bool m_showPolyGroups = false;
+    BrushType m_activeBrush = BRUSH_FLATTEN;
     float m_curvature = 0.0f;
 
     // Global material settings
