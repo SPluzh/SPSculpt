@@ -1582,6 +1582,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 if (closestMesh) {
                     if (closestMesh != scene.getSelected()) {
                         scene.setOrUnsetMesh(closestMesh, false);
+                        return;
                     }
 
                     if (m_currentBrush == BRUSH_TRANSFORM) {
@@ -1657,10 +1658,12 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                         closestMesh->matrix = targetMatrix;
                         closestMesh->postInit();
                         closestMesh->isDirty = true;
+                        return;
                     }
-                    return;
                 } else {
-                    return;
+                    if (m_currentBrush == BRUSH_TRANSFORM) {
+                        return;
+                    }
                 }
             }
 
