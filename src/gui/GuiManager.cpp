@@ -1,4 +1,6 @@
 #include "gui/GuiManager.h"
+#include "mesh/Multimesh.h"
+#include "common/Logger.h"
 #include "render/AngleRenderer.h"
 #include "render/RenderSettings.h"
 #include "editing/BrushCursor.h"
@@ -1133,6 +1135,112 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             }
         }
 
+        ImGui::End();
+    }
+
+    // 3.5 Multiresolution Sculpting Panel
+    if (m_showMultiresPanel) {
+        ImGui::SetNextWindowPos({160.0f * scale, 450.0f * scale}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize({300.0f * scale, 300.0f * scale}, ImGuiCond_FirstUseEver);
+        ImGui::Begin("Multiresolution", &m_showMultiresPanel);
+
+        Mesh* selectedMesh = scene.getSelected();
+        if (!selectedMesh) {
+            ImGui::TextDisabled("No mesh selected");
+        } else {
+            Multimesh* multimesh = dynamic_cast<Multimesh*>(selectedMesh);
+            if (!multimesh) {
+                ImGui::Text("Mesh: %s", selectedMesh->outlinerName.c_str());
+                ImGui::Text("Vertices: %d", selectedMesh->getNbVertices());
+                ImGui::Text("Faces: %d", selectedMesh->getNbFaces());
+                ImGui::Separator();
+                if (ImGui::Button("Convert to Multires Mesh", ImVec2(-1, 30))) {
+                    sculpt_log("[UI Multires] Convert to Multires Mesh clicked for mesh '%s' (Verts: %d, Faces: %d)\n",
+                              selectedMesh->outlinerName.c_str(), selectedMesh->getNbVertices(), selectedMesh->getNbFaces());
+                    auto newMm = std::make_unique<Multimesh>(selectedMesh);
+                    scene.replaceMesh(selectedMesh, newMm.release());
+                    sculpt_log("[UI Multires] Mesh conversion complete.\n");
+                }
+            } else {
+                MeshResolution* curMesh = multimesh->getCurrentMesh();
+                int curSel = multimesh->getSelection();
+                int numLevels = (int)multimesh->getNbLevels();
+
+                ImGui::Text("Mesh: %s", multimesh->outlinerName.c_str());
+                ImGui::Text("Active Level: %d / %d", curSel + 1, numLevels);
+                if (curMesh) {
+                    ImGui::Text("Vertices: %d", curMesh->getNbVertices());
+                    ImGui::Text("Faces: %d", curMesh->getNbFaces());
+                }
+                ImGui::Separator();
+
+                // Navigation buttons
+                if (curSel > 0) {
+                    if (ImGui::Button("Lower Level (Shift+D)", ImVec2(135, 28))) {
+                        sculpt_log("[UI Multires] Lower Level clicked (Current: %d)\n", curSel);
+                        multimesh->lowerLevel();
+                    }
+                } else {
+                    ImGui::BeginDisabled();
+                    ImGui::Button("Lower Level (Shift+D)", ImVec2(135, 28));
+                    ImGui::EndDisabled();
+                }
+                ImGui::SameLine();
+                if (curSel < numLevels - 1) {
+                    if (ImGui::Button("Higher Level (D)", ImVec2(135, 28))) {
+                        sculpt_log("[UI Multires] Higher Level clicked (Current: %d)\n", curSel);
+                        multimesh->higherLevel();
+                    }
+                } else {
+                    ImGui::BeginDisabled();
+                    ImGui::Button("Higher Level (D)", ImVec2(135, 28));
+                    ImGui::EndDisabled();
+                }
+
+                ImGui::Spacing();
+
+                // Add / Reverse Subdivide buttons
+                if (ImGui::Button("Subdivide (+)", ImVec2(135, 28))) {
+                    sculpt_log("[UI Multires] Subdivide (+) clicked. Active level: %d / %d\n", curSel + 1, numLevels);
+                    scene.pushHistoryState();
+                    multimesh->addLevel();
+                    sculpt_log("[UI Multires] Subdivide (+) finished.\n");
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Revert Topology (-)", ImVec2(135, 28))) {
+                    sculpt_log("[UI Multires] Revert Topology (-) clicked. Active level: %d / %d\n", curSel + 1, numLevels);
+                    scene.pushHistoryState();
+                    if (!multimesh->computeReverse()) {
+                        sculpt_log("[UI Multires] Failed to revert mesh topology (mesh is not a regular subdivision surface)\n");
+                    } else {
+                        sculpt_log("[UI Multires] Revert Topology (-) succeeded.\n");
+                    }
+                }
+
+                ImGui::Spacing();
+                ImGui::Separator();
+
+                // Slider for direct level selection
+                int targetSel = curSel;
+                if (ImGui::SliderInt("Level", &targetSel, 0, numLevels - 1)) {
+                    sculpt_log("[UI Multires] Level slider changed to: %d\n", targetSel);
+                    multimesh->selectResolution(targetSel);
+                }
+
+                ImGui::Spacing();
+                if (ImGui::Button("Delete Lower", ImVec2(135, 24))) {
+                    sculpt_log("[UI Multires] Delete Lower clicked (Current: %d)\n", curSel);
+                    scene.pushHistoryState();
+                    multimesh->deleteLower();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Delete Higher", ImVec2(135, 24))) {
+                    sculpt_log("[UI Multires] Delete Higher clicked (Current: %d)\n", curSel);
+                    scene.pushHistoryState();
+                    multimesh->deleteHigher();
+                }
+            }
+        }
         ImGui::End();
     }
 

@@ -36,12 +36,16 @@ public:
     std::vector<uint32_t> vertRingVert;
     std::vector<uint8_t>  vertOnEdge;      // nbVerts
     std::vector<uint8_t>  vertVisible;     // nbVerts
+    std::vector<uint32_t> edges;           // nbEdges (valence per edge)
+    std::vector<uint32_t> faceEdges;       // nbFaces * 4 (edge index per face edge)
+    std::vector<uint32_t> vertTagFlags;    // nbVerts (tag flags for algorithms)
 
     // Octree
     Octree octree;
 
     int nbVerts = 0;
     int nbFaces = 0;
+    int nbEdges = 0;
     bool isDirty = true;
     bool isVertexDirty = false;
     bool isColorDirty = false;
@@ -54,6 +58,17 @@ public:
     void initFaceGroups();
     uint32_t getNextFreeGroupID() const;
     void setFaceGroup(uint32_t faceIdx, uint32_t gid);
+    void initEdges();
+    void initTopology();
+    uint32_t getTagFlag() const {
+        static uint32_t g_tagFlag = 0;
+        return ++g_tagFlag;
+    }
+    bool hasOnlyTriangles() const;
+    int getNbEdges() const { return nbEdges; }
+    int getNbQuads() const;
+    int getNbTriangles() const;
+
 
 
     // SGL/OBJ migration properties
@@ -68,13 +83,61 @@ public:
     uint32_t m_id = 0;
     std::string outlinerName = "";
     uint32_t getID() const { return m_id; }
+    void setID(uint32_t id) { m_id = id; }
 
     Mesh() {
         static uint32_t s_idCounter = 0;
         m_id = ++s_idCounter;
         outlinerName = "Mesh " + std::to_string(m_id);
     }
-    ~Mesh() = default;
+
+    Mesh(const Mesh& other) {
+        isArmature = false;
+        armatureGraph = nullptr;
+        verts = other.verts;
+        normals = other.normals;
+        colors = other.colors;
+        materials = other.materials;
+        faceNormals = other.faceNormals;
+        faceBoxes = other.faceBoxes;
+        faceCenters = other.faceCenters;
+        vertProxy = other.vertProxy;
+        faces = other.faces;
+        faceGroups = other.faceGroups;
+        vrfStartCount = other.vrfStartCount;
+        vertRingFace = other.vertRingFace;
+        vrvStartCount = other.vrvStartCount;
+        vertRingVert = other.vertRingVert;
+        vertOnEdge = other.vertOnEdge;
+        vertVisible = other.vertVisible;
+        edges = other.edges;
+        faceEdges = other.faceEdges;
+        vertTagFlags = other.vertTagFlags;
+        nbVerts = other.nbVerts;
+        nbFaces = other.nbFaces;
+        nbEdges = other.nbEdges;
+        isDirty = other.isDirty;
+        isVertexDirty = other.isVertexDirty;
+        isColorDirty = other.isColorDirty;
+        isMaterialDirty = other.isMaterialDirty;
+        isFaceGroupDirty = other.isFaceGroupDirty;
+        isTopologyDirty = other.isTopologyDirty;
+        dirtyVertMin = other.dirtyVertMin;
+        dirtyVertMax = other.dirtyVertMax;
+        visibleV1 = other.visibleV1;
+        visibleV2 = other.visibleV2;
+        center = other.center;
+        scale = other.scale;
+        texCoords = other.texCoords;
+        facesTexCoord = other.facesTexCoord;
+        hasUV = other.hasUV;
+        m_id = other.m_id;
+        outlinerName = other.outlinerName;
+        matrix = other.matrix;
+        editMatrix = other.editMatrix;
+    }
+
+    virtual ~Mesh() = default;
 
     // Initialization from JS-managed arrays
 

@@ -73,10 +73,66 @@ public:
     std::vector<OctreeCell*> cellPool;
     int poolIndex = 0;
 
-    ~Octree() {
+    Octree() = default;
+
+    Octree(const Octree& other) {
+        clearPool();
+    }
+
+    Octree& operator=(const Octree& other) {
+        if (this != &other) {
+            clearPool();
+        }
+        return *this;
+    }
+
+    Octree(Octree&& other) noexcept {
+        root = other.root; other.root = nullptr;
+        vertsData = other.vertsData; other.vertsData = nullptr;
+        facesData = other.facesData; other.facesData = nullptr;
+        faceCentersData = other.faceCentersData; other.faceCentersData = nullptr;
+        faceBoxesData = other.faceBoxesData; other.faceBoxesData = nullptr;
+        faceLeaf = std::move(other.faceLeaf);
+        facePosInLeaf = std::move(other.facePosInLeaf);
+        nbVerts = other.nbVerts; other.nbVerts = 0;
+        nbFaces = other.nbFaces; other.nbFaces = 0;
+        maxFaces = other.maxFaces;
+        cellPool = std::move(other.cellPool);
+        poolIndex = other.poolIndex; other.poolIndex = 0;
+    }
+
+    Octree& operator=(Octree&& other) noexcept {
+        if (this != &other) {
+            clearPool();
+            root = other.root; other.root = nullptr;
+            vertsData = other.vertsData; other.vertsData = nullptr;
+            facesData = other.facesData; other.facesData = nullptr;
+            faceCentersData = other.faceCentersData; other.faceCentersData = nullptr;
+            faceBoxesData = other.faceBoxesData; other.faceBoxesData = nullptr;
+            faceLeaf = std::move(other.faceLeaf);
+            facePosInLeaf = std::move(other.facePosInLeaf);
+            nbVerts = other.nbVerts; other.nbVerts = 0;
+            nbFaces = other.nbFaces; other.nbFaces = 0;
+            maxFaces = other.maxFaces;
+            cellPool = std::move(other.cellPool);
+            poolIndex = other.poolIndex; other.poolIndex = 0;
+        }
+        return *this;
+    }
+
+    void clearPool() {
         for (OctreeCell* cell : cellPool) {
             delete cell;
         }
+        cellPool.clear();
+        poolIndex = 0;
+        root = nullptr;
+        faceLeaf.clear();
+        facePosInLeaf.clear();
+    }
+
+    ~Octree() {
+        clearPool();
     }
 
     OctreeCell* getCell();

@@ -65,12 +65,16 @@ add_executable(sculptsp
     src/scene/Scene.cpp
     # mesh
     src/mesh/Mesh.cpp
+    src/mesh/MeshResolution.cpp
+    src/mesh/Multimesh.cpp
     src/mesh/Octree.cpp
     src/mesh/NormalCalc.cpp
     src/mesh/Topology.cpp
     # sculpt algorithms
     src/sculpt/SculptEngine.cpp
     src/sculpt/Remesh.cpp
+    src/editing/Subdivision.cpp
+    src/editing/Reversion.cpp
     # render
     src/render/AngleRenderer.cpp
     src/render/ReferenceImage.cpp

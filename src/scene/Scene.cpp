@@ -237,6 +237,19 @@ void Scene::removeMesh(Mesh* m) {
     }
 }
 
+void Scene::replaceMesh(Mesh* oldMesh, Mesh* newMesh) {
+    auto it = std::find(m_meshes.begin(), m_meshes.end(), oldMesh);
+    if (it != m_meshes.end()) {
+        *it = newMesh;
+    }
+    for (auto& sel : m_selectedMeshes) {
+        if (sel == oldMesh) {
+            sel = newMesh;
+        }
+    }
+    delete oldMesh;
+}
+
 const std::vector<Mesh*>& Scene::getMeshes() const {
     return m_meshes;
 }

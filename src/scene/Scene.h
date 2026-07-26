@@ -60,6 +60,7 @@ public:
 
     void addMesh(Mesh* m);
     void removeMesh(Mesh* m);
+    void replaceMesh(Mesh* oldMesh, Mesh* newMesh);
     void clear();
     const std::vector<Mesh*>& getMeshes() const;
     void selectMesh(Mesh* m);

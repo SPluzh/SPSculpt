@@ -2,6 +2,8 @@
 #include <cstring>
 #include <algorithm>
 #include "mesh/NormalCalc.h"
+#include "mesh/Topology.h"
+#include "common/Constants.h"
 
 void Mesh::initFaceGroups() {
     faceGroups.assign(nbFaces, 0);
@@ -26,6 +28,146 @@ void Mesh::setFaceGroup(uint32_t faceIdx, uint32_t gid) {
     }
 }
 
+bool Mesh::hasOnlyTriangles() const {
+    for (int i = 0; i < nbFaces; ++i) {
+        if (faces[i * 4 + 3] != TRI_INDEX) return false;
+    }
+    return true;
+}
+
+int Mesh::getNbQuads() const {
+    int quads = 0;
+    for (int i = 0; i < nbFaces; ++i) {
+        if (faces[i * 4 + 3] != TRI_INDEX) quads++;
+    }
+    return quads;
+}
+
+int Mesh::getNbTriangles() const {
+    int tris = 0;
+    for (int i = 0; i < nbFaces; ++i) {
+        if (faces[i * 4 + 3] != TRI_INDEX) tris += 2;
+        else tris += 1;
+    }
+    return tris;
+}
+
+void Mesh::initTopology() {
+    computeTopology(
+        nbVerts, faces.data(), nbFaces,
+        vrfStartCount, vertRingFace,
+        vrvStartCount, vertRingVert,
+        vertOnEdge
+    );
+    initEdges();
+    vertTagFlags.assign(nbVerts, 0);
+}
+
+void Mesh::initEdges() {
+    faceEdges.resize(nbFaces * 4, 0);
+    nbEdges = 0;
+    std::vector<uint32_t> vertEdgeTemp(nbVerts, 0);
+
+    for (int i = 0; i < nbVerts; ++i) {
+        uint32_t start = vrfStartCount[i * 2];
+        uint32_t end = start + vrfStartCount[i * 2 + 1];
+        uint32_t compTest = nbEdges;
+        for (uint32_t j = start; j < end; ++j) {
+            uint32_t id = vertRingFace[j] * 4;
+            uint32_t iv1 = faces[id];
+            uint32_t iv2 = faces[id + 1];
+            uint32_t iv3 = faces[id + 2];
+            uint32_t iv4 = faces[id + 3];
+            uint32_t t = 0;
+            uint32_t idEdge = 0;
+            if (iv4 == TRI_INDEX) {
+                if ((uint32_t)i > iv1) {
+                    t = vertEdgeTemp[iv1];
+                    idEdge = id + ((uint32_t)i == iv2 ? 0 : 2);
+                    if (t <= compTest) {
+                        faceEdges[idEdge] = nbEdges;
+                        vertEdgeTemp[iv1] = ++nbEdges;
+                    } else {
+                        faceEdges[idEdge] = t - 1;
+                    }
+                }
+                if ((uint32_t)i > iv2) {
+                    t = vertEdgeTemp[iv2];
+                    idEdge = id + ((uint32_t)i == iv1 ? 0 : 1);
+                    if (t <= compTest) {
+                        faceEdges[idEdge] = nbEdges;
+                        vertEdgeTemp[iv2] = ++nbEdges;
+                    } else {
+                        faceEdges[idEdge] = t - 1;
+                    }
+                }
+                if ((uint32_t)i > iv3) {
+                    t = vertEdgeTemp[iv3];
+                    idEdge = id + ((uint32_t)i == iv1 ? 2 : 1);
+                    if (t <= compTest) {
+                        faceEdges[idEdge] = nbEdges;
+                        vertEdgeTemp[iv3] = ++nbEdges;
+                    } else {
+                        faceEdges[idEdge] = t - 1;
+                    }
+                }
+                faceEdges[id + 3] = TRI_INDEX;
+            } else {
+                if ((uint32_t)i > iv1 && (uint32_t)i != iv3) {
+                    t = vertEdgeTemp[iv1];
+                    idEdge = id + ((uint32_t)i == iv2 ? 0 : 3);
+                    if (t <= compTest) {
+                        faceEdges[idEdge] = nbEdges;
+                        vertEdgeTemp[iv1] = ++nbEdges;
+                    } else {
+                        faceEdges[idEdge] = t - 1;
+                    }
+                }
+                if ((uint32_t)i > iv2 && (uint32_t)i != iv4) {
+                    t = vertEdgeTemp[iv2];
+                    idEdge = id + ((uint32_t)i == iv1 ? 0 : 1);
+                    if (t <= compTest) {
+                        faceEdges[idEdge] = nbEdges;
+                        vertEdgeTemp[iv2] = ++nbEdges;
+                    } else {
+                        faceEdges[idEdge] = t - 1;
+                    }
+                }
+                if ((uint32_t)i > iv3 && (uint32_t)i != iv1) {
+                    t = vertEdgeTemp[iv3];
+                    idEdge = id + ((uint32_t)i == iv2 ? 1 : 2);
+                    if (t <= compTest) {
+                        faceEdges[idEdge] = nbEdges;
+                        vertEdgeTemp[iv3] = ++nbEdges;
+                    } else {
+                        faceEdges[idEdge] = t - 1;
+                    }
+                }
+                if ((uint32_t)i > iv4 && (uint32_t)i != iv2) {
+                    t = vertEdgeTemp[iv4];
+                    idEdge = id + ((uint32_t)i == iv1 ? 3 : 2);
+                    if (t <= compTest) {
+                        faceEdges[idEdge] = nbEdges;
+                        vertEdgeTemp[iv4] = ++nbEdges;
+                    } else {
+                        faceEdges[idEdge] = t - 1;
+                    }
+                }
+            }
+        }
+    }
+    edges.assign(nbEdges, 0);
+    for (int k = 0; k < nbFaces; ++k) {
+        uint32_t idf = k * 4;
+        if (faceEdges[idf] < (uint32_t)nbEdges) edges[faceEdges[idf]]++;
+        if (faceEdges[idf + 1] < (uint32_t)nbEdges) edges[faceEdges[idf + 1]]++;
+        if (faceEdges[idf + 2] < (uint32_t)nbEdges) edges[faceEdges[idf + 2]]++;
+        uint32_t i4 = faceEdges[idf + 3];
+        if (i4 != TRI_INDEX && i4 < (uint32_t)nbEdges)
+            edges[i4]++;
+    }
+}
+
 void Mesh::allocate(int nbV, int nbF, int nbRF, int nbRV) {
     nbVerts = nbV;
     nbFaces = nbF;
@@ -39,6 +181,7 @@ void Mesh::allocate(int nbV, int nbF, int nbRF, int nbRV) {
     vrvStartCount.resize(nbVerts * 2);
     vertRingVert.resize(nbRV);
     vertOnEdge.resize(nbVerts);
+    vertTagFlags.assign(nbVerts, 0);
 
     normals.resize(nbVerts * 3, 0.0f);
     colors.resize(nbVerts * 3, 1.0f);
@@ -58,6 +201,7 @@ void Mesh::allocate(int nbV, int nbF, int nbRF, int nbRV) {
 
 void Mesh::postInit() {
     vertProxy = verts;
+    vertTagFlags.assign(nbVerts, 0);
 
     if (faceGroups.size() != (size_t)nbFaces) {
         initFaceGroups();
@@ -88,6 +232,12 @@ void Mesh::postInit() {
     faceNormals.resize(nbFaces * 3, 0.0f);
     faceBoxes.resize(nbFaces * 6, 0.0f);
     faceCenters.resize(nbFaces * 3, 0.0f);
+
+    if (vrfStartCount.size() != (size_t)(nbVerts * 2) || vertRingFace.empty()) {
+        initTopology();
+    } else {
+        initEdges();
+    }
 
     updateFaceNormalsAndBoxes(
         verts.data(), nbVerts,
