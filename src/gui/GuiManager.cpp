@@ -6,6 +6,7 @@
 #include "render/RenderSettings.h"
 #include "editing/BrushCursor.h"
 #include "files/FileManager.h"
+#include "platform/FileDialog.h"
 #include "brushes/BrushPresetManager.h"
 #include "editing/ArmatureTool.h"
 #include "editing/undo/UndoManager.h"
@@ -180,6 +181,71 @@ GuiManager::GuiManager() {}
 
 GuiManager::~GuiManager() {
     shutdown();
+}
+
+void GuiManager::openScene(Scene& scene) {
+    std::string path = FileDialog::openFile(FileDialog::getImportFilters(), "Open File");
+    if (!path.empty()) {
+        snprintf(m_importPath, sizeof(m_importPath), "%s", path.c_str());
+        scene.clear();
+        auto newMeshes = FileManager::importFiles(path, &scene, m_renderer);
+        for (auto* mesh : newMeshes) {
+            scene.addMesh(mesh);
+        }
+        if (!newMeshes.empty()) {
+            scene.selectMesh(newMeshes.front());
+            scene.pushHistoryState();
+        }
+        if (FileManager::getExtension(path) == "sgl") {
+            m_currentScenePath = path;
+        } else {
+            m_currentScenePath.clear();
+        }
+    }
+}
+
+void GuiManager::saveScene(Scene& scene) {
+    if (m_currentScenePath.empty()) {
+        saveSceneAs(scene);
+    } else {
+        FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer);
+    }
+}
+
+void GuiManager::saveSceneAs(Scene& scene) {
+    static const std::vector<FileDialog::FilterSpec> sglFilters = {
+        { "SculptGL Scene (*.sgl)", "*.sgl" },
+        { "All Files (*.*)", "*.*" }
+    };
+    std::string path = FileDialog::saveFile(sglFilters, "sgl", "Save Scene As");
+    if (!path.empty()) {
+        m_currentScenePath = path;
+        snprintf(m_exportPath, sizeof(m_exportPath), "%s", path.c_str());
+        FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer);
+    }
+}
+
+void GuiManager::importFile(Scene& scene) {
+    std::string path = FileDialog::openFile(FileDialog::getImportFilters(), "Import File");
+    if (!path.empty()) {
+        snprintf(m_importPath, sizeof(m_importPath), "%s", path.c_str());
+        auto newMeshes = FileManager::importFiles(path, &scene, m_renderer);
+        for (auto* mesh : newMeshes) {
+            scene.addMesh(mesh);
+        }
+        if (!newMeshes.empty()) {
+            scene.selectMesh(newMeshes.front());
+            scene.pushHistoryState();
+        }
+    }
+}
+
+void GuiManager::exportFile(Scene& scene) {
+    std::string path = FileDialog::saveFile(FileDialog::getExportFilters(), "sgl", "Export File");
+    if (!path.empty()) {
+        snprintf(m_exportPath, sizeof(m_exportPath), "%s", path.c_str());
+        FileManager::exportMeshes(path, scene.getMeshes(), &scene, m_renderer);
+    }
 }
 
 void GuiManager::rebuildFontsAndStyles() {
@@ -377,15 +443,26 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
     if (menuBarOpen) {
         if (ImGui::BeginMenu("File")) {
-            if (ImGui::MenuItem("Load Default Sphere")) {
-                scene.loadDefaultSphere();
+            if (ImGui::MenuItem("Open...", "Ctrl+O")) {
+                openScene(scene);
+            }
+            if (ImGui::MenuItem("Save", "Ctrl+S")) {
+                saveScene(scene);
+            }
+            if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S")) {
+                saveSceneAs(scene);
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Import File...")) {
-                m_showFilesPanel = true;
+            if (ImGui::MenuItem("Import File...", "Ctrl+I")) {
+                importFile(scene);
             }
-            if (ImGui::MenuItem("Export File...")) {
-                m_showFilesPanel = true;
+            if (ImGui::MenuItem("Export File...", "Ctrl+E")) {
+                exportFile(scene);
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Load Default Sphere")) {
+                scene.loadDefaultSphere();
+                m_currentScenePath.clear();
             }
             ImGui::Separator();
             if (ImGui::MenuItem("Save Render Settings")) {
@@ -410,7 +487,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGui::MenuItem("Scene Outliner", nullptr, &m_showScenePanel);
             ImGui::MenuItem("Topology & Remesh", nullptr, &m_showTopologyPanel);
             ImGui::MenuItem("Multiresolution", nullptr, &m_showMultiresPanel);
-            ImGui::MenuItem("Import & Export", nullptr, &m_showFilesPanel);
             ImGui::MenuItem("Camera & Viewport", nullptr, &m_showCameraPanel);
             ImGui::MenuItem("Rendering Quality", nullptr, &m_showRenderingPanel);
             ImGui::MenuItem("Reference Images", nullptr, &m_showReferenceImagesPanel);
@@ -2218,30 +2294,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         ImGui::End();
     }
 
-    // 7.5. Import & Export Panel
-    if (m_showFilesPanel) {
-        ImGui::SetNextWindowPos({740.0f * scale, 260.0f * scale}, ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize({300.0f * scale, 200.0f * scale}, ImGuiCond_FirstUseEver);
-        ImGui::Begin("Import & Export", &m_showFilesPanel, ImGuiWindowFlags_AlwaysAutoResize);
 
-        ImGui::InputText("Import Path", m_importPath, sizeof(m_importPath));
-        if (ImGui::Button("Import##file", ImVec2(-1, 0))) {
-            auto newMeshes = FileManager::importFiles(m_importPath, &scene, &renderer);
-            for (auto* mesh : newMeshes) {
-                scene.addMesh(mesh);
-            }
-            scene.pushHistoryState();
-        }
-        
-        ImGui::Separator();
-
-        ImGui::InputText("Export Path", m_exportPath, sizeof(m_exportPath));
-        if (ImGui::Button("Export##file", ImVec2(-1, 0))) {
-            FileManager::exportMeshes(m_exportPath, scene.getMeshes(), &scene, &renderer);
-        }
-
-        ImGui::End();
-    }
 
     // 8. Gizmo Cube Window
     if (m_showGizmoCube) {

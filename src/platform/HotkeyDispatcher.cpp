@@ -1,4 +1,6 @@
 #include "platform/HotkeyDispatcher.h"
+#include "platform/FileDialog.h"
+#include "files/FileManager.h"
 #include "render/AngleRenderer.h"
 #include <imgui.h>
 #include <algorithm>
@@ -203,9 +205,13 @@ HKAction HotkeyDispatcher::mapKeyToAction(const SDL_Keysym& keysym, bool ctrlPre
             if (shiftPressed) return HKAction::Redo;
             return HKAction::Undo;
         }
+        if (sym == SDLK_s) {
+            if (shiftPressed) return HKAction::SaveFileAs;
+            return HKAction::SaveFile;
+        }
         if (sym == SDLK_y) return HKAction::Redo;
         if (sym == SDLK_d) return HKAction::DuplicateSelection;
-        if (sym == SDLK_o || sym == SDLK_i) return HKAction::OpenFile;
+        if (sym == SDLK_o) return HKAction::OpenFile;
         if (sym == SDLK_e) return HKAction::ExportOBJ;
         if (sym == SDLK_t) return HKAction::ToggleDyntopo;
         if (sym == SDLK_x) return HKAction::RunRemesh;
@@ -392,8 +398,10 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
             case HKAction::Undo: scene.undo(); break;
             case HKAction::Redo: scene.redo(); break;
             
-            case HKAction::OpenFile: gui.toggleFilesPanel(); break;
-            case HKAction::ExportOBJ: gui.toggleFilesPanel(); break;
+            case HKAction::OpenFile: gui.openScene(scene); break;
+            case HKAction::SaveFile: gui.saveScene(scene); break;
+            case HKAction::SaveFileAs: gui.saveSceneAs(scene); break;
+            case HKAction::ExportOBJ: gui.exportFile(scene); break;
             case HKAction::ToggleDyntopo: gui.toggleTopologyPanel(); break;
             case HKAction::OpenContextPopup: gui.m_openContextPopup = true; break;
             case HKAction::RunRemesh: gui.performRemesh(scene); break;

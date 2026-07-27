@@ -51,7 +51,9 @@ enum class HKAction {
     ClearScene,            // Ctrl+Alt+N
     Undo,                  // Ctrl+Z
     Redo,                  // Ctrl+Y or Ctrl+Shift+Z
-    OpenFile,              // Ctrl+O / Ctrl+I
+    OpenFile,              // Ctrl+O
+    SaveFile,              // Ctrl+S
+    SaveFileAs,            // Ctrl+Shift+S
     ExportOBJ,             // Ctrl+E
     ToggleDyntopo,         // Ctrl+T
     RunRemesh,             // Ctrl+X

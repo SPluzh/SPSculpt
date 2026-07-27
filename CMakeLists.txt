@@ -109,8 +109,13 @@ add_executable(sculptsp
     # platform
     src/platform/HotkeyDispatcher.cpp
     src/platform/TabletInput.cpp
+    src/platform/FileDialog.cpp
     src/platform/NativeMain.cpp
 )
+
+if(WIN32)
+    target_link_libraries(sculptsp PRIVATE comdlg32)
+endif()
 
 if(TARGET SDL2::SDL2)
     target_link_libraries(sculptsp PRIVATE SDL2::SDL2)
@@ -125,3 +130,4 @@ target_compile_options(sculptsp PRIVATE -O3 -g)
 if(MINGW)
     target_link_options(sculptsp PRIVATE -static-libgcc -static-libstdc++)
 endif()
+

@@ -81,7 +81,8 @@ private:
     void rebuildFontsAndStyles();
     float getUiScale() const { return m_dpiScale * m_uiScale; }
 
-    // File path buffers
+    // File path state
+    std::string m_currentScenePath = "";
     char m_importPath[256] = "model.obj";
     char m_exportPath[256] = "output.obj";
     char m_refImagePath[256] = "";
@@ -132,12 +133,20 @@ public:
     // Fallback for empty calls
     void render() {}
 
+    // File operations
+    void openScene(Scene& scene);
+    void saveScene(Scene& scene);
+    void saveSceneAs(Scene& scene);
+    void importFile(Scene& scene);
+    void exportFile(Scene& scene);
+    const std::string& getCurrentScenePath() const { return m_currentScenePath; }
+    void setCurrentScenePath(const std::string& path) { m_currentScenePath = path; }
+
     // Panel toggles
     void toggleToolbar() { m_showToolbar = !m_showToolbar; }
     void toggleSculptingPanel() { m_showSculptingPanel = !m_showSculptingPanel; }
     void toggleScenePanel() { m_showScenePanel = !m_showScenePanel; }
     void toggleTopologyPanel() { m_showTopologyPanel = !m_showTopologyPanel; }
-    void toggleFilesPanel() { m_showFilesPanel = !m_showFilesPanel; }
     void toggleCameraPanel() { m_showCameraPanel = !m_showCameraPanel; }
     void toggleRenderingPanel() { m_showRenderingPanel = !m_showRenderingPanel; }
     void toggleMaskingPanel() { m_showMaskingPanel = !m_showMaskingPanel; }
