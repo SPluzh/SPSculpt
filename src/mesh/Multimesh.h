@@ -35,5 +35,8 @@ public:
     void syncToCurrentMesh();
     void updateResolution();
 
+    void flip(int axisIndex) override;
+    void mirror(int axisIndex, bool positiveToNegative, SymmetryMode mode) override;
+
     size_t getNbLevels() const { return meshes.size(); }
 };

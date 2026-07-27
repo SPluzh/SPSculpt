@@ -9,6 +9,8 @@
 
 #include "sculpt/ArmatureGraph.h"
 
+enum class SymmetryMode { Local = 0, World = 1 };
+
 class Camera;
 
 class Mesh {
@@ -70,16 +72,24 @@ public:
     int getNbQuads() const;
     int getNbTriangles() const;
 
-
-
     // SGL/OBJ migration properties
     bool visibleV1 = true;
     bool visibleV2 = true;
     glm::vec3 center{0.0f};
     float scale = 1.0f;
+    float symmetryOffset = 0.0f;
     std::vector<float>    texCoords;     // nbTexCoords * 2
     std::vector<uint32_t> facesTexCoord;  // nbFaces * 4
     bool hasUV = false;
+
+    float getSymmetryOffset() const { return symmetryOffset; }
+    void setSymmetryOffset(float val) { symmetryOffset = val; }
+
+    float computeLocalRadius() const;
+    glm::vec3 getSymmetryOriginForAxis(int axisIndex, SymmetryMode mode) const;
+    glm::vec3 getSymmetryNormalForAxis(int axisIndex, SymmetryMode mode) const;
+    virtual void flip(int axisIndex);
+    virtual void mirror(int axisIndex, bool positiveToNegative, SymmetryMode mode);
 
     uint32_t m_id = 0;
     std::string outlinerName = "";

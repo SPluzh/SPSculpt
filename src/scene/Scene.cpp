@@ -1006,7 +1006,7 @@ void Scene::addTorus() {
     selectMesh(mesh);
 }
 
-void Scene::addPrimitiveAtMask(const std::string& type, bool useSym, int symAxis) {
+void Scene::addPrimitiveAtMask(const std::string& type, bool useSym, bool symX, bool symY, bool symZ) {
     Mesh* activeMesh = getSelected();
     if (!activeMesh) return;
 
@@ -1107,14 +1107,24 @@ void Scene::addPrimitiveAtMask(const std::string& type, bool useSym, int symAxis
         selectMesh(prim);
     }
 
-    if (useSym) {
-        glm::vec3 mirroredCenter = localCenter;
-        if (symAxis == 0) mirroredCenter.x = -localCenter.x;
-        else if (symAxis == 1) mirroredCenter.y = -localCenter.y;
-        else if (symAxis == 2) mirroredCenter.z = -localCenter.z;
+    if (useSym && (symX || symY || symZ)) {
+        std::vector<float> xVals = { 1.0f };
+        std::vector<float> yVals = { 1.0f };
+        std::vector<float> zVals = { 1.0f };
+        if (symX) xVals.push_back(-1.0f);
+        if (symY) yVals.push_back(-1.0f);
+        if (symZ) zVals.push_back(-1.0f);
 
-        if (glm::distance(mirroredCenter, localCenter) > 0.001f) {
-            spawnPrimitive(mirroredCenter, std::to_string(m_meshes.size() + 1));
+        for (float sx : xVals) {
+            for (float sy : yVals) {
+                for (float sz : zVals) {
+                    if (sx == 1.0f && sy == 1.0f && sz == 1.0f) continue;
+                    glm::vec3 mirroredCenter(localCenter.x * sx, localCenter.y * sy, localCenter.z * sz);
+                    if (glm::distance(mirroredCenter, localCenter) > 0.001f) {
+                        spawnPrimitive(mirroredCenter, std::to_string(m_meshes.size() + 1));
+                    }
+                }
+            }
         }
     }
 }

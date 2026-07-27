@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.6]
+- **Symmetry**: Upgraded the sculpting engine symmetry system from a single-axis selection to simultaneous multi-axis bitmask-style symmetry, supporting concurrent X, Y, and Z mirror passes across all brush tools (including Move, Drag, Elastic, and Paint).
+- **Symmetry**: Updated the `BrushCursor` rendering system to project and draw multiple symmetry indicator dots simultaneously across all enabled reflection planes in real-time.
+- **Symmetry**: Refactored `SculptManager` stroke initiation, initial intersection tracking (`m_initialSymIntersections`), plane snapping, vertex culling, and stroke pass loops to execute parallel mirror transformations across active symmetry combinations (up to 7 concurrent mirror passes).
+- **Symmetry**: Refactored primitive spawning (`addPrimitiveAtMask`) to mirror generated geometry simultaneously across all active symmetry axes when placing objects at masked bounding box locations.
+- **UI**: Overhauled the Floating Island HUD symmetry section, replacing the dropdown combo-box with individual icon-based toggle buttons (Split icon for master symmetry toggle, and dedicated X, Y, Z axis toggle buttons with active state highlighting).
+- **UI**: Updated the Side Panel "Symmetry Settings" section to use independent X, Y, Z axis checkboxes for multi-axis toggling.
+
 ## [1.2.5]
 - **Performance**: Optimized Grab-style brushes (**Move**, **Drag**, **Elastic**) on high-density meshes (70k+ vertices), completely eliminating lag and stutter during rapid cursor movement:
   - Bypassed redundant stroke-step interpolation in `SculptManager`, executing grab brushes exactly once per mouse move frame.

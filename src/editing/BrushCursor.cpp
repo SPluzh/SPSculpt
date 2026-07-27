@@ -107,7 +107,9 @@ void BrushCursor::update(int mouseX, int mouseY,
                           const Scene& scene,
                           float brushRadius,
                           bool useSym,
-                          int symAxis,
+                          bool symX,
+                          bool symY,
+                          bool symZ,
                           bool isSculpting,
                           BrushType brushType,
                           bool hasActiveStrokeHit,
@@ -288,33 +290,38 @@ void BrushCursor::update(int mouseX, int mouseY,
 
         m_state.symMVPs.clear();
         m_state.symOccluded.clear();
-        if (useSym && mesh) {
+        if (useSym && (symX || symY || symZ) && mesh) {
             glm::mat4 invMatrix = glm::inverse(mesh->matrix);
             glm::vec3 lPt = glm::vec3(invMatrix * glm::vec4(worldPt, 1.0f));
             glm::vec3 lNormal = glm::normalize(glm::vec3(glm::transpose(mesh->matrix) * glm::vec4(worldNormal, 0.0f)));
-
-            glm::vec3 localSymPt = lPt;
-            glm::vec3 localSymNormal = lNormal;
-            if (symAxis == 0) { // X
-                localSymPt.x = -localSymPt.x;
-                localSymNormal.x = -localSymNormal.x;
-            } else if (symAxis == 1) { // Y
-                localSymPt.y = -localSymPt.y;
-                localSymNormal.y = -localSymNormal.y;
-            } else if (symAxis == 2) { // Z
-                localSymPt.z = -localSymPt.z;
-                localSymNormal.z = -localSymNormal.z;
-            }
-
             glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(mesh->matrix)));
-            glm::vec3 worldSymPt = glm::vec3(mesh->matrix * glm::vec4(localSymPt, 1.0f));
-            glm::vec3 worldSymNormal = glm::normalize(normalMatrix * localSymNormal);
 
-            glm::mat4 symMVP = buildCircleMVP(worldSymPt, worldSymNormal, constRadiusLeft, cameraLeft, tiltX, tiltY);
-            m_state.symMVPs.push_back(symMVP);
-            
-            bool occluded = checkOcclusion(worldSymPt, cameraLeft, mesh);
-            m_state.symOccluded.push_back(occluded ? 1 : 0);
+            std::vector<float> xVals = { 1.0f };
+            std::vector<float> yVals = { 1.0f };
+            std::vector<float> zVals = { 1.0f };
+            if (symX) xVals.push_back(-1.0f);
+            if (symY) yVals.push_back(-1.0f);
+            if (symZ) zVals.push_back(-1.0f);
+
+            for (float sx : xVals) {
+                for (float sy : yVals) {
+                    for (float sz : zVals) {
+                        if (sx == 1.0f && sy == 1.0f && sz == 1.0f) continue;
+
+                        glm::vec3 localSymPt(lPt.x * sx, lPt.y * sy, lPt.z * sz);
+                        glm::vec3 localSymNormal(lNormal.x * sx, lNormal.y * sy, lNormal.z * sz);
+
+                        glm::vec3 worldSymPt = glm::vec3(mesh->matrix * glm::vec4(localSymPt, 1.0f));
+                        glm::vec3 worldSymNormal = glm::normalize(normalMatrix * localSymNormal);
+
+                        glm::mat4 symMVP = buildCircleMVP(worldSymPt, worldSymNormal, constRadiusLeft, cameraLeft, tiltX, tiltY);
+                        m_state.symMVPs.push_back(symMVP);
+
+                        bool occluded = checkOcclusion(worldSymPt, cameraLeft, mesh);
+                        m_state.symOccluded.push_back(occluded ? 1 : 0);
+                    }
+                }
+            }
         }
 
         // --- Right Viewport MVP construction ---
@@ -339,33 +346,38 @@ void BrushCursor::update(int mouseX, int mouseY,
             float constRadiusRight = 2.5f * (worldRadiusRight / brushRadius) * pressureDotFactor;
             m_state.dotMVPRight = buildCircleMVP(worldPt, worldNormal, constRadiusRight, *cameraRight, tiltX, tiltY);
 
-            if (useSym && mesh) {
+            if (useSym && (symX || symY || symZ) && mesh) {
                 glm::mat4 invMatrix = glm::inverse(mesh->matrix);
                 glm::vec3 lPt = glm::vec3(invMatrix * glm::vec4(worldPt, 1.0f));
                 glm::vec3 lNormal = glm::normalize(glm::vec3(glm::transpose(mesh->matrix) * glm::vec4(worldNormal, 0.0f)));
-
-                glm::vec3 localSymPt = lPt;
-                glm::vec3 localSymNormal = lNormal;
-                if (symAxis == 0) { // X
-                    localSymPt.x = -localSymPt.x;
-                    localSymNormal.x = -localSymNormal.x;
-                } else if (symAxis == 1) { // Y
-                    localSymPt.y = -localSymPt.y;
-                    localSymNormal.y = -localSymNormal.y;
-                } else if (symAxis == 2) { // Z
-                    localSymPt.z = -localSymPt.z;
-                    localSymNormal.z = -localSymNormal.z;
-                }
-
                 glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(mesh->matrix)));
-                glm::vec3 worldSymPt = glm::vec3(mesh->matrix * glm::vec4(localSymPt, 1.0f));
-                glm::vec3 worldSymNormal = glm::normalize(normalMatrix * localSymNormal);
 
-                glm::mat4 symMVP = buildCircleMVP(worldSymPt, worldSymNormal, constRadiusRight, *cameraRight, tiltX, tiltY);
-                m_state.symMVPsRight.push_back(symMVP);
-                
-                bool occluded = checkOcclusion(worldSymPt, *cameraRight, mesh);
-                m_state.symOccludedRight.push_back(occluded ? 1 : 0);
+                std::vector<float> xVals = { 1.0f };
+                std::vector<float> yVals = { 1.0f };
+                std::vector<float> zVals = { 1.0f };
+                if (symX) xVals.push_back(-1.0f);
+                if (symY) yVals.push_back(-1.0f);
+                if (symZ) zVals.push_back(-1.0f);
+
+                for (float sx : xVals) {
+                    for (float sy : yVals) {
+                        for (float sz : zVals) {
+                            if (sx == 1.0f && sy == 1.0f && sz == 1.0f) continue;
+
+                            glm::vec3 localSymPt(lPt.x * sx, lPt.y * sy, lPt.z * sz);
+                            glm::vec3 localSymNormal(lNormal.x * sx, lNormal.y * sy, lNormal.z * sz);
+
+                            glm::vec3 worldSymPt = glm::vec3(mesh->matrix * glm::vec4(localSymPt, 1.0f));
+                            glm::vec3 worldSymNormal = glm::normalize(normalMatrix * localSymNormal);
+
+                            glm::mat4 symMVP = buildCircleMVP(worldSymPt, worldSymNormal, constRadiusRight, *cameraRight, tiltX, tiltY);
+                            m_state.symMVPsRight.push_back(symMVP);
+
+                            bool occluded = checkOcclusion(worldSymPt, *cameraRight, mesh);
+                            m_state.symOccludedRight.push_back(occluded ? 1 : 0);
+                        }
+                    }
+                }
             }
         }
     } else {

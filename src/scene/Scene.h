@@ -78,7 +78,7 @@ public:
     void addCube();
     void addCylinder();
     void addTorus();
-    void addPrimitiveAtMask(const std::string& type, bool useSym, int symAxis);
+    void addPrimitiveAtMask(const std::string& type, bool useSym, bool symX, bool symY, bool symZ);
     void duplicateSelection();
     void mergeSelection();
     void clearScene();

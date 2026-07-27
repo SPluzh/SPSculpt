@@ -141,7 +141,13 @@ private:
 
     BrushCursor m_cursor;
     bool m_useSym = false;
-    int m_symAxis = 0; // 0=X, 1=Y, 2=Z
+    bool m_symX = true;
+    bool m_symY = false;
+    bool m_symZ = false;
+    SymmetryMode m_symmetryMode = SymmetryMode::Local;
+
+    std::vector<std::vector<uint32_t>> m_grabbedVerticesSyms;
+    std::vector<glm::vec3>             m_initialSymIntersections;
 
     PolyGroupTool m_polyGroupTool;
     uint32_t m_activeGroupId = 1;
@@ -218,11 +224,49 @@ public:
     void setNegative(bool val) { getCurrentSettings().negative = val; }
     void toggleNegative() { getCurrentSettings().negative = !getCurrentSettings().negative; }
 
-    bool getUseSym() const { return m_useSym; }
-    void setUseSym(bool val) { m_useSym = val; }
+    bool getUseSym() const { return m_useSym && (m_symX || m_symY || m_symZ); }
+    void setUseSym(bool val) {
+        m_useSym = val;
+        if (val && !m_symX && !m_symY && !m_symZ) {
+            m_symX = true;
+        }
+    }
 
-    int getSymAxis() const { return m_symAxis; }
-    void setSymAxis(int val) { m_symAxis = val; }
+    bool getSymX() const { return m_symX; }
+    void setSymX(bool val) {
+        m_symX = val;
+        if (m_symX || m_symY || m_symZ) m_useSym = true;
+    }
+
+    bool getSymY() const { return m_symY; }
+    void setSymY(bool val) {
+        m_symY = val;
+        if (m_symX || m_symY || m_symZ) m_useSym = true;
+    }
+
+    bool getSymZ() const { return m_symZ; }
+    void setSymZ(bool val) {
+        m_symZ = val;
+        if (m_symX || m_symY || m_symZ) m_useSym = true;
+    }
+
+    int getSymAxis() const {
+        if (m_symX) return 0;
+        if (m_symY) return 1;
+        if (m_symZ) return 2;
+        return 0;
+    }
+    void setSymAxis(int val) {
+        m_symX = (val == 0);
+        m_symY = (val == 1);
+        m_symZ = (val == 2);
+        m_useSym = true;
+    }
+
+    SymmetryMode getSymmetryMode() const { return m_symmetryMode; }
+    void setSymmetryMode(SymmetryMode mode) { m_symmetryMode = mode; }
+
+    std::vector<glm::vec3> getActiveSymmetryScales() const;
 
     const BrushCursor& getCursor() const { return m_cursor; }
     BrushCursor& getCursor() { return m_cursor; }

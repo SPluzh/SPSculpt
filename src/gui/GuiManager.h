@@ -37,6 +37,7 @@ private:
     bool m_showRenderingPanel = true;
     bool m_showMaskingPanel = true;
     bool m_showMultiresPanel = true;
+    bool m_showSymmetryPanel = true;
     bool m_showZSpheresPanel = true;
     bool m_showReferenceImagesPanel = true;
     bool m_showGizmoCube = true;
@@ -45,6 +46,9 @@ private:
     bool m_showUndoDiagPanel = false;
     bool m_showDebugLogPanel = false;
     bool m_showFloatingIsland = true;
+
+    int m_mirrorAxis = 0; // 0: X, 1: Y, 2: Z
+    bool m_mirrorPositiveToNegative = true;
 
     // FPS calculation variables
     std::deque<std::chrono::steady_clock::time_point> m_fpsTimes;
@@ -108,6 +112,7 @@ private:
     void drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer);
     void drawUndoDiagPanel(Scene& scene);
     void drawDebugLogPanel();
+    void drawSymmetryPanel(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer);
 
 public:
     GuiManager();
@@ -133,6 +138,7 @@ public:
     void toggleRenderingPanel() { m_showRenderingPanel = !m_showRenderingPanel; }
     void toggleMaskingPanel() { m_showMaskingPanel = !m_showMaskingPanel; }
     void toggleMultiresPanel() { m_showMultiresPanel = !m_showMultiresPanel; }
+    void toggleSymmetryPanel() { m_showSymmetryPanel = !m_showSymmetryPanel; }
     void toggleZSpheresPanel() { m_showZSpheresPanel = !m_showZSpheresPanel; }
     void toggleReferenceImagesPanel() { m_showReferenceImagesPanel = !m_showReferenceImagesPanel; }
     void toggleGizmoCube() { m_showGizmoCube = !m_showGizmoCube; }
@@ -140,6 +146,9 @@ public:
     void toggleUndoDiagPanel() { m_showUndoDiagPanel = !m_showUndoDiagPanel; }
     void toggleDebugLogPanel() { m_showDebugLogPanel = !m_showDebugLogPanel; }
     void toggleFloatingIsland() { m_showFloatingIsland = !m_showFloatingIsland; }
+
+    bool getShowSymmetryPanel() const { return m_showSymmetryPanel; }
+    void setShowSymmetryPanel(bool show) { m_showSymmetryPanel = show; }
 
     bool getShowTopologyPanel() const { return m_showTopologyPanel; }
     void setShowTopologyPanel(bool show) { m_showTopologyPanel = show; }

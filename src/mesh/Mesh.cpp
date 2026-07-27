@@ -204,6 +204,10 @@ void Mesh::postInit() {
     vertProxy = verts;
     vertTagFlags.assign(nbVerts, 0);
 
+    float bbox[6];
+    computeBbox(bbox);
+    center = glm::vec3((bbox[0] + bbox[3]) * 0.5f, (bbox[1] + bbox[4]) * 0.5f, (bbox[2] + bbox[5]) * 0.5f);
+
     if (faceGroups.size() != (size_t)nbFaces) {
         initFaceGroups();
     } else {
@@ -429,4 +433,368 @@ void Mesh::initTexCoordsDataFromOBJData(const std::vector<float>& uvAr, const st
     facesTexCoord = uvfAr;
     hasUV = true;
     nbVerts = verts.size() / 3;
+}
+
+#include <cmath>
+
+float Mesh::computeLocalRadius() const {
+    if (nbVerts == 0) return 1.0f;
+    float bbox[6];
+    computeBbox(bbox);
+    float dx = bbox[3] - bbox[0];
+    float dy = bbox[4] - bbox[1];
+    float dz = bbox[5] - bbox[2];
+    float radius = std::sqrt(dx * dx + dy * dy + dz * dz) * 0.5f;
+    return radius > 1e-6f ? radius : 1.0f;
+}
+
+glm::vec3 Mesh::getSymmetryOriginForAxis(int axisIndex, SymmetryMode mode) const {
+    glm::vec3 normalVec(0.0f);
+    if (axisIndex == 0) normalVec = glm::vec3(1.0f, 0.0f, 0.0f);
+    else if (axisIndex == 1) normalVec = glm::vec3(0.0f, 1.0f, 0.0f);
+    else if (axisIndex == 2) normalVec = glm::vec3(0.0f, 0.0f, 1.0f);
+
+    if (mode == SymmetryMode::World) {
+        float worldRadius = computeLocalRadius() * scale;
+        glm::vec3 worldOrigin = normalVec * (symmetryOffset * worldRadius);
+        glm::mat4 invM = glm::inverse(matrix);
+        return glm::vec3(invM * glm::vec4(worldOrigin, 1.0f));
+    } else {
+        float localRadius = computeLocalRadius();
+        return normalVec * (symmetryOffset * localRadius);
+    }
+}
+
+glm::vec3 Mesh::getSymmetryNormalForAxis(int axisIndex, SymmetryMode mode) const {
+    glm::vec3 normalVec(0.0f);
+    if (axisIndex == 0) normalVec = glm::vec3(1.0f, 0.0f, 0.0f);
+    else if (axisIndex == 1) normalVec = glm::vec3(0.0f, 1.0f, 0.0f);
+    else if (axisIndex == 2) normalVec = glm::vec3(0.0f, 0.0f, 1.0f);
+
+    if (mode == SymmetryMode::World) {
+        glm::mat3 m3 = glm::transpose(glm::mat3(matrix));
+        glm::vec3 localNormal = m3 * normalVec;
+        float len = glm::length(localNormal);
+        return len > 1e-5f ? localNormal / len : normalVec;
+    } else {
+        return normalVec;
+    }
+}
+
+void Mesh::flip(int axisIndex) {
+    if (nbVerts == 0 || nbFaces == 0) return;
+    if (axisIndex < 0 || axisIndex > 2) return;
+
+    float cVal = center[axisIndex];
+    for (int i = 0; i < nbVerts; ++i) {
+        int id = i * 3 + axisIndex;
+        verts[id] = 2.0f * cVal - verts[id];
+    }
+
+    for (int i = 0; i < nbFaces; ++i) {
+        int id = i * 4;
+        uint32_t iv1 = faces[id];
+        uint32_t iv2 = faces[id + 1];
+        uint32_t iv3 = faces[id + 2];
+        uint32_t iv4 = faces[id + 3];
+        if (iv4 == TRI_INDEX) {
+            faces[id + 1] = iv3;
+            faces[id + 2] = iv2;
+        } else {
+            faces[id + 1] = iv4;
+            faces[id + 3] = iv2;
+        }
+    }
+
+    if (hasUV && facesTexCoord.size() == static_cast<size_t>(nbFaces * 4)) {
+        for (int i = 0; i < nbFaces; ++i) {
+            int id = i * 4;
+            uint32_t uv1 = facesTexCoord[id];
+            uint32_t uv2 = facesTexCoord[id + 1];
+            uint32_t uv3 = facesTexCoord[id + 2];
+            uint32_t uv4 = facesTexCoord[id + 3];
+            if (uv4 == TRI_INDEX) {
+                facesTexCoord[id + 1] = uv3;
+                facesTexCoord[id + 2] = uv2;
+            } else {
+                facesTexCoord[id + 1] = uv4;
+                facesTexCoord[id + 3] = uv2;
+            }
+        }
+    }
+
+    vrfStartCount.clear();
+    vertRingFace.clear();
+    vrvStartCount.clear();
+    vertRingVert.clear();
+    vertOnEdge.clear();
+
+    postInit();
+    isDirty = true;
+    isTopologyDirty = true;
+}
+
+void Mesh::mirror(int axisIndex, bool positiveToNegative, SymmetryMode mode) {
+    if (nbVerts == 0 || nbFaces == 0) return;
+    if (axisIndex < 0 || axisIndex > 2) return;
+
+    glm::vec3 origin = getSymmetryOriginForAxis(axisIndex, mode);
+    glm::vec3 normal = getSymmetryNormalForAxis(axisIndex, mode);
+
+    // 1. Calculate signed distance to the plane for each vertex
+    std::vector<float> distances(nbVerts);
+    for (int i = 0; i < nbVerts; ++i) {
+        int idx = i * 3;
+        float vx = verts[idx] - origin.x;
+        float vy = verts[idx + 1] - origin.y;
+        float vz = verts[idx + 2] - origin.z;
+        distances[i] = vx * normal.x + vy * normal.y + vz * normal.z;
+    }
+
+    // 2. Identify which faces are kept
+    std::vector<int> keptFaces;
+    keptFaces.reserve(nbFaces);
+    for (int i = 0; i < nbFaces; ++i) {
+        int idx = i * 4;
+        uint32_t iv1 = faces[idx];
+        uint32_t iv2 = faces[idx + 1];
+        uint32_t iv3 = faces[idx + 2];
+        uint32_t iv4 = faces[idx + 3];
+
+        float dSum = distances[iv1] + distances[iv2] + distances[iv3];
+        int count = 3;
+        if (iv4 != TRI_INDEX) {
+            dSum += distances[iv4];
+            count = 4;
+        }
+        float avgDist = dSum / count;
+        float snapTol = std::max(1e-4f, computeLocalRadius() * 0.005f);
+        bool keep = positiveToNegative ? (avgDist >= -snapTol) : (avgDist <= snapTol);
+        if (keep) {
+            keptFaces.push_back(i);
+        }
+    }
+
+    if (keptFaces.empty()) return;
+
+    // 3. For all kept faces, mark their vertices.
+    std::vector<int32_t> newVertsMap(nbVerts, -1);
+    std::vector<float> tempVertices;
+    std::vector<float> tempColors;
+    std::vector<float> tempMaterials;
+    std::vector<bool> boundaryFlags;
+
+    bool hasColors = (colors.size() == static_cast<size_t>(nbVerts * 3));
+    bool hasMats = (materials.size() == static_cast<size_t>(nbVerts * 3));
+    bool hasUVs = hasUV && !facesTexCoord.empty();
+
+    auto addVertex = [&](uint32_t origIdx) -> uint32_t {
+        if (newVertsMap[origIdx] != -1) {
+            return static_cast<uint32_t>(newVertsMap[origIdx]);
+        }
+
+        uint32_t newIdx = static_cast<uint32_t>(tempVertices.size() / 3);
+        newVertsMap[origIdx] = static_cast<int32_t>(newIdx);
+
+        uint32_t o3 = origIdx * 3;
+        float vx = verts[o3];
+        float vy = verts[o3 + 1];
+        float vz = verts[o3 + 2];
+
+        float dist = distances[origIdx];
+        bool onBoundary = false;
+        float snapTol = std::max(1e-4f, computeLocalRadius() * 0.005f);
+        if (positiveToNegative ? (dist < 0.0f) : (dist > 0.0f)) {
+            vx = vx - dist * normal.x;
+            vy = vy - dist * normal.y;
+            vz = vz - dist * normal.z;
+            onBoundary = true;
+        } else if (std::abs(dist) <= snapTol) {
+            vx = vx - dist * normal.x;
+            vy = vy - dist * normal.y;
+            vz = vz - dist * normal.z;
+            onBoundary = true;
+        }
+
+        tempVertices.push_back(vx);
+        tempVertices.push_back(vy);
+        tempVertices.push_back(vz);
+
+        if (hasColors) {
+            tempColors.push_back(colors[o3]);
+            tempColors.push_back(colors[o3 + 1]);
+            tempColors.push_back(colors[o3 + 2]);
+        }
+        if (hasMats) {
+            tempMaterials.push_back(materials[o3]);
+            tempMaterials.push_back(materials[o3 + 1]);
+            tempMaterials.push_back(materials[o3 + 2]);
+        }
+
+        boundaryFlags.push_back(onBoundary);
+        return newIdx;
+    };
+
+    std::vector<uint32_t> newFacesOriginal;
+    newFacesOriginal.reserve(keptFaces.size() * 4);
+    std::vector<uint32_t> newFacesUVOriginal;
+    if (hasUVs) newFacesUVOriginal.reserve(keptFaces.size() * 4);
+
+    for (int fIdx : keptFaces) {
+        int idx = fIdx * 4;
+        uint32_t iv1 = faces[idx];
+        uint32_t iv2 = faces[idx + 1];
+        uint32_t iv3 = faces[idx + 2];
+        uint32_t iv4 = faces[idx + 3];
+
+        uint32_t nv1 = addVertex(iv1);
+        uint32_t nv2 = addVertex(iv2);
+        uint32_t nv3 = addVertex(iv3);
+        uint32_t nv4 = (iv4 != TRI_INDEX) ? addVertex(iv4) : TRI_INDEX;
+
+        newFacesOriginal.push_back(nv1);
+        newFacesOriginal.push_back(nv2);
+        newFacesOriginal.push_back(nv3);
+        newFacesOriginal.push_back(nv4);
+
+        if (hasUVs) {
+            newFacesUVOriginal.push_back(facesTexCoord[idx]);
+            newFacesUVOriginal.push_back(facesTexCoord[idx + 1]);
+            newFacesUVOriginal.push_back(facesTexCoord[idx + 2]);
+            newFacesUVOriginal.push_back(facesTexCoord[idx + 3]);
+        }
+    }
+
+    // 4. Duplicate and mirror strictly-source vertices
+    size_t numKeptVerts = tempVertices.size() / 3;
+    std::vector<uint32_t> mirrorMap(numKeptVerts);
+    for (size_t i = 0; i < numKeptVerts; ++i) {
+        if (boundaryFlags[i]) {
+            mirrorMap[i] = static_cast<uint32_t>(i);
+        } else {
+            uint32_t newIdx = static_cast<uint32_t>(tempVertices.size() / 3);
+            mirrorMap[i] = newIdx;
+
+            size_t i3 = i * 3;
+            float vx = tempVertices[i3];
+            float vy = tempVertices[i3 + 1];
+            float vz = tempVertices[i3 + 2];
+
+            float dx = vx - origin.x;
+            float dy = vy - origin.y;
+            float dz = vz - origin.z;
+            float d = dx * normal.x + dy * normal.y + dz * normal.z;
+
+            float mx = vx - 2.0f * d * normal.x;
+            float my = vy - 2.0f * d * normal.y;
+            float mz = vz - 2.0f * d * normal.z;
+
+            tempVertices.push_back(mx);
+            tempVertices.push_back(my);
+            tempVertices.push_back(mz);
+
+            if (hasColors) {
+                tempColors.push_back(tempColors[i3]);
+                tempColors.push_back(tempColors[i3 + 1]);
+                tempColors.push_back(tempColors[i3 + 2]);
+            }
+            if (hasMats) {
+                tempMaterials.push_back(tempMaterials[i3]);
+                tempMaterials.push_back(tempMaterials[i3 + 1]);
+                tempMaterials.push_back(tempMaterials[i3 + 2]);
+            }
+        }
+    }
+
+    // 5. Build final face array with original and mirrored faces
+    std::vector<uint32_t> finalFaces;
+    finalFaces.reserve(newFacesOriginal.size() * 2);
+    std::vector<uint32_t> finalFacesUV;
+    if (hasUVs) finalFacesUV.reserve(newFacesUVOriginal.size() * 2);
+
+    for (uint32_t f : newFacesOriginal) {
+        finalFaces.push_back(f);
+    }
+    if (hasUVs) {
+        for (uint32_t fuv : newFacesUVOriginal) {
+            finalFacesUV.push_back(fuv);
+        }
+    }
+
+    size_t numKeptFaceCount = newFacesOriginal.size() / 4;
+    for (size_t i = 0; i < numKeptFaceCount; ++i) {
+        size_t idx = i * 4;
+        uint32_t nv1 = newFacesOriginal[idx];
+        uint32_t nv2 = newFacesOriginal[idx + 1];
+        uint32_t nv3 = newFacesOriginal[idx + 2];
+        uint32_t nv4 = newFacesOriginal[idx + 3];
+
+        uint32_t mv1 = mirrorMap[nv1];
+        uint32_t mv2 = mirrorMap[nv2];
+        uint32_t mv3 = mirrorMap[nv3];
+        uint32_t mv4 = (nv4 != TRI_INDEX) ? mirrorMap[nv4] : TRI_INDEX;
+
+        if (mv4 == TRI_INDEX) {
+            finalFaces.push_back(mv1);
+            finalFaces.push_back(mv3);
+            finalFaces.push_back(mv2);
+            finalFaces.push_back(TRI_INDEX);
+        } else {
+            finalFaces.push_back(mv1);
+            finalFaces.push_back(mv4);
+            finalFaces.push_back(mv3);
+            finalFaces.push_back(mv2);
+        }
+
+        if (hasUVs) {
+            uint32_t uv1 = newFacesUVOriginal[idx];
+            uint32_t uv2 = newFacesUVOriginal[idx + 1];
+            uint32_t uv3 = newFacesUVOriginal[idx + 2];
+            uint32_t uv4 = newFacesUVOriginal[idx + 3];
+            if (uv4 == TRI_INDEX) {
+                finalFacesUV.push_back(uv1);
+                finalFacesUV.push_back(uv3);
+                finalFacesUV.push_back(uv2);
+                finalFacesUV.push_back(TRI_INDEX);
+            } else {
+                finalFacesUV.push_back(uv1);
+                finalFacesUV.push_back(uv4);
+                finalFacesUV.push_back(uv3);
+                finalFacesUV.push_back(uv2);
+            }
+        }
+    }
+
+    // 6. Update mesh data
+    nbVerts = static_cast<int>(tempVertices.size() / 3);
+    nbFaces = static_cast<int>(finalFaces.size() / 4);
+
+    verts = std::move(tempVertices);
+    if (hasColors) colors = std::move(tempColors);
+    else colors.assign(nbVerts * 3, 1.0f);
+
+    if (hasMats) materials = std::move(tempMaterials);
+    else {
+        materials.resize(nbVerts * 3);
+        for (int i = 0; i < nbVerts; ++i) {
+            materials[i * 3] = 0.5f;
+            materials[i * 3 + 1] = 0.0f;
+            materials[i * 3 + 2] = 1.0f;
+        }
+    }
+
+    faces = std::move(finalFaces);
+    if (hasUVs) {
+        facesTexCoord = std::move(finalFacesUV);
+    }
+
+    vrfStartCount.clear();
+    vertRingFace.clear();
+    vrvStartCount.clear();
+    vertRingVert.clear();
+    vertOnEdge.clear();
+
+    postInit();
+    isDirty = true;
+    isTopologyDirty = true;
 }

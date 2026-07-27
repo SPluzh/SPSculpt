@@ -268,6 +268,29 @@ SculptManager::SculptManager() {
     m_brushSettings[BRUSH_BRUSH].stampUseTilt = false;
 }
 
+std::vector<glm::vec3> SculptManager::getActiveSymmetryScales() const {
+    std::vector<glm::vec3> scales;
+    if (!m_useSym || (!m_symX && !m_symY && !m_symZ)) return scales;
+
+    std::vector<float> xVals = { 1.0f };
+    std::vector<float> yVals = { 1.0f };
+    std::vector<float> zVals = { 1.0f };
+
+    if (m_symX) xVals.push_back(-1.0f);
+    if (m_symY) yVals.push_back(-1.0f);
+    if (m_symZ) zVals.push_back(-1.0f);
+
+    for (float sx : xVals) {
+        for (float sy : yVals) {
+            for (float sz : zVals) {
+                if (sx == 1.0f && sy == 1.0f && sz == 1.0f) continue;
+                scales.push_back(glm::vec3(sx, sy, sz));
+            }
+        }
+    }
+    return scales;
+}
+
 int SculptManager::doStrokePass(
     Scene& scene,
     Mesh* mesh,
@@ -955,7 +978,8 @@ int SculptManager::doStrokePass(
 void SculptManager::cancelStroke() {
     m_isSculpting = false;
     m_grabbedVertices.clear();
-    m_grabbedVerticesSym.clear();
+    m_grabbedVerticesSyms.clear();
+    m_initialSymIntersections.clear();
     m_lassoPoints.clear();
     m_isLassoActive = false;
     m_gradIsDrawing = false;
@@ -1134,19 +1158,28 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         }
 
         if (m_useSym && !pickedVertices.empty()) {
-            int symAxis = m_symAxis;
             float eps = 1e-4f;
-            float initVal = m_initialIntersection[symAxis];
             std::vector<uint32_t> filteredPrimary;
             filteredPrimary.reserve(pickedVertices.size());
             const float* vertProxyData = mesh->vertProxy.data();
             for (uint32_t v : pickedVertices) {
-                float val = vertProxyData[v * 3 + symAxis];
-                if (initVal >= 0.0f) {
-                    if (val >= -eps) filteredPrimary.push_back(v);
-                } else {
-                    if (val <= eps) filteredPrimary.push_back(v);
+                bool keep = true;
+                if (m_symX) {
+                    float initVal = m_initialIntersection.x;
+                    float val = vertProxyData[v * 3 + 0];
+                    if (initVal >= 0.0f ? (val < -eps) : (val > eps)) keep = false;
                 }
+                if (keep && m_symY) {
+                    float initVal = m_initialIntersection.y;
+                    float val = vertProxyData[v * 3 + 1];
+                    if (initVal >= 0.0f ? (val < -eps) : (val > eps)) keep = false;
+                }
+                if (keep && m_symZ) {
+                    float initVal = m_initialIntersection.z;
+                    float val = vertProxyData[v * 3 + 2];
+                    if (initVal >= 0.0f ? (val < -eps) : (val > eps)) keep = false;
+                }
+                if (keep) filteredPrimary.push_back(v);
             }
             pickedVertices = std::move(filteredPrimary);
         }
@@ -1204,12 +1237,17 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         );
 
         if (m_useSym && activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_POLYGROUP) {
-            int symAxis = m_symAxis;
             float eps = 1e-4f;
             const float* vertProxyData = mesh->vertProxy.data();
             for (uint32_t v : pickedVertices) {
-                if (std::abs(vertProxyData[v * 3 + symAxis]) <= eps) {
-                    mesh->verts[v * 3 + symAxis] = vertProxyData[v * 3 + symAxis];
+                if (m_symX && std::abs(vertProxyData[v * 3 + 0]) <= eps) {
+                    mesh->verts[v * 3 + 0] = vertProxyData[v * 3 + 0];
+                }
+                if (m_symY && std::abs(vertProxyData[v * 3 + 1]) <= eps) {
+                    mesh->verts[v * 3 + 1] = vertProxyData[v * 3 + 1];
+                }
+                if (m_symZ && std::abs(vertProxyData[v * 3 + 2]) <= eps) {
+                    mesh->verts[v * 3 + 2] = vertProxyData[v * 3 + 2];
                 }
             }
         }
@@ -1220,118 +1258,105 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 
         // Symmetry pass (Step 2)
         if (m_useSym) {
-            glm::vec3 symCenter;
-            std::vector<uint32_t> symVerts;
+            std::vector<glm::vec3> symScales = getActiveSymmetryScales();
 
-            if (isGrabBrush && !m_firstStrokeFrame) {
-                // Calculate symmetry drag direction and center
-                glm::vec3 symRayOrigin = localRayOrigin;
-                glm::vec3 symRayDir = localRayDir;
-                if (m_symAxis == 0) {
-                    symRayOrigin.x = -symRayOrigin.x;
-                    symRayDir.x = -symRayDir.x;
-                } else if (m_symAxis == 1) {
-                    symRayOrigin.y = -symRayOrigin.y;
-                    symRayDir.y = -symRayDir.y;
-                } else if (m_symAxis == 2) {
-                    symRayOrigin.z = -symRayOrigin.z;
-                    symRayDir.z = -symRayDir.z;
+            if (m_firstStrokeFrame) {
+                m_initialSymIntersections.resize(symScales.size());
+                for (size_t sIdx = 0; sIdx < symScales.size(); ++sIdx) {
+                    m_initialSymIntersections[sIdx] = m_initialIntersection * symScales[sIdx];
                 }
-                glm::vec3 symDragDir = vertexOnLine(m_initialSymIntersection, symRayOrigin, symRayOrigin + symRayDir) - m_initialSymIntersection;
-                symCenter = m_initialSymIntersection + symDragDir;
-                symVerts = m_grabbedVerticesSym;
-            } else {
-                // Reflect center of stroke in mesh's local space
-                symCenter = m_currentIntersection;
-                if (m_symAxis == 0) {
-                    symCenter.x = -symCenter.x;
-                } else if (m_symAxis == 1) {
-                    symCenter.y = -symCenter.y;
-                } else if (m_symAxis == 2) {
-                    symCenter.z = -symCenter.z;
-                }
-
-                // Gather symmetry vertices in local space
-                symVerts = mesh->octree.pickVerticesInSphere(
-                    symCenter.x, symCenter.y, symCenter.z,
-                    radius2, mesh->vertVisible.data()
-                );
-
-                if (getCurrentSettings().culling && !symVerts.empty()) {
-                    glm::vec3 symRayDir = localRayDir;
-                    if (m_symAxis == 0) symRayDir.x = -symRayDir.x;
-                    else if (m_symAxis == 1) symRayDir.y = -symRayDir.y;
-                    else if (m_symAxis == 2) symRayDir.z = -symRayDir.z;
-                    filterCullingVertices(symVerts, mesh, symRayDir);
-                }
-
-                if (getCurrentSettings().singlePolyGroup && !mesh->faceGroups.empty() && !symVerts.empty()) {
-                    filterPolyGroupVertices(symVerts, mesh, m_strokeTargetPolyGroup);
-                }
-
-                int symAxis = m_symAxis;
-                float eps = 1e-4f;
-                float initVal = m_initialIntersection[symAxis];
-                std::vector<uint32_t> filteredSym;
-                filteredSym.reserve(symVerts.size());
-                const float* vertProxyData = mesh->vertProxy.data();
-                for (uint32_t v : symVerts) {
-                    float val = vertProxyData[v * 3 + symAxis];
-                    if (initVal >= 0.0f) {
-                        if (val < -eps) filteredSym.push_back(v);
-                    } else {
-                        if (val > eps) filteredSym.push_back(v);
-                    }
-                }
-                symVerts = std::move(filteredSym);
-
-                if (isGrabBrush) {
-                    m_grabbedVerticesSym = symVerts;
-                }
+                m_grabbedVerticesSyms.resize(symScales.size());
             }
 
-            if (!symVerts.empty()) {
-                // Mirror cached area normal and center for symmetry pass
-                glm::vec3 symAreaNormal = m_cachedAreaNormal;
-                glm::vec3 symAreaCenter = m_cachedAreaCenter;
-                if (m_symAxis == 0) {
-                    symAreaNormal.x = -symAreaNormal.x;
-                    symAreaCenter.x = -symAreaCenter.x;
-                } else if (m_symAxis == 1) {
-                    symAreaNormal.y = -symAreaNormal.y;
-                    symAreaCenter.y = -symAreaCenter.y;
-                } else if (m_symAxis == 2) {
-                    symAreaNormal.z = -symAreaNormal.z;
-                    symAreaCenter.z = -symAreaCenter.z;
+            for (size_t sIdx = 0; sIdx < symScales.size(); ++sIdx) {
+                glm::vec3 sScale = symScales[sIdx];
+                glm::vec3 symCenter;
+                std::vector<uint32_t> symVerts;
+
+                if (isGrabBrush && !m_firstStrokeFrame) {
+                    glm::vec3 symRayOrigin = localRayOrigin * sScale;
+                    glm::vec3 symRayDir = localRayDir * sScale;
+                    const glm::vec3& initSymInter = (sIdx < m_initialSymIntersections.size()) ? m_initialSymIntersections[sIdx] : (m_initialIntersection * sScale);
+                    glm::vec3 symDragDir = vertexOnLine(initSymInter, symRayOrigin, symRayOrigin + symRayDir) - initSymInter;
+                    symCenter = initSymInter + symDragDir;
+                    if (sIdx < m_grabbedVerticesSyms.size()) {
+                        symVerts = m_grabbedVerticesSyms[sIdx];
+                    }
+                } else {
+                    symCenter = m_currentIntersection * sScale;
+
+                    symVerts = mesh->octree.pickVerticesInSphere(
+                        symCenter.x, symCenter.y, symCenter.z,
+                        radius2, mesh->vertVisible.data()
+                    );
+
+                    if (getCurrentSettings().culling && !symVerts.empty()) {
+                        glm::vec3 symRayDir = localRayDir * sScale;
+                        filterCullingVertices(symVerts, mesh, symRayDir);
+                    }
+
+                    if (getCurrentSettings().singlePolyGroup && !mesh->faceGroups.empty() && !symVerts.empty()) {
+                        filterPolyGroupVertices(symVerts, mesh, m_strokeTargetPolyGroup);
+                    }
+
+                    float eps = 1e-4f;
+                    std::vector<uint32_t> filteredSym;
+                    filteredSym.reserve(symVerts.size());
+                    const float* vertProxyData = mesh->vertProxy.data();
+                    for (uint32_t v : symVerts) {
+                        bool keep = true;
+                        if (sScale.x < 0.0f) {
+                            float initVal = m_initialIntersection.x;
+                            float val = vertProxyData[v * 3 + 0];
+                            if (initVal >= 0.0f ? (val > -eps) : (val < eps)) keep = false;
+                        }
+                        if (keep && sScale.y < 0.0f) {
+                            float initVal = m_initialIntersection.y;
+                            float val = vertProxyData[v * 3 + 1];
+                            if (initVal >= 0.0f ? (val > -eps) : (val < eps)) keep = false;
+                        }
+                        if (keep && sScale.z < 0.0f) {
+                            float initVal = m_initialIntersection.z;
+                            float val = vertProxyData[v * 3 + 2];
+                            if (initVal >= 0.0f ? (val > -eps) : (val < eps)) keep = false;
+                        }
+                        if (keep) filteredSym.push_back(v);
+                    }
+                    symVerts = std::move(filteredSym);
+
+                    if (isGrabBrush) {
+                        if (sIdx >= m_grabbedVerticesSyms.size()) m_grabbedVerticesSyms.resize(sIdx + 1);
+                        m_grabbedVerticesSyms[sIdx] = symVerts;
+                    }
                 }
 
-                // Mirror current intersection normal for symmetry pass
-                glm::vec3 symIntersectionNormal = m_currentIntersectionNormal;
-                if (m_symAxis == 0) symIntersectionNormal.x = -symIntersectionNormal.x;
-                else if (m_symAxis == 1) symIntersectionNormal.y = -symIntersectionNormal.y;
-                else if (m_symAxis == 2) symIntersectionNormal.z = -symIntersectionNormal.z;
+                if (!symVerts.empty()) {
+                    glm::vec3 symAreaNormal = m_cachedAreaNormal * sScale;
+                    glm::vec3 symAreaCenter = m_cachedAreaCenter * sScale;
+                    glm::vec3 symIntersectionNormal = m_currentIntersectionNormal * sScale;
+                    const glm::vec3& initSymInter = (sIdx < m_initialSymIntersections.size()) ? m_initialSymIntersections[sIdx] : (m_initialIntersection * sScale);
 
-                // Record initial vertices before modification for symmetry pass
-                g_undoManager.recordAffectedVertices(scene, mesh->m_id, symVerts, strokeAffectsColors, strokeAffectsMaterials);
+                    g_undoManager.recordAffectedVertices(scene, mesh->m_id, symVerts, strokeAffectsColors, strokeAffectsMaterials);
 
-                int symDeformed = doStrokePass(
-                    scene,
-                    mesh,
-                    activeBrush,
-                    negative,
-                    symVerts,
-                    symCenter,
-                    symIntersectionNormal,
-                    m_initialSymIntersection,
-                    symAreaNormal,
-                    symAreaCenter,
-                    localRadius,
-                    intensity,
-                    mouseX
-                );
+                    int symDeformed = doStrokePass(
+                        scene,
+                        mesh,
+                        activeBrush,
+                        negative,
+                        symVerts,
+                        symCenter,
+                        symIntersectionNormal,
+                        initSymInter,
+                        symAreaNormal,
+                        symAreaCenter,
+                        localRadius,
+                        intensity,
+                        mouseX
+                    );
 
-                if (symDeformed > 0) {
-                    allAffectedVerts.insert(allAffectedVerts.end(), symVerts.begin(), symVerts.begin() + symDeformed);
+                    if (symDeformed > 0) {
+                        allAffectedVerts.insert(allAffectedVerts.end(), symVerts.begin(), symVerts.begin() + symDeformed);
+                    }
                 }
             }
         }
@@ -1987,10 +2012,11 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 m_currentIntersection = m_initialIntersection;
                 m_currentIntersectionNormal = m_initialIntersectionNormal;
 
-                m_initialSymIntersection = m_initialIntersection;
-                if (m_symAxis == 0) m_initialSymIntersection.x = -m_initialSymIntersection.x;
-                else if (m_symAxis == 1) m_initialSymIntersection.y = -m_initialSymIntersection.y;
-                else if (m_symAxis == 2) m_initialSymIntersection.z = -m_initialSymIntersection.z;
+                std::vector<glm::vec3> symScales = getActiveSymmetryScales();
+                m_initialSymIntersections.resize(symScales.size());
+                for (size_t sIdx = 0; sIdx < symScales.size(); ++sIdx) {
+                    m_initialSymIntersections[sIdx] = m_initialIntersection * symScales[sIdx];
+                }
 
                 m_lastStrokeX = mouseX;
                 m_lastStrokeY = mouseY;
@@ -2122,9 +2148,9 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     localToScreen[15] = mvp[3][3];
 
                     float ptPlaneX = 0.0f, ptPlaneY = 0.0f, ptPlaneZ = 0.0f;
-                    float nPlaneX = (m_symAxis == 0) ? 1.0f : 0.0f;
-                    float nPlaneY = (m_symAxis == 1) ? 1.0f : 0.0f;
-                    float nPlaneZ = (m_symAxis == 2) ? 1.0f : 0.0f;
+                    float nPlaneX = m_symX ? 1.0f : 0.0f;
+                    float nPlaneY = m_symY ? 1.0f : 0.0f;
+                    float nPlaneZ = m_symZ ? 1.0f : 0.0f;
 
                     ::applyGradientMask(
                         mesh->verts.data(),
@@ -2674,9 +2700,9 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             localToScreen[15] = mvp[3][3];
 
             float ptPlaneX = 0.0f, ptPlaneY = 0.0f, ptPlaneZ = 0.0f;
-            float nPlaneX = (m_symAxis == 0) ? 1.0f : 0.0f;
-            float nPlaneY = (m_symAxis == 1) ? 1.0f : 0.0f;
-            float nPlaneZ = (m_symAxis == 2) ? 1.0f : 0.0f;
+            float nPlaneX = m_symX ? 1.0f : 0.0f;
+            float nPlaneY = m_symY ? 1.0f : 0.0f;
+            float nPlaneZ = m_symZ ? 1.0f : 0.0f;
 
             ::applyGradientMask(
                 mesh->verts.data(),
@@ -2806,7 +2832,9 @@ void SculptManager::processFrame(Scene& scene) {
             scene,
             activeSettings.radius,
             m_useSym,
-            m_symAxis,
+            m_symX,
+            m_symY,
+            m_symZ,
             m_isSculpting,
             activeBrush,
             m_isSculpting ? m_hasAnyValidIntersection : m_currentIntersectionValid,

@@ -371,3 +371,18 @@ int Multimesh::getLowIndexRender() const {
     }
     return 0;
 }
+
+void Multimesh::flip(int axisIndex) {
+    Mesh::flip(axisIndex);
+    meshes.clear();
+    meshes.push_back(std::make_unique<MeshResolution>(*this, true));
+    setSelection(0);
+}
+
+void Multimesh::mirror(int axisIndex, bool positiveToNegative, SymmetryMode mode) {
+    Mesh::mirror(axisIndex, positiveToNegative, mode);
+    meshes.clear();
+    meshes.push_back(std::make_unique<MeshResolution>(*this, true));
+    setSelection(0);
+}
+
