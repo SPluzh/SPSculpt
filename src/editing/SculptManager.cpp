@@ -2973,7 +2973,12 @@ bool SculptManager::saveSettings(const std::string& filepath) {
     out << "pressureCurve=" << g_tablet.getPressureCurveString() << "\n";
     out << "pressureCurveType=" << (int)g_tablet.getInterpolationType() << "\n";
 #endif
-    out << "\n";
+    out << "\n[Symmetry]\n";
+    out << "useSym=" << (m_useSym ? "true" : "false") << "\n";
+    out << "symX=" << (m_symX ? "true" : "false") << "\n";
+    out << "symY=" << (m_symY ? "true" : "false") << "\n";
+    out << "symZ=" << (m_symZ ? "true" : "false") << "\n";
+    out << "symmetryMode=" << (m_symmetryMode == SymmetryMode::World ? "world" : "local") << "\n\n";
 
     std::cout << "Successfully saved brush settings to: " << filepath << std::endl;
     return true;
@@ -3117,6 +3122,31 @@ bool SculptManager::loadSettings(const std::string& filepath) {
             }
         }
 #endif
+    }
+
+    auto itSymmetry = sections.find("Symmetry");
+    if (itSymmetry != sections.end()) {
+        const auto& params = itSymmetry->second;
+        auto getBoolParam = [&](const std::string& key, bool& outVal) {
+            auto it = params.find(key);
+            if (it != params.end()) {
+                outVal = (it->second == "true" || it->second == "1");
+            }
+        };
+
+        getBoolParam("useSym", m_useSym);
+        getBoolParam("symX", m_symX);
+        getBoolParam("symY", m_symY);
+        getBoolParam("symZ", m_symZ);
+
+        auto itMode = params.find("symmetryMode");
+        if (itMode != params.end()) {
+            if (itMode->second == "world" || itMode->second == "1") {
+                m_symmetryMode = SymmetryMode::World;
+            } else {
+                m_symmetryMode = SymmetryMode::Local;
+            }
+        }
     }
 
     std::cout << "Successfully loaded brush settings from: " << filepath << std::endl;

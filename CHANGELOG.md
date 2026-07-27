@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.6]
+- **Symmetry**: Saved symmetry settings (Symmetry toggle, active X, Y, Z mirror axes, and local/world symmetry space) so they are preserved across application restarts.
+- **UI**: Saved the visibility state of the Symmetry Settings panel to persist it across application restarts.
 - **Fix**: Resolved an issue where enabling symmetry caused stamp rotation to freeze/lock on the Clay Buildup, Square, and Brush tools by isolating stroke direction tracking between primary and symmetry passes and preventing state corruption of `m_alphaOrigin`.
 - **Symmetry**: Upgraded the sculpting engine symmetry system from a single-axis selection to simultaneous multi-axis bitmask-style symmetry, supporting concurrent X, Y, and Z mirror passes across all brush tools (including Move, Drag, Elastic, and Paint).
 - **Symmetry**: Updated the `BrushCursor` rendering system to project and draw multiple symmetry indicator dots simultaneously across all enabled reflection planes in real-time.

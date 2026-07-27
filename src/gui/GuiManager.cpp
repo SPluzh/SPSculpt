@@ -3919,6 +3919,7 @@ bool GuiManager::saveSettings(const std::string& filepath) {
     out << "showUndoDiagPanel=" << (m_showUndoDiagPanel ? "true" : "false") << "\n";
     out << "showDebugLogPanel=" << (m_showDebugLogPanel ? "true" : "false") << "\n";
     out << "showFloatingIsland=" << (m_showFloatingIsland ? "true" : "false") << "\n";
+    out << "showSymmetryPanel=" << (m_showSymmetryPanel ? "true" : "false") << "\n";
 
     out << "[General]\n";
     out << "uiScaleMultiplier=" << m_uiScale << "\n";
@@ -4005,6 +4006,7 @@ bool GuiManager::loadSettings(const std::string& filepath) {
         getBoolParam("showUndoDiagPanel", m_showUndoDiagPanel);
         getBoolParam("showDebugLogPanel", m_showDebugLogPanel);
         getBoolParam("showFloatingIsland", m_showFloatingIsland);
+        getBoolParam("showSymmetryPanel", m_showSymmetryPanel);
     }
 
     auto itGen = sections.find("General");
