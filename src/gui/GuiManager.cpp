@@ -2633,7 +2633,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         ImGui::Separator();
         
         ImGui::Text("Pressure:");
-        ImGui::ProgressBar(diag.currentPressure, ImVec2(-1, 20), "");
+        ImGui::ProgressBar(diag.currentPressure, ImVec2(-1, 20.0f * scale), "");
         ImGui::SameLine(ImGui::GetWindowWidth() * 0.5f);
         ImGui::Text("Pressure Value: %.3f", diag.currentPressure);
         
@@ -3933,6 +3933,10 @@ bool GuiManager::saveSettings(const std::string& filepath) {
     out << "y=" << m_winY << "\n";
     out << "maximized=" << (m_winMaximized ? "true" : "false") << "\n";
 
+    out << "[Undo]\n";
+    out << "maxMemoryGB=" << g_undoManager.getMaxMemoryGB() << "\n";
+    out << "maxEntries=" << g_undoManager.getMaxEntries() << "\n";
+
     std::cout << "Successfully saved GUI panel settings to: " << filepath << std::endl;
     return true;
 }
@@ -4054,6 +4058,29 @@ bool GuiManager::loadSettings(const std::string& filepath) {
         getIntParam("x", m_winX);
         getIntParam("y", m_winY);
         getBoolParam("maximized", m_winMaximized);
+    }
+
+    auto itUndo = sections.find("Undo");
+    if (itUndo != sections.end()) {
+        const auto& params = itUndo->second;
+        auto itMemGB = params.find("maxMemoryGB");
+        if (itMemGB != params.end()) {
+            try {
+                double gb = std::stod(itMemGB->second);
+                if (gb >= 0.1 && gb <= 128.0) {
+                    g_undoManager.setMaxMemoryGB(gb);
+                }
+            } catch (...) {}
+        }
+        auto itEntries = params.find("maxEntries");
+        if (itEntries != params.end()) {
+            try {
+                size_t n = std::stoull(itEntries->second);
+                if (n >= 1 && n <= 10000) {
+                    g_undoManager.setMaxEntries(n);
+                }
+            } catch (...) {}
+        }
     }
 
     if (m_imguiInitialized) {
@@ -4377,14 +4404,35 @@ void GuiManager::drawUndoDiagPanel(Scene& scene) {
 
     size_t memBytes = g_undoManager.getTotalMemoryUsage();
     double memMB = (double)memBytes / (1024.0 * 1024.0);
-    double maxMemMB = (double)g_undoManager.getMaxMemory() / (1024.0 * 1024.0);
+    double maxMemGB = g_undoManager.getMaxMemoryGB();
 
     ImGui::Separator();
-    ImGui::Text("Memory: %.2f MB / %.0f MB", memMB, maxMemMB);
     float progress = (float)(memBytes / (double)g_undoManager.getMaxMemory());
     if (progress < 0.0f) progress = 0.0f;
     if (progress > 1.0f) progress = 1.0f;
-    ImGui::ProgressBar(progress, ImVec2(-1, 6.0f * scale));
+
+    char memBuf[128];
+    if (maxMemGB >= 1.0) {
+        snprintf(memBuf, sizeof(memBuf), "%.2f MB / %.2f GB (%.1f%%)", memMB, maxMemGB, progress * 100.0f);
+    } else {
+        snprintf(memBuf, sizeof(memBuf), "%.2f MB / %.0f MB (%.1f%%)", memMB, maxMemGB * 1024.0, progress * 100.0f);
+    }
+
+    ImGui::Text("Memory Usage:");
+    ImGui::ProgressBar(progress, ImVec2(-1.0f, 24.0f * scale), memBuf);
+
+    float memLimitGB = (float)maxMemGB;
+    ImGui::PushItemWidth(120.0f * scale);
+    if (ImGui::SliderFloat("Memory Limit (GB)", &memLimitGB, 0.5f, 32.0f, "%.1f GB")) {
+        if (memLimitGB < 0.1f) memLimitGB = 0.1f;
+        g_undoManager.setMaxMemoryGB((double)memLimitGB);
+    }
+    int maxEntries = (int)g_undoManager.getMaxEntries();
+    if (ImGui::SliderInt("Max Entries", &maxEntries, 0, 500, maxEntries == 0 ? "Unlimited" : "%d")) {
+        if (maxEntries < 0) maxEntries = 0;
+        g_undoManager.setMaxEntries((size_t)maxEntries);
+    }
+    ImGui::PopItemWidth();
 
     ImGui::Separator();
 

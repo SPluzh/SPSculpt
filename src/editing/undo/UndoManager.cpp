@@ -211,13 +211,15 @@ void UndoManager::pushEntry(std::unique_ptr<UndoEntry> entry) {
 }
 
 void UndoManager::trimToMemoryLimit() {
-    while (m_undoStack.size() > m_maxEntries) {
-        sculpt_log_lvl(LogLevel::Warning, "[Undo] Trimming stack due to maxEntries limit (%zu entries)\n", m_maxEntries);
-        m_undoStack.pop_front();
+    if (m_maxEntries > 0) {
+        while (m_undoStack.size() > m_maxEntries) {
+            sculpt_log_lvl(LogLevel::Warning, "[Undo] Trimming stack due to maxEntries limit (%zu entries)\n", m_maxEntries);
+            m_undoStack.pop_front();
+        }
     }
     while (getTotalMemoryUsage() > m_maxMemory && !m_undoStack.empty()) {
-        sculpt_log_lvl(LogLevel::Warning, "[Undo] Trimming stack due to maxMemory limit (%.2f MB / %.2f MB)\n",
-                       getTotalMemoryUsage() / (1024.0f * 1024.0f), m_maxMemory / (1024.0f * 1024.0f));
+        sculpt_log_lvl(LogLevel::Warning, "[Undo] Trimming stack due to maxMemory limit (%.2f MB / %.2f GB)\n",
+                       getTotalMemoryUsage() / (1024.0f * 1024.0f), (double)m_maxMemory / (1024.0 * 1024.0 * 1024.0));
         m_undoStack.pop_front();
     }
 }

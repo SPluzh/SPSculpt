@@ -15,8 +15,8 @@ class Mesh;
 
 class UndoManager {
 public:
-    static constexpr size_t DEFAULT_MAX_MEMORY = 512 * 1024 * 1024; // 512 MB
-    static constexpr size_t DEFAULT_MAX_ENTRIES = 100;
+    static constexpr size_t DEFAULT_MAX_MEMORY = 4ULL * 1024 * 1024 * 1024; // 4 GB
+    static constexpr size_t DEFAULT_MAX_ENTRIES = 0; // 0 = unlimited (limited only by memory)
 
     UndoManager();
     ~UndoManager() = default;
@@ -78,8 +78,10 @@ public:
 
     void clear();
     void setMaxMemory(size_t bytes) { m_maxMemory = bytes; trimToMemoryLimit(); }
+    void setMaxMemoryGB(double gb)  { setMaxMemory(static_cast<size_t>(gb * 1024.0 * 1024.0 * 1024.0)); }
     void setMaxEntries(size_t n)    { m_maxEntries = n; trimToMemoryLimit(); }
     size_t getMaxMemory() const { return m_maxMemory; }
+    double getMaxMemoryGB() const { return static_cast<double>(m_maxMemory) / (1024.0 * 1024.0 * 1024.0); }
     size_t getMaxEntries() const { return m_maxEntries; }
 
 private:
