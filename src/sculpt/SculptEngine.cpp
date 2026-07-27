@@ -77,15 +77,8 @@ int strokeFlatten(
 
     const float* vProxy = (accumulate || lockPosition) ? verts : vertProxy;
 
-    int writeIdx = 0;
+    #pragma omp parallel for schedule(static) if(nbIVerts > 1000)
     for (int i = 0; i < nbIVerts; ++i) {
-        if (i + 8 < nbIVerts) {
-            uint32_t nextId = iVerts[i + 8];
-            __builtin_prefetch(&verts[nextId * 3], 1, 1);
-            __builtin_prefetch(&materials[nextId * 3], 0, 1);
-            __builtin_prefetch(&vProxy[nextId * 3], 0, 1);
-        }
-
         uint32_t id = iVerts[i];
         int ind = id * 3;
 
@@ -164,10 +157,8 @@ int strokeFlatten(
         verts[ind] -= anx * fallOff;
         verts[ind + 1] -= any * fallOff;
         verts[ind + 2] -= anz * fallOff;
-
-        iVerts[writeIdx++] = id;
     }
-    return writeIdx;
+    return nbIVerts;
 }
 
 static void laplacianSmooth(
@@ -466,14 +457,8 @@ bool computeAreaNormalAndCenter(
     float az = 0.0f;
     float acc = 0.0f;
 
+    #pragma omp parallel for reduction(+:anx,any,anz,ax,ay,az,acc) if(nbIVerts > 512)
     for (int i = 0; i < nbIVerts; ++i) {
-        if (i + 8 < nbIVerts) {
-            uint32_t nextId = iVerts[i + 8];
-            __builtin_prefetch(&verts[nextId * 3], 0, 1);
-            __builtin_prefetch(&normals[nextId * 3], 0, 1);
-            __builtin_prefetch(&materials[nextId * 3], 0, 1);
-        }
-
         uint32_t id = iVerts[i];
         int ind = id * 3;
         float f = materials[ind + 2];
@@ -1738,41 +1723,49 @@ int strokeSquareBrush(
     float comp = negative ? -1.0f : 1.0f;
     int writeIdx = 0;
 
-    for (int i = 0; i < nbIVerts; ++i) {
-        if (i + 8 < nbIVerts) {
-            uint32_t nextId = iVerts[i + 8];
-            __builtin_prefetch(&verts[nextId * 3], 0, 1);
-            __builtin_prefetch(&materials[nextId * 3], 0, 1);
+    #pragma omp parallel if(nbIVerts > 500)
+    {
+        std::vector<uint32_t> localVerts;
+        #pragma omp for schedule(static)
+        for (int i = 0; i < nbIVerts; ++i) {
+            uint32_t id = iVerts[i];
+            int ind = id * 3;
+
+            float vx = verts[ind];
+            float vy = verts[ind + 1];
+            float vz = verts[ind + 2];
+
+            float distToPlane = (vx - ax) * anx + (vy - ay) * any + (vz - az) * anz;
+            if (distToPlane * comp > 0.0f) {
+                continue;
+            }
+
+            float xn = alphaRatioY * (alphaLookAt[0] * vx + alphaLookAt[4] * vy + alphaLookAt[8] * vz + alphaLookAt[12]) / (alphaXSym ? -alphaSide : alphaSide);
+            float yn = alphaRatioX * (alphaLookAt[1] * vx + alphaLookAt[5] * vy + alphaLookAt[9] * vz + alphaLookAt[13]) / alphaSide;
+
+            float dist = std::max(std::abs(xn), std::abs(yn));
+            if (dist >= 1.0f) {
+                continue;
+            }
+
+            float fallOff = getFallOff(dist, focalShiftFalloff ? focalShift : 0.0f, false, nullptr);
+            fallOff *= distToPlane * intensity * materials[ind + 2];
+
+            if (fallOff == 0.0f) continue;
+
+            verts[ind] -= anx * fallOff;
+            verts[ind + 1] -= any * fallOff;
+            verts[ind + 2] -= anz * fallOff;
+
+            localVerts.push_back(id);
         }
 
-        uint32_t id = iVerts[i];
-        int ind = id * 3;
-
-        float vx = verts[ind];
-        float vy = verts[ind + 1];
-        float vz = verts[ind + 2];
-
-        float distToPlane = (vx - ax) * anx + (vy - ay) * any + (vz - az) * anz;
-        if (distToPlane * comp > 0.0f) {
-            continue;
+        #pragma omp critical
+        {
+            for (uint32_t id : localVerts) {
+                iVerts[writeIdx++] = id;
+            }
         }
-
-        float xn = alphaRatioY * (alphaLookAt[0] * vx + alphaLookAt[4] * vy + alphaLookAt[8] * vz + alphaLookAt[12]) / (alphaXSym ? -alphaSide : alphaSide);
-        float yn = alphaRatioX * (alphaLookAt[1] * vx + alphaLookAt[5] * vy + alphaLookAt[9] * vz + alphaLookAt[13]) / alphaSide;
-
-        float dist = std::max(std::abs(xn), std::abs(yn));
-        if (dist >= 1.0f) {
-            continue;
-        }
-
-        float fallOff = getFallOff(dist, focalShiftFalloff ? focalShift : 0.0f, false, nullptr);
-        fallOff *= distToPlane * intensity * materials[ind + 2];
-
-        verts[ind] -= anx * fallOff;
-        verts[ind + 1] -= any * fallOff;
-        verts[ind + 2] -= anz * fallOff;
-
-        iVerts[writeIdx++] = id;
     }
     return writeIdx;
 }
@@ -1792,144 +1785,152 @@ int strokeBrush(
     const float* alphaLookAt, bool alphaXSym
 ) {
     if (radius <= 0.0f) return 0;
-    int writeIdx = 0;
 
     float angleRad = stampAngle * (3.1415926535f / 180.0f);
     float cosA = std::cos(angleRad);
     float sinA = std::sin(angleRad);
+    int writeIdx = 0;
 
-    for (int i = 0; i < nbIVerts; ++i) {
-        if (i + 8 < nbIVerts) {
-            uint32_t nextId = iVerts[i + 8];
-            __builtin_prefetch(&verts[nextId * 3], 0, 1);
-            __builtin_prefetch(&materials[nextId * 3], 0, 1);
-        }
+    #pragma omp parallel if(nbIVerts > 500)
+    {
+        std::vector<uint32_t> localVerts;
+        #pragma omp for schedule(static)
+        for (int i = 0; i < nbIVerts; ++i) {
+            uint32_t id = iVerts[i];
+            int ind = id * 3;
 
-        uint32_t id = iVerts[i];
-        int ind = id * 3;
-
-        float matVal = materials[ind + 2];
-        if (matVal <= 0.0f) {
-            continue;
-        }
-
-        float vx = verts[ind];
-        float vy = verts[ind + 1];
-        float vz = verts[ind + 2];
-
-        float distToPlane = 0.0f;
-        if (clay) {
-            distToPlane = (vx - ax) * anx + (vy - ay) * any + (vz - az) * anz;
-            float comp = negative ? -1.0f : 1.0f;
-            if (distToPlane * comp > 0.0f) {
+            float matVal = materials[ind + 2];
+            if (matVal <= 0.0f) {
                 continue;
             }
-        }
 
-        // Project onto brush local coordinates (xn_proj, yn_proj)
-        float xn_proj = (alphaLookAt[0] * vx + alphaLookAt[4] * vy + alphaLookAt[8] * vz + alphaLookAt[12]) / (alphaXSym ? -radius : radius);
-        float yn_proj = (alphaLookAt[1] * vx + alphaLookAt[5] * vy + alphaLookAt[9] * vz + alphaLookAt[13]) / radius;
+            float vx = verts[ind];
+            float vy = verts[ind + 1];
+            float vz = verts[ind + 2];
 
-        // Pre-rotate coordinates by stampAngle
-        float xn = xn_proj * cosA - yn_proj * sinA;
-        float yn = xn_proj * sinA + yn_proj * cosA;
-
-        // Calculate distance based on stampType
-        float dist = 0.0f;
-        bool inside = true;
-
-        if (stampType == 0) { // Circle
-            dist = std::sqrt(xn * xn + yn * yn);
-            if (dist > 1.0f) inside = false;
-        }
-        else if (stampType == 1) { // Regular Polygon
-            float r = std::sqrt(xn * xn + yn * yn);
-            if (r > 1.0f) {
-                inside = false;
-            } else {
-                int sides = std::max(3, stampSides);
-                float theta = std::atan2(yn, xn);
-                float alpha = 2.0f * 3.1415926535f / sides;
-                float folded = theta - alpha * std::round(theta / alpha);
-                
-                float rEdge = std::cos(alpha / 2.0f) / std::cos(folded);
-                dist = r / rEdge;
-                if (dist > 1.0f) inside = false;
-            }
-        }
-        else if (stampType == 2) { // Star Shape
-            float r = std::sqrt(xn * xn + yn * yn);
-            if (r > 1.0f) {
-                inside = false;
-            } else {
-                int sides = std::max(2, stampSides);
-                float theta = std::atan2(yn, xn);
-                float beta = 3.1415926535f / sides;
-                float folded = std::fmod(theta + 2.0f * 3.1415926535f, 2.0f * beta);
-                if (folded > beta) {
-                    folded = 2.0f * beta - folded;
+            float distToPlane = 0.0f;
+            if (clay) {
+                distToPlane = (vx - ax) * anx + (vy - ay) * any + (vz - az) * anz;
+                float comp = negative ? -1.0f : 1.0f;
+                if (distToPlane * comp > 0.0f) {
+                    continue;
                 }
-                
-                float rIn = std::max(0.01f, std::min(0.99f, stampInnerRatio));
-                float num = rIn * std::sin(beta);
-                float den = std::sin(folded) * (1.0f - rIn * std::cos(beta)) + std::cos(folded) * rIn * std::sin(beta);
-                float rBoundary = num / std::max(1e-6f, den);
-                
-                dist = r / rBoundary;
+            }
+
+            // Project onto brush local coordinates (xn_proj, yn_proj)
+            float xn_proj = (alphaLookAt[0] * vx + alphaLookAt[4] * vy + alphaLookAt[8] * vz + alphaLookAt[12]) / (alphaXSym ? -radius : radius);
+            float yn_proj = (alphaLookAt[1] * vx + alphaLookAt[5] * vy + alphaLookAt[9] * vz + alphaLookAt[13]) / radius;
+
+            // Pre-rotate coordinates by stampAngle
+            float xn = xn_proj * cosA - yn_proj * sinA;
+            float yn = xn_proj * sinA + yn_proj * cosA;
+
+            // Calculate distance based on stampType
+            float dist = 0.0f;
+            bool inside = true;
+
+            if (stampType == 0) { // Circle
+                dist = std::sqrt(xn * xn + yn * yn);
                 if (dist > 1.0f) inside = false;
             }
-        }
-        else if (stampType == 3) { // Ring (Torus)
-            float r = std::sqrt(xn * xn + yn * yn);
-            float rIn = std::max(0.01f, std::min(0.99f, stampInnerRatio));
-            if (r > 1.0f || r < rIn) {
-                inside = false;
+            else if (stampType == 1) { // Regular Polygon
+                float r = std::sqrt(xn * xn + yn * yn);
+                if (r > 1.0f) {
+                    inside = false;
+                } else {
+                    int sides = std::max(3, stampSides);
+                    float theta = std::atan2(yn, xn);
+                    float alpha = 2.0f * 3.1415926535f / sides;
+                    float folded = theta - alpha * std::round(theta / alpha);
+                    
+                    float rEdge = std::cos(alpha / 2.0f) / std::cos(folded);
+                    dist = r / rEdge;
+                    if (dist > 1.0f) inside = false;
+                }
+            }
+            else if (stampType == 2) { // Star Shape
+                float r = std::sqrt(xn * xn + yn * yn);
+                if (r > 1.0f) {
+                    inside = false;
+                } else {
+                    int sides = std::max(2, stampSides);
+                    float theta = std::atan2(yn, xn);
+                    float beta = 3.1415926535f / sides;
+                    float folded = std::fmod(theta + 2.0f * 3.1415926535f, 2.0f * beta);
+                    if (folded > beta) {
+                        folded = 2.0f * beta - folded;
+                    }
+                    
+                    float rIn = std::max(0.01f, std::min(0.99f, stampInnerRatio));
+                    float num = rIn * std::sin(beta);
+                    float den = std::sin(folded) * (1.0f - rIn * std::cos(beta)) + std::cos(folded) * rIn * std::sin(beta);
+                    float rBoundary = num / std::max(1e-6f, den);
+                    
+                    dist = r / rBoundary;
+                    if (dist > 1.0f) inside = false;
+                }
+            }
+            else if (stampType == 3) { // Ring (Torus)
+                float r = std::sqrt(xn * xn + yn * yn);
+                float rIn = std::max(0.01f, std::min(0.99f, stampInnerRatio));
+                if (r > 1.0f || r < rIn) {
+                    inside = false;
+                } else {
+                    float rMid = (1.0f + rIn) * 0.5f;
+                    float halfWidth = (1.0f - rIn) * 0.5f;
+                    dist = std::abs(r - rMid) / halfWidth;
+                }
+            }
+            else if (stampType == 4) { // Rectangle
+                float rY = std::max(0.01f, std::min(1.0f, stampInnerRatio));
+                if (std::abs(xn) > 1.0f || std::abs(yn) > rY) {
+                    inside = false;
+                } else {
+                    dist = std::max(std::abs(xn), std::abs(yn) / rY);
+                }
+            }
+            else {
+                dist = std::sqrt(xn * xn + yn * yn);
+                if (dist > 1.0f) inside = false;
+            }
+
+            if (!inside) {
+                continue;
+            }
+
+            float fallOff = getFallOff(dist, focalShiftFalloff ? focalShift : 0.0f, false, nullptr);
+            
+            // Parametric edge blur
+            if (stampBlur > 0.001f) {
+                float blur = std::min(1.0f, stampBlur);
+                if (dist > 1.0f - blur) {
+                    float t = (1.0f - dist) / blur;
+                    fallOff *= t * t * (3.0f - 2.0f * t); // smoothstep
+                }
+            }
+
+            float deformVal = 0.0f;
+            if (clay) {
+                deformVal = -distToPlane * intensity * fallOff * matVal;
             } else {
-                float rMid = (1.0f + rIn) * 0.5f;
-                float halfWidth = (1.0f - rIn) * 0.5f;
-                dist = std::abs(r - rMid) / halfWidth;
+                deformVal = (negative ? -intensity : intensity) * radius * 0.1f * fallOff * matVal;
+            }
+
+            if (deformVal == 0.0f) continue;
+
+            verts[ind] += anx * deformVal;
+            verts[ind + 1] += any * deformVal;
+            verts[ind + 2] += anz * deformVal;
+
+            localVerts.push_back(id);
+        }
+
+        #pragma omp critical
+        {
+            for (uint32_t id : localVerts) {
+                iVerts[writeIdx++] = id;
             }
         }
-        else if (stampType == 4) { // Rectangle
-            float rY = std::max(0.01f, std::min(1.0f, stampInnerRatio));
-            if (std::abs(xn) > 1.0f || std::abs(yn) > rY) {
-                inside = false;
-            } else {
-                dist = std::max(std::abs(xn), std::abs(yn) / rY);
-            }
-        }
-        else {
-            dist = std::sqrt(xn * xn + yn * yn);
-            if (dist > 1.0f) inside = false;
-        }
-
-        if (!inside) {
-            continue;
-        }
-
-        float fallOff = getFallOff(dist, focalShiftFalloff ? focalShift : 0.0f, false, nullptr);
-        
-        // Parametric edge blur
-        if (stampBlur > 0.001f) {
-            float blur = std::min(1.0f, stampBlur);
-            if (dist > 1.0f - blur) {
-                float t = (1.0f - dist) / blur;
-                fallOff *= t * t * (3.0f - 2.0f * t); // smoothstep
-            }
-        }
-
-        float deformVal = 0.0f;
-        if (clay) {
-            deformVal = -distToPlane * intensity * fallOff * matVal;
-        } else {
-            deformVal = (negative ? -intensity : intensity) * radius * 0.1f * fallOff * matVal;
-        }
-
-        verts[ind] += anx * deformVal;
-        verts[ind + 1] += any * deformVal;
-        verts[ind + 2] += anz * deformVal;
-
-        iVerts[writeIdx++] = id;
     }
     return writeIdx;
 }

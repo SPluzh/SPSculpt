@@ -32,6 +32,7 @@ struct MeshRenderBuffers {
     GLuint polygroupVboMaterials = 0;
     GLuint polygroupVboGroups = 0;
     size_t polygroupVertCount = 0;
+    bool polygroupDirty = true;
     
     size_t vertCount = 0;
     size_t triIndexCount = 0;

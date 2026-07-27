@@ -15,6 +15,7 @@ void updateFaceNormalsAndBoxes(
     bool full = (nbIFaces < 0 || (iFaces == nullptr && nbIFaces != 0));
     int loopCount = full ? nbFaces : nbIFaces;
 
+    #pragma omp parallel for schedule(static) if(loopCount > 500)
     for (int i = 0; i < loopCount; ++i) {
         uint32_t ind = full ? i : iFaces[i];
         if (ind >= (uint32_t)nbFaces) continue;
@@ -106,6 +107,7 @@ void updateVertexNormals(
     bool full = (nbIVerts < 0 || (iVerts == nullptr && nbIVerts != 0));
     int loopCount = full ? totalNbVerts : nbIVerts;
 
+    #pragma omp parallel for schedule(static) if(loopCount > 500)
     for (int i = 0; i < loopCount; ++i) {
         uint32_t ind = full ? i : iVerts[i];
         if (ind >= (uint32_t)totalNbVerts) continue;

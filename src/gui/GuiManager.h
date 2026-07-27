@@ -55,6 +55,10 @@ private:
     std::chrono::steady_clock::time_point m_fpsLastUpdate = std::chrono::steady_clock::now();
     int m_fpsValue = 0;
 
+    // FPS limiter
+    bool m_fpsLimitEnabled = true;
+    int  m_fpsLimit = 60;
+
     // settings
     float m_dyntopoDetail = 100.0f;
     int m_remeshResolution = 150;
@@ -152,6 +156,12 @@ public:
 
     bool getShowTopologyPanel() const { return m_showTopologyPanel; }
     void setShowTopologyPanel(bool show) { m_showTopologyPanel = show; }
+
+    // FPS limiter accessors
+    bool getFpsLimitEnabled() const { return m_fpsLimitEnabled; }
+    void setFpsLimitEnabled(bool v) { m_fpsLimitEnabled = v; }
+    int  getFpsLimit() const { return m_fpsLimit; }
+    void setFpsLimit(int v) { m_fpsLimit = std::max(1, std::min(v, 9999)); }
 
     // Settings accessors
     float getDyntopoDetail() const { return m_dyntopoDetail; }

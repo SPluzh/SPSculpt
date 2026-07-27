@@ -439,6 +439,17 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             if (m_gizmoSize < 0.04f) m_gizmoSize = 0.04f;
             if (m_gizmoSize > 0.25f) m_gizmoSize = 0.25f;
 
+            ImGui::Separator();
+            ImGui::Checkbox("Limit FPS", &m_fpsLimitEnabled);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cap the render loop to the target FPS to reduce GPU load");
+            if (m_fpsLimitEnabled) {
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(80.0f * scale);
+                ImGui::SliderInt("Target FPS", &m_fpsLimit, 15, 240);
+                if (m_fpsLimit < 15) m_fpsLimit = 15;
+                if (m_fpsLimit > 240) m_fpsLimit = 240;
+            }
+
             ImGui::EndMenu();
         }
         ImGui::EndMainMenuBar();
@@ -3912,6 +3923,8 @@ bool GuiManager::saveSettings(const std::string& filepath) {
     out << "[General]\n";
     out << "uiScaleMultiplier=" << m_uiScale << "\n";
     out << "gizmoSize=" << m_gizmoSize << "\n";
+    out << "fpsLimitEnabled=" << (m_fpsLimitEnabled ? "true" : "false") << "\n";
+    out << "fpsLimit=" << m_fpsLimit << "\n";
 
     out << "[Window]\n";
     out << "width=" << m_winWidth << "\n";
@@ -4004,6 +4017,17 @@ bool GuiManager::loadSettings(const std::string& filepath) {
             m_gizmoSize = std::stof(itGizmo->second);
             if (m_gizmoSize < 0.04f) m_gizmoSize = 0.04f;
             if (m_gizmoSize > 0.25f) m_gizmoSize = 0.25f;
+        }
+        auto getBoolParamGen = [&](const std::string& key, bool& outVal) {
+            auto itb = params.find(key);
+            if (itb != params.end()) outVal = (itb->second == "true" || itb->second == "1");
+        };
+        getBoolParamGen("fpsLimitEnabled", m_fpsLimitEnabled);
+        auto itFps = params.find("fpsLimit");
+        if (itFps != params.end()) {
+            try { m_fpsLimit = std::stoi(itFps->second); } catch (...) {}
+            if (m_fpsLimit < 15) m_fpsLimit = 15;
+            if (m_fpsLimit > 240) m_fpsLimit = 240;
         }
     }
 

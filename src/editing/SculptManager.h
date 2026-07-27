@@ -354,12 +354,15 @@ private:
     std::vector<uint32_t> m_tagFlags;
     uint32_t m_tagEpoch = 0;
     std::vector<uint32_t> m_iFacesCache;
+    std::vector<uint32_t> m_pickedVerticesCache;
+    std::vector<uint32_t> m_allAffectedVertsCache;
 
     // Cache for computeAreaNormalAndCenter & inverse mesh matrix
     bool m_firstStrokeFrame = false;
     glm::vec3 m_cachedAreaNormal{0.0f};
     glm::vec3 m_cachedAreaCenter{0.0f};
     glm::mat4 m_cachedInvMatrix{1.0f};
+    glm::mat4 m_cachedCamWorldMatrix{1.0f};
 
     // Gradient mask state variables
     glm::vec2 m_gradPointA{0.0f};

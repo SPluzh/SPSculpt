@@ -544,8 +544,12 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
         uploadIfDirty(mesh);
     }
 
+    // Whether the active shader actually consumes shadow/SSAO/SSR data.
+    // Matcap (1), WetClay (2), Normal (3), VoxelChecker (4), PolyGroup (5) do NOT.
+    const bool needsLightingPasses = (m_shaderType == 0 && m_renderMode == RenderMode::PBR) || m_showPolyGroups;
+
     // 0a. Shadow Map Pass
-    if (m_shadowEnabled) {
+    if (m_shadowEnabled && needsLightingPasses) {
         int shadowLightIdx = -1;
         const auto& lights = scene.getLights();
         for (int i = 0; i < (int)lights.size(); ++i) {
@@ -685,7 +689,7 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
     renderScenePass(scene, 1); // 1 = Opaque geometry
 
     // 2b. SSAO Pass
-    if (m_useSsao) {
+    if (m_useSsao && needsLightingPasses) {
         // A. Normals pre-pass
         glBindFramebuffer(GL_FRAMEBUFFER, m_rttNormals.fbo);
         glViewport(0, 0, m_width, m_height);
@@ -764,7 +768,7 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
     }
 
     // 2c. SSR Pass
-    if (m_useSsr && m_renderMode == RenderMode::PBR && m_ssrProgram) {
+    if (m_useSsr && needsLightingPasses && m_ssrProgram) {
         glBindFramebuffer(GL_FRAMEBUFFER, m_rttSsr.fbo);
         glViewport(0, 0, m_width, m_height);
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
@@ -1375,6 +1379,10 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
     glUniform1i(glGetUniformLocation(program, "uShowPolyGroups"), m_showPolyGroups ? 1 : 0);
 
     if (program == m_polygroupProgram) {
+        if (bufs->polygroupVao == 0 || bufs->polygroupDirty) {
+            buildPolyGroupBuffers(mesh, bufs.get());
+            bufs->polygroupDirty = false;
+        }
         if (bufs->polygroupVao != 0 && bufs->polygroupVertCount > 0) {
             glBindVertexArray(bufs->polygroupVao);
             glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(bufs->polygroupVertCount));
@@ -2074,7 +2082,11 @@ void AngleRenderer::uploadIfDirty(Mesh* mesh) {
         glBindVertexArray(0);
         bufs->vertCount = mesh->nbVerts;
 
-        buildPolyGroupBuffers(mesh, bufs.get());
+        bufs->polygroupDirty = true;
+        if (bufs->polygroupVao != 0 && (m_showPolyGroups || m_activeBrush == BRUSH_POLYGROUP || m_shaderType == 5)) {
+            buildPolyGroupBuffers(mesh, bufs.get());
+            bufs->polygroupDirty = false;
+        }
         mesh->isFaceGroupDirty = false;
         
         mesh->isDirty = false;
@@ -2113,7 +2125,11 @@ void AngleRenderer::uploadIfDirty(Mesh* mesh) {
             glBufferData(GL_ELEMENT_ARRAY_BUFFER, wireIndices.size() * sizeof(uint32_t), wireIndices.data(), GL_DYNAMIC_DRAW);
             bufs->wireIndexCount = wireIndices.size();
 
-            buildPolyGroupBuffers(mesh, bufs.get());
+            bufs->polygroupDirty = true;
+            if (bufs->polygroupVao != 0 && (m_showPolyGroups || m_activeBrush == BRUSH_POLYGROUP || m_shaderType == 5)) {
+                buildPolyGroupBuffers(mesh, bufs.get());
+                bufs->polygroupDirty = false;
+            }
             mesh->isFaceGroupDirty = false;
         }
         if (mesh->isVertexDirty && mesh->dirtyVertMin <= mesh->dirtyVertMax && mesh->dirtyVertMax < (uint32_t)mesh->nbVerts) {
@@ -2128,8 +2144,10 @@ void AngleRenderer::uploadIfDirty(Mesh* mesh) {
             glBufferSubData(GL_ARRAY_BUFFER, offset, size,
                             mesh->normals.data() + mesh->dirtyVertMin * 3);
 
-            if (bufs->polygroupVao != 0) {
+            bufs->polygroupDirty = true;
+            if (bufs->polygroupVao != 0 && (m_showPolyGroups || m_activeBrush == BRUSH_POLYGROUP || m_shaderType == 5)) {
                 buildPolyGroupBuffers(mesh, bufs.get());
+                bufs->polygroupDirty = false;
             }
             
             mesh->isVertexDirty = false;
@@ -2568,25 +2586,27 @@ void AngleRenderer::drawFullscreenMerge(const Scene& scene) {
 
     glUniform1i(glGetUniformLocation(m_mergeProgram, "uFilmic"), m_filmic ? 1 : 0);
 
-    // Pass SSAO parameters
+    // Pass SSAO parameters — only effective when PBR shader is active
+    const bool ssaoActive = m_useSsao && (m_shaderType == 0);
     glActiveTexture(GL_TEXTURE4);
-    if (m_useSsao) {
+    if (ssaoActive) {
         glBindTexture(GL_TEXTURE_2D, m_rttSsaoBlur.texture);
     } else {
         glBindTexture(GL_TEXTURE_2D, 0);
     }
     glUniform1i(glGetUniformLocation(m_mergeProgram, "uSsaoTexture"), 4);
-    glUniform1i(glGetUniformLocation(m_mergeProgram, "uSsaoEnabled"), m_useSsao ? 1 : 0);
+    glUniform1i(glGetUniformLocation(m_mergeProgram, "uSsaoEnabled"), ssaoActive ? 1 : 0);
     glUniform1f(glGetUniformLocation(m_mergeProgram, "uSsaoIntensity"), m_ssaoIntensity);
 
+    const bool ssrActive = m_useSsr && (m_shaderType == 0) && m_renderMode == RenderMode::PBR;
     glActiveTexture(GL_TEXTURE5);
-    if (m_useSsr && m_renderMode == RenderMode::PBR) {
+    if (ssrActive) {
         glBindTexture(GL_TEXTURE_2D, m_rttSsr.texture);
     } else {
         glBindTexture(GL_TEXTURE_2D, 0);
     }
     glUniform1i(glGetUniformLocation(m_mergeProgram, "uSsrTexture"), 5);
-    glUniform1i(glGetUniformLocation(m_mergeProgram, "uSsrEnabled"), (m_useSsr && m_renderMode == RenderMode::PBR) ? 1 : 0);
+    glUniform1i(glGetUniformLocation(m_mergeProgram, "uSsrEnabled"), ssrActive ? 1 : 0);
     glUniform1f(glGetUniformLocation(m_mergeProgram, "uSsrIntensity"), m_ssrIntensity);
 
     glBindVertexArray(m_fsqVao);

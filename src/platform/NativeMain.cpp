@@ -312,7 +312,9 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
-    SDL_GL_SetSwapInterval(1);
+    // Use adaptive vsync (0) so our SDL_Delay-based frame cap can actually control timing.
+    // SwapInterval(1) would block inside the driver at monitor rate, making SDL_Delay useless.
+    SDL_GL_SetSwapInterval(0);
 
     // Calculate initial DPI scale and physical drawable size
     int drawableWidth = width;
@@ -373,6 +375,7 @@ int main(int argc, char* argv[]) {
 #endif
 
     auto lastFrameTime = std::chrono::high_resolution_clock::now();
+    auto lastActivityTime = std::chrono::high_resolution_clock::now(); // for idle throttle
     bool quit = false;
     SDL_Event event;
     std::cout << "[Debug] Entering main loop." << std::endl;
@@ -391,7 +394,15 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        bool hadActivity = false; // set true on any user input this frame
         while (SDL_PollEvent(&event)) {
+            // Track user activity for idle throttle
+            if (event.type == SDL_MOUSEMOTION || event.type == SDL_MOUSEBUTTONDOWN ||
+                event.type == SDL_MOUSEBUTTONUP || event.type == SDL_MOUSEWHEEL ||
+                event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) {
+                hadActivity = true;
+                lastActivityTime = std::chrono::high_resolution_clock::now();
+            }
             if (event.type == SDL_QUIT) {
                 quit = true;
             } else if (event.type == SDL_WINDOWEVENT) {
@@ -564,7 +575,37 @@ int main(int argc, char* argv[]) {
         }
         wasRemeshRunning = isRemeshRunning;
 
+        // If actively sculpting, mark as active
+        if (sculpt.isSculpting() || sculpt.getCameraController().isDragging()) {
+            hadActivity = true;
+            lastActivityTime = std::chrono::high_resolution_clock::now();
+        }
+
         SDL_GL_SwapWindow(window);
+
+        // ---- GPU load limiter ----
+        {
+            auto frameEnd = std::chrono::high_resolution_clock::now();
+            float frameMs = std::chrono::duration<float, std::milli>(frameEnd - currentFrameTime).count();
+
+            bool fpsLimitOn  = gui.getFpsLimitEnabled();
+            int  targetFps   = gui.getFpsLimit();          // e.g. 60
+            float targetMs   = 1000.0f / (float)targetFps;
+
+            // Idle throttle: >500 ms since last activity → drop to 15 FPS
+            float idleMs = std::chrono::duration<float, std::milli>(
+                               frameEnd - lastActivityTime).count();
+            bool isIdle = (idleMs > 500.0f) && !gui.isRemeshRunning();
+            if (isIdle) {
+                targetMs = 1000.0f / 15.0f; // 15 FPS while idle
+                fpsLimitOn = true;
+            }
+
+            if (fpsLimitOn && frameMs < targetMs) {
+                Uint32 sleepMs = static_cast<Uint32>(targetMs - frameMs);
+                if (sleepMs > 0) SDL_Delay(sleepMs);
+            }
+        }
     }
 
     // Auto-save render and shading settings on exit

@@ -313,15 +313,15 @@ int SculptManager::doStrokePass(
             glm::vec3 areaNormal = cachedAreaNormal;
             glm::vec3 areaCenter = cachedAreaCenter;
 
-            if (!getCurrentSettings().flattenLockNormal || !getCurrentSettings().flattenLockOrigin) {
-                std::vector<float> areaResults(7, 0.0f);
+            if (!m_firstStrokeFrame && (!getCurrentSettings().flattenLockNormal || !getCurrentSettings().flattenLockOrigin)) {
+                float areaResults[7] = {0.0f};
                 if (computeAreaNormalAndCenter(
                     mesh->verts.data(),
                     mesh->normals.data(),
                     mesh->materials.data(),
                     pickedVertices.data(),
                     pickedVertices.size(),
-                    areaResults.data()
+                    areaResults
                 )) {
                     if (!getCurrentSettings().flattenLockNormal) {
                         areaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
@@ -634,15 +634,15 @@ int SculptManager::doStrokePass(
             glm::vec3 areaNormal = cachedAreaNormal;
             glm::vec3 areaCenter = cachedAreaCenter;
 
-            if (!getCurrentSettings().flattenLockNormal || !getCurrentSettings().flattenLockOrigin) {
-                std::vector<float> areaResults(7, 0.0f);
+            if (!m_firstStrokeFrame && (!getCurrentSettings().flattenLockNormal || !getCurrentSettings().flattenLockOrigin)) {
+                float areaResults[7] = {0.0f};
                 if (computeAreaNormalAndCenter(
                     mesh->verts.data(),
                     mesh->normals.data(),
                     mesh->materials.data(),
                     pickedVertices.data(),
                     pickedVertices.size(),
-                    areaResults.data()
+                    areaResults
                 )) {
                     if (!getCurrentSettings().flattenLockNormal) {
                         areaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
@@ -683,15 +683,15 @@ int SculptManager::doStrokePass(
             glm::vec3 areaNormal = cachedAreaNormal;
             glm::vec3 areaCenter = cachedAreaCenter;
 
-            if (!getCurrentSettings().flattenLockNormal || !getCurrentSettings().flattenLockOrigin) {
-                std::vector<float> areaResults(7, 0.0f);
+            if (!m_firstStrokeFrame && (!getCurrentSettings().flattenLockNormal || !getCurrentSettings().flattenLockOrigin)) {
+                float areaResults[7] = {0.0f};
                 if (computeAreaNormalAndCenter(
                     mesh->verts.data(),
                     mesh->normals.data(),
                     mesh->materials.data(),
                     pickedVertices.data(),
                     pickedVertices.size(),
-                    areaResults.data()
+                    areaResults
                 )) {
                     if (!getCurrentSettings().flattenLockNormal) {
                         areaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
@@ -720,8 +720,8 @@ int SculptManager::doStrokePass(
                 m_hasAlphaOrigin = true;
 
                 // Fallback to screen-space alignment
-                glm::mat4 invMeshMatrix = glm::inverse(mesh->matrix);
-                glm::mat4 camWorld = glm::inverse(scene.getCamera().getViewMatrix());
+                const glm::mat4& invMeshMatrix = m_cachedInvMatrix;
+                const glm::mat4& camWorld = m_cachedCamWorldMatrix;
                 glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
                 strokeDir = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
             } else {
@@ -738,8 +738,8 @@ int SculptManager::doStrokePass(
                 }
 
                 if (!hasStrokeDir) {
-                    glm::mat4 invMeshMatrix = glm::inverse(mesh->matrix);
-                    glm::mat4 camWorld = glm::inverse(scene.getCamera().getViewMatrix());
+                    const glm::mat4& invMeshMatrix = m_cachedInvMatrix;
+                    const glm::mat4& camWorld = m_cachedCamWorldMatrix;
                     glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
                     strokeDir = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
                 }
@@ -989,6 +989,7 @@ void SculptManager::cancelStroke() {
 void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, float mouseX, float mouseY, float currentPressure) {
     if (m_firstStrokeFrame) {
         m_cachedInvMatrix = glm::inverse(mesh->matrix);
+        m_cachedCamWorldMatrix = glm::inverse(camera.getViewMatrix());
     }
     const glm::mat4& invMatrix = m_cachedInvMatrix;
 
@@ -1197,19 +1198,23 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         bool altPressed = (SDL_GetModState() & KMOD_ALT) != 0;
         bool negative = getSettings(activeBrush).negative ^ altPressed;
 
-        // Cache area normal and center for Clay/Flatten brushes on first frame
-        if (m_firstStrokeFrame && (activeBrush == BRUSH_CLAY || activeBrush == BRUSH_CLAYBUILDUP || activeBrush == BRUSH_FLATTEN)) {
-            std::vector<float> areaResults(7, 0.0f);
-            computeAreaNormalAndCenter(
+        // Cache area normal and center for Clay/Flatten/Brush tools on first frame
+        if (m_firstStrokeFrame && (activeBrush == BRUSH_CLAY || activeBrush == BRUSH_CLAYBUILDUP || activeBrush == BRUSH_FLATTEN || activeBrush == BRUSH_SQUAREBRUSH || activeBrush == BRUSH_BRUSH)) {
+            float areaResults[7] = {0.0f};
+            if (computeAreaNormalAndCenter(
                 mesh->verts.data(),
                 mesh->normals.data(),
                 mesh->materials.data(),
                 pickedVertices.data(),
                 pickedVertices.size(),
-                areaResults.data()
-            );
-            m_cachedAreaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
-            m_cachedAreaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
+                areaResults
+            )) {
+                m_cachedAreaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
+                m_cachedAreaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
+            } else {
+                m_cachedAreaNormal = m_currentIntersectionNormal;
+                m_cachedAreaCenter = m_currentIntersection;
+            }
         }
 
         bool strokeAffectsColors = (activeBrush == BRUSH_PAINT && getCurrentSettings().writeAlbedo);
