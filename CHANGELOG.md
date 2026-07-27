@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [1.2.6]
 - **Fix**: Fixed Move and Elastic tools when symmetry is active by switching deformation calculations from hard assignment (`=`) to additive accumulation (`+=`) and pre-resetting grabbed vertex positions to `vertProxy`, preventing symmetry passes from overwriting primary stroke displacements.
 - **Symmetry**: Completely eliminated polygon stretching and brush offset artifacts along the symmetry axis by removing artificial sphere truncation filters (`filteredPrimary` and `filteredSym`), matching the JavaScript reference implementation's smooth radial falloff across mirror planes.
+- **Settings**: Saved camera control settings (projection type, camera mode, FOV, picking pivot option, and rotation/pan/zoom/roll navigation speeds) to `render_settings.cfg` so they automatically persist across application restarts.
 - **Symmetry**: Saved symmetry settings (Symmetry toggle, active X, Y, Z mirror axes, and local/world symmetry space) so they are preserved across application restarts.
 - **UI**: Saved the visibility state of the Symmetry Settings panel to persist it across application restarts.
 - **Fix**: Resolved an issue where enabling symmetry caused stamp rotation to freeze/lock on the Clay Buildup, Square, and Brush tools by isolating stroke direction tracking between primary and symmetry passes and preventing state corruption of `m_alphaOrigin`.

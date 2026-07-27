@@ -76,6 +76,10 @@ bool RenderSettings::save(const std::string& filepath, const AngleRenderer& rend
 
     const Camera* mainCam = scene.getCameraByIndex(0);
     if (mainCam) {
+        out << "cameraMode=" << static_cast<int>(mainCam->getMode()) << "\n";
+        out << "cameraProjection=" << static_cast<int>(mainCam->getProjectionType()) << "\n";
+        out << "cameraFov=" << mainCam->getFov() << "\n";
+        out << "cameraUsePivot=" << (mainCam->getUsePivot() ? "true" : "false") << "\n";
         out << "speedRotate=" << mainCam->getSpeedRotate() << "\n";
         out << "speedTranslate=" << mainCam->getSpeedTranslate() << "\n";
         out << "speedZoom=" << mainCam->getSpeedZoom() << "\n";
@@ -202,6 +206,39 @@ bool RenderSettings::load(const std::string& filepath, AngleRenderer& renderer, 
         it = params.find("splitShowInactiveCursor");
         if (it != params.end()) {
             scene.setSplitShowInactiveCursor(it->second == "true" || it->second == "1");
+        }
+
+        it = params.find("cameraMode");
+        if (it != params.end()) {
+            auto val = static_cast<CameraEnums::CameraMode>(safe_stoi(it->second, 0));
+            for (int cIdx = 0; cIdx < 2; ++cIdx) {
+                Camera* cam = scene.getCameraByIndex(cIdx);
+                if (cam) cam->setMode(val);
+            }
+        }
+        it = params.find("cameraProjection");
+        if (it != params.end()) {
+            auto val = static_cast<CameraEnums::Projection>(safe_stoi(it->second, 0));
+            for (int cIdx = 0; cIdx < 2; ++cIdx) {
+                Camera* cam = scene.getCameraByIndex(cIdx);
+                if (cam) cam->setProjectionType(val);
+            }
+        }
+        it = params.find("cameraFov");
+        if (it != params.end()) {
+            float val = safe_stof(it->second, 45.0f);
+            for (int cIdx = 0; cIdx < 2; ++cIdx) {
+                Camera* cam = scene.getCameraByIndex(cIdx);
+                if (cam) cam->setFov(val);
+            }
+        }
+        it = params.find("cameraUsePivot");
+        if (it != params.end()) {
+            bool val = (it->second == "true" || it->second == "1");
+            for (int cIdx = 0; cIdx < 2; ++cIdx) {
+                Camera* cam = scene.getCameraByIndex(cIdx);
+                if (cam) cam->setUsePivot(val);
+            }
         }
 
         it = params.find("speedRotate");
