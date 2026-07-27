@@ -4226,6 +4226,56 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         }
         ImGui::PopItemWidth();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select Active Sculpting Brush");
+
+        ImGui::SameLine();
+        ImGui::TextDisabled("|");
+        ImGui::SameLine();
+
+        bool showGrid = renderer.getShowGrid();
+        if (showGrid) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+        if (ImGui::Button(ICON_LC_GRID "##hudGrid")) {
+            renderer.setShowGrid(!showGrid);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Grid Display");
+        if (showGrid) {
+            ImGui::PopStyleColor(3);
+        }
+
+        ImGui::SameLine();
+
+        bool flatShading = renderer.getFlatShading();
+        if (flatShading) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+        if (ImGui::Button(ICON_LC_CUBOID "##hudFlatShading")) {
+            renderer.setFlatShading(!flatShading);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Flat Shading");
+        if (flatShading) {
+            ImGui::PopStyleColor(3);
+        }
+
+        ImGui::SameLine();
+
+        bool showWireframe = renderer.getShowWireframe();
+        if (showWireframe) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+        if (ImGui::Button(ICON_LC_TRIANGLE "##hudWireframe")) {
+            renderer.setShowWireframe(!showWireframe);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Wireframe Shading");
+        if (showWireframe) {
+            ImGui::PopStyleColor(3);
+        }
     }
     ImGui::End();
 

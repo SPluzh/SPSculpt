@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
   - Consolidated primary and symmetry pass updates into a single batch, eliminating duplicate geometric recalculations when symmetry is enabled.
   - Cached inverse world-to-local matrix per stroke to prevent redundant matrix inversions during active drag frames.
 - **UI**: Automatically hide the "Spacing" slider in the Sculpting Settings panel when Move, Drag, or Elastic brushes are active.
+- **UI**: Added Grid Display, Flat Shading, and Wireframe Shading toggle buttons with representative Lucide icons (Grid, Cuboid, and Triangle) and tooltips to the Floating Island HUD for rapid real-time viewport adjustments.
 
 ## [1.2.4]
 - **Remeshing**: Improved the accuracy of polygroup preservation during voxel remeshing, ensuring sharp, clean boundaries without jagged edges or bleeding on complex models.
