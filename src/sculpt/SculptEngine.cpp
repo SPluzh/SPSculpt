@@ -967,9 +967,9 @@ int strokeMove(
             continue;
         }
 
-        verts[ind] = vx + dirx * fallOff;
-        verts[ind + 1] = vy + diry * fallOff;
-        verts[ind + 2] = vz + dirz * fallOff;
+        verts[ind] += dirx * fallOff;
+        verts[ind + 1] += diry * fallOff;
+        verts[ind + 2] += dirz * fallOff;
     }
     return nbIVerts;
 }
@@ -1104,9 +1104,9 @@ int strokeElastic(
             continue;
         }
 
-        verts[ind] = vx + (ux / S) * fallOff;
-        verts[ind + 1] = vy + (uy / S) * fallOff;
-        verts[ind + 2] = vz + (uz / S) * fallOff;
+        verts[ind] += (ux / S) * fallOff;
+        verts[ind + 1] += (uy / S) * fallOff;
+        verts[ind + 2] += (uz / S) * fallOff;
     }
     return nbIVerts;
 }
