@@ -304,7 +304,9 @@ int SculptManager::doStrokePass(
     const glm::vec3& cachedAreaCenter,
     float localRadius,
     float intensity,
-    float mouseX
+    float mouseX,
+    bool isSymmetry,
+    const glm::vec3& sScale
 ) {
     int deformedCount = 0;
 
@@ -715,17 +717,17 @@ int SculptManager::doStrokePass(
             glm::vec3 strokeDir(0.0f);
             bool hasStrokeDir = false;
 
-            if (m_firstStrokeFrame || !m_hasAlphaOrigin) {
-                m_alphaOrigin = currentIntersection;
-                m_hasAlphaOrigin = true;
+            glm::vec3 passAlphaOrigin = isSymmetry ? (m_alphaOrigin * sScale) : m_alphaOrigin;
 
+            if (m_firstStrokeFrame || !m_hasAlphaOrigin) {
                 // Fallback to screen-space alignment
                 const glm::mat4& invMeshMatrix = m_cachedInvMatrix;
                 const glm::mat4& camWorld = m_cachedCamWorldMatrix;
                 glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
+                if (isSymmetry) camRightLocal = camRightLocal * sScale;
                 strokeDir = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
             } else {
-                glm::vec3 movement = currentIntersection - m_alphaOrigin;
+                glm::vec3 movement = currentIntersection - passAlphaOrigin;
                 float movementLen = glm::length(movement);
                 if (movementLen > 1e-7f) {
                     glm::vec3 movementDir = movement / movementLen;
@@ -741,14 +743,13 @@ int SculptManager::doStrokePass(
                     const glm::mat4& invMeshMatrix = m_cachedInvMatrix;
                     const glm::mat4& camWorld = m_cachedCamWorldMatrix;
                     glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
+                    if (isSymmetry) camRightLocal = camRightLocal * sScale;
                     strokeDir = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
                 }
-
-                m_alphaOrigin = currentIntersection;
             }
 
-            glm::vec3 eye = m_alphaOrigin;
-            glm::vec3 nor = m_alphaOrigin + areaNormal * localRadius;
+            glm::vec3 eye = currentIntersection;
+            glm::vec3 nor = currentIntersection + areaNormal * localRadius;
             glm::mat4 lookAtMat = glm::lookAt(eye, nor, strokeDir);
 
             float alphaLookAt[16];
@@ -808,17 +809,17 @@ int SculptManager::doStrokePass(
             glm::vec3 strokeDir(0.0f);
             bool hasStrokeDir = false;
 
-            if (m_firstStrokeFrame || !m_hasAlphaOrigin) {
-                m_alphaOrigin = currentIntersection;
-                m_hasAlphaOrigin = true;
+            glm::vec3 passAlphaOrigin = isSymmetry ? (m_alphaOrigin * sScale) : m_alphaOrigin;
 
+            if (m_firstStrokeFrame || !m_hasAlphaOrigin) {
                 // Fallback to screen-space alignment
                 glm::mat4 invMeshMatrix = glm::inverse(mesh->matrix);
                 glm::mat4 camWorld = glm::inverse(scene.getCamera().getViewMatrix());
                 glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
+                if (isSymmetry) camRightLocal = camRightLocal * sScale;
                 strokeDir = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
             } else {
-                glm::vec3 movement = currentIntersection - m_alphaOrigin;
+                glm::vec3 movement = currentIntersection - passAlphaOrigin;
                 float movementLen = glm::length(movement);
                 if (movementLen > 1e-7f) {
                     glm::vec3 movementDir = movement / movementLen;
@@ -834,14 +835,13 @@ int SculptManager::doStrokePass(
                     glm::mat4 invMeshMatrix = glm::inverse(mesh->matrix);
                     glm::mat4 camWorld = glm::inverse(scene.getCamera().getViewMatrix());
                     glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
+                    if (isSymmetry) camRightLocal = camRightLocal * sScale;
                     strokeDir = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
                 }
-
-                m_alphaOrigin = currentIntersection;
             }
 
-            glm::vec3 eye = m_alphaOrigin;
-            glm::vec3 nor = m_alphaOrigin + areaNormal * localRadius;
+            glm::vec3 eye = currentIntersection;
+            glm::vec3 nor = currentIntersection + areaNormal * localRadius;
             glm::mat4 lookAtMat = glm::lookAt(eye, nor, strokeDir);
 
             float alphaLookAt[16];
@@ -888,25 +888,24 @@ int SculptManager::doStrokePass(
             glm::vec3 strokeDir(0.0f);
             bool hasStrokeDir = false;
 
+            glm::vec3 passAlphaOrigin = isSymmetry ? (m_alphaOrigin * sScale) : m_alphaOrigin;
+
             if (getCurrentSettings().stampLockRotation) {
                 glm::mat4 invMeshMatrix = glm::inverse(mesh->matrix);
                 glm::mat4 camWorld = glm::inverse(scene.getCamera().getViewMatrix());
                 glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
+                if (isSymmetry) camRightLocal = camRightLocal * sScale;
                 strokeDir = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
-                m_alphaOrigin = currentIntersection;
-                m_hasAlphaOrigin = true;
             }
             else if (m_firstStrokeFrame || !m_hasAlphaOrigin) {
-                m_alphaOrigin = currentIntersection;
-                m_hasAlphaOrigin = true;
-
                 // Fallback to screen-space alignment
                 glm::mat4 invMeshMatrix = glm::inverse(mesh->matrix);
                 glm::mat4 camWorld = glm::inverse(scene.getCamera().getViewMatrix());
                 glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
+                if (isSymmetry) camRightLocal = camRightLocal * sScale;
                 strokeDir = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
             } else {
-                glm::vec3 movement = currentIntersection - m_alphaOrigin;
+                glm::vec3 movement = currentIntersection - passAlphaOrigin;
                 float movementLen = glm::length(movement);
                 if (movementLen > 1e-7f) {
                     glm::vec3 movementDir = movement / movementLen;
@@ -922,14 +921,13 @@ int SculptManager::doStrokePass(
                     glm::mat4 invMeshMatrix = glm::inverse(mesh->matrix);
                     glm::mat4 camWorld = glm::inverse(scene.getCamera().getViewMatrix());
                     glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
+                    if (isSymmetry) camRightLocal = camRightLocal * sScale;
                     strokeDir = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
                 }
-
-                m_alphaOrigin = currentIntersection;
             }
 
-            glm::vec3 eye = m_alphaOrigin;
-            glm::vec3 nor = m_alphaOrigin + areaNormal * localRadius;
+            glm::vec3 eye = currentIntersection;
+            glm::vec3 nor = currentIntersection + areaNormal * localRadius;
             glm::mat4 lookAtMat = glm::lookAt(eye, nor, strokeDir);
 
             float alphaLookAt[16];
@@ -984,6 +982,7 @@ void SculptManager::cancelStroke() {
     m_isLassoActive = false;
     m_gradIsDrawing = false;
     m_draggedSegment = nullptr;
+    m_hasAlphaOrigin = false;
 }
 
 void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, float mouseX, float mouseY, float currentPressure) {
@@ -1238,7 +1237,9 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             m_cachedAreaCenter,
             localRadius,
             intensity,
-            mouseX
+            mouseX,
+            false,
+            glm::vec3(1.0f)
         );
 
         if (m_useSym && activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_POLYGROUP) {
@@ -1356,7 +1357,9 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                         symAreaCenter,
                         localRadius,
                         intensity,
-                        mouseX
+                        mouseX,
+                        true,
+                        sScale
                     );
 
                     if (symDeformed > 0) {
@@ -1447,6 +1450,8 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         }
     }
 
+    m_alphaOrigin = m_currentIntersection;
+    m_hasAlphaOrigin = true;
     m_firstStrokeFrame = false;
 }
 

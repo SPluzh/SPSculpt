@@ -412,7 +412,9 @@ private:
         const glm::vec3& cachedAreaCenter,
         float localRadius,
         float intensity,
-        float mouseX
+        float mouseX,
+        bool isSymmetry = false,
+        const glm::vec3& sScale = glm::vec3(1.0f)
     );
 };
 
