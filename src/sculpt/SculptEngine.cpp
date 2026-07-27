@@ -945,7 +945,7 @@ int strokeMove(
     bool useAccuCurve, const float* accuCurveLut
 ) {
     const float radiusSq = radius * radius;
-    int writeIdx = 0;
+    #pragma omp parallel for schedule(static) if(nbIVerts > 1000)
     for (int i = 0; i < nbIVerts; ++i) {
         uint32_t id = iVerts[i];
         int ind = id * 3;
@@ -985,10 +985,8 @@ int strokeMove(
         verts[ind] = vx + dirx * fallOff;
         verts[ind + 1] = vy + diry * fallOff;
         verts[ind + 2] = vz + dirz * fallOff;
-
-        iVerts[writeIdx++] = id;
     }
-    return writeIdx;
+    return nbIVerts;
 }
 
 int strokeDrag(
@@ -1004,10 +1002,8 @@ int strokeDrag(
     const float* alphaLookAt, bool alphaXSym,
     bool useAccuCurve, const float* accuCurveLut
 ) {
-
     const float radiusSq = radius * radius;
-
-    int writeIdx = 0;
+    #pragma omp parallel for schedule(static) if(nbIVerts > 1000)
     for (int i = 0; i < nbIVerts; ++i) {
         uint32_t id = iVerts[i];
         int ind = id * 3;
@@ -1047,10 +1043,8 @@ int strokeDrag(
         verts[ind] = vx + dirx * fallOff;
         verts[ind + 1] = vy + diry * fallOff;
         verts[ind + 2] = vz + dirz * fallOff;
-
-        iVerts[writeIdx++] = id;
     }
-    return writeIdx;
+    return nbIVerts;
 }
 
 int strokeElastic(
@@ -1078,11 +1072,10 @@ int strokeElastic(
     float b = 3.0f - 4.0f * nu;
     float S = (1.5f * a - b) / eps;
 
-    int writeIdx = 0;
+    #pragma omp parallel for schedule(static) if(nbIVerts > 1000)
     for (int i = 0; i < nbIVerts; ++i) {
         uint32_t id = iVerts[i];
         int ind = id * 3;
-        int j = i * 3;
 
         float matVal = materials[ind + 2];
         if (matVal <= 0.0f) {
@@ -1129,10 +1122,8 @@ int strokeElastic(
         verts[ind] = vx + (ux / S) * fallOff;
         verts[ind + 1] = vy + (uy / S) * fallOff;
         verts[ind + 2] = vz + (uz / S) * fallOff;
-
-        iVerts[writeIdx++] = id;
     }
-    return writeIdx;
+    return nbIVerts;
 }
 
 int strokeMask(

@@ -598,8 +598,11 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
             ImGui::Checkbox("Focal Shift Falloff", &settings.focalShiftFalloff);
 
-            ImGui::SliderFloat("Spacing", &settings.spacing, 0.01f, 1.0f, "%.2f");
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spacing between stroke points as fraction of radius");
+            bool isGrabBrush = (brushType == BRUSH_MOVE || brushType == BRUSH_DRAG || brushType == BRUSH_ELASTIC);
+            if (!isGrabBrush) {
+                ImGui::SliderFloat("Spacing", &settings.spacing, 0.01f, 1.0f, "%.2f");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spacing between stroke points as fraction of radius");
+            }
 
             ImGui::Checkbox("Negative (Invert)", &settings.negative);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggles add vs subtract sculpting direction");

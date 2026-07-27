@@ -949,86 +949,6 @@ int SculptManager::doStrokePass(
             break;
     }
 
-    if (deformedCount > 0) {
-        bool isSculptDeform = (activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_MASK_GRADIENT_BLUR && activeBrush != BRUSH_POLYGROUP);
-
-        if (isSculptDeform) {
-            if (m_tagFlags.size() < (size_t)mesh->nbFaces) {
-                m_tagFlags.assign(mesh->nbFaces, 0);
-            }
-            if (m_iFacesCache.size() < (size_t)mesh->nbFaces) {
-                m_iFacesCache.resize(mesh->nbFaces);
-            }
-
-            uint32_t numIFaces = getFacesFromVerticesFast(
-                pickedVertices.data(),
-                pickedVertices.size(),
-                mesh->vrfStartCount.data(),
-                mesh->vertRingFace.data(),
-                m_iFacesCache.data(),
-                m_tagFlags.data(),
-                &m_tagEpoch,
-                mesh->nbFaces
-            );
-
-            updateFaceNormalsAndBoxes(
-                mesh->verts.data(), mesh->nbVerts,
-                mesh->faces.data(), mesh->nbFaces,
-                m_iFacesCache.data(), numIFaces,
-                mesh->faceNormals.data(),
-                mesh->faceBoxes.data(),
-                mesh->faceCenters.data()
-            );
-
-            updateVertexNormals(
-                pickedVertices.data(), pickedVertices.size(), mesh->nbVerts,
-                mesh->vrfStartCount.data(),
-                mesh->vertRingFace.data(),
-                mesh->faceNormals.data(),
-                mesh->normals.data()
-            );
-
-            mesh->octree.update(
-                mesh->verts.data(), mesh->nbVerts,
-                mesh->faces.data(), mesh->nbFaces,
-                mesh->faceBoxes.data(),
-                m_iFacesCache.data(), numIFaces
-            );
-        }
-
-        uint32_t minV = pickedVertices[0];
-        uint32_t maxV = pickedVertices[0];
-        for (int i = 1; i < deformedCount; ++i) {
-            uint32_t v = pickedVertices[i];
-            if (v < minV) minV = v;
-            if (v > maxV) maxV = v;
-        }
-        
-        if (mesh->isVertexDirty || mesh->isColorDirty || mesh->isMaterialDirty) {
-            mesh->dirtyVertMin = std::min(mesh->dirtyVertMin, minV);
-            mesh->dirtyVertMax = std::max(mesh->dirtyVertMax, maxV);
-        } else {
-            mesh->dirtyVertMin = minV;
-            mesh->dirtyVertMax = maxV;
-        }
-
-        const auto& settings = getCurrentSettings();
-        if (activeBrush == BRUSH_PAINT) {
-            if (settings.writeAlbedo) {
-                mesh->isColorDirty = true;
-            }
-            if (settings.writeRoughness || settings.writeMetalness) {
-                mesh->isMaterialDirty = true;
-            }
-        } else if (activeBrush == BRUSH_MASK || activeBrush == BRUSH_MASK_GRADIENT_BLUR) {
-            mesh->isMaterialDirty = true;
-        } else if (activeBrush == BRUSH_POLYGROUP) {
-            mesh->isFaceGroupDirty = true;
-        } else {
-            mesh->isVertexDirty = true;
-        }
-    }
-
     return deformedCount;
 }
 
@@ -1043,8 +963,12 @@ void SculptManager::cancelStroke() {
 }
 
 void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, float mouseX, float mouseY, float currentPressure) {
+    if (m_firstStrokeFrame) {
+        m_cachedInvMatrix = glm::inverse(mesh->matrix);
+    }
+    const glm::mat4& invMatrix = m_cachedInvMatrix;
+
     Ray ray = camera.getRay(mouseX, mouseY);
-    glm::mat4 invMatrix = glm::inverse(mesh->matrix);
     glm::vec3 localRayOrigin = glm::vec3(invMatrix * glm::vec4(ray.origin, 1.0f));
     glm::vec3 localRayDir = glm::normalize(glm::vec3(invMatrix * glm::vec4(ray.dir, 0.0f)));
 
@@ -1214,6 +1138,8 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         }
     }
 
+    std::vector<uint32_t> allAffectedVerts;
+
     if (!pickedVertices.empty()) {
         bool altPressed = (SDL_GetModState() & KMOD_ALT) != 0;
         bool negative = getSettings(activeBrush).negative ^ altPressed;
@@ -1241,7 +1167,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         g_undoManager.recordAffectedVertices(scene, mesh->m_id, pickedVertices, strokeAffectsColors, strokeAffectsMaterials);
 
         // Primary pass
-        doStrokePass(
+        int primaryDeformed = doStrokePass(
             scene,
             mesh,
             activeBrush,
@@ -1256,6 +1182,10 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             intensity,
             mouseX
         );
+
+        if (primaryDeformed > 0) {
+            allAffectedVerts.insert(allAffectedVerts.end(), pickedVertices.begin(), pickedVertices.begin() + primaryDeformed);
+        }
 
         // Symmetry pass (Step 2)
         if (m_useSym) {
@@ -1337,7 +1267,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 // Record initial vertices before modification for symmetry pass
                 g_undoManager.recordAffectedVertices(scene, mesh->m_id, symVerts, strokeAffectsColors, strokeAffectsMaterials);
 
-                doStrokePass(
+                int symDeformed = doStrokePass(
                     scene,
                     mesh,
                     activeBrush,
@@ -1352,7 +1282,91 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                     intensity,
                     mouseX
                 );
+
+                if (symDeformed > 0) {
+                    allAffectedVerts.insert(allAffectedVerts.end(), symVerts.begin(), symVerts.begin() + symDeformed);
+                }
             }
+        }
+    }
+
+    if (!allAffectedVerts.empty()) {
+        bool isSculptDeform = (activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_MASK_GRADIENT_BLUR && activeBrush != BRUSH_POLYGROUP);
+
+        if (isSculptDeform) {
+            if (m_tagFlags.size() < (size_t)mesh->nbFaces) {
+                m_tagFlags.assign(mesh->nbFaces, 0);
+            }
+            if (m_iFacesCache.size() < (size_t)mesh->nbFaces) {
+                m_iFacesCache.resize(mesh->nbFaces);
+            }
+
+            uint32_t numIFaces = getFacesFromVerticesFast(
+                allAffectedVerts.data(),
+                allAffectedVerts.size(),
+                mesh->vrfStartCount.data(),
+                mesh->vertRingFace.data(),
+                m_iFacesCache.data(),
+                m_tagFlags.data(),
+                &m_tagEpoch,
+                mesh->nbFaces
+            );
+
+            updateFaceNormalsAndBoxes(
+                mesh->verts.data(), mesh->nbVerts,
+                mesh->faces.data(), mesh->nbFaces,
+                m_iFacesCache.data(), numIFaces,
+                mesh->faceNormals.data(),
+                mesh->faceBoxes.data(),
+                mesh->faceCenters.data()
+            );
+
+            updateVertexNormals(
+                allAffectedVerts.data(), allAffectedVerts.size(), mesh->nbVerts,
+                mesh->vrfStartCount.data(),
+                mesh->vertRingFace.data(),
+                mesh->faceNormals.data(),
+                mesh->normals.data()
+            );
+
+            mesh->octree.update(
+                mesh->verts.data(), mesh->nbVerts,
+                mesh->faces.data(), mesh->nbFaces,
+                mesh->faceBoxes.data(),
+                m_iFacesCache.data(), numIFaces
+            );
+        }
+
+        uint32_t minV = allAffectedVerts[0];
+        uint32_t maxV = allAffectedVerts[0];
+        for (size_t i = 1; i < allAffectedVerts.size(); ++i) {
+            uint32_t v = allAffectedVerts[i];
+            if (v < minV) minV = v;
+            if (v > maxV) maxV = v;
+        }
+
+        if (mesh->isVertexDirty || mesh->isColorDirty || mesh->isMaterialDirty) {
+            mesh->dirtyVertMin = std::min(mesh->dirtyVertMin, minV);
+            mesh->dirtyVertMax = std::max(mesh->dirtyVertMax, maxV);
+        } else {
+            mesh->dirtyVertMin = minV;
+            mesh->dirtyVertMax = maxV;
+        }
+
+        const auto& settings = getCurrentSettings();
+        if (activeBrush == BRUSH_PAINT) {
+            if (settings.writeAlbedo) {
+                mesh->isColorDirty = true;
+            }
+            if (settings.writeRoughness || settings.writeMetalness) {
+                mesh->isMaterialDirty = true;
+            }
+        } else if (activeBrush == BRUSH_MASK || activeBrush == BRUSH_MASK_GRADIENT_BLUR) {
+            mesh->isMaterialDirty = true;
+        } else if (activeBrush == BRUSH_POLYGROUP) {
+            mesh->isFaceGroupDirty = true;
+        } else {
+            mesh->isVertexDirty = true;
         }
     }
 
@@ -2690,7 +2704,9 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             const auto& activeSettings = getSettings(activeBrush);
             float minSpacing = activeSettings.spacing * activeSettings.radius;
 
-            if (minSpacing <= 0.0f) {
+            bool isGrabBrush = (activeBrush == BRUSH_MOVE || activeBrush == BRUSH_DRAG || activeBrush == BRUSH_ELASTIC);
+
+            if (isGrabBrush || minSpacing <= 0.0f) {
                 executeStroke(scene, mesh, camera, (float)mouseX, (float)mouseY, currentPressure);
                 m_lastStrokeX = mouseX;
                 m_lastStrokeY = mouseY;

@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.5]
+- **Performance**: Optimized Grab-style brushes (**Move**, **Drag**, **Elastic**) on high-density meshes (70k+ vertices), completely eliminating lag and stutter during rapid cursor movement:
+  - Bypassed redundant stroke-step interpolation in `SculptManager`, executing grab brushes exactly once per mouse move frame.
+  - Parallelized `strokeMove`, `strokeDrag`, and `strokeElastic` algorithms using OpenMP, accelerating displacement calculations across all available CPU cores.
+  - Unified mesh updates so vertex normals, face normals, bounding boxes, and octree nodes recalculate once per mouse event rather than per sub-step.
+  - Consolidated primary and symmetry pass updates into a single batch, eliminating duplicate geometric recalculations when symmetry is enabled.
+  - Cached inverse world-to-local matrix per stroke to prevent redundant matrix inversions during active drag frames.
+- **UI**: Automatically hide the "Spacing" slider in the Sculpting Settings panel when Move, Drag, or Elastic brushes are active.
+
 ## [1.2.4]
 - **Remeshing**: Improved the accuracy of polygroup preservation during voxel remeshing, ensuring sharp, clean boundaries without jagged edges or bleeding on complex models.
 - **Remeshing**: Eliminated polygroup projection leaks across thin geometry parts (such as ears and fingers) during remeshing operations.
