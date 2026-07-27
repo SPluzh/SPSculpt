@@ -1133,8 +1133,28 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             filterPolyGroupVertices(pickedVertices, mesh, m_strokeTargetPolyGroup);
         }
 
+        if (m_useSym && !pickedVertices.empty()) {
+            int symAxis = m_symAxis;
+            float eps = 1e-4f;
+            float initVal = m_initialIntersection[symAxis];
+            std::vector<uint32_t> filteredPrimary;
+            filteredPrimary.reserve(pickedVertices.size());
+            const float* vertProxyData = mesh->vertProxy.data();
+            for (uint32_t v : pickedVertices) {
+                float val = vertProxyData[v * 3 + symAxis];
+                if (initVal >= 0.0f) {
+                    if (val >= -eps) filteredPrimary.push_back(v);
+                } else {
+                    if (val <= eps) filteredPrimary.push_back(v);
+                }
+            }
+            pickedVertices = std::move(filteredPrimary);
+        }
+
         if (isGrabBrush) {
-            m_grabbedVertices = pickedVertices;
+            if (m_firstStrokeFrame || m_grabbedVertices.empty()) {
+                m_grabbedVertices = pickedVertices;
+            }
         }
     }
 
@@ -1182,6 +1202,17 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             intensity,
             mouseX
         );
+
+        if (m_useSym && activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_POLYGROUP) {
+            int symAxis = m_symAxis;
+            float eps = 1e-4f;
+            const float* vertProxyData = mesh->vertProxy.data();
+            for (uint32_t v : pickedVertices) {
+                if (std::abs(vertProxyData[v * 3 + symAxis]) <= eps) {
+                    mesh->verts[v * 3 + symAxis] = vertProxyData[v * 3 + symAxis];
+                }
+            }
+        }
 
         if (primaryDeformed > 0) {
             allAffectedVerts.insert(allAffectedVerts.end(), pickedVertices.begin(), pickedVertices.begin() + primaryDeformed);
@@ -1237,6 +1268,22 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 if (getCurrentSettings().singlePolyGroup && !mesh->faceGroups.empty() && !symVerts.empty()) {
                     filterPolyGroupVertices(symVerts, mesh, m_strokeTargetPolyGroup);
                 }
+
+                int symAxis = m_symAxis;
+                float eps = 1e-4f;
+                float initVal = m_initialIntersection[symAxis];
+                std::vector<uint32_t> filteredSym;
+                filteredSym.reserve(symVerts.size());
+                const float* vertProxyData = mesh->vertProxy.data();
+                for (uint32_t v : symVerts) {
+                    float val = vertProxyData[v * 3 + symAxis];
+                    if (initVal >= 0.0f) {
+                        if (val < -eps) filteredSym.push_back(v);
+                    } else {
+                        if (val > eps) filteredSym.push_back(v);
+                    }
+                }
+                symVerts = std::move(filteredSym);
 
                 if (isGrabBrush) {
                     m_grabbedVerticesSym = symVerts;
