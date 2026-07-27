@@ -1012,10 +1012,14 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 
     if (isGrabBrush && !m_firstStrokeFrame) {
         // Bypass raycast for grab brushes on subsequent frames
-        glm::vec3 rayNear = localRayOrigin;
-        glm::vec3 rayFar = localRayOrigin + localRayDir;
-        glm::vec3 dragDir = vertexOnLine(m_initialIntersection, rayNear, rayFar) - m_initialIntersection;
-        m_currentIntersection = m_initialIntersection + dragDir;
+        glm::vec3 camFrontLocal = -glm::normalize(glm::vec3(m_cachedInvMatrix * glm::vec4(glm::vec3(m_cachedCamWorldMatrix[2]), 0.0f)));
+        float denom = glm::dot(camFrontLocal, localRayDir);
+        if (std::abs(denom) > 1e-12f) {
+            float t = glm::dot(camFrontLocal, m_initialIntersection - localRayOrigin) / denom;
+            m_currentIntersection = localRayOrigin + localRayDir * t;
+        } else {
+            m_currentIntersection = m_initialIntersection;
+        }
         m_currentIntersectionValid = true;
 
         m_lastValidIntersection = m_currentIntersection;
@@ -1165,19 +1169,19 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             for (uint32_t v : pickedVertices) {
                 bool keep = true;
                 if (m_symX) {
-                    float initVal = m_initialIntersection.x;
+                    float currVal = m_currentIntersection.x;
                     float val = vertProxyData[v * 3 + 0];
-                    if (initVal >= 0.0f ? (val < -eps) : (val > eps)) keep = false;
+                    if (currVal >= 0.0f ? (val < -eps) : (val > eps)) keep = false;
                 }
                 if (keep && m_symY) {
-                    float initVal = m_initialIntersection.y;
+                    float currVal = m_currentIntersection.y;
                     float val = vertProxyData[v * 3 + 1];
-                    if (initVal >= 0.0f ? (val < -eps) : (val > eps)) keep = false;
+                    if (currVal >= 0.0f ? (val < -eps) : (val > eps)) keep = false;
                 }
                 if (keep && m_symZ) {
-                    float initVal = m_initialIntersection.z;
+                    float currVal = m_currentIntersection.z;
                     float val = vertProxyData[v * 3 + 2];
-                    if (initVal >= 0.0f ? (val < -eps) : (val > eps)) keep = false;
+                    if (currVal >= 0.0f ? (val < -eps) : (val > eps)) keep = false;
                 }
                 if (keep) filteredPrimary.push_back(v);
             }
@@ -1283,8 +1287,15 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                     glm::vec3 symRayOrigin = localRayOrigin * sScale;
                     glm::vec3 symRayDir = localRayDir * sScale;
                     const glm::vec3& initSymInter = (sIdx < m_initialSymIntersections.size()) ? m_initialSymIntersections[sIdx] : (m_initialIntersection * sScale);
-                    glm::vec3 symDragDir = vertexOnLine(initSymInter, symRayOrigin, symRayOrigin + symRayDir) - initSymInter;
-                    symCenter = initSymInter + symDragDir;
+                    glm::vec3 camFrontLocal = -glm::normalize(glm::vec3(m_cachedInvMatrix * glm::vec4(glm::vec3(m_cachedCamWorldMatrix[2]), 0.0f)));
+                    glm::vec3 symCamFrontLocal = camFrontLocal * sScale;
+                    float denom = glm::dot(symCamFrontLocal, symRayDir);
+                    if (std::abs(denom) > 1e-12f) {
+                        float t = glm::dot(symCamFrontLocal, initSymInter - symRayOrigin) / denom;
+                        symCenter = symRayOrigin + symRayDir * t;
+                    } else {
+                        symCenter = initSymInter;
+                    }
                     if (sIdx < m_grabbedVerticesSyms.size()) {
                         symVerts = m_grabbedVerticesSyms[sIdx];
                     }
@@ -1312,19 +1323,19 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                     for (uint32_t v : symVerts) {
                         bool keep = true;
                         if (sScale.x < 0.0f) {
-                            float initVal = m_initialIntersection.x;
+                            float symVal = symCenter.x;
                             float val = vertProxyData[v * 3 + 0];
-                            if (initVal >= 0.0f ? (val > -eps) : (val < eps)) keep = false;
+                            if (symVal >= 0.0f ? (val < -eps) : (val > eps)) keep = false;
                         }
                         if (keep && sScale.y < 0.0f) {
-                            float initVal = m_initialIntersection.y;
+                            float symVal = symCenter.y;
                             float val = vertProxyData[v * 3 + 1];
-                            if (initVal >= 0.0f ? (val > -eps) : (val < eps)) keep = false;
+                            if (symVal >= 0.0f ? (val < -eps) : (val > eps)) keep = false;
                         }
                         if (keep && sScale.z < 0.0f) {
-                            float initVal = m_initialIntersection.z;
+                            float symVal = symCenter.z;
                             float val = vertProxyData[v * 3 + 2];
-                            if (initVal >= 0.0f ? (val > -eps) : (val < eps)) keep = false;
+                            if (symVal >= 0.0f ? (val < -eps) : (val > eps)) keep = false;
                         }
                         if (keep) filteredSym.push_back(v);
                     }
