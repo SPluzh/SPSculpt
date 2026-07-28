@@ -4257,7 +4257,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         if (ImGui::Button(ICON_LC_SPLIT "##hudSym")) {
             sculpt.setUseSym(!useSym);
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Symmetry");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Symmetry (Alt+X)");
 
         if (useSym) {
             ImGui::PopStyleColor(3);

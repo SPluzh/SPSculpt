@@ -27,6 +27,7 @@ enum class HKAction {
     BrushFocalShift,       // D (modal)
     BrushNegative,         // N (toggle)
     BrushPicker,           // I (toggle)
+    ToggleSymmetry,        // Alt+X (toggle)
     RemeshResolution,      // X (modal)
     TopologyDetail,        // Z (modal)
     DeleteSelected,        // Del

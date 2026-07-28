@@ -219,6 +219,7 @@ HKAction HotkeyDispatcher::mapKeyToAction(const SDL_Keysym& keysym, bool ctrlPre
     
     // Check Alt combinations
     if (altPressed) {
+        if (sym == SDLK_x) return HKAction::ToggleSymmetry;
         if (sym == SDLK_z) {
             if (shiftPressed) return HKAction::CameraRedo;
             return HKAction::CameraUndo;
@@ -293,6 +294,7 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
             case HKAction::ToolTransform: sculpt.setBrush(BRUSH_TRANSFORM); break;
             
             case HKAction::BrushNegative: sculpt.toggleNegative(); break;
+            case HKAction::ToggleSymmetry: sculpt.setUseSym(!sculpt.getUseSym()); break;
             
             case HKAction::BrushIntensity: {
                 if (m_modalMode != ModalMode::INTENSITY) {
