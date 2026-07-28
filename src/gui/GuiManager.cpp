@@ -625,9 +625,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             }
             if (ImGui::Button(tools[i], ImVec2(-1, 26))) {
                 sculpt.setBrush((BrushType)i);
-                if ((BrushType)i == BRUSH_POLYGROUP) {
-                    renderer.setShowPolyGroups(true);
-                }
             }
             if (selected) {
                 ImGui::PopStyleColor();
@@ -4382,9 +4379,6 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
                 bool isSelected = (currentBrush == (BrushType)i);
                 if (ImGui::Selectable(tools[i], isSelected)) {
                     sculpt.setBrush((BrushType)i);
-                    if ((BrushType)i == BRUSH_POLYGROUP) {
-                        renderer.setShowPolyGroups(true);
-                    }
                 }
             }
             ImGui::EndCombo();
