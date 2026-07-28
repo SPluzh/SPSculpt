@@ -1,4 +1,5 @@
 #include "editing/SculptManager.h"
+#include "common/IniFile.h"
 #include "brushes/BrushPresetManager.h"
 #include "sculpt/SculptEngine.h"
 #include "mesh/NormalCalc.h"
@@ -2870,229 +2871,140 @@ std::vector<uint32_t> SculptManager::getVerticesInLasso(Mesh* mesh, const Camera
     return insideVertices;
 }
 
-bool SculptManager::saveSettings(const std::string& filepath) {
-    std::ofstream out(filepath);
-    if (!out.is_open()) {
-        std::cerr << "Failed to open brush settings file for writing: " << filepath << std::endl;
-        return false;
-    }
-
+bool SculptManager::saveSettings(IniFile& ini) {
     for (int i = 0; i < BRUSH_COUNT; ++i) {
-        out << "[Brush_" << i << "]\n";
-        out << "radius=" << m_brushSettings[i].radius << "\n";
-        out << "intensity=" << m_brushSettings[i].intensity << "\n";
-        out << "focalShift=" << m_brushSettings[i].focalShift << "\n";
-        out << "focalShiftFalloff=" << (m_brushSettings[i].focalShiftFalloff ? "true" : "false") << "\n";
-        out << "hardness=" << m_brushSettings[i].hardness << "\n";
-        out << "spacing=" << m_brushSettings[i].spacing << "\n";
-        out << "negative=" << (m_brushSettings[i].negative ? "true" : "false") << "\n";
-        out << "culling=" << (m_brushSettings[i].culling ? "true" : "false") << "\n";
-        out << "accumulate=" << (m_brushSettings[i].accumulate ? "true" : "false") << "\n";
-        out << "lockPosition=" << (m_brushSettings[i].lockPosition ? "true" : "false") << "\n";
-        out << "idAlpha=" << m_brushSettings[i].idAlpha << "\n";
-        out << "clay=" << (m_brushSettings[i].clay ? "true" : "false") << "\n";
-        out << "tangent=" << (m_brushSettings[i].tangent ? "true" : "false") << "\n";
-        out << "topoCheck=" << (m_brushSettings[i].topoCheck ? "true" : "false") << "\n";
-        out << "elasticity=" << m_brushSettings[i].elasticity << "\n";
-        out << "paintColor=" << m_brushSettings[i].paintColor.r << " " << m_brushSettings[i].paintColor.g << " " << m_brushSettings[i].paintColor.b << "\n";
-        out << "paintRoughness=" << m_brushSettings[i].paintRoughness << "\n";
-        out << "paintMetallic=" << m_brushSettings[i].paintMetallic << "\n";
-        out << "writeAlbedo=" << (m_brushSettings[i].writeAlbedo ? "true" : "false") << "\n";
-        out << "writeRoughness=" << (m_brushSettings[i].writeRoughness ? "true" : "false") << "\n";
-        out << "writeMetalness=" << (m_brushSettings[i].writeMetalness ? "true" : "false") << "\n";
-        out << "maskSharpenBlurIterations=" << m_brushSettings[i].maskSharpenBlurIterations << "\n";
-        out << "maskSharpenFactor=" << m_brushSettings[i].maskSharpenFactor << "\n";
-        out << "maskExtractThickness=" << m_brushSettings[i].maskExtractThickness << "\n";
-        out << "blurMaskedOnly=" << (m_brushSettings[i].blurMaskedOnly ? "true" : "false") << "\n";
-        out << "stampType=" << m_brushSettings[i].stampType << "\n";
-        out << "stampSides=" << m_brushSettings[i].stampSides << "\n";
-        out << "stampInnerRatio=" << m_brushSettings[i].stampInnerRatio << "\n";
-        out << "stampAngle=" << m_brushSettings[i].stampAngle << "\n";
-        out << "stampBlur=" << m_brushSettings[i].stampBlur << "\n";
-        out << "stampLockRotation=" << (m_brushSettings[i].stampLockRotation ? "true" : "false") << "\n";
-        out << "stampUseTilt=" << (m_brushSettings[i].stampUseTilt ? "true" : "false") << "\n\n";
+        std::string sec = "Brush_" + std::to_string(i);
+        ini.setFloat(sec, "radius", m_brushSettings[i].radius);
+        ini.setFloat(sec, "intensity", m_brushSettings[i].intensity);
+        ini.setFloat(sec, "focalShift", m_brushSettings[i].focalShift);
+        ini.setBool(sec, "focalShiftFalloff", m_brushSettings[i].focalShiftFalloff);
+        ini.setFloat(sec, "hardness", m_brushSettings[i].hardness);
+        ini.setFloat(sec, "spacing", m_brushSettings[i].spacing);
+        ini.setBool(sec, "negative", m_brushSettings[i].negative);
+        ini.setBool(sec, "culling", m_brushSettings[i].culling);
+        ini.setBool(sec, "accumulate", m_brushSettings[i].accumulate);
+        ini.setBool(sec, "lockPosition", m_brushSettings[i].lockPosition);
+        ini.setInt(sec, "idAlpha", m_brushSettings[i].idAlpha);
+        ini.setBool(sec, "clay", m_brushSettings[i].clay);
+        ini.setBool(sec, "tangent", m_brushSettings[i].tangent);
+        ini.setBool(sec, "topoCheck", m_brushSettings[i].topoCheck);
+        ini.setFloat(sec, "elasticity", m_brushSettings[i].elasticity);
+        
+        glm::vec3 col = m_brushSettings[i].paintColor;
+        ini.set(sec, "paintColor", std::to_string(col.r) + " " + std::to_string(col.g) + " " + std::to_string(col.b));
+        ini.setFloat(sec, "paintRoughness", m_brushSettings[i].paintRoughness);
+        ini.setFloat(sec, "paintMetallic", m_brushSettings[i].paintMetallic);
+        ini.setBool(sec, "writeAlbedo", m_brushSettings[i].writeAlbedo);
+        ini.setBool(sec, "writeRoughness", m_brushSettings[i].writeRoughness);
+        ini.setBool(sec, "writeMetalness", m_brushSettings[i].writeMetalness);
+        ini.setInt(sec, "maskSharpenBlurIterations", m_brushSettings[i].maskSharpenBlurIterations);
+        ini.setFloat(sec, "maskSharpenFactor", m_brushSettings[i].maskSharpenFactor);
+        ini.setFloat(sec, "maskExtractThickness", m_brushSettings[i].maskExtractThickness);
+        ini.setBool(sec, "blurMaskedOnly", m_brushSettings[i].blurMaskedOnly);
+        ini.setInt(sec, "stampType", m_brushSettings[i].stampType);
+        ini.setInt(sec, "stampSides", m_brushSettings[i].stampSides);
+        ini.setFloat(sec, "stampInnerRatio", m_brushSettings[i].stampInnerRatio);
+        ini.setFloat(sec, "stampAngle", m_brushSettings[i].stampAngle);
+        ini.setFloat(sec, "stampBlur", m_brushSettings[i].stampBlur);
+        ini.setBool(sec, "stampLockRotation", m_brushSettings[i].stampLockRotation);
+        ini.setBool(sec, "stampUseTilt", m_brushSettings[i].stampUseTilt);
     }
 
-    out << "[General]\n";
-    out << "dividerDivisions=" << m_dividerDivisions << "\n";
-    out << "measureUseDistanceThickness=" << (m_measureUseDistanceThickness ? "true" : "false") << "\n";
+    std::string genSec = "General";
+    ini.setInt(genSec, "dividerDivisions", m_dividerDivisions);
+    ini.setBool(genSec, "measureUseDistanceThickness", m_measureUseDistanceThickness);
 #ifdef _WIN32
-    out << "usePressure=" << (g_tablet.isPressureEnabled() ? "true" : "false") << "\n";
-    out << "usePressureSize=" << (g_tablet.isPressureSizeEnabled() ? "true" : "false") << "\n";
-    out << "usePressureCursor=" << (g_tablet.isPressureCursorEnabled() ? "true" : "false") << "\n";
-    out << "useTilt=" << (g_tablet.isTiltEnabled() ? "true" : "false") << "\n";
-    out << "pressureCurve=" << g_tablet.getPressureCurveString() << "\n";
-    out << "pressureCurveType=" << (int)g_tablet.getInterpolationType() << "\n";
+    ini.setBool(genSec, "usePressure", g_tablet.isPressureEnabled());
+    ini.setBool(genSec, "usePressureSize", g_tablet.isPressureSizeEnabled());
+    ini.setBool(genSec, "usePressureCursor", g_tablet.isPressureCursorEnabled());
+    ini.setBool(genSec, "useTilt", g_tablet.isTiltEnabled());
+    ini.set(genSec, "pressureCurve", g_tablet.getPressureCurveString());
+    ini.setInt(genSec, "pressureCurveType", (int)g_tablet.getInterpolationType());
 #endif
-    out << "\n[Symmetry]\n";
-    out << "useSym=" << (m_useSym ? "true" : "false") << "\n";
-    out << "symX=" << (m_symX ? "true" : "false") << "\n";
-    out << "symY=" << (m_symY ? "true" : "false") << "\n";
-    out << "symZ=" << (m_symZ ? "true" : "false") << "\n";
-    out << "symmetryMode=" << (m_symmetryMode == SymmetryMode::World ? "world" : "local") << "\n\n";
 
-    std::cout << "Successfully saved brush settings to: " << filepath << std::endl;
+    std::string symSec = "Symmetry";
+    ini.setBool(symSec, "useSym", m_useSym);
+    ini.setBool(symSec, "symX", m_symX);
+    ini.setBool(symSec, "symY", m_symY);
+    ini.setBool(symSec, "symZ", m_symZ);
+    ini.set(symSec, "symmetryMode", (m_symmetryMode == SymmetryMode::World ? "world" : "local"));
+
     return true;
 }
 
-bool SculptManager::loadSettings(const std::string& filepath) {
-    std::ifstream in(filepath);
-    if (!in.is_open()) {
-        std::cerr << "Failed to open brush settings file for reading: " << filepath << std::endl;
-        return false;
-    }
-
-    std::string line;
-    std::string currentSection = "";
-    std::unordered_map<std::string, std::unordered_map<std::string, std::string>> sections;
-
-    while (std::getline(in, line)) {
-        line = trim(line);
-        if (line.empty() || line[0] == ';' || line[0] == '#') {
-            continue;
-        }
-
-        if (line[0] == '[' && line[line.size() - 1] == ']') {
-            currentSection = trim(line.substr(1, line.size() - 2));
-            continue;
-        }
-
-        size_t eqPos = line.find('=');
-        if (eqPos != std::string::npos && !currentSection.empty()) {
-            std::string key = trim(line.substr(0, eqPos));
-            std::string val = trim(line.substr(eqPos + 1));
-            sections[currentSection][key] = val;
-        }
-    }
-
+bool SculptManager::loadSettings(const IniFile& ini) {
     for (int i = 0; i < BRUSH_COUNT; ++i) {
-        std::string sectionName = "Brush_" + std::to_string(i);
-        auto itSection = sections.find(sectionName);
-        if (itSection != sections.end()) {
-            const auto& params = itSection->second;
+        std::string sec = "Brush_" + std::to_string(i);
+        if (!ini.hasSection(sec)) continue;
 
-            auto getParam = [&](const std::string& key, auto& outVal, auto converter) {
-                auto it = params.find(key);
-                if (it != params.end()) {
-                    outVal = converter(it->second);
-                }
-            };
+        if (ini.hasKey(sec, "radius")) m_brushSettings[i].radius = ini.getFloat(sec, "radius", 50.0f);
+        if (ini.hasKey(sec, "intensity")) m_brushSettings[i].intensity = ini.getFloat(sec, "intensity", 0.5f);
+        if (ini.hasKey(sec, "focalShift")) m_brushSettings[i].focalShift = ini.getFloat(sec, "focalShift", 0.0f);
+        if (ini.hasKey(sec, "focalShiftFalloff")) m_brushSettings[i].focalShiftFalloff = ini.getBool(sec, "focalShiftFalloff");
+        if (ini.hasKey(sec, "hardness")) m_brushSettings[i].hardness = ini.getFloat(sec, "hardness", 0.5f);
+        if (ini.hasKey(sec, "spacing")) m_brushSettings[i].spacing = ini.getFloat(sec, "spacing", 0.15f);
+        if (ini.hasKey(sec, "negative")) m_brushSettings[i].negative = ini.getBool(sec, "negative");
+        if (ini.hasKey(sec, "culling")) m_brushSettings[i].culling = ini.getBool(sec, "culling");
+        if (ini.hasKey(sec, "accumulate")) m_brushSettings[i].accumulate = ini.getBool(sec, "accumulate");
+        if (ini.hasKey(sec, "lockPosition")) m_brushSettings[i].lockPosition = ini.getBool(sec, "lockPosition");
+        if (ini.hasKey(sec, "idAlpha")) m_brushSettings[i].idAlpha = ini.getInt(sec, "idAlpha", 0);
+        if (ini.hasKey(sec, "clay")) m_brushSettings[i].clay = ini.getBool(sec, "clay");
+        if (ini.hasKey(sec, "tangent")) m_brushSettings[i].tangent = ini.getBool(sec, "tangent");
+        if (ini.hasKey(sec, "topoCheck")) m_brushSettings[i].topoCheck = ini.getBool(sec, "topoCheck");
+        if (ini.hasKey(sec, "elasticity")) m_brushSettings[i].elasticity = ini.getFloat(sec, "elasticity", 1.0f);
 
-            auto getBoolParam = [&](const std::string& key, bool& outVal) {
-                auto it = params.find(key);
-                if (it != params.end()) {
-                    outVal = (it->second == "true" || it->second == "1");
-                }
-            };
-
-            getParam("radius", m_brushSettings[i].radius, [](const std::string& s) { return safe_stof(s, 50.0f); });
-            getParam("intensity", m_brushSettings[i].intensity, [](const std::string& s) { return safe_stof(s, 0.5f); });
-            getParam("focalShift", m_brushSettings[i].focalShift, [](const std::string& s) { return safe_stof(s, 0.0f); });
-            getBoolParam("focalShiftFalloff", m_brushSettings[i].focalShiftFalloff);
-            getParam("hardness", m_brushSettings[i].hardness, [](const std::string& s) { return safe_stof(s, 0.5f); });
-            getParam("spacing", m_brushSettings[i].spacing, [](const std::string& s) { return safe_stof(s, 0.15f); });
-            getBoolParam("negative", m_brushSettings[i].negative);
-            getBoolParam("culling", m_brushSettings[i].culling);
-            getBoolParam("accumulate", m_brushSettings[i].accumulate);
-            getBoolParam("lockPosition", m_brushSettings[i].lockPosition);
-            getParam("idAlpha", m_brushSettings[i].idAlpha, [](const std::string& s) { return safe_stoi(s, 0); });
-            getBoolParam("clay", m_brushSettings[i].clay);
-            getBoolParam("tangent", m_brushSettings[i].tangent);
-            getBoolParam("topoCheck", m_brushSettings[i].topoCheck);
-            getParam("elasticity", m_brushSettings[i].elasticity, [](const std::string& s) { return safe_stof(s, 1.0f); });
-
-            auto itColor = params.find("paintColor");
-            if (itColor != params.end()) {
-                std::stringstream ss(itColor->second);
-                float r, g, b;
-                if (ss >> r >> g >> b) {
-                    m_brushSettings[i].paintColor = glm::vec3(r, g, b);
-                }
+        if (ini.hasKey(sec, "paintColor")) {
+            std::stringstream ss(ini.get(sec, "paintColor"));
+            float r, g, b;
+            if (ss >> r >> g >> b) {
+                m_brushSettings[i].paintColor = glm::vec3(r, g, b);
             }
-
-            getParam("paintRoughness", m_brushSettings[i].paintRoughness, [](const std::string& s) { return safe_stof(s, 0.5f); });
-            getParam("paintMetallic", m_brushSettings[i].paintMetallic, [](const std::string& s) { return safe_stof(s, 0.0f); });
-
-            getBoolParam("writeAlbedo", m_brushSettings[i].writeAlbedo);
-            getBoolParam("writeRoughness", m_brushSettings[i].writeRoughness);
-            getBoolParam("writeMetalness", m_brushSettings[i].writeMetalness);
-
-            getParam("maskSharpenBlurIterations", m_brushSettings[i].maskSharpenBlurIterations, [](const std::string& s) { return safe_stoi(s, 4); });
-            getParam("maskSharpenFactor", m_brushSettings[i].maskSharpenFactor, [](const std::string& s) { return safe_stof(s, 1.0f); });
-            getParam("maskExtractThickness", m_brushSettings[i].maskExtractThickness, [](const std::string& s) { return safe_stof(s, 0.05f); });
-            getBoolParam("blurMaskedOnly", m_brushSettings[i].blurMaskedOnly);
-            getParam("stampType", m_brushSettings[i].stampType, [](const std::string& s) { return safe_stoi(s, 0); });
-            getParam("stampSides", m_brushSettings[i].stampSides, [](const std::string& s) { return safe_stoi(s, 5); });
-            getParam("stampInnerRatio", m_brushSettings[i].stampInnerRatio, [](const std::string& s) { return safe_stof(s, 0.5f); });
-            getParam("stampAngle", m_brushSettings[i].stampAngle, [](const std::string& s) { return safe_stof(s, 0.0f); });
-            getParam("stampBlur", m_brushSettings[i].stampBlur, [](const std::string& s) { return safe_stof(s, 0.0f); });
-            getBoolParam("stampLockRotation", m_brushSettings[i].stampLockRotation);
-            getBoolParam("stampUseTilt", m_brushSettings[i].stampUseTilt);
         }
+
+        if (ini.hasKey(sec, "paintRoughness")) m_brushSettings[i].paintRoughness = ini.getFloat(sec, "paintRoughness", 0.5f);
+        if (ini.hasKey(sec, "paintMetallic")) m_brushSettings[i].paintMetallic = ini.getFloat(sec, "paintMetallic", 0.0f);
+
+        if (ini.hasKey(sec, "writeAlbedo")) m_brushSettings[i].writeAlbedo = ini.getBool(sec, "writeAlbedo");
+        if (ini.hasKey(sec, "writeRoughness")) m_brushSettings[i].writeRoughness = ini.getBool(sec, "writeRoughness");
+        if (ini.hasKey(sec, "writeMetalness")) m_brushSettings[i].writeMetalness = ini.getBool(sec, "writeMetalness");
+
+        if (ini.hasKey(sec, "maskSharpenBlurIterations")) m_brushSettings[i].maskSharpenBlurIterations = ini.getInt(sec, "maskSharpenBlurIterations", 4);
+        if (ini.hasKey(sec, "maskSharpenFactor")) m_brushSettings[i].maskSharpenFactor = ini.getFloat(sec, "maskSharpenFactor", 1.0f);
+        if (ini.hasKey(sec, "maskExtractThickness")) m_brushSettings[i].maskExtractThickness = ini.getFloat(sec, "maskExtractThickness", 0.05f);
+        if (ini.hasKey(sec, "blurMaskedOnly")) m_brushSettings[i].blurMaskedOnly = ini.getBool(sec, "blurMaskedOnly");
+        if (ini.hasKey(sec, "stampType")) m_brushSettings[i].stampType = ini.getInt(sec, "stampType", 0);
+        if (ini.hasKey(sec, "stampSides")) m_brushSettings[i].stampSides = ini.getInt(sec, "stampSides", 5);
+        if (ini.hasKey(sec, "stampInnerRatio")) m_brushSettings[i].stampInnerRatio = ini.getFloat(sec, "stampInnerRatio", 0.5f);
+        if (ini.hasKey(sec, "stampAngle")) m_brushSettings[i].stampAngle = ini.getFloat(sec, "stampAngle", 0.0f);
+        if (ini.hasKey(sec, "stampBlur")) m_brushSettings[i].stampBlur = ini.getFloat(sec, "stampBlur", 0.0f);
+        if (ini.hasKey(sec, "stampLockRotation")) m_brushSettings[i].stampLockRotation = ini.getBool(sec, "stampLockRotation");
+        if (ini.hasKey(sec, "stampUseTilt")) m_brushSettings[i].stampUseTilt = ini.getBool(sec, "stampUseTilt");
     }
 
-    auto itGeneral = sections.find("General");
-    if (itGeneral != sections.end()) {
-        const auto& params = itGeneral->second;
-        auto it = params.find("dividerDivisions");
-        if (it != params.end()) {
-            m_dividerDivisions = std::stoi(it->second);
-        }
-        it = params.find("measureUseDistanceThickness");
-        if (it != params.end()) {
-            m_measureUseDistanceThickness = (it->second == "true" || it->second == "1");
-        }
+    std::string genSec = "General";
+    if (ini.hasSection(genSec)) {
+        if (ini.hasKey(genSec, "dividerDivisions")) m_dividerDivisions = ini.getInt(genSec, "dividerDivisions", 3);
+        if (ini.hasKey(genSec, "measureUseDistanceThickness")) m_measureUseDistanceThickness = ini.getBool(genSec, "measureUseDistanceThickness");
 #ifdef _WIN32
-        it = params.find("usePressure");
-        if (it != params.end()) {
-            g_tablet.setPressureEnabled(it->second == "true" || it->second == "1");
-        }
-        it = params.find("usePressureSize");
-        if (it != params.end()) {
-            g_tablet.setPressureSizeEnabled(it->second == "true" || it->second == "1");
-        }
-        it = params.find("usePressureCursor");
-        if (it != params.end()) {
-            g_tablet.setPressureCursorEnabled(it->second == "true" || it->second == "1");
-        }
-        it = params.find("useTilt");
-        if (it != params.end()) {
-            g_tablet.setTiltEnabled(it->second == "true" || it->second == "1");
-        }
-        it = params.find("pressureCurve");
-        if (it != params.end()) {
-            g_tablet.setPressureCurveFromString(it->second);
-        }
-        it = params.find("pressureCurveType");
-        if (it != params.end()) {
-            g_tablet.setInterpolationType((TabletInput::InterpolationType)std::stoi(it->second));
-        } else {
-            it = params.find("useSplineCurve");
-            if (it != params.end()) {
-                g_tablet.setSplineEnabled(it->second == "true" || it->second == "1");
-            }
-        }
+        if (ini.hasKey(genSec, "usePressure")) g_tablet.setPressureEnabled(ini.getBool(genSec, "usePressure"));
+        if (ini.hasKey(genSec, "usePressureSize")) g_tablet.setPressureSizeEnabled(ini.getBool(genSec, "usePressureSize"));
+        if (ini.hasKey(genSec, "usePressureCursor")) g_tablet.setPressureCursorEnabled(ini.getBool(genSec, "usePressureCursor"));
+        if (ini.hasKey(genSec, "useTilt")) g_tablet.setTiltEnabled(ini.getBool(genSec, "useTilt"));
+        if (ini.hasKey(genSec, "pressureCurve")) g_tablet.setPressureCurveFromString(ini.get(genSec, "pressureCurve"));
+        if (ini.hasKey(genSec, "pressureCurveType")) g_tablet.setInterpolationType((TabletInput::InterpolationType)ini.getInt(genSec, "pressureCurveType"));
 #endif
     }
 
-    auto itSymmetry = sections.find("Symmetry");
-    if (itSymmetry != sections.end()) {
-        const auto& params = itSymmetry->second;
-        auto getBoolParam = [&](const std::string& key, bool& outVal) {
-            auto it = params.find(key);
-            if (it != params.end()) {
-                outVal = (it->second == "true" || it->second == "1");
-            }
-        };
+    std::string symSec = "Symmetry";
+    if (ini.hasSection(symSec)) {
+        if (ini.hasKey(symSec, "useSym")) m_useSym = ini.getBool(symSec, "useSym");
+        if (ini.hasKey(symSec, "symX")) m_symX = ini.getBool(symSec, "symX");
+        if (ini.hasKey(symSec, "symY")) m_symY = ini.getBool(symSec, "symY");
+        if (ini.hasKey(symSec, "symZ")) m_symZ = ini.getBool(symSec, "symZ");
 
-        getBoolParam("useSym", m_useSym);
-        getBoolParam("symX", m_symX);
-        getBoolParam("symY", m_symY);
-        getBoolParam("symZ", m_symZ);
-
-        auto itMode = params.find("symmetryMode");
-        if (itMode != params.end()) {
-            if (itMode->second == "world" || itMode->second == "1") {
+        if (ini.hasKey(symSec, "symmetryMode")) {
+            std::string modeStr = ini.get(symSec, "symmetryMode");
+            if (modeStr == "world" || modeStr == "1") {
                 m_symmetryMode = SymmetryMode::World;
             } else {
                 m_symmetryMode = SymmetryMode::Local;
@@ -3100,7 +3012,6 @@ bool SculptManager::loadSettings(const std::string& filepath) {
         }
     }
 
-    std::cout << "Successfully loaded brush settings from: " << filepath << std::endl;
     return true;
 }
 

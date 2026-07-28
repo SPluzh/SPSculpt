@@ -12,6 +12,7 @@
 #include "editing/PolyGroupTool.h"
 
 class ArmatureTool;
+class IniFile;
 
 struct BrushSettings {
     float radius = 50.0f;
@@ -161,8 +162,8 @@ public:
     void executeStroke(Scene& scene, Mesh* mesh, Camera& camera, float mouseX, float mouseY, float currentPressure);
     void cancelStroke();
 
-    bool saveSettings(const std::string& filepath);
-    bool loadSettings(const std::string& filepath);
+    bool saveSettings(IniFile& ini);
+    bool loadSettings(const IniFile& ini);
 
     bool isSculpting() const { return m_isSculpting; }
     void setRawMousePos(int x, int y) {

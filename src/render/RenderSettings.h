@@ -3,8 +3,10 @@
 
 class AngleRenderer;
 class Scene;
+class IniFile;
 
 namespace RenderSettings {
-    bool save(const std::string& filepath, const AngleRenderer& renderer, const Scene& scene);
-    bool load(const std::string& filepath, AngleRenderer& renderer, Scene& scene);
+    bool save(IniFile& ini, const AngleRenderer& renderer, const Scene& scene);
+    bool load(const IniFile& ini, AngleRenderer& renderer, Scene& scene);
 }
+

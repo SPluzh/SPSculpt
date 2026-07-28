@@ -33,6 +33,7 @@
 #include "gui/GuiManager.h"
 #include "platform/HotkeyDispatcher.h"
 #include "render/RenderSettings.h"
+#include "common/IniFile.h"
 #include "brushes/BrushPresetManager.h"
 
 #ifdef _WIN32
@@ -260,8 +261,11 @@ int main(int argc, char* argv[]) {
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
 
+    IniFile appSettings;
+    appSettings.load("app_settings.cfg");
+
     GuiManager gui;
-    gui.loadSettings("gui_settings.cfg");
+    gui.loadSettings(appSettings);
 
     int width = gui.getWindowWidth();
     int height = gui.getWindowHeight();
@@ -343,7 +347,7 @@ int main(int argc, char* argv[]) {
     renderer.setTextureId(0);
 
     // Auto-load render and shading settings if they exist
-    RenderSettings::load("render_settings.cfg", renderer, scene);
+    RenderSettings::load(appSettings, renderer, scene);
     if (scene.getSplitMode() != Scene::SplitMode::OFF) {
         int halfW = width / 2;
         scene.getCamera().onResize(halfW, height);
@@ -356,7 +360,7 @@ int main(int argc, char* argv[]) {
 
     BrushPresetManager::instance().loadDefaults();
     SculptManager sculpt;
-    sculpt.loadSettings("brush_settings.cfg");
+    sculpt.loadSettings(appSettings);
     gui.init(window, glContext);
     HotkeyDispatcher dispatcher;
 
@@ -608,10 +612,12 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Auto-save render and shading settings on exit
-    sculpt.saveSettings("brush_settings.cfg");
-    RenderSettings::save("render_settings.cfg", renderer, scene);
-    gui.saveSettings("gui_settings.cfg");
+    // Save application settings on exit
+    IniFile saveApp;
+    RenderSettings::save(saveApp, renderer, scene);
+    sculpt.saveSettings(saveApp);
+    gui.saveSettings(saveApp);
+    saveApp.save("app_settings.cfg");
 
 #ifdef _WIN32
     g_tablet.wintabClose();

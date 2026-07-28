@@ -14,6 +14,7 @@
 #include "sculpt/Remesh.h"
 
 class AngleRenderer;
+class IniFile;
 
 class GuiManager {
 public:
@@ -127,8 +128,8 @@ public:
     void shutdown();
     void render(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer, SDL_Window* window);
     
-    bool saveSettings(const std::string& filepath);
-    bool loadSettings(const std::string& filepath);
+    bool saveSettings(IniFile& ini);
+    bool loadSettings(const IniFile& ini);
     
     // Fallback for empty calls
     void render() {}

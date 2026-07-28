@@ -1,4 +1,5 @@
 #include "gui/GuiManager.h"
+#include "common/IniFile.h"
 #include "mesh/Multimesh.h"
 #include "common/Constants.h"
 #include "common/Logger.h"
@@ -465,18 +466,21 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 m_currentScenePath.clear();
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Save Render Settings")) {
-                RenderSettings::save("render_settings.cfg", renderer, scene);
+            if (ImGui::MenuItem("Save App Settings")) {
+                IniFile ini;
+                ini.load("app_settings.cfg");
+                RenderSettings::save(ini, renderer, scene);
+                sculpt.saveSettings(ini);
+                saveSettings(ini);
+                ini.save("app_settings.cfg");
             }
-            if (ImGui::MenuItem("Load Render Settings")) {
-                RenderSettings::load("render_settings.cfg", renderer, scene);
-            }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Save GUI Settings")) {
-                saveSettings("gui_settings.cfg");
-            }
-            if (ImGui::MenuItem("Load GUI Settings")) {
-                loadSettings("gui_settings.cfg");
+            if (ImGui::MenuItem("Load App Settings")) {
+                IniFile ini;
+                if (ini.load("app_settings.cfg")) {
+                    RenderSettings::load(ini, renderer, scene);
+                    sculpt.loadSettings(ini);
+                    loadSettings(ini);
+                }
             }
             ImGui::EndMenu();
         }
@@ -2209,11 +2213,21 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         ImGui::Separator();
         ImGui::Text("Settings Profile:");
         if (ImGui::Button("Save Profile", ImVec2(120, 0))) {
-            RenderSettings::save("render_settings.cfg", renderer, scene);
+            IniFile ini;
+            ini.load("app_settings.cfg");
+            RenderSettings::save(ini, renderer, scene);
+            sculpt.saveSettings(ini);
+            saveSettings(ini);
+            ini.save("app_settings.cfg");
         }
         ImGui::SameLine();
         if (ImGui::Button("Load Profile", ImVec2(120, 0))) {
-            RenderSettings::load("render_settings.cfg", renderer, scene);
+            IniFile ini;
+            if (ini.load("app_settings.cfg")) {
+                RenderSettings::load(ini, renderer, scene);
+                sculpt.loadSettings(ini);
+                loadSettings(ini);
+            }
         }
 
         ImGui::End();
@@ -3938,7 +3952,7 @@ void GuiManager::drawModalIndicatorHUD(SculptManager& sculpt, Scene& scene) {
 }
 
 
-bool GuiManager::saveSettings(const std::string& filepath) {
+bool GuiManager::saveSettings(IniFile& ini) {
     if (m_window) {
         Uint32 flags = SDL_GetWindowFlags(m_window);
         m_winMaximized = (flags & SDL_WINDOW_MAXIMIZED) != 0;
@@ -3948,193 +3962,112 @@ bool GuiManager::saveSettings(const std::string& filepath) {
         }
     }
 
-    std::ofstream out(filepath);
-    if (!out.is_open()) {
-        std::cerr << "Failed to open GUI settings file for writing: " << filepath << std::endl;
-        return false;
-    }
+    std::string panelSec = "Panels";
+    ini.setBool(panelSec, "showToolbar", m_showToolbar);
+    ini.setBool(panelSec, "showSculptingPanel", m_showSculptingPanel);
+    ini.setBool(panelSec, "showScenePanel", m_showScenePanel);
+    ini.setBool(panelSec, "showTopologyPanel", m_showTopologyPanel);
+    ini.setBool(panelSec, "showFilesPanel", m_showFilesPanel);
+    ini.setBool(panelSec, "showCameraPanel", m_showCameraPanel);
+    ini.setBool(panelSec, "showRenderingPanel", m_showRenderingPanel);
+    ini.setBool(panelSec, "showMaskingPanel", m_showMaskingPanel);
+    ini.setBool(panelSec, "showMultiresPanel", m_showMultiresPanel);
+    ini.setBool(panelSec, "showZSpheresPanel", m_showZSpheresPanel);
+    ini.setBool(panelSec, "showReferenceImagesPanel", m_showReferenceImagesPanel);
+    ini.setBool(panelSec, "showGizmoCube", m_showGizmoCube);
+    ini.setBool(panelSec, "showMeshInfo", m_showMeshInfo);
+    ini.setBool(panelSec, "showTabletDiagPanel", m_showTabletDiagPanel);
+    ini.setBool(panelSec, "showUndoDiagPanel", m_showUndoDiagPanel);
+    ini.setBool(panelSec, "showDebugLogPanel", m_showDebugLogPanel);
+    ini.setBool(panelSec, "showFloatingIsland", m_showFloatingIsland);
+    ini.setBool(panelSec, "showSymmetryPanel", m_showSymmetryPanel);
 
-    out << "[Panels]\n";
-    out << "showToolbar=" << (m_showToolbar ? "true" : "false") << "\n";
-    out << "showSculptingPanel=" << (m_showSculptingPanel ? "true" : "false") << "\n";
-    out << "showScenePanel=" << (m_showScenePanel ? "true" : "false") << "\n";
-    out << "showTopologyPanel=" << (m_showTopologyPanel ? "true" : "false") << "\n";
-    out << "showFilesPanel=" << (m_showFilesPanel ? "true" : "false") << "\n";
-    out << "showCameraPanel=" << (m_showCameraPanel ? "true" : "false") << "\n";
-    out << "showRenderingPanel=" << (m_showRenderingPanel ? "true" : "false") << "\n";
-    out << "showMaskingPanel=" << (m_showMaskingPanel ? "true" : "false") << "\n";
-    out << "showMultiresPanel=" << (m_showMultiresPanel ? "true" : "false") << "\n";
-    out << "showZSpheresPanel=" << (m_showZSpheresPanel ? "true" : "false") << "\n";
-    out << "showReferenceImagesPanel=" << (m_showReferenceImagesPanel ? "true" : "false") << "\n";
-    out << "showGizmoCube=" << (m_showGizmoCube ? "true" : "false") << "\n";
-    out << "showMeshInfo=" << (m_showMeshInfo ? "true" : "false") << "\n";
-    out << "showTabletDiagPanel=" << (m_showTabletDiagPanel ? "true" : "false") << "\n";
-    out << "showUndoDiagPanel=" << (m_showUndoDiagPanel ? "true" : "false") << "\n";
-    out << "showDebugLogPanel=" << (m_showDebugLogPanel ? "true" : "false") << "\n";
-    out << "showFloatingIsland=" << (m_showFloatingIsland ? "true" : "false") << "\n";
-    out << "showSymmetryPanel=" << (m_showSymmetryPanel ? "true" : "false") << "\n";
+    std::string genSec = "GuiGeneral";
+    ini.setFloat(genSec, "uiScaleMultiplier", m_uiScale);
+    ini.setFloat(genSec, "gizmoSize", m_gizmoSize);
+    ini.setBool(genSec, "fpsLimitEnabled", m_fpsLimitEnabled);
+    ini.setInt(genSec, "fpsLimit", m_fpsLimit);
 
-    out << "[General]\n";
-    out << "uiScaleMultiplier=" << m_uiScale << "\n";
-    out << "gizmoSize=" << m_gizmoSize << "\n";
-    out << "fpsLimitEnabled=" << (m_fpsLimitEnabled ? "true" : "false") << "\n";
-    out << "fpsLimit=" << m_fpsLimit << "\n";
+    std::string winSec = "Window";
+    ini.setInt(winSec, "width", m_winWidth);
+    ini.setInt(winSec, "height", m_winHeight);
+    ini.setInt(winSec, "x", m_winX);
+    ini.setInt(winSec, "y", m_winY);
+    ini.setBool(winSec, "maximized", m_winMaximized);
 
-    out << "[Window]\n";
-    out << "width=" << m_winWidth << "\n";
-    out << "height=" << m_winHeight << "\n";
-    out << "x=" << m_winX << "\n";
-    out << "y=" << m_winY << "\n";
-    out << "maximized=" << (m_winMaximized ? "true" : "false") << "\n";
+    std::string undoSec = "Undo";
+    ini.setFloat(undoSec, "maxMemoryGB", (float)g_undoManager.getMaxMemoryGB());
+    ini.setInt(undoSec, "maxEntries", (int)g_undoManager.getMaxEntries());
 
-    out << "[Undo]\n";
-    out << "maxMemoryGB=" << g_undoManager.getMaxMemoryGB() << "\n";
-    out << "maxEntries=" << g_undoManager.getMaxEntries() << "\n";
-
-    std::cout << "Successfully saved GUI panel settings to: " << filepath << std::endl;
     return true;
 }
 
-bool GuiManager::loadSettings(const std::string& filepath) {
-    std::ifstream in(filepath);
-    if (!in.is_open()) {
-        std::cerr << "Failed to open GUI settings file for reading: " << filepath << std::endl;
-        return false;
+bool GuiManager::loadSettings(const IniFile& ini) {
+    std::string panelSec = "Panels";
+    if (ini.hasSection(panelSec)) {
+        if (ini.hasKey(panelSec, "showToolbar")) m_showToolbar = ini.getBool(panelSec, "showToolbar");
+        if (ini.hasKey(panelSec, "showSculptingPanel")) m_showSculptingPanel = ini.getBool(panelSec, "showSculptingPanel");
+        if (ini.hasKey(panelSec, "showScenePanel")) m_showScenePanel = ini.getBool(panelSec, "showScenePanel");
+        if (ini.hasKey(panelSec, "showTopologyPanel")) m_showTopologyPanel = ini.getBool(panelSec, "showTopologyPanel");
+        if (ini.hasKey(panelSec, "showFilesPanel")) m_showFilesPanel = ini.getBool(panelSec, "showFilesPanel");
+        if (ini.hasKey(panelSec, "showCameraPanel")) m_showCameraPanel = ini.getBool(panelSec, "showCameraPanel");
+        if (ini.hasKey(panelSec, "showRenderingPanel")) m_showRenderingPanel = ini.getBool(panelSec, "showRenderingPanel");
+        if (ini.hasKey(panelSec, "showMaskingPanel")) m_showMaskingPanel = ini.getBool(panelSec, "showMaskingPanel");
+        if (ini.hasKey(panelSec, "showMultiresPanel")) m_showMultiresPanel = ini.getBool(panelSec, "showMultiresPanel");
+        if (ini.hasKey(panelSec, "showZSpheresPanel")) m_showZSpheresPanel = ini.getBool(panelSec, "showZSpheresPanel");
+        if (ini.hasKey(panelSec, "showReferenceImagesPanel")) m_showReferenceImagesPanel = ini.getBool(panelSec, "showReferenceImagesPanel");
+        if (ini.hasKey(panelSec, "showGizmoCube")) m_showGizmoCube = ini.getBool(panelSec, "showGizmoCube");
+        if (ini.hasKey(panelSec, "showMeshInfo")) m_showMeshInfo = ini.getBool(panelSec, "showMeshInfo");
+        if (ini.hasKey(panelSec, "showTabletDiagPanel")) m_showTabletDiagPanel = ini.getBool(panelSec, "showTabletDiagPanel");
+        if (ini.hasKey(panelSec, "showUndoDiagPanel")) m_showUndoDiagPanel = ini.getBool(panelSec, "showUndoDiagPanel");
+        if (ini.hasKey(panelSec, "showDebugLogPanel")) m_showDebugLogPanel = ini.getBool(panelSec, "showDebugLogPanel");
+        if (ini.hasKey(panelSec, "showFloatingIsland")) m_showFloatingIsland = ini.getBool(panelSec, "showFloatingIsland");
+        if (ini.hasKey(panelSec, "showSymmetryPanel")) m_showSymmetryPanel = ini.getBool(panelSec, "showSymmetryPanel");
     }
 
-    std::string line;
-    std::string currentSection = "";
-    std::unordered_map<std::string, std::unordered_map<std::string, std::string>> sections;
-
-    auto trimLocal = [](const std::string& str) {
-        size_t first = str.find_first_not_of(" \t\r\n");
-        if (first == std::string::npos) return std::string("");
-        size_t last = str.find_last_not_of(" \t\r\n");
-        return str.substr(first, (last - first + 1));
-    };
-
-    while (std::getline(in, line)) {
-        line = trimLocal(line);
-        if (line.empty() || line[0] == ';' || line[0] == '#') {
-            continue;
-        }
-
-        if (line[0] == '[' && line[line.size() - 1] == ']') {
-            currentSection = trimLocal(line.substr(1, line.size() - 2));
-            continue;
-        }
-
-        size_t eqPos = line.find('=');
-        if (eqPos != std::string::npos && !currentSection.empty()) {
-            std::string key = trimLocal(line.substr(0, eqPos));
-            std::string val = trimLocal(line.substr(eqPos + 1));
-            sections[currentSection][key] = val;
-        }
-    }
-
-    auto itSection = sections.find("Panels");
-    if (itSection != sections.end()) {
-        const auto& params = itSection->second;
-        auto getBoolParam = [&](const std::string& key, bool& outVal) {
-            auto it = params.find(key);
-            if (it != params.end()) {
-                outVal = (it->second == "true" || it->second == "1");
-            }
-        };
-
-        getBoolParam("showToolbar", m_showToolbar);
-        getBoolParam("showSculptingPanel", m_showSculptingPanel);
-        getBoolParam("showScenePanel", m_showScenePanel);
-        getBoolParam("showTopologyPanel", m_showTopologyPanel);
-        getBoolParam("showFilesPanel", m_showFilesPanel);
-        getBoolParam("showCameraPanel", m_showCameraPanel);
-        getBoolParam("showRenderingPanel", m_showRenderingPanel);
-        getBoolParam("showMaskingPanel", m_showMaskingPanel);
-        getBoolParam("showMultiresPanel", m_showMultiresPanel);
-        getBoolParam("showZSpheresPanel", m_showZSpheresPanel);
-        getBoolParam("showReferenceImagesPanel", m_showReferenceImagesPanel);
-        getBoolParam("showGizmoCube", m_showGizmoCube);
-        getBoolParam("showMeshInfo", m_showMeshInfo);
-        getBoolParam("showTabletDiagPanel", m_showTabletDiagPanel);
-        getBoolParam("showUndoDiagPanel", m_showUndoDiagPanel);
-        getBoolParam("showDebugLogPanel", m_showDebugLogPanel);
-        getBoolParam("showFloatingIsland", m_showFloatingIsland);
-        getBoolParam("showSymmetryPanel", m_showSymmetryPanel);
-    }
-
-    auto itGen = sections.find("General");
-    if (itGen != sections.end()) {
-        const auto& params = itGen->second;
-        auto it = params.find("uiScaleMultiplier");
-        if (it != params.end()) {
-            m_uiScale = std::stof(it->second);
+    std::string genSec = "GuiGeneral";
+    if (!ini.hasSection(genSec)) genSec = "General";
+    if (ini.hasSection(genSec)) {
+        if (ini.hasKey(genSec, "uiScaleMultiplier")) {
+            m_uiScale = ini.getFloat(genSec, "uiScaleMultiplier", 1.0f);
             if (m_uiScale < 0.5f) m_uiScale = 0.5f;
             if (m_uiScale > 2.5f) m_uiScale = 2.5f;
         }
-        auto itGizmo = params.find("gizmoSize");
-        if (itGizmo != params.end()) {
-            m_gizmoSize = std::stof(itGizmo->second);
+        if (ini.hasKey(genSec, "gizmoSize")) {
+            m_gizmoSize = ini.getFloat(genSec, "gizmoSize", 0.10f);
             if (m_gizmoSize < 0.04f) m_gizmoSize = 0.04f;
             if (m_gizmoSize > 0.25f) m_gizmoSize = 0.25f;
         }
-        auto getBoolParamGen = [&](const std::string& key, bool& outVal) {
-            auto itb = params.find(key);
-            if (itb != params.end()) outVal = (itb->second == "true" || itb->second == "1");
-        };
-        getBoolParamGen("fpsLimitEnabled", m_fpsLimitEnabled);
-        auto itFps = params.find("fpsLimit");
-        if (itFps != params.end()) {
-            try { m_fpsLimit = std::stoi(itFps->second); } catch (...) {}
+        if (ini.hasKey(genSec, "fpsLimitEnabled")) m_fpsLimitEnabled = ini.getBool(genSec, "fpsLimitEnabled");
+        if (ini.hasKey(genSec, "fpsLimit")) {
+            m_fpsLimit = ini.getInt(genSec, "fpsLimit", 60);
             if (m_fpsLimit < 15) m_fpsLimit = 15;
             if (m_fpsLimit > 240) m_fpsLimit = 240;
         }
     }
 
-    auto itWin = sections.find("Window");
-    if (itWin != sections.end()) {
-        const auto& params = itWin->second;
-        auto getIntParam = [&](const std::string& key, int& outVal) {
-            auto it = params.find(key);
-            if (it != params.end()) {
-                try {
-                    outVal = std::stoi(it->second);
-                } catch (...) {}
-            }
-        };
-        auto getBoolParam = [&](const std::string& key, bool& outVal) {
-            auto it = params.find(key);
-            if (it != params.end()) {
-                outVal = (it->second == "true" || it->second == "1");
-            }
-        };
-
-        getIntParam("width", m_winWidth);
-        getIntParam("height", m_winHeight);
-        getIntParam("x", m_winX);
-        getIntParam("y", m_winY);
-        getBoolParam("maximized", m_winMaximized);
+    std::string winSec = "Window";
+    if (ini.hasSection(winSec)) {
+        if (ini.hasKey(winSec, "width")) m_winWidth = ini.getInt(winSec, "width", 1280);
+        if (ini.hasKey(winSec, "height")) m_winHeight = ini.getInt(winSec, "height", 720);
+        if (ini.hasKey(winSec, "x")) m_winX = ini.getInt(winSec, "x", SDL_WINDOWPOS_CENTERED);
+        if (ini.hasKey(winSec, "y")) m_winY = ini.getInt(winSec, "y", SDL_WINDOWPOS_CENTERED);
+        if (ini.hasKey(winSec, "maximized")) m_winMaximized = ini.getBool(winSec, "maximized");
     }
 
-    auto itUndo = sections.find("Undo");
-    if (itUndo != sections.end()) {
-        const auto& params = itUndo->second;
-        auto itMemGB = params.find("maxMemoryGB");
-        if (itMemGB != params.end()) {
-            try {
-                double gb = std::stod(itMemGB->second);
-                if (gb >= 0.1 && gb <= 128.0) {
-                    g_undoManager.setMaxMemoryGB(gb);
-                }
-            } catch (...) {}
+    std::string undoSec = "Undo";
+    if (ini.hasSection(undoSec)) {
+        if (ini.hasKey(undoSec, "maxMemoryGB")) {
+            double gb = ini.getFloat(undoSec, "maxMemoryGB", 4.0f);
+            if (gb >= 0.1 && gb <= 128.0) {
+                g_undoManager.setMaxMemoryGB(gb);
+            }
         }
-        auto itEntries = params.find("maxEntries");
-        if (itEntries != params.end()) {
-            try {
-                size_t n = std::stoull(itEntries->second);
-                if (n >= 1 && n <= 10000) {
-                    g_undoManager.setMaxEntries(n);
-                }
-            } catch (...) {}
+        if (ini.hasKey(undoSec, "maxEntries")) {
+            size_t n = ini.getInt(undoSec, "maxEntries", 100);
+            if (n >= 1 && n <= 10000) {
+                g_undoManager.setMaxEntries(n);
+            }
         }
     }
 
@@ -4142,7 +4075,6 @@ bool GuiManager::loadSettings(const std::string& filepath) {
         m_pendingUiScaleRefresh = true;
     }
 
-    std::cout << "Successfully loaded GUI panel settings from: " << filepath << std::endl;
     return true;
 }
 

@@ -60,6 +60,8 @@ include_directories(
 )
 
 add_executable(sculptsp
+    # common
+    src/common/IniFile.cpp
     # scene
     src/scene/Camera.cpp
     src/scene/Scene.cpp

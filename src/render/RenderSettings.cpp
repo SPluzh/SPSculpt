@@ -2,495 +2,233 @@
 #include "render/AngleRenderer.h"
 #include "scene/Scene.h"
 #include "mesh/Mesh.h"
-#include <fstream>
+#include "common/IniFile.h"
 #include <sstream>
 #include <iostream>
-#include <algorithm>
-#include <unordered_map>
 
-static std::string trim(const std::string& str) {
-    size_t first = str.find_first_not_of(" \t\r\n");
-    if (first == std::string::npos) return "";
-    size_t last = str.find_last_not_of(" \t\r\n");
-    return str.substr(first, (last - first + 1));
-}
+bool RenderSettings::save(IniFile& ini, const AngleRenderer& renderer, const Scene& scene) {
+    const std::string sec = "Renderer";
 
-static int safe_stoi(const std::string& str, int defaultVal = 0) {
-    try {
-        return std::stoi(str);
-    } catch (...) {
-        return defaultVal;
-    }
-}
-
-static float safe_stof(const std::string& str, float defaultVal = 0.0f) {
-    try {
-        return std::stof(str);
-    } catch (...) {
-        return defaultVal;
-    }
-}
-
-bool RenderSettings::save(const std::string& filepath, const AngleRenderer& renderer, const Scene& scene) {
-    std::ofstream out(filepath);
-    if (!out.is_open()) {
-        std::cerr << "Failed to open settings file for writing: " << filepath << std::endl;
-        return false;
-    }
-
-    out << "[Renderer]\n";
-    out << "showBackground=" << (renderer.getShowBackground() ? "true" : "false") << "\n";
-    out << "backgroundType=" << renderer.getBackgroundType() << "\n";
-    out << "bgBlur=" << renderer.getBgBlur() << "\n";
-    out << "bgFill=" << (renderer.getBgFill() ? "true" : "false") << "\n";
-    out << "bgTexturePath=" << renderer.getBgTexturePath() << "\n";
-    out << "filmic=" << (renderer.getFilmic() ? "true" : "false") << "\n";
-    out << "showContour=" << (renderer.getShowContour() ? "true" : "false") << "\n";
-    out << "showGrid=" << (renderer.getShowGrid() ? "true" : "false") << "\n";
-    out << "showSymmetryLine=" << (renderer.getShowSymmetryLine() ? "true" : "false") << "\n";
-    out << "darkenUnselected=" << (renderer.getDarkenUnselected() ? "true" : "false") << "\n";
+    ini.setBool(sec, "showBackground", renderer.getShowBackground());
+    ini.setInt(sec, "backgroundType", renderer.getBackgroundType());
+    ini.setFloat(sec, "bgBlur", renderer.getBgBlur());
+    ini.setBool(sec, "bgFill", renderer.getBgFill());
+    ini.set(sec, "bgTexturePath", renderer.getBgTexturePath());
+    ini.setBool(sec, "filmic", renderer.getFilmic());
+    ini.setBool(sec, "showContour", renderer.getShowContour());
+    ini.setBool(sec, "showGrid", renderer.getShowGrid());
+    ini.setBool(sec, "showSymmetryLine", renderer.getShowSymmetryLine());
+    ini.setBool(sec, "darkenUnselected", renderer.getDarkenUnselected());
     
     glm::vec4 cColor = renderer.getContourColor();
-    out << "contourColor=" << cColor.r << " " << cColor.g << " " << cColor.b << " " << cColor.a << "\n";
-    out << "cursorThickness=" << renderer.getCursorThickness() << "\n";
-    out << "smoothCursor=" << (renderer.getSmoothCursor() ? "true" : "false") << "\n";
-    out << "splitMode=" << static_cast<int>(scene.getSplitMode()) << "\n";
-    out << "splitShowInactiveCursor=" << (scene.getSplitShowInactiveCursor() ? "true" : "false") << "\n";
-    out << "currentEnvIdx=" << renderer.getCurrentEnvIdx() << "\n";
+    ini.set(sec, "contourColor", std::to_string(cColor.r) + " " + std::to_string(cColor.g) + " " + std::to_string(cColor.b) + " " + std::to_string(cColor.a));
+    ini.setFloat(sec, "cursorThickness", renderer.getCursorThickness());
+    ini.setBool(sec, "smoothCursor", renderer.getSmoothCursor());
+    ini.setInt(sec, "splitMode", static_cast<int>(scene.getSplitMode()));
+    ini.setBool(sec, "splitShowInactiveCursor", scene.getSplitShowInactiveCursor());
+    ini.setInt(sec, "currentEnvIdx", renderer.getCurrentEnvIdx());
     
     // Global shading display settings
-    out << "shaderType=" << renderer.getShaderType() << "\n";
-    out << "matcapIdx=" << renderer.getMatcap() << "\n";
-    out << "showWireframe=" << (renderer.getShowWireframe() ? "true" : "false") << "\n";
-    out << "flatShading=" << (renderer.getFlatShading() ? "true" : "false") << "\n";
-    out << "curvature=" << renderer.getCurvature() << "\n";
-    out << "bevelEnabled=" << (renderer.getBevelEnabled() ? "true" : "false") << "\n";
-    out << "bevelRadius=" << renderer.getBevelRadius() << "\n";
-    out << "bevelStrength=" << renderer.getBevelStrength() << "\n";
-    out << "bevelScaleWithDistance=" << (renderer.getBevelScaleWithDistance() ? "true" : "false") << "\n";
-    out << "useFxaa=" << (renderer.getUseFxaa() ? "true" : "false") << "\n";
-    out << "useSsao=" << (renderer.getUseSsao() ? "true" : "false") << "\n";
-    out << "ssaoRadius=" << renderer.getSsaoRadius() << "\n";
-    out << "ssaoBias=" << renderer.getSsaoBias() << "\n";
-    out << "ssaoIntensity=" << renderer.getSsaoIntensity() << "\n";
+    ini.setInt(sec, "shaderType", renderer.getShaderType());
+    ini.setInt(sec, "matcapIdx", renderer.getMatcap());
+    ini.setBool(sec, "showWireframe", renderer.getShowWireframe());
+    ini.setBool(sec, "flatShading", renderer.getFlatShading());
+    ini.setFloat(sec, "curvature", renderer.getCurvature());
+    ini.setBool(sec, "bevelEnabled", renderer.getBevelEnabled());
+    ini.setFloat(sec, "bevelRadius", renderer.getBevelRadius());
+    ini.setFloat(sec, "bevelStrength", renderer.getBevelStrength());
+    ini.setBool(sec, "bevelScaleWithDistance", renderer.getBevelScaleWithDistance());
+    ini.setBool(sec, "useFxaa", renderer.getUseFxaa());
+    ini.setBool(sec, "useSsao", renderer.getUseSsao());
+    ini.setFloat(sec, "ssaoRadius", renderer.getSsaoRadius());
+    ini.setFloat(sec, "ssaoBias", renderer.getSsaoBias());
+    ini.setFloat(sec, "ssaoIntensity", renderer.getSsaoIntensity());
 
     const Camera* mainCam = scene.getCameraByIndex(0);
     if (mainCam) {
-        out << "cameraMode=" << static_cast<int>(mainCam->getMode()) << "\n";
-        out << "cameraProjection=" << static_cast<int>(mainCam->getProjectionType()) << "\n";
-        out << "cameraFov=" << mainCam->getFov() << "\n";
-        out << "cameraUsePivot=" << (mainCam->getUsePivot() ? "true" : "false") << "\n";
-        out << "speedRotate=" << mainCam->getSpeedRotate() << "\n";
-        out << "speedTranslate=" << mainCam->getSpeedTranslate() << "\n";
-        out << "speedZoom=" << mainCam->getSpeedZoom() << "\n";
-        out << "speedRoll=" << mainCam->getSpeedRoll() << "\n";
+        ini.setInt(sec, "cameraMode", static_cast<int>(mainCam->getMode()));
+        ini.setInt(sec, "cameraProjection", static_cast<int>(mainCam->getProjectionType()));
+        ini.setFloat(sec, "cameraFov", mainCam->getFov());
+        ini.setBool(sec, "cameraUsePivot", mainCam->getUsePivot());
+        ini.setFloat(sec, "speedRotate", mainCam->getSpeedRotate());
+        ini.setFloat(sec, "speedTranslate", mainCam->getSpeedTranslate());
+        ini.setFloat(sec, "speedZoom", mainCam->getSpeedZoom());
+        ini.setFloat(sec, "speedRoll", mainCam->getSpeedRoll());
     }
-    out << "exposure=" << renderer.getExposure() << "\n";
-    out << "wetClayWetness=" << renderer.getWetClayWetness() << "\n";
-    out << "wetClayBumpStrength=" << renderer.getWetClayBumpStrength() << "\n";
-    out << "wetClayNoiseScale=" << renderer.getWetClayNoiseScale() << "\n";
-    out << "wetClaySSSIntensity=" << renderer.getWetClaySSSIntensity() << "\n";
-    out << "wetClaySSSColor=" << renderer.getWetClaySSSColor().r << " " << renderer.getWetClaySSSColor().g << " " << renderer.getWetClaySSSColor().b << "\n\n";
+    ini.setFloat(sec, "exposure", renderer.getExposure());
+    ini.setFloat(sec, "wetClayWetness", renderer.getWetClayWetness());
+    ini.setFloat(sec, "wetClayBumpStrength", renderer.getWetClayBumpStrength());
+    ini.setFloat(sec, "wetClayNoiseScale", renderer.getWetClayNoiseScale());
+    ini.setFloat(sec, "wetClaySSSIntensity", renderer.getWetClaySSSIntensity());
 
-    out << "useVertexColors=" << (renderer.getUseVertexColors() ? "true" : "false") << "\n";
-    out << "useVertexMaterials=" << (renderer.getUseVertexMaterials() ? "true" : "false") << "\n";
-    out << "albedo=" << renderer.getAlbedo()[0] << " " << renderer.getAlbedo()[1] << " " << renderer.getAlbedo()[2] << "\n";
-    out << "roughness=" << renderer.getRoughness() << "\n";
-    out << "metallic=" << renderer.getMetallic() << "\n";
-    out << "transmission=" << renderer.getTransmission() << "\n";
-    out << "ior=" << renderer.getIor() << "\n";
-    out << "sssColor=" << renderer.getSssColor().r << " " << renderer.getSssColor().g << " " << renderer.getSssColor().b << "\n";
-    out << "sssIntensity=" << renderer.getSssIntensity() << "\n";
-    out << "sssDepth=" << renderer.getSssDepth() << "\n";
-    out << "alpha=" << renderer.getAlpha() << "\n\n";
+    glm::vec3 wcColor = renderer.getWetClaySSSColor();
+    ini.set(sec, "wetClaySSSColor", std::to_string(wcColor.r) + " " + std::to_string(wcColor.g) + " " + std::to_string(wcColor.b));
 
-    std::cout << "Successfully saved render and shading settings to: " << filepath << std::endl;
+    ini.setBool(sec, "useVertexColors", renderer.getUseVertexColors());
+    ini.setBool(sec, "useVertexMaterials", renderer.getUseVertexMaterials());
+    
+    auto albedo = renderer.getAlbedo();
+    ini.set(sec, "albedo", std::to_string(albedo[0]) + " " + std::to_string(albedo[1]) + " " + std::to_string(albedo[2]));
+    ini.setFloat(sec, "roughness", renderer.getRoughness());
+    ini.setFloat(sec, "metallic", renderer.getMetallic());
+    ini.setFloat(sec, "transmission", renderer.getTransmission());
+    ini.setFloat(sec, "ior", renderer.getIor());
+
+    glm::vec3 sssCol = renderer.getSssColor();
+    ini.set(sec, "sssColor", std::to_string(sssCol.r) + " " + std::to_string(sssCol.g) + " " + std::to_string(sssCol.b));
+    ini.setFloat(sec, "sssIntensity", renderer.getSssIntensity());
+    ini.setFloat(sec, "sssDepth", renderer.getSssDepth());
+    ini.setFloat(sec, "alpha", renderer.getAlpha());
+
     return true;
 }
 
-bool RenderSettings::load(const std::string& filepath, AngleRenderer& renderer, Scene& scene) {
-    std::ifstream in(filepath);
-    if (!in.is_open()) {
-        std::cerr << "Failed to open settings file for reading: " << filepath << std::endl;
+bool RenderSettings::load(const IniFile& ini, AngleRenderer& renderer, Scene& scene) {
+    const std::string sec = "Renderer";
+    if (!ini.hasSection(sec)) {
         return false;
     }
 
-    std::string line;
-    std::string currentSection = "";
-    std::unordered_map<std::string, std::unordered_map<std::string, std::string>> sections;
-
-    while (std::getline(in, line)) {
-        line = trim(line);
-        if (line.empty() || line[0] == ';' || line[0] == '#') {
-            continue;
-        }
-
-        if (line[0] == '[' && line[line.size() - 1] == ']') {
-            currentSection = trim(line.substr(1, line.size() - 2));
-            continue;
-        }
-
-        size_t eqPos = line.find('=');
-        if (eqPos != std::string::npos && !currentSection.empty()) {
-            std::string key = trim(line.substr(0, eqPos));
-            std::string val = trim(line.substr(eqPos + 1));
-            sections[currentSection][key] = val;
+    if (ini.hasKey(sec, "showBackground")) renderer.setShowBackground(ini.getBool(sec, "showBackground"));
+    if (ini.hasKey(sec, "backgroundType")) renderer.setBackgroundType(ini.getInt(sec, "backgroundType"));
+    if (ini.hasKey(sec, "bgBlur")) renderer.setBgBlur(ini.getFloat(sec, "bgBlur"));
+    if (ini.hasKey(sec, "bgFill")) renderer.setBgFill(ini.getBool(sec, "bgFill"));
+    if (ini.hasKey(sec, "bgTexturePath")) renderer.loadBackgroundTexture(ini.get(sec, "bgTexturePath"));
+    if (ini.hasKey(sec, "filmic")) renderer.setFilmic(ini.getBool(sec, "filmic"));
+    if (ini.hasKey(sec, "showContour")) renderer.setShowContour(ini.getBool(sec, "showContour"));
+    if (ini.hasKey(sec, "showGrid")) renderer.setShowGrid(ini.getBool(sec, "showGrid"));
+    if (ini.hasKey(sec, "showSymmetryLine")) renderer.setShowSymmetryLine(ini.getBool(sec, "showSymmetryLine"));
+    if (ini.hasKey(sec, "darkenUnselected")) renderer.setDarkenUnselected(ini.getBool(sec, "darkenUnselected"));
+    
+    if (ini.hasKey(sec, "contourColor")) {
+        std::stringstream ss(ini.get(sec, "contourColor"));
+        float r, g, b, a;
+        if (ss >> r >> g >> b >> a) {
+            renderer.setContourColor(glm::vec4(r, g, b, a));
         }
     }
 
-    // Process [Renderer] section
-    auto rent = sections.find("Renderer");
-    if (rent != sections.end()) {
-        const auto& params = rent->second;
+    if (ini.hasKey(sec, "cursorThickness")) renderer.setCursorThickness(ini.getFloat(sec, "cursorThickness", 2.5f));
+    if (ini.hasKey(sec, "smoothCursor")) renderer.setSmoothCursor(ini.getBool(sec, "smoothCursor"));
+    if (ini.hasKey(sec, "splitMode")) scene.setSplitMode(static_cast<Scene::SplitMode>(ini.getInt(sec, "splitMode", 0)));
+    if (ini.hasKey(sec, "splitShowInactiveCursor")) scene.setSplitShowInactiveCursor(ini.getBool(sec, "splitShowInactiveCursor"));
 
-        auto it = params.find("showBackground");
-        if (it != params.end()) {
-            renderer.setShowBackground(it->second == "true" || it->second == "1");
+    if (ini.hasKey(sec, "cameraMode")) {
+        auto val = static_cast<CameraEnums::CameraMode>(ini.getInt(sec, "cameraMode", 0));
+        for (int cIdx = 0; cIdx < 2; ++cIdx) {
+            Camera* cam = scene.getCameraByIndex(cIdx);
+            if (cam) cam->setMode(val);
         }
-        it = params.find("backgroundType");
-        if (it != params.end()) {
-            renderer.setBackgroundType(safe_stoi(it->second));
+    }
+    if (ini.hasKey(sec, "cameraProjection")) {
+        auto val = static_cast<CameraEnums::Projection>(ini.getInt(sec, "cameraProjection", 0));
+        for (int cIdx = 0; cIdx < 2; ++cIdx) {
+            Camera* cam = scene.getCameraByIndex(cIdx);
+            if (cam) cam->setProjectionType(val);
         }
-         it = params.find("bgBlur");
-        if (it != params.end()) {
-            renderer.setBgBlur(safe_stof(it->second));
+    }
+    if (ini.hasKey(sec, "cameraFov")) {
+        float val = ini.getFloat(sec, "cameraFov", 45.0f);
+        for (int cIdx = 0; cIdx < 2; ++cIdx) {
+            Camera* cam = scene.getCameraByIndex(cIdx);
+            if (cam) cam->setFov(val);
         }
-        it = params.find("bgFill");
-        if (it != params.end()) {
-            renderer.setBgFill(it->second == "true" || it->second == "1");
-        }
-        it = params.find("bgTexturePath");
-        if (it != params.end()) {
-            renderer.loadBackgroundTexture(it->second);
-        }
-        it = params.find("filmic");
-        if (it != params.end()) {
-            renderer.setFilmic(it->second == "true" || it->second == "1");
-        }
-        it = params.find("showContour");
-        if (it != params.end()) {
-            renderer.setShowContour(it->second == "true" || it->second == "1");
-        }
-        it = params.find("showGrid");
-        if (it != params.end()) {
-            renderer.setShowGrid(it->second == "true" || it->second == "1");
-        }
-        it = params.find("showSymmetryLine");
-        if (it != params.end()) {
-            renderer.setShowSymmetryLine(it->second == "true" || it->second == "1");
-        }
-        it = params.find("darkenUnselected");
-        if (it != params.end()) {
-            renderer.setDarkenUnselected(it->second == "true" || it->second == "1");
-        }
-        it = params.find("contourColor");
-        if (it != params.end()) {
-            std::stringstream ss(it->second);
-            float r, g, b, a;
-            if (ss >> r >> g >> b >> a) {
-                renderer.setContourColor(glm::vec4(r, g, b, a));
-            }
-        }
-        it = params.find("cursorThickness");
-        if (it != params.end()) {
-            renderer.setCursorThickness(safe_stof(it->second, 2.5f));
-        }
-        it = params.find("smoothCursor");
-        if (it != params.end()) {
-            renderer.setSmoothCursor(it->second == "true" || it->second == "1");
-        }
-        it = params.find("splitMode");
-        if (it != params.end()) {
-            scene.setSplitMode(static_cast<Scene::SplitMode>(safe_stoi(it->second, 0)));
-        }
-        it = params.find("splitShowInactiveCursor");
-        if (it != params.end()) {
-            scene.setSplitShowInactiveCursor(it->second == "true" || it->second == "1");
-        }
-
-        it = params.find("cameraMode");
-        if (it != params.end()) {
-            auto val = static_cast<CameraEnums::CameraMode>(safe_stoi(it->second, 0));
-            for (int cIdx = 0; cIdx < 2; ++cIdx) {
-                Camera* cam = scene.getCameraByIndex(cIdx);
-                if (cam) cam->setMode(val);
-            }
-        }
-        it = params.find("cameraProjection");
-        if (it != params.end()) {
-            auto val = static_cast<CameraEnums::Projection>(safe_stoi(it->second, 0));
-            for (int cIdx = 0; cIdx < 2; ++cIdx) {
-                Camera* cam = scene.getCameraByIndex(cIdx);
-                if (cam) cam->setProjectionType(val);
-            }
-        }
-        it = params.find("cameraFov");
-        if (it != params.end()) {
-            float val = safe_stof(it->second, 45.0f);
-            for (int cIdx = 0; cIdx < 2; ++cIdx) {
-                Camera* cam = scene.getCameraByIndex(cIdx);
-                if (cam) cam->setFov(val);
-            }
-        }
-        it = params.find("cameraUsePivot");
-        if (it != params.end()) {
-            bool val = (it->second == "true" || it->second == "1");
-            for (int cIdx = 0; cIdx < 2; ++cIdx) {
-                Camera* cam = scene.getCameraByIndex(cIdx);
-                if (cam) cam->setUsePivot(val);
-            }
-        }
-
-        it = params.find("speedRotate");
-        if (it != params.end()) {
-            float val = safe_stof(it->second, 1.0f);
-            for (int cIdx = 0; cIdx < 2; ++cIdx) {
-                Camera* cam = scene.getCameraByIndex(cIdx);
-                if (cam) cam->setSpeedRotate(val);
-            }
-        }
-        it = params.find("speedTranslate");
-        if (it != params.end()) {
-            float val = safe_stof(it->second, 1.0f);
-            for (int cIdx = 0; cIdx < 2; ++cIdx) {
-                Camera* cam = scene.getCameraByIndex(cIdx);
-                if (cam) cam->setSpeedTranslate(val);
-            }
-        }
-        it = params.find("speedZoom");
-        if (it != params.end()) {
-            float val = safe_stof(it->second, 1.0f);
-            for (int cIdx = 0; cIdx < 2; ++cIdx) {
-                Camera* cam = scene.getCameraByIndex(cIdx);
-                if (cam) cam->setSpeedZoom(val);
-            }
-        }
-        it = params.find("speedRoll");
-        if (it != params.end()) {
-            float val = safe_stof(it->second, 1.0f);
-            for (int cIdx = 0; cIdx < 2; ++cIdx) {
-                Camera* cam = scene.getCameraByIndex(cIdx);
-                if (cam) cam->setSpeedRoll(val);
-            }
-        }
-        
-        // Load environment preset first (so it resets exposure and SH)
-        int envIdx = -1;
-        it = params.find("currentEnvIdx");
-        if (it != params.end()) {
-            envIdx = safe_stoi(it->second);
-            renderer.setEnvironmentPreset(envIdx);
-        }
-
-        // Apply custom exposure afterward, in case they tweaked it
-        it = params.find("exposure");
-        if (it != params.end()) {
-            renderer.setExposure(safe_stof(it->second));
-        }
-
-        it = params.find("wetClayWetness");
-        if (it != params.end()) {
-            renderer.setWetClayWetness(safe_stof(it->second, 0.6f));
-        }
-        it = params.find("wetClayBumpStrength");
-        if (it != params.end()) {
-            renderer.setWetClayBumpStrength(safe_stof(it->second, 0.4f));
-        }
-        it = params.find("wetClayNoiseScale");
-        if (it != params.end()) {
-            renderer.setWetClayNoiseScale(safe_stof(it->second, 8.0f));
-        }
-        it = params.find("wetClaySSSIntensity");
-        if (it != params.end()) {
-            renderer.setWetClaySSSIntensity(safe_stof(it->second, 0.25f));
-        }
-        it = params.find("wetClaySSSColor");
-        if (it != params.end()) {
-            std::stringstream ss(it->second);
-            float r, g, b;
-            if (ss >> r >> g >> b) {
-                renderer.setWetClaySSSColor(glm::vec3(r, g, b));
-            }
-        }
-
-        // Global shading display settings
-        it = params.find("shaderType");
-        if (it != params.end()) {
-            renderer.setShaderType(safe_stoi(it->second, 0));
-        }
-        it = params.find("matcapIdx");
-        if (it != params.end()) {
-            renderer.setMatcap(safe_stoi(it->second, 0));
-        }
-        it = params.find("showWireframe");
-        if (it != params.end()) {
-            renderer.setShowWireframe(it->second == "true" || it->second == "1");
-        }
-        it = params.find("flatShading");
-        if (it != params.end()) {
-            renderer.setFlatShading(it->second == "true" || it->second == "1");
-        }
-        it = params.find("curvature");
-        if (it != params.end()) {
-            renderer.setCurvature(safe_stof(it->second, 0.0f));
-        }
-        it = params.find("bevelEnabled");
-        if (it != params.end()) {
-            renderer.setBevelEnabled(it->second == "true" || it->second == "1");
-        }
-        it = params.find("bevelRadius");
-        if (it != params.end()) {
-            renderer.setBevelRadius(safe_stof(it->second, 4.0f));
-        }
-        it = params.find("bevelStrength");
-        if (it != params.end()) {
-            renderer.setBevelStrength(safe_stof(it->second, 1.5f));
-        }
-        it = params.find("bevelScaleWithDistance");
-        if (it != params.end()) {
-            renderer.setBevelScaleWithDistance(it->second == "true" || it->second == "1");
-        }
-        it = params.find("useFxaa");
-        if (it != params.end()) {
-            renderer.setUseFxaa(it->second == "true" || it->second == "1");
-        }
-        it = params.find("useSsao");
-        if (it != params.end()) {
-            renderer.setUseSsao(it->second == "true" || it->second == "1");
-        }
-        it = params.find("ssaoRadius");
-        if (it != params.end()) {
-            renderer.setSsaoRadius(safe_stof(it->second, 0.5f));
-        }
-        it = params.find("ssaoBias");
-        if (it != params.end()) {
-            renderer.setSsaoBias(safe_stof(it->second, 0.025f));
-        }
-        it = params.find("ssaoIntensity");
-        if (it != params.end()) {
-            renderer.setSsaoIntensity(safe_stof(it->second, 1.0f));
-        }
-
-        it = params.find("useVertexColors");
-        if (it != params.end()) {
-            renderer.setUseVertexColors(it->second == "true" || it->second == "1");
-        }
-        it = params.find("useVertexMaterials");
-        if (it != params.end()) {
-            renderer.setUseVertexMaterials(it->second == "true" || it->second == "1");
-        }
-
-        // Global material settings
-        it = params.find("albedo");
-        if (it != params.end()) {
-            std::stringstream ss(it->second);
-            float r, g, b;
-            if (ss >> r >> g >> b) {
-                renderer.setAlbedo(r, g, b);
-            }
-        }
-        it = params.find("roughness");
-        if (it != params.end()) {
-            renderer.setRoughness(safe_stof(it->second, 0.5f));
-        }
-        it = params.find("metallic");
-        if (it != params.end()) {
-            renderer.setMetallic(safe_stof(it->second, 0.0f));
-        }
-        it = params.find("transmission");
-        if (it != params.end()) {
-            renderer.setTransmission(safe_stof(it->second, 0.0f));
-        }
-        it = params.find("ior");
-        if (it != params.end()) {
-            renderer.setIor(safe_stof(it->second, 1.5f));
-        }
-        it = params.find("sssColor");
-        if (it != params.end()) {
-            std::stringstream ss(it->second);
-            float r, g, b;
-            if (ss >> r >> g >> b) {
-                renderer.setSssColor(glm::vec3(r, g, b));
-            }
-        }
-        it = params.find("sssIntensity");
-        if (it != params.end()) {
-            renderer.setSssIntensity(safe_stof(it->second, 0.0f));
-        }
-        it = params.find("sssDepth");
-        if (it != params.end()) {
-            renderer.setSssDepth(safe_stof(it->second, 1.0f));
-        }
-
-
-        it = params.find("alpha");
-        if (it != params.end()) {
-            renderer.setAlpha(safe_stof(it->second, 1.0f));
+    }
+    if (ini.hasKey(sec, "cameraUsePivot")) {
+        bool val = ini.getBool(sec, "cameraUsePivot");
+        for (int cIdx = 0; cIdx < 2; ++cIdx) {
+            Camera* cam = scene.getCameraByIndex(cIdx);
+            if (cam) cam->setUsePivot(val);
         }
     }
 
-    // Fallback: check if settings exist in [Mesh_0] but not [Renderer]
-    auto renderer_params = (rent != sections.end()) ? rent->second : std::unordered_map<std::string, std::string>();
-    bool has_shaderType = renderer_params.find("shaderType") != renderer_params.end();
-    bool has_matcapIdx = renderer_params.find("matcapIdx") != renderer_params.end();
-    bool has_showWireframe = renderer_params.find("showWireframe") != renderer_params.end();
-    bool has_flatShading = renderer_params.find("flatShading") != renderer_params.end();
-    bool has_curvature = renderer_params.find("curvature") != renderer_params.end();
-    bool has_albedo = renderer_params.find("albedo") != renderer_params.end();
-    bool has_roughness = renderer_params.find("roughness") != renderer_params.end();
-    bool has_metallic = renderer_params.find("metallic") != renderer_params.end();
-    bool has_alpha = renderer_params.find("alpha") != renderer_params.end();
- 
-    if (!has_shaderType || !has_matcapIdx || !has_showWireframe || !has_flatShading || !has_curvature ||
-        !has_albedo || !has_roughness || !has_metallic || !has_alpha) {
-        auto m0 = sections.find("Mesh_0");
-        if (m0 != sections.end()) {
-            const auto& m0Params = m0->second;
-            if (!has_shaderType) {
-                auto it = m0Params.find("shaderType");
-                if (it != m0Params.end()) renderer.setShaderType(safe_stoi(it->second, 0));
-            }
-            if (!has_matcapIdx) {
-                auto it = m0Params.find("matcapIdx");
-                if (it != m0Params.end()) renderer.setMatcap(safe_stoi(it->second, 0));
-            }
-            if (!has_showWireframe) {
-                auto it = m0Params.find("showWireframe");
-                if (it != m0Params.end()) renderer.setShowWireframe(it->second == "true" || it->second == "1");
-            }
-            if (!has_flatShading) {
-                auto it = m0Params.find("flatShading");
-                if (it != m0Params.end()) renderer.setFlatShading(it->second == "true" || it->second == "1");
-            }
-            if (!has_curvature) {
-                auto it = m0Params.find("curvature");
-                if (it != m0Params.end()) renderer.setCurvature(safe_stof(it->second, 0.0f));
-            }
-            if (!has_albedo) {
-                auto it = m0Params.find("albedo");
-                if (it != m0Params.end()) {
-                    std::stringstream ss(it->second);
-                    float r, g, b;
-                    if (ss >> r >> g >> b) renderer.setAlbedo(r, g, b);
-                }
-            }
-            if (!has_roughness) {
-                auto it = m0Params.find("roughness");
-                if (it != m0Params.end()) renderer.setRoughness(safe_stof(it->second, 0.5f));
-            }
-            if (!has_metallic) {
-                auto it = m0Params.find("metallic");
-                if (it != m0Params.end()) renderer.setMetallic(safe_stof(it->second, 0.0f));
-            }
-            if (!has_alpha) {
-                auto it = m0Params.find("alpha");
-                if (it != m0Params.end()) renderer.setAlpha(safe_stof(it->second, 1.0f));
-            }
+    if (ini.hasKey(sec, "speedRotate")) {
+        float val = ini.getFloat(sec, "speedRotate", 1.0f);
+        for (int cIdx = 0; cIdx < 2; ++cIdx) {
+            Camera* cam = scene.getCameraByIndex(cIdx);
+            if (cam) cam->setSpeedRotate(val);
+        }
+    }
+    if (ini.hasKey(sec, "speedTranslate")) {
+        float val = ini.getFloat(sec, "speedTranslate", 1.0f);
+        for (int cIdx = 0; cIdx < 2; ++cIdx) {
+            Camera* cam = scene.getCameraByIndex(cIdx);
+            if (cam) cam->setSpeedTranslate(val);
+        }
+    }
+    if (ini.hasKey(sec, "speedZoom")) {
+        float val = ini.getFloat(sec, "speedZoom", 1.0f);
+        for (int cIdx = 0; cIdx < 2; ++cIdx) {
+            Camera* cam = scene.getCameraByIndex(cIdx);
+            if (cam) cam->setSpeedZoom(val);
+        }
+    }
+    if (ini.hasKey(sec, "speedRoll")) {
+        float val = ini.getFloat(sec, "speedRoll", 1.0f);
+        for (int cIdx = 0; cIdx < 2; ++cIdx) {
+            Camera* cam = scene.getCameraByIndex(cIdx);
+            if (cam) cam->setSpeedRoll(val);
+        }
+    }
+    
+    if (ini.hasKey(sec, "currentEnvIdx")) {
+        renderer.setEnvironmentPreset(ini.getInt(sec, "currentEnvIdx"));
+    }
+
+    if (ini.hasKey(sec, "exposure")) renderer.setExposure(ini.getFloat(sec, "exposure"));
+    if (ini.hasKey(sec, "wetClayWetness")) renderer.setWetClayWetness(ini.getFloat(sec, "wetClayWetness", 0.6f));
+    if (ini.hasKey(sec, "wetClayBumpStrength")) renderer.setWetClayBumpStrength(ini.getFloat(sec, "wetClayBumpStrength", 0.4f));
+    if (ini.hasKey(sec, "wetClayNoiseScale")) renderer.setWetClayNoiseScale(ini.getFloat(sec, "wetClayNoiseScale", 8.0f));
+    if (ini.hasKey(sec, "wetClaySSSIntensity")) renderer.setWetClaySSSIntensity(ini.getFloat(sec, "wetClaySSSIntensity", 0.25f));
+    
+    if (ini.hasKey(sec, "wetClaySSSColor")) {
+        std::stringstream ss(ini.get(sec, "wetClaySSSColor"));
+        float r, g, b;
+        if (ss >> r >> g >> b) {
+            renderer.setWetClaySSSColor(glm::vec3(r, g, b));
         }
     }
 
+    if (ini.hasKey(sec, "shaderType")) renderer.setShaderType(ini.getInt(sec, "shaderType", 0));
+    if (ini.hasKey(sec, "matcapIdx")) renderer.setMatcap(ini.getInt(sec, "matcapIdx", 0));
+    if (ini.hasKey(sec, "showWireframe")) renderer.setShowWireframe(ini.getBool(sec, "showWireframe"));
+    if (ini.hasKey(sec, "flatShading")) renderer.setFlatShading(ini.getBool(sec, "flatShading"));
+    if (ini.hasKey(sec, "curvature")) renderer.setCurvature(ini.getFloat(sec, "curvature", 0.0f));
+    if (ini.hasKey(sec, "bevelEnabled")) renderer.setBevelEnabled(ini.getBool(sec, "bevelEnabled"));
+    if (ini.hasKey(sec, "bevelRadius")) renderer.setBevelRadius(ini.getFloat(sec, "bevelRadius", 4.0f));
+    if (ini.hasKey(sec, "bevelStrength")) renderer.setBevelStrength(ini.getFloat(sec, "bevelStrength", 1.5f));
+    if (ini.hasKey(sec, "bevelScaleWithDistance")) renderer.setBevelScaleWithDistance(ini.getBool(sec, "bevelScaleWithDistance"));
+    if (ini.hasKey(sec, "useFxaa")) renderer.setUseFxaa(ini.getBool(sec, "useFxaa"));
+    if (ini.hasKey(sec, "useSsao")) renderer.setUseSsao(ini.getBool(sec, "useSsao"));
+    if (ini.hasKey(sec, "ssaoRadius")) renderer.setSsaoRadius(ini.getFloat(sec, "ssaoRadius", 0.5f));
+    if (ini.hasKey(sec, "ssaoBias")) renderer.setSsaoBias(ini.getFloat(sec, "ssaoBias", 0.025f));
+    if (ini.hasKey(sec, "ssaoIntensity")) renderer.setSsaoIntensity(ini.getFloat(sec, "ssaoIntensity", 1.0f));
 
+    if (ini.hasKey(sec, "useVertexColors")) renderer.setUseVertexColors(ini.getBool(sec, "useVertexColors"));
+    if (ini.hasKey(sec, "useVertexMaterials")) renderer.setUseVertexMaterials(ini.getBool(sec, "useVertexMaterials"));
 
-    std::cout << "Successfully loaded render and shading settings from: " << filepath << std::endl;
+    if (ini.hasKey(sec, "albedo")) {
+        std::stringstream ss(ini.get(sec, "albedo"));
+        float r, g, b;
+        if (ss >> r >> g >> b) {
+            renderer.setAlbedo(r, g, b);
+        }
+    }
+    if (ini.hasKey(sec, "roughness")) renderer.setRoughness(ini.getFloat(sec, "roughness", 0.5f));
+    if (ini.hasKey(sec, "metallic")) renderer.setMetallic(ini.getFloat(sec, "metallic", 0.0f));
+    if (ini.hasKey(sec, "transmission")) renderer.setTransmission(ini.getFloat(sec, "transmission", 0.0f));
+    if (ini.hasKey(sec, "ior")) renderer.setIor(ini.getFloat(sec, "ior", 1.5f));
+    
+    if (ini.hasKey(sec, "sssColor")) {
+        std::stringstream ss(ini.get(sec, "sssColor"));
+        float r, g, b;
+        if (ss >> r >> g >> b) {
+            renderer.setSssColor(glm::vec3(r, g, b));
+        }
+    }
+    if (ini.hasKey(sec, "sssIntensity")) renderer.setSssIntensity(ini.getFloat(sec, "sssIntensity", 0.0f));
+    if (ini.hasKey(sec, "sssDepth")) renderer.setSssDepth(ini.getFloat(sec, "sssDepth", 1.0f));
+    if (ini.hasKey(sec, "alpha")) renderer.setAlpha(ini.getFloat(sec, "alpha", 1.0f));
+
     return true;
 }
