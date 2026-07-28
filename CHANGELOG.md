@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0]
+- **Transform Tool**: Enabled vertex masking support for the Transform Tool, ensuring unmasked vertices transform relative to the active matrix while masked vertices stay stationary in world space.
+- **Transform Tool**: Added a "Center Pivot on Unmasked" UI button in the Transform Tool settings panel when masking is active, positioning the gizmo pivot directly at the unmasked geometry's center of mass.
+- **Transform Tool**: Ensured matrix resetting and target matrix applications respect active vertex masks.
+
+
 ## [1.2.9]
 - **PolyGroups**: Fixed an issue where `Ctrl + Shift + Click` on an already-isolated polygroup (including the main/default polygroup 0) failed to toggle isolation off and restore the visibility of other polygroups.
 - **PolyGroups**: Added automatic initialization check for `mesh->faceGroups` when executing visibility clicks on meshes without pre-existing explicit polygroup arrays.

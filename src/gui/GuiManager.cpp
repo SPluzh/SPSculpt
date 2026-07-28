@@ -1264,11 +1264,98 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     ImGui::Checkbox("Edit Pivot (Alt)", &m_editPivot);
                     ImGui::Separator();
                     
-                    if (ImGui::Button("Reset Matrix", ImVec2(-1, 26))) {
-                        Mesh* selectedMesh = scene.getSelected();
-                        if (selectedMesh) {
+                    Mesh* selectedMesh = scene.getSelected();
+                    if (selectedMesh) {
+                        bool meshHasMask = false;
+                        if (!selectedMesh->materials.empty()) {
+                            for (int i = 0; i < selectedMesh->nbVerts; ++i) {
+                                if (selectedMesh->materials[i * 3 + 2] < 0.999f) {
+                                    meshHasMask = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (meshHasMask) {
+                            if (ImGui::Button("Center Pivot on Unmasked", ImVec2(-1, 26))) {
+                                scene.pushHistoryState();
+                                glm::vec3 centerSum(0.0f);
+                                float weightSum = 0.0f;
+                                for (int i = 0; i < selectedMesh->nbVerts; ++i) {
+                                    float m = selectedMesh->materials[i * 3 + 2];
+                                    if (m > 0.001f) {
+                                        glm::vec3 localPos(selectedMesh->verts[i * 3], selectedMesh->verts[i * 3 + 1], selectedMesh->verts[i * 3 + 2]);
+                                        centerSum += localPos * m;
+                                        weightSum += m;
+                                    }
+                                }
+                                glm::vec3 targetLocalCenter(0.0f);
+                                if (weightSum > 1e-5f) {
+                                    targetLocalCenter = centerSum / weightSum;
+                                } else {
+                                    float bbox[6];
+                                    selectedMesh->computeBbox(bbox);
+                                    targetLocalCenter = glm::vec3((bbox[0]+bbox[1])*0.5f, (bbox[2]+bbox[3])*0.5f, (bbox[4]+bbox[5])*0.5f);
+                                }
+
+                                glm::vec3 targetWorldCenter = glm::vec3(selectedMesh->matrix * glm::vec4(targetLocalCenter, 1.0f));
+                                glm::mat4 targetMatrix = selectedMesh->matrix;
+                                targetMatrix[3] = glm::vec4(targetWorldCenter, 1.0f);
+
+                                glm::mat4 deltaLocalMatrix = glm::inverse(selectedMesh->matrix) * targetMatrix;
+                                glm::mat4 deltaLocalMatrixInv = glm::inverse(deltaLocalMatrix);
+                                glm::mat3 enMatrix = glm::transpose(glm::inverse(glm::mat3(deltaLocalMatrixInv)));
+                                for (int i = 0; i < selectedMesh->nbVerts; ++i) {
+                                    glm::vec4 pos(selectedMesh->verts[i * 3], selectedMesh->verts[i * 3 + 1], selectedMesh->verts[i * 3 + 2], 1.0f);
+                                    glm::vec4 newPos = deltaLocalMatrixInv * pos;
+                                    selectedMesh->verts[i * 3]     = newPos.x;
+                                    selectedMesh->verts[i * 3 + 1] = newPos.y;
+                                    selectedMesh->verts[i * 3 + 2] = newPos.z;
+
+                                    glm::vec3 normal(selectedMesh->normals[i * 3], selectedMesh->normals[i * 3 + 1], selectedMesh->normals[i * 3 + 2]);
+                                    glm::vec3 newNormal = glm::normalize(enMatrix * normal);
+                                    selectedMesh->normals[i * 3]     = newNormal.x;
+                                    selectedMesh->normals[i * 3 + 1] = newNormal.y;
+                                    selectedMesh->normals[i * 3 + 2] = newNormal.z;
+                                }
+                                selectedMesh->matrix = targetMatrix;
+                                selectedMesh->postInit();
+                                selectedMesh->isDirty = true;
+                            }
+                        }
+
+                        if (ImGui::Button("Reset Matrix", ImVec2(-1, 26))) {
                             scene.pushHistoryState();
-                            selectedMesh->matrix = glm::mat4(1.0f);
+                            if (meshHasMask && !m_editPivot) {
+                                glm::mat4 pivotStartMatrix = selectedMesh->matrix;
+                                glm::mat4 targetMatrix(1.0f);
+                                glm::mat4 invMnew = glm::inverse(targetMatrix);
+                                glm::mat4 startToNewLocal = invMnew * pivotStartMatrix;
+                                glm::mat3 normalMatrixStartToNew = glm::transpose(glm::inverse(glm::mat3(startToNewLocal)));
+                                for (int i = 0; i < selectedMesh->nbVerts; ++i) {
+                                    float m = selectedMesh->materials[i * 3 + 2];
+                                    if (m < 0.999f) {
+                                        glm::vec4 vStart(selectedMesh->verts[i * 3], selectedMesh->verts[i * 3 + 1], selectedMesh->verts[i * 3 + 2], 1.0f);
+                                        glm::vec3 nStart(selectedMesh->normals[i * 3], selectedMesh->normals[i * 3 + 1], selectedMesh->normals[i * 3 + 2]);
+                                        glm::vec4 vTransformed = startToNewLocal * vStart;
+                                        glm::vec4 vNew = (1.0f - m) * vTransformed + m * vStart;
+
+                                        glm::vec3 nTransformed = normalMatrixStartToNew * nStart;
+                                        glm::vec3 nNew = glm::normalize((1.0f - m) * nTransformed + m * nStart);
+
+                                        selectedMesh->verts[i * 3]     = vNew.x;
+                                        selectedMesh->verts[i * 3 + 1] = vNew.y;
+                                        selectedMesh->verts[i * 3 + 2] = vNew.z;
+                                        selectedMesh->normals[i * 3]     = nNew.x;
+                                        selectedMesh->normals[i * 3 + 1] = nNew.y;
+                                        selectedMesh->normals[i * 3 + 2] = nNew.z;
+                                    }
+                                }
+                                selectedMesh->matrix = targetMatrix;
+                                selectedMesh->postInit();
+                            } else {
+                                selectedMesh->matrix = glm::mat4(1.0f);
+                            }
                             selectedMesh->isDirty = true;
                         }
                     }
@@ -3372,6 +3459,9 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             static bool wasUsingGizmo = false;
             static bool draggedPivot = false;
             static glm::mat4 pivotStartMatrix = glm::mat4(1.0f);
+            static std::vector<float> transformStartVerts;
+            static std::vector<float> transformStartNormals;
+            static bool transformHasMask = false;
 
             bool isUsingGizmo = ImGuizmo::IsUsing();
             bool isMovingPivot = m_editPivot || ImGui::GetIO().KeyAlt;
@@ -3380,6 +3470,19 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 scene.pushHistoryState();
                 pivotStartMatrix = selectedMesh->matrix;
                 draggedPivot = isMovingPivot;
+
+                transformStartVerts = selectedMesh->verts;
+                transformStartNormals = selectedMesh->normals;
+                transformHasMask = false;
+
+                if (!draggedPivot && !selectedMesh->materials.empty()) {
+                    for (int i = 0; i < selectedMesh->nbVerts; ++i) {
+                        if (selectedMesh->materials[i * 3 + 2] < 0.999f) {
+                            transformHasMask = true;
+                            break;
+                        }
+                    }
+                }
             }
 
             ImGuizmo::OPERATION op = ImGuizmo::UNIVERSAL;
@@ -3415,6 +3518,61 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     selectedMesh->enMatrix = glm::transpose(glm::inverse(glm::mat3(deltaLocalMatrixInv)));
                 } else {
                     selectedMesh->matrix = matrix;
+                    if (transformHasMask && !transformStartVerts.empty() && transformStartVerts.size() == selectedMesh->verts.size()) {
+                        glm::mat4 invMnew = glm::inverse(matrix);
+                        glm::mat4 startToNewLocal = invMnew * pivotStartMatrix;
+                        glm::mat3 normalMatrixStartToNew = glm::transpose(glm::inverse(glm::mat3(startToNewLocal)));
+
+                        int nbVerts = selectedMesh->nbVerts;
+                        for (int i = 0; i < nbVerts; ++i) {
+                            float m = selectedMesh->materials[i * 3 + 2];
+                            glm::vec4 vStart(
+                                transformStartVerts[i * 3],
+                                transformStartVerts[i * 3 + 1],
+                                transformStartVerts[i * 3 + 2],
+                                1.0f
+                            );
+                            glm::vec3 nStart(
+                                transformStartNormals[i * 3],
+                                transformStartNormals[i * 3 + 1],
+                                transformStartNormals[i * 3 + 2]
+                            );
+
+                            if (m >= 0.999f) {
+                                selectedMesh->verts[i * 3]     = vStart.x;
+                                selectedMesh->verts[i * 3 + 1] = vStart.y;
+                                selectedMesh->verts[i * 3 + 2] = vStart.z;
+                                selectedMesh->normals[i * 3]     = nStart.x;
+                                selectedMesh->normals[i * 3 + 1] = nStart.y;
+                                selectedMesh->normals[i * 3 + 2] = nStart.z;
+                            } else if (m <= 0.001f) {
+                                glm::vec4 vNew = startToNewLocal * vStart;
+                                glm::vec3 nNew = glm::normalize(normalMatrixStartToNew * nStart);
+                                selectedMesh->verts[i * 3]     = vNew.x;
+                                selectedMesh->verts[i * 3 + 1] = vNew.y;
+                                selectedMesh->verts[i * 3 + 2] = vNew.z;
+                                selectedMesh->normals[i * 3]     = nNew.x;
+                                selectedMesh->normals[i * 3 + 1] = nNew.y;
+                                selectedMesh->normals[i * 3 + 2] = nNew.z;
+                            } else {
+                                glm::vec4 vTransformed = startToNewLocal * vStart;
+                                glm::vec4 vNew = (1.0f - m) * vTransformed + m * vStart;
+
+                                glm::vec3 nTransformed = normalMatrixStartToNew * nStart;
+                                glm::vec3 nNew = glm::normalize((1.0f - m) * nTransformed + m * nStart);
+
+                                selectedMesh->verts[i * 3]     = vNew.x;
+                                selectedMesh->verts[i * 3 + 1] = vNew.y;
+                                selectedMesh->verts[i * 3 + 2] = vNew.z;
+                                selectedMesh->normals[i * 3]     = nNew.x;
+                                selectedMesh->normals[i * 3 + 1] = nNew.y;
+                                selectedMesh->normals[i * 3 + 2] = nNew.z;
+                            }
+                        }
+                        selectedMesh->isVertexDirty = true;
+                        selectedMesh->dirtyVertMin = 0;
+                        selectedMesh->dirtyVertMax = nbVerts - 1;
+                    }
                 }
                 selectedMesh->isDirty = true;
             }
@@ -3440,8 +3598,16 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         selectedMesh->postInit();
                         selectedMesh->isDirty = true;
                     }
+                } else if (transformHasMask) {
+                    selectedMesh->postInit();
+                    selectedMesh->isDirty = true;
                 }
                 draggedPivot = false;
+                transformHasMask = false;
+                transformStartVerts.clear();
+                transformStartVerts.shrink_to_fit();
+                transformStartNormals.clear();
+                transformStartNormals.shrink_to_fit();
             }
             wasUsingGizmo = isUsingGizmo;
 
@@ -3502,7 +3668,44 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             mesh->postInit();
                             mesh->isDirty = true;
                         } else {
-                            mesh->matrix = targetMatrix;
+                            bool hasMask = false;
+                            if (!mesh->materials.empty()) {
+                                for (int i = 0; i < mesh->nbVerts; ++i) {
+                                    if (mesh->materials[i * 3 + 2] < 0.999f) {
+                                        hasMask = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (hasMask) {
+                                glm::mat4 pivotStartMatrix = mesh->matrix;
+                                glm::mat4 invMnew = glm::inverse(targetMatrix);
+                                glm::mat4 startToNewLocal = invMnew * pivotStartMatrix;
+                                glm::mat3 normalMatrixStartToNew = glm::transpose(glm::inverse(glm::mat3(startToNewLocal)));
+                                for (int i = 0; i < mesh->nbVerts; ++i) {
+                                    float m = mesh->materials[i * 3 + 2];
+                                    if (m < 0.999f) {
+                                        glm::vec4 vStart(mesh->verts[i * 3], mesh->verts[i * 3 + 1], mesh->verts[i * 3 + 2], 1.0f);
+                                        glm::vec3 nStart(mesh->normals[i * 3], mesh->normals[i * 3 + 1], mesh->normals[i * 3 + 2]);
+                                        glm::vec4 vTransformed = startToNewLocal * vStart;
+                                        glm::vec4 vNew = (1.0f - m) * vTransformed + m * vStart;
+
+                                        glm::vec3 nTransformed = normalMatrixStartToNew * nStart;
+                                        glm::vec3 nNew = glm::normalize((1.0f - m) * nTransformed + m * nStart);
+
+                                        mesh->verts[i * 3]     = vNew.x;
+                                        mesh->verts[i * 3 + 1] = vNew.y;
+                                        mesh->verts[i * 3 + 2] = vNew.z;
+                                        mesh->normals[i * 3]     = nNew.x;
+                                        mesh->normals[i * 3 + 1] = nNew.y;
+                                        mesh->normals[i * 3 + 2] = nNew.z;
+                                    }
+                                }
+                                mesh->matrix = targetMatrix;
+                                mesh->postInit();
+                            } else {
+                                mesh->matrix = targetMatrix;
+                            }
                             mesh->isDirty = true;
                         }
                     };
