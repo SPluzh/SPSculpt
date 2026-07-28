@@ -3,6 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.6]
+- **UI**: Added Solo mode allowing users to isolate the active mesh for focused editing, accessible via the new Solo icon button on the Floating Island HUD or by pressing the 'C' hotkey.
 - **Fix**: Fixed Move and Elastic tools when symmetry is active by switching deformation calculations from hard assignment (`=`) to additive accumulation (`+=`) and pre-resetting grabbed vertex positions to `vertProxy`, preventing symmetry passes from overwriting primary stroke displacements.
 - **Symmetry**: Completely eliminated polygon stretching and brush offset artifacts along the symmetry axis by removing artificial sphere truncation filters (`filteredPrimary` and `filteredSym`), matching the JavaScript reference implementation's smooth radial falloff across mirror planes.
 - **Settings**: Saved camera control settings (projection type, camera mode, FOV, picking pivot option, and rotation/pan/zoom/roll navigation speeds) to `render_settings.cfg` so they automatically persist across application restarts.

@@ -1556,7 +1556,7 @@ void SculptManager::validateSegments(Scene& scene) {
 void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
     Mesh* mesh = scene.getSelected();
     int activeVp = scene.getActiveViewport();
-    if (mesh && !mesh->isVisible(activeVp)) {
+    if (mesh && !scene.isMeshRenderVisible(mesh, activeVp)) {
         mesh = nullptr;
     }
     Camera& camera = scene.getCamera();
@@ -1592,7 +1592,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
                 for (Mesh* m : scene.getMeshes()) {
                     if (!m) continue;
-                    if (!m->isVisible(activeVp)) continue;
+                    if (!scene.isMeshRenderVisible(m, activeVp)) continue;
 
                     glm::mat4 invMatrix = glm::inverse(m->matrix);
                     glm::vec3 localRayOrigin = glm::vec3(invMatrix * glm::vec4(ray.origin, 1.0f));

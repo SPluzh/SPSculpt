@@ -572,7 +572,7 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
             if (m_shadowProgram) {
                 glUseProgram(m_shadowProgram);
                 for (auto* mesh : scene.getMeshes()) {
-                    if (mesh->isVisible(0)) {
+                    if (scene.isMeshRenderVisible(mesh, 0)) {
                         mesh->updateMatrices(scene.getCamera());
                         glm::mat4 mvp = m_shadowLightMVP * mesh->matrix;
                         glUniformMatrix4fv(glGetUniformLocation(m_shadowProgram, "uLightMVP"), 1, GL_FALSE, glm::value_ptr(mvp));
@@ -1087,7 +1087,7 @@ void AngleRenderer::renderScenePass(const Scene& scene, int passType) {
 void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Camera& camera, int viewportIdx) {
     if (passType == 0) {
         // Contour pass
-        if (scene.getSelected() && scene.getSelected()->isVisible(viewportIdx)) {
+        if (scene.getSelected() && scene.isMeshRenderVisible(scene.getSelected(), viewportIdx)) {
             drawMeshFlatColor(scene.getSelected(), scene, camera, glm::vec4(1.0f));
         }
     } else if (passType == 3) {
@@ -1101,7 +1101,7 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
     } else if (passType == 1) {
         // Opaque meshes (alpha == 1.0)
         for (auto* mesh : scene.getMeshes()) {
-            if (mesh->isVisible(viewportIdx) && m_alpha == 1.0f) {
+            if (scene.isMeshRenderVisible(mesh, viewportIdx) && m_alpha == 1.0f) {
                 if (mesh->isArmature && mesh->armatureGraph) {
                     if (mesh == scene.getSelected()) {
                         drawArmature(*mesh->armatureGraph, camera, m_armatureSelectedNode, m_armatureHoveredParent, m_armatureHoveredChild, m_armatureHasSymmetry);
@@ -1122,7 +1122,7 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
     } else if (passType == 2) {
         // Transparent meshes (alpha < 1.0)
         for (auto* mesh : scene.getMeshes()) {
-            if (mesh->isVisible(viewportIdx) && m_alpha < 1.0f) {
+            if (scene.isMeshRenderVisible(mesh, viewportIdx) && m_alpha < 1.0f) {
                 if (mesh->isArmature && mesh->armatureGraph) {
                     if (mesh == scene.getSelected()) {
                         drawArmature(*mesh->armatureGraph, camera, m_armatureSelectedNode, m_armatureHoveredParent, m_armatureHoveredChild, m_armatureHasSymmetry);
@@ -1143,14 +1143,14 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
     } else if (passType == 4) {
         // Bevel pre-pass
         for (auto* mesh : scene.getMeshes()) {
-            if (mesh->isVisible(viewportIdx)) {
+            if (scene.isMeshRenderVisible(mesh, viewportIdx)) {
                 drawMeshPrepass(mesh, scene, camera);
             }
         }
     } else if (passType == 5) {
         // Normals pre-pass for SSAO
         for (auto* mesh : scene.getMeshes()) {
-            if (mesh->isVisible(viewportIdx)) {
+            if (scene.isMeshRenderVisible(mesh, viewportIdx)) {
                 if (mesh->isArmature && mesh->armatureGraph) {
                     if (mesh == scene.getSelected()) {
                         drawArmature(*mesh->armatureGraph, camera, m_armatureSelectedNode, m_armatureHoveredParent, m_armatureHoveredChild, m_armatureHasSymmetry, true);
@@ -1165,7 +1165,7 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
     } else if (passType == 6) {
         // G-Buffer pass
         for (auto* mesh : scene.getMeshes()) {
-            if (mesh->isVisible(viewportIdx)) {
+            if (scene.isMeshRenderVisible(mesh, viewportIdx)) {
                 drawMeshGBuffer(mesh, scene, camera);
             }
         }
@@ -1478,7 +1478,7 @@ void AngleRenderer::drawVoxelPreview(const Scene& scene, const Camera& camera, i
     glUniform1i(glGetUniformLocation(m_voxelCheckerProgram, "uIsPreview"), 1);
 
     for (auto* mesh : scene.getVoxelMeshes()) {
-        if (!mesh->isVisible(viewportIdx)) continue;
+        if (!scene.isMeshRenderVisible(mesh, viewportIdx)) continue;
 
         auto it = m_meshBuffers.find(mesh);
         if (it == m_meshBuffers.end() || it->second->triIndexCount == 0) continue;

@@ -129,6 +129,12 @@ public:
     const std::vector<Mesh*>& getVoxelMeshes() const { return m_voxelMeshes; }
     void updateVoxelPreview(float step, const std::vector<Mesh*>& meshes);
 
+    // Solo Mode
+    bool isSoloActive() const { return m_soloMeshId != 0; }
+    uint32_t getSoloMeshId() const { return m_soloMeshId; }
+    void toggleSolo(Mesh* mesh);
+    bool isMeshRenderVisible(const Mesh* mesh, int viewport = 0) const;
+
 private:
     std::vector<LightSource> m_lights;
     std::vector<ReferenceImage> m_refImages;
@@ -140,4 +146,6 @@ private:
     bool m_voxelPreview = false;
     float m_voxelStep = 0.0f;
     std::vector<Mesh*> m_voxelMeshes;
+
+    uint32_t m_soloMeshId = 0;
 };

@@ -264,6 +264,7 @@ HKAction HotkeyDispatcher::mapKeyToAction(const SDL_Keysym& keysym, bool ctrlPre
         case SDLK_UP: return HKAction::StrifeUp;
         case SDLK_DOWN: return HKAction::StrifeDown;
         
+        case SDLK_c: return HKAction::SoloSelected;
         case SDLK_F1: return HKAction::OpenContextPopup;
         
         default: break;
@@ -405,6 +406,7 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
             case HKAction::ToggleDyntopo: gui.toggleTopologyPanel(); break;
             case HKAction::OpenContextPopup: gui.m_openContextPopup = true; break;
             case HKAction::RunRemesh: gui.performRemesh(scene); break;
+            case HKAction::SoloSelected: scene.toggleSolo(scene.getSelected()); break;
             
             default: break;
         }

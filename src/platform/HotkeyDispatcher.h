@@ -60,6 +60,7 @@ enum class HKAction {
     
     // Misc
     OpenContextPopup,      // F1
+    SoloSelected,          // C
     None
 };
 

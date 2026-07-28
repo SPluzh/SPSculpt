@@ -134,7 +134,7 @@ void BrushCursor::update(int mouseX, int mouseY,
     const Camera& cameraLeft = scene.getCamera();
     const Camera* cameraRight = (scene.getSplitMode() != Scene::SplitMode::OFF) ? scene.getCameraByIndex(1) : nullptr;
     int activeViewport = (scene.getSplitMode() != Scene::SplitMode::OFF && scene.getActiveViewport() == 1 && cameraRight) ? 1 : 0;
-    if (mesh && !mesh->isVisible(activeViewport)) {
+    if (mesh && !scene.isMeshRenderVisible(mesh, activeViewport)) {
         mesh = nullptr;
     }
     const Camera& camera = (activeViewport == 1 && cameraRight) 

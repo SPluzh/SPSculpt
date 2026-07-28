@@ -4418,6 +4418,22 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         if (showWireframe) {
             ImGui::PopStyleColor(3);
         }
+
+        ImGui::SameLine();
+
+        bool isSolo = scene.isSoloActive();
+        if (isSolo) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.45f, 0.05f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.55f, 0.15f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.75f, 0.35f, 0.00f, 1.0f));
+        }
+        if (ImGui::Button(ICON_LC_EYE "##hudSolo")) {
+            scene.toggleSolo(scene.getSelected());
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Solo Mode (C)");
+        if (isSolo) {
+            ImGui::PopStyleColor(3);
+        }
     }
     ImGui::End();
 

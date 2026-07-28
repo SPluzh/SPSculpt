@@ -61,6 +61,7 @@ void Scene::clear() {
         }
     }
     m_refImages.clear();
+    m_soloMeshId = 0;
 }
 
 void Scene::addReferenceImage(const std::string& path) {
@@ -212,6 +213,9 @@ void Scene::addMesh(Mesh* m) {
 }
 
 void Scene::removeMesh(Mesh* m) {
+    if (m && m_soloMeshId == m->getID()) {
+        m_soloMeshId = 0;
+    }
     auto it = std::find(m_meshes.begin(), m_meshes.end(), m);
     if (it != m_meshes.end()) {
         int idx = (int)std::distance(m_meshes.begin(), it);
@@ -1224,4 +1228,24 @@ void Scene::updateVoxelPreview(float step, const std::vector<Mesh*>& meshes) {
         m_voxelStep = step;
         m_voxelMeshes = meshes;
     }
+}
+
+void Scene::toggleSolo(Mesh* mesh) {
+    if (!mesh) {
+        m_soloMeshId = 0;
+        return;
+    }
+    if (m_soloMeshId == mesh->getID()) {
+        m_soloMeshId = 0;
+    } else {
+        m_soloMeshId = mesh->getID();
+    }
+}
+
+bool Scene::isMeshRenderVisible(const Mesh* mesh, int viewport) const {
+    if (!mesh) return false;
+    if (m_soloMeshId != 0) {
+        return mesh->getID() == m_soloMeshId;
+    }
+    return mesh->isVisible(viewport);
 }
