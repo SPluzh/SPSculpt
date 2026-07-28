@@ -1569,13 +1569,9 @@ int applyGradientMask(
         float t = ((sx - ax) * vx_line + (sy - ay) * vy_line) / len2;
 
         if (symmetry) {
-            float dx = vx - ptPlaneX;
-            float dy = vy - ptPlaneY;
-            float dz = vz - ptPlaneZ;
-            float dot = dx * nPlaneX + dy * nPlaneY + dz * nPlaneZ;
-            float svx = vx - 2.0f * nPlaneX * dot;
-            float svy = vy - 2.0f * nPlaneY * dot;
-            float svz = vz - 2.0f * nPlaneZ * dot;
+            float svx = (nPlaneX != 0.0f) ? -vx : vx;
+            float svy = (nPlaneY != 0.0f) ? -vy : vy;
+            float svz = (nPlaneZ != 0.0f) ? -vz : vz;
 
             float sw = m3 * svx + m7 * svy + m11 * svz + m15;
             if (sw == 0.0f) sw = 1.0f;

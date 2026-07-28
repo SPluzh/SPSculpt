@@ -3459,6 +3459,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             static bool wasUsingGizmo = false;
             static bool draggedPivot = false;
             static glm::mat4 pivotStartMatrix = glm::mat4(1.0f);
+            static glm::vec3 transformPivotStartLocal = glm::vec3(0.0f);
             static std::vector<float> transformStartVerts;
             static std::vector<float> transformStartNormals;
             static bool transformHasMask = false;
@@ -3474,6 +3475,9 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 transformStartVerts = selectedMesh->verts;
                 transformStartNormals = selectedMesh->normals;
                 transformHasMask = false;
+
+                glm::vec4 pivotWorld = matrix[3];
+                transformPivotStartLocal = glm::vec3(glm::inverse(pivotStartMatrix) * pivotWorld);
 
                 if (!draggedPivot && !selectedMesh->materials.empty()) {
                     for (int i = 0; i < selectedMesh->nbVerts; ++i) {
@@ -3517,15 +3521,67 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     selectedMesh->editMatrix = deltaLocalMatrixInv;
                     selectedMesh->enMatrix = glm::transpose(glm::inverse(glm::mat3(deltaLocalMatrixInv)));
                 } else {
-                    selectedMesh->matrix = matrix;
-                    if (transformHasMask && !transformStartVerts.empty() && transformStartVerts.size() == selectedMesh->verts.size()) {
-                        glm::mat4 invMnew = glm::inverse(matrix);
-                        glm::mat4 startToNewLocal = invMnew * pivotStartMatrix;
-                        glm::mat3 normalMatrixStartToNew = glm::transpose(glm::inverse(glm::mat3(startToNewLocal)));
+                    bool useSymTransform = sculpt.getUseSym();
+                    if ((transformHasMask || useSymTransform) && !transformStartVerts.empty() && transformStartVerts.size() == selectedMesh->verts.size()) {
+                        selectedMesh->matrix = pivotStartMatrix;
+                        glm::mat4 deltaLocal = glm::inverse(pivotStartMatrix) * matrix;
+                        glm::mat3 normalMatrixPrimary = glm::transpose(glm::inverse(glm::mat3(deltaLocal)));
+
+                        bool symX = sculpt.getSymX();
+                        bool symY = sculpt.getSymY();
+                        bool symZ = sculpt.getSymZ();
+
+                        // Compute mesh bounding box in transformStartVerts coordinates
+                        float bbox[6];
+                        selectedMesh->computeBbox(bbox);
+                        float meshCenterX = (bbox[0] + bbox[1]) * 0.5f;
+                        float meshCenterY = (bbox[2] + bbox[3]) * 0.5f;
+                        float meshCenterZ = (bbox[4] + bbox[5]) * 0.5f;
+
+                        // Pivot location relative to mesh symmetry origin (meshCenter)
+                        glm::vec3 d_pivot(
+                            -meshCenterX,
+                            -meshCenterY,
+                            -meshCenterZ
+                        );
+
+                        float diagLen = std::sqrt(
+                            (bbox[1] - bbox[0]) * (bbox[1] - bbox[0]) +
+                            (bbox[3] - bbox[2]) * (bbox[3] - bbox[2]) +
+                            (bbox[5] - bbox[4]) * (bbox[5] - bbox[4])
+                        );
+                        float blendEps = std::max(0.005f, 0.01f * diagLen);
+
+                        // Symmetry reflection matrix across mesh center (symmetry plane) in transformStartVerts local space
+                        glm::vec3 P_plane(meshCenterX, meshCenterY, meshCenterZ);
+                        glm::mat4 T_plane = glm::translate(glm::mat4(1.0f), P_plane);
+                        glm::mat4 T_plane_inv = glm::translate(glm::mat4(1.0f), -P_plane);
+
+                        glm::mat4 S_axis(1.0f);
+                        if (symX) S_axis[0][0] = -1.0f;
+                        if (symY) S_axis[1][1] = -1.0f;
+                        if (symZ) S_axis[2][2] = -1.0f;
+
+                        glm::mat4 M_sym = T_plane * S_axis * T_plane_inv;
+                        glm::mat4 deltaSym = M_sym * deltaLocal * M_sym;
+                        glm::mat3 normalMatrixSym = glm::transpose(glm::inverse(glm::mat3(deltaSym)));
 
                         int nbVerts = selectedMesh->nbVerts;
                         for (int i = 0; i < nbVerts; ++i) {
-                            float m = selectedMesh->materials[i * 3 + 2];
+                            float m = (transformHasMask && selectedMesh->materials.size() == (size_t)nbVerts * 3)
+                                      ? selectedMesh->materials[i * 3 + 2]
+                                      : 1.0f;
+
+                            if (m <= 0.001f && !useSymTransform) {
+                                selectedMesh->verts[i * 3]     = transformStartVerts[i * 3];
+                                selectedMesh->verts[i * 3 + 1] = transformStartVerts[i * 3 + 1];
+                                selectedMesh->verts[i * 3 + 2] = transformStartVerts[i * 3 + 2];
+                                selectedMesh->normals[i * 3]     = transformStartNormals[i * 3];
+                                selectedMesh->normals[i * 3 + 1] = transformStartNormals[i * 3 + 1];
+                                selectedMesh->normals[i * 3 + 2] = transformStartNormals[i * 3 + 2];
+                                continue;
+                            }
+
                             glm::vec4 vStart(
                                 transformStartVerts[i * 3],
                                 transformStartVerts[i * 3 + 1],
@@ -3538,40 +3594,69 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                 transformStartNormals[i * 3 + 2]
                             );
 
-                            if (m >= 0.999f) {
-                                selectedMesh->verts[i * 3]     = vStart.x;
-                                selectedMesh->verts[i * 3 + 1] = vStart.y;
-                                selectedMesh->verts[i * 3 + 2] = vStart.z;
-                                selectedMesh->normals[i * 3]     = nStart.x;
-                                selectedMesh->normals[i * 3 + 1] = nStart.y;
-                                selectedMesh->normals[i * 3 + 2] = nStart.z;
-                            } else if (m <= 0.001f) {
-                                glm::vec4 vNew = startToNewLocal * vStart;
-                                glm::vec3 nNew = glm::normalize(normalMatrixStartToNew * nStart);
-                                selectedMesh->verts[i * 3]     = vNew.x;
-                                selectedMesh->verts[i * 3 + 1] = vNew.y;
-                                selectedMesh->verts[i * 3 + 2] = vNew.z;
-                                selectedMesh->normals[i * 3]     = nNew.x;
-                                selectedMesh->normals[i * 3 + 1] = nNew.y;
-                                selectedMesh->normals[i * 3 + 2] = nNew.z;
+                            glm::vec4 vTransformed;
+                            glm::vec3 nTransformed;
+
+                            if (useSymTransform) {
+                                // Compute distance from symmetry plane for each active axis
+                                float d_vx = vStart.x - meshCenterX;
+                                float d_vy = vStart.y - meshCenterY;
+                                float d_vz = vStart.z - meshCenterZ;
+
+                                bool isPrimaryX = !symX || ((d_pivot.x >= 0.0f) ? (d_vx >= 0.0f) : (d_vx < 0.0f));
+                                bool isPrimaryY = !symY || ((d_pivot.y >= 0.0f) ? (d_vy >= 0.0f) : (d_vy < 0.0f));
+                                bool isPrimaryZ = !symZ || ((d_pivot.z >= 0.0f) ? (d_vz >= 0.0f) : (d_vz < 0.0f));
+
+                                bool isPrimaryVert = isPrimaryX && isPrimaryY && isPrimaryZ;
+                                float weightP = isPrimaryVert ? 1.0f : 0.0f;
+
+                                if (symX && std::abs(d_vx) < blendEps) {
+                                    float t = 0.5f + 0.5f * (d_vx / blendEps);
+                                    if (d_pivot.x < 0.0f) t = 1.0f - t;
+                                    weightP = t;
+                                }
+                                if (symY && std::abs(d_vy) < blendEps) {
+                                    float t = 0.5f + 0.5f * (d_vy / blendEps);
+                                    if (d_pivot.y < 0.0f) t = 1.0f - t;
+                                    weightP *= t;
+                                }
+                                if (symZ && std::abs(d_vz) < blendEps) {
+                                    float t = 0.5f + 0.5f * (d_vz / blendEps);
+                                    if (d_pivot.z < 0.0f) t = 1.0f - t;
+                                    weightP *= t;
+                                }
+
+                                weightP = std::max(0.0f, std::min(1.0f, weightP));
+
+                                glm::vec4 vP = deltaLocal * vStart;
+                                glm::vec3 nP = normalMatrixPrimary * nStart;
+
+                                glm::vec4 vS = deltaSym * vStart;
+                                glm::vec3 nS = normalMatrixSym * nStart;
+
+                                vTransformed = weightP * vP + (1.0f - weightP) * vS;
+                                nTransformed = glm::normalize(weightP * nP + (1.0f - weightP) * nS);
                             } else {
-                                glm::vec4 vTransformed = startToNewLocal * vStart;
-                                glm::vec4 vNew = (1.0f - m) * vTransformed + m * vStart;
-
-                                glm::vec3 nTransformed = normalMatrixStartToNew * nStart;
-                                glm::vec3 nNew = glm::normalize((1.0f - m) * nTransformed + m * nStart);
-
-                                selectedMesh->verts[i * 3]     = vNew.x;
-                                selectedMesh->verts[i * 3 + 1] = vNew.y;
-                                selectedMesh->verts[i * 3 + 2] = vNew.z;
-                                selectedMesh->normals[i * 3]     = nNew.x;
-                                selectedMesh->normals[i * 3 + 1] = nNew.y;
-                                selectedMesh->normals[i * 3 + 2] = nNew.z;
+                                vTransformed = deltaLocal * vStart;
+                                nTransformed = normalMatrixPrimary * nStart;
                             }
+
+                            glm::vec4 vNew = m * vTransformed + (1.0f - m) * vStart;
+                            glm::vec3 nNew = glm::normalize(m * nTransformed + (1.0f - m) * nStart);
+
+                            selectedMesh->verts[i * 3]     = vNew.x;
+                            selectedMesh->verts[i * 3 + 1] = vNew.y;
+                            selectedMesh->verts[i * 3 + 2] = vNew.z;
+                            selectedMesh->normals[i * 3]     = nNew.x;
+                            selectedMesh->normals[i * 3 + 1] = nNew.y;
+                            selectedMesh->normals[i * 3 + 2] = nNew.z;
                         }
+
                         selectedMesh->isVertexDirty = true;
                         selectedMesh->dirtyVertMin = 0;
                         selectedMesh->dirtyVertMax = nbVerts - 1;
+                    } else {
+                        selectedMesh->matrix = matrix;
                     }
                 }
                 selectedMesh->isDirty = true;
@@ -3598,7 +3683,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         selectedMesh->postInit();
                         selectedMesh->isDirty = true;
                     }
-                } else if (transformHasMask) {
+                } else if (transformHasMask || sculpt.getUseSym()) {
+                    selectedMesh->matrix = pivotStartMatrix;
                     selectedMesh->postInit();
                     selectedMesh->isDirty = true;
                 }

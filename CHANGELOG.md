@@ -6,6 +6,10 @@ All notable changes to this project will be documented in this file.
 - **Transform Tool**: Enabled vertex masking support for the Transform Tool, ensuring unmasked vertices transform relative to the active matrix while masked vertices stay stationary in world space.
 - **Transform Tool**: Added a "Center Pivot on Unmasked" UI button in the Transform Tool settings panel when masking is active, positioning the gizmo pivot directly at the unmasked geometry's center of mass.
 - **Transform Tool**: Ensured matrix resetting and target matrix applications respect active vertex masks.
+- **Transform Tool**: Added full symmetry support when manipulating the Transform Tool gizmo with off-center or arbitrary pivot locations, automatically calculating mirrored transformations around mirrored pivots (`S * deltaLocal * S`) and smoothly blending vertex movement across active symmetry planes.
+- **Masking & Symmetry**: Added full multi-axis symmetry support to Lasso Masking and Lasso Hiding by evaluating primary and mirrored vertex positions against the lasso selection boundary.
+- **Masking & Symmetry**: Fixed mask brush stroke sign to correctly decrease mask values towards 0.0 (masked) during standard strokes and increase towards 1.0 (unmasked) when holding Alt.
+- **Masking & Symmetry**: Fixed symmetry reflection calculation in Mask Gradient Blur tool for active symmetry axes.
 
 
 ## [1.2.9]

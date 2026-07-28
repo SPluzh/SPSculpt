@@ -2876,25 +2876,61 @@ std::vector<uint32_t> SculptManager::getVerticesInLasso(Mesh* mesh, const Camera
     int nbVerts = mesh->nbVerts;
     const float* verts = mesh->verts.data();
 
+    std::vector<glm::vec3> symScales;
+    if (m_useSym) {
+        symScales = getActiveSymmetryScales();
+    }
+
     for (int i = 0; i < nbVerts; ++i) {
         int ind = i * 3;
         glm::vec4 localPos(verts[ind], verts[ind + 1], verts[ind + 2], 1.0f);
         glm::vec4 clipPos = mvp * localPos;
         float w = clipPos.w;
-        if (w <= 0.0f) continue;
+        bool isInside = false;
 
-        float ndcX = clipPos.x / w;
-        float ndcY = clipPos.y / w;
+        if (w > 0.0f) {
+            float ndcX = clipPos.x / w;
+            float ndcY = clipPos.y / w;
 
-        if (camera.getRef2DMode()) {
-            ndcX = ndcX * camera.getView2DZoom() + camera.getView2DOffsetX();
-            ndcY = ndcY * camera.getView2DZoom() + camera.getView2DOffsetY();
+            if (camera.getRef2DMode()) {
+                ndcX = ndcX * camera.getView2DZoom() + camera.getView2DOffsetX();
+                ndcY = ndcY * camera.getView2DZoom() + camera.getView2DOffsetY();
+            }
+
+            float screenX = (ndcX + 1.0f) * 0.5f * width;
+            float screenY = (1.0f - ndcY) * 0.5f * height;
+
+            if (isPointInPolygon(screenX, screenY, m_lassoPoints)) {
+                isInside = true;
+            }
         }
 
-        float screenX = (ndcX + 1.0f) * 0.5f * width;
-        float screenY = (1.0f - ndcY) * 0.5f * height;
+        if (!isInside && !symScales.empty()) {
+            for (const auto& sScale : symScales) {
+                glm::vec4 symLocalPos(verts[ind] * sScale.x, verts[ind + 1] * sScale.y, verts[ind + 2] * sScale.z, 1.0f);
+                glm::vec4 symClipPos = mvp * symLocalPos;
+                float sw = symClipPos.w;
+                if (sw > 0.0f) {
+                    float ndcX = symClipPos.x / sw;
+                    float ndcY = symClipPos.y / sw;
 
-        if (isPointInPolygon(screenX, screenY, m_lassoPoints)) {
+                    if (camera.getRef2DMode()) {
+                        ndcX = ndcX * camera.getView2DZoom() + camera.getView2DOffsetX();
+                        ndcY = ndcY * camera.getView2DZoom() + camera.getView2DOffsetY();
+                    }
+
+                    float screenX = (ndcX + 1.0f) * 0.5f * width;
+                    float screenY = (1.0f - ndcY) * 0.5f * height;
+
+                    if (isPointInPolygon(screenX, screenY, m_lassoPoints)) {
+                        isInside = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (isInside) {
             insideVertices.push_back(i);
         }
     }
