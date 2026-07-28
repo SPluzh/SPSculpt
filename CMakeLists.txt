@@ -116,6 +116,7 @@ add_executable(sculptsp
 )
 
 if(WIN32)
+    set_target_properties(sculptsp PROPERTIES WIN32_EXECUTABLE TRUE)
     target_link_libraries(sculptsp PRIVATE comdlg32)
 endif()
 

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.7]
+- **CLI**: Disabled console window by default when launching the application on Windows.
+- **CLI**: Added `--console` (also `-console`, `-c`, `--show-console`) command-line parameter to allocate/attach a console window when requested.
+- **Scripts**: Updated `run.bat` to pass `--console %*` to `sculptsp.exe`.
+
 ## [1.2.6]
 - **Fix**: Resolved asymmetrical displacement when using the Alt key (normal displacement) on the Move, Drag, and Elastic brushes with symmetry enabled. Drag direction is now calculated from screen-space mouse projection on the primary pass and scaled by `sScale` across mirror passes, ensuring identical and symmetric displacement along surface normals on both sides.
 - **Hotkey**: Assigned `Alt + X` hotkey combination to quickly toggle master symmetry on and off.
