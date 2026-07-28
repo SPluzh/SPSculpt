@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(sculptsp CXX)
+project(SPSculpt CXX)
 set(CMAKE_CXX_STANDARD 20)
 
 add_subdirectory(third_party/glm)
@@ -59,7 +59,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/third_party
 )
 
-add_executable(sculptsp
+add_executable(SPSculpt
     # common
     src/common/IniFile.cpp
     # scene
@@ -116,21 +116,21 @@ add_executable(sculptsp
 )
 
 if(WIN32)
-    set_target_properties(sculptsp PROPERTIES WIN32_EXECUTABLE TRUE)
-    target_link_libraries(sculptsp PRIVATE comdlg32)
+    set_target_properties(SPSculpt PROPERTIES WIN32_EXECUTABLE TRUE OUTPUT_NAME "SPSculpt")
+    target_link_libraries(SPSculpt PRIVATE comdlg32)
 endif()
 
 if(TARGET SDL2::SDL2)
-    target_link_libraries(sculptsp PRIVATE SDL2::SDL2)
+    target_link_libraries(SPSculpt PRIVATE SDL2::SDL2)
 else()
-    target_link_libraries(sculptsp PRIVATE ${SDL2_LIBRARIES})
+    target_link_libraries(SPSculpt PRIVATE ${SDL2_LIBRARIES})
     include_directories(${SDL2_INCLUDE_DIRS})
 endif()
 
-target_link_libraries(sculptsp PRIVATE imgui ${EGL_LIBRARY} ${GLES_LIBRARY} glm nlohmann_json::nlohmann_json)
-target_compile_options(sculptsp PRIVATE -O3)
+target_link_libraries(SPSculpt PRIVATE imgui ${EGL_LIBRARY} ${GLES_LIBRARY} glm nlohmann_json::nlohmann_json)
+target_compile_options(SPSculpt PRIVATE -O3)
 
 if(MINGW)
-    target_link_options(sculptsp PRIVATE -static-libgcc -static-libstdc++)
+    target_link_options(SPSculpt PRIVATE -static-libgcc -static-libstdc++)
 endif()
 

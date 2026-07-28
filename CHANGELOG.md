@@ -3,6 +3,10 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.7]
+- **Brand**: Renamed the application from SculptSP to SPSculpt.
+- **Build**: Updated the executable output name to SPSculpt.exe.
+- **UI**: Updated the window title from "SculptSP Native Engine" to "SPSculpt".
+- **Scripts**: Updated build, run, package, and production release batch scripts to use SPSculpt.exe.
 - **Build**: Added `build_prod.bat` for generating optimized production releases.
 - **Build**: Reduced executable file size from 55MB to ~4.5MB by removing debug symbols from release compile options and stripping final binaries.
 - **CLI**: Disabled console window by default when launching the application on Windows.

@@ -233,7 +233,7 @@ void GuiManager::saveSceneAs(Scene& scene) {
 
 void GuiManager::updateWindowTitle(SDL_Window* window, bool isModified) {
     if (!window) return;
-    std::string title = "SculptSP Native Engine";
+    std::string title = "SPSculpt";
     if (!m_currentScenePath.empty()) {
         title += " - " + m_currentScenePath;
     }

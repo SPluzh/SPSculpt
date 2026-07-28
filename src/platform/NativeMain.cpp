@@ -269,7 +269,7 @@ int main(int argc, char* argv[]) {
     try {
         SDL_SetMainReady();
     SDL_SetHint(SDL_HINT_OPENGL_ES_DRIVER, "1");
-    std::cout << "Starting SculptSP Desktop Core..." << std::endl;
+    std::cout << "Starting SPSculpt Desktop Core..." << std::endl;
 
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
         std::cerr << "SDL initialization failed: " << SDL_GetError() << std::endl;
@@ -315,7 +315,7 @@ int main(int argc, char* argv[]) {
     }
 
     SDL_Window* window = SDL_CreateWindow(
-        "SculptSP Native Engine",
+        "SPSculpt",
         posX, posY,
         width, height,
         SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI | (startMaximized ? SDL_WINDOW_MAXIMIZED : 0)

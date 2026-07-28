@@ -42,7 +42,7 @@ std::vector<uint8_t> exportGLB(const std::vector<Mesh*>& meshes) {
     size_t byteOffset = 0;
 
     json j;
-    j["asset"] = { {"version", "2.0"}, {"generator", "SculptSP GLB Exporter"} };
+    j["asset"] = { {"version", "2.0"}, {"generator", "SPSculpt GLB Exporter"} };
     j["scenes"] = json::array({ { {"nodes", json::array()} } });
     j["scene"] = 0;
     j["nodes"] = json::array();

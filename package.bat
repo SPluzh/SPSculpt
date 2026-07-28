@@ -1,6 +1,6 @@
 @echo off
 if not exist dist mkdir dist
-copy /Y build\sculptsp.exe dist\
+copy /Y build\SPSculpt.exe dist\
 copy /Y C:\msys64\ucrt64\bin\SDL2.dll dist\
 copy /Y C:\msys64\ucrt64\bin\libEGL.dll dist\
 copy /Y C:\msys64\ucrt64\bin\libGLESv2.dll dist\

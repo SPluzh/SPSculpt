@@ -1,4 +1,4 @@
-# SculptSP Desktop Native
+# SPSculpt Desktop Native
 
 Standalone C++ desktop sculpt application using SDL2, OpenGL ES 3.0 (via ANGLE), and ImGui.
 
@@ -26,5 +26,5 @@ Run `run.bat` on Windows or:
 
 ```bash
 cd build
-./sculptsp
+./SPSculpt
 ```

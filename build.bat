@@ -5,7 +5,7 @@ cd build
 cmake .. -G "Ninja" -DCMAKE_BUILD_TYPE=Release
 cmake --build .
 cd ..
-if exist build\sculptsp.exe (
+if exist build\SPSculpt.exe (
     if not exist dist mkdir dist
-    copy /Y build\sculptsp.exe dist\
+    copy /Y build\SPSculpt.exe dist\
 )

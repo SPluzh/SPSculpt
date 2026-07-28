@@ -18,12 +18,12 @@ cd ..
 
 echo.
 echo [1/3] Stripping debug symbols from executable...
-strip --strip-all build\sculptsp.exe
+strip --strip-all build\SPSculpt.exe
 
 if not exist dist mkdir dist
 
 echo [2/3] Copying executable and DLLs to dist...
-copy /Y build\sculptsp.exe dist\ >nul
+copy /Y build\SPSculpt.exe dist\ >nul
 copy /Y C:\msys64\ucrt64\bin\SDL2.dll dist\ >nul
 copy /Y C:\msys64\ucrt64\bin\libEGL.dll dist\ >nul
 copy /Y C:\msys64\ucrt64\bin\libGLESv2.dll dist\ >nul
@@ -42,7 +42,7 @@ echo ========================================================
 echo SUCCESS: Production build complete!
 echo Output folder: dist\
 echo Final EXE Size:
-for %%I in (dist\sculptsp.exe) do echo %%~zI bytes (%%~zI / 1024 / 1024 MB)
+for %%I in (dist\SPSculpt.exe) do echo %%~zI bytes (%%~zI / 1024 / 1024 MB)
 echo ========================================================
 goto end
 
