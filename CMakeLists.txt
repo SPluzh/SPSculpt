@@ -128,7 +128,7 @@ else()
 endif()
 
 target_link_libraries(sculptsp PRIVATE imgui ${EGL_LIBRARY} ${GLES_LIBRARY} glm nlohmann_json::nlohmann_json)
-target_compile_options(sculptsp PRIVATE -O3 -g)
+target_compile_options(sculptsp PRIVATE -O3)
 
 if(MINGW)
     target_link_options(sculptsp PRIVATE -static-libgcc -static-libstdc++)

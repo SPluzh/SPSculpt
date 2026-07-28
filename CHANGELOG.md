@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.7]
+- **Build**: Added `build_prod.bat` for generating optimized production releases.
+- **Build**: Reduced executable file size from 55MB to ~4.5MB by removing debug symbols from release compile options and stripping final binaries.
 - **CLI**: Disabled console window by default when launching the application on Windows.
 - **CLI**: Added `--console` (also `-console`, `-c`, `--show-console`) command-line parameter to allocate/attach a console window when requested.
 - **Scripts**: Updated `run.bat` to pass `--console %*` to `sculptsp.exe`.
