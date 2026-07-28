@@ -1,30 +1,21 @@
 # SPSculpt Desktop Native
 
-Standalone C++ desktop sculpt application using SDL2, OpenGL ES 3.0 (via ANGLE), and ImGui.
+SPSculpt is a 3D sculpting desktop application written in C++.
 
-## Prerequisites
+## Relationship to SculptGL
 
-- **CMake** 3.20+
-- **Compiler**: GCC / MinGW (MSYS2) or MSVC with C++20 support
-- **SDL2** development libraries
-- **ANGLE** (EGL/GLESv2) development libraries
+SPSculpt is a native C++ port and optimization of [SculptGL](https://github.com/stephomi/sculptgl), the web-based sculpting application created by Stéphane Ginier.
 
-## How to Build
+### What Remains from the Original SculptGL:
+* **Core Algorithms**: The mathematical formulas for the original sculpting brushes (Clay, Flatten, Smooth, Crease, Pinch, Paint, Mask, Move, Drag, Inflate, Twist, Local Scale, and Standard Brush) and stroke interpolation.
+* **Mesh & Topology**: Voxel remeshing (Marching Cubes-based surface reconstruction), dynamic subdivision, decimation, octree traversal, and quad-sphere generators.
+* **File Compatibility**: Native support for reading/writing SculptGL Scene (`.sgl`) files.
+* **Shading Math**: Ported GLSL equations for Matcap, PBR, and Curvature rendering.
 
-Run `build.bat` on Windows or:
+### What Was Replaced (C++ Native Version):
+* **Core Tech**: 100% rewritten in **C++20** (no JS/WebGL/WASM/Emscripten remaining).
+* **Window & Input**: Managed natively via **SDL2** instead of browser-based APIs.
+* **User Interface**: Powered by **Dear ImGui** instead of the original lil-gui/HTML interface.
+* **Performance**: Optimized with **OpenMP** multi-threading and asynchronous background workers.
 
-```bash
-mkdir build
-cd build
-cmake .. -G "MinGW Makefiles"
-cmake --build . --config Release
-```
 
-## How to Run
-
-Run `run.bat` on Windows or:
-
-```bash
-cd build
-./SPSculpt
-```
