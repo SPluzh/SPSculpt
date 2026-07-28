@@ -4438,6 +4438,22 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
 
         ImGui::SameLine();
 
+        bool showPolyGroups = renderer.getShowPolyGroups();
+        if (showPolyGroups) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+        if (ImGui::Button(ICON_LC_LAYERS "##hudPolyGroups")) {
+            renderer.setShowPolyGroups(!showPolyGroups);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle PolyGroups Display");
+        if (showPolyGroups) {
+            ImGui::PopStyleColor(3);
+        }
+
+        ImGui::SameLine();
+
         bool isSilhouette = (renderer.getShaderType() == 6);
         if (isSilhouette) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
