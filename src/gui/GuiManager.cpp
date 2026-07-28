@@ -625,6 +625,9 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             }
             if (ImGui::Button(tools[i], ImVec2(-1, 26))) {
                 sculpt.setBrush((BrushType)i);
+                if ((BrushType)i == BRUSH_POLYGROUP) {
+                    renderer.setShowPolyGroups(true);
+                }
             }
             if (selected) {
                 ImGui::PopStyleColor();
@@ -4379,6 +4382,9 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
                 bool isSelected = (currentBrush == (BrushType)i);
                 if (ImGui::Selectable(tools[i], isSelected)) {
                     sculpt.setBrush((BrushType)i);
+                    if ((BrushType)i == BRUSH_POLYGROUP) {
+                        renderer.setShowPolyGroups(true);
+                    }
                 }
             }
             ImGui::EndCombo();
@@ -4438,14 +4444,14 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
 
         ImGui::SameLine();
 
-        bool showPolyGroups = renderer.getShowPolyGroups();
+        bool showPolyGroups = renderer.getShowPolyGroups() || (sculpt.getBrush() == BRUSH_POLYGROUP);
         if (showPolyGroups) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
         }
         if (ImGui::Button(ICON_LC_LAYERS "##hudPolyGroups")) {
-            renderer.setShowPolyGroups(!showPolyGroups);
+            renderer.setShowPolyGroups(!renderer.getShowPolyGroups());
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle PolyGroups Display");
         if (showPolyGroups) {
