@@ -3,6 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.2.6]
+- **Fix**: Resolved asymmetrical displacement when using the Alt key (normal displacement) on the Move, Drag, and Elastic brushes with symmetry enabled. Drag direction is now calculated from screen-space mouse projection on the primary pass and scaled by `sScale` across mirror passes, ensuring identical and symmetric displacement along surface normals on both sides.
 - **Hotkey**: Assigned `Alt + X` hotkey combination to quickly toggle master symmetry on and off.
 - **UI**: Added Solo mode allowing users to isolate the active mesh for focused editing, accessible via the new Solo icon button on the Floating Island HUD or by pressing the 'C' hotkey.
 - **Fix**: Fixed Move and Elastic tools when symmetry is active by switching deformation calculations from hard assignment (`=`) to additive accumulation (`+=`) and pre-resetting grabbed vertex positions to `vertProxy`, preventing symmetry passes from overwriting primary stroke displacements.

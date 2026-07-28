@@ -445,9 +445,9 @@ int SculptManager::doStrokePass(
         case BRUSH_MOVE: {
             glm::vec3 dragDirection;
             if (negative) {
-                glm::vec3 norm = (glm::length(currentIntersectionNormal) > 1e-6f) ? glm::normalize(currentIntersectionNormal) : glm::vec3(0.0f, 1.0f, 0.0f);
+                glm::vec3 norm = (glm::length(m_currentIntersectionNormal) > 1e-6f) ? glm::normalize(m_currentIntersectionNormal) : glm::vec3(0.0f, 1.0f, 0.0f);
                 glm::mat4 localToView = scene.getCamera().getViewMatrix() * mesh->matrix;
-                glm::vec3 dragVec = currentIntersection - initialIntersection;
+                glm::vec3 dragVec = m_currentIntersection - m_initialIntersection;
                 glm::vec3 dragView = glm::vec3(localToView * glm::vec4(dragVec, 0.0f));
                 glm::vec3 normView = glm::vec3(localToView * glm::vec4(norm, 0.0f));
                 if (glm::length(normView) > 1e-6f) {
@@ -462,9 +462,11 @@ int SculptManager::doStrokePass(
                 if (scale < 1e-12f) scale = 1.0f;
                 float localAmount = amount / scale;
 
-                dragDirection = norm * (localAmount * intensity);
+                glm::vec3 primaryDragDir = norm * (localAmount * intensity);
+                dragDirection = isSymmetry ? (primaryDragDir * sScale) : primaryDragDir;
             } else {
-                dragDirection = (currentIntersection - initialIntersection) * intensity;
+                glm::vec3 primaryDragDir = (m_currentIntersection - m_initialIntersection) * intensity;
+                dragDirection = isSymmetry ? (primaryDragDir * sScale) : primaryDragDir;
             }
             deformedCount = strokeMove(
                 mesh->verts.data(),
@@ -484,9 +486,9 @@ int SculptManager::doStrokePass(
         case BRUSH_DRAG: {
             glm::vec3 dragDirection;
             if (negative) {
-                glm::vec3 norm = (glm::length(currentIntersectionNormal) > 1e-6f) ? glm::normalize(currentIntersectionNormal) : glm::vec3(0.0f, 1.0f, 0.0f);
+                glm::vec3 norm = (glm::length(m_currentIntersectionNormal) > 1e-6f) ? glm::normalize(m_currentIntersectionNormal) : glm::vec3(0.0f, 1.0f, 0.0f);
                 glm::mat4 localToView = scene.getCamera().getViewMatrix() * mesh->matrix;
-                glm::vec3 dragVec = currentIntersection - initialIntersection;
+                glm::vec3 dragVec = m_currentIntersection - m_initialIntersection;
                 glm::vec3 dragView = glm::vec3(localToView * glm::vec4(dragVec, 0.0f));
                 glm::vec3 normView = glm::vec3(localToView * glm::vec4(norm, 0.0f));
                 if (glm::length(normView) > 1e-6f) {
@@ -501,9 +503,11 @@ int SculptManager::doStrokePass(
                 if (scale < 1e-12f) scale = 1.0f;
                 float localAmount = amount / scale;
 
-                dragDirection = norm * (localAmount * intensity);
+                glm::vec3 primaryDragDir = norm * (localAmount * intensity);
+                dragDirection = isSymmetry ? (primaryDragDir * sScale) : primaryDragDir;
             } else {
-                dragDirection = (currentIntersection - initialIntersection) * intensity;
+                glm::vec3 primaryDragDir = (m_currentIntersection - m_initialIntersection) * intensity;
+                dragDirection = isSymmetry ? (primaryDragDir * sScale) : primaryDragDir;
             }
             deformedCount = strokeDrag(
                 mesh->verts.data(),
@@ -522,9 +526,9 @@ int SculptManager::doStrokePass(
         case BRUSH_ELASTIC: {
             glm::vec3 dragDirection;
             if (negative) {
-                glm::vec3 norm = (glm::length(currentIntersectionNormal) > 1e-6f) ? glm::normalize(currentIntersectionNormal) : glm::vec3(0.0f, 1.0f, 0.0f);
+                glm::vec3 norm = (glm::length(m_currentIntersectionNormal) > 1e-6f) ? glm::normalize(m_currentIntersectionNormal) : glm::vec3(0.0f, 1.0f, 0.0f);
                 glm::mat4 localToView = scene.getCamera().getViewMatrix() * mesh->matrix;
-                glm::vec3 dragVec = currentIntersection - initialIntersection;
+                glm::vec3 dragVec = m_currentIntersection - m_initialIntersection;
                 glm::vec3 dragView = glm::vec3(localToView * glm::vec4(dragVec, 0.0f));
                 glm::vec3 normView = glm::vec3(localToView * glm::vec4(norm, 0.0f));
                 if (glm::length(normView) > 1e-6f) {
@@ -539,9 +543,11 @@ int SculptManager::doStrokePass(
                 if (scale < 1e-12f) scale = 1.0f;
                 float localAmount = amount / scale;
 
-                dragDirection = norm * (localAmount * intensity);
+                glm::vec3 primaryDragDir = norm * (localAmount * intensity);
+                dragDirection = isSymmetry ? (primaryDragDir * sScale) : primaryDragDir;
             } else {
-                dragDirection = (currentIntersection - initialIntersection) * intensity;
+                glm::vec3 primaryDragDir = (m_currentIntersection - m_initialIntersection) * intensity;
+                dragDirection = isSymmetry ? (primaryDragDir * sScale) : primaryDragDir;
             }
             deformedCount = strokeElastic(
                 mesh->verts.data(),
