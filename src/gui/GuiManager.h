@@ -235,4 +235,5 @@ public:
 
     // Context popup request
     bool m_openContextPopup = false;
+    int m_previousShaderType = 0;
 };

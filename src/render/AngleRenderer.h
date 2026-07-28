@@ -371,6 +371,7 @@ private:
     GLuint m_viewport2DProgram = 0;
     GLuint m_contourProgram = 0;
     GLuint m_wetClayProgram = 0;
+    GLuint m_silhouetteProgram = 0;
     GLuint m_voxelCheckerProgram = 0;
     GLuint m_normalProgram = 0;
     GLuint m_bevelPrepassProgram = 0;

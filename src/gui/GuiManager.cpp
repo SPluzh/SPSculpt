@@ -1886,7 +1886,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         ImGui::Begin("Rendering Quality", &m_showRenderingPanel, ImGuiWindowFlags_AlwaysAutoResize);
 
         // Global shading settings (always accessible)
-        const char* shaders[] = { "PBR Shader", "Matcap Shading", "Wet Clay Shading", "Normal Shader", "Voxel Checker Shader", "Flat Shading" };
+        const char* shaders[] = { "PBR Shader", "Matcap Shading", "Wet Clay Shading", "Normal Shader", "Voxel Checker Shader", "Flat Shading", "Silhouette Shader" };
         int type = renderer.getShaderType();
         if (ImGui::Combo("Material Shader", &type, shaders, IM_ARRAYSIZE(shaders))) {
             renderer.setShaderType(type);
@@ -4433,6 +4433,27 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Wireframe Shading");
         if (showWireframe) {
+            ImGui::PopStyleColor(3);
+        }
+
+        ImGui::SameLine();
+
+        bool isSilhouette = (renderer.getShaderType() == 6);
+        if (isSilhouette) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+        if (ImGui::Button(ICON_LC_CONTRAST "##hudSilhouette")) {
+            if (isSilhouette) {
+                renderer.setShaderType(m_previousShaderType);
+            } else {
+                m_previousShaderType = renderer.getShaderType();
+                renderer.setShaderType(6);
+            }
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Silhouette Mode");
+        if (isSilhouette) {
             ImGui::PopStyleColor(3);
         }
 

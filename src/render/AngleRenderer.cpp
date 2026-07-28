@@ -37,6 +37,7 @@ AngleRenderer::~AngleRenderer() {
     if (m_viewport2DProgram) glDeleteProgram(m_viewport2DProgram);
     if (m_contourProgram) glDeleteProgram(m_contourProgram);
     if (m_wetClayProgram) glDeleteProgram(m_wetClayProgram);
+    if (m_silhouetteProgram) glDeleteProgram(m_silhouetteProgram);
     if (m_voxelCheckerProgram) glDeleteProgram(m_voxelCheckerProgram);
     if (m_normalProgram) glDeleteProgram(m_normalProgram);
     if (m_bevelPrepassProgram) glDeleteProgram(m_bevelPrepassProgram);
@@ -219,6 +220,7 @@ bool AngleRenderer::init(int width, int height) {
     m_polygroupProgram = loadAndCompileProgram("polygroup.vert", "polygroup.frag");
     m_pbrProgram = loadAndCompileProgram("pbr.vert", "pbr.frag");
     m_wetClayProgram = loadAndCompileProgram("wet_clay.vert", "wet_clay.frag");
+    m_silhouetteProgram = loadAndCompileProgram("silhouette.vert", "silhouette.frag");
     m_normalProgram = loadAndCompileProgram("normal.vert", "normal.frag");
     m_voxelCheckerProgram = loadAndCompileProgram("voxel_checker.vert", "voxel_checker.frag");
     m_mergeProgram = loadAndCompileProgram("merge.vert", "merge.frag");
@@ -242,7 +244,7 @@ bool AngleRenderer::init(int width, int height) {
 
     // Check if critical shader programs failed to load/link
     if (!m_bgProgram || !m_selectionProgram || !m_refImageProgram || !m_wireframeProgram ||
-        !m_flatProgram || !m_matcapProgram || !m_pbrProgram || !m_wetClayProgram ||
+        !m_flatProgram || !m_matcapProgram || !m_pbrProgram || !m_wetClayProgram || !m_silhouetteProgram ||
         !m_normalProgram || !m_voxelCheckerProgram || !m_mergeProgram || !m_fxaaProgram ||
         !m_viewport2DProgram || !m_contourProgram || !m_bevelPrepassProgram || !m_bevelFilterProgram ||
         !m_ssaoNormalsProgram || !m_ssaoProgram || !m_ssaoBlurProgram || !m_armatureProgram || !m_armatureNormalsProgram ||
@@ -1248,6 +1250,7 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
     else if (m_shaderType == 2) program = m_wetClayProgram;
     else if (m_shaderType == 3) program = m_normalProgram;
     else if (m_shaderType == 4) program = m_voxelCheckerProgram;
+    else if (m_shaderType == 6) program = m_silhouetteProgram;
 
     if (program == 0) return;
     glUseProgram(program);
