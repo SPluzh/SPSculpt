@@ -2384,57 +2384,82 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                         mesh->isDirty = true;
                         mesh->isFaceGroupDirty = true;
                     } else if (hitMesh && mesh && intersectFaceId != 0xffffffff) {
-                        bool hasPolyGroups = (mesh && mesh->faceGroups.size() == (size_t)mesh->nbFaces);
-                        if (hasPolyGroups) {
-                            uint32_t clickedGroupId = m_polyGroupTool.getGroupAtFace(mesh, intersectFaceId);
-                            SDL_Keymod mod = SDL_GetModState();
-                            bool altPressed = m_lassoAlt || ((mod & KMOD_ALT) != 0);
+                        if (mesh->faceGroups.size() != (size_t)mesh->nbFaces) {
+                            mesh->initFaceGroups();
+                        }
+                        uint32_t clickedGroupId = m_polyGroupTool.getGroupAtFace(mesh, intersectFaceId);
+                        SDL_Keymod mod = SDL_GetModState();
+                        bool altPressed = m_lassoAlt || ((mod & KMOD_ALT) != 0);
 
-                            scene.pushHistoryState();
+                        scene.pushHistoryState();
 
-                            if (mesh->faceVisible.size() != (size_t)mesh->nbFaces) {
-                                mesh->faceVisible.assign(mesh->nbFaces, 1);
+                        if (mesh->faceVisible.size() != (size_t)mesh->nbFaces) {
+                            mesh->faceVisible.assign(mesh->nbFaces, 1);
+                        }
+
+                        if (!altPressed) {
+                            // Check if clickedGroupId is currently isolated (all its faces visible, and all other group faces hidden)
+                            bool isAlreadyIsolated = true;
+                            bool hasOtherGroups = false;
+                            for (int f = 0; f < mesh->nbFaces; ++f) {
+                                uint32_t gid = (mesh->faceGroups.size() > (size_t)f) ? mesh->faceGroups[f] : 0;
+                                if (gid == clickedGroupId) {
+                                    if (!mesh->faceVisible[f]) {
+                                        isAlreadyIsolated = false;
+                                        break;
+                                    }
+                                } else {
+                                    hasOtherGroups = true;
+                                    if (mesh->faceVisible[f]) {
+                                        isAlreadyIsolated = false;
+                                        break;
+                                    }
+                                }
                             }
 
-                            if (!altPressed) {
-                                // Ctrl + Shift + Click: isolate clicked polygroup (show ONLY clickedGroupId)
+                            if (isAlreadyIsolated && hasOtherGroups) {
+                                // Toggle isolation OFF: show ALL polygroups
+                                std::cout << "[VisibilityClick] PolyGroup " << clickedGroupId << " is already isolated. Showing all polygroups..." << std::endl;
+                                std::fill(mesh->faceVisible.begin(), mesh->faceVisible.end(), 1);
+                            } else {
+                                // Isolate clicked polygroup (show ONLY clickedGroupId)
                                 std::cout << "[VisibilityClick] Ctrl+Shift+Click on PolyGroup " << clickedGroupId << ". Isolating polygroup..." << std::endl;
                                 for (int f = 0; f < mesh->nbFaces; ++f) {
                                     uint32_t gid = (mesh->faceGroups.size() > (size_t)f) ? mesh->faceGroups[f] : 0;
                                     mesh->faceVisible[f] = (gid == clickedGroupId) ? 1 : 0;
                                 }
-                            } else {
-                                // Ctrl + Shift + Alt + Click: hide clicked polygroup (hide clickedGroupId, keeping other currently visible faces)
-                                std::cout << "[VisibilityClick] Ctrl+Shift+Alt+Click on PolyGroup " << clickedGroupId << ". Hiding polygroup..." << std::endl;
-                                for (int f = 0; f < mesh->nbFaces; ++f) {
-                                    uint32_t gid = (mesh->faceGroups.size() > (size_t)f) ? mesh->faceGroups[f] : 0;
-                                    if (gid == clickedGroupId) {
-                                        mesh->faceVisible[f] = 0;
-                                    }
-                                }
                             }
-
-                            // Synchronize vertVisible from faceVisible:
-                            // Mark vertVisible = 1 for all vertices that belong to ANY visible face
-                            std::vector<uint8_t> newVertVisible(mesh->nbVerts, 0);
+                        } else {
+                            // Ctrl + Shift + Alt + Click: hide clicked polygroup (hide clickedGroupId, keeping other currently visible faces)
+                            std::cout << "[VisibilityClick] Ctrl+Shift+Alt+Click on PolyGroup " << clickedGroupId << ". Hiding polygroup..." << std::endl;
                             for (int f = 0; f < mesh->nbFaces; ++f) {
-                                if (mesh->faceVisible[f]) {
-                                    uint32_t v0 = mesh->faces[f * 4];
-                                    uint32_t v1 = mesh->faces[f * 4 + 1];
-                                    uint32_t v2 = mesh->faces[f * 4 + 2];
-                                    uint32_t v3 = mesh->faces[f * 4 + 3];
-
-                                    if (v0 < newVertVisible.size()) newVertVisible[v0] = 1;
-                                    if (v1 < newVertVisible.size()) newVertVisible[v1] = 1;
-                                    if (v2 < newVertVisible.size()) newVertVisible[v2] = 1;
-                                    if (v3 != 0xffffffff && v3 < newVertVisible.size()) newVertVisible[v3] = 1;
+                                uint32_t gid = (mesh->faceGroups.size() > (size_t)f) ? mesh->faceGroups[f] : 0;
+                                if (gid == clickedGroupId) {
+                                    mesh->faceVisible[f] = 0;
                                 }
                             }
-
-                            mesh->vertVisible = newVertVisible;
-                            mesh->isDirty = true;
-                            mesh->isFaceGroupDirty = true;
                         }
+
+                        // Synchronize vertVisible from faceVisible:
+                        // Mark vertVisible = 1 for all vertices that belong to ANY visible face
+                        std::vector<uint8_t> newVertVisible(mesh->nbVerts, 0);
+                        for (int f = 0; f < mesh->nbFaces; ++f) {
+                            if (mesh->faceVisible[f]) {
+                                uint32_t v0 = mesh->faces[f * 4];
+                                uint32_t v1 = mesh->faces[f * 4 + 1];
+                                uint32_t v2 = mesh->faces[f * 4 + 2];
+                                uint32_t v3 = mesh->faces[f * 4 + 3];
+
+                                if (v0 < newVertVisible.size()) newVertVisible[v0] = 1;
+                                if (v1 < newVertVisible.size()) newVertVisible[v1] = 1;
+                                if (v2 < newVertVisible.size()) newVertVisible[v2] = 1;
+                                if (v3 != 0xffffffff && v3 < newVertVisible.size()) newVertVisible[v3] = 1;
+                            }
+                        }
+
+                        mesh->vertVisible = std::move(newVertVisible);
+                        mesh->isDirty = true;
+                        mesh->isFaceGroupDirty = true;
                     }
                 }
             }

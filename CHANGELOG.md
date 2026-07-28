@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.9]
+- **PolyGroups**: Fixed an issue where `Ctrl + Shift + Click` on an already-isolated polygroup (including the main/default polygroup 0) failed to toggle isolation off and restore the visibility of other polygroups.
+- **PolyGroups**: Added automatic initialization check for `mesh->faceGroups` when executing visibility clicks on meshes without pre-existing explicit polygroup arrays.
+
 ## [1.2.8]
 - **Camera**: Refactored camera framing logic (`resetViewToWorldPoints` / `resetViewToMeshes`) to transform all mesh bounding points into camera view space using the active rotation matrix (`m_quatRot`) and world matrix (`mesh->matrix`).
 - **Camera**: Fixed a bug where setting `targetState.offset` equal to `targetState.center` caused double-translation inside `glm::lookAt()`, shifting the camera target vertically when framing high or tall objects and cropping them off the top of the viewport.
