@@ -133,6 +133,7 @@ void UndoManager::endSculptStroke(Scene& scene) {
         sculpt_log_lvl(LogLevel::Info, "[Undo] Sculpt stroke completed: '%s' (%zu verts recorded, size: %.2f KB)\n",
                        m_activeSculptEntry->description.c_str(), totalRecordedVerts, m_activeSculptEntry->getMemoryUsage() / 1024.0f);
         pushEntry(std::move(m_activeSculptEntry));
+        scene.setModified(true);
     } else {
         sculpt_log_lvl(LogLevel::Debug, "[Undo] Sculpt stroke canceled or no changes detected\n");
         m_activeSculptEntry.reset();
@@ -182,6 +183,7 @@ void UndoManager::pushTopologyChange(Scene& scene,
     sculpt_log_lvl(LogLevel::Info, "[Undo] Topology change pushed: '%s' (size: %.2f MB)\n",
                    description.c_str(), entry->getMemoryUsage() / (1024.0f * 1024.0f));
     pushEntry(std::move(entry));
+    scene.setModified(true);
 }
 
 void UndoManager::pushMetaChange(Scene& scene,
@@ -196,6 +198,7 @@ void UndoManager::pushMetaChange(Scene& scene,
     entry->after = scene.saveCurrentState();
     sculpt_log_lvl(LogLevel::Info, "[Undo] Meta change pushed: '%s'\n", description.c_str());
     pushEntry(std::move(entry));
+    scene.setModified(true);
 }
 
 void UndoManager::pushLegacyState(Scene& scene, const std::string& description) {
@@ -343,6 +346,7 @@ void UndoManager::undo(Scene& scene) {
     applyEntry(entry.get(), scene, true);
 
     m_redoStack.push_back(std::move(entry));
+    scene.setModified(true);
 }
 
 void UndoManager::redo(Scene& scene) {
@@ -358,5 +362,6 @@ void UndoManager::redo(Scene& scene) {
     applyEntry(entry.get(), scene, false);
 
     m_undoStack.push_back(std::move(entry));
+    scene.setModified(true);
 }
 

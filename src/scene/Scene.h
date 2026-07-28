@@ -135,6 +135,10 @@ public:
     void toggleSolo(Mesh* mesh);
     bool isMeshRenderVisible(const Mesh* mesh, int viewport = 0) const;
 
+    // Modification tracking
+    bool isModified() const { return m_isModified; }
+    void setModified(bool mod = true) { m_isModified = mod; }
+
 private:
     std::vector<LightSource> m_lights;
     std::vector<ReferenceImage> m_refImages;
@@ -148,4 +152,5 @@ private:
     std::vector<Mesh*> m_voxelMeshes;
 
     uint32_t m_soloMeshId = 0;
+    bool m_isModified = false;
 };

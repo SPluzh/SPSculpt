@@ -114,11 +114,19 @@ private:
     float m_savedMetallic = 0.0f;
     bool m_savedUseVertexColors = false;
     bool m_savedUseVertexMaterials = false;
+    // Window title & Unsaved exit dialog state
+    std::string m_lastWindowTitle = "";
+    bool m_showUnsavedModal = false;
+    bool m_unsavedModalOpen = false;
+    bool m_pendingQuit = false;
+
     void takeScreenshot(const Scene& scene, AngleRenderer& renderer);
     void drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer);
     void drawUndoDiagPanel(Scene& scene);
     void drawDebugLogPanel();
     void drawSymmetryPanel(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer);
+    void updateWindowTitle(SDL_Window* window, bool isModified);
+    void drawUnsavedChangesModal(Scene& scene, bool& quitApp);
 
 public:
     GuiManager();
@@ -133,6 +141,17 @@ public:
     
     // Fallback for empty calls
     void render() {}
+
+    // Window title & Exit handling
+    void requestExit(bool forceModalCheck = true) {
+        m_pendingQuit = true;
+        if (forceModalCheck) {
+            m_showUnsavedModal = true;
+        }
+    }
+    bool isPendingQuit() const { return m_pendingQuit; }
+    void cancelQuit() { m_pendingQuit = false; m_showUnsavedModal = false; m_unsavedModalOpen = false; }
+    bool isUnsavedModalOpen() const { return m_unsavedModalOpen; }
 
     // File operations
     void openScene(Scene& scene);

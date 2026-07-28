@@ -202,6 +202,7 @@ void GuiManager::openScene(Scene& scene) {
         } else {
             m_currentScenePath.clear();
         }
+        scene.setModified(false);
     }
 }
 
@@ -209,7 +210,9 @@ void GuiManager::saveScene(Scene& scene) {
     if (m_currentScenePath.empty()) {
         saveSceneAs(scene);
     } else {
-        FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer);
+        if (FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer)) {
+            scene.setModified(false);
+        }
     }
 }
 
@@ -222,7 +225,66 @@ void GuiManager::saveSceneAs(Scene& scene) {
     if (!path.empty()) {
         m_currentScenePath = path;
         snprintf(m_exportPath, sizeof(m_exportPath), "%s", path.c_str());
-        FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer);
+        if (FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer)) {
+            scene.setModified(false);
+        }
+    }
+}
+
+void GuiManager::updateWindowTitle(SDL_Window* window, bool isModified) {
+    if (!window) return;
+    std::string title = "SculptSP Native Engine";
+    if (!m_currentScenePath.empty()) {
+        title += " - " + m_currentScenePath;
+    }
+    if (isModified) {
+        title += " *";
+    }
+    if (title != m_lastWindowTitle) {
+        SDL_SetWindowTitle(window, title.c_str());
+        m_lastWindowTitle = title;
+    }
+}
+
+void GuiManager::drawUnsavedChangesModal(Scene& scene, bool& quitApp) {
+    if (m_showUnsavedModal) {
+        ImGui::OpenPopup("Unsaved Changes##ExitModal");
+        m_showUnsavedModal = false;
+        m_unsavedModalOpen = true;
+    }
+
+    if (m_unsavedModalOpen) {
+        ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+        ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        if (ImGui::BeginPopupModal("Unsaved Changes##ExitModal", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
+            ImGui::Text("The current project has unsaved changes.");
+            ImGui::Text("Do you want to save changes before exiting?");
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            if (ImGui::Button("Save", ImVec2(100, 0))) {
+                saveScene(scene);
+                if (!scene.isModified()) {
+                    quitApp = true;
+                    m_unsavedModalOpen = false;
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Don't Save", ImVec2(110, 0))) {
+                scene.setModified(false);
+                quitApp = true;
+                m_unsavedModalOpen = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(100, 0))) {
+                cancelQuit();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
     }
 }
 
@@ -464,6 +526,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             if (ImGui::MenuItem("Load Default Sphere")) {
                 scene.loadDefaultSphere();
                 m_currentScenePath.clear();
+                scene.setModified(false);
             }
             ImGui::Separator();
             if (ImGui::MenuItem("Save App Settings")) {
@@ -480,6 +543,14 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     RenderSettings::load(ini, renderer, scene);
                     sculpt.loadSettings(ini);
                     loadSettings(ini);
+                }
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Exit", "Alt+F4")) {
+                if (scene.isModified()) {
+                    requestExit();
+                } else {
+                    requestExit(false);
                 }
             }
             ImGui::EndMenu();
@@ -3639,6 +3710,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     drawFloatingIslandHUD(sculpt, scene, renderer);
     drawUndoDiagPanel(scene);
     drawDebugLogPanel();
+    drawUnsavedChangesModal(scene, m_pendingQuit);
+    updateWindowTitle(window, scene.isModified());
 
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());

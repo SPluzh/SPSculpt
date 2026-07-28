@@ -429,8 +429,12 @@ int main(int argc, char* argv[]) {
                 hadActivity = true;
                 lastActivityTime = std::chrono::high_resolution_clock::now();
             }
-            if (event.type == SDL_QUIT) {
-                quit = true;
+            if (event.type == SDL_QUIT || (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_CLOSE)) {
+                if (scene.isModified()) {
+                    gui.requestExit();
+                } else {
+                    quit = true;
+                }
             } else if (event.type == SDL_WINDOWEVENT) {
                 if (event.window.event == SDL_WINDOWEVENT_RESIZED) {
                      width = event.window.data1;
@@ -594,6 +598,10 @@ int main(int argc, char* argv[]) {
         renderer.setActiveBrush(sculpt.getBrush());
         renderer.render(scene);
         gui.render(sculpt, scene, renderer, window);
+        
+        if (gui.isPendingQuit() && !scene.isModified() && !gui.isUnsavedModalOpen()) {
+            quit = true;
+        }
         
         bool isRemeshRunning = gui.isRemeshRunning();
         if (wasRemeshRunning && !isRemeshRunning) {

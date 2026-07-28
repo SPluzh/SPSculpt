@@ -62,6 +62,7 @@ void Scene::clear() {
     }
     m_refImages.clear();
     m_soloMeshId = 0;
+    m_isModified = false;
 }
 
 void Scene::addReferenceImage(const std::string& path) {
@@ -183,14 +184,17 @@ Mesh* Scene::getMeshById(uint32_t id) const {
 }
 
 void Scene::pushHistoryState() {
+    m_isModified = true;
     g_undoManager.pushLegacyState(*this);
 }
 
 void Scene::undo() {
+    m_isModified = true;
     g_undoManager.undo(*this);
 }
 
 void Scene::redo() {
+    m_isModified = true;
     g_undoManager.redo(*this);
 }
 
@@ -218,6 +222,7 @@ void Scene::removeMesh(Mesh* m) {
     }
     auto it = std::find(m_meshes.begin(), m_meshes.end(), m);
     if (it != m_meshes.end()) {
+        m_isModified = true;
         int idx = (int)std::distance(m_meshes.begin(), it);
         m_meshes.erase(it);
         
@@ -244,6 +249,7 @@ void Scene::removeMesh(Mesh* m) {
 }
 
 void Scene::replaceMesh(Mesh* oldMesh, Mesh* newMesh) {
+    m_isModified = true;
     auto it = std::find(m_meshes.begin(), m_meshes.end(), oldMesh);
     if (it != m_meshes.end()) {
         *it = newMesh;
@@ -563,6 +569,7 @@ void Scene::loadDefaultSphere() {
     selectMesh(mesh);
 
     m_camera.resetView();
+    m_isModified = false;
 }
 
 static void generateSubdividedCube(
