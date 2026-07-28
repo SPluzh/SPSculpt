@@ -1,4 +1,5 @@
 #include "scene/Camera.h"
+#include "mesh/Mesh.h"
 #include <algorithm>
 #include <cmath>
 #include <glm/gtc/matrix_transform.hpp>
@@ -271,29 +272,80 @@ void Camera::resetView() {
     pushState();
 }
 
-void Camera::resetViewToMesh(const float* bbox) {
-    if (!bbox) {
+void Camera::resetViewToWorldPoints(const std::vector<glm::vec3>& worldPoints) {
+    if (worldPoints.empty()) {
         resetView();
         return;
     }
-    float centerX = (bbox[0] + bbox[3]) * 0.5f;
-    float centerY = (bbox[1] + bbox[4]) * 0.5f;
-    float centerZ = (bbox[2] + bbox[5]) * 0.5f;
-    
+
+    // 1. Compute World AABB of points
+    glm::vec3 minW = worldPoints[0];
+    glm::vec3 maxW = worldPoints[0];
+    for (const auto& p : worldPoints) {
+        minW = glm::min(minW, p);
+        maxW = glm::max(maxW, p);
+    }
+    glm::vec3 centerWorld = (minW + maxW) * 0.5f;
+
+    // 2. Transform points to camera view space relative to centerWorld
+    glm::vec3 camMin(1e9f);
+    glm::vec3 camMax(-1e9f);
+    std::vector<glm::vec3> pCamList;
+    pCamList.reserve(worldPoints.size());
+
+    for (const auto& p : worldPoints) {
+        glm::vec3 pCam = m_quatRot * (p - centerWorld);
+        pCamList.push_back(pCam);
+        camMin = glm::min(camMin, pCam);
+        camMax = glm::max(camMax, pCam);
+    }
+
+    // 3. Align target center precisely with view-space center of bounding box
+    glm::vec3 camCenter = (camMin + camMax) * 0.5f;
+    glm::vec3 adjustedCenterWorld = centerWorld + glm::inverse(m_quatRot) * camCenter;
+
+    // 4. Recalculate view space points relative to adjustedCenterWorld
+    for (size_t i = 0; i < worldPoints.size(); ++i) {
+        pCamList[i] = m_quatRot * (worldPoints[i] - adjustedCenterWorld);
+    }
+
+    float w = m_width > 0 ? static_cast<float>(m_width) : 1.0f;
+    float h = m_height > 0 ? static_cast<float>(m_height) : 1.0f;
+
+    float targetTransZ = 30.0f;
+
+    if (m_projectionType == CameraEnums::Projection::PERSPECTIVE) {
+        float fovY_deg = getFovDegrees();
+        float theta_y = (fovY_deg * 0.5f) * (M_PI / 180.0f);
+        float tan_y = std::tan(theta_y);
+        float aspect = w / h;
+        float tan_x = aspect * tan_y;
+
+        float maxReqD = 0.001f;
+        for (const auto& pCam : pCamList) {
+            float reqD_y = std::abs(pCam.y) / tan_y + pCam.z;
+            float reqD_x = std::abs(pCam.x) / tan_x + pCam.z;
+            maxReqD = std::max({maxReqD, reqD_y, reqD_x});
+        }
+
+        // Apply a comfortable 15% safety margin factor (1.15)
+        float eyeDist = std::max(1.0f, maxReqD * 1.15f);
+        targetTransZ = eyeDist * (fovY_deg / 45.0f);
+    } else {
+        // Orthographic projection
+        float maxReqTransZ = 0.001f;
+        for (const auto& pCam : pCamList) {
+            float reqZ_x = (std::abs(pCam.x) * 1.15f) / (w * 0.00055f);
+            float reqZ_y = (std::abs(pCam.y) * 1.15f) / (h * 0.00055f);
+            maxReqTransZ = std::max({maxReqTransZ, reqZ_x, reqZ_y});
+        }
+        targetTransZ = std::max(1.0f, maxReqTransZ);
+    }
+
     CameraState targetState;
-    targetState.center = glm::vec3(centerX, centerY, centerZ);
-    targetState.offset = targetState.center;
-
-    float dx = bbox[3] - bbox[0];
-    float dy = bbox[4] - bbox[1];
-    float dz = bbox[5] - bbox[2];
-    float radius = std::sqrt(dx*dx + dy*dy + dz*dz) * 0.5f;
-    if (radius < 1e-4f) radius = 50.0f;
-
-    float fit = computeFrustumFit();
-    float zoom = 0.65f * radius * fit;
-
-    targetState.trans = glm::vec3(0.0f, 0.0f, zoom);
+    targetState.center = adjustedCenterWorld;
+    targetState.offset = glm::vec3(0.0f);
+    targetState.trans = glm::vec3(0.0f, 0.0f, targetTransZ);
     targetState.quatRot = m_quatRot;
     targetState.rotX = m_rotX;
     targetState.rotY = m_rotY;
@@ -307,10 +359,65 @@ void Camera::resetViewToMesh(const float* bbox) {
     targetState.ref2DMode = m_ref2DMode;
     targetState.refDrag = m_refDrag;
 
-    m_speed = radius * 1.5f;
+    float radius = glm::distance(minW, maxW) * 0.5f;
+    m_speed = std::max(10.0f, radius * 1.5f);
 
     startTransition(targetState, 0.2f);
     pushState();
+}
+
+void Camera::resetViewToMeshes(const std::vector<Mesh*>& meshes) {
+    std::vector<glm::vec3> worldPoints;
+    for (const Mesh* mesh : meshes) {
+        if (!mesh || mesh->nbVerts == 0) continue;
+        float localBbox[6];
+        mesh->computeBbox(localBbox);
+
+        glm::vec3 corners[8] = {
+            {localBbox[0], localBbox[1], localBbox[2]},
+            {localBbox[3], localBbox[1], localBbox[2]},
+            {localBbox[0], localBbox[4], localBbox[2]},
+            {localBbox[3], localBbox[4], localBbox[2]},
+            {localBbox[0], localBbox[1], localBbox[5]},
+            {localBbox[3], localBbox[1], localBbox[5]},
+            {localBbox[0], localBbox[4], localBbox[5]},
+            {localBbox[3], localBbox[4], localBbox[5]}
+        };
+
+        for (int i = 0; i < 8; ++i) {
+            glm::vec3 wPos = glm::vec3(mesh->matrix * glm::vec4(corners[i], 1.0f));
+            worldPoints.push_back(wPos);
+        }
+    }
+
+    resetViewToWorldPoints(worldPoints);
+}
+
+void Camera::resetViewToMesh(const Mesh* mesh) {
+    if (!mesh) {
+        resetView();
+        return;
+    }
+    resetViewToMeshes({const_cast<Mesh*>(mesh)});
+}
+
+void Camera::resetViewToMesh(const float* bbox) {
+    if (!bbox) {
+        resetView();
+        return;
+    }
+    std::vector<glm::vec3> worldPoints = {
+        {bbox[0], bbox[1], bbox[2]},
+        {bbox[3], bbox[1], bbox[2]},
+        {bbox[0], bbox[4], bbox[2]},
+        {bbox[3], bbox[4], bbox[2]},
+        {bbox[0], bbox[1], bbox[5]},
+        {bbox[3], bbox[1], bbox[5]},
+        {bbox[0], bbox[4], bbox[5]},
+        {bbox[3], bbox[4], bbox[5]}
+    };
+
+    resetViewToWorldPoints(worldPoints);
 }
 
 float Camera::computeFrustumFit() const {

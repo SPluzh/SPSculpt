@@ -16,6 +16,8 @@ namespace CameraEnums {
     };
 }
 
+class Mesh;
+
 struct Ray {
     glm::vec3 origin;
     glm::vec3 dir;
@@ -86,7 +88,10 @@ public:
 
     glm::vec3 computePosition() const;
     void resetView();
+    void resetViewToMeshes(const std::vector<Mesh*>& meshes);
+    void resetViewToMesh(const Mesh* mesh);
     void resetViewToMesh(const float* bbox);
+    void resetViewToWorldPoints(const std::vector<glm::vec3>& worldPoints);
     float computeFrustumFit() const;
     void snapClosestRotation();
     void toggleViewFront();

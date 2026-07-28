@@ -1798,7 +1798,19 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         }
 
         ImGui::Separator();
-        if (ImGui::Button("Reset Camera View", ImVec2(-1, 0))) {
+        if (ImGui::Button("Frame Selection (F)", ImVec2(140 * scale, 0))) {
+            std::vector<Mesh*> selected = scene.getSelectedMeshes();
+            if (selected.empty() && scene.getSelected()) selected.push_back(scene.getSelected());
+            if (selected.empty()) {
+                for (Mesh* m : scene.getMeshes()) {
+                    if (m && m->isVisible(scene.getActiveViewport())) selected.push_back(m);
+                }
+            }
+            if (!selected.empty()) camera.resetViewToMeshes(selected);
+            else camera.resetView();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Reset Camera", ImVec2(-1, 0))) {
             camera.resetView();
         }
 

@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.8]
+- **Camera**: Refactored camera framing logic (`resetViewToWorldPoints` / `resetViewToMeshes`) to transform all mesh bounding points into camera view space using the active rotation matrix (`m_quatRot`) and world matrix (`mesh->matrix`).
+- **Camera**: Fixed a bug where setting `targetState.offset` equal to `targetState.center` caused double-translation inside `glm::lookAt()`, shifting the camera target vertically when framing high or tall objects and cropping them off the top of the viewport.
+- **Camera**: Fixed `targetState.offset` to `glm::vec3(0.0f)` and increased the frustum fitting safety margin factor to 15% (`1.15f`), ensuring objects of any aspect ratio or height are framed cleanly without touching viewport boundaries.
+- **Input / Hotkey**: Updated the 'F' hotkey (`HKAction::CameraFrame`) to frame selected mesh(es) if any are selected, or fall back to framing all visible scene meshes when no selection exists.
+- **UI**: Added a "Frame Selection (F)" button in the Camera Settings GUI panel.
+
 ## [1.2.7]
 - **Brand**: Renamed the application from SculptSP to SPSculpt.
 - **Build**: Updated the executable output name to SPSculpt.exe.

@@ -377,11 +377,19 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
                 break;
             }
             case HKAction::CameraFrame: {
-                Mesh* selected = scene.getSelected();
-                if (selected) {
-                    float bbox[6];
-                    selected->computeBbox(bbox);
-                    scene.getCamera().resetViewToMesh(bbox);
+                std::vector<Mesh*> selectedMeshes = scene.getSelectedMeshes();
+                if (selectedMeshes.empty() && scene.getSelected()) {
+                    selectedMeshes.push_back(scene.getSelected());
+                }
+                if (selectedMeshes.empty()) {
+                    for (Mesh* m : scene.getMeshes()) {
+                        if (m && m->isVisible(scene.getActiveViewport())) {
+                            selectedMeshes.push_back(m);
+                        }
+                    }
+                }
+                if (!selectedMeshes.empty()) {
+                    scene.getCamera().resetViewToMeshes(selectedMeshes);
                 } else {
                     scene.getCamera().resetView();
                 }
