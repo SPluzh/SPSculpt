@@ -255,125 +255,138 @@ int strokeSmooth(
     const float* alphaLookAt, bool alphaXSym
 ) {
 
+    if (nbIVerts <= 0 || intensity <= 0.0f) return 0;
+
     static std::vector<float> smoothVerts;
     if (smoothVerts.size() < static_cast<size_t>(nbIVerts * 3)) {
         smoothVerts.resize(nbIVerts * 3);
     }
-    laplacianSmooth(verts, vrvStartCount, vertRingVert, vertOnEdge, iVerts, nbIVerts, smoothVerts.data());
 
-    float p = (1.0f - focalShift) / 2.0f;
-    const float pSq = p * p;
-
+    int numPasses = std::max(1, std::min(10, static_cast<int>(std::ceil(intensity))));
+    float remainingIntensity = intensity;
     int writeIdx = 0;
-    for (int i = 0; i < nbIVerts; ++i) {
-        uint32_t id = iVerts[i];
-        int ind = id * 3;
 
-        float mIntensity = intensity * materials[ind + 2];
-        if (mIntensity <= 0.0f) {
-            continue;
-        }
+    for (int pass = 0; pass < numPasses; ++pass) {
+        float passWeight = std::min(1.0f, remainingIntensity);
+        remainingIntensity -= passWeight;
 
-        float vx = verts[ind];
-        float vy = verts[ind + 1];
-        float vz = verts[ind + 2];
+        laplacianSmooth(verts, vrvStartCount, vertRingVert, vertOnEdge, iVerts, nbIVerts, smoothVerts.data());
 
-        if (radius > 0.0f) {
-            float dx = vx - cx;
-            float dy = vy - cy;
-            float dz = vz - cz;
-            float distSq = (dx * dx + dy * dy + dz * dz) / (radius * radius);
-            if (distSq >= 1.0f) {
+        float p = (1.0f - focalShift) / 2.0f;
+        const float pSq = p * p;
+
+        writeIdx = 0;
+        for (int i = 0; i < nbIVerts; ++i) {
+            uint32_t id = iVerts[i];
+            int ind = id * 3;
+
+            float mIntensity = passWeight * materials[ind + 2];
+            if (mIntensity <= 0.0f) {
                 continue;
             }
-            if (distSq < pSq) {
-                // fallOff = 1.0f, mIntensity is unchanged
-            } else if (p >= 1.0f) {
-                continue;
-            } else {
-                float dist = std::sqrt(distSq);
-                float d = (dist - p) / (1.0f - p);
-                float d2 = d * d;
-                float fallOff = 3.0f * d2 * d2 - 4.0f * d2 * d + 1.0f;
-                mIntensity *= fallOff;
+
+            float vx = verts[ind];
+            float vy = verts[ind + 1];
+            float vz = verts[ind + 2];
+
+            if (radius > 0.0f) {
+                float dx = vx - cx;
+                float dy = vy - cy;
+                float dz = vz - cz;
+                float distSq = (dx * dx + dy * dy + dz * dz) / (radius * radius);
+                if (distSq >= 1.0f) {
+                    continue;
+                }
+                if (distSq < pSq) {
+                    // fallOff = 1.0f, mIntensity is unchanged
+                } else if (p >= 1.0f) {
+                    continue;
+                } else {
+                    float dist = std::sqrt(distSq);
+                    float d = (dist - p) / (1.0f - p);
+                    float d2 = d * d;
+                    float fallOff = 3.0f * d2 * d2 - 4.0f * d2 * d + 1.0f;
+                    mIntensity *= fallOff;
+                }
             }
-        }
 
-        // Alpha map value
-        float alphaVal = 1.0f;
-        if (hasAlpha && alphaTex && alphaLookAt) {
-            float xn = alphaRatioY * (alphaLookAt[0] * vx + alphaLookAt[4] * vy + alphaLookAt[8] * vz + alphaLookAt[12]) / (alphaXSym ? -alphaSide : alphaSide);
-            float yn = alphaRatioX * (alphaLookAt[1] * vx + alphaLookAt[5] * vy + alphaLookAt[9] * vz + alphaLookAt[13]) / alphaSide;
+            // Alpha map value
+            float alphaVal = 1.0f;
+            if (hasAlpha && alphaTex && alphaLookAt) {
+                float xn = alphaRatioY * (alphaLookAt[0] * vx + alphaLookAt[4] * vy + alphaLookAt[8] * vz + alphaLookAt[12]) / (alphaXSym ? -alphaSide : alphaSide);
+                float yn = alphaRatioX * (alphaLookAt[1] * vx + alphaLookAt[5] * vy + alphaLookAt[9] * vz + alphaLookAt[13]) / alphaSide;
 
-            float edgeDist = std::sqrt(xn * xn + yn * yn);
-            if (edgeDist > 1.0f) {
-                alphaVal = 0.0f;
-            } else {
-                const uint8_t* tex = alphaTex;
-                int txn = std::max(0, std::min(alphaWidth - 1, static_cast<int>((0.5f - xn * 0.5f) * alphaWidth)));
-                int tyn = std::max(0, std::min(alphaHeight - 1, static_cast<int>((0.5f - yn * 0.5f) * alphaHeight)));
-                alphaVal = tex[txn + alphaWidth * tyn] / 255.0f;
+                float edgeDist = std::sqrt(xn * xn + yn * yn);
+                if (edgeDist > 1.0f) {
+                    alphaVal = 0.0f;
+                } else {
+                    const uint8_t* tex = alphaTex;
+                    int txn = std::max(0, std::min(alphaWidth - 1, static_cast<int>((0.5f - xn * 0.5f) * alphaWidth)));
+                    int tyn = std::max(0, std::min(alphaHeight - 1, static_cast<int>((0.5f - yn * 0.5f) * alphaHeight)));
+                    alphaVal = tex[txn + alphaWidth * tyn] / 255.0f;
 
-                float fs = focalShiftFalloff ? focalShift : 0.0f;
-                if (fs != 0.0f) {
-                    if (fs > 0.0f) {
-                        float softRadius = (1.0f - fs) / 2.0f;
-                        if (edgeDist > softRadius) {
-                            float edgeFade = 1.0f - (edgeDist - softRadius) / (1.0f - softRadius);
-                            edgeFade = std::max(0.0f, std::min(1.0f, edgeFade));
-                            float smooth = edgeFade * edgeFade * (3.0f - 2.0f * edgeFade);
-                            alphaVal *= std::pow(smooth, 1.0f + fs * 5.0f);
+                    float fs = focalShiftFalloff ? focalShift : 0.0f;
+                    if (fs != 0.0f) {
+                        if (fs > 0.0f) {
+                            float softRadius = (1.0f - fs) / 2.0f;
+                            if (edgeDist > softRadius) {
+                                float edgeFade = 1.0f - (edgeDist - softRadius) / (1.0f - softRadius);
+                                edgeFade = std::max(0.0f, std::min(1.0f, edgeFade));
+                                float smooth = edgeFade * edgeFade * (3.0f - 2.0f * edgeFade);
+                                alphaVal *= std::pow(smooth, 1.0f + fs * 5.0f);
+                            }
+                        } else {
+                            alphaVal = std::pow(alphaVal, 1.0f / (1.0f - fs * 3.0f));
                         }
-                    } else {
-                        alphaVal = std::pow(alphaVal, 1.0f / (1.0f - fs * 3.0f));
                     }
                 }
             }
-        }
 
-        mIntensity *= alphaVal;
+            mIntensity *= alphaVal;
+            mIntensity = std::min(1.0f, mIntensity);
 
-        if (mIntensity <= 0.0f) {
-            continue;
-        }
-
-        int i3 = i * 3;
-        float smx = smoothVerts[i3];
-        float smy = smoothVerts[i3 + 1];
-        float smz = smoothVerts[i3 + 2];
-
-        float diffX = smx - vx;
-        float diffY = smy - vy;
-        float diffZ = smz - vz;
-        if (diffX * diffX + diffY * diffY + diffZ * diffZ < 1e-12f) {
-            continue;
-        }
-
-        if (tangent) {
-            float nx = normals[ind];
-            float ny = normals[ind + 1];
-            float nz = normals[ind + 2];
-            float len = nx * nx + ny * ny + nz * nz;
-            if (len == 0.0f) {
+            if (mIntensity <= 0.0f) {
                 continue;
             }
-            len = 1.0f / std::sqrt(len);
-            nx *= len;
-            ny *= len;
-            nz *= len;
 
-            float dot = nx * diffX + ny * diffY + nz * diffZ;
-            verts[ind] = vx + (smx - nx * dot - vx) * mIntensity;
-            verts[ind + 1] = vy + (smy - ny * dot - vy) * mIntensity;
-            verts[ind + 2] = vz + (smz - nz * dot - vz) * mIntensity;
-        } else {
-            float intComp = 1.0f - mIntensity;
-            verts[ind] = vx * intComp + smx * mIntensity;
-            verts[ind + 1] = vy * intComp + smy * mIntensity;
-            verts[ind + 2] = vz * intComp + smz * mIntensity;
+            int i3 = i * 3;
+            float smx = smoothVerts[i3];
+            float smy = smoothVerts[i3 + 1];
+            float smz = smoothVerts[i3 + 2];
+
+            float diffX = smx - vx;
+            float diffY = smy - vy;
+            float diffZ = smz - vz;
+            if (diffX * diffX + diffY * diffY + diffZ * diffZ < 1e-12f) {
+                continue;
+            }
+
+            if (tangent) {
+                float nx = normals[ind];
+                float ny = normals[ind + 1];
+                float nz = normals[ind + 2];
+                float len = nx * nx + ny * ny + nz * nz;
+                if (len == 0.0f) {
+                    continue;
+                }
+                len = 1.0f / std::sqrt(len);
+                nx *= len;
+                ny *= len;
+                nz *= len;
+
+                float dot = nx * diffX + ny * diffY + nz * diffZ;
+                verts[ind] = vx + (smx - nx * dot - vx) * mIntensity;
+                verts[ind + 1] = vy + (smy - ny * dot - vy) * mIntensity;
+                verts[ind + 2] = vz + (smz - nz * dot - vz) * mIntensity;
+            } else {
+                float intComp = 1.0f - mIntensity;
+                verts[ind] = vx * intComp + smx * mIntensity;
+                verts[ind + 1] = vy * intComp + smy * mIntensity;
+                verts[ind + 2] = vz * intComp + smz * mIntensity;
+            }
+
+            iVerts[writeIdx++] = id;
         }
-
-        iVerts[writeIdx++] = id;
     }
     return writeIdx;
 }
@@ -731,9 +744,9 @@ int strokePinch(
             alphaLookAt, alphaXSym,
             focalShift, focalShiftFalloff
         );
-        fallOff *= deformIntensity * matVal * alphaVal;
+        fallOff = std::min(0.95f, fallOff * deformIntensity * matVal * alphaVal);
 
-        if (fallOff == 0.0f) {
+        if (fallOff <= 0.0f) {
             continue;
         }
 

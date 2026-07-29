@@ -733,7 +733,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
         // 1. General Brush Settings Section
         if (ImGui::CollapsingHeader("General Parameters", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::SliderFloat("Radius", &settings.radius, 1.0f, 500.0f, "%.1f px");
+            ImGui::SliderFloat("Radius", &settings.radius, 1.0f, 1000.0f, "%.1f px");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Brush radius in pixels");
 
 #ifdef _WIN32
@@ -750,8 +750,24 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Vary cursor dot/point size dynamically based on stylus pressure");
 #endif
 
-            ImGui::SliderFloat("Intensity", &settings.intensity, 0.0f, 1.0f, "%.2f");
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Overall brush strength");
+            float intensityPct = settings.intensity * 100.0f;
+            float maxPct = (intensityPct > 100.0f) ? std::min(1000.0f, std::max(100.0f, intensityPct)) : 100.0f;
+            if (ImGui::SliderFloat("Intensity", &intensityPct, 0.0f, maxPct, "%.0f%%")) {
+                settings.intensity = std::max(0.0f, std::min(10.0f, intensityPct / 100.0f));
+            }
+            if (ImGui::IsItemActive() && ImGui::GetIO().MouseDelta.x > 0.0f && intensityPct >= maxPct - 0.1f) {
+                intensityPct = std::min(1000.0f, intensityPct + 10.0f);
+                settings.intensity = intensityPct / 100.0f;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Overall brush strength (0% to 1000%)");
+                float wheel = ImGui::GetIO().MouseWheel;
+                if (wheel != 0.0f) {
+                    float stepPct = (intensityPct < 100.0f) ? 5.0f : 25.0f;
+                    intensityPct = std::max(0.0f, std::min(1000.0f, intensityPct + wheel * stepPct));
+                    settings.intensity = intensityPct / 100.0f;
+                }
+            }
 
             ImGui::SliderFloat("Hardness", &settings.hardness, 0.0f, 1.0f, "%.2f");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Brush profile hardness/falloff shape");
@@ -4273,11 +4289,17 @@ void GuiManager::drawModalIndicatorHUD(SculptManager& sculpt, Scene& scene) {
     float fraction = 0.0f;
 
     switch (m_activeModalMode) {
-        case ModalMode::INTENSITY:
+        case ModalMode::INTENSITY: {
             label = "Intensity";
-            snprintf(valStr, sizeof(valStr), "%d%%", (int)(sculpt.getBrushIntensity() * 100.0f));
-            fraction = sculpt.getBrushIntensity();
+            float valPct = sculpt.getBrushIntensity() * 100.0f;
+            snprintf(valStr, sizeof(valStr), "%d%%", (int)std::round(valPct));
+            if (valPct <= 100.0f) {
+                fraction = valPct / 200.0f;
+            } else {
+                fraction = 0.5f + 0.5f * (valPct - 100.0f) / 900.0f;
+            }
             break;
+        }
         case ModalMode::FOCAL_SHIFT:
             if (sculpt.getBrush() == BRUSH_PAINT) {
                 label = "Hardness";
@@ -4292,7 +4314,7 @@ void GuiManager::drawModalIndicatorHUD(SculptManager& sculpt, Scene& scene) {
         case ModalMode::RADIUS:
             label = "Radius";
             snprintf(valStr, sizeof(valStr), "%d px", (int)sculpt.getBrushRadius());
-            fraction = (sculpt.getBrushRadius() - 0.5f) / (500.0f - 0.5f);
+            fraction = (sculpt.getBrushRadius() - 0.5f) / (1000.0f - 0.5f);
             break;
         case ModalMode::REMESH_RESOLUTION:
             label = "Remesh Resolution";
@@ -4562,7 +4584,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         ImGui::Text("Size");
         ImGui::SameLine();
         ImGui::PushItemWidth(80.0f * scale);
-        if (ImGui::SliderFloat("##hudRadius", &radius, 1.0f, 500.0f, "%.0f px")) {
+        if (ImGui::SliderFloat("##hudRadius", &radius, 1.0f, 1000.0f, "%.0f px")) {
             sculpt.setBrushRadius(radius);
         }
         ImGui::PopItemWidth();
@@ -4572,8 +4594,23 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         ImGui::Text("Strength");
         ImGui::SameLine();
         ImGui::PushItemWidth(80.0f * scale);
-        if (ImGui::SliderFloat("##hudIntensity", &intensity, 0.0f, 1.0f, "%.2f")) {
-            sculpt.setBrushIntensity(intensity);
+        float intensityPct = sculpt.getBrushIntensity() * 100.0f;
+        float maxHudPct = (intensityPct > 100.0f) ? std::min(1000.0f, std::max(100.0f, intensityPct)) : 100.0f;
+        if (ImGui::SliderFloat("##hudIntensity", &intensityPct, 0.0f, maxHudPct, "%.0f%%")) {
+            sculpt.setBrushIntensity(std::max(0.0f, std::min(10.0f, intensityPct / 100.0f)));
+        }
+        if (ImGui::IsItemActive() && ImGui::GetIO().MouseDelta.x > 0.0f && intensityPct >= maxHudPct - 0.1f) {
+            intensityPct = std::min(1000.0f, intensityPct + 10.0f);
+            sculpt.setBrushIntensity(intensityPct / 100.0f);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Overall brush strength (0% to 1000%)");
+            float wheel = ImGui::GetIO().MouseWheel;
+            if (wheel != 0.0f) {
+                float stepPct = (intensityPct < 100.0f) ? 5.0f : 25.0f;
+                intensityPct = std::max(0.0f, std::min(1000.0f, intensityPct + wheel * stepPct));
+                sculpt.setBrushIntensity(intensityPct / 100.0f);
+            }
         }
         ImGui::PopItemWidth();
 

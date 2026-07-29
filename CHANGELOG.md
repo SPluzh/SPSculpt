@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.4]
+- **Brushes**: Expanded maximum brush radius limit to 1000px and intensity limit to 1000% across the interface, Floating Island HUD, and hotkey modal controls.
+- **Brushes**: Extended intensity slider behavior to operate as 0%–100% by default while allowing scrub-through dragging and mouse-wheel scrolling up to 1000%.
+- **Brushes**: Unified intensity percentage formatting (`0%` – `1000%`) consistently across panel sliders, Floating Island HUD, and hotkey modal HUD card.
+- **Brushes**: Smoothly scaled hotkey 'A' modal drag sensitivity and HUD progress bar mapping, eliminating jumps and layout shifts when crossing 100%.
+- **Sculpt Engine**: Upgraded Smooth brush (`strokeSmooth`) to perform multi-pass Laplacian smoothing (1 to 10 passes per stroke step for intensities 100%–1000%), providing 10x deeper smoothing power while guaranteeing topology stability and preventing polygon tearing.
+- **Sculpt Engine**: Clamped falloff in `strokePinch` to prevent mesh inversion during high-intensity pinch strokes.
+
 ## [1.3.3]
 - **UI**: Made the Floating Island HUD more compact by reducing its padding from `16px` to `8px` horizontally and `8px` to `4px` vertically, locking it flush against the absolute top edge of the window (overlapping the transparent menu bar area) and disabling manual dragging.
 - **UI**: Reduced the corner rounding (border radius) of the Floating Island HUD from `20px` to `8px` for a cleaner, sleeker look.

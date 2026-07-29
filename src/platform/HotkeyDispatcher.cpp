@@ -49,12 +49,14 @@ bool HotkeyDispatcher::processEvent(const SDL_Event& event, SculptManager& sculp
                 switch (m_modalMode) {
                     case ModalMode::RADIUS: {
                         float r = sculpt.getBrushRadius() + deltaX * 1.5f;
-                        sculpt.setBrushRadius(std::max(0.5f, std::min(500.0f, r)));
+                        sculpt.setBrushRadius(std::max(0.5f, std::min(1000.0f, r)));
                         break;
                     }
                     case ModalMode::INTENSITY: {
-                        float i = sculpt.getBrushIntensity() + deltaX * 0.005f;
-                        sculpt.setBrushIntensity(std::max(0.0f, std::min(1.0f, i)));
+                        float curI = sculpt.getBrushIntensity();
+                        float scaleFactor = 0.005f + curI * 0.005f;
+                        float i = curI + deltaX * scaleFactor;
+                        sculpt.setBrushIntensity(std::max(0.0f, std::min(10.0f, i)));
                         break;
                     }
                     case ModalMode::FOCAL_SHIFT: {
