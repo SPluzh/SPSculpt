@@ -51,7 +51,8 @@ public:
                 const glm::vec3& activeStrokeHitNormal = glm::vec3(0.0f, 1.0f, 0.0f),
                 float focalShift = 0.0f,
                 float hardness = 0.5f,
-                const glm::vec3& paintColor = glm::vec3(0.8f, 0.0f, 0.0f));
+                const glm::vec3& paintColor = glm::vec3(0.8f, 0.0f, 0.0f),
+                SymmetryMode symMode = SymmetryMode::Local);
 
     void applyToRenderer(AngleRenderer& renderer) const;
 

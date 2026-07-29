@@ -3552,18 +3552,37 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         );
                         float blendEps = std::max(0.005f, 0.01f * diagLen);
 
-                        // Symmetry reflection matrix across mesh center (symmetry plane) in transformStartVerts local space
+                        // Symmetry reflection matrix across active symmetry plane in transformStartVerts local space
+                        SymmetryMode symMode = sculpt.getSymmetryMode();
                         glm::vec3 P_plane(meshCenterX, meshCenterY, meshCenterZ);
-                        glm::mat4 T_plane = glm::translate(glm::mat4(1.0f), P_plane);
-                        glm::mat4 T_plane_inv = glm::translate(glm::mat4(1.0f), -P_plane);
+                        if (symMode == SymmetryMode::Local && selectedMesh) {
+                            int axis = sculpt.getSymAxis();
+                            P_plane = selectedMesh->getSymmetryOriginForAxis(axis, SymmetryMode::Local);
+                        } else if (symMode == SymmetryMode::World && selectedMesh) {
+                            int axis = sculpt.getSymAxis();
+                            P_plane = selectedMesh->getSymmetryOriginForAxis(axis, SymmetryMode::World);
+                        }
 
                         glm::mat4 S_axis(1.0f);
                         if (symX) S_axis[0][0] = -1.0f;
                         if (symY) S_axis[1][1] = -1.0f;
                         if (symZ) S_axis[2][2] = -1.0f;
 
-                        glm::mat4 M_sym = T_plane * S_axis * T_plane_inv;
-                        glm::mat4 deltaSym = M_sym * deltaLocal * M_sym;
+                        glm::mat4 deltaSym;
+                        if (symMode == SymmetryMode::World) {
+                            glm::mat4 invM0 = glm::inverse(pivotStartMatrix);
+                            glm::mat4 S_world(1.0f);
+                            if (symX) S_world[0][0] = -1.0f;
+                            if (symY) S_world[1][1] = -1.0f;
+                            if (symZ) S_world[2][2] = -1.0f;
+                            glm::mat4 S_local = invM0 * S_world * pivotStartMatrix;
+                            deltaSym = S_local * deltaLocal * S_local;
+                        } else {
+                            glm::mat4 T_plane = glm::translate(glm::mat4(1.0f), P_plane);
+                            glm::mat4 T_plane_inv = glm::translate(glm::mat4(1.0f), -P_plane);
+                            glm::mat4 M_sym = T_plane * S_axis * T_plane_inv;
+                            deltaSym = M_sym * deltaLocal * M_sym;
+                        }
                         glm::mat3 normalMatrixSym = glm::transpose(glm::inverse(glm::mat3(deltaSym)));
 
                         int nbVerts = selectedMesh->nbVerts;
@@ -3599,9 +3618,15 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
                             if (useSymTransform) {
                                 // Compute distance from symmetry plane for each active axis
-                                float d_vx = vStart.x - meshCenterX;
-                                float d_vy = vStart.y - meshCenterY;
-                                float d_vz = vStart.z - meshCenterZ;
+                                float d_vx = vStart.x - P_plane.x;
+                                float d_vy = vStart.y - P_plane.y;
+                                float d_vz = vStart.z - P_plane.z;
+                                if (symMode == SymmetryMode::World && selectedMesh) {
+                                    glm::vec4 vWorld = pivotStartMatrix * vStart;
+                                    d_vx = vWorld.x;
+                                    d_vy = vWorld.y;
+                                    d_vz = vWorld.z;
+                                }
 
                                 bool isPrimaryX = !symX || ((d_pivot.x >= 0.0f) ? (d_vx >= 0.0f) : (d_vx < 0.0f));
                                 bool isPrimaryY = !symY || ((d_pivot.y >= 0.0f) ? (d_vy >= 0.0f) : (d_vy < 0.0f));
@@ -5013,8 +5038,15 @@ void GuiManager::drawSymmetryPanel(SculptManager& sculpt, Scene& scene, AngleRen
         renderer.setShowSymmetryLine(showSymLine);
     }
 
-    // 5. Symmetry Offset Slider
     Mesh* activeMesh = scene.getSelected();
+    if (showSymLine && activeMesh) {
+        int axis = sculpt.getSymAxis();
+        glm::vec3 orig = activeMesh->getSymmetryOriginForAxis(axis, sculpt.getSymmetryMode());
+        glm::vec3 norm = activeMesh->getSymmetryNormalForAxis(axis, sculpt.getSymmetryMode());
+        renderer.setSymmetryParameters(showSymLine, {orig.x, orig.y, orig.z}, {norm.x, norm.y, norm.z});
+    }
+
+    // 5. Symmetry Offset Slider
     if (activeMesh) {
         float symOffset = activeMesh->getSymmetryOffset();
         if (ImGui::SliderFloat("Symmetry Offset", &symOffset, -1.0f, 1.0f, "%.3f")) {

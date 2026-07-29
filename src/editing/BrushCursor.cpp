@@ -1,4 +1,5 @@
 #include "editing/BrushCursor.h"
+#include "editing/SculptManager.h"
 #include "scene/Scene.h"
 #include "scene/Camera.h"
 #include "render/AngleRenderer.h"
@@ -117,7 +118,8 @@ void BrushCursor::update(int mouseX, int mouseY,
                           const glm::vec3& activeStrokeHitNormal,
                           float focalShift,
                           float hardness,
-                          const glm::vec3& paintColor) {
+                          const glm::vec3& paintColor,
+                          SymmetryMode symMode) {
     if (brushType == BRUSH_VISIBILITY || brushType == BRUSH_MASK_GRADIENT_BLUR) {
         m_state.visible = false;
         return;
@@ -308,8 +310,9 @@ void BrushCursor::update(int mouseX, int mouseY,
                     for (float sz : zVals) {
                         if (sx == 1.0f && sy == 1.0f && sz == 1.0f) continue;
 
-                        glm::vec3 localSymPt(lPt.x * sx, lPt.y * sy, lPt.z * sz);
-                        glm::vec3 localSymNormal(lNormal.x * sx, lNormal.y * sy, lNormal.z * sz);
+                        glm::vec3 sScale(sx, sy, sz);
+                        glm::vec3 localSymPt = reflectPointSymmetry(lPt, sScale, mesh, symMode);
+                        glm::vec3 localSymNormal = reflectVectorSymmetry(lNormal, sScale, mesh, symMode);
 
                         glm::vec3 worldSymPt = glm::vec3(mesh->matrix * glm::vec4(localSymPt, 1.0f));
                         glm::vec3 worldSymNormal = glm::normalize(normalMatrix * localSymNormal);
@@ -364,8 +367,9 @@ void BrushCursor::update(int mouseX, int mouseY,
                         for (float sz : zVals) {
                             if (sx == 1.0f && sy == 1.0f && sz == 1.0f) continue;
 
-                            glm::vec3 localSymPt(lPt.x * sx, lPt.y * sy, lPt.z * sz);
-                            glm::vec3 localSymNormal(lNormal.x * sx, lNormal.y * sy, lNormal.z * sz);
+                            glm::vec3 sScale(sx, sy, sz);
+                            glm::vec3 localSymPt = reflectPointSymmetry(lPt, sScale, mesh, symMode);
+                            glm::vec3 localSymNormal = reflectVectorSymmetry(lNormal, sScale, mesh, symMode);
 
                             glm::vec3 worldSymPt = glm::vec3(mesh->matrix * glm::vec4(localSymPt, 1.0f));
                             glm::vec3 worldSymNormal = glm::normalize(normalMatrix * localSymNormal);

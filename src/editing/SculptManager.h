@@ -14,6 +14,10 @@
 class ArmatureTool;
 class IniFile;
 
+glm::vec3 reflectPointSymmetry(const glm::vec3& pt, const glm::vec3& sScale, const Mesh* mesh, SymmetryMode mode);
+glm::vec3 reflectVectorSymmetry(const glm::vec3& vec, const glm::vec3& sScale, const Mesh* mesh, SymmetryMode mode);
+
+
 struct BrushSettings {
     float radius = 50.0f;
     float intensity = 0.5f;

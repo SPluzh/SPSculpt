@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.1]
+- **Symmetry**: Fixed World Space symmetry mode across the entire sculpting engine (`SculptManager`), brush cursors (`BrushCursor`), lasso selection (`getVerticesInLasso`), renderer plane indicators (`AngleRenderer`), and transform tool (`GuiManager`).
+- **Symmetry**: Replaced naive axis scaling with coordinate-space plane reflections (`reflectPointSymmetry` and `reflectVectorSymmetry`) using `Mesh::getSymmetryOriginForAxis` and `Mesh::getSymmetryNormalForAxis`.
+- **Symmetry**: Ensured symmetry planes stay fixed in World Space when scene meshes are rotated, scaled, or offset, correctly mirroring intersections, normals, ray directions, cursor overlays, and vertex transformations.
+
 ## [1.3.0]
 - **Transform Tool**: Enabled vertex masking support for the Transform Tool, ensuring unmasked vertices transform relative to the active matrix while masked vertices stay stationary in world space.
 - **Transform Tool**: Added a "Center Pivot on Unmasked" UI button in the Transform Tool settings panel when masking is active, positioning the gizmo pivot directly at the unmasked geometry's center of mass.

@@ -41,3 +41,8 @@ enum class ModalMode {
     CAMERA_FOV
 };
 
+enum class SymmetryMode {
+    Local = 0,
+    World = 1
+};
+

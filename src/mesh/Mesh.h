@@ -9,7 +9,7 @@
 
 #include "sculpt/ArmatureGraph.h"
 
-enum class SymmetryMode { Local = 0, World = 1 };
+#include "common/Enums.h"
 
 class Camera;
 

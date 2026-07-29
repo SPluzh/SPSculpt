@@ -44,6 +44,34 @@ static bool rayTriangleIntersect(
     return t > EPSILON;
 }
 
+glm::vec3 reflectPointSymmetry(const glm::vec3& pt, const glm::vec3& sScale, const Mesh* mesh, SymmetryMode mode) {
+    if (!mesh) return pt * sScale;
+    glm::vec3 result = pt;
+    for (int axis = 0; axis < 3; ++axis) {
+        if (sScale[axis] < 0.0f) {
+            glm::vec3 origin = mesh->getSymmetryOriginForAxis(axis, mode);
+            glm::vec3 normal = mesh->getSymmetryNormalForAxis(axis, mode);
+            float dist = glm::dot(result - origin, normal);
+            result -= 2.0f * dist * normal;
+        }
+    }
+    return result;
+}
+
+glm::vec3 reflectVectorSymmetry(const glm::vec3& vec, const glm::vec3& sScale, const Mesh* mesh, SymmetryMode mode) {
+    if (!mesh) return vec * sScale;
+    glm::vec3 result = vec;
+    for (int axis = 0; axis < 3; ++axis) {
+        if (sScale[axis] < 0.0f) {
+            glm::vec3 normal = mesh->getSymmetryNormalForAxis(axis, mode);
+            float dist = glm::dot(result, normal);
+            result -= 2.0f * dist * normal;
+        }
+    }
+    return result;
+}
+
+
 static glm::vec3 vertexOnLine(const glm::vec3& vertex, const glm::vec3& vNear, const glm::vec3& vFar) {
     glm::vec3 ab = vFar - vNear;
     float len2 = glm::dot(ab, ab);
@@ -1256,7 +1284,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             if (m_firstStrokeFrame) {
                 m_initialSymIntersections.resize(symScales.size());
                 for (size_t sIdx = 0; sIdx < symScales.size(); ++sIdx) {
-                    m_initialSymIntersections[sIdx] = m_initialIntersection * symScales[sIdx];
+                    m_initialSymIntersections[sIdx] = reflectPointSymmetry(m_initialIntersection, symScales[sIdx], mesh, m_symmetryMode);
                 }
                 m_grabbedVerticesSyms.resize(symScales.size());
             }
@@ -1267,11 +1295,11 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 std::vector<uint32_t> symVerts;
 
                 if (isGrabBrush && !m_firstStrokeFrame) {
-                    glm::vec3 symRayOrigin = localRayOrigin * sScale;
-                    glm::vec3 symRayDir = localRayDir * sScale;
-                    const glm::vec3& initSymInter = (sIdx < m_initialSymIntersections.size()) ? m_initialSymIntersections[sIdx] : (m_initialIntersection * sScale);
+                    glm::vec3 symRayOrigin = reflectPointSymmetry(localRayOrigin, sScale, mesh, m_symmetryMode);
+                    glm::vec3 symRayDir = reflectVectorSymmetry(localRayDir, sScale, mesh, m_symmetryMode);
+                    const glm::vec3& initSymInter = (sIdx < m_initialSymIntersections.size()) ? m_initialSymIntersections[sIdx] : reflectPointSymmetry(m_initialIntersection, sScale, mesh, m_symmetryMode);
                     glm::vec3 camFrontLocal = -glm::normalize(glm::vec3(m_cachedInvMatrix * glm::vec4(glm::vec3(m_cachedCamWorldMatrix[2]), 0.0f)));
-                    glm::vec3 symCamFrontLocal = camFrontLocal * sScale;
+                    glm::vec3 symCamFrontLocal = reflectVectorSymmetry(camFrontLocal, sScale, mesh, m_symmetryMode);
                     float denom = glm::dot(symCamFrontLocal, symRayDir);
                     if (std::abs(denom) > 1e-12f) {
                         float t = glm::dot(symCamFrontLocal, initSymInter - symRayOrigin) / denom;
@@ -1283,7 +1311,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                         symVerts = m_grabbedVerticesSyms[sIdx];
                     }
                 } else {
-                    symCenter = m_currentIntersection * sScale;
+                    symCenter = reflectPointSymmetry(m_currentIntersection, sScale, mesh, m_symmetryMode);
 
                     symVerts = mesh->octree.pickVerticesInSphere(
                         symCenter.x, symCenter.y, symCenter.z,
@@ -1291,7 +1319,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                     );
 
                     if (getCurrentSettings().culling && !symVerts.empty()) {
-                        glm::vec3 symRayDir = localRayDir * sScale;
+                        glm::vec3 symRayDir = reflectVectorSymmetry(localRayDir, sScale, mesh, m_symmetryMode);
                         filterCullingVertices(symVerts, mesh, symRayDir);
                     }
 
@@ -1306,10 +1334,10 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 }
 
                 if (!symVerts.empty()) {
-                    glm::vec3 symAreaNormal = m_cachedAreaNormal * sScale;
-                    glm::vec3 symAreaCenter = m_cachedAreaCenter * sScale;
-                    glm::vec3 symIntersectionNormal = m_currentIntersectionNormal * sScale;
-                    const glm::vec3& initSymInter = (sIdx < m_initialSymIntersections.size()) ? m_initialSymIntersections[sIdx] : (m_initialIntersection * sScale);
+                    glm::vec3 symAreaNormal = reflectVectorSymmetry(m_cachedAreaNormal, sScale, mesh, m_symmetryMode);
+                    glm::vec3 symAreaCenter = reflectPointSymmetry(m_cachedAreaCenter, sScale, mesh, m_symmetryMode);
+                    glm::vec3 symIntersectionNormal = reflectVectorSymmetry(m_currentIntersectionNormal, sScale, mesh, m_symmetryMode);
+                    const glm::vec3& initSymInter = (sIdx < m_initialSymIntersections.size()) ? m_initialSymIntersections[sIdx] : reflectPointSymmetry(m_initialIntersection, sScale, mesh, m_symmetryMode);
 
                     g_undoManager.recordAffectedVertices(scene, mesh->m_id, symVerts, strokeAffectsColors, strokeAffectsMaterials);
 
@@ -1994,7 +2022,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 std::vector<glm::vec3> symScales = getActiveSymmetryScales();
                 m_initialSymIntersections.resize(symScales.size());
                 for (size_t sIdx = 0; sIdx < symScales.size(); ++sIdx) {
-                    m_initialSymIntersections[sIdx] = m_initialIntersection * symScales[sIdx];
+                    m_initialSymIntersections[sIdx] = reflectPointSymmetry(m_initialIntersection, symScales[sIdx], mesh, m_symmetryMode);
                 }
 
                 m_lastStrokeX = mouseX;
@@ -2846,7 +2874,8 @@ void SculptManager::processFrame(Scene& scene) {
             m_isSculpting ? m_lastValidIntersectionNormal : m_currentIntersectionNormal,
             activeSettings.focalShift,
             activeSettings.hardness,
-            activeSettings.paintColor
+            activeSettings.paintColor,
+            m_symmetryMode
         );
     }
 }
@@ -2907,7 +2936,9 @@ std::vector<uint32_t> SculptManager::getVerticesInLasso(Mesh* mesh, const Camera
 
         if (!isInside && !symScales.empty()) {
             for (const auto& sScale : symScales) {
-                glm::vec4 symLocalPos(verts[ind] * sScale.x, verts[ind + 1] * sScale.y, verts[ind + 2] * sScale.z, 1.0f);
+                glm::vec3 lPos(verts[ind], verts[ind + 1], verts[ind + 2]);
+                glm::vec3 symPos = reflectPointSymmetry(lPos, sScale, mesh, m_symmetryMode);
+                glm::vec4 symLocalPos(symPos, 1.0f);
                 glm::vec4 symClipPos = mvp * symLocalPos;
                 float sw = symClipPos.w;
                 if (sw > 0.0f) {

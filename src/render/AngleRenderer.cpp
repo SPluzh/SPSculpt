@@ -1272,8 +1272,15 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
     glUniform3fv(glGetUniformLocation(program, "uAlbedo"), 1, &effectiveAlbedo[0]);
     glUniform1i(glGetUniformLocation(program, "uFlat"), m_flatShading ? 1 : 0);
 
-    glUniform3f(glGetUniformLocation(program, "uPlaneN"), m_planeNormal.x, m_planeNormal.y, m_planeNormal.z);
-    glUniform3f(glGetUniformLocation(program, "uPlaneO"), m_planeOrigin.x, m_planeOrigin.y, m_planeOrigin.z);
+    if (m_showSymmetryLine) {
+        glm::vec3 O_view = glm::vec3(mesh->mvMatrix * glm::vec4(m_planeOrigin, 1.0f));
+        glm::vec3 N_view = glm::normalize(mesh->nMatrix * m_planeNormal);
+        glUniform3f(glGetUniformLocation(program, "uPlaneN"), N_view.x, N_view.y, N_view.z);
+        glUniform3f(glGetUniformLocation(program, "uPlaneO"), O_view.x, O_view.y, O_view.z);
+    } else {
+        glUniform3f(glGetUniformLocation(program, "uPlaneN"), m_planeNormal.x, m_planeNormal.y, m_planeNormal.z);
+        glUniform3f(glGetUniformLocation(program, "uPlaneO"), m_planeOrigin.x, m_planeOrigin.y, m_planeOrigin.z);
+    }
     glUniform1i(glGetUniformLocation(program, "uSym"), m_showSymmetryLine ? 1 : 0);
     
     bool darken = false;
