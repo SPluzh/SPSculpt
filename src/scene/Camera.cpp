@@ -235,9 +235,25 @@ float Camera::getOrthoZoom() const {
 
 void Camera::translate(float dx, float dy) {
     cancelTransition();
+    float w = m_width > 0 ? static_cast<float>(m_width) : 1.0f;
     float h = m_height > 0 ? static_cast<float>(m_height) : 1.0f;
-    float factor = (m_speed * m_trans.z / 54.0f) * m_speedTranslate / h;
-    glm::vec3 delta(-dx * factor, dy * factor, 0.0f);
+
+    float factorX = 0.0f;
+    float factorY = 0.0f;
+
+    if (m_projectionType == CameraEnums::Projection::PERSPECTIVE) {
+        float eyeDist = getTransZ();
+        float proj00 = m_projMatrix[0][0] != 0.0f ? m_projMatrix[0][0] : 1.0f;
+        float proj11 = m_projMatrix[1][1] != 0.0f ? m_projMatrix[1][1] : 1.0f;
+        factorX = (2.0f / w) / proj00 * eyeDist * m_speedTranslate;
+        factorY = (2.0f / h) / proj11 * eyeDist * m_speedTranslate;
+    } else {
+        float orthoZoom = getOrthoZoom();
+        factorX = 2.0f * orthoZoom * m_speedTranslate;
+        factorY = 2.0f * orthoZoom * m_speedTranslate;
+    }
+
+    glm::vec3 delta(-dx * factorX, dy * factorY, 0.0f);
     m_trans += delta;
     if (m_projectionType == CameraEnums::Projection::ORTHOGRAPHIC) {
         updateOrtho();
