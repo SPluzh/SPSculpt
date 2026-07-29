@@ -4548,6 +4548,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f * scale);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f * scale, 4.0f * scale));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f * scale, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f * scale);
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                              ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse |
@@ -4608,6 +4609,8 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         ImGui::SameLine();
         ImGui::TextDisabled("|");
         ImGui::SameLine();
+
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(1.0f * scale, 0.0f));
 
         bool useSym = sculpt.getUseSym();
 
@@ -4676,6 +4679,8 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         if (symZ) {
             ImGui::PopStyleColor(3);
         }
+
+        ImGui::PopStyleVar(1);
 
         ImGui::SameLine();
         ImGui::TextDisabled("|");
@@ -4798,7 +4803,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
     }
     ImGui::End();
 
-    ImGui::PopStyleVar(3);
+    ImGui::PopStyleVar(4);
     ImGui::PopStyleColor(2);
 }
 
