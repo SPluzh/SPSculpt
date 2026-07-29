@@ -111,11 +111,11 @@ void Camera::rotate(float mouseX, float mouseY, float speedRotate) {
 
     if (m_mode == CameraEnums::CameraMode::ORBIT) {
         glm::vec2 diff = normalizedMouseXY - m_lastNormalizedMouseXY;
-        float factor = (M_PI * 0.5f) * speedFactor;
+        float factor = (float)M_PI * speedFactor;
         setOrbit(m_rotX - diff.y * factor, m_rotY + diff.x * factor);
     } else if (m_mode == CameraEnums::CameraMode::PLANE) {
         glm::vec2 realDiff = normalizedMouseXY - m_lastNormalizedMouseXY;
-        glm::vec2 scaledDiff = realDiff * (speedFactor * (float)M_PI * 0.5f);
+        glm::vec2 scaledDiff = realDiff * (speedFactor * (float)M_PI);
         float length = glm::length(scaledDiff);
         if (length > 0.0f) {
             glm::vec3 axisRot(-scaledDiff.y, scaledDiff.x, 0.0f);
