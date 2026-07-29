@@ -2207,10 +2207,19 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             bool isRealDrag = (m_lassoPoints.size() >= 3) && (maxDragDist >= LASSO_DRAG_THRESHOLD);
 
             if (isRealDrag && mesh) {
+                auto tLassoStart = std::chrono::high_resolution_clock::now();
+                sculpt_log("[LassoRelease] Processing lasso drag (Points: %zu, MeshVerts: %d, IsMask: %d, Alt: %d, Sym: %d)...\n",
+                          m_lassoPoints.size(), mesh->nbVerts, m_isMaskLasso ? 1 : 0, m_lassoAlt ? 1 : 0, m_useSym ? 1 : 0);
+
                 std::vector<uint32_t> selectedVertices = getVerticesInLasso(mesh, camera);
+
                 if (m_isMaskLasso) {
-                    scene.pushHistoryState();
                     if (!selectedVertices.empty()) {
+                        auto tHistStart = std::chrono::high_resolution_clock::now();
+                        scene.pushHistoryState();
+                        auto tHistEnd = std::chrono::high_resolution_clock::now();
+                        double histMs = std::chrono::duration<double, std::milli>(tHistEnd - tHistStart).count();
+
                         float maskVal = m_lassoAlt ? 1.0f : 0.0f;
                         float* materials = mesh->materials.data();
                         for (uint32_t vid : selectedVertices) {
@@ -2219,10 +2228,19 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                         mesh->isMaterialDirty = true;
                         mesh->dirtyVertMin = 0;
                         mesh->dirtyVertMax = mesh->nbVerts - 1;
+                        mesh->isDirty = true;
+
+                        auto tLassoEnd = std::chrono::high_resolution_clock::now();
+                        double totalMs = std::chrono::duration<double, std::milli>(tLassoEnd - tLassoStart).count();
+                        sculpt_log("[LassoRelease] Mask Applied: %zu / %d verts (HistoryPush: %.2f ms, Total: %.2f ms)\n",
+                                  selectedVertices.size(), mesh->nbVerts, histMs, totalMs);
                     } else {
-                        clearMask(mesh);
+                        sculpt_log("[LassoRelease] Empty lasso selection -> clearing mask\n");
+                        clearMask(mesh, &scene);
+                        auto tLassoEnd = std::chrono::high_resolution_clock::now();
+                        double totalMs = std::chrono::duration<double, std::milli>(tLassoEnd - tLassoStart).count();
+                        sculpt_log("[LassoRelease] Clear Mask completed in %.2f ms\n", totalMs);
                     }
-                    mesh->isDirty = true;
                 } else {
                     scene.pushHistoryState();
                     if (mesh->faceVisible.size() != (size_t)mesh->nbFaces) {
@@ -2762,8 +2780,14 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
         }
 
         if (m_isLassoActive) {
-            if (m_lassoPoints.empty() || m_lassoPoints.back() != glm::vec2((float)mouseX, (float)mouseY)) {
-                m_lassoPoints.push_back(glm::vec2((float)mouseX, (float)mouseY));
+            glm::vec2 newPt((float)mouseX, (float)mouseY);
+            if (m_lassoPoints.empty()) {
+                m_lassoPoints.push_back(newPt);
+            } else {
+                glm::vec2 diff = newPt - m_lassoPoints.back();
+                if (glm::dot(diff, diff) >= 4.0f) { // min 2px spacing
+                    m_lassoPoints.push_back(newPt);
+                }
             }
             m_lassoAlt = (SDL_GetModState() & KMOD_ALT) != 0;
             return;
@@ -2895,8 +2919,21 @@ static bool isPointInPolygon(float x, float y, const std::vector<glm::vec2>& pol
 }
 
 std::vector<uint32_t> SculptManager::getVerticesInLasso(Mesh* mesh, const Camera& camera) {
-    std::vector<uint32_t> insideVertices;
-    if (!mesh) return insideVertices;
+    if (!mesh) return {};
+
+    auto t0 = std::chrono::high_resolution_clock::now();
+
+    // Compute lasso AABB
+    float lassoMinX = std::numeric_limits<float>::max();
+    float lassoMinY = std::numeric_limits<float>::max();
+    float lassoMaxX = -std::numeric_limits<float>::max();
+    float lassoMaxY = -std::numeric_limits<float>::max();
+    for (const auto& pt : m_lassoPoints) {
+        lassoMinX = std::min(lassoMinX, pt.x);
+        lassoMinY = std::min(lassoMinY, pt.y);
+        lassoMaxX = std::max(lassoMaxX, pt.x);
+        lassoMaxY = std::max(lassoMaxY, pt.y);
+    }
 
     glm::mat4 mvp = camera.getProjMatrix() * camera.getViewMatrix() * mesh->matrix;
     float width = (float)camera.getWidth();
@@ -2905,66 +2942,123 @@ std::vector<uint32_t> SculptManager::getVerticesInLasso(Mesh* mesh, const Camera
     int nbVerts = mesh->nbVerts;
     const float* verts = mesh->verts.data();
 
-    std::vector<glm::vec3> symScales;
+    struct CachedSymPlane {
+        glm::vec3 origin;
+        glm::vec3 normal;
+    };
+    struct CachedSymScale {
+        std::vector<CachedSymPlane> planes;
+    };
+
+    std::vector<CachedSymScale> cachedSymScales;
     if (m_useSym) {
-        symScales = getActiveSymmetryScales();
+        std::vector<glm::vec3> symScales = getActiveSymmetryScales();
+        cachedSymScales.reserve(symScales.size());
+        for (const auto& sScale : symScales) {
+            CachedSymScale css;
+            for (int axis = 0; axis < 3; ++axis) {
+                if (sScale[axis] < 0.0f) {
+                    css.planes.push_back({
+                        mesh->getSymmetryOriginForAxis(axis, m_symmetryMode),
+                        mesh->getSymmetryNormalForAxis(axis, m_symmetryMode)
+                    });
+                }
+            }
+            cachedSymScales.push_back(css);
+        }
     }
 
-    for (int i = 0; i < nbVerts; ++i) {
-        int ind = i * 3;
-        glm::vec4 localPos(verts[ind], verts[ind + 1], verts[ind + 2], 1.0f);
-        glm::vec4 clipPos = mvp * localPos;
-        float w = clipPos.w;
-        bool isInside = false;
+    bool is2D = camera.getRef2DMode();
+    float zoom2D = camera.getView2DZoom();
+    float offX2D = camera.getView2DOffsetX();
+    float offY2D = camera.getView2DOffsetY();
 
-        if (w > 0.0f) {
-            float ndcX = clipPos.x / w;
-            float ndcY = clipPos.y / w;
+    std::vector<uint32_t> insideVertices;
 
-            if (camera.getRef2DMode()) {
-                ndcX = ndcX * camera.getView2DZoom() + camera.getView2DOffsetX();
-                ndcY = ndcY * camera.getView2DZoom() + camera.getView2DOffsetY();
-            }
+    #pragma omp parallel
+    {
+        std::vector<uint32_t> localSelected;
+        #pragma omp for nowait
+        for (int i = 0; i < nbVerts; ++i) {
+            if (!mesh->vertVisible[i]) continue;
 
-            float screenX = (ndcX + 1.0f) * 0.5f * width;
-            float screenY = (1.0f - ndcY) * 0.5f * height;
+            int ind = i * 3;
+            glm::vec3 lPos(verts[ind], verts[ind + 1], verts[ind + 2]);
 
-            if (isPointInPolygon(screenX, screenY, m_lassoPoints)) {
-                isInside = true;
-            }
-        }
+            // 1. Primary vertex screen-space check
+            glm::vec4 clipPos = mvp * glm::vec4(lPos, 1.0f);
+            float w = clipPos.w;
+            bool isInside = false;
 
-        if (!isInside && !symScales.empty()) {
-            for (const auto& sScale : symScales) {
-                glm::vec3 lPos(verts[ind], verts[ind + 1], verts[ind + 2]);
-                glm::vec3 symPos = reflectPointSymmetry(lPos, sScale, mesh, m_symmetryMode);
-                glm::vec4 symLocalPos(symPos, 1.0f);
-                glm::vec4 symClipPos = mvp * symLocalPos;
-                float sw = symClipPos.w;
-                if (sw > 0.0f) {
-                    float ndcX = symClipPos.x / sw;
-                    float ndcY = symClipPos.y / sw;
+            if (w > 0.0f) {
+                float ndcX = clipPos.x / w;
+                float ndcY = clipPos.y / w;
 
-                    if (camera.getRef2DMode()) {
-                        ndcX = ndcX * camera.getView2DZoom() + camera.getView2DOffsetX();
-                        ndcY = ndcY * camera.getView2DZoom() + camera.getView2DOffsetY();
-                    }
+                if (is2D) {
+                    ndcX = ndcX * zoom2D + offX2D;
+                    ndcY = ndcY * zoom2D + offY2D;
+                }
 
-                    float screenX = (ndcX + 1.0f) * 0.5f * width;
-                    float screenY = (1.0f - ndcY) * 0.5f * height;
+                float screenX = (ndcX + 1.0f) * 0.5f * width;
+                float screenY = (1.0f - ndcY) * 0.5f * height;
 
+                if (screenX >= lassoMinX && screenX <= lassoMaxX &&
+                    screenY >= lassoMinY && screenY <= lassoMaxY) {
                     if (isPointInPolygon(screenX, screenY, m_lassoPoints)) {
                         isInside = true;
-                        break;
                     }
                 }
             }
+
+            // 2. Reflected symmetry check (if primary was not inside)
+            if (!isInside && m_useSym && !cachedSymScales.empty()) {
+                for (const auto& css : cachedSymScales) {
+                    glm::vec3 symPos = lPos;
+                    for (const auto& plane : css.planes) {
+                        float dist = glm::dot(symPos - plane.origin, plane.normal);
+                        symPos -= 2.0f * dist * plane.normal;
+                    }
+                    glm::vec4 symClipPos = mvp * glm::vec4(symPos, 1.0f);
+                    float sw = symClipPos.w;
+                    if (sw > 0.0f) {
+                        float ndcX = symClipPos.x / sw;
+                        float ndcY = symClipPos.y / sw;
+
+                        if (is2D) {
+                            ndcX = ndcX * zoom2D + offX2D;
+                            ndcY = ndcY * zoom2D + offY2D;
+                        }
+
+                        float screenX = (ndcX + 1.0f) * 0.5f * width;
+                        float screenY = (1.0f - ndcY) * 0.5f * height;
+
+                        if (screenX >= lassoMinX && screenX <= lassoMaxX &&
+                            screenY >= lassoMinY && screenY <= lassoMaxY) {
+                            if (isPointInPolygon(screenX, screenY, m_lassoPoints)) {
+                                isInside = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (isInside) {
+                localSelected.push_back((uint32_t)i);
+            }
         }
 
-        if (isInside) {
-            insideVertices.push_back(i);
+        #pragma omp critical
+        {
+            insideVertices.insert(insideVertices.end(), localSelected.begin(), localSelected.end());
         }
     }
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+    sculpt_log("[getVerticesInLasso] Processed %d verts (Selected: %zu, Sym: %s, LassoPts: %zu) in %.2f ms\n",
+              nbVerts, insideVertices.size(), m_useSym ? "ON" : "OFF", m_lassoPoints.size(), ms);
 
     return insideVertices;
 }
@@ -3113,23 +3207,58 @@ bool SculptManager::loadSettings(const IniFile& ini) {
     return true;
 }
 
-void SculptManager::clearMask(Mesh* mesh) {
+void SculptManager::clearMask(Mesh* mesh, Scene* scene) {
+    sculpt_log("[clearMask] Called for mesh %p...\n", mesh);
     if (!mesh) return;
-    if (mesh->materials.size() < (size_t)mesh->nbVerts * 3) return;
+    if (mesh->materials.size() < (size_t)mesh->nbVerts * 3) {
+        sculpt_log("[clearMask] Error: materials buffer size mismatch!\n");
+        return;
+    }
+
+    auto t0 = std::chrono::high_resolution_clock::now();
+
     float* materials = mesh->materials.data();
     int nbVerts = mesh->nbVerts;
+
+    bool hasMask = false;
+    for (int i = 0; i < nbVerts; ++i) {
+        if (materials[i * 3 + 2] < 1.0f) {
+            hasMask = true;
+            break;
+        }
+    }
+    if (!hasMask) {
+        sculpt_log("[clearMask] Mesh already unmasked (0 masked verts). Early-out.\n");
+        return;
+    }
+
+    double histMs = 0.0;
+    if (scene) {
+        auto tHist0 = std::chrono::high_resolution_clock::now();
+        scene->pushHistoryState();
+        auto tHist1 = std::chrono::high_resolution_clock::now();
+        histMs = std::chrono::duration<double, std::milli>(tHist1 - tHist0).count();
+    }
+
     for (int i = 0; i < nbVerts; ++i) {
         materials[i * 3 + 2] = 1.0f;
     }
     mesh->isMaterialDirty = true;
     mesh->dirtyVertMin = 0;
     mesh->dirtyVertMax = nbVerts - 1;
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    double totalMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    sculpt_log("[clearMask] Cleared mask on %d verts (HistoryPush: %.2f ms, Total: %.2f ms)\n",
+              nbVerts, histMs, totalMs);
 }
 
 void SculptManager::invertMask(Mesh* mesh) {
-    std::cout << "[MaskInvert] Inverting mask for mesh " << mesh << " (nbVerts=" << (mesh ? mesh->nbVerts : 0) << ")..." << std::endl;
+    sculpt_log("[invertMask] Inverting mask for mesh %p (nbVerts=%d)...\n", mesh, mesh ? mesh->nbVerts : 0);
     if (!mesh) return;
     if (mesh->materials.size() < (size_t)mesh->nbVerts * 3) return;
+
+    auto t0 = std::chrono::high_resolution_clock::now();
     float* materials = mesh->materials.data();
     int nbVerts = mesh->nbVerts;
     for (int i = 0; i < nbVerts; ++i) {
@@ -3138,7 +3267,10 @@ void SculptManager::invertMask(Mesh* mesh) {
     mesh->isMaterialDirty = true;
     mesh->dirtyVertMin = 0;
     mesh->dirtyVertMax = nbVerts - 1;
-    std::cout << "[MaskInvert] Mask inverted successfully." << std::endl;
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    sculpt_log("[invertMask] Mask inverted on %d verts in %.2f ms.\n", nbVerts, ms);
 }
 
 void SculptManager::blurMask(Mesh* mesh, int iterations) {

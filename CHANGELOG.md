@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.6]
+- **Masking & Symmetry**: Optimized `getVerticesInLasso` performance when symmetry is enabled by hoisting invariant symmetry plane origins and normals outside the high-density vertex loop, eliminating O(N²) `computeLocalRadius()` and matrix inversion recalculations per vertex.
+- **Masking & Symmetry**: Reduced lasso mask selection and clear-mask processing time on high-poly meshes with active symmetry from ~25 seconds to ~2-5 milliseconds.
+
 ## [1.3.5]
 - **Model Snapshot**: Added "Model Snapshot" feature (`ModelSnapshot` in `AngleRenderer`), allowing users to freeze a reference viewport image of the scene that stays stationary relative to the screen.
 - **Model Snapshot**: Added HUD toggle button (`ICON_LC_IMAGE`), Camera Panel manual trigger button, and `Panels` menu item.
