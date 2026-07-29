@@ -382,9 +382,14 @@ const Camera* Scene::getCameraByIndex(int idx) const {
 
 void Scene::setSplitMode(SplitMode mode) {
     m_splitMode = mode;
+    bool isSplit = (mode != SplitMode::OFF);
+    m_camera.setSplitViewport(isSplit);
     if (mode == SplitMode::INDEPENDENT && !m_cameraRight) {
         m_cameraRight = std::make_shared<Camera>(m_camera);
         m_cameraRight->toggleViewRight();
+    }
+    if (m_cameraRight) {
+        m_cameraRight->setSplitViewport(isSplit);
     }
     m_activeViewport = 0;
 }

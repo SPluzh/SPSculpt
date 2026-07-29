@@ -119,6 +119,9 @@ public:
     void setSpeedRoll(float val) { m_speedRoll = val; }
     float getSpeedRoll() const { return m_speedRoll; }
 
+    void setSplitViewport(bool split) { m_isSplitViewport = split; }
+    bool isSplitViewport() const { return m_isSplitViewport; }
+
     void setOrbitAngles(float rx, float ry);
     float getRotX() const { return m_rotX; }
     float getRotY() const { return m_rotY; }
@@ -194,6 +197,7 @@ private:
 
     bool m_ref2DMode = false;
     bool m_refDrag = true;
+    bool m_isSplitViewport = false;
 
     CameraState m_startState;
     CameraState m_targetState;

@@ -107,24 +107,26 @@ void Camera::setPivot(const glm::vec3& pivot) {
 void Camera::rotate(float mouseX, float mouseY, float speedRotate) {
     cancelTransition();
     glm::vec2 normalizedMouseXY = normalizedMouse(mouseX, mouseY, (float)m_width, (float)m_height);
-    float speedFactor = (speedRotate / 0.25f) * m_speedRotate;
+    float speedFactor = speedRotate * m_speedRotate;
+    float baseFactor = m_isSplitViewport ? ((float)M_PI * 0.5f) : (float)M_PI;
 
     if (m_mode == CameraEnums::CameraMode::ORBIT) {
         glm::vec2 diff = normalizedMouseXY - m_lastNormalizedMouseXY;
-        setOrbit(m_rotX - diff.y * 2.0f * speedFactor, m_rotY + diff.x * 2.0f * speedFactor);
+        float factor = baseFactor * speedFactor;
+        setOrbit(m_rotX - diff.y * factor, m_rotY + diff.x * factor);
     } else if (m_mode == CameraEnums::CameraMode::PLANE) {
         glm::vec2 realDiff = normalizedMouseXY - m_lastNormalizedMouseXY;
-        glm::vec2 scaledDiff = realDiff * speedFactor;
+        glm::vec2 scaledDiff = realDiff * (speedFactor * baseFactor);
         float length = glm::length(scaledDiff);
         if (length > 0.0f) {
             glm::vec3 axisRot(-scaledDiff.y, scaledDiff.x, 0.0f);
             axisRot = glm::normalize(axisRot);
-            glm::quat q = glm::angleAxis(length * 2.0f, axisRot);
+            glm::quat q = glm::angleAxis(length, axisRot);
             m_quatRot = q * m_quatRot;
         }
     } else if (m_mode == CameraEnums::CameraMode::SPHERICAL) {
         glm::vec2 realDiff = normalizedMouseXY - m_lastNormalizedMouseXY;
-        glm::vec2 scaledDiff = realDiff * speedFactor;
+        glm::vec2 scaledDiff = realDiff * (speedFactor * (baseFactor / (float)M_PI));
         glm::vec2 nextVirtualMouseXY = m_virtualNormalizedMouseXY + scaledDiff;
 
         auto mouseOnUnitSphere = [](const glm::vec2& mouse) -> glm::vec3 {
@@ -142,7 +144,7 @@ void Camera::rotate(float mouseX, float mouseY, float speedRotate) {
         float angle = std::acos(std::max(-1.0f, std::min(1.0f, dot)));
         if (angle > 1e-4f) {
             glm::vec3 axisRot = glm::normalize(glm::cross(mouseOnSphereBefore, mouseOnSphereAfter));
-            glm::quat q = glm::angleAxis(angle * 2.0f, axisRot);
+            glm::quat q = glm::angleAxis(angle * speedFactor * (baseFactor / (float)M_PI), axisRot);
             m_quatRot = q * m_quatRot;
         }
         m_virtualNormalizedMouseXY = nextVirtualMouseXY;
