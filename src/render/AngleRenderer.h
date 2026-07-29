@@ -6,14 +6,24 @@
 #include <memory>
 #include <GLES3/gl3.h>
 #include <glm/glm.hpp>
+#include "scene/Camera.h"
 #include "render/ReferenceImage.h"
 #include "render/RenderTarget.h"
 #include "common/Enums.h"
 
 class Mesh;
 class Scene;
-class Camera;
 class ArmatureGraph;
+
+struct ModelSnapshot {
+    Camera frozenCamera;
+    RenderTarget rt;
+    int width = 0;
+    int height = 0;
+    bool active = false;
+    bool needsUpdate = false;
+};
+
 
 struct MeshRenderBuffers {
     GLuint vao = 0;
@@ -218,6 +228,17 @@ public:
 
     std::vector<uint8_t> renderToBuffer(const Scene& scene, int w, int h);
 
+    // Model Snapshot (Render-to-Texture frozen camera overlay)
+    void createSnapshot(const Scene& scene);
+    void updateSnapshotIfNeeded(const Scene& scene);
+    void destroySnapshot();
+    void toggleSnapshot(const Scene& scene);
+    bool hasActiveSnapshot() const { return m_snapshot.active; }
+    GLuint getSnapshotTexture() const { return m_snapshot.rt.texture; }
+    int getSnapshotWidth() const { return m_snapshot.width; }
+    int getSnapshotHeight() const { return m_snapshot.height; }
+    void markSnapshotDirty() { if (m_snapshot.active) m_snapshot.needsUpdate = true; }
+
     // Helpers to update environmental params
     void setEnvironmentParameters(float exposure, const std::vector<float>& sph);
     void setEnvironmentParametersFast(float exposure, uintptr_t sphPtr);
@@ -281,7 +302,7 @@ public:
     GLuint loadAndCompileProgram(const std::string& vertFile, const std::string& fragFile);
 
     // Mesh buffer uploads
-    void uploadIfDirty(Mesh* mesh);
+    bool uploadIfDirty(Mesh* mesh);
 
 private:
     void generateTriangleIndices(const Mesh* mesh, std::vector<uint32_t>& outIndices);
@@ -527,6 +548,9 @@ private:
     int m_armatureCylIndicesCount = 0;
 
     std::unordered_map<const Mesh*, std::unique_ptr<MeshRenderBuffers>> m_meshBuffers;
+
+    // Model Snapshot storage
+    ModelSnapshot m_snapshot;
 
     // Uniform locations cache
     std::unordered_map<GLuint, std::unordered_map<std::string, GLint>> m_uniformLocations;

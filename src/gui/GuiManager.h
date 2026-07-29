@@ -122,6 +122,7 @@ private:
 
     void takeScreenshot(const Scene& scene, AngleRenderer& renderer);
     void drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer);
+    void drawModelSnapshotWindow(const Scene& scene, AngleRenderer& renderer);
     void drawUndoDiagPanel(Scene& scene);
     void drawDebugLogPanel();
     void drawSymmetryPanel(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer);

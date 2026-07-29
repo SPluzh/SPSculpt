@@ -542,8 +542,19 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
     m_cameraRight = scene.getCameraRight();
 
     // 0. Ensure all mesh dirty buffers are uploaded first (must run on the active GL thread/context)
+    bool anyMeshUploaded = false;
     for (auto* mesh : scene.getMeshes()) {
-        uploadIfDirty(mesh);
+        if (uploadIfDirty(mesh)) {
+            anyMeshUploaded = true;
+        }
+    }
+
+    // Auto-update Model Snapshot if geometry changed or update requested
+    if (targetFbo == 0 && m_snapshot.active) {
+        if (m_snapshot.needsUpdate || anyMeshUploaded) {
+            m_snapshot.needsUpdate = true;
+            updateSnapshotIfNeeded(scene);
+        }
     }
 
     // Whether the active shader actually consumes shadow/SSAO/SSR data.
@@ -1996,7 +2007,10 @@ void AngleRenderer::buildPolyGroupBuffers(const Mesh* mesh, MeshRenderBuffers* b
     glBindVertexArray(0);
 }
 
-void AngleRenderer::uploadIfDirty(Mesh* mesh) {
+bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
+    if (!mesh) return false;
+    bool uploaded = false;
+
     auto& bufs = m_meshBuffers[mesh];
     if (!bufs) {
         bufs = std::make_unique<MeshRenderBuffers>();
@@ -2046,6 +2060,7 @@ void AngleRenderer::uploadIfDirty(Mesh* mesh) {
     }
 
     if (mesh->isDirty || bufs->vertCount != (size_t)mesh->nbVerts || mesh->isFaceGroupDirty) {
+        uploaded = true;
         glBindVertexArray(bufs->vao);
         
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
@@ -2106,6 +2121,7 @@ void AngleRenderer::uploadIfDirty(Mesh* mesh) {
         mesh->isTopologyDirty = false;
     } else {
         if (mesh->isFaceGroupDirty) {
+            uploaded = true;
             std::vector<uint32_t> vertGroups(mesh->nbVerts, 0);
             if (mesh->faceGroups.size() == (size_t)mesh->nbFaces) {
                 bool hasFaceVis = (mesh->faceVisible.size() == (size_t)mesh->nbFaces);
@@ -2143,6 +2159,7 @@ void AngleRenderer::uploadIfDirty(Mesh* mesh) {
             mesh->isFaceGroupDirty = false;
         }
         if (mesh->isVertexDirty && mesh->dirtyVertMin <= mesh->dirtyVertMax && mesh->dirtyVertMax < (uint32_t)mesh->nbVerts) {
+            uploaded = true;
             size_t offset = mesh->dirtyVertMin * 3 * sizeof(float);
             size_t size   = (mesh->dirtyVertMax - mesh->dirtyVertMin + 1) * 3 * sizeof(float);
             
@@ -2164,6 +2181,7 @@ void AngleRenderer::uploadIfDirty(Mesh* mesh) {
         }
 
         if (mesh->isColorDirty && mesh->dirtyVertMin <= mesh->dirtyVertMax && mesh->dirtyVertMax < (uint32_t)mesh->nbVerts) {
+            uploaded = true;
             size_t offset = mesh->dirtyVertMin * 3 * sizeof(float);
             size_t size   = (mesh->dirtyVertMax - mesh->dirtyVertMin + 1) * 3 * sizeof(float);
 
@@ -2175,6 +2193,7 @@ void AngleRenderer::uploadIfDirty(Mesh* mesh) {
         }
 
         if (mesh->isMaterialDirty && mesh->dirtyVertMin <= mesh->dirtyVertMax && mesh->dirtyVertMax < (uint32_t)mesh->nbVerts) {
+            uploaded = true;
             size_t offset = mesh->dirtyVertMin * 3 * sizeof(float);
             size_t size   = (mesh->dirtyVertMax - mesh->dirtyVertMin + 1) * 3 * sizeof(float);
 
@@ -2186,6 +2205,7 @@ void AngleRenderer::uploadIfDirty(Mesh* mesh) {
         }
         
         if (mesh->isTopologyDirty) {
+            uploaded = true;
             std::vector<uint32_t> triIndices;
             generateTriangleIndices(mesh, triIndices);
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
@@ -2201,6 +2221,7 @@ void AngleRenderer::uploadIfDirty(Mesh* mesh) {
             mesh->isTopologyDirty = false;
         }
     }
+    return uploaded;
 }
 
 void AngleRenderer::drawReferenceImages(const Scene& scene, const Camera& camera) {
@@ -3207,4 +3228,69 @@ void AngleRenderer::drawMeshGBuffer(Mesh* mesh, const Scene& scene, const Camera
 
     glBindVertexArray(0);
 }
+
+void AngleRenderer::createSnapshot(const Scene& scene) {
+    int w = (m_width > 0) ? m_width : 1280;
+    int h = (m_height > 0) ? m_height : 720;
+
+    m_snapshot.frozenCamera = scene.getCamera();
+    m_snapshot.width = w;
+    m_snapshot.height = h;
+
+    if (m_snapshot.rt.fbo == 0) {
+        m_snapshot.rt.init(w, h, true);
+    } else {
+        m_snapshot.rt.resize(w, h);
+    }
+
+    m_snapshot.active = true;
+    m_snapshot.needsUpdate = true;
+}
+
+void AngleRenderer::updateSnapshotIfNeeded(const Scene& scene) {
+    if (!m_snapshot.active || !m_snapshot.needsUpdate) return;
+
+    if (m_width > 0 && m_height > 0 && (m_snapshot.width != m_width || m_snapshot.height != m_height)) {
+        m_snapshot.width = m_width;
+        m_snapshot.height = m_height;
+        m_snapshot.rt.resize(m_snapshot.width, m_snapshot.height);
+    }
+
+    m_snapshot.needsUpdate = false;
+
+    Camera& activeCam = const_cast<Camera&>(scene.getCamera());
+    int oldW = activeCam.getWidth();
+    int oldH = activeCam.getHeight();
+    Camera backupCam = activeCam;
+    bool oldTakingScreenshot = m_isTakingScreenshot;
+    bool oldSplitMode = m_splitMode;
+    auto oldCamRight = m_cameraRight;
+
+    activeCam = m_snapshot.frozenCamera;
+    activeCam.onResize(m_snapshot.width, m_snapshot.height);
+    m_isTakingScreenshot = true;
+
+    render(scene, m_snapshot.rt.fbo);
+
+    activeCam = backupCam;
+    activeCam.onResize(oldW, oldH);
+    m_isTakingScreenshot = oldTakingScreenshot;
+    m_splitMode = oldSplitMode;
+    m_cameraRight = oldCamRight;
+}
+
+void AngleRenderer::destroySnapshot() {
+    m_snapshot.rt.release();
+    m_snapshot.active = false;
+    m_snapshot.needsUpdate = false;
+}
+
+void AngleRenderer::toggleSnapshot(const Scene& scene) {
+    if (m_snapshot.active) {
+        destroySnapshot();
+    } else {
+        createSnapshot(scene);
+    }
+}
+
 

@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.5]
+- **Model Snapshot**: Added "Model Snapshot" feature (`ModelSnapshot` in `AngleRenderer`), allowing users to freeze a reference viewport image of the scene that stays stationary relative to the screen.
+- **Model Snapshot**: Added HUD toggle button (`ICON_LC_IMAGE`), Camera Panel manual trigger button, and `Panels` menu item.
+- **Model Snapshot**: Implemented automatic snapshot refresh logic, updating the offscreen buffer in real-time whenever mesh geometry, vertex colors, materials, or polygroups are modified during sculpting or transformation.
+- **Renderer**: Fixed camera viewport matrix jittering and aspect ratio distortion in split screen mode (Mirror / Independent) when Model Snapshot updates occur, by preserving split mode state and restoring camera aspect ratio parameters (`oldW`, `oldH`) after snapshot pass completion.
+
 ## [1.3.4]
 - **Brushes**: Expanded maximum brush radius limit to 1000px and intensity limit to 1000% across the interface, Floating Island HUD, and hotkey modal controls.
 - **Brushes**: Extended intensity slider behavior to operate as 0%–100% by default while allowing scrub-through dragging and mouse-wheel scrolling up to 1000%.

@@ -570,6 +570,10 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGui::MenuItem("Undo History", nullptr, &m_showUndoDiagPanel);
             ImGui::MenuItem("Debug Log", nullptr, &m_showDebugLogPanel);
             ImGui::MenuItem("Floating Island HUD", nullptr, &m_showFloatingIsland);
+            bool hasSnapshot = renderer.hasActiveSnapshot();
+            if (ImGui::MenuItem("Model Snapshot (Screen Reference)", nullptr, &hasSnapshot)) {
+                renderer.toggleSnapshot(scene);
+            }
 #ifdef _WIN32
             ImGui::MenuItem("Tablet Diagnostics", nullptr, &m_showTabletDiagPanel);
 #endif
@@ -1915,6 +1919,11 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         ImGui::SameLine();
         if (ImGui::Button("Reset Camera", ImVec2(-1, 0))) {
             camera.resetView();
+        }
+
+        ImGui::Separator();
+        if (ImGui::Button("Take Model Snapshot", ImVec2(-1, 0))) {
+            renderer.createSnapshot(scene);
         }
 
         ImGui::Separator();
@@ -4050,6 +4059,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     }
 
     drawFloatingIslandHUD(sculpt, scene, renderer);
+    drawModelSnapshotWindow(scene, renderer);
     drawUndoDiagPanel(scene);
     drawDebugLogPanel();
     drawUnsavedChangesModal(scene, m_pendingQuit);
@@ -4837,11 +4847,64 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         if (isSolo) {
             ImGui::PopStyleColor(3);
         }
+
+        ImGui::SameLine();
+
+        bool hasSnapshot = renderer.hasActiveSnapshot();
+        if (hasSnapshot) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+        if (ImGui::Button(ICON_LC_IMAGE "##hudSnapshot")) {
+            renderer.toggleSnapshot(scene);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Model Snapshot (Screen Reference)");
+        if (hasSnapshot) {
+            ImGui::PopStyleColor(3);
+        }
     }
     ImGui::End();
 
     ImGui::PopStyleVar(4);
     ImGui::PopStyleColor(2);
+}
+
+void GuiManager::drawModelSnapshotWindow(const Scene& scene, AngleRenderer& renderer) {
+    if (!renderer.hasActiveSnapshot()) return;
+
+    float scale = getUiScale();
+
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    float defaultWidth = 320.0f * scale;
+    float defaultHeight = 240.0f * scale;
+
+    ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x - defaultWidth - 20.0f * scale, viewport->Pos.y + 60.0f * scale), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(defaultWidth, defaultHeight), ImGuiCond_FirstUseEver);
+
+    ImGui::SetNextWindowSizeConstraints(ImVec2(160.0f * scale, 120.0f * scale), ImVec2(viewport->Size.x, viewport->Size.y));
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar;
+
+    bool open = true;
+    if (ImGui::Begin("Model Snapshot", &open, flags)) {
+        GLuint tex = renderer.getSnapshotTexture();
+        if (tex != 0) {
+            ImVec2 avail = ImGui::GetContentRegionAvail();
+
+            // Texture UV mapping: OpenGL textures are Y-flipped in ImGui. (0,1) to (1,0) flips Y correctly.
+            ImGui::Image((ImTextureID)(uintptr_t)tex, avail, ImVec2(0, 1), ImVec2(1, 0));
+
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Frozen Model Snapshot (Auto-updates on edit)");
+            }
+        }
+    }
+    ImGui::End();
+
+    if (!open) {
+        renderer.destroySnapshot();
+    }
 }
 
 void GuiManager::drawUndoDiagPanel(Scene& scene) {
