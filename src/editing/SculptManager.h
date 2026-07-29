@@ -150,6 +150,7 @@ private:
     bool m_symY = false;
     bool m_symZ = false;
     SymmetryMode m_symmetryMode = SymmetryMode::Local;
+    ModalMode m_modalMode = ModalMode::NONE;
 
     std::vector<std::vector<uint32_t>> m_grabbedVerticesSyms;
     std::vector<glm::vec3>             m_initialSymIntersections;
@@ -274,6 +275,9 @@ public:
     }
 
     std::vector<glm::vec3> getActiveSymmetryScales() const;
+
+    ModalMode getModalMode() const { return m_modalMode; }
+    void setModalMode(ModalMode mode) { m_modalMode = mode; }
 
     const BrushCursor& getCursor() const { return m_cursor; }
     BrushCursor& getCursor() { return m_cursor; }

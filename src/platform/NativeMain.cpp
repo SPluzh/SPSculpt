@@ -591,6 +591,7 @@ int main(int argc, char* argv[]) {
         if (gui.isRemeshRunning()) {
             sculpt.getCursor().hide();
         } else {
+            sculpt.setModalMode(dispatcher.getModalMode());
             sculpt.processFrame(scene);
         }
         sculpt.getCursor().applyToRenderer(renderer);

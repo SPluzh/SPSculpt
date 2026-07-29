@@ -119,7 +119,8 @@ void BrushCursor::update(int mouseX, int mouseY,
                           float focalShift,
                           float hardness,
                           const glm::vec3& paintColor,
-                          SymmetryMode symMode) {
+                          SymmetryMode symMode,
+                          ModalMode modalMode) {
     if (brushType == BRUSH_VISIBILITY || brushType == BRUSH_MASK_GRADIENT_BLUR) {
         m_state.visible = false;
         return;
@@ -255,6 +256,13 @@ void BrushCursor::update(int mouseX, int mouseY,
         m_state.hitPoint = worldPt;
         m_state.hitNormal = worldNormal;
 
+        bool isModal = (modalMode != ModalMode::NONE);
+        glm::vec3 circleNormalLeft = worldNormal;
+        if (isModal) {
+            glm::mat4 invViewLeft = glm::inverse(cameraLeft.getViewMatrix());
+            circleNormalLeft = glm::normalize(glm::vec3(invViewLeft[2]));
+        }
+
         // --- Left Viewport MVP construction ---
         float worldRadiusLeft = 0.0f;
         if (cameraLeft.isOrthographic()) {
@@ -277,9 +285,9 @@ void BrushCursor::update(int mouseX, int mouseY,
         }
 #endif
 
-        m_state.circleMVP = buildCircleMVP(worldPt, worldNormal, worldRadiusLeft, cameraLeft, tiltX, tiltY);
+        m_state.circleMVP = buildCircleMVP(worldPt, circleNormalLeft, worldRadiusLeft, cameraLeft, tiltX, tiltY);
         float innerWorldRadiusLeft = worldRadiusLeft * innerRatio;
-        m_state.innerCircleMVP = buildCircleMVP(worldPt, worldNormal, innerWorldRadiusLeft, cameraLeft, tiltX, tiltY);
+        m_state.innerCircleMVP = buildCircleMVP(worldPt, circleNormalLeft, innerWorldRadiusLeft, cameraLeft, tiltX, tiltY);
 
         float pressureDotFactor = 1.0f;
 #ifdef _WIN32
@@ -288,7 +296,7 @@ void BrushCursor::update(int mouseX, int mouseY,
         }
 #endif
         float constRadiusLeft = 2.5f * (worldRadiusLeft / brushRadius) * pressureDotFactor;
-        m_state.dotMVP = buildCircleMVP(worldPt, worldNormal, constRadiusLeft, cameraLeft, tiltX, tiltY);
+        m_state.dotMVP = buildCircleMVP(worldPt, circleNormalLeft, constRadiusLeft, cameraLeft, tiltX, tiltY);
 
         m_state.symMVPs.clear();
         m_state.symOccluded.clear();
@@ -317,7 +325,8 @@ void BrushCursor::update(int mouseX, int mouseY,
                         glm::vec3 worldSymPt = glm::vec3(mesh->matrix * glm::vec4(localSymPt, 1.0f));
                         glm::vec3 worldSymNormal = glm::normalize(normalMatrix * localSymNormal);
 
-                        glm::mat4 symMVP = buildCircleMVP(worldSymPt, worldSymNormal, constRadiusLeft, cameraLeft, tiltX, tiltY);
+                        glm::vec3 circleSymNormalLeft = isModal ? circleNormalLeft : worldSymNormal;
+                        glm::mat4 symMVP = buildCircleMVP(worldSymPt, circleSymNormalLeft, constRadiusLeft, cameraLeft, tiltX, tiltY);
                         m_state.symMVPs.push_back(symMVP);
 
                         bool occluded = checkOcclusion(worldSymPt, cameraLeft, mesh);
@@ -331,6 +340,12 @@ void BrushCursor::update(int mouseX, int mouseY,
         m_state.symMVPsRight.clear();
         m_state.symOccludedRight.clear();
         if (cameraRight) {
+            glm::vec3 circleNormalRight = worldNormal;
+            if (isModal) {
+                glm::mat4 invViewRight = glm::inverse(cameraRight->getViewMatrix());
+                circleNormalRight = glm::normalize(glm::vec3(invViewRight[2]));
+            }
+
             float worldRadiusRight = 0.0f;
             if (cameraRight->isOrthographic()) {
                 worldRadiusRight = brushRadius * 2.0f * cameraRight->getOrthoZoom();
@@ -342,12 +357,12 @@ void BrushCursor::update(int mouseX, int mouseY,
                 worldRadiusRight = brushRadius * hitDepth * std::tan(fov_rad * 0.5f) * 2.0f / screenHeight;
             }
 
-            m_state.circleMVPRight = buildCircleMVP(worldPt, worldNormal, worldRadiusRight, *cameraRight, tiltX, tiltY);
+            m_state.circleMVPRight = buildCircleMVP(worldPt, circleNormalRight, worldRadiusRight, *cameraRight, tiltX, tiltY);
             float innerWorldRadiusRight = worldRadiusRight * innerRatio;
-            m_state.innerCircleMVPRight = buildCircleMVP(worldPt, worldNormal, innerWorldRadiusRight, *cameraRight, tiltX, tiltY);
+            m_state.innerCircleMVPRight = buildCircleMVP(worldPt, circleNormalRight, innerWorldRadiusRight, *cameraRight, tiltX, tiltY);
 
             float constRadiusRight = 2.5f * (worldRadiusRight / brushRadius) * pressureDotFactor;
-            m_state.dotMVPRight = buildCircleMVP(worldPt, worldNormal, constRadiusRight, *cameraRight, tiltX, tiltY);
+            m_state.dotMVPRight = buildCircleMVP(worldPt, circleNormalRight, constRadiusRight, *cameraRight, tiltX, tiltY);
 
             if (useSym && (symX || symY || symZ) && mesh) {
                 glm::mat4 invMatrix = glm::inverse(mesh->matrix);
@@ -374,7 +389,8 @@ void BrushCursor::update(int mouseX, int mouseY,
                             glm::vec3 worldSymPt = glm::vec3(mesh->matrix * glm::vec4(localSymPt, 1.0f));
                             glm::vec3 worldSymNormal = glm::normalize(normalMatrix * localSymNormal);
 
-                            glm::mat4 symMVP = buildCircleMVP(worldSymPt, worldSymNormal, constRadiusRight, *cameraRight, tiltX, tiltY);
+                            glm::vec3 circleSymNormalRight = isModal ? circleNormalRight : worldSymNormal;
+                            glm::mat4 symMVP = buildCircleMVP(worldSymPt, circleSymNormalRight, constRadiusRight, *cameraRight, tiltX, tiltY);
                             m_state.symMVPsRight.push_back(symMVP);
 
                             bool occluded = checkOcclusion(worldSymPt, *cameraRight, mesh);

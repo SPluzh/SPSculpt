@@ -2899,7 +2899,8 @@ void SculptManager::processFrame(Scene& scene) {
             activeSettings.focalShift,
             activeSettings.hardness,
             activeSettings.paintColor,
-            m_symmetryMode
+            m_symmetryMode,
+            m_modalMode
         );
     }
 }
