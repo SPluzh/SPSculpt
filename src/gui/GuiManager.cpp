@@ -4822,12 +4822,46 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
         }
+
+        // Split-button: Perspective toggle (left) + FOV arrow (right)
         if (ImGui::Button(ICON_LC_CAMERA "##hudPerspective")) {
             scene.getCamera().setProjectionType(isPerspective ? CameraEnums::Projection::ORTHOGRAPHIC : CameraEnums::Projection::PERSPECTIVE);
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Perspective Projection (P)");
+
+        ImVec2 pMin = ImGui::GetItemRectMin();
+
+        // Narrow arrow button flush against Perspective button (0 gap, 0 padding, fixed 12px width)
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, ImGui::GetStyle().FramePadding.y));
+        bool openFovPopup = ImGui::Button(ICON_LC_CHEVRON_DOWN "##hudFovArrow", ImVec2(12.0f * scale, 0.0f));
+        ImGui::PopStyleVar();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("FOV Settings");
+
+        ImVec2 pMax = ImGui::GetItemRectMax();
+
         if (isPerspective) {
             ImGui::PopStyleColor(3);
+        }
+
+        float splitCenterX = (pMin.x + pMax.x) * 0.5f;
+        float splitBottomY = pMax.y + 4.0f * scale;
+
+        if (openFovPopup) {
+            ImGui::OpenPopup("##hudFovPopup");
+        }
+
+        ImGui::SetNextWindowPos(ImVec2(splitCenterX, splitBottomY), ImGuiCond_Appearing, ImVec2(0.5f, 0.0f));
+        if (ImGui::BeginPopup("##hudFovPopup")) {
+            float fov = scene.getCamera().getFov();
+            ImGui::TextUnformatted("FOV:");
+            ImGui::SameLine();
+            ImGui::PushItemWidth(120.0f * scale);
+            if (ImGui::SliderFloat("##hudFovSlider", &fov, 10.0f, 120.0f, "%.0f mm")) {
+                scene.getCamera().setFov(fov);
+            }
+            ImGui::PopItemWidth();
+            ImGui::EndPopup();
         }
 
         ImGui::SameLine();
