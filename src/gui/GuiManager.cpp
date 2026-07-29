@@ -4540,20 +4540,20 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
     float scale = getUiScale();
 
     ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImVec2 pos = ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f, viewport->WorkPos.y + 12.0f * scale);
-    ImGui::SetNextWindowPos(pos, ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.0f));
+    ImVec2 pos = ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f, viewport->Pos.y);
+    ImGui::SetNextWindowPos(pos, ImGuiCond_Always, ImVec2(0.5f, 0.0f));
     
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.09f, 0.10f, 0.90f));
     ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.01f, 0.52f, 0.45f, 0.40f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 20.0f * scale);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f * scale, 8.0f * scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f * scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f * scale, 4.0f * scale));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f * scale, 0.0f));
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                              ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse |
-                             ImGuiWindowFlags_AlwaysAutoResize;
+                             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove;
 
-    if (ImGui::Begin("##FloatingIslandHUD", nullptr, flags)) {
+    if (ImGui::Begin("##FloatingIslandHUD_v2", nullptr, flags)) {
         bool hasUndo = scene.canUndo();
         bool hasRedo = scene.canRedo();
 
@@ -4572,78 +4572,6 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Redo (Ctrl+Y)");
         if (!hasRedo) ImGui::EndDisabled();
-
-        ImGui::SameLine();
-        ImGui::TextDisabled("|");
-        ImGui::SameLine();
-
-        bool useSym = sculpt.getUseSym();
-
-        if (useSym) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
-        }
-
-        if (ImGui::Button(ICON_LC_SPLIT "##hudSym")) {
-            sculpt.setUseSym(!useSym);
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Symmetry (Alt+X)");
-
-        if (useSym) {
-            ImGui::PopStyleColor(3);
-        }
-
-        ImGui::SameLine();
-
-        // X Axis Button
-        bool symX = sculpt.getSymX();
-        if (symX) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
-        }
-        if (ImGui::Button("X##hudSymX")) {
-            sculpt.setSymX(!symX);
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle X Symmetry");
-        if (symX) {
-            ImGui::PopStyleColor(3);
-        }
-
-        ImGui::SameLine();
-
-        // Y Axis Button
-        bool symY = sculpt.getSymY();
-        if (symY) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
-        }
-        if (ImGui::Button("Y##hudSymY")) {
-            sculpt.setSymY(!symY);
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Y Symmetry");
-        if (symY) {
-            ImGui::PopStyleColor(3);
-        }
-
-        ImGui::SameLine();
-
-        // Z Axis Button
-        bool symZ = sculpt.getSymZ();
-        if (symZ) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
-        }
-        if (ImGui::Button("Z##hudSymZ")) {
-            sculpt.setSymZ(!symZ);
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Z Symmetry");
-        if (symZ) {
-            ImGui::PopStyleColor(3);
-        }
 
         ImGui::SameLine();
         ImGui::TextDisabled("|");
@@ -4816,6 +4744,78 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Solo Mode (C)");
         if (isSolo) {
+            ImGui::PopStyleColor(3);
+        }
+
+        ImGui::SameLine();
+        ImGui::TextDisabled("|");
+        ImGui::SameLine();
+
+        bool useSym = sculpt.getUseSym();
+
+        if (useSym) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+
+        if (ImGui::Button(ICON_LC_SPLIT "##hudSym")) {
+            sculpt.setUseSym(!useSym);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Symmetry (Alt+X)");
+
+        if (useSym) {
+            ImGui::PopStyleColor(3);
+        }
+
+        ImGui::SameLine();
+
+        // X Axis Button
+        bool symX = sculpt.getSymX();
+        if (symX) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+        if (ImGui::Button("X##hudSymX")) {
+            sculpt.setSymX(!symX);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle X Symmetry");
+        if (symX) {
+            ImGui::PopStyleColor(3);
+        }
+
+        ImGui::SameLine();
+
+        // Y Axis Button
+        bool symY = sculpt.getSymY();
+        if (symY) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+        if (ImGui::Button("Y##hudSymY")) {
+            sculpt.setSymY(!symY);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Y Symmetry");
+        if (symY) {
+            ImGui::PopStyleColor(3);
+        }
+
+        ImGui::SameLine();
+
+        // Z Axis Button
+        bool symZ = sculpt.getSymZ();
+        if (symZ) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+        if (ImGui::Button("Z##hudSymZ")) {
+            sculpt.setSymZ(!symZ);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Z Symmetry");
+        if (symZ) {
             ImGui::PopStyleColor(3);
         }
     }
