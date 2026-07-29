@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.2]
+- **Camera**: Refactored perspective and orthographic camera conversion logic (`setProjectionType`, `getTransZ`, `toggleViewAngles`) to ensure strictly invertible, mathematically precise scale parity across view switches.
+- **Camera**: Eliminated translation drift and FOV-dependent scale jumps when toggling between perspective and orthographic projection modes.
+
 ## [1.3.1]
 - **Symmetry**: Fixed World Space symmetry mode across the entire sculpting engine (`SculptManager`), brush cursors (`BrushCursor`), lasso selection (`getVerticesInLasso`), renderer plane indicators (`AngleRenderer`), and transform tool (`GuiManager`).
 - **Symmetry**: Replaced naive axis scaling with coordinate-space plane reflections (`reflectPointSymmetry` and `reflectVectorSymmetry`) using `Mesh::getSymmetryOriginForAxis` and `Mesh::getSymmetryNormalForAxis`.

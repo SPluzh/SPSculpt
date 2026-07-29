@@ -29,24 +29,33 @@ Camera::Camera() {
     resetView();
 }
 
+#include "common/Logger.h"
 void Camera::setProjectionType(CameraEnums::Projection projType) {
     if (m_projectionType == projType) return;
-    
-    // Smooth transition matching JS Camera.js setProjectionType
-    float tanHalfFov = std::tan(getFovDegrees() * M_PI / 360.0f);
+
+    float fovRad = getFovDegrees() * (float)M_PI / 180.0f;
+    float tanHalfFov = std::tan(fovRad * 0.5f);
     float h = m_height > 0 ? (float)m_height : 1.0f;
-    
+    float oldTransZ = m_trans.z;
+
     if (projType == CameraEnums::Projection::ORTHOGRAPHIC) {
+        // Perspective -> Ortho (Strictly Invertible)
         float eyeDist = getTransZ();
-        m_trans.z = eyeDist * tanHalfFov / (h * 0.00055f);
+        float halfH = eyeDist * tanHalfFov;
+        m_trans.z = halfH / (h * 0.00055f);
         m_offset.z = 0.0f;
+        sculpt_log("[Camera] Perspective -> Ortho: oldTransZ=%.3f, eyeDist=%.3f, halfH=%.3f, newTransZ=%.3f, fov=%.1f, height=%.0f\n",
+                    oldTransZ, eyeDist, halfH, m_trans.z, m_fov, h);
     } else {
+        // Ortho -> Perspective (Strictly Invertible)
         float halfH = h * std::abs(m_trans.z) * 0.00055f;
         float eyeDist = halfH / tanHalfFov;
         m_trans.z = eyeDist * getFovDegrees() / 45.0f;
+        sculpt_log("[Camera] Ortho -> Perspective: oldTransZ=%.3f, eyeDist=%.3f, halfH=%.3f, newTransZ=%.3f, fov=%.1f, height=%.0f\n",
+                    oldTransZ, eyeDist, halfH, m_trans.z, m_fov, h);
     }
     m_trans.z = std::max(0.001f, m_trans.z);
-    
+
     m_projectionType = projType;
     updateProjection();
     updateView();
@@ -164,7 +173,15 @@ void Camera::setOrbitAngles(float rx, float ry) {
 }
 
 float Camera::getTransZ() const {
-    return m_projectionType == CameraEnums::Projection::PERSPECTIVE ? m_trans.z * 45.0f / getFovDegrees() : 1000.0f;
+    if (m_projectionType == CameraEnums::Projection::PERSPECTIVE) {
+        return m_trans.z * 45.0f / getFovDegrees();
+    } else {
+        // Return world-space equivalent focal distance for ortho mode.
+        float h = m_height > 0 ? (float)m_height : 1.0f;
+        float fovRad = getFovDegrees() * (float)M_PI / 180.0f;
+        float tanHalfFov = std::tan(fovRad * 0.5f);
+        return std::abs(m_trans.z) * h * 0.00055f / tanHalfFov;
+    }
 }
 
 void Camera::updateView() {
@@ -805,6 +822,19 @@ void Camera::toggleViewAngles(float rx, float ry) {
     targetState.center = m_center;
     targetState.offset = m_offset;
     targetState.trans = m_trans;
+
+    // If currently in perspective, convert trans.z so the object stays the same
+    // apparent size after switching to orthographic.
+    if (m_projectionType == CameraEnums::Projection::PERSPECTIVE) {
+        float fovRad = getFovDegrees() * (float)M_PI / 180.0f;
+        float tanHalfFov = std::tan(fovRad * 0.5f);
+        float h = m_height > 0 ? (float)m_height : 1.0f;
+        float eyeDist = getTransZ();
+        float halfH = eyeDist * tanHalfFov;
+        targetState.trans.z = std::max(0.001f, halfH / (h * 0.00055f));
+        targetState.offset.z = 0.0f;
+    }
+
     targetState.rotX = rx;
     targetState.rotY = normalizeAngle(ry, m_rotY);
     targetState.quatRot = glm::angleAxis(targetState.rotX, glm::vec3(1.0f, 0.0f, 0.0f)) *
