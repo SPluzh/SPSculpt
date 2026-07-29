@@ -349,7 +349,7 @@ void GuiManager::rebuildFontsAndStyles() {
     font_cfg.PixelSnapH = true;
     font_cfg.FontDataOwnedByAtlas = false;
     font_cfg.GlyphMinAdvanceX = 13.0f * combinedScale;
-    font_cfg.GlyphOffset = ImVec2(0.0f, 1.0f * combinedScale); // Adjusted offset to align icons properly in buttons
+    font_cfg.GlyphOffset = ImVec2(0.0f, 2.0f * combinedScale); // Adjusted offset to align icons properly in buttons
     static const ImWchar icon_ranges[] = { 0xe000, 0xf8ff, 0 };
     io.Fonts->AddFontFromMemoryTTF((void*)lucide_font_data, lucide_font_size, std::round(14.0f * combinedScale), &font_cfg, icon_ranges);
     

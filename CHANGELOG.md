@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 - **UI**: Removed the Undo and Redo buttons from the Floating Island HUD to declutter and optimize space.
 - **UI**: Repositioned the symmetry controls (master toggle and X, Y, Z axis buttons) to be placed before the viewport toggles.
 - **UI**: Applied consistent subtle frame rounding (`3px` scaled) to all buttons in the Floating Island HUD, and packed the symmetry buttons group tightly (spacing of `1px` scaled) to look like a single segmented control.
+- **UI**: Adjusted the vertical baseline offset (`GlyphOffset.y`) of the Lucide icon font from `1.0 * scale` to `2.0 * scale` to align all viewport icons perfectly in the center of the buttons.
 - **UI**: Added a Perspective Projection toggle button (`ICON_LC_CAMERA`) to the Floating Island HUD with active state highlighting and tooltip (`Toggle Perspective Projection (P)`), enabling quick switching between Perspective and Orthographic camera modes directly from the viewport header.
 
 ## [1.3.2]
