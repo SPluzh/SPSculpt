@@ -31,7 +31,11 @@ Camera::Camera() {
 
 #include "common/Logger.h"
 void Camera::setProjectionType(CameraEnums::Projection projType) {
-    if (m_projectionType == projType) return;
+    if (m_projectionType == projType) {
+        m_targetState.projectionType = projType;
+        m_startState.projectionType = projType;
+        return;
+    }
 
     float fovRad = getFovDegrees() * (float)M_PI / 180.0f;
     float tanHalfFov = std::tan(fovRad * 0.5f);
@@ -57,12 +61,18 @@ void Camera::setProjectionType(CameraEnums::Projection projType) {
     m_trans.z = std::max(0.001f, m_trans.z);
 
     m_projectionType = projType;
+    m_targetState.projectionType = projType;
+    m_startState.projectionType = projType;
+    m_targetState.trans = m_trans;
+    m_startState.trans = m_trans;
     updateProjection();
     updateView();
 }
 
 void Camera::setMode(CameraEnums::CameraMode mode) {
     m_mode = mode;
+    m_targetState.mode = mode;
+    m_startState.mode = mode;
     if (mode == CameraEnums::CameraMode::ORBIT) {
         setOrbit(0.0f, 0.0f);
     }
@@ -70,6 +80,8 @@ void Camera::setMode(CameraEnums::CameraMode mode) {
 
 void Camera::setFov(float fov) {
     m_fov = std::max(1.0f, std::min(fov, 200.0f));
+    m_targetState.fov = m_fov;
+    m_startState.fov = m_fov;
     updateView();
     updateProjection();
 }
@@ -722,6 +734,9 @@ void Camera::applyState(const CameraState& state) {
     m_view2DZoom = state.view2DZoom;
     m_ref2DMode = state.ref2DMode;
     m_refDrag = state.refDrag;
+    m_targetState = state;
+    m_startState = state;
+    m_transitionActive = false;
     updateView();
     updateProjection();
 }
