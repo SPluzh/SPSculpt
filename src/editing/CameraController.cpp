@@ -180,9 +180,10 @@ void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std
                 float factor = 1.0f + static_cast<float>(dx) * 0.005f;
                 camera.setView2DZoom(camera.getView2DZoom() * factor);
             } else if (m_drag == DragMode::Roll) {
-                float h = camera.getHeight() > 0 ? static_cast<float>(camera.getHeight()) : 1000.0f;
-                float speedTranslateFactor = camera.getSpeedTranslate() / h;
-                float angle = static_cast<float>(dx) * speedTranslateFactor * 6.0f * camera.getSpeedRoll();
+                float w = camera.getWidth() > 0 ? static_cast<float>(camera.getWidth()) : 1000.0f;
+                float piVal = 3.14159265358979323846f;
+                float baseAngleScale = camera.isSplitViewport() ? piVal : (2.0f * piVal);
+                float angle = (static_cast<float>(dx) / w) * baseAngleScale * camera.getSpeedRoll();
                 camera.roll(angle);
             }
 
