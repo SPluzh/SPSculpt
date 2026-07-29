@@ -107,19 +107,20 @@ void Camera::setPivot(const glm::vec3& pivot) {
 void Camera::rotate(float mouseX, float mouseY, float speedRotate) {
     cancelTransition();
     glm::vec2 normalizedMouseXY = normalizedMouse(mouseX, mouseY, (float)m_width, (float)m_height);
-    float speedFactor = (speedRotate / 0.25f) * m_speedRotate;
+    float speedFactor = speedRotate * m_speedRotate;
 
     if (m_mode == CameraEnums::CameraMode::ORBIT) {
         glm::vec2 diff = normalizedMouseXY - m_lastNormalizedMouseXY;
-        setOrbit(m_rotX - diff.y * 2.0f * speedFactor, m_rotY + diff.x * 2.0f * speedFactor);
+        float factor = (M_PI * 0.5f) * speedFactor;
+        setOrbit(m_rotX - diff.y * factor, m_rotY + diff.x * factor);
     } else if (m_mode == CameraEnums::CameraMode::PLANE) {
         glm::vec2 realDiff = normalizedMouseXY - m_lastNormalizedMouseXY;
-        glm::vec2 scaledDiff = realDiff * speedFactor;
+        glm::vec2 scaledDiff = realDiff * (speedFactor * (float)M_PI * 0.5f);
         float length = glm::length(scaledDiff);
         if (length > 0.0f) {
             glm::vec3 axisRot(-scaledDiff.y, scaledDiff.x, 0.0f);
             axisRot = glm::normalize(axisRot);
-            glm::quat q = glm::angleAxis(length * 2.0f, axisRot);
+            glm::quat q = glm::angleAxis(length, axisRot);
             m_quatRot = q * m_quatRot;
         }
     } else if (m_mode == CameraEnums::CameraMode::SPHERICAL) {
@@ -142,7 +143,7 @@ void Camera::rotate(float mouseX, float mouseY, float speedRotate) {
         float angle = std::acos(std::max(-1.0f, std::min(1.0f, dot)));
         if (angle > 1e-4f) {
             glm::vec3 axisRot = glm::normalize(glm::cross(mouseOnSphereBefore, mouseOnSphereAfter));
-            glm::quat q = glm::angleAxis(angle * 2.0f, axisRot);
+            glm::quat q = glm::angleAxis(angle * speedFactor, axisRot);
             m_quatRot = q * m_quatRot;
         }
         m_virtualNormalizedMouseXY = nextVirtualMouseXY;
@@ -263,12 +264,10 @@ void Camera::translate(float dx, float dy) {
 
 void Camera::zoom(float df) {
     cancelTransition();
-    glm::vec3 delta = m_offset - m_trans;
-    delta *= df * (m_speed / 54.0f) * m_speedZoom;
-    if (df < 0.0f) {
-        delta.x = delta.y = 0.0f;
-    }
-    m_trans += delta;
+    float scaleFactor = std::pow(2.0f, -df * m_speedZoom);
+    m_trans.z *= scaleFactor;
+    m_trans.z = std::max(0.001f, std::min(m_trans.z, 100000.0f));
+
     if (m_projectionType == CameraEnums::Projection::ORTHOGRAPHIC) {
         updateOrtho();
     }

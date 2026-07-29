@@ -61,7 +61,7 @@ public:
     const glm::mat4& getViewportMatrix() const { return m_viewportMatrix; }
 
     void start(float mouseX, float mouseY, bool cancelAnim = true);
-    void rotate(float mouseX, float mouseY, float speedRotate = 0.25f);
+    void rotate(float mouseX, float mouseY, float speedRotate = 1.0f);
     void translate(float dx, float dy);
     void zoom(float df);
 
