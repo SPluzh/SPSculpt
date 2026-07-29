@@ -108,7 +108,7 @@ void Camera::rotate(float mouseX, float mouseY, float speedRotate) {
     cancelTransition();
     glm::vec2 normalizedMouseXY = normalizedMouse(mouseX, mouseY, (float)m_width, (float)m_height);
     float speedFactor = speedRotate * m_speedRotate;
-    float baseFactor = m_isSplitViewport ? ((float)M_PI * 0.5f) : (float)M_PI;
+    float baseFactor = m_isSplitViewport ? (float)M_PI : (2.0f * (float)M_PI);
 
     if (m_mode == CameraEnums::CameraMode::ORBIT) {
         glm::vec2 diff = normalizedMouseXY - m_lastNormalizedMouseXY;
