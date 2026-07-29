@@ -4877,26 +4877,59 @@ void GuiManager::drawModelSnapshotWindow(const Scene& scene, AngleRenderer& rend
 
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     float defaultWidth = 320.0f * scale;
-    float defaultHeight = 240.0f * scale;
+    float defaultHeight = 260.0f * scale;
 
     ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x - defaultWidth - 20.0f * scale, viewport->Pos.y + 60.0f * scale), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(defaultWidth, defaultHeight), ImGuiCond_FirstUseEver);
 
-    ImGui::SetNextWindowSizeConstraints(ImVec2(160.0f * scale, 120.0f * scale), ImVec2(viewport->Size.x, viewport->Size.y));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(180.0f * scale, 140.0f * scale), ImVec2(viewport->Size.x, viewport->Size.y));
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar;
 
     bool open = true;
     if (ImGui::Begin("Model Snapshot", &open, flags)) {
+        // Toolbar controls
+        bool isSilhouette = renderer.isSnapshotSilhouette();
+
+        if (ImGui::Button(ICON_LC_CAMERA " View")) {
+            renderer.updateSnapshotCamera(scene);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Update snapshot camera angle to current main camera view");
+
+        ImGui::SameLine();
+
+        if (ImGui::Button(ICON_LC_ROTATE_CW " Refresh")) {
+            renderer.markSnapshotDirty();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Re-render model snapshot");
+
+        ImGui::SameLine();
+
+        if (isSilhouette) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+        if (ImGui::Button(ICON_LC_MOON " Silhouette")) {
+            renderer.setSnapshotSilhouette(!isSilhouette);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Silhouette mode for snapshot window");
+        if (isSilhouette) {
+            ImGui::PopStyleColor(3);
+        }
+
+        ImGui::Separator();
+
         GLuint tex = renderer.getSnapshotTexture();
         if (tex != 0) {
             ImVec2 avail = ImGui::GetContentRegionAvail();
+            if (avail.x > 1.0f && avail.y > 1.0f) {
+                // Texture UV mapping: OpenGL textures are Y-flipped in ImGui. (0,1) to (1,0) flips Y correctly.
+                ImGui::Image((ImTextureID)(uintptr_t)tex, avail, ImVec2(0, 1), ImVec2(1, 0));
 
-            // Texture UV mapping: OpenGL textures are Y-flipped in ImGui. (0,1) to (1,0) flips Y correctly.
-            ImGui::Image((ImTextureID)(uintptr_t)tex, avail, ImVec2(0, 1), ImVec2(1, 0));
-
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Frozen Model Snapshot (Auto-updates on edit)");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Frozen Model Snapshot (Auto-updates on edit)");
+                }
             }
         }
     }

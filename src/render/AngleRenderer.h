@@ -22,6 +22,7 @@ struct ModelSnapshot {
     int height = 0;
     bool active = false;
     bool needsUpdate = false;
+    bool isSilhouette = false;
 };
 
 
@@ -233,11 +234,19 @@ public:
     void updateSnapshotIfNeeded(const Scene& scene);
     void destroySnapshot();
     void toggleSnapshot(const Scene& scene);
+    void updateSnapshotCamera(const Scene& scene);
     bool hasActiveSnapshot() const { return m_snapshot.active; }
     GLuint getSnapshotTexture() const { return m_snapshot.rt.texture; }
     int getSnapshotWidth() const { return m_snapshot.width; }
     int getSnapshotHeight() const { return m_snapshot.height; }
     void markSnapshotDirty() { if (m_snapshot.active) m_snapshot.needsUpdate = true; }
+    bool isSnapshotSilhouette() const { return m_snapshot.isSilhouette; }
+    void setSnapshotSilhouette(bool silhouette) {
+        if (m_snapshot.isSilhouette != silhouette) {
+            m_snapshot.isSilhouette = silhouette;
+            if (m_snapshot.active) m_snapshot.needsUpdate = true;
+        }
+    }
 
     // Helpers to update environmental params
     void setEnvironmentParameters(float exposure, const std::vector<float>& sph);

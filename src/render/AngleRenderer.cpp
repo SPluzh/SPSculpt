@@ -3247,6 +3247,13 @@ void AngleRenderer::createSnapshot(const Scene& scene) {
     m_snapshot.needsUpdate = true;
 }
 
+void AngleRenderer::updateSnapshotCamera(const Scene& scene) {
+    if (m_snapshot.active) {
+        m_snapshot.frozenCamera = scene.getCamera();
+        m_snapshot.needsUpdate = true;
+    }
+}
+
 void AngleRenderer::updateSnapshotIfNeeded(const Scene& scene) {
     if (!m_snapshot.active || !m_snapshot.needsUpdate) return;
 
@@ -3265,6 +3272,11 @@ void AngleRenderer::updateSnapshotIfNeeded(const Scene& scene) {
     bool oldTakingScreenshot = m_isTakingScreenshot;
     bool oldSplitMode = m_splitMode;
     auto oldCamRight = m_cameraRight;
+    int oldShaderType = m_shaderType;
+
+    if (m_snapshot.isSilhouette) {
+        m_shaderType = 6; // Silhouette shader
+    }
 
     activeCam = m_snapshot.frozenCamera;
     activeCam.onResize(m_snapshot.width, m_snapshot.height);
@@ -3277,6 +3289,7 @@ void AngleRenderer::updateSnapshotIfNeeded(const Scene& scene) {
     m_isTakingScreenshot = oldTakingScreenshot;
     m_splitMode = oldSplitMode;
     m_cameraRight = oldCamRight;
+    m_shaderType = oldShaderType;
 }
 
 void AngleRenderer::destroySnapshot() {
