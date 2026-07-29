@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.3]
+- **UI**: Added a Perspective Projection toggle button (`ICON_LC_CAMERA`) to the Floating Island HUD with active state highlighting and tooltip (`Toggle Perspective Projection (P)`), enabling quick switching between Perspective and Orthographic camera modes directly from the viewport header.
+
 ## [1.3.2]
 - **Camera**: Refactored perspective and orthographic camera conversion logic (`setProjectionType`, `getTransZ`, `toggleViewAngles`) to ensure strictly invertible, mathematically precise scale parity across view switches.
 - **Camera**: Eliminated translation drift and FOV-dependent scale jumps when toggling between perspective and orthographic projection modes.

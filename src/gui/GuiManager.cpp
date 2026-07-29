@@ -4789,6 +4789,22 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
 
         ImGui::SameLine();
 
+        bool isPerspective = (scene.getCamera().getProjectionType() == CameraEnums::Projection::PERSPECTIVE);
+        if (isPerspective) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+        if (ImGui::Button(ICON_LC_CAMERA "##hudPerspective")) {
+            scene.getCamera().setProjectionType(isPerspective ? CameraEnums::Projection::ORTHOGRAPHIC : CameraEnums::Projection::PERSPECTIVE);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Perspective Projection (P)");
+        if (isPerspective) {
+            ImGui::PopStyleColor(3);
+        }
+
+        ImGui::SameLine();
+
         bool isSolo = scene.isSoloActive();
         if (isSolo) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.45f, 0.05f, 0.8f));
