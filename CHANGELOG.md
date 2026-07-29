@@ -5,7 +5,8 @@ All notable changes to this project will be documented in this file.
 ## [1.3.3]
 - **UI**: Made the Floating Island HUD more compact by reducing its padding from `16px` to `8px` horizontally and `8px` to `4px` vertically, locking it flush against the absolute top edge of the window (overlapping the transparent menu bar area) and disabling manual dragging.
 - **UI**: Reduced the corner rounding (border radius) of the Floating Island HUD from `20px` to `8px` for a cleaner, sleeker look.
-- **UI**: Moved the symmetry controls (master toggle and X, Y, Z axis buttons) to the right-most section of the Floating Island HUD.
+- **UI**: Removed the Undo and Redo buttons from the Floating Island HUD to declutter and optimize space.
+- **UI**: Repositioned the symmetry controls (master toggle and X, Y, Z axis buttons) to be placed before the viewport toggles.
 - **UI**: Added a Perspective Projection toggle button (`ICON_LC_CAMERA`) to the Floating Island HUD with active state highlighting and tooltip (`Toggle Perspective Projection (P)`), enabling quick switching between Perspective and Orthographic camera modes directly from the viewport header.
 
 ## [1.3.2]
