@@ -192,11 +192,12 @@ public:
         m_currentBrush = brush; 
         m_gradActivePoint = '\0';
         m_gradIsDrawing = false;
+        m_hasPending = false;
+        m_hoveredSegment = nullptr;
+        m_draggedSegment = nullptr;
     }
     void setTool(BrushType brush) { 
-        m_currentBrush = brush; 
-        m_gradActivePoint = '\0';
-        m_gradIsDrawing = false;
+        setBrush(brush);
     }
 
     float getBrushRadius() const { return getCurrentSettings().radius; }

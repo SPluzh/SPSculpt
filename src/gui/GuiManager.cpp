@@ -3378,7 +3378,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     }
 
     // 10. Measure / Divider Overlays
-    if (sculpt.getBrush() == BRUSH_MEASURE || sculpt.getBrush() == BRUSH_DIVIDER) {
+    if (sculpt.getBrush() == BRUSH_MEASURE || sculpt.getBrush() == BRUSH_DIVIDER ||
+        !sculpt.getMeasureSegments().empty() || !sculpt.getDividerSegments().empty()) {
         sculpt.validateSegments(scene);
         ImDrawList* drawList = ImGui::GetForegroundDrawList();
         bool useDistanceThickness = sculpt.getMeasureUseDistanceThickness();
