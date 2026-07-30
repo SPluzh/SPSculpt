@@ -4958,7 +4958,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
 
         ImGui::Spacing();
 
-        // Bottom Vertical Slider: Intensity
+        // Middle Vertical Slider: Intensity
         float intensityPct = sculpt.getBrushIntensity() * 100.0f;
         float maxHudPct = (intensityPct > 100.0f) ? std::min(1000.0f, std::max(100.0f, intensityPct)) : 100.0f;
         if (ImGui::VSliderFloat("##hudVertIntensity", ImVec2(squareSize, vSliderH), &intensityPct, 0.0f, maxHudPct, "")) {
@@ -4975,6 +4975,22 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
                 float stepPct = (intensityPct < 100.0f) ? 5.0f : 25.0f;
                 intensityPct = std::max(0.0f, std::min(1000.0f, intensityPct + wheel * stepPct));
                 sculpt.setBrushIntensity(intensityPct / 100.0f);
+            }
+        }
+
+        ImGui::Spacing();
+
+        // Bottom Vertical Slider: Focal Shift
+        float focalShift = sculpt.getFocalShift();
+        if (ImGui::VSliderFloat("##hudVertFocalShift", ImVec2(squareSize, vSliderH), &focalShift, -1.0f, 1.0f, "")) {
+            sculpt.setFocalShift(focalShift);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Focal Shift: %.0f%%", focalShift * 100.0f);
+            float wheel = ImGui::GetIO().MouseWheel;
+            if (wheel != 0.0f) {
+                focalShift = std::max(-1.0f, std::min(1.0f, focalShift + wheel * 0.05f));
+                sculpt.setFocalShift(focalShift);
             }
         }
 
