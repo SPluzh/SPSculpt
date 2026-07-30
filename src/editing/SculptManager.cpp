@@ -1453,18 +1453,19 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 }
 
 glm::vec3 SculptManager::getAnchorWorldPos(const MeasurementAnchor& anchor) {
-    if (anchor.type == MeasurementAnchor::VERTEX) {
+    if (anchor.type == MeasurementAnchor::VERTEX && anchor.mesh != nullptr) {
         Mesh* mesh = anchor.mesh;
         uint32_t vertIdx = anchor.vertIdx;
-        glm::vec3 localPos(
-            mesh->verts[vertIdx * 3],
-            mesh->verts[vertIdx * 3 + 1],
-            mesh->verts[vertIdx * 3 + 2]
-        );
-        return glm::vec3(mesh->matrix * glm::vec4(localPos, 1.0f));
-    } else {
-        return anchor.worldPos;
+        if (vertIdx * 3 + 2 < mesh->verts.size()) {
+            glm::vec3 localPos(
+                mesh->verts[vertIdx * 3],
+                mesh->verts[vertIdx * 3 + 1],
+                mesh->verts[vertIdx * 3 + 2]
+            );
+            return glm::vec3(mesh->matrix * glm::vec4(localPos, 1.0f));
+        }
     }
+    return anchor.worldPos;
 }
 
 MeasurementAnchor SculptManager::pickAnchor(float mouseX, float mouseY, Scene& scene, const glm::vec3* referenceWorldPos) {
@@ -1576,10 +1577,12 @@ void SculptManager::validateSegments(Scene& scene) {
     auto validate = [&](std::vector<MeasurementSegment>& segments) {
         segments.erase(std::remove_if(segments.begin(), segments.end(), [&](const MeasurementSegment& seg) {
             if (seg.vertA.type == MeasurementAnchor::VERTEX) {
-                if (std::find(meshes.begin(), meshes.end(), seg.vertA.mesh) == meshes.end()) return true;
+                if (!seg.vertA.mesh || std::find(meshes.begin(), meshes.end(), seg.vertA.mesh) == meshes.end()) return true;
+                if (seg.vertA.vertIdx * 3 + 2 >= seg.vertA.mesh->verts.size()) return true;
             }
             if (seg.vertB.type == MeasurementAnchor::VERTEX) {
-                if (std::find(meshes.begin(), meshes.end(), seg.vertB.mesh) == meshes.end()) return true;
+                if (!seg.vertB.mesh || std::find(meshes.begin(), meshes.end(), seg.vertB.mesh) == meshes.end()) return true;
+                if (seg.vertB.vertIdx * 3 + 2 >= seg.vertB.mesh->verts.size()) return true;
             }
             return false;
         }), segments.end());

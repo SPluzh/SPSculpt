@@ -1697,6 +1697,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         ImGui::SameLine();
         if (ImGui::Button("Clear All", ImVec2(-1, 0))) {
             scene.clearScene();
+            sculpt.clearMeasurements();
         }
 
         // Measurement & Divider Tools Section
@@ -1747,6 +1748,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         }
 
         // Created Measure & Divider Items Outliner
+        sculpt.validateSegments(scene);
         auto& measureSegs = sculpt.getMeasureSegments();
         auto& dividerSegs = sculpt.getDividerSegments();
         int totalToolItems = (int)measureSegs.size() + (int)dividerSegs.size();
