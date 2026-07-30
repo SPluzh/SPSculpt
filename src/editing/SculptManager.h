@@ -106,6 +106,7 @@ struct MeasurementSegment {
     MeasurementAnchor vertA;
     MeasurementAnchor vertB;
     bool isReference = false;   // Для Measure: является ли отрезок эталоном
+    std::string name = "";
 };
 
 class SculptManager {

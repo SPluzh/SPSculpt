@@ -2105,6 +2105,9 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                             if (seg.isReference) { hasReference = true; break; }
                         }
                         newSeg.isReference = !hasReference;
+                        newSeg.name = "Measure " + std::to_string(m_measureSegments.size() + 1);
+                    } else {
+                        newSeg.name = "Divider " + std::to_string(m_dividerSegments.size() + 1);
                     }
 
                     segments.push_back(newSeg);

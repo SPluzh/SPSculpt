@@ -1664,13 +1664,179 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             if (ImGui::Checkbox("Use Distance Thickness", &useDist)) {
                 sculpt.setMeasureUseDistanceThickness(useDist);
             }
-            ImGui::Text("Active measure segments: %d", (int)sculpt.getMeasureSegments().size());
         } else if (isDividerActive) {
             int divs = sculpt.getDividerDivisions();
             if (ImGui::SliderInt("Divisions", &divs, 2, 6)) {
                 sculpt.setDividerDivisions(divs);
             }
-            ImGui::Text("Active divider segments: %d", (int)sculpt.getDividerSegments().size());
+        }
+
+        // Created Measure & Divider Items Outliner
+        auto& measureSegs = sculpt.getMeasureSegments();
+        auto& dividerSegs = sculpt.getDividerSegments();
+        int totalToolItems = (int)measureSegs.size() + (int)dividerSegs.size();
+
+        if (totalToolItems > 0) {
+            ImGui::Separator();
+            ImGui::Text("Created Tool Items (%d):", totalToolItems);
+
+            float referenceLength = 0.0f;
+            for (const auto& seg : measureSegs) {
+                if (seg.isReference) {
+                    glm::vec3 worldA = SculptManager::getAnchorWorldPos(seg.vertA);
+                    glm::vec3 worldB = SculptManager::getAnchorWorldPos(seg.vertB);
+                    referenceLength = glm::distance(worldA, worldB);
+                    break;
+                }
+            }
+
+            static int renameSegType = 0; // 1 = Measure, 2 = Divider
+            static int renameSegIdx = -1;
+            static char renameSegBuf[128] = "";
+
+            ImGui::BeginChild("ToolOutlinerList", ImVec2(0, std::clamp(totalToolItems * 26 + 30, 60, 160)), true);
+            if (ImGui::BeginTable("ToolOutlinerTable", 4, ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV)) {
+                ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed, 75.0f);
+                ImGui::TableSetupColumn("Ref", ImGuiTableColumnFlags_WidthFixed, 35.0f);
+                ImGui::TableSetupColumn("##DelCol", ImGuiTableColumnFlags_WidthFixed, 25.0f);
+                ImGui::TableHeadersRow();
+
+                int deleteMeasureIdx = -1;
+                int deleteDividerIdx = -1;
+
+                // Measure Segments
+                for (int i = 0; i < (int)measureSegs.size(); ++i) {
+                    auto& seg = measureSegs[i];
+                    ImGui::TableNextRow();
+                    ImGui::PushID(1000 + i);
+
+                    glm::vec3 worldA = SculptManager::getAnchorWorldPos(seg.vertA);
+                    glm::vec3 worldB = SculptManager::getAnchorWorldPos(seg.vertB);
+                    float worldDist = glm::distance(worldA, worldB);
+
+                    // Column 1: Name
+                    ImGui::TableNextColumn();
+                    std::string displayName = seg.name.empty() ? ("Measure " + std::to_string(i + 1)) : seg.name;
+                    if (renameSegType == 1 && renameSegIdx == i) {
+                        ImGui::SetNextItemWidth(-FLT_MIN);
+                        if (ImGui::InputText("##RenameMeasure", renameSegBuf, sizeof(renameSegBuf), ImGuiInputTextFlags_EnterReturnsTrue)) {
+                            seg.name = renameSegBuf;
+                            renameSegIdx = -1;
+                        }
+                        if (ImGui::IsItemDeactivated() && !ImGui::IsItemDeactivatedAfterEdit()) {
+                            seg.name = renameSegBuf;
+                            renameSegIdx = -1;
+                        }
+                    } else {
+                        if (ImGui::Selectable(displayName.c_str(), false)) {
+                            sculpt.setTool(BRUSH_MEASURE);
+                        }
+                        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+                            renameSegType = 1;
+                            renameSegIdx = i;
+                            strncpy(renameSegBuf, displayName.c_str(), sizeof(renameSegBuf));
+                        }
+                    }
+
+                    // Column 2: Value / Ratio
+                    ImGui::TableNextColumn();
+                    if (seg.isReference) {
+                        ImGui::TextColored(ImVec4(0.2f, 0.9f, 0.4f, 1.0f), "1.00x");
+                    } else if (referenceLength > 0.0f) {
+                        ImGui::Text("%.2fx", worldDist / referenceLength);
+                    } else {
+                        ImGui::Text("%.2f", worldDist);
+                    }
+
+                    // Column 3: Ref Checkbox
+                    ImGui::TableNextColumn();
+                    bool isRef = seg.isReference;
+                    if (ImGui::Checkbox("##RefCheck", &isRef)) {
+                        if (isRef) {
+                            for (auto& s : measureSegs) s.isReference = false;
+                            seg.isReference = true;
+                        }
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Set as reference scale unit");
+                    }
+
+                    // Column 4: Delete Button
+                    ImGui::TableNextColumn();
+                    if (ImGui::Button("X##DelM", ImVec2(20, 0))) {
+                        deleteMeasureIdx = i;
+                    }
+
+                    ImGui::PopID();
+                }
+
+                // Divider Segments
+                for (int j = 0; j < (int)dividerSegs.size(); ++j) {
+                    auto& seg = dividerSegs[j];
+                    ImGui::TableNextRow();
+                    ImGui::PushID(2000 + j);
+
+                    glm::vec3 worldA = SculptManager::getAnchorWorldPos(seg.vertA);
+                    glm::vec3 worldB = SculptManager::getAnchorWorldPos(seg.vertB);
+                    float worldDist = glm::distance(worldA, worldB);
+
+                    // Column 1: Name
+                    ImGui::TableNextColumn();
+                    std::string displayName = seg.name.empty() ? ("Divider " + std::to_string(j + 1)) : seg.name;
+                    if (renameSegType == 2 && renameSegIdx == j) {
+                        ImGui::SetNextItemWidth(-FLT_MIN);
+                        if (ImGui::InputText("##RenameDivider", renameSegBuf, sizeof(renameSegBuf), ImGuiInputTextFlags_EnterReturnsTrue)) {
+                            seg.name = renameSegBuf;
+                            renameSegIdx = -1;
+                        }
+                        if (ImGui::IsItemDeactivated() && !ImGui::IsItemDeactivatedAfterEdit()) {
+                            seg.name = renameSegBuf;
+                            renameSegIdx = -1;
+                        }
+                    } else {
+                        if (ImGui::Selectable(displayName.c_str(), false)) {
+                            sculpt.setTool(BRUSH_DIVIDER);
+                        }
+                        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+                            renameSegType = 2;
+                            renameSegIdx = j;
+                            strncpy(renameSegBuf, displayName.c_str(), sizeof(renameSegBuf));
+                        }
+                    }
+
+                    // Column 2: Value / Divisions
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%.2f (%dd)", worldDist, sculpt.getDividerDivisions());
+
+                    // Column 3: Ref Checkbox (N/A)
+                    ImGui::TableNextColumn();
+                    ImGui::TextDisabled("-");
+
+                    // Column 4: Delete Button
+                    ImGui::TableNextColumn();
+                    if (ImGui::Button("X##DelD", ImVec2(20, 0))) {
+                        deleteDividerIdx = j;
+                    }
+
+                    ImGui::PopID();
+                }
+
+                ImGui::EndTable();
+
+                if (deleteMeasureIdx >= 0 && deleteMeasureIdx < (int)measureSegs.size()) {
+                    bool wasRef = measureSegs[deleteMeasureIdx].isReference;
+                    measureSegs.erase(measureSegs.begin() + deleteMeasureIdx);
+                    if (wasRef && !measureSegs.empty()) {
+                        measureSegs[0].isReference = true;
+                    }
+                }
+
+                if (deleteDividerIdx >= 0 && deleteDividerIdx < (int)dividerSegs.size()) {
+                    dividerSegs.erase(dividerSegs.begin() + deleteDividerIdx);
+                }
+            }
+            ImGui::EndChild();
         }
 
         ImGui::End();
