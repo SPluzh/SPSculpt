@@ -5198,6 +5198,81 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
 
         ImGui::SameLine();
 
+        // Split View Button + Dropdown Arrow
+        bool isSplit = (scene.getSplitMode() != Scene::SplitMode::OFF);
+        if (isSplit) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+
+        auto applySplitMode = [&](Scene::SplitMode newMode) {
+            scene.setSplitMode(newMode);
+            if (m_window) {
+                int w, h;
+                SDL_GetWindowSize(m_window, &w, &h);
+                renderer.resize(w, h);
+                if (scene.getSplitMode() != Scene::SplitMode::OFF) {
+                    int halfW = w / 2;
+                    scene.getCamera().onResize(halfW, h);
+                    if (scene.getCameraRight()) {
+                        scene.getCameraRight()->onResize(w - halfW, h);
+                    }
+                } else {
+                    scene.getCamera().onResize(w, h);
+                }
+            }
+        };
+
+        if (ImGui::Button(ICON_LC_COLUMNS "##hudSplitView", squareBtn)) {
+            applySplitMode(isSplit ? Scene::SplitMode::OFF : Scene::SplitMode::MIRROR);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Split Viewport");
+
+        ImVec2 sMin = ImGui::GetItemRectMin();
+
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, ImGui::GetStyle().FramePadding.y));
+        bool openSplitPopup = ImGui::Button(ICON_LC_CHEVRON_DOWN "##hudSplitViewArrow", halfSquareBtn);
+        ImGui::PopStyleVar();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Split View Options");
+
+        ImVec2 sMax = ImGui::GetItemRectMax();
+
+        if (isSplit) {
+            ImGui::PopStyleColor(3);
+        }
+
+        float sCenterX = (sMin.x + sMax.x) * 0.5f;
+        float sBottomY = sMax.y + 4.0f * scale;
+
+        if (openSplitPopup) {
+            ImGui::OpenPopup("##hudSplitViewPopup");
+        }
+
+        ImGui::SetNextWindowPos(ImVec2(sCenterX, sBottomY), ImGuiCond_Appearing, ImVec2(0.5f, 0.0f));
+        if (ImGui::BeginPopup("##hudSplitViewPopup")) {
+            ImGui::TextUnformatted("Split View:");
+            int curSplitMode = static_cast<int>(scene.getSplitMode());
+            bool changed = false;
+            if (ImGui::RadioButton("Off", &curSplitMode, 0)) changed = true;
+            if (ImGui::RadioButton("Mirror", &curSplitMode, 1)) changed = true;
+            if (ImGui::RadioButton("Independent", &curSplitMode, 2)) changed = true;
+            if (changed) {
+                applySplitMode(static_cast<Scene::SplitMode>(curSplitMode));
+            }
+            if (scene.getSplitMode() != Scene::SplitMode::OFF) {
+                ImGui::Separator();
+                bool showInactive = scene.getSplitShowInactiveCursor();
+                if (ImGui::Checkbox("Show Inactive Cursor", &showInactive)) {
+                    scene.setSplitShowInactiveCursor(showInactive);
+                }
+            }
+            ImGui::EndPopup();
+        }
+
+        ImGui::SameLine();
+
         bool isSolo = scene.isSoloActive();
         if (isSolo) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.45f, 0.05f, 0.8f));
