@@ -121,7 +121,8 @@ void BrushCursor::update(int mouseX, int mouseY,
                           const glm::vec3& paintColor,
                           SymmetryMode symMode,
                           ModalMode modalMode) {
-    if (brushType == BRUSH_VISIBILITY || brushType == BRUSH_MASK_GRADIENT_BLUR) {
+    if (brushType == BRUSH_VISIBILITY || brushType == BRUSH_MASK_GRADIENT_BLUR ||
+        brushType == BRUSH_MEASURE || brushType == BRUSH_DIVIDER || brushType == BRUSH_TRANSFORM) {
         m_state.visible = false;
         return;
     }

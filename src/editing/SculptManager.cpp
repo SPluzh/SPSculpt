@@ -2863,7 +2863,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 }
 
 void SculptManager::processFrame(Scene& scene) {
-    if (m_cameraController.isDragging()) {
+    if (m_cameraController.isDragging() || m_currentBrush == BRUSH_MEASURE || m_currentBrush == BRUSH_DIVIDER || m_currentBrush == BRUSH_TRANSFORM) {
         m_cursor.hide();
     } else {
         // Resolve dynamic brush modifier swap (Shift->Smooth, Ctrl->Mask, Ctrl+Shift->Visibility)
