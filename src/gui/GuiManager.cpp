@@ -3140,8 +3140,13 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     if (sculpt.getBrush() == BRUSH_MEASURE || sculpt.getBrush() == BRUSH_DIVIDER) {
         sculpt.validateSegments(scene);
         ImDrawList* drawList = ImGui::GetForegroundDrawList();
-        const Camera& camera = scene.getCamera();
         bool useDistanceThickness = sculpt.getMeasureUseDistanceThickness();
+
+        float viewportWidth = ImGui::GetIO().DisplaySize.x;
+        float viewportHeight = ImGui::GetIO().DisplaySize.y;
+        bool isSplit = (scene.getSplitMode() != Scene::SplitMode::OFF);
+        int numViewports = isSplit ? 2 : 1;
+        float halfW = viewportWidth * 0.5f;
 
         auto getPixelsPerUnit = [](const glm::vec3& worldPos, const Camera& camera) -> float {
             glm::mat4 view = camera.getViewMatrix();
@@ -3188,166 +3193,186 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             }
         }
 
-        auto drawSeg = [&](const MeasurementSegment& seg, bool isReference, bool isPreview) {
-            glm::vec3 worldA = SculptManager::getAnchorWorldPos(seg.vertA);
-            glm::vec3 worldB = SculptManager::getAnchorWorldPos(seg.vertB);
+        for (int vp = 0; vp < numViewports; ++vp) {
+            const Camera* camPtr = isSplit ? scene.getCameraByIndex(vp) : &scene.getCamera();
+            if (!camPtr) continue;
+            const Camera& camera = *camPtr;
+            float xOffset = (isSplit && vp == 1) ? halfW : 0.0f;
+            float vpWidth = isSplit ? halfW : viewportWidth;
 
-            glm::vec3 screenA = camera.project(worldA);
-            glm::vec3 screenB = camera.project(worldB);
-            ImVec2 posA(screenA.x, screenA.y);
-            ImVec2 posB(screenB.x, screenB.y);
-
-            float worldDist = glm::distance(worldA, worldB);
-
-            bool isHoveredA = (&seg == hoveredSeg && hoveredKey == "vertA");
-            bool isHoveredB = (&seg == hoveredSeg && hoveredKey == "vertB");
-
-            ImU32 color = isReference ? IM_COL32(255, 255, 255, 255) : IM_COL32(176, 190, 197, 255);
-            if (isPreview) {
-                color = isReference ? IM_COL32(255, 255, 255, 150) : IM_COL32(176, 190, 197, 150);
+            if (isSplit) {
+                drawList->PushClipRect(
+                    ImVec2(xOffset, 0.0f),
+                    ImVec2(xOffset + vpWidth, viewportHeight),
+                    true
+                );
             }
 
-            float strokeWidth = isReference ? 1.5f : 1.0f;
-            float rA = isReference ? 5.0f : 4.0f;
-            float rB = isReference ? 5.0f : 4.0f;
-            float rDiv = 3.5f;
+            auto drawSeg = [&](const MeasurementSegment& seg, bool isReference, bool isPreview) {
+                glm::vec3 worldA = SculptManager::getAnchorWorldPos(seg.vertA);
+                glm::vec3 worldB = SculptManager::getAnchorWorldPos(seg.vertB);
 
-            if (useDistanceThickness) {
-                glm::vec3 worldMid = (worldA + worldB) * 0.5f;
-                float ppuMid = getPixelsPerUnit(worldMid, camera);
-                strokeWidth = (isReference ? 0.11f : 0.075f) * ppuMid;
-                strokeWidth = glm::clamp(strokeWidth, 0.25f * scale, 5.0f * scale);
+                glm::vec3 screenA = camera.project(worldA);
+                glm::vec3 screenB = camera.project(worldB);
+                ImVec2 posA(screenA.x + xOffset, screenA.y);
+                ImVec2 posB(screenB.x + xOffset, screenB.y);
 
-                float ppuA = getPixelsPerUnit(worldA, camera);
-                rA = (isReference ? 0.35f : 0.28f) * ppuA;
-                rA = glm::clamp(rA, 1.0f * scale, 15.0f * scale);
+                float worldDist = glm::distance(worldA, worldB);
 
-                float ppuB = getPixelsPerUnit(worldB, camera);
-                rB = (isReference ? 0.35f : 0.28f) * ppuB;
-                rB = glm::clamp(rB, 1.0f * scale, 15.0f * scale);
+                bool isHoveredA = (&seg == hoveredSeg && hoveredKey == "vertA");
+                bool isHoveredB = (&seg == hoveredSeg && hoveredKey == "vertB");
 
-                rDiv = 0.2f * ppuMid;
-                rDiv = glm::clamp(rDiv, 0.8f * scale, 10.0f * scale);
-            } else {
-                strokeWidth *= scale;
-                rA *= scale;
-                rB *= scale;
-                rDiv *= scale;
-            }
-
-            if (isHoveredA) rA = std::max(8.0f * scale, rA * 1.6f);
-            if (isHoveredB) rB = std::max(8.0f * scale, rB * 1.6f);
-
-            // 1. Line
-            if (isPreview) {
-                ImVec2 d = ImVec2(posB.x - posA.x, posB.y - posA.y);
-                float len = std::sqrt(d.x * d.x + d.y * d.y);
-                if (len > 0.0f) {
-                    float step = 10.0f * scale;
-                    int numSteps = (int)(len / step);
-                    float ux = d.x / len;
-                    float uy = d.y / len;
-                    for (int i = 0; i < numSteps; ++i) {
-                        float tStart = i * step;
-                        float tEnd = tStart + 5.0f * scale;
-                        if (tEnd > len) tEnd = len;
-                        drawList->AddLine(
-                            ImVec2(posA.x + ux * tStart, posA.y + uy * tStart),
-                            ImVec2(posA.x + ux * tEnd, posA.y + uy * tEnd),
-                            color,
-                            strokeWidth
-                        );
-                    }
+                ImU32 color = isReference ? IM_COL32(255, 255, 255, 255) : IM_COL32(176, 190, 197, 255);
+                if (isPreview) {
+                    color = isReference ? IM_COL32(255, 255, 255, 150) : IM_COL32(176, 190, 197, 150);
                 }
-            } else {
-                drawList->AddLine(posA, posB, color, strokeWidth);
-            }
 
-            // 2. Division marks or ticks
-            if (isDivider) {
-                if (divisions >= 2 && divisions <= 6) {
-                    for (int k = 1; k < divisions; ++k) {
-                        float t = (float)k / (float)divisions;
-                        glm::vec3 divWorld = glm::mix(worldA, worldB, t);
-                        glm::vec3 divScreen = camera.project(divWorld);
-                        ImVec2 divPos(divScreen.x, divScreen.y);
-                        ImU32 fillCol = isPreview ? IM_COL32(255, 255, 255, 102) : IM_COL32(255, 255, 255, 255);
-                        ImU32 strokeCol = isPreview ? IM_COL32(26, 26, 26, 102) : IM_COL32(26, 26, 26, 255);
-                        drawList->AddCircleFilled(divPos, rDiv, fillCol);
-                        drawList->AddCircle(divPos, rDiv, strokeCol, 0, 1.0f * scale);
-                    }
-                }
-            } else {
-                if (!isReference && referenceLength > 0.0f) {
-                    int nTicks = (int)std::floor((worldDist - 1e-5f) / referenceLength);
-                    for (int k = 1; k <= nTicks; ++k) {
-                        float t = (k * referenceLength) / worldDist;
-                        glm::vec3 tickWorld = glm::mix(worldA, worldB, t);
-                        glm::vec3 tickScreen = camera.project(tickWorld);
-                        ImVec2 tickPos(tickScreen.x, tickScreen.y);
-                        drawList->AddCircleFilled(tickPos, 2.5f * scale, IM_COL32(255, 255, 255, 255));
-                        drawList->AddCircle(tickPos, 2.5f * scale, color, 0, 1.0f * scale);
-                    }
-                }
-            }
+                float strokeWidth = isReference ? 1.5f : 1.0f;
+                float rA = isReference ? 5.0f : 4.0f;
+                float rB = isReference ? 5.0f : 4.0f;
+                float rDiv = 3.5f;
 
-            // 3. Endpoint shapes
-            ImU32 strokeA = isHoveredA ? IM_COL32(0, 229, 255, 255) : IM_COL32(26, 26, 26, 255);
-            float swA = isHoveredA ? 2.5f * scale : 1.2f * scale;
-            drawEndpointShape(drawList, posA, rA, seg.vertA.type, color, strokeA, swA);
+                if (useDistanceThickness) {
+                    glm::vec3 worldMid = (worldA + worldB) * 0.5f;
+                    float ppuMid = getPixelsPerUnit(worldMid, camera);
+                    strokeWidth = (isReference ? 0.11f : 0.075f) * ppuMid;
+                    strokeWidth = glm::clamp(strokeWidth, 0.25f * scale, 5.0f * scale);
 
-            ImU32 strokeB = isHoveredB ? IM_COL32(0, 229, 255, 255) : IM_COL32(26, 26, 26, 255);
-            float swB = isHoveredB ? 2.5f * scale : 1.2f * scale;
-            drawEndpointShape(drawList, posB, rB, seg.vertB.type, color, strokeB, swB);
+                    float ppuA = getPixelsPerUnit(worldA, camera);
+                    rA = (isReference ? 0.35f : 0.28f) * ppuA;
+                    rA = glm::clamp(rA, 1.0f * scale, 15.0f * scale);
 
-            // 4. Text Label (Measure tool only)
-            if (!isDivider) {
-                char label[32];
-                if (isReference) {
-                    strcpy(label, "1.00x");
+                    float ppuB = getPixelsPerUnit(worldB, camera);
+                    rB = (isReference ? 0.35f : 0.28f) * ppuB;
+                    rB = glm::clamp(rB, 1.0f * scale, 15.0f * scale);
+
+                    rDiv = 0.2f * ppuMid;
+                    rDiv = glm::clamp(rDiv, 0.8f * scale, 10.0f * scale);
                 } else {
-                    if (referenceLength > 0.0f) {
-                        sprintf(label, "%.2fx", worldDist / referenceLength);
-                    } else {
-                        sprintf(label, "%.2f", worldDist);
+                    strokeWidth *= scale;
+                    rA *= scale;
+                    rB *= scale;
+                    rDiv *= scale;
+                }
+
+                if (isHoveredA) rA = std::max(8.0f * scale, rA * 1.6f);
+                if (isHoveredB) rB = std::max(8.0f * scale, rB * 1.6f);
+
+                // 1. Line
+                if (isPreview) {
+                    ImVec2 d = ImVec2(posB.x - posA.x, posB.y - posA.y);
+                    float len = std::sqrt(d.x * d.x + d.y * d.y);
+                    if (len > 0.0f) {
+                        float step = 10.0f * scale;
+                        int numSteps = (int)(len / step);
+                        float ux = d.x / len;
+                        float uy = d.y / len;
+                        for (int i = 0; i < numSteps; ++i) {
+                            float tStart = i * step;
+                            float tEnd = tStart + 5.0f * scale;
+                            if (tEnd > len) tEnd = len;
+                            drawList->AddLine(
+                                ImVec2(posA.x + ux * tStart, posA.y + uy * tStart),
+                                ImVec2(posA.x + ux * tEnd, posA.y + uy * tEnd),
+                                color,
+                                strokeWidth
+                            );
+                        }
+                    }
+                } else {
+                    drawList->AddLine(posA, posB, color, strokeWidth);
+                }
+
+                // 2. Division marks or ticks
+                if (isDivider) {
+                    if (divisions >= 2 && divisions <= 6) {
+                        for (int k = 1; k < divisions; ++k) {
+                            float t = (float)k / (float)divisions;
+                            glm::vec3 divWorld = glm::mix(worldA, worldB, t);
+                            glm::vec3 divScreen = camera.project(divWorld);
+                            ImVec2 divPos(divScreen.x + xOffset, divScreen.y);
+                            ImU32 fillCol = isPreview ? IM_COL32(255, 255, 255, 102) : IM_COL32(255, 255, 255, 255);
+                            ImU32 strokeCol = isPreview ? IM_COL32(26, 26, 26, 102) : IM_COL32(26, 26, 26, 255);
+                            drawList->AddCircleFilled(divPos, rDiv, fillCol);
+                            drawList->AddCircle(divPos, rDiv, strokeCol, 0, 1.0f * scale);
+                        }
+                    }
+                } else {
+                    if (!isReference && referenceLength > 0.0f) {
+                        int nTicks = (int)std::floor((worldDist - 1e-5f) / referenceLength);
+                        for (int k = 1; k <= nTicks; ++k) {
+                            float t = (k * referenceLength) / worldDist;
+                            glm::vec3 tickWorld = glm::mix(worldA, worldB, t);
+                            glm::vec3 tickScreen = camera.project(tickWorld);
+                            ImVec2 tickPos(tickScreen.x + xOffset, tickScreen.y);
+                            drawList->AddCircleFilled(tickPos, 2.5f * scale, IM_COL32(255, 255, 255, 255));
+                            drawList->AddCircle(tickPos, 2.5f * scale, color, 0, 1.0f * scale);
+                        }
                     }
                 }
 
-                ImVec2 labelSize = ImGui::CalcTextSize(label);
-                float textWidth = labelSize.x + 12.0f * scale;
-                float textHeight = labelSize.y + 6.0f * scale;
+                // 3. Endpoint shapes
+                ImU32 strokeA = isHoveredA ? IM_COL32(0, 229, 255, 255) : IM_COL32(26, 26, 26, 255);
+                float swA = isHoveredA ? 2.5f * scale : 1.2f * scale;
+                drawEndpointShape(drawList, posA, rA, seg.vertA.type, color, strokeA, swA);
 
-                ImVec2 midPos((posA.x + posB.x) * 0.5f, (posA.y + posB.y) * 0.5f - 10.0f * scale);
-                ImVec2 minRect(midPos.x - textWidth * 0.5f, midPos.y - textHeight * 0.5f);
-                ImVec2 maxRect(midPos.x + textWidth * 0.5f, midPos.y + textHeight * 0.5f);
+                ImU32 strokeB = isHoveredB ? IM_COL32(0, 229, 255, 255) : IM_COL32(26, 26, 26, 255);
+                float swB = isHoveredB ? 2.5f * scale : 1.2f * scale;
+                drawEndpointShape(drawList, posB, rB, seg.vertB.type, color, strokeB, swB);
 
-                drawList->AddRectFilled(minRect, maxRect, IM_COL32(20, 20, 20, 217), 4.0f * scale);
-                drawList->AddRect(minRect, maxRect, color, 4.0f * scale, 0, 1.0f * scale);
+                // 4. Text Label (Measure tool only)
+                if (!isDivider) {
+                    char label[32];
+                    if (isReference) {
+                        strcpy(label, "1.00x");
+                    } else {
+                        if (referenceLength > 0.0f) {
+                            sprintf(label, "%.2fx", worldDist / referenceLength);
+                        } else {
+                            sprintf(label, "%.2f", worldDist);
+                        }
+                    }
 
-                ImVec2 textPos(midPos.x - labelSize.x * 0.5f, midPos.y - labelSize.y * 0.5f);
-                drawList->AddText(textPos, IM_COL32(255, 255, 255, 255), label);
-            }
-        };
+                    ImVec2 labelSize = ImGui::CalcTextSize(label);
+                    float textWidth = labelSize.x + 12.0f * scale;
+                    float textHeight = labelSize.y + 6.0f * scale;
 
-        // Draw completed segments
-        for (const auto& s : segments) {
-            drawSeg(s, !isDivider && s.isReference, false);
-        }
+                    ImVec2 midPos((posA.x + posB.x) * 0.5f, (posA.y + posB.y) * 0.5f - 10.0f * scale);
+                    ImVec2 minRect(midPos.x - textWidth * 0.5f, midPos.y - textHeight * 0.5f);
+                    ImVec2 maxRect(midPos.x + textWidth * 0.5f, midPos.y + textHeight * 0.5f);
 
-        // Draw pending/preview
-        if (sculpt.hasPending()) {
-            MeasurementSegment pendingSeg;
-            pendingSeg.vertA = sculpt.getPendingAnchorA();
-            pendingSeg.vertB = sculpt.getPendingAnchorB();
-            bool isPendingRef = true;
-            if (!isDivider) {
-                bool hasRef = false;
-                for (const auto& s : segments) {
-                    if (s.isReference) { hasRef = true; break; }
+                    drawList->AddRectFilled(minRect, maxRect, IM_COL32(20, 20, 20, 217), 4.0f * scale);
+                    drawList->AddRect(minRect, maxRect, color, 4.0f * scale, 0, 1.0f * scale);
+
+                    ImVec2 textPos(midPos.x - labelSize.x * 0.5f, midPos.y - labelSize.y * 0.5f);
+                    drawList->AddText(textPos, IM_COL32(255, 255, 255, 255), label);
                 }
-                isPendingRef = !hasRef;
+            };
+
+            // Draw completed segments
+            for (const auto& s : segments) {
+                drawSeg(s, !isDivider && s.isReference, false);
             }
-            drawSeg(pendingSeg, isPendingRef, true);
+
+            // Draw pending/preview
+            if (sculpt.hasPending()) {
+                MeasurementSegment pendingSeg;
+                pendingSeg.vertA = sculpt.getPendingAnchorA();
+                pendingSeg.vertB = sculpt.getPendingAnchorB();
+                bool isPendingRef = true;
+                if (!isDivider) {
+                    bool hasRef = false;
+                    for (const auto& s : segments) {
+                        if (s.isReference) { hasRef = true; break; }
+                    }
+                    isPendingRef = !hasRef;
+                }
+                drawSeg(pendingSeg, isPendingRef, true);
+            }
+
+            if (isSplit) {
+                drawList->PopClipRect();
+            }
         }
     }
 
