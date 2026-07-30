@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.8]
+- **Camera**: Added Camera Undo (`Alt + Z`) and Camera Redo (`Alt + Shift + Z`) shortcuts to easily step backward and forward through viewport view changes.
+- **Camera**: Integrated automatic state history recording into mouse navigation gestures (orbit, pan, zoom, roll), mouse wheel zoom, projection mode switches, and view snapping.
+- **Input**: Updated hotkey dispatcher to allow `Alt + Z` and `Alt + Shift + Z` camera navigation hotkeys through when ImGui interface elements are focused (unless actively typing text).
+
 ## [1.3.7]
 - **UI**: Added a vertical Focal Shift slider (`VSliderFloat`) to the left Floating Island HUD directly below the Intensity slider, complete with real-time percentage tooltip formatting and mouse-wheel adjustment support.
 - **UI**: Prevented brush cursor from being hidden when hovering over Floating Island HUD panels and popups.

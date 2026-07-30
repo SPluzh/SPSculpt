@@ -29,7 +29,20 @@ static bool rayTriangleIntersect(
     return t > EPSILON;
 }
 
+void CameraController::stopDrag(Camera* camera) {
+    if (m_drag != DragMode::None) {
+        if (camera) {
+            camera->pushState();
+        }
+        m_drag = DragMode::None;
+        m_snapTriggered = false;
+    }
+}
+
 void CameraController::startDrag(DragMode mode, int mouseX, int mouseY, Camera& camera, const std::vector<Mesh*>& meshes) {
+    if (m_drag == DragMode::None) {
+        camera.pushState();
+    }
     m_drag = mode;
     m_prevX = mouseX;
     m_prevY = mouseY;
@@ -110,7 +123,7 @@ void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std
             if (e.button.button == SDL_BUTTON_RIGHT) {
                 if (e.button.clicks >= 2) {
                     camera.resetView2D();
-                    m_drag = DragMode::None;
+                    stopDrag(&camera);
                 } else if (ctrlPressed) {
                     startDrag(DragMode::Zoom2D, mouseX, mouseY, camera, meshes);
                 } else if (altPressed) {
@@ -123,7 +136,7 @@ void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std
         if (e.button.button == SDL_BUTTON_MIDDLE) {
             if (e.button.clicks >= 2) {
                 camera.resetView();
-                m_drag = DragMode::None;
+                stopDrag(&camera);
             } else {
                 startDrag(DragMode::Pan, mouseX, mouseY, camera, meshes);
             }
@@ -140,13 +153,15 @@ void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std
         }
     } else if (e.type == SDL_MOUSEBUTTONUP) {
         if (e.button.button == SDL_BUTTON_MIDDLE || e.button.button == SDL_BUTTON_RIGHT || e.button.button == SDL_BUTTON_LEFT) {
-            stopDrag();
+            stopDrag(&camera);
         }
     } else if (e.type == SDL_MOUSEWHEEL) {
         if (camera.getRef2DMode()) {
             return; // Block 3D scroll-zoom in 2D mode
         }
+        camera.pushState();
         camera.zoom(-static_cast<float>(e.wheel.y) * 0.05f);
+        camera.pushState();
     } else if (e.type == SDL_MOUSEMOTION) {
         if (m_drag != DragMode::None) {
             int mouseX = e.motion.x;

@@ -16,7 +16,7 @@ public:
     
     void startDrag(DragMode mode, int mouseX, int mouseY, Camera& camera, const std::vector<Mesh*>& meshes);
     bool isDragging() const { return m_drag != DragMode::None; }
-    void stopDrag() { m_drag = DragMode::None; m_snapTriggered = false; }
+    void stopDrag(Camera* camera = nullptr);
     DragMode getDragMode() const { return m_drag; }
 
 private:

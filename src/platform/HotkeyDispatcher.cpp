@@ -24,11 +24,17 @@ bool HotkeyDispatcher::processEvent(const SDL_Event& event, SculptManager& sculp
     if (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) {
         ImGuiIO& io = ImGui::GetIO();
         if (io.WantCaptureKeyboard) {
-            // Exception: Ctrl+Z / Ctrl+Y always allowed
+            // Exception: Ctrl+Z / Ctrl+Y and Alt+Z / Alt+Shift+Z camera undo/redo allowed when not typing text
             bool isCtrl = (event.key.keysym.mod & KMOD_CTRL) != 0;
-            if (!isCtrl) return false;
-            if (event.key.keysym.sym != SDLK_z && event.key.keysym.sym != SDLK_y)
+            bool isAlt = (event.key.keysym.mod & KMOD_ALT) != 0;
+            SDL_Keycode sym = event.key.keysym.sym;
+
+            bool isUndoRedoHotkey = (isCtrl && (sym == SDLK_z || sym == SDLK_y)) ||
+                                    (isAlt && sym == SDLK_z);
+
+            if (!isUndoRedoHotkey || io.WantTextInput) {
                 return false;
+            }
         }
 
         updateModifiers(event, sculpt, scene, renderer);

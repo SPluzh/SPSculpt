@@ -67,6 +67,7 @@ void Camera::setProjectionType(CameraEnums::Projection projType) {
     m_startState.trans = m_trans;
     updateProjection();
     updateView();
+    pushState();
 }
 
 void Camera::setMode(CameraEnums::CameraMode mode) {
@@ -656,6 +657,7 @@ void Camera::snapClosestRotation() {
     targetState.refDrag = m_refDrag;
 
     startTransition(targetState, 0.2f);
+    pushState();
 }
 
 void Camera::pushState() {
