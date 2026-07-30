@@ -4980,6 +4980,59 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
 
         ImGui::Separator();
 
+        // Voxel Remesh Button
+        bool runningRemesh = isRemeshRunning();
+        if (runningRemesh) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.45f, 0.05f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.55f, 0.15f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.75f, 0.35f, 0.00f, 1.0f));
+        }
+
+        if (ImGui::Button(ICON_LC_BOX "##hudVertVoxelRemesh", ImVec2(squareSize, squareSize))) {
+            performRemesh(scene);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Voxel Remesh (Resolution: %d)", m_remeshResolution);
+        }
+        if (runningRemesh) {
+            ImGui::PopStyleColor(3);
+        }
+
+        // Half-Height Arrow Button for Remesh Settings Popup
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, ImGui::GetStyle().FramePadding.y));
+        bool openRemeshPopup = ImGui::Button(ICON_LC_CHEVRON_DOWN "##hudVertRemeshArrow", ImVec2(squareSize, squareSize * 0.5f));
+        ImGui::PopStyleVar();
+
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Remesh Settings");
+        }
+
+        ImVec2 arrowMin = ImGui::GetItemRectMin();
+        ImVec2 arrowMax = ImGui::GetItemRectMax();
+
+        if (openRemeshPopup) {
+            ImGui::OpenPopup("##hudVertRemeshPopup");
+        }
+
+        ImGui::SetNextWindowPos(ImVec2(arrowMax.x + 6.0f * scale, arrowMin.y), ImGuiCond_Appearing);
+        if (ImGui::BeginPopup("##hudVertRemeshPopup")) {
+            ImGui::TextUnformatted("Voxel Remesh");
+            ImGui::Separator();
+            ImGui::Text("Resolution: %d", m_remeshResolution);
+            ImGui::PushItemWidth(140.0f * scale);
+            ImGui::SliderInt("##hudRemeshResSlider", &m_remeshResolution, 32, 512);
+            ImGui::PopItemWidth();
+            ImGui::Checkbox("Keep PolyGroups", &m_remeshKeepPolyGroups);
+            ImGui::Separator();
+            if (ImGui::Button("Remesh Now", ImVec2(-1.0f, 0.0f))) {
+                performRemesh(scene);
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        ImGui::Separator();
+
         // Bottom Menu Button
         if (ImGui::Button(ICON_LC_MENU "##hudVertAppMenu", ImVec2(squareSize, squareSize))) {
             ImGui::OpenPopup("##hudVertAppMenuPopup");
