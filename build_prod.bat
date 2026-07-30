@@ -36,6 +36,10 @@ echo [3/3] Copying assets to dist...
 if exist ZBrushes (
     xcopy /E /I /Y ZBrushes dist\ZBrushes >nul
 )
+if exist resources (
+    xcopy /E /I /Y resources dist\resources >nul
+)
+
 
 echo.
 echo ========================================================

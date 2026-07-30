@@ -134,3 +134,12 @@ if(MINGW)
     target_link_options(SPSculpt PRIVATE -static-libgcc -static-libstdc++)
 endif()
 
+add_custom_command(
+    TARGET SPSculpt POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/resources
+        $<TARGET_FILE_DIR:SPSculpt>/resources
+    COMMENT "Copying resources to binary output directory"
+)
+
+

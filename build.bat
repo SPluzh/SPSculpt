@@ -7,5 +7,7 @@ cmake --build .
 cd ..
 if exist build\SPSculpt.exe (
     if not exist dist mkdir dist
-    copy /Y build\SPSculpt.exe dist\
+    copy /Y build\SPSculpt.exe dist\ >nul
+    if exist resources xcopy /E /I /Y resources dist\resources >nul
 )
+
