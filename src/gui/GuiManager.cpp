@@ -1936,7 +1936,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGui::Separator();
 
             ImGui::SliderFloat("Detail Factor", &m_dyntopoDetail, 10.0f, 500.0f, "%.1f");
-            ImGui::SliderInt("Remesh Resolution", &m_remeshResolution, 32, 512);
+            ImGui::SliderInt("Remesh Resolution", &m_remeshResolution, 10, 1000);
             if (ImGui::IsItemActive()) {
                 float bbox[6];
                 selectedMesh->computeBbox(bbox);
@@ -5025,7 +5025,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::Separator();
             ImGui::Text("Resolution: %d", m_remeshResolution);
             ImGui::PushItemWidth(140.0f * scale);
-            ImGui::SliderInt("##hudRemeshResSlider", &m_remeshResolution, 32, 512);
+            ImGui::SliderInt("##hudRemeshResSlider", &m_remeshResolution, 10, 1000);
             if (ImGui::IsItemActive()) {
                 Mesh* selectedMesh = scene.getSelected();
                 if (selectedMesh) {
