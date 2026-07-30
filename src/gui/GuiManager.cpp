@@ -4087,7 +4087,20 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     // Render brush cursor using ImGui foreground draw list for beautiful antialiased lines
     if (renderer.getSmoothCursor()) {
         const auto& cursorState = sculpt.getCursor().getState();
-        if (cursorState.visible && !ImGui::GetIO().WantCaptureMouse) {
+        bool hideForUi = ImGui::GetIO().WantCaptureMouse;
+        if (hideForUi) {
+            ImGuiContext* g = GImGui;
+            if (g && g->HoveredWindow && g->HoveredWindow->Name) {
+                std::string_view winName(g->HoveredWindow->Name);
+                if (winName.find("FloatingIsland") != std::string_view::npos ||
+                    winName.find("hud") != std::string_view::npos ||
+                    winName.find("HUD") != std::string_view::npos ||
+                    winName.find("PivotLock") != std::string_view::npos) {
+                    hideForUi = false;
+                }
+            }
+        }
+        if (cursorState.visible && !hideForUi) {
             float viewportWidth = ImGui::GetIO().DisplaySize.x;
             float viewportHeight = ImGui::GetIO().DisplaySize.y;
             float leftViewportWidth = viewportWidth;

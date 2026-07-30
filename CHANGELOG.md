@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [1.3.7]
 - **UI**: Added a vertical Focal Shift slider (`VSliderFloat`) to the left Floating Island HUD directly below the Intensity slider, complete with real-time percentage tooltip formatting and mouse-wheel adjustment support.
+- **UI**: Prevented brush cursor from being hidden when hovering over Floating Island HUD panels and popups.
 
 ## [1.3.6]
 - **Masking & Symmetry**: Optimized `getVerticesInLasso` performance when symmetry is enabled by hoisting invariant symmetry plane origins and normals outside the high-density vertex loop, eliminating O(N²) `computeLocalRadius()` and matrix inversion recalculations per vertex.
