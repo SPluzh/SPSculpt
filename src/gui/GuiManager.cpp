@@ -4963,6 +4963,10 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
     if (ImGui::Begin("##FloatingIslandHUD_v2", nullptr, flags)) {
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(1.0f * scale, 0.0f));
 
+        float squareBtnSize = ImGui::GetFrameHeight();
+        ImVec2 squareBtn(squareBtnSize, squareBtnSize);
+        ImVec2 halfSquareBtn(squareBtnSize * 0.5f, squareBtnSize);
+
         bool useSym = sculpt.getUseSym();
 
         if (useSym) {
@@ -4971,11 +4975,33 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
         }
 
-        if (ImGui::Button(ICON_LC_SPLIT "##hudSym")) {
+        if (ImGui::Button(ICON_LC_SPLIT "##hudSym", squareBtn)) {
             sculpt.setUseSym(!useSym);
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Symmetry (Alt+X)");
 
+        if (useSym) {
+            ImGui::PopStyleColor(3);
+        }
+
+        ImGui::SameLine();
+
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, ImGui::GetStyle().FramePadding.y));
+
+        // World / Local Symmetry Mode Button
+        SymmetryMode symMode = sculpt.getSymmetryMode();
+        bool isWorldSym = (symMode == SymmetryMode::World);
+        if (useSym) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+        if (ImGui::Button(isWorldSym ? "W##hudSymMode" : "L##hudSymMode", halfSquareBtn)) {
+            sculpt.setSymmetryMode(isWorldSym ? SymmetryMode::Local : SymmetryMode::World);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Symmetry Space: %s (Click to toggle)", isWorldSym ? "World" : "Local");
+        }
         if (useSym) {
             ImGui::PopStyleColor(3);
         }
@@ -4989,7 +5015,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
         }
-        if (ImGui::Button("X##hudSymX")) {
+        if (ImGui::Button("X##hudSymX", halfSquareBtn)) {
             sculpt.setSymX(!symX);
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle X Symmetry");
@@ -5006,7 +5032,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
         }
-        if (ImGui::Button("Y##hudSymY")) {
+        if (ImGui::Button("Y##hudSymY", halfSquareBtn)) {
             sculpt.setSymY(!symY);
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Y Symmetry");
@@ -5023,7 +5049,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
         }
-        if (ImGui::Button("Z##hudSymZ")) {
+        if (ImGui::Button("Z##hudSymZ", halfSquareBtn)) {
             sculpt.setSymZ(!symZ);
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Z Symmetry");
@@ -5031,7 +5057,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::PopStyleColor(3);
         }
 
-        ImGui::PopStyleVar(1);
+        ImGui::PopStyleVar(1); // FramePadding
 
         ImGui::SameLine();
         ImGui::TextDisabled("|");
@@ -5043,7 +5069,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
         }
-        if (ImGui::Button(ICON_LC_GRID "##hudGrid")) {
+        if (ImGui::Button(ICON_LC_GRID "##hudGrid", squareBtn)) {
             renderer.setShowGrid(!showGrid);
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Grid Display");
@@ -5059,7 +5085,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
         }
-        if (ImGui::Button(ICON_LC_CUBOID "##hudFlatShading")) {
+        if (ImGui::Button(ICON_LC_CUBOID "##hudFlatShading", squareBtn)) {
             renderer.setFlatShading(!flatShading);
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Flat Shading");
@@ -5075,7 +5101,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
         }
-        if (ImGui::Button(ICON_LC_TRIANGLE "##hudWireframe")) {
+        if (ImGui::Button(ICON_LC_TRIANGLE "##hudWireframe", squareBtn)) {
             renderer.setShowWireframe(!showWireframe);
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Wireframe Shading");
@@ -5091,7 +5117,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
         }
-        if (ImGui::Button(ICON_LC_LAYERS "##hudPolyGroups")) {
+        if (ImGui::Button(ICON_LC_LAYERS "##hudPolyGroups", squareBtn)) {
             renderer.setShowPolyGroups(!renderer.getShowPolyGroups());
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle PolyGroups Display");
@@ -5107,7 +5133,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
         }
-        if (ImGui::Button(ICON_LC_CONTRAST "##hudSilhouette")) {
+        if (ImGui::Button(ICON_LC_CONTRAST "##hudSilhouette", squareBtn)) {
             if (isSilhouette) {
                 renderer.setShaderType(m_previousShaderType);
             } else {
@@ -5130,17 +5156,17 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         }
 
         // Split-button: Perspective toggle (left) + FOV arrow (right)
-        if (ImGui::Button(ICON_LC_CAMERA "##hudPerspective")) {
+        if (ImGui::Button(ICON_LC_CAMERA "##hudPerspective", squareBtn)) {
             scene.getCamera().setProjectionType(isPerspective ? CameraEnums::Projection::ORTHOGRAPHIC : CameraEnums::Projection::PERSPECTIVE);
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Perspective Projection (P)");
 
         ImVec2 pMin = ImGui::GetItemRectMin();
 
-        // Narrow arrow button flush against Perspective button (0 gap, 0 padding, fixed 12px width)
+        // Narrow arrow button flush against Perspective button (0 gap, 0 padding, half square width)
         ImGui::SameLine(0.0f, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, ImGui::GetStyle().FramePadding.y));
-        bool openFovPopup = ImGui::Button(ICON_LC_CHEVRON_DOWN "##hudFovArrow", ImVec2(12.0f * scale, 0.0f));
+        bool openFovPopup = ImGui::Button(ICON_LC_CHEVRON_DOWN "##hudFovArrow", halfSquareBtn);
         ImGui::PopStyleVar();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("FOV Settings");
 
@@ -5178,7 +5204,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.55f, 0.15f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.75f, 0.35f, 0.00f, 1.0f));
         }
-        if (ImGui::Button(ICON_LC_EYE "##hudSolo")) {
+        if (ImGui::Button(ICON_LC_EYE "##hudSolo", squareBtn)) {
             scene.toggleSolo(scene.getSelected());
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Solo Mode (C)");
@@ -5194,7 +5220,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
         }
-        if (ImGui::Button(ICON_LC_IMAGE "##hudSnapshot")) {
+        if (ImGui::Button(ICON_LC_IMAGE "##hudSnapshot", squareBtn)) {
             renderer.toggleSnapshot(scene);
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Model Snapshot (Screen Reference)");
