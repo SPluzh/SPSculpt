@@ -1595,72 +1595,78 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             }
 
             // Measure Tool Row in Outliner
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::PushID(88801);
-            bool isMeasureToolActive = (sculpt.getBrush() == BRUSH_MEASURE);
-            if (ImGui::Checkbox("##ActMeasureTool", &isMeasureToolActive)) {
-                if (isMeasureToolActive) sculpt.setTool(BRUSH_MEASURE);
-            }
-            ImGui::PopID();
+            bool showMeasureRow = !sculpt.getMeasureSegments().empty() || (sculpt.getBrush() == BRUSH_MEASURE);
+            if (showMeasureRow) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::PushID(88801);
+                bool isMeasureToolActive = (sculpt.getBrush() == BRUSH_MEASURE);
+                if (ImGui::Checkbox("##ActMeasureTool", &isMeasureToolActive)) {
+                    if (isMeasureToolActive) sculpt.setTool(BRUSH_MEASURE);
+                }
+                ImGui::PopID();
 
-            ImGui::TableNextColumn();
-            if (ImGui::Selectable("Measure Tool", isMeasureToolActive)) {
-                sculpt.setTool(BRUSH_MEASURE);
-            }
+                ImGui::TableNextColumn();
+                if (ImGui::Selectable("Measure Tool", isMeasureToolActive)) {
+                    sculpt.setTool(BRUSH_MEASURE);
+                }
 
-            ImGui::TableNextColumn();
-            ImGui::Text("%d segs", (int)sculpt.getMeasureSegments().size());
+                ImGui::TableNextColumn();
+                ImGui::Text("%d segs", (int)sculpt.getMeasureSegments().size());
 
-            ImGui::TableNextColumn();
-            ImGui::PushID(88802);
-            bool mV1 = sculpt.getMeasureVisibleV1();
-            if (ImGui::Checkbox("##MeasureV1", &mV1)) {
-                sculpt.setMeasureVisibleV1(mV1);
-            }
-            ImGui::PopID();
+                ImGui::TableNextColumn();
+                ImGui::PushID(88802);
+                bool mV1 = sculpt.getMeasureVisibleV1();
+                if (ImGui::Checkbox("##MeasureV1", &mV1)) {
+                    sculpt.setMeasureVisibleV1(mV1);
+                }
+                ImGui::PopID();
 
-            ImGui::TableNextColumn();
-            ImGui::PushID(88803);
-            bool mV2 = sculpt.getMeasureVisibleV2();
-            if (ImGui::Checkbox("##MeasureV2", &mV2)) {
-                sculpt.setMeasureVisibleV2(mV2);
+                ImGui::TableNextColumn();
+                ImGui::PushID(88803);
+                bool mV2 = sculpt.getMeasureVisibleV2();
+                if (ImGui::Checkbox("##MeasureV2", &mV2)) {
+                    sculpt.setMeasureVisibleV2(mV2);
+                }
+                ImGui::PopID();
             }
-            ImGui::PopID();
 
             // Divider Tool Row in Outliner
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::PushID(88804);
-            bool isDividerToolActive = (sculpt.getBrush() == BRUSH_DIVIDER);
-            if (ImGui::Checkbox("##ActDividerTool", &isDividerToolActive)) {
-                if (isDividerToolActive) sculpt.setTool(BRUSH_DIVIDER);
-            }
-            ImGui::PopID();
+            bool showDividerRow = !sculpt.getDividerSegments().empty() || (sculpt.getBrush() == BRUSH_DIVIDER);
+            if (showDividerRow) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::PushID(88804);
+                bool isDividerToolActive = (sculpt.getBrush() == BRUSH_DIVIDER);
+                if (ImGui::Checkbox("##ActDividerTool", &isDividerToolActive)) {
+                    if (isDividerToolActive) sculpt.setTool(BRUSH_DIVIDER);
+                }
+                ImGui::PopID();
 
-            ImGui::TableNextColumn();
-            if (ImGui::Selectable("Divider Tool", isDividerToolActive)) {
-                sculpt.setTool(BRUSH_DIVIDER);
-            }
+                ImGui::TableNextColumn();
+                if (ImGui::Selectable("Divider Tool", isDividerToolActive)) {
+                    sculpt.setTool(BRUSH_DIVIDER);
+                }
 
-            ImGui::TableNextColumn();
-            ImGui::Text("%d segs", (int)sculpt.getDividerSegments().size());
+                ImGui::TableNextColumn();
+                ImGui::Text("%d segs", (int)sculpt.getDividerSegments().size());
 
-            ImGui::TableNextColumn();
-            ImGui::PushID(88805);
-            bool dV1 = sculpt.getDividerVisibleV1();
-            if (ImGui::Checkbox("##DividerV1", &dV1)) {
-                sculpt.setDividerVisibleV1(dV1);
-            }
-            ImGui::PopID();
+                ImGui::TableNextColumn();
+                ImGui::PushID(88805);
+                bool dV1 = sculpt.getDividerVisibleV1();
+                if (ImGui::Checkbox("##DividerV1", &dV1)) {
+                    sculpt.setDividerVisibleV1(dV1);
+                }
+                ImGui::PopID();
 
-            ImGui::TableNextColumn();
-            ImGui::PushID(88806);
-            bool dV2 = sculpt.getDividerVisibleV2();
-            if (ImGui::Checkbox("##DividerV2", &dV2)) {
-                sculpt.setDividerVisibleV2(dV2);
+                ImGui::TableNextColumn();
+                ImGui::PushID(88806);
+                bool dV2 = sculpt.getDividerVisibleV2();
+                if (ImGui::Checkbox("##DividerV2", &dV2)) {
+                    sculpt.setDividerVisibleV2(dV2);
+                }
+                ImGui::PopID();
             }
-            ImGui::PopID();
 
             ImGui::EndTable();
         }
@@ -3411,25 +3417,24 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         const MeasurementSegment* hoveredSeg = sculpt.getHoveredSegment();
         std::string hoveredKey = sculpt.getHoveredVertexKey();
 
-        bool isDivider = (sculpt.getBrush() == BRUSH_DIVIDER);
         int divisions = sculpt.getDividerDivisions();
 
         // Find reference length for Measure
         float referenceLength = 0.0f;
-        const auto& segments = isDivider ? sculpt.getDividerSegments() : sculpt.getMeasureSegments();
-        if (!isDivider) {
-            for (const auto& seg : segments) {
-                if (seg.isReference) {
-                    glm::vec3 worldA = sculpt.getAnchorWorldPos(seg.vertA);
-                    glm::vec3 worldB = sculpt.getAnchorWorldPos(seg.vertB);
-                    referenceLength = glm::distance(worldA, worldB);
-                    break;
-                }
+        for (const auto& seg : sculpt.getMeasureSegments()) {
+            if (seg.isReference) {
+                glm::vec3 worldA = SculptManager::getAnchorWorldPos(seg.vertA);
+                glm::vec3 worldB = SculptManager::getAnchorWorldPos(seg.vertB);
+                referenceLength = glm::distance(worldA, worldB);
+                break;
             }
         }
 
         for (int vp = 0; vp < numViewports; ++vp) {
-            if (isDivider ? !sculpt.isDividerVisible(vp) : !sculpt.isMeasureVisible(vp)) continue;
+            bool showMeasure = sculpt.isMeasureVisible(vp);
+            bool showDivider = sculpt.isDividerVisible(vp);
+            if (!showMeasure && !showDivider) continue;
+
             const Camera* camPtr = isSplit ? scene.getCameraByIndex(vp) : &scene.getCamera();
             if (!camPtr) continue;
             const Camera& camera = *camPtr;
@@ -3444,7 +3449,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 );
             }
 
-            auto drawSeg = [&](const MeasurementSegment& seg, bool isReference, bool isPreview) {
+            auto drawSeg = [&](const MeasurementSegment& seg, bool isReference, bool isPreview, bool isDivider) {
                 glm::vec3 worldA = SculptManager::getAnchorWorldPos(seg.vertA);
                 glm::vec3 worldB = SculptManager::getAnchorWorldPos(seg.vertB);
 
@@ -3585,25 +3590,34 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 }
             };
 
-            // Draw completed segments
-            for (const auto& s : segments) {
-                drawSeg(s, !isDivider && s.isReference, false);
+            // Draw Measure segments if visible in vp
+            if (showMeasure) {
+                for (const auto& s : sculpt.getMeasureSegments()) {
+                    drawSeg(s, s.isReference, false, false);
+                }
+                if (sculpt.getBrush() == BRUSH_MEASURE && sculpt.hasPending()) {
+                    MeasurementSegment pendingSeg;
+                    pendingSeg.vertA = sculpt.getPendingAnchorA();
+                    pendingSeg.vertB = sculpt.getPendingAnchorB();
+                    bool isPendingRef = true;
+                    for (const auto& s : sculpt.getMeasureSegments()) {
+                        if (s.isReference) { isPendingRef = false; break; }
+                    }
+                    drawSeg(pendingSeg, isPendingRef, true, false);
+                }
             }
 
-            // Draw pending/preview
-            if (sculpt.hasPending()) {
-                MeasurementSegment pendingSeg;
-                pendingSeg.vertA = sculpt.getPendingAnchorA();
-                pendingSeg.vertB = sculpt.getPendingAnchorB();
-                bool isPendingRef = true;
-                if (!isDivider) {
-                    bool hasRef = false;
-                    for (const auto& s : segments) {
-                        if (s.isReference) { hasRef = true; break; }
-                    }
-                    isPendingRef = !hasRef;
+            // Draw Divider segments if visible in vp
+            if (showDivider) {
+                for (const auto& s : sculpt.getDividerSegments()) {
+                    drawSeg(s, false, false, true);
                 }
-                drawSeg(pendingSeg, isPendingRef, true);
+                if (sculpt.getBrush() == BRUSH_DIVIDER && sculpt.hasPending()) {
+                    MeasurementSegment pendingSeg;
+                    pendingSeg.vertA = sculpt.getPendingAnchorA();
+                    pendingSeg.vertB = sculpt.getPendingAnchorB();
+                    drawSeg(pendingSeg, false, true, true);
+                }
             }
 
             if (isSplit) {
