@@ -4999,7 +4999,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
 
         // Half-Height Arrow Button attached directly below (0 gap)
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 0.0f));
-        bool openRemeshPopup = ImGui::Button(ICON_LC_CHEVRON_DOWN "##hudVertRemeshArrow", ImVec2(squareSize, squareSize * 0.45f));
+        bool openRemeshPopup = ImGui::Button(ICON_LC_MORE_HORIZONTAL "##hudVertRemeshArrow", ImVec2(squareSize, squareSize * 0.45f));
         ImGui::PopStyleVar();
 
         if (ImGui::IsItemHovered()) {
@@ -5297,7 +5297,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         // Narrow arrow button flush against Perspective button (0 gap, 0 padding, half square width)
         ImGui::SameLine(0.0f, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, ImGui::GetStyle().FramePadding.y));
-        bool openFovPopup = ImGui::Button(ICON_LC_CHEVRON_DOWN "##hudFovArrow", halfSquareBtn);
+        bool openFovPopup = ImGui::Button(ICON_LC_MORE_VERTICAL "##hudFovArrow", halfSquareBtn);
         ImGui::PopStyleVar();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("FOV Settings");
 
@@ -5364,7 +5364,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
 
         ImGui::SameLine(0.0f, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, ImGui::GetStyle().FramePadding.y));
-        bool openSplitPopup = ImGui::Button(ICON_LC_CHEVRON_DOWN "##hudSplitViewArrow", halfSquareBtn);
+        bool openSplitPopup = ImGui::Button(ICON_LC_MORE_VERTICAL "##hudSplitViewArrow", halfSquareBtn);
         ImGui::PopStyleVar();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Split View Options");
 
