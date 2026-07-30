@@ -169,6 +169,7 @@ void Mesh::initEdges() {
 }
 
 void Mesh::allocate(int nbV, int nbF, int nbRF, int nbRV) {
+    m_localRadiusDirty = true;
     nbVerts = nbV;
     nbFaces = nbF;
 
@@ -201,6 +202,7 @@ void Mesh::allocate(int nbV, int nbF, int nbRF, int nbRV) {
 }
 
 void Mesh::postInit() {
+    m_localRadiusDirty = true;
     vertProxy = verts;
     vertTagFlags.assign(nbVerts, 0);
 
@@ -439,13 +441,18 @@ void Mesh::initTexCoordsDataFromOBJData(const std::vector<float>& uvAr, const st
 
 float Mesh::computeLocalRadius() const {
     if (nbVerts == 0) return 1.0f;
+    if (!m_localRadiusDirty && m_cachedLocalRadius > 0.0f) {
+        return m_cachedLocalRadius;
+    }
     float bbox[6];
     computeBbox(bbox);
     float dx = bbox[3] - bbox[0];
     float dy = bbox[4] - bbox[1];
     float dz = bbox[5] - bbox[2];
     float radius = std::sqrt(dx * dx + dy * dy + dz * dz) * 0.5f;
-    return radius > 1e-6f ? radius : 1.0f;
+    m_cachedLocalRadius = radius > 1e-6f ? radius : 1.0f;
+    m_localRadiusDirty = false;
+    return m_cachedLocalRadius;
 }
 
 glm::vec3 Mesh::getSymmetryOriginForAxis(int axisIndex, SymmetryMode mode) const {

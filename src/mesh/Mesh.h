@@ -86,10 +86,17 @@ public:
     void setSymmetryOffset(float val) { symmetryOffset = val; }
 
     float computeLocalRadius() const;
+    void invalidateLocalRadius() const { m_localRadiusDirty = true; }
     glm::vec3 getSymmetryOriginForAxis(int axisIndex, SymmetryMode mode) const;
     glm::vec3 getSymmetryNormalForAxis(int axisIndex, SymmetryMode mode) const;
     virtual void flip(int axisIndex);
     virtual void mirror(int axisIndex, bool positiveToNegative, SymmetryMode mode);
+
+private:
+    mutable float m_cachedLocalRadius = -1.0f;
+    mutable bool m_localRadiusDirty = true;
+
+public:
 
     uint32_t m_id = 0;
     std::string outlinerName = "";

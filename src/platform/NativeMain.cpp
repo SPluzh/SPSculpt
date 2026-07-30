@@ -597,8 +597,14 @@ int main(int argc, char* argv[]) {
         sculpt.getCursor().applyToRenderer(renderer);
         renderer.setLassoParameters(sculpt.isLassoActive(), sculpt.getLassoPoints(), sculpt.getLassoAlt(), sculpt.isMaskLasso());
         renderer.setActiveBrush(sculpt.getBrush());
+        bool isSculptingActive = sculpt.isSculpting();
+        auto tRenderStart = std::chrono::high_resolution_clock::now();
         renderer.render(scene);
+        double renderMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tRenderStart).count();
+
+        auto tGuiStart = std::chrono::high_resolution_clock::now();
         gui.render(sculpt, scene, renderer, window);
+        double guiMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tGuiStart).count();
         
         if (gui.isPendingQuit() && !scene.isModified() && !gui.isUnsavedModalOpen()) {
             quit = true;
@@ -611,12 +617,19 @@ int main(int argc, char* argv[]) {
         wasRemeshRunning = isRemeshRunning;
 
         // If actively sculpting, mark as active
-        if (sculpt.isSculpting() || sculpt.getCameraController().isDragging()) {
+        if (isSculptingActive || sculpt.getCameraController().isDragging()) {
             hadActivity = true;
             lastActivityTime = std::chrono::high_resolution_clock::now();
         }
 
+        auto tSwapStart = std::chrono::high_resolution_clock::now();
         SDL_GL_SwapWindow(window);
+        double swapMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tSwapStart).count();
+
+        if (isSculptingActive && (renderMs + guiMs + swapMs > 5.0)) {
+            sculpt_log("[SCULPT RENDER FRAME] Render: %.2fms | GUI: %.2fms | Swap: %.2fms\n",
+                       renderMs, guiMs, swapMs);
+        }
 
         // ---- GPU load limiter ----
         {

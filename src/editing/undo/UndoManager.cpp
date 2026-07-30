@@ -9,8 +9,9 @@
 UndoManager g_undoManager;
 
 namespace {
-    // Helper to keep track of recorded vertex indices per mesh during an active stroke
-    static std::unordered_map<uint32_t, std::unordered_set<uint32_t>> s_recordedVertSets;
+    // Helper to keep track of recorded vertex indices per mesh during an active stroke using fast array stamps
+    static std::unordered_map<uint32_t, std::vector<uint32_t>> s_recordedStamps;
+    static uint32_t s_recordedCurrentStamp = 0;
 }
 
 UndoManager::UndoManager() {}
@@ -25,7 +26,11 @@ void UndoManager::beginSculptStroke(Scene& scene,
         m_activeSculptEntry = std::make_unique<SculptUndoEntry>();
         m_activeSculptEntry->description = description;
         m_activeMeshDeltaMap.clear();
-        s_recordedVertSets.clear();
+        ++s_recordedCurrentStamp;
+        if (s_recordedCurrentStamp == 0) {
+            s_recordedStamps.clear();
+            s_recordedCurrentStamp = 1;
+        }
         sculpt_log_lvl(LogLevel::Debug, "[Undo] Begin sculpt stroke: '%s'\n", description.c_str());
     }
     recordAffectedVertices(scene, meshId, affectedVerts, affectsColors, affectsMaterials);
@@ -59,11 +64,16 @@ void UndoManager::recordAffectedVertices(Scene& scene,
     if (affectsColors) delta.hasColors = true;
     if (affectsMaterials) delta.hasMaterials = true;
 
-    auto& recordedSet = s_recordedVertSets[meshId];
+    auto& stamps = s_recordedStamps[meshId];
+    if (stamps.size() < static_cast<size_t>(mesh->nbVerts)) {
+        stamps.resize(mesh->nbVerts, 0);
+    }
+    uint32_t currentStamp = s_recordedCurrentStamp;
 
     for (uint32_t v : affectedVerts) {
         if (v >= (uint32_t)mesh->nbVerts) continue;
-        if (recordedSet.insert(v).second) {
+        if (stamps[v] != currentStamp) {
+            stamps[v] = currentStamp;
             // First time this vertex is recorded in this stroke
             delta.indices.push_back(v);
             delta.prevVerts.push_back(mesh->verts[v * 3 + 0]);
@@ -140,14 +150,14 @@ void UndoManager::endSculptStroke(Scene& scene) {
     }
 
     m_activeMeshDeltaMap.clear();
-    s_recordedVertSets.clear();
+    s_recordedStamps.clear();
 }
 
 void UndoManager::cancelSculptStroke() {
     sculpt_log_lvl(LogLevel::Debug, "[Undo] Sculpt stroke canceled\n");
     m_activeSculptEntry.reset();
     m_activeMeshDeltaMap.clear();
-    s_recordedVertSets.clear();
+    s_recordedStamps.clear();
 }
 
 void UndoManager::pushSculptOperation(Scene& scene,
@@ -254,7 +264,7 @@ void UndoManager::clear() {
     m_redoStack.clear();
     m_activeSculptEntry.reset();
     m_activeMeshDeltaMap.clear();
-    s_recordedVertSets.clear();
+    s_recordedStamps.clear();
 }
 
 void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {

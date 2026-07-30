@@ -2059,6 +2059,9 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
         mesh->isDirty = true;
     }
 
+    auto tUploadStart = std::chrono::high_resolution_clock::now();
+    bool isFullUpload = (mesh->isDirty || bufs->vertCount != (size_t)mesh->nbVerts || mesh->isFaceGroupDirty);
+
     if (mesh->isDirty || bufs->vertCount != (size_t)mesh->nbVerts || mesh->isFaceGroupDirty) {
         uploaded = true;
         glBindVertexArray(bufs->vao);
@@ -2219,6 +2222,15 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
             bufs->wireIndexCount = wireIndices.size();
             
             mesh->isTopologyDirty = false;
+        }
+    }
+
+    if (uploaded) {
+        double uploadMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tUploadStart).count();
+        if (uploadMs > 1.0) {
+            sculpt_log("[GPU UPLOAD] %s Upload: %.2fms | Verts range: %u..%u (Total %d)\n",
+                       isFullUpload ? "FULL" : "Incremental", uploadMs,
+                       mesh->dirtyVertMin, mesh->dirtyVertMax, mesh->nbVerts);
         }
     }
     return uploaded;

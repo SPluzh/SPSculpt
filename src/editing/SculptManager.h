@@ -18,6 +18,38 @@ glm::vec3 reflectPointSymmetry(const glm::vec3& pt, const glm::vec3& sScale, con
 glm::vec3 reflectVectorSymmetry(const glm::vec3& vec, const glm::vec3& sScale, const Mesh* mesh, SymmetryMode mode);
 
 
+struct SculptFrameProfile {
+    double raycastMs = 0.0;
+    double pickVertsMs = 0.0;
+    double cullingMs = 0.0;
+    double undoRecordMs = 0.0;
+    double primaryDeformMs = 0.0;
+    double symmetryMs = 0.0;
+    double faceLookupMs = 0.0;
+    double faceNormalsMs = 0.0;
+    double vertNormalsMs = 0.0;
+    double octreeUpdateMs = 0.0;
+    double gpuUploadMs = 0.0;
+    double renderMs = 0.0;
+    
+    int pickedVertCount = 0;
+    int affectedVertCount = 0;
+    int affectedFaceCount = 0;
+    
+    void reset() {
+        raycastMs = pickVertsMs = cullingMs = undoRecordMs = 0.0;
+        primaryDeformMs = symmetryMs = faceLookupMs = faceNormalsMs = 0.0;
+        vertNormalsMs = octreeUpdateMs = gpuUploadMs = renderMs = 0.0;
+        pickedVertCount = affectedVertCount = affectedFaceCount = 0;
+    }
+
+    double getTotalMs() const {
+        return raycastMs + pickVertsMs + cullingMs + undoRecordMs +
+               primaryDeformMs + symmetryMs + faceLookupMs + faceNormalsMs +
+               vertNormalsMs + octreeUpdateMs + gpuUploadMs + renderMs;
+    }
+};
+
 struct BrushSettings {
     float radius = 50.0f;
     float intensity = 0.5f;
@@ -364,6 +396,9 @@ public:
     const MeasurementSegment* getDraggedSegment() const { return m_draggedSegment; }
     std::string getDraggedVertexKey() const { return m_draggedVertexKey; }
 
+    const SculptFrameProfile& getLastFrameProfile() const { return m_lastFrameProfile; }
+    SculptFrameProfile& getMutableLastFrameProfile() { return m_lastFrameProfile; }
+
     static glm::vec3 getAnchorWorldPos(const MeasurementAnchor& anchor);
     MeasurementAnchor pickAnchor(float mouseX, float mouseY, Scene& scene, const glm::vec3* referenceWorldPos);
     void validateSegments(Scene& scene);
@@ -434,6 +469,7 @@ private:
     bool m_isDividerVisibleV1 = true;
     bool m_isDividerVisibleV2 = true;
 
+    SculptFrameProfile m_lastFrameProfile;
     uint32_t m_strokeTargetPolyGroup = 0;
     void filterPolyGroupVertices(std::vector<uint32_t>& pickedVertices, const Mesh* mesh, uint32_t targetGroupId);
 

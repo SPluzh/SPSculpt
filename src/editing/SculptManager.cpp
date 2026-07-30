@@ -826,17 +826,18 @@ int SculptManager::doStrokePass(
         case BRUSH_SQUAREBRUSH: {
             glm::vec3 areaCenter = currentIntersection;
             glm::vec3 areaNormal = currentIntersectionNormal;
-            std::vector<float> areaResults(7, 0.0f);
-            computeAreaNormalAndCenter(
+            float areaResults[7] = {0.0f};
+            if (computeAreaNormalAndCenter(
                 mesh->verts.data(),
                 mesh->normals.data(),
                 mesh->materials.data(),
                 pickedVertices.data(),
                 pickedVertices.size(),
-                areaResults.data()
-            );
-            areaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
-            areaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
+                areaResults
+            )) {
+                areaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
+                areaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
+            }
 
             float off = localRadius * 0.1f;
             areaCenter += areaNormal * (negative ? -off : off);
@@ -844,14 +845,14 @@ int SculptManager::doStrokePass(
             glm::vec3 strokeDir(0.0f);
             bool hasStrokeDir = false;
 
-            glm::vec3 passAlphaOrigin = isSymmetry ? (m_alphaOrigin * sScale) : m_alphaOrigin;
+            glm::vec3 passAlphaOrigin = isSymmetry ? reflectPointSymmetry(m_alphaOrigin, sScale, mesh, m_symmetryMode) : m_alphaOrigin;
 
             if (m_firstStrokeFrame || !m_hasAlphaOrigin) {
                 // Fallback to screen-space alignment
-                glm::mat4 invMeshMatrix = glm::inverse(mesh->matrix);
-                glm::mat4 camWorld = glm::inverse(scene.getCamera().getViewMatrix());
+                const glm::mat4& invMeshMatrix = m_cachedInvMatrix;
+                const glm::mat4& camWorld = m_cachedCamWorldMatrix;
                 glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
-                if (isSymmetry) camRightLocal = camRightLocal * sScale;
+                if (isSymmetry) camRightLocal = reflectVectorSymmetry(camRightLocal, sScale, mesh, m_symmetryMode);
                 strokeDir = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
             } else {
                 glm::vec3 movement = currentIntersection - passAlphaOrigin;
@@ -867,10 +868,10 @@ int SculptManager::doStrokePass(
                 }
 
                 if (!hasStrokeDir) {
-                    glm::mat4 invMeshMatrix = glm::inverse(mesh->matrix);
-                    glm::mat4 camWorld = glm::inverse(scene.getCamera().getViewMatrix());
+                    const glm::mat4& invMeshMatrix = m_cachedInvMatrix;
+                    const glm::mat4& camWorld = m_cachedCamWorldMatrix;
                     glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
-                    if (isSymmetry) camRightLocal = camRightLocal * sScale;
+                    if (isSymmetry) camRightLocal = reflectVectorSymmetry(camRightLocal, sScale, mesh, m_symmetryMode);
                     strokeDir = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
                 }
             }
@@ -901,18 +902,19 @@ int SculptManager::doStrokePass(
         case BRUSH_BRUSH: {
             glm::vec3 areaCenter = currentIntersection;
             glm::vec3 areaNormal = currentIntersectionNormal;
-            std::vector<float> areaResults(7, 0.0f);
-            computeAreaNormalAndCenter(
+            float areaResults[7] = {0.0f};
+            if (computeAreaNormalAndCenter(
                 mesh->verts.data(),
                 mesh->normals.data(),
                 mesh->materials.data(),
                 pickedVertices.data(),
                 pickedVertices.size(),
-                areaResults.data()
-            );
-            if (areaResults[6] > 0.0f) {
-                areaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
-                areaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
+                areaResults
+            )) {
+                if (areaResults[6] > 0.0f) {
+                    areaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
+                    areaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
+                }
             }
 
             if (getCurrentSettings().clay) {
@@ -923,21 +925,21 @@ int SculptManager::doStrokePass(
             glm::vec3 strokeDir(0.0f);
             bool hasStrokeDir = false;
 
-            glm::vec3 passAlphaOrigin = isSymmetry ? (m_alphaOrigin * sScale) : m_alphaOrigin;
+            glm::vec3 passAlphaOrigin = isSymmetry ? reflectPointSymmetry(m_alphaOrigin, sScale, mesh, m_symmetryMode) : m_alphaOrigin;
 
             if (getCurrentSettings().stampLockRotation) {
-                glm::mat4 invMeshMatrix = glm::inverse(mesh->matrix);
-                glm::mat4 camWorld = glm::inverse(scene.getCamera().getViewMatrix());
+                const glm::mat4& invMeshMatrix = m_cachedInvMatrix;
+                const glm::mat4& camWorld = m_cachedCamWorldMatrix;
                 glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
-                if (isSymmetry) camRightLocal = camRightLocal * sScale;
+                if (isSymmetry) camRightLocal = reflectVectorSymmetry(camRightLocal, sScale, mesh, m_symmetryMode);
                 strokeDir = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
             }
             else if (m_firstStrokeFrame || !m_hasAlphaOrigin) {
                 // Fallback to screen-space alignment
-                glm::mat4 invMeshMatrix = glm::inverse(mesh->matrix);
-                glm::mat4 camWorld = glm::inverse(scene.getCamera().getViewMatrix());
+                const glm::mat4& invMeshMatrix = m_cachedInvMatrix;
+                const glm::mat4& camWorld = m_cachedCamWorldMatrix;
                 glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
-                if (isSymmetry) camRightLocal = camRightLocal * sScale;
+                if (isSymmetry) camRightLocal = reflectVectorSymmetry(camRightLocal, sScale, mesh, m_symmetryMode);
                 strokeDir = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
             } else {
                 glm::vec3 movement = currentIntersection - passAlphaOrigin;
@@ -953,10 +955,10 @@ int SculptManager::doStrokePass(
                 }
 
                 if (!hasStrokeDir) {
-                    glm::mat4 invMeshMatrix = glm::inverse(mesh->matrix);
-                    glm::mat4 camWorld = glm::inverse(scene.getCamera().getViewMatrix());
+                    const glm::mat4& invMeshMatrix = m_cachedInvMatrix;
+                    const glm::mat4& camWorld = m_cachedCamWorldMatrix;
                     glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
-                    if (isSymmetry) camRightLocal = camRightLocal * sScale;
+                    if (isSymmetry) camRightLocal = reflectVectorSymmetry(camRightLocal, sScale, mesh, m_symmetryMode);
                     strokeDir = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
                 }
             }
@@ -1021,6 +1023,10 @@ void SculptManager::cancelStroke() {
 }
 
 void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, float mouseX, float mouseY, float currentPressure) {
+    m_lastFrameProfile.reset();
+    
+    auto tFrameStart = std::chrono::high_resolution_clock::now();
+
     if (m_firstStrokeFrame) {
         m_cachedInvMatrix = glm::inverse(mesh->matrix);
         m_cachedCamWorldMatrix = glm::inverse(camera.getViewMatrix());
@@ -1045,6 +1051,8 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 
     uint32_t intersectFaceId = 0xffffffff;
 
+    // --- Stage 1: Raycast ---
+    auto tStage = std::chrono::high_resolution_clock::now();
     if (isGrabBrush && !m_firstStrokeFrame) {
         // Bypass raycast for grab brushes on subsequent frames
         glm::vec3 camFrontLocal = -glm::normalize(glm::vec3(m_cachedInvMatrix * glm::vec4(glm::vec3(m_cachedCamWorldMatrix[2]), 0.0f)));
@@ -1103,6 +1111,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 
         if (intersectFaceId == 0xffffffff) {
             m_currentIntersectionValid = false;
+            m_lastFrameProfile.raycastMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
             return;
         }
 
@@ -1123,6 +1132,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             m_strokeTargetPolyGroup = mesh->faceGroups[intersectFaceId];
         }
     }
+    m_lastFrameProfile.raycastMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
 
     if (activeBrush == BRUSH_POLYGROUP) {
         if ((SDL_GetModState() & KMOD_ALT) != 0) {
@@ -1176,6 +1186,8 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     }
     float radius2 = localRadius * localRadius;
 
+    // --- Stage 2: Pick Vertices ---
+    tStage = std::chrono::high_resolution_clock::now();
     std::vector<uint32_t> pickedVertices;
     if (isGrabBrush && !m_firstStrokeFrame) {
         pickedVertices = m_grabbedVertices;
@@ -1187,21 +1199,26 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z, radius2, mesh->vertVisible.data()
             );
         }
-
-        if (getSettings(activeBrush).culling) {
-            filterCullingVertices(pickedVertices, mesh, localRayDir);
-        }
-
-        if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty()) {
-            filterPolyGroupVertices(pickedVertices, mesh, m_strokeTargetPolyGroup);
-        }
-
         if (isGrabBrush) {
             if (m_firstStrokeFrame || m_grabbedVertices.empty()) {
                 m_grabbedVertices = pickedVertices;
             }
         }
     }
+    m_lastFrameProfile.pickVertsMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
+    m_lastFrameProfile.pickedVertCount = (int)pickedVertices.size();
+
+    // --- Stage 3: Culling & PolyGroup Filtering ---
+    tStage = std::chrono::high_resolution_clock::now();
+    if (!isGrabBrush || m_firstStrokeFrame) {
+        if (getSettings(activeBrush).culling) {
+            filterCullingVertices(pickedVertices, mesh, localRayDir);
+        }
+        if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty()) {
+            filterPolyGroupVertices(pickedVertices, mesh, m_strokeTargetPolyGroup);
+        }
+    }
+    m_lastFrameProfile.cullingMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
 
     std::vector<uint32_t> allAffectedVerts;
 
@@ -1251,10 +1268,13 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         bool strokeAffectsMaterials = (activeBrush == BRUSH_PAINT && (getCurrentSettings().writeRoughness || getCurrentSettings().writeMetalness)) ||
                                        (activeBrush == BRUSH_MASK || activeBrush == BRUSH_MASK_GRADIENT_BLUR);
 
-        // Record initial vertices before modification for primary pass
+        // --- Stage 4: Undo Record ---
+        tStage = std::chrono::high_resolution_clock::now();
         g_undoManager.recordAffectedVertices(scene, mesh->m_id, pickedVertices, strokeAffectsColors, strokeAffectsMaterials);
+        m_lastFrameProfile.undoRecordMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
 
-        // Primary pass
+        // --- Stage 5: Primary Deform Pass ---
+        tStage = std::chrono::high_resolution_clock::now();
         int primaryDeformed = doStrokePass(
             scene,
             mesh,
@@ -1272,12 +1292,14 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             false,
             glm::vec3(1.0f)
         );
+        m_lastFrameProfile.primaryDeformMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
 
         if (primaryDeformed > 0) {
             allAffectedVerts.insert(allAffectedVerts.end(), pickedVertices.begin(), pickedVertices.begin() + primaryDeformed);
         }
 
-        // Symmetry pass (Step 2)
+        // --- Stage 6: Symmetry Pass ---
+        tStage = std::chrono::high_resolution_clock::now();
         if (m_useSym) {
             std::vector<glm::vec3> symScales = getActiveSymmetryScales();
 
@@ -1339,7 +1361,9 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                     glm::vec3 symIntersectionNormal = reflectVectorSymmetry(m_currentIntersectionNormal, sScale, mesh, m_symmetryMode);
                     const glm::vec3& initSymInter = (sIdx < m_initialSymIntersections.size()) ? m_initialSymIntersections[sIdx] : reflectPointSymmetry(m_initialIntersection, sScale, mesh, m_symmetryMode);
 
+                    auto tUndoSym = std::chrono::high_resolution_clock::now();
                     g_undoManager.recordAffectedVertices(scene, mesh->m_id, symVerts, strokeAffectsColors, strokeAffectsMaterials);
+                    m_lastFrameProfile.undoRecordMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tUndoSym).count();
 
                     int symDeformed = doStrokePass(
                         scene,
@@ -1365,7 +1389,10 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 }
             }
         }
+        m_lastFrameProfile.symmetryMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
     }
+
+    m_lastFrameProfile.affectedVertCount = (int)allAffectedVerts.size();
 
     if (!allAffectedVerts.empty()) {
         bool isSculptDeform = (activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_MASK_GRADIENT_BLUR && activeBrush != BRUSH_POLYGROUP);
@@ -1378,6 +1405,8 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 m_iFacesCache.resize(mesh->nbFaces);
             }
 
+            // --- Stage 7: Face Lookup ---
+            tStage = std::chrono::high_resolution_clock::now();
             uint32_t numIFaces = getFacesFromVerticesFast(
                 allAffectedVerts.data(),
                 allAffectedVerts.size(),
@@ -1388,7 +1417,11 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 &m_tagEpoch,
                 mesh->nbFaces
             );
+            m_lastFrameProfile.faceLookupMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
+            m_lastFrameProfile.affectedFaceCount = (int)numIFaces;
 
+            // --- Stage 8: Face Normals & Boxes ---
+            tStage = std::chrono::high_resolution_clock::now();
             updateFaceNormalsAndBoxes(
                 mesh->verts.data(), mesh->nbVerts,
                 mesh->faces.data(), mesh->nbFaces,
@@ -1397,7 +1430,10 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 mesh->faceBoxes.data(),
                 mesh->faceCenters.data()
             );
+            m_lastFrameProfile.faceNormalsMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
 
+            // --- Stage 9: Vertex Normals ---
+            tStage = std::chrono::high_resolution_clock::now();
             updateVertexNormals(
                 allAffectedVerts.data(), allAffectedVerts.size(), mesh->nbVerts,
                 mesh->vrfStartCount.data(),
@@ -1405,13 +1441,17 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 mesh->faceNormals.data(),
                 mesh->normals.data()
             );
+            m_lastFrameProfile.vertNormalsMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
 
+            // --- Stage 10: Octree Update ---
+            tStage = std::chrono::high_resolution_clock::now();
             mesh->octree.update(
                 mesh->verts.data(), mesh->nbVerts,
                 mesh->faces.data(), mesh->nbFaces,
                 mesh->faceBoxes.data(),
                 m_iFacesCache.data(), numIFaces
             );
+            m_lastFrameProfile.octreeUpdateMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
         }
 
         uint32_t minV = allAffectedVerts[0];
@@ -1450,6 +1490,27 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     m_alphaOrigin = m_currentIntersection;
     m_hasAlphaOrigin = true;
     m_firstStrokeFrame = false;
+
+    // Log high CPU stroke durations (> 5ms)
+    double totalCpuMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tFrameStart).count();
+    if (totalCpuMs > 5.0) {
+        sculpt_log("[SCULPT CPU STROKE] Total CPU: %.2fms | Verts: %d (Picked: %d) | Faces: %d\n"
+                  "  |- Raycast:        %6.2f ms\n"
+                  "  |- Pick Vertices:  %6.2f ms\n"
+                  "  |- Culling/Group:  %6.2f ms\n"
+                  "  |- Undo Record:    %6.2f ms\n"
+                  "  |- Primary Deform: %6.2f ms\n"
+                  "  |- Symmetry Pass:  %6.2f ms\n"
+                  "  |- Face Lookup:    %6.2f ms\n"
+                  "  |- Face Normals:   %6.2f ms\n"
+                  "  |- Vert Normals:   %6.2f ms\n"
+                  "  \\- Octree Update:  %6.2f ms\n",
+                  totalCpuMs, m_lastFrameProfile.affectedVertCount, m_lastFrameProfile.pickedVertCount, m_lastFrameProfile.affectedFaceCount,
+                  m_lastFrameProfile.raycastMs, m_lastFrameProfile.pickVertsMs, m_lastFrameProfile.cullingMs,
+                  m_lastFrameProfile.undoRecordMs, m_lastFrameProfile.primaryDeformMs, m_lastFrameProfile.symmetryMs,
+                  m_lastFrameProfile.faceLookupMs, m_lastFrameProfile.faceNormalsMs, m_lastFrameProfile.vertNormalsMs,
+                  m_lastFrameProfile.octreeUpdateMs);
+    }
 }
 
 glm::vec3 SculptManager::getAnchorWorldPos(const MeasurementAnchor& anchor) {
