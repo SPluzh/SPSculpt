@@ -5026,10 +5026,23 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::Text("Resolution: %d", m_remeshResolution);
             ImGui::PushItemWidth(140.0f * scale);
             ImGui::SliderInt("##hudRemeshResSlider", &m_remeshResolution, 32, 512);
+            if (ImGui::IsItemActive()) {
+                Mesh* selectedMesh = scene.getSelected();
+                if (selectedMesh) {
+                    float bbox[6];
+                    selectedMesh->computeBbox(bbox);
+                    float maxDim = std::max({bbox[3] - bbox[0], bbox[4] - bbox[1], bbox[5] - bbox[2]});
+                    float step = maxDim / (float)m_remeshResolution;
+                    scene.updateVoxelPreview(step, {selectedMesh});
+                }
+            } else if (ImGui::IsItemDeactivated()) {
+                scene.updateVoxelPreview(0.0f, {});
+            }
             ImGui::PopItemWidth();
             ImGui::Checkbox("Keep PolyGroups", &m_remeshKeepPolyGroups);
             ImGui::Separator();
             if (ImGui::Button("Remesh Now", ImVec2(-1.0f, 0.0f))) {
+                scene.updateVoxelPreview(0.0f, {});
                 performRemesh(scene);
                 ImGui::CloseCurrentPopup();
             }
