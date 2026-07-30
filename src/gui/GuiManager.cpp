@@ -1769,11 +1769,15 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             static int renameSegIdx = -1;
             static char renameSegBuf[128] = "";
 
-            ImGui::BeginChild("ToolOutlinerList", ImVec2(0, std::clamp(totalToolItems * 26 + 30, 60, 160)), true);
+            float availY = ImGui::GetContentRegionAvail().y;
+            float desiredHeight = (float)(totalToolItems * 28 + 35);
+            float listHeight = std::max(60.0f, std::min(desiredHeight, std::max(160.0f, availY - 10.0f)));
+
+            ImGui::BeginChild("ToolOutlinerList", ImVec2(0, listHeight), true);
             if (ImGui::BeginTable("ToolOutlinerTable", 4, ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV)) {
                 ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed, 75.0f);
-                ImGui::TableSetupColumn("Ref", ImGuiTableColumnFlags_WidthFixed, 35.0f);
+                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+                ImGui::TableSetupColumn("Ref", ImGuiTableColumnFlags_WidthFixed, 40.0f);
                 ImGui::TableSetupColumn("##DelCol", ImGuiTableColumnFlags_WidthFixed, 25.0f);
                 ImGui::TableHeadersRow();
 
