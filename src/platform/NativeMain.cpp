@@ -558,6 +558,18 @@ int main(int argc, char* argv[]) {
                     if (io.WantCaptureKeyboard && (eventCopy.type == SDL_KEYDOWN || eventCopy.type == SDL_KEYUP)) {
                         skipSculpt = true;
                     }
+                    if (gui.getTimelapsePlayer().isOpen()) {
+                        skipSculpt = true;
+                        bool isCameraEvent = (eventCopy.type == SDL_MOUSEBUTTONDOWN || eventCopy.type == SDL_MOUSEBUTTONUP) &&
+                                             (eventCopy.button.button == SDL_BUTTON_RIGHT || eventCopy.button.button == SDL_BUTTON_MIDDLE);
+                        bool isWheelEvent = (eventCopy.type == SDL_MOUSEWHEEL);
+                        bool isMotionAndDragging = (eventCopy.type == SDL_MOUSEMOTION || eventCopy.type == SDL_MOUSEBUTTONUP) &&
+                                                   sculpt.getCameraController().isDragging();
+
+                        if ((!io.WantCaptureMouse && (isCameraEvent || isWheelEvent)) || isMotionAndDragging) {
+                            sculpt.getCameraController().handleEvent(eventCopy, scene.getCamera(), scene.getMeshes());
+                        }
+                    }
 
                     if (!skipSculpt) {
                         sculpt.handleEvent(eventCopy, scene);

@@ -161,6 +161,7 @@ void Scene::restoreState(const HistoryState& hs) {
         m->visibleV2 = ms.visibleV2;
 
         m->postInit();
+        m->isDirty = true;
         m_meshes.push_back(m);
     }
     m_selectedIdx = hs.selectedMeshIdx;

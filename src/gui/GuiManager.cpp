@@ -496,6 +496,10 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
 
+    if (m_timelapsePlayer.isOpen()) {
+        m_timelapsePlayer.update(ImGui::GetIO().DeltaTime, scene);
+    }
+
     // 1. Main Menu Bar (fallback when floating island is disabled)
     if (!m_showFloatingIsland) {
         ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
@@ -4279,6 +4283,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     drawModelSnapshotWindow(scene, renderer);
     drawUndoDiagPanel(scene);
     drawDebugLogPanel();
+    drawTimelapsePanel(scene, renderer);
     drawUnsavedChangesModal(scene, m_pendingQuit);
     updateWindowTitle(window, scene.isModified());
 
@@ -4300,7 +4305,7 @@ void GuiManager::performRemesh(Scene& scene) {
         return;
     }
 
-    scene.pushHistoryState();
+    m_remeshBeforeState = scene.saveCurrentState();
 
     // Snapshot mesh data for worker thread
     auto verts = selectedMesh->verts;
@@ -4472,6 +4477,9 @@ void GuiManager::applyRemeshResult(Scene& scene, const RemeshResult& r) {
     }
 
     selectedMesh->isDirty = true;
+
+    HistoryState afterState = scene.saveCurrentState();
+    g_undoManager.pushTopologyChange(scene, "Voxel Remesh", std::move(m_remeshBeforeState), std::move(afterState));
 }
 
 void GuiManager::drawRemeshProgressModal() {
@@ -4629,6 +4637,7 @@ bool GuiManager::saveSettings(IniFile& ini) {
     ini.setBool(panelSec, "showDebugLogPanel", m_showDebugLogPanel);
     ini.setBool(panelSec, "showFloatingIsland", m_showFloatingIsland);
     ini.setBool(panelSec, "showSymmetryPanel", m_showSymmetryPanel);
+    ini.setBool(panelSec, "showTimelapsePanel", m_showTimelapsePanel);
 
     std::string genSec = "GuiGeneral";
     ini.setFloat(genSec, "uiScaleMultiplier", m_uiScale);
@@ -4671,6 +4680,7 @@ bool GuiManager::loadSettings(const IniFile& ini) {
         if (ini.hasKey(panelSec, "showDebugLogPanel")) m_showDebugLogPanel = ini.getBool(panelSec, "showDebugLogPanel");
         if (ini.hasKey(panelSec, "showFloatingIsland")) m_showFloatingIsland = ini.getBool(panelSec, "showFloatingIsland");
         if (ini.hasKey(panelSec, "showSymmetryPanel")) m_showSymmetryPanel = ini.getBool(panelSec, "showSymmetryPanel");
+        if (ini.hasKey(panelSec, "showTimelapsePanel")) m_showTimelapsePanel = ini.getBool(panelSec, "showTimelapsePanel");
     }
 
     std::string genSec = "GuiGeneral";
@@ -4850,6 +4860,7 @@ void GuiManager::drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRend
         ImGui::MenuItem("Undo History", nullptr, &m_showUndoDiagPanel);
         ImGui::MenuItem("Debug Log", nullptr, &m_showDebugLogPanel);
         ImGui::MenuItem("Floating Island HUD", nullptr, &m_showFloatingIsland);
+        ImGui::MenuItem("Sculpt Timelapse", nullptr, &m_showTimelapsePanel);
         bool hasSnapshot = renderer.hasActiveSnapshot();
         if (ImGui::MenuItem("Model Snapshot (Screen Reference)", nullptr, &hasSnapshot)) {
             renderer.toggleSnapshot(scene);
@@ -5904,6 +5915,154 @@ void GuiManager::drawSafeFramesOverlay(const AngleRenderer& renderer, const Scen
         drawSingleSafeFrame(0.0f, 0.0f, halfW, viewportHeight);
         drawSingleSafeFrame(halfW, 0.0f, viewportWidth, viewportHeight);
     }
+}
+
+void GuiManager::drawTimelapsePanel(Scene& scene, AngleRenderer& renderer) {
+    if (!m_showTimelapsePanel) return;
+
+    float scale = getUiScale();
+    ImGui::SetNextWindowSize(ImVec2(620.0f * scale, 230.0f * scale), ImGuiCond_FirstUseEver);
+
+    float vpW = ImGui::GetIO().DisplaySize.x;
+    float vpH = ImGui::GetIO().DisplaySize.y;
+    ImGui::SetNextWindowPos(ImVec2(vpW * 0.5f, vpH - 250.0f * scale), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.0f));
+
+    if (ImGui::Begin("Sculpt Timelapse Player", &m_showTimelapsePanel, ImGuiWindowFlags_NoCollapse)) {
+
+        if (!m_timelapsePlayer.isOpen()) {
+            ImGui::TextWrapped("The Sculpt Timelapse Player replays your sculpting session history step-by-step and exports PNG frame sequences.");
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            size_t undoCount = g_undoManager.getUndoStack().size();
+            if (undoCount == 0) {
+                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "No sculpt history available. Sculpt on a mesh to build history!");
+            } else {
+                ImGui::Text("Recorded session steps in history: %zu", undoCount);
+                ImGui::Spacing();
+                if (ImGui::Button("Open Timelapse Player", ImVec2(220.0f * scale, 36.0f * scale))) {
+                    m_timelapsePlayer.open(g_undoManager, scene);
+                }
+            }
+        } else {
+            int currentStep = m_timelapsePlayer.getCurrentStep();
+            int totalSteps = m_timelapsePlayer.getTotalSteps();
+            auto state = m_timelapsePlayer.getState();
+
+            // Controls row
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.0f * scale, 4.0f * scale));
+
+            if (ImGui::Button("|<##Start", ImVec2(36.0f * scale, 28.0f * scale))) {
+                m_timelapsePlayer.seekToStart(scene);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Jump to Start");
+            ImGui::SameLine();
+
+            if (ImGui::Button("<##Back", ImVec2(36.0f * scale, 28.0f * scale))) {
+                m_timelapsePlayer.stepBackward(scene);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Step Backward");
+            ImGui::SameLine();
+
+            const char* playIcon = (state == TimelapsePlayer::State::PLAYING) ? "||" : ">";
+            if (ImGui::Button(playIcon, ImVec2(48.0f * scale, 28.0f * scale))) {
+                m_timelapsePlayer.togglePlayPause(scene);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip(state == TimelapsePlayer::State::PLAYING ? "Pause" : "Play");
+            ImGui::SameLine();
+
+            if (ImGui::Button(">##Fwd", ImVec2(36.0f * scale, 28.0f * scale))) {
+                m_timelapsePlayer.stepForward(scene);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Step Forward");
+            ImGui::SameLine();
+
+            if (ImGui::Button(">|##End", ImVec2(36.0f * scale, 28.0f * scale))) {
+                m_timelapsePlayer.seekToEnd(scene);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Jump to End");
+
+            ImGui::PopStyleVar();
+
+            ImGui::SameLine();
+            ImGui::Text("Step: %d / %d", currentStep, totalSteps);
+
+            ImGui::SameLine();
+            ImGui::TextDisabled("(%s)", m_timelapsePlayer.getCurrentDescription().c_str());
+
+            // Timeline slider
+            ImGui::Spacing();
+            int sliderStep = currentStep;
+            ImGui::SetNextItemWidth(-1.0f);
+            if (ImGui::SliderInt("##TimelapseTimeline", &sliderStep, 0, totalSteps, "Step: %d")) {
+                m_timelapsePlayer.seekToStep(sliderStep, scene);
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // Options & Export
+            float playSpeed = m_timelapsePlayer.getPlaySpeed();
+            ImGui::SetNextItemWidth(140.0f * scale);
+            if (ImGui::SliderFloat("Speed (steps/sec)", &playSpeed, 1.0f, 60.0f, "%.1f")) {
+                m_timelapsePlayer.setPlaySpeed(playSpeed);
+            }
+
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(100.0f * scale);
+            ImGui::InputInt("Steps / Frame", &m_exportStepsPerFrame);
+            if (m_exportStepsPerFrame < 1) m_exportStepsPerFrame = 1;
+
+            ImGui::SameLine();
+            if (ImGui::Button("Export PNG Sequence...", ImVec2(180.0f * scale, 26.0f * scale))) {
+                ImGui::OpenPopup("Export Timelapse PNGs");
+            }
+
+            ImGui::SameLine();
+            if (ImGui::Button("Close Player", ImVec2(110.0f * scale, 26.0f * scale))) {
+                m_timelapsePlayer.close(g_undoManager, scene);
+            }
+
+            // Modal for export config
+            if (ImGui::BeginPopupModal("Export Timelapse PNGs", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::Text("Configure frame export options:");
+                ImGui::Spacing();
+
+                ImGui::InputText("Output Directory", m_exportDir, sizeof(m_exportDir));
+                ImGui::InputInt("Width", &m_exportWidth);
+                ImGui::InputInt("Height", &m_exportHeight);
+                ImGui::InputInt("Steps per Frame", &m_exportStepsPerFrame);
+
+                if (m_exportWidth < 64) m_exportWidth = 64;
+                if (m_exportHeight < 64) m_exportHeight = 64;
+                if (m_exportStepsPerFrame < 1) m_exportStepsPerFrame = 1;
+
+                int frameCount = (totalSteps + m_exportStepsPerFrame - 1) / m_exportStepsPerFrame;
+                ImGui::Text("Total frames to export: %d", frameCount);
+
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                if (ImGui::Button("Start Export", ImVec2(120.0f * scale, 30.0f * scale))) {
+                    ImGui::CloseCurrentPopup();
+                    m_timelapsePlayer.exportFrames(scene, renderer, m_exportDir, m_exportWidth, m_exportHeight, m_exportStepsPerFrame,
+                        [](int current, int total) {
+                            sculpt_log("[Timelapse Export] Exporting frame %d / %d...\n", current, total);
+                        });
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel", ImVec2(120.0f * scale, 30.0f * scale))) {
+                    ImGui::CloseCurrentPopup();
+                }
+
+                ImGui::EndPopup();
+            }
+        }
+    }
+    ImGui::End();
 }
 
 

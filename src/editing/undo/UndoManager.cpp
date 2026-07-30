@@ -187,9 +187,25 @@ void UndoManager::pushTopologyChange(Scene& scene,
     entry->description = description;
     entry->before = scene.saveCurrentState();
     
-    operation();
+    if (operation) {
+        operation();
+    }
 
     entry->after = scene.saveCurrentState();
+    sculpt_log_lvl(LogLevel::Info, "[Undo] Topology change pushed: '%s' (size: %.2f MB)\n",
+                   description.c_str(), entry->getMemoryUsage() / (1024.0f * 1024.0f));
+    pushEntry(std::move(entry));
+    scene.setModified(true);
+}
+
+void UndoManager::pushTopologyChange(Scene& scene,
+                                      const std::string& description,
+                                      HistoryState beforeState,
+                                      HistoryState afterState) {
+    auto entry = std::make_unique<TopologyUndoEntry>();
+    entry->description = description;
+    entry->before = std::move(beforeState);
+    entry->after = std::move(afterState);
     sculpt_log_lvl(LogLevel::Info, "[Undo] Topology change pushed: '%s' (size: %.2f MB)\n",
                    description.c_str(), entry->getMemoryUsage() / (1024.0f * 1024.0f));
     pushEntry(std::move(entry));

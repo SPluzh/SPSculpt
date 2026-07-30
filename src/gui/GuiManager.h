@@ -12,6 +12,7 @@
 #include "editing/SculptManager.h"
 #include "scene/Scene.h"
 #include "sculpt/Remesh.h"
+#include "timelapse/TimelapsePlayer.h"
 
 class AngleRenderer;
 class IniFile;
@@ -47,6 +48,14 @@ private:
     bool m_showUndoDiagPanel = false;
     bool m_showDebugLogPanel = false;
     bool m_showFloatingIsland = true;
+    bool m_showTimelapsePanel = false;
+
+    // Timelapse export settings
+    int m_exportStepsPerFrame = 1;
+    int m_exportWidth = 1920;
+    int m_exportHeight = 1080;
+    char m_exportDir[256] = "timelapse_frames";
+    TimelapsePlayer m_timelapsePlayer;
 
     int m_mirrorAxis = 0; // 0: X, 1: Y, 2: Z
     bool m_mirrorPositiveToNegative = true;
@@ -89,6 +98,7 @@ private:
     char m_refImagePath[256] = "";
 
     RemeshProgress m_remeshAsync;
+    HistoryState m_remeshBeforeState;
     AngleRenderer* m_renderer = nullptr;
 
     ModalMode m_activeModalMode = ModalMode::NONE;
@@ -130,6 +140,7 @@ private:
     void drawSafeFramesOverlay(const AngleRenderer& renderer, const Scene& scene);
     void updateWindowTitle(SDL_Window* window, bool isModified);
     void drawUnsavedChangesModal(Scene& scene, bool& quitApp);
+    void drawTimelapsePanel(Scene& scene, AngleRenderer& renderer);
 
 public:
     GuiManager();
@@ -182,6 +193,11 @@ public:
     void toggleUndoDiagPanel() { m_showUndoDiagPanel = !m_showUndoDiagPanel; }
     void toggleDebugLogPanel() { m_showDebugLogPanel = !m_showDebugLogPanel; }
     void toggleFloatingIsland() { m_showFloatingIsland = !m_showFloatingIsland; }
+    void toggleTimelapsePanel() { m_showTimelapsePanel = !m_showTimelapsePanel; }
+
+    bool getShowTimelapsePanel() const { return m_showTimelapsePanel; }
+    void setShowTimelapsePanel(bool show) { m_showTimelapsePanel = show; }
+    TimelapsePlayer& getTimelapsePlayer() { return m_timelapsePlayer; }
 
     bool getShowSymmetryPanel() const { return m_showSymmetryPanel; }
     void setShowSymmetryPanel(bool show) { m_showSymmetryPanel = show; }

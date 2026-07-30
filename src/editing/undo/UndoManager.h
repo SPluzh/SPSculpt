@@ -50,6 +50,10 @@ public:
     void pushTopologyChange(Scene& scene,
                             const std::string& description,
                             std::function<void()> operation);
+    void pushTopologyChange(Scene& scene,
+                            const std::string& description,
+                            HistoryState beforeState,
+                            HistoryState afterState);
 
     // --- API for scene meta changes ---
     void pushMetaChange(Scene& scene,
@@ -76,6 +80,21 @@ public:
     const std::deque<std::unique_ptr<UndoEntry>>& getUndoStack() const { return m_undoStack; }
     const std::deque<std::unique_ptr<UndoEntry>>& getRedoStack() const { return m_redoStack; }
 
+    // Timelapse stack ownership transfer
+    std::deque<std::unique_ptr<UndoEntry>> takeUndoStack() {
+        auto stack = std::move(m_undoStack);
+        m_undoStack.clear();
+        m_redoStack.clear();
+        return stack;
+    }
+
+    void restoreUndoStack(std::deque<std::unique_ptr<UndoEntry>> stack) {
+        m_undoStack = std::move(stack);
+        m_redoStack.clear();
+    }
+
+    static void applyEntry(UndoEntry* entry, Scene& scene, bool isUndo);
+
     void clear();
     void setMaxMemory(size_t bytes) { m_maxMemory = bytes; trimToMemoryLimit(); }
     void setMaxMemoryGB(double gb)  { setMaxMemory(static_cast<size_t>(gb * 1024.0 * 1024.0 * 1024.0)); }
@@ -97,7 +116,6 @@ private:
 
     void pushEntry(std::unique_ptr<UndoEntry> entry);
     void trimToMemoryLimit();
-    void applyEntry(UndoEntry* entry, Scene& scene, bool isUndo);
 };
 
 extern UndoManager g_undoManager;

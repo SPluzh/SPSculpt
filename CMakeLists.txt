@@ -103,6 +103,8 @@ add_executable(SPSculpt
     src/editing/PolyGroupTool.cpp
     src/editing/undo/UndoManager.cpp
     src/sculpt/ArmatureGraph.cpp
+    # timelapse
+    src/timelapse/TimelapsePlayer.cpp
     # brushes
     src/brushes/BrushPreset.cpp
     src/brushes/BrushPresetManager.cpp

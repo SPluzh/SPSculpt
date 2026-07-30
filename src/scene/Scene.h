@@ -45,10 +45,12 @@ private:
     Camera m_camera;
 
     friend class UndoManager;
-    HistoryState saveCurrentState() const;
-    void restoreState(const HistoryState& state);
+    friend class TimelapsePlayer;
+    friend class GuiManager;
 
 public:
+    HistoryState saveCurrentState() const;
+    void restoreState(const HistoryState& state);
     Mesh* getMeshById(uint32_t id) const;
     enum class SplitMode {
         OFF = 0,
