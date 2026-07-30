@@ -139,6 +139,12 @@ public:
     bool getSmoothCursor() const { return m_smoothCursor; }
     void setShowGrid(bool show) { m_showGrid = show; }
     bool getShowGrid() const { return m_showGrid; }
+    void setShowSafeFrames(bool show) { m_showSafeFrames = show; }
+    bool getShowSafeFrames() const { return m_showSafeFrames; }
+    void setSafeFramesMargin(float margin) { m_safeFramesMargin = std::max(0.0f, margin); }
+    float getSafeFramesMargin() const { return m_safeFramesMargin; }
+    void setSafeFramesThickness(float thickness) { m_safeFramesThickness = std::max(0.01f, thickness); }
+    float getSafeFramesThickness() const { return m_safeFramesThickness; }
     void setShowPolyGroups(bool show) { m_showPolyGroups = show; }
     bool getShowPolyGroups() const { return m_showPolyGroups; }
     void setActiveBrush(BrushType brush) { m_activeBrush = brush; }
@@ -476,6 +482,9 @@ private:
     bool m_bevelScaleWithDistance = false;
     bool m_showContour = true;
     bool m_showGrid = true;
+    bool m_showSafeFrames = false;
+    float m_safeFramesMargin = 20.0f;
+    float m_safeFramesThickness = 1.5f;
     glm::vec4 m_contourColor{1.0f, 0.75f, 0.1f, 1.0f};
     float m_cursorThickness = 2.5f;
     bool m_smoothCursor = true;

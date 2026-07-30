@@ -17,6 +17,9 @@ bool RenderSettings::save(IniFile& ini, const AngleRenderer& renderer, const Sce
     ini.setBool(sec, "filmic", renderer.getFilmic());
     ini.setBool(sec, "showContour", renderer.getShowContour());
     ini.setBool(sec, "showGrid", renderer.getShowGrid());
+    ini.setBool(sec, "showSafeFrames", renderer.getShowSafeFrames());
+    ini.setFloat(sec, "safeFramesMargin", renderer.getSafeFramesMargin());
+    ini.setFloat(sec, "safeFramesThickness", renderer.getSafeFramesThickness());
     ini.setBool(sec, "showSymmetryLine", renderer.getShowSymmetryLine());
     ini.setBool(sec, "darkenUnselected", renderer.getDarkenUnselected());
     
@@ -97,6 +100,9 @@ bool RenderSettings::load(const IniFile& ini, AngleRenderer& renderer, Scene& sc
     if (ini.hasKey(sec, "filmic")) renderer.setFilmic(ini.getBool(sec, "filmic"));
     if (ini.hasKey(sec, "showContour")) renderer.setShowContour(ini.getBool(sec, "showContour"));
     if (ini.hasKey(sec, "showGrid")) renderer.setShowGrid(ini.getBool(sec, "showGrid"));
+    if (ini.hasKey(sec, "showSafeFrames")) renderer.setShowSafeFrames(ini.getBool(sec, "showSafeFrames"));
+    if (ini.hasKey(sec, "safeFramesMargin")) renderer.setSafeFramesMargin(ini.getFloat(sec, "safeFramesMargin", 20.0f));
+    if (ini.hasKey(sec, "safeFramesThickness")) renderer.setSafeFramesThickness(ini.getFloat(sec, "safeFramesThickness", 1.5f));
     if (ini.hasKey(sec, "showSymmetryLine")) renderer.setShowSymmetryLine(ini.getBool(sec, "showSymmetryLine"));
     if (ini.hasKey(sec, "darkenUnselected")) renderer.setDarkenUnselected(ini.getBool(sec, "darkenUnselected"));
     

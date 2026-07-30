@@ -127,6 +127,7 @@ private:
     void drawUndoDiagPanel(Scene& scene);
     void drawDebugLogPanel();
     void drawSymmetryPanel(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer);
+    void drawSafeFramesOverlay(const AngleRenderer& renderer, const Scene& scene);
     void updateWindowTitle(SDL_Window* window, bool isModified);
     void drawUnsavedChangesModal(Scene& scene, bool& quitApp);
 

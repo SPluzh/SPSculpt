@@ -1991,6 +1991,25 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         }
 
         ImGui::Separator();
+        ImGui::Text("Safe Frames Overlay:");
+        bool showSafeFrames = renderer.getShowSafeFrames();
+        if (ImGui::Checkbox("Enable Safe Frames", &showSafeFrames)) {
+            renderer.setShowSafeFrames(showSafeFrames);
+        }
+        if (showSafeFrames) {
+            ImGui::Indent();
+            float sfMargin = renderer.getSafeFramesMargin();
+            if (ImGui::SliderFloat("Margin##SFMargin", &sfMargin, 5.0f, 200.0f, "%.0f px")) {
+                renderer.setSafeFramesMargin(sfMargin);
+            }
+            float sfThickness = renderer.getSafeFramesThickness();
+            if (ImGui::SliderFloat("Line Thickness##SFThickness", &sfThickness, 0.1f, 5.0f, "%.1f px")) {
+                renderer.setSafeFramesThickness(sfThickness);
+            }
+            ImGui::Unindent();
+        }
+
+        ImGui::Separator();
         ImGui::Text("Camera Speeds:");
         
         float rot = camera.getSpeedRotate();
@@ -4235,6 +4254,10 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         }
     }
 
+    if (renderer.getShowSafeFrames()) {
+        drawSafeFramesOverlay(renderer, scene);
+    }
+
     if (m_activeModalMode != ModalMode::NONE) {
         drawModalIndicatorHUD(sculpt, scene);
     }
@@ -4903,6 +4926,27 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::EndPopup();
         }
 
+        // Alt (Invert / Subtractive Mode) Toggle Button
+        bool isAltPhysicallyPressed = ImGui::GetIO().KeyAlt || ((SDL_GetModState() & KMOD_ALT) != 0);
+        bool isAltActive = isAltPhysicallyPressed || sculpt.getNegative();
+
+        if (isAltActive) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+
+        if (ImGui::Button("Alt##hudVertAltBtn", ImVec2(squareSize, squareSize))) {
+            sculpt.toggleNegative();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Invert Brush Mode (Alt)");
+        }
+
+        if (isAltActive) {
+            ImGui::PopStyleColor(3);
+        }
+
         ImGui::Separator();
 
         // Top Vertical Slider: Size
@@ -5143,6 +5187,22 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Silhouette Mode");
         if (isSilhouette) {
+            ImGui::PopStyleColor(3);
+        }
+
+        ImGui::SameLine();
+
+        bool showSafeFrames = renderer.getShowSafeFrames();
+        if (showSafeFrames) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+        if (ImGui::Button(ICON_LC_FRAME "##hudSafeFrames", squareBtn)) {
+            renderer.setShowSafeFrames(!showSafeFrames);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Safe Frames Overlay");
+        if (showSafeFrames) {
             ImGui::PopStyleColor(3);
         }
 
@@ -5699,6 +5759,45 @@ void GuiManager::drawSymmetryPanel(SculptManager& sculpt, Scene& scene, AngleRen
     }
 
     ImGui::End();
+}
+
+void GuiManager::drawSafeFramesOverlay(const AngleRenderer& renderer, const Scene& scene) {
+    ImDrawList* drawList = ImGui::GetForegroundDrawList();
+    float viewportWidth = ImGui::GetIO().DisplaySize.x;
+    float viewportHeight = ImGui::GetIO().DisplaySize.y;
+    float scale = getUiScale();
+
+    float margin = renderer.getSafeFramesMargin() * scale;
+    float rawThickness = renderer.getSafeFramesThickness() * scale;
+
+    float thickness = std::max(1.0f, rawThickness);
+    float alphaScale = std::min(1.0f, std::max(0.05f, rawThickness));
+
+    ImU32 lineColor = IM_COL32(240, 240, 240, (int)(220.0f * alphaScale));
+
+    auto drawSingleSafeFrame = [&](float vx0, float vy0, float vx1, float vy1) {
+        float x0 = vx0 + margin;
+        float y0 = vy0 + margin;
+        float x1 = vx1 - margin;
+        float y1 = vy1 - margin;
+
+        if (x1 <= x0 || y1 <= y0) return;
+
+        ImGui::GetForegroundDrawList()->PushClipRect(ImVec2(vx0, vy0), ImVec2(vx1, vy1), true);
+
+        // Clean Safe Frame Rect with pure line color
+        drawList->AddRect(ImVec2(x0, y0), ImVec2(x1, y1), lineColor, 0.0f, 0, thickness);
+
+        ImGui::GetForegroundDrawList()->PopClipRect();
+    };
+
+    if (!renderer.getSplitMode()) {
+        drawSingleSafeFrame(0.0f, 0.0f, viewportWidth, viewportHeight);
+    } else {
+        float halfW = viewportWidth * 0.5f;
+        drawSingleSafeFrame(0.0f, 0.0f, halfW, viewportHeight);
+        drawSingleSafeFrame(halfW, 0.0f, viewportWidth, viewportHeight);
+    }
 }
 
 
