@@ -411,10 +411,10 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
             case HKAction::Undo: scene.undo(); break;
             case HKAction::Redo: scene.redo(); break;
             
-            case HKAction::OpenFile: gui.openScene(scene); break;
-            case HKAction::SaveFile: gui.saveScene(scene); break;
-            case HKAction::SaveFileAs: gui.saveSceneAs(scene); break;
-            case HKAction::ExportOBJ: gui.exportFile(scene); break;
+            case HKAction::OpenFile: gui.openScene(scene, &sculpt); break;
+            case HKAction::SaveFile: gui.saveScene(scene, &sculpt); break;
+            case HKAction::SaveFileAs: gui.saveSceneAs(scene, &sculpt); break;
+            case HKAction::ExportOBJ: gui.exportFile(scene, &sculpt); break;
             case HKAction::ToggleDyntopo: gui.toggleTopologyPanel(); break;
             case HKAction::OpenContextPopup: gui.m_openContextPopup = true; break;
             case HKAction::RunRemesh: gui.performRemesh(scene); break;

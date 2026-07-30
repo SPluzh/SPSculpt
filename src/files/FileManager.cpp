@@ -71,7 +71,8 @@ std::string FileManager::getExtension(const std::string& path) {
 
 std::vector<Mesh*> FileManager::importFiles(const std::string& path,
                                            Scene* scene,
-                                           AngleRenderer* renderer) {
+                                           AngleRenderer* renderer,
+                                           SculptManager* sculpt) {
     std::string ext = getExtension(path);
     
     if (ext == "sgl") {
@@ -81,7 +82,7 @@ std::vector<Mesh*> FileManager::importFiles(const std::string& path,
         }
         std::vector<uint8_t> buffer = readBinaryFile(path);
         if (buffer.empty()) return {};
-        return ImportSGL::importSGL(buffer, *scene, *renderer);
+        return ImportSGL::importSGL(buffer, *scene, *renderer, sculpt);
     }
     
     if (ext == "obj") {
@@ -121,15 +122,16 @@ std::vector<Mesh*> FileManager::importFiles(const std::string& path,
 bool FileManager::exportMeshes(const std::string& path,
                                const std::vector<Mesh*>& meshes,
                                const Scene* scene,
-                               const AngleRenderer* renderer) {
+                               const AngleRenderer* renderer,
+                               const SculptManager* sculpt) {
     std::string ext = getExtension(path);
     
     if (ext == "sgl") {
-        if (!scene || !renderer) {
-            std::cerr << "Exporting SGL requires Scene and Renderer pointers" << std::endl;
+        if (!scene || !renderer || !sculpt) {
+            std::cerr << "Exporting SGL requires Scene, Renderer, and Sculpt pointers" << std::endl;
             return false;
         }
-        std::vector<uint8_t> buffer = ExportSGL::exportSGL(meshes, *scene, *renderer);
+        std::vector<uint8_t> buffer = ExportSGL::exportSGL(meshes, *scene, *renderer, *sculpt);
         if (buffer.empty()) return false;
         return writeBinaryFile(path, buffer);
     }

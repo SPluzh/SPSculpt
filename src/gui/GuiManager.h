@@ -156,11 +156,11 @@ public:
     bool isUnsavedModalOpen() const { return m_unsavedModalOpen; }
 
     // File operations
-    void openScene(Scene& scene);
-    void saveScene(Scene& scene);
-    void saveSceneAs(Scene& scene);
-    void importFile(Scene& scene);
-    void exportFile(Scene& scene);
+    void openScene(Scene& scene, SculptManager* sculpt = nullptr);
+    void saveScene(Scene& scene, SculptManager* sculpt = nullptr);
+    void saveSceneAs(Scene& scene, SculptManager* sculpt = nullptr);
+    void importFile(Scene& scene, SculptManager* sculpt = nullptr);
+    void exportFile(Scene& scene, SculptManager* sculpt = nullptr);
     const std::string& getCurrentScenePath() const { return m_currentScenePath; }
     void setCurrentScenePath(const std::string& path) { m_currentScenePath = path; }
 

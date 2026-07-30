@@ -330,6 +330,26 @@ public:
     bool getMeasureUseDistanceThickness() const { return m_measureUseDistanceThickness; }
     void setMeasureUseDistanceThickness(bool val) { m_measureUseDistanceThickness = val; }
 
+    bool isMeasureVisible(int vpIdx = 0) const { return vpIdx == 1 ? m_isMeasureVisibleV2 : m_isMeasureVisibleV1; }
+    void setMeasureVisible(bool vis, int vpIdx = 0) {
+        if (vpIdx == 1) m_isMeasureVisibleV2 = vis;
+        else m_isMeasureVisibleV1 = vis;
+    }
+    bool getMeasureVisibleV1() const { return m_isMeasureVisibleV1; }
+    void setMeasureVisibleV1(bool vis) { m_isMeasureVisibleV1 = vis; }
+    bool getMeasureVisibleV2() const { return m_isMeasureVisibleV2; }
+    void setMeasureVisibleV2(bool vis) { m_isMeasureVisibleV2 = vis; }
+
+    bool isDividerVisible(int vpIdx = 0) const { return vpIdx == 1 ? m_isDividerVisibleV2 : m_isDividerVisibleV1; }
+    void setDividerVisible(bool vis, int vpIdx = 0) {
+        if (vpIdx == 1) m_isDividerVisibleV2 = vis;
+        else m_isDividerVisibleV1 = vis;
+    }
+    bool getDividerVisibleV1() const { return m_isDividerVisibleV1; }
+    void setDividerVisibleV1(bool vis) { m_isDividerVisibleV1 = vis; }
+    bool getDividerVisibleV2() const { return m_isDividerVisibleV2; }
+    void setDividerVisibleV2(bool vis) { m_isDividerVisibleV2 = vis; }
+
     void clearMeasurements() {
         m_measureSegments.clear();
         m_dividerSegments.clear();
@@ -407,6 +427,11 @@ private:
 
     int m_dividerDivisions = 3; // От 2 до 6
     bool m_measureUseDistanceThickness = true;
+
+    bool m_isMeasureVisibleV1 = true;
+    bool m_isMeasureVisibleV2 = true;
+    bool m_isDividerVisibleV1 = true;
+    bool m_isDividerVisibleV2 = true;
 
     uint32_t m_strokeTargetPolyGroup = 0;
     void filterPolyGroupVertices(std::vector<uint32_t>& pickedVertices, const Mesh* mesh, uint32_t targetGroupId);

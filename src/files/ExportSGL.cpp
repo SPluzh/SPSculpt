@@ -54,7 +54,7 @@ public:
     const std::vector<uint8_t>& getBuffer() const { return m_buffer; }
 };
 
-std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& scene, const AngleRenderer& renderer) {
+std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& scene, const AngleRenderer& renderer, const SculptManager& sculpt) {
     BinaryWriter writer;
     
     // Version 6
@@ -144,16 +144,48 @@ std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& sc
         }
     }
 
-    // Measure tool stubs
-    writer.writeU32(1); // isMeasureVisibleV1 = 1
-    writer.writeU32(1); // isMeasureVisibleV2 = 1
-    writer.writeU32(0); // measureSegments.length = 0
+    auto writeAnchor = [&](const MeasurementAnchor& anchor) {
+        if (anchor.type == MeasurementAnchor::VERTEX && anchor.mesh != nullptr) {
+            writer.writeU32(0); // vertex type
+            int meshIdx = -1;
+            for (size_t m = 0; m < meshes.size(); ++m) {
+                if (meshes[m] == anchor.mesh) {
+                    meshIdx = static_cast<int>(m);
+                    break;
+                }
+            }
+            writer.writeU32(meshIdx >= 0 ? static_cast<uint32_t>(meshIdx) : 0);
+            writer.writeU32(anchor.vertIdx);
+            writer.writeU32(0); // unused padding
+        } else {
+            writer.writeU32(1); // free type
+            writer.writeF32(anchor.worldPos.x);
+            writer.writeF32(anchor.worldPos.y);
+            writer.writeF32(anchor.worldPos.z);
+        }
+    };
 
-    // Divider tool stubs
-    writer.writeU32(1); // isDividerVisibleV1 = 1
-    writer.writeU32(1); // isDividerVisibleV2 = 1
-    writer.writeU32(3); // dividerDivisions = 3
-    writer.writeU32(0); // dividerSegments.length = 0
+    // Measure tool data
+    writer.writeU32(sculpt.getMeasureVisibleV1() ? 1 : 0);
+    writer.writeU32(sculpt.getMeasureVisibleV2() ? 1 : 0);
+    const auto& measureSegments = sculpt.getMeasureSegments();
+    writer.writeU32(static_cast<uint32_t>(measureSegments.size()));
+    for (const auto& seg : measureSegments) {
+        writeAnchor(seg.vertA);
+        writeAnchor(seg.vertB);
+        writer.writeU32(seg.isReference ? 1 : 0);
+    }
+
+    // Divider tool data
+    writer.writeU32(sculpt.getDividerVisibleV1() ? 1 : 0);
+    writer.writeU32(sculpt.getDividerVisibleV2() ? 1 : 0);
+    writer.writeU32(static_cast<uint32_t>(sculpt.getDividerDivisions()));
+    const auto& dividerSegments = sculpt.getDividerSegments();
+    writer.writeU32(static_cast<uint32_t>(dividerSegments.size()));
+    for (const auto& seg : dividerSegments) {
+        writeAnchor(seg.vertA);
+        writeAnchor(seg.vertB);
+    }
 
     return writer.getBuffer();
 }

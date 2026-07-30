@@ -62,7 +62,7 @@ public:
     bool hasData() const { return m_wordOffset * 4 < m_size; }
 };
 
-std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, AngleRenderer& renderer) {
+std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, AngleRenderer& renderer, SculptManager* sculpt) {
     if (buffer.size() < 4) return {};
 
     BinaryReader reader(buffer.data(), buffer.size());
@@ -234,37 +234,81 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
     }
 
     if (version >= 6) {
-        auto readAnchor = [&]() {
+        auto readAnchor = [&]() -> MeasurementAnchor {
+            MeasurementAnchor anchor;
             uint32_t type = reader.readU32();
             if (type == 0) {
-                reader.readU32(); // meshIdx
-                reader.readU32(); // vertIdx
+                anchor.type = MeasurementAnchor::VERTEX;
+                uint32_t meshIdx = reader.readU32();
+                anchor.vertIdx = reader.readU32();
                 reader.readU32(); // skip unused
+                if (meshIdx < meshes.size()) {
+                    anchor.mesh = meshes[meshIdx];
+                } else {
+                    anchor.mesh = nullptr;
+                }
             } else {
-                reader.readF32(); // wx
-                reader.readF32(); // wy
-                reader.readF32(); // wz
+                anchor.type = MeasurementAnchor::FREE;
+                anchor.mesh = nullptr;
+                float wx = reader.readF32();
+                float wy = reader.readF32();
+                float wz = reader.readF32();
+                anchor.worldPos = glm::vec3(wx, wy, wz);
             }
+            return anchor;
         };
 
         // Measure tool
-        reader.readU32(); // isMeasureVisibleV1
-        reader.readU32(); // isMeasureVisibleV2
+        bool isMeasureVisibleV1 = reader.readU32() != 0;
+        bool isMeasureVisibleV2 = reader.readU32() != 0;
         uint32_t nbMeasureSegments = reader.readU32();
+        std::vector<MeasurementSegment> measureSegments;
+        measureSegments.reserve(nbMeasureSegments);
         for (uint32_t s = 0; s < nbMeasureSegments; ++s) {
-            readAnchor();
-            readAnchor();
-            reader.readU32(); // isReference
+            MeasurementSegment seg;
+            seg.vertA = readAnchor();
+            seg.vertB = readAnchor();
+            seg.isReference = reader.readU32() != 0;
+            seg.name = "Measure " + std::to_string(s + 1);
+            measureSegments.push_back(seg);
         }
 
         // Divider tool
-        reader.readU32(); // isDividerVisibleV1
-        reader.readU32(); // isDividerVisibleV2
-        reader.readU32(); // dividerDivisions
+        bool isDividerVisibleV1 = reader.readU32() != 0;
+        bool isDividerVisibleV2 = reader.readU32() != 0;
+        uint32_t dividerDivisions = reader.readU32();
         uint32_t nbDividerSegments = reader.readU32();
+        std::vector<MeasurementSegment> dividerSegments;
+        dividerSegments.reserve(nbDividerSegments);
         for (uint32_t s = 0; s < nbDividerSegments; ++s) {
-            readAnchor();
-            readAnchor();
+            MeasurementSegment seg;
+            seg.vertA = readAnchor();
+            seg.vertB = readAnchor();
+            seg.isReference = false;
+            seg.name = "Divider " + std::to_string(s + 1);
+            dividerSegments.push_back(seg);
+        }
+
+        if (sculpt) {
+            sculpt->setMeasureVisibleV1(isMeasureVisibleV1);
+            sculpt->setMeasureVisibleV2(isMeasureVisibleV2);
+            sculpt->getMeasureSegments() = std::move(measureSegments);
+
+            sculpt->setDividerVisibleV1(isDividerVisibleV1);
+            sculpt->setDividerVisibleV2(isDividerVisibleV2);
+            sculpt->setDividerDivisions(dividerDivisions > 0 ? (int)dividerDivisions : 3);
+            sculpt->getDividerSegments() = std::move(dividerSegments);
+        }
+    } else {
+        if (sculpt) {
+            sculpt->setMeasureVisibleV1(true);
+            sculpt->setMeasureVisibleV2(true);
+            sculpt->getMeasureSegments().clear();
+
+            sculpt->setDividerVisibleV1(true);
+            sculpt->setDividerVisibleV2(true);
+            sculpt->setDividerDivisions(3);
+            sculpt->getDividerSegments().clear();
         }
     }
 

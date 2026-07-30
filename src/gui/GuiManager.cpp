@@ -184,12 +184,12 @@ GuiManager::~GuiManager() {
     shutdown();
 }
 
-void GuiManager::openScene(Scene& scene) {
+void GuiManager::openScene(Scene& scene, SculptManager* sculpt) {
     std::string path = FileDialog::openFile(FileDialog::getImportFilters(), "Open File");
     if (!path.empty()) {
         snprintf(m_importPath, sizeof(m_importPath), "%s", path.c_str());
         scene.clear();
-        auto newMeshes = FileManager::importFiles(path, &scene, m_renderer);
+        auto newMeshes = FileManager::importFiles(path, &scene, m_renderer, sculpt);
         for (auto* mesh : newMeshes) {
             scene.addMesh(mesh);
         }
@@ -206,17 +206,17 @@ void GuiManager::openScene(Scene& scene) {
     }
 }
 
-void GuiManager::saveScene(Scene& scene) {
+void GuiManager::saveScene(Scene& scene, SculptManager* sculpt) {
     if (m_currentScenePath.empty()) {
-        saveSceneAs(scene);
+        saveSceneAs(scene, sculpt);
     } else {
-        if (FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer)) {
+        if (FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer, sculpt)) {
             scene.setModified(false);
         }
     }
 }
 
-void GuiManager::saveSceneAs(Scene& scene) {
+void GuiManager::saveSceneAs(Scene& scene, SculptManager* sculpt) {
     static const std::vector<FileDialog::FilterSpec> sglFilters = {
         { "SculptGL Scene (*.sgl)", "*.sgl" },
         { "All Files (*.*)", "*.*" }
@@ -225,7 +225,7 @@ void GuiManager::saveSceneAs(Scene& scene) {
     if (!path.empty()) {
         m_currentScenePath = path;
         snprintf(m_exportPath, sizeof(m_exportPath), "%s", path.c_str());
-        if (FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer)) {
+        if (FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer, sculpt)) {
             scene.setModified(false);
         }
     }
@@ -288,11 +288,11 @@ void GuiManager::drawUnsavedChangesModal(Scene& scene, bool& quitApp) {
     }
 }
 
-void GuiManager::importFile(Scene& scene) {
+void GuiManager::importFile(Scene& scene, SculptManager* sculpt) {
     std::string path = FileDialog::openFile(FileDialog::getImportFilters(), "Import File");
     if (!path.empty()) {
         snprintf(m_importPath, sizeof(m_importPath), "%s", path.c_str());
-        auto newMeshes = FileManager::importFiles(path, &scene, m_renderer);
+        auto newMeshes = FileManager::importFiles(path, &scene, m_renderer, sculpt);
         for (auto* mesh : newMeshes) {
             scene.addMesh(mesh);
         }
@@ -303,11 +303,11 @@ void GuiManager::importFile(Scene& scene) {
     }
 }
 
-void GuiManager::exportFile(Scene& scene) {
+void GuiManager::exportFile(Scene& scene, SculptManager* sculpt) {
     std::string path = FileDialog::saveFile(FileDialog::getExportFilters(), "sgl", "Export File");
     if (!path.empty()) {
         snprintf(m_exportPath, sizeof(m_exportPath), "%s", path.c_str());
-        FileManager::exportMeshes(path, scene.getMeshes(), &scene, m_renderer);
+        FileManager::exportMeshes(path, scene.getMeshes(), &scene, m_renderer, sculpt);
     }
 }
 
@@ -1593,6 +1593,75 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 }
                 ImGui::PopID();
             }
+
+            // Measure Tool Row in Outliner
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::PushID(88801);
+            bool isMeasureToolActive = (sculpt.getBrush() == BRUSH_MEASURE);
+            if (ImGui::Checkbox("##ActMeasureTool", &isMeasureToolActive)) {
+                if (isMeasureToolActive) sculpt.setTool(BRUSH_MEASURE);
+            }
+            ImGui::PopID();
+
+            ImGui::TableNextColumn();
+            if (ImGui::Selectable("Measure Tool", isMeasureToolActive)) {
+                sculpt.setTool(BRUSH_MEASURE);
+            }
+
+            ImGui::TableNextColumn();
+            ImGui::Text("%d segs", (int)sculpt.getMeasureSegments().size());
+
+            ImGui::TableNextColumn();
+            ImGui::PushID(88802);
+            bool mV1 = sculpt.getMeasureVisibleV1();
+            if (ImGui::Checkbox("##MeasureV1", &mV1)) {
+                sculpt.setMeasureVisibleV1(mV1);
+            }
+            ImGui::PopID();
+
+            ImGui::TableNextColumn();
+            ImGui::PushID(88803);
+            bool mV2 = sculpt.getMeasureVisibleV2();
+            if (ImGui::Checkbox("##MeasureV2", &mV2)) {
+                sculpt.setMeasureVisibleV2(mV2);
+            }
+            ImGui::PopID();
+
+            // Divider Tool Row in Outliner
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::PushID(88804);
+            bool isDividerToolActive = (sculpt.getBrush() == BRUSH_DIVIDER);
+            if (ImGui::Checkbox("##ActDividerTool", &isDividerToolActive)) {
+                if (isDividerToolActive) sculpt.setTool(BRUSH_DIVIDER);
+            }
+            ImGui::PopID();
+
+            ImGui::TableNextColumn();
+            if (ImGui::Selectable("Divider Tool", isDividerToolActive)) {
+                sculpt.setTool(BRUSH_DIVIDER);
+            }
+
+            ImGui::TableNextColumn();
+            ImGui::Text("%d segs", (int)sculpt.getDividerSegments().size());
+
+            ImGui::TableNextColumn();
+            ImGui::PushID(88805);
+            bool dV1 = sculpt.getDividerVisibleV1();
+            if (ImGui::Checkbox("##DividerV1", &dV1)) {
+                sculpt.setDividerVisibleV1(dV1);
+            }
+            ImGui::PopID();
+
+            ImGui::TableNextColumn();
+            ImGui::PushID(88806);
+            bool dV2 = sculpt.getDividerVisibleV2();
+            if (ImGui::Checkbox("##DividerV2", &dV2)) {
+                sculpt.setDividerVisibleV2(dV2);
+            }
+            ImGui::PopID();
+
             ImGui::EndTable();
         }
         ImGui::EndChild();
@@ -3360,6 +3429,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         }
 
         for (int vp = 0; vp < numViewports; ++vp) {
+            if (isDivider ? !sculpt.isDividerVisible(vp) : !sculpt.isMeasureVisible(vp)) continue;
             const Camera* camPtr = isSplit ? scene.getCameraByIndex(vp) : &scene.getCamera();
             if (!camPtr) continue;
             const Camera& camera = *camPtr;
@@ -4660,20 +4730,20 @@ void GuiManager::drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRend
     float scale = getUiScale();
     if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("Open...", "Ctrl+O")) {
-            openScene(scene);
+            openScene(scene, &sculpt);
         }
         if (ImGui::MenuItem("Save", "Ctrl+S")) {
-            saveScene(scene);
+            saveScene(scene, &sculpt);
         }
         if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S")) {
-            saveSceneAs(scene);
+            saveSceneAs(scene, &sculpt);
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Import File...", "Ctrl+I")) {
-            importFile(scene);
+            importFile(scene, &sculpt);
         }
         if (ImGui::MenuItem("Export File...", "Ctrl+E")) {
-            exportFile(scene);
+            exportFile(scene, &sculpt);
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Load Default Sphere")) {
