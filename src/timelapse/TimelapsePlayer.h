@@ -4,6 +4,7 @@
 #include "editing/undo/UndoEntry.h"
 #include "scene/Scene.h"
 #include "render/AngleRenderer.h"
+#include "timelapse/TimelapseSerializer.h"
 #include <vector>
 #include <memory>
 #include <string>
@@ -43,6 +44,12 @@ public:
     void pause();
     void togglePlayPause(Scene& scene);
     void update(float deltaTime, Scene& scene);
+
+    // Save current player recording timeline to a .stlapse file
+    bool saveTimelapse(const std::string& filepath, const TimelapseMetadata& metadata = {});
+
+    // Load a .stlapse file into player and set initial scene state
+    bool loadTimelapse(const std::string& filepath, Scene& scene, TimelapseMetadata* outMetadata = nullptr);
 
     // Export PNG frames sequence to disk
     bool exportFrames(Scene& scene, AngleRenderer& renderer,

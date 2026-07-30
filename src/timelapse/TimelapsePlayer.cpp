@@ -231,3 +231,58 @@ void TimelapsePlayer::rebuildMeshState(Scene& scene) {
         m->isDirty = true;
     }
 }
+
+bool TimelapsePlayer::saveTimelapse(const std::string& filepath, const TimelapseMetadata& metadata) {
+    if (!m_isOpen || m_timeline.empty()) {
+        sculpt_log("[TimelapsePlayer] Cannot save timelapse: player is not open or timeline is empty.\n");
+        return false;
+    }
+
+    return TimelapseSerializer::saveToFile(filepath, m_initialState, m_timeline, metadata);
+}
+
+bool TimelapsePlayer::loadTimelapse(const std::string& filepath, Scene& scene, TimelapseMetadata* outMetadata) {
+    HistoryState loadedInitialState;
+    std::vector<std::unique_ptr<UndoEntry>> loadedTimeline;
+    TimelapseMetadata meta;
+
+    if (!TimelapseSerializer::loadFromFile(filepath, loadedInitialState, loadedTimeline, meta)) {
+        sculpt_log("[TimelapsePlayer] Failed to load timelapse from file: %s\n", filepath.c_str());
+        return false;
+    }
+
+    if (outMetadata) {
+        *outMetadata = meta;
+    }
+
+    m_timeline = std::move(loadedTimeline);
+    m_initialState = std::move(loadedInitialState);
+    m_totalSteps = static_cast<int>(m_timeline.size());
+    m_savedStepOnOpen = m_totalSteps;
+
+    m_steps.clear();
+    m_steps.reserve(m_totalSteps);
+    for (int i = 0; i < m_totalSteps; ++i) {
+        TimelineStep step;
+        step.stepIndex = i;
+        if (m_timeline[i]) {
+            step.type = m_timeline[i]->getType();
+            step.description = m_timeline[i]->getDescription();
+        } else {
+            step.type = UndoEntryType::Sculpt;
+            step.description = "Unknown Step";
+        }
+        m_steps.push_back(step);
+    }
+
+    scene.restoreState(m_initialState);
+    m_currentStep = 0;
+    m_isOpen = true;
+    m_state = State::PAUSED;
+    m_accumTime = 0.0f;
+
+    rebuildMeshState(scene);
+    sculpt_log("[TimelapsePlayer] Loaded .stlapse file with %d steps successfully.\n", m_totalSteps);
+    return true;
+}
+

@@ -5937,12 +5937,25 @@ void GuiManager::drawTimelapsePanel(Scene& scene, AngleRenderer& renderer) {
 
             size_t undoCount = g_undoManager.getUndoStack().size();
             if (undoCount == 0) {
-                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "No sculpt history available. Sculpt on a mesh to build history!");
+                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "No sculpt history in RAM.");
             } else {
                 ImGui::Text("Recorded session steps in history: %zu", undoCount);
                 ImGui::Spacing();
-                if (ImGui::Button("Open Timelapse Player", ImVec2(220.0f * scale, 36.0f * scale))) {
+                if (ImGui::Button("Open History in Player", ImVec2(200.0f * scale, 36.0f * scale))) {
                     m_timelapsePlayer.open(g_undoManager, scene);
+                }
+                ImGui::SameLine();
+            }
+
+            static const std::vector<FileDialog::FilterSpec> stlapseFilters = {
+                {"Sculpt Timelapse (*.stlapse)", "*.stlapse"}
+            };
+
+            if (ImGui::Button("Load .stlapse File...", ImVec2(180.0f * scale, 36.0f * scale))) {
+                std::string path = FileDialog::openFile(stlapseFilters, "Open Sculpt Timelapse");
+                if (!path.empty()) {
+                    TimelapseMetadata meta;
+                    m_timelapsePlayer.loadTimelapse(path, scene, &meta);
                 }
             }
         } else {
@@ -6003,7 +6016,7 @@ void GuiManager::drawTimelapsePanel(Scene& scene, AngleRenderer& renderer) {
             ImGui::Separator();
             ImGui::Spacing();
 
-            // Options & Export
+            // Options & Export & Save .stlapse
             float playSpeed = m_timelapsePlayer.getPlaySpeed();
             ImGui::SetNextItemWidth(140.0f * scale);
             if (ImGui::SliderFloat("Speed (steps/sec)", &playSpeed, 1.0f, 60.0f, "%.1f")) {
@@ -6015,13 +6028,29 @@ void GuiManager::drawTimelapsePanel(Scene& scene, AngleRenderer& renderer) {
             ImGui::InputInt("Steps / Frame", &m_exportStepsPerFrame);
             if (m_exportStepsPerFrame < 1) m_exportStepsPerFrame = 1;
 
+            static const std::vector<FileDialog::FilterSpec> stlapseFilters = {
+                {"Sculpt Timelapse (*.stlapse)", "*.stlapse"}
+            };
+
             ImGui::SameLine();
-            if (ImGui::Button("Export PNG Sequence...", ImVec2(180.0f * scale, 26.0f * scale))) {
+            if (ImGui::Button("Save .stlapse...", ImVec2(130.0f * scale, 26.0f * scale))) {
+                std::string path = FileDialog::saveFile(stlapseFilters, "stlapse", "Save Sculpt Timelapse");
+                if (!path.empty()) {
+                    TimelapseMetadata meta;
+                    meta.title = "Sculpt Timelapse";
+                    meta.totalStrokes = m_timelapsePlayer.getTotalSteps();
+                    m_timelapsePlayer.saveTimelapse(path, meta);
+                }
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save entire timelapse recording to a .stlapse binary file");
+
+            ImGui::SameLine();
+            if (ImGui::Button("Export PNGs...", ImVec2(130.0f * scale, 26.0f * scale))) {
                 ImGui::OpenPopup("Export Timelapse PNGs");
             }
 
             ImGui::SameLine();
-            if (ImGui::Button("Close Player", ImVec2(110.0f * scale, 26.0f * scale))) {
+            if (ImGui::Button("Close Player", ImVec2(100.0f * scale, 26.0f * scale))) {
                 m_timelapsePlayer.close(g_undoManager, scene);
             }
 

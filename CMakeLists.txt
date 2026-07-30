@@ -105,6 +105,7 @@ add_executable(SPSculpt
     src/sculpt/ArmatureGraph.cpp
     # timelapse
     src/timelapse/TimelapsePlayer.cpp
+    src/timelapse/TimelapseSerializer.cpp
     # brushes
     src/brushes/BrushPreset.cpp
     src/brushes/BrushPresetManager.cpp
