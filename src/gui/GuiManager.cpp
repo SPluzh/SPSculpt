@@ -4990,7 +4990,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.75f, 0.35f, 0.00f, 1.0f));
         }
 
-        if (ImGui::Button(ICON_LC_BOX "##hudVertVoxelRemesh", ImVec2(squareSize, squareSize))) {
+        if (ImGui::Button(ICON_LC_BOXES "##hudVertVoxelRemesh", ImVec2(squareSize, squareSize))) {
             performRemesh(scene);
         }
         if (ImGui::IsItemHovered()) {
