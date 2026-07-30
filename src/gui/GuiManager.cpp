@@ -4980,7 +4980,9 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
 
         ImGui::Separator();
 
-        // Voxel Remesh Button
+        // Split-button Voxel Remesh: Main Box button + Arrow button attached with 0 gap
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 0.0f));
+
         bool runningRemesh = isRemeshRunning();
         if (runningRemesh) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.45f, 0.05f, 0.8f));
@@ -4994,18 +4996,21 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Voxel Remesh (Resolution: %d)", m_remeshResolution);
         }
-        if (runningRemesh) {
-            ImGui::PopStyleColor(3);
-        }
 
-        // Half-Height Arrow Button for Remesh Settings Popup
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, ImGui::GetStyle().FramePadding.y));
-        bool openRemeshPopup = ImGui::Button(ICON_LC_CHEVRON_DOWN "##hudVertRemeshArrow", ImVec2(squareSize, squareSize * 0.5f));
+        // Half-Height Arrow Button attached directly below (0 gap)
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 0.0f));
+        bool openRemeshPopup = ImGui::Button(ICON_LC_CHEVRON_DOWN "##hudVertRemeshArrow", ImVec2(squareSize, squareSize * 0.45f));
         ImGui::PopStyleVar();
 
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Remesh Settings");
         }
+
+        if (runningRemesh) {
+            ImGui::PopStyleColor(3);
+        }
+
+        ImGui::PopStyleVar(); // Restore ItemSpacing
 
         ImVec2 arrowMin = ImGui::GetItemRectMin();
         ImVec2 arrowMax = ImGui::GetItemRectMax();
