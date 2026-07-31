@@ -1905,7 +1905,7 @@ void AngleRenderer::drawClipCurve() {
     GLint locRef2DMode = glGetUniformLocation(m_selectionProgram, "uRef2DMode");
     if (locRef2DMode != -1) glUniform1i(locRef2DMode, 0);
 
-    glm::vec3 curveColor = m_clipCurveAlt ? glm::vec3(1.0f, 0.4f, 0.1f) : glm::vec3(0.0f, 0.85f, 1.0f);
+    glm::vec3 curveColor = m_clipCurveAlt ? glm::vec3(1.0f, 0.5f, 0.1f) : glm::vec3(1.0f, 0.2f, 0.2f);
     glUniform3fv(locColor, 1, &curveColor[0]);
 
     glm::mat4 identityMVP(1.0f);
