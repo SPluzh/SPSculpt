@@ -4284,6 +4284,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     drawUndoDiagPanel(scene);
     drawDebugLogPanel();
     drawTimelapsePanel(scene, renderer);
+    drawPreferencesPanel(sculpt, scene, renderer);
     drawUnsavedChangesModal(scene, m_pendingQuit);
     updateWindowTitle(window, scene.isModified());
 
@@ -4638,9 +4639,11 @@ bool GuiManager::saveSettings(IniFile& ini) {
     ini.setBool(panelSec, "showFloatingIsland", m_showFloatingIsland);
     ini.setBool(panelSec, "showSymmetryPanel", m_showSymmetryPanel);
     ini.setBool(panelSec, "showTimelapsePanel", m_showTimelapsePanel);
+    ini.setBool(panelSec, "showPreferencesPanel", m_showPreferencesPanel);
 
     std::string genSec = "GuiGeneral";
     ini.setFloat(genSec, "uiScaleMultiplier", m_uiScale);
+    ini.setFloat(genSec, "floatingIslandScaleMultiplier", m_floatingIslandScale);
     ini.setFloat(genSec, "gizmoSize", m_gizmoSize);
     ini.setBool(genSec, "fpsLimitEnabled", m_fpsLimitEnabled);
     ini.setInt(genSec, "fpsLimit", m_fpsLimit);
@@ -4681,6 +4684,7 @@ bool GuiManager::loadSettings(const IniFile& ini) {
         if (ini.hasKey(panelSec, "showFloatingIsland")) m_showFloatingIsland = ini.getBool(panelSec, "showFloatingIsland");
         if (ini.hasKey(panelSec, "showSymmetryPanel")) m_showSymmetryPanel = ini.getBool(panelSec, "showSymmetryPanel");
         if (ini.hasKey(panelSec, "showTimelapsePanel")) m_showTimelapsePanel = ini.getBool(panelSec, "showTimelapsePanel");
+        if (ini.hasKey(panelSec, "showPreferencesPanel")) m_showPreferencesPanel = ini.getBool(panelSec, "showPreferencesPanel");
     }
 
     std::string genSec = "GuiGeneral";
@@ -4690,6 +4694,11 @@ bool GuiManager::loadSettings(const IniFile& ini) {
             m_uiScale = ini.getFloat(genSec, "uiScaleMultiplier", 1.0f);
             if (m_uiScale < 0.5f) m_uiScale = 0.5f;
             if (m_uiScale > 2.5f) m_uiScale = 2.5f;
+        }
+        if (ini.hasKey(genSec, "floatingIslandScaleMultiplier")) {
+            m_floatingIslandScale = ini.getFloat(genSec, "floatingIslandScaleMultiplier", 1.0f);
+            if (m_floatingIslandScale < 0.5f) m_floatingIslandScale = 0.5f;
+            if (m_floatingIslandScale > 2.5f) m_floatingIslandScale = 2.5f;
         }
         if (ini.hasKey(genSec, "gizmoSize")) {
             m_gizmoSize = ini.getFloat(genSec, "gizmoSize", 0.10f);
@@ -4868,41 +4877,22 @@ void GuiManager::drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRend
 #ifdef _WIN32
         ImGui::MenuItem("Tablet Diagnostics", nullptr, &m_showTabletDiagPanel);
 #endif
+        ImGui::Separator();
+        ImGui::MenuItem("Preferences & App Settings", nullptr, &m_showPreferencesPanel);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Options")) {
-        ImGui::SetNextItemWidth(120.0f * scale);
-        ImGui::SliderFloat("UI Scale", &m_uiScale, 0.5f, 2.5f, "%.2fx");
-        if (m_uiScale < 0.5f) m_uiScale = 0.5f;
-        if (m_uiScale > 2.5f) m_uiScale = 2.5f;
-
-        if (ImGui::IsItemDeactivatedAfterEdit()) {
-            m_pendingUiScaleRefresh = true;
+        if (ImGui::MenuItem("Preferences & App Settings...", "Ctrl+,")) {
+            m_showPreferencesPanel = true;
         }
-
-        ImGui::SetNextItemWidth(120.0f * scale);
-        ImGui::SliderFloat("Gizmo Size", &m_gizmoSize, 0.04f, 0.25f, "%.2f");
-        if (m_gizmoSize < 0.04f) m_gizmoSize = 0.04f;
-        if (m_gizmoSize > 0.25f) m_gizmoSize = 0.25f;
-
-        ImGui::Separator();
-        ImGui::Checkbox("Limit FPS", &m_fpsLimitEnabled);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cap the render loop to the target FPS to reduce GPU load");
-        if (m_fpsLimitEnabled) {
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(80.0f * scale);
-            ImGui::SliderInt("Target FPS", &m_fpsLimit, 15, 240);
-            if (m_fpsLimit < 15) m_fpsLimit = 15;
-            if (m_fpsLimit > 240) m_fpsLimit = 240;
-        }
-
         ImGui::EndMenu();
     }
 }
 
 void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer) {
     if (!m_showFloatingIsland) return;
-    float scale = getUiScale();
+    float scale = getFloatingIslandScale();
+    float fontScale = m_floatingIslandScale / std::max(0.01f, m_uiScale);
 
     ImGuiViewport* viewport = ImGui::GetMainViewport();
 
@@ -4911,6 +4901,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
     ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.01f, 0.52f, 0.45f, 0.40f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f * scale);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f * scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(3.0f * scale, 3.0f * scale));
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                              ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse |
@@ -4926,6 +4917,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f * scale, 6.0f * scale));
 
     if (ImGui::Begin("##FloatingIslandBrushVert", nullptr, flags)) {
+        ImGui::SetWindowFontScale(fontScale);
         float squareSize = ImGui::GetFrameHeight();
         float vSliderH = 80.0f * scale;
 
@@ -4939,6 +4931,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Brush: %s", brushName);
 
         if (ImGui::BeginPopup("##hudVertBrushPopup")) {
+            ImGui::SetWindowFontScale(fontScale);
             for (int i = 0; i < BRUSH_COUNT; i++) {
                 BrushType bType = static_cast<BrushType>(i);
                 bool isSelected = (currentBrush == bType);
@@ -5039,9 +5032,9 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
 
         // Half-Height Arrow Button attached directly below (0 gap)
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 0.0f));
-        ImGui::SetWindowFontScale(0.65f);
+        ImGui::SetWindowFontScale(fontScale * 0.65f);
         bool openRemeshPopup = ImGui::Button(ICON_LC_CHEVRON_DOWN "##hudVertRemeshArrow", ImVec2(squareSize, squareSize * 0.45f));
-        ImGui::SetWindowFontScale(1.0f);
+        ImGui::SetWindowFontScale(fontScale);
         ImGui::PopStyleVar();
 
         if (ImGui::IsItemHovered()) {
@@ -5063,6 +5056,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
 
         ImGui::SetNextWindowPos(ImVec2(arrowMax.x + 6.0f * scale, arrowMin.y), ImGuiCond_Appearing);
         if (ImGui::BeginPopup("##hudVertRemeshPopup")) {
+            ImGui::SetWindowFontScale(fontScale);
             ImGui::TextUnformatted("Voxel Remesh");
             ImGui::Separator();
             ImGui::Text("Resolution: %d", m_remeshResolution);
@@ -5100,6 +5094,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Main Menu (File, Panels, Options)");
 
         if (ImGui::BeginPopup("##hudVertAppMenuPopup")) {
+            ImGui::SetWindowFontScale(fontScale);
             drawAppMenuItems(sculpt, scene, renderer);
             ImGui::EndPopup();
         }
@@ -5118,6 +5113,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f * scale, 0.0f));
 
     if (ImGui::Begin("##FloatingIslandHUD_v2", nullptr, flags)) {
+        ImGui::SetWindowFontScale(fontScale);
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(1.0f * scale, 0.0f));
 
         float squareBtnSize = ImGui::GetFrameHeight();
@@ -5339,9 +5335,9 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         // Narrow arrow button flush against Perspective button (0 gap, 0 padding, half square width)
         ImGui::SameLine(0.0f, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, ImGui::GetStyle().FramePadding.y));
-        ImGui::SetWindowFontScale(0.65f);
+        ImGui::SetWindowFontScale(fontScale * 0.65f);
         bool openFovPopup = ImGui::Button(ICON_LC_CHEVRON_DOWN "##hudFovArrow", halfSquareBtn);
-        ImGui::SetWindowFontScale(1.0f);
+        ImGui::SetWindowFontScale(fontScale);
         ImGui::PopStyleVar();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("FOV Settings");
 
@@ -5360,6 +5356,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
 
         ImGui::SetNextWindowPos(ImVec2(splitCenterX, splitBottomY), ImGuiCond_Appearing, ImVec2(0.5f, 0.0f));
         if (ImGui::BeginPopup("##hudFovPopup")) {
+            ImGui::SetWindowFontScale(fontScale);
             float fov = scene.getCamera().getFov();
             ImGui::TextUnformatted("FOV:");
             ImGui::SameLine();
@@ -5408,9 +5405,9 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
 
         ImGui::SameLine(0.0f, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, ImGui::GetStyle().FramePadding.y));
-        ImGui::SetWindowFontScale(0.65f);
+        ImGui::SetWindowFontScale(fontScale * 0.65f);
         bool openSplitPopup = ImGui::Button(ICON_LC_CHEVRON_DOWN "##hudSplitViewArrow", halfSquareBtn);
-        ImGui::SetWindowFontScale(1.0f);
+        ImGui::SetWindowFontScale(fontScale);
         ImGui::PopStyleVar();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Split View Options");
 
@@ -5429,6 +5426,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
 
         ImGui::SetNextWindowPos(ImVec2(sCenterX, sBottomY), ImGuiCond_Appearing, ImVec2(0.5f, 0.0f));
         if (ImGui::BeginPopup("##hudSplitViewPopup")) {
+            ImGui::SetWindowFontScale(fontScale);
             ImGui::TextUnformatted("Split View:");
             int curSplitMode = static_cast<int>(scene.getSplitMode());
             bool changed = false;
@@ -5483,7 +5481,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
     ImGui::End();
 
     ImGui::PopStyleVar(2); // WindowPadding, ItemSpacing
-    ImGui::PopStyleVar(2); // WindowRounding, FrameRounding
+    ImGui::PopStyleVar(3); // WindowRounding, FrameRounding, FramePadding
     ImGui::PopStyleColor(2); // WindowBg, Border
 }
 
@@ -6089,6 +6087,154 @@ void GuiManager::drawTimelapsePanel(Scene& scene, AngleRenderer& renderer) {
 
                 ImGui::EndPopup();
             }
+        }
+    }
+    ImGui::End();
+}
+
+void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer) {
+    if (!m_showPreferencesPanel) return;
+
+    float scale = getUiScale();
+
+    ImGui::SetNextWindowPos(ImVec2(120.0f * scale, 120.0f * scale), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(480.0f * scale, 420.0f * scale), ImGuiCond_FirstUseEver);
+
+    if (ImGui::Begin("Preferences & Application Settings", &m_showPreferencesPanel, ImGuiWindowFlags_NoCollapse)) {
+        if (ImGui::BeginTabBar("##PreferencesTabs")) {
+
+            // 1. Interface & Display Tab
+            if (ImGui::BeginTabItem("Interface & Display")) {
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Scaling & Layout");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                // Global UI Scale
+                ImGui::SetNextItemWidth(180.0f * scale);
+                if (ImGui::SliderFloat("Global UI Scale", &m_uiScale, 0.5f, 2.5f, "%.2fx")) {
+                    if (m_uiScale < 0.5f) m_uiScale = 0.5f;
+                    if (m_uiScale > 2.5f) m_uiScale = 2.5f;
+                }
+                if (ImGui::IsItemDeactivatedAfterEdit()) {
+                    m_pendingUiScaleRefresh = true;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Reset UI Scale")) {
+                    m_uiScale = 1.0f;
+                    m_pendingUiScaleRefresh = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset Global UI scale multiplier to default (1.0x)");
+
+                ImGui::Spacing();
+
+                // Floating Island HUD Scale
+                ImGui::SetNextItemWidth(180.0f * scale);
+                if (ImGui::SliderFloat("Floating HUD Scale", &m_floatingIslandScale, 0.5f, 2.5f, "%.2fx")) {
+                    if (m_floatingIslandScale < 0.5f) m_floatingIslandScale = 0.5f;
+                    if (m_floatingIslandScale > 2.5f) m_floatingIslandScale = 2.5f;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Reset HUD Scale")) {
+                    m_floatingIslandScale = 1.0f;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset Floating Island HUD scale multiplier to default (1.0x)");
+
+                ImGui::Spacing();
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Gizmo & Viewport Overlays");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                ImGui::SetNextItemWidth(180.0f * scale);
+                ImGui::SliderFloat("Transform Gizmo Size", &m_gizmoSize, 0.04f, 0.25f, "%.2f");
+                if (m_gizmoSize < 0.04f) m_gizmoSize = 0.04f;
+                if (m_gizmoSize > 0.25f) m_gizmoSize = 0.25f;
+
+                ImGui::Spacing();
+                ImGui::Checkbox("Show Floating Island HUD", &m_showFloatingIsland);
+                ImGui::Checkbox("Show Navigation Cube", &m_showGizmoCube);
+
+                ImGui::EndTabItem();
+            }
+
+            // 2. Performance Tab
+            if (ImGui::BeginTabItem("Performance")) {
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Frame Rate Control");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                ImGui::Checkbox("Limit Render Frame Rate (FPS)", &m_fpsLimitEnabled);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cap the render loop to the target FPS to reduce GPU load and battery usage");
+
+                if (m_fpsLimitEnabled) {
+                    ImGui::SetNextItemWidth(180.0f * scale);
+                    ImGui::SliderInt("Target FPS Cap", &m_fpsLimit, 15, 240, "%d FPS");
+                    if (m_fpsLimit < 15) m_fpsLimit = 15;
+                    if (m_fpsLimit > 240) m_fpsLimit = 240;
+                }
+
+                ImGui::Spacing();
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Statistics");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                ImGui::Text("Current Measured Frame Rate: %d FPS", m_fpsValue);
+
+                ImGui::EndTabItem();
+            }
+
+            // 3. Undo & System Tab
+            if (ImGui::BeginTabItem("Undo & System")) {
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Undo History Allocation");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                float maxMemGB = (float)g_undoManager.getMaxMemoryGB();
+                ImGui::SetNextItemWidth(180.0f * scale);
+                if (ImGui::SliderFloat("Max RAM Limit (GB)", &maxMemGB, 0.5f, 16.0f, "%.1f GB")) {
+                    g_undoManager.setMaxMemoryGB((double)maxMemGB);
+                }
+
+                int maxEntries = (int)g_undoManager.getMaxEntries();
+                ImGui::SetNextItemWidth(180.0f * scale);
+                if (ImGui::SliderInt("Max Undo History Steps", &maxEntries, 5, 200, "%d steps")) {
+                    g_undoManager.setMaxEntries((size_t)maxEntries);
+                }
+
+                ImGui::Spacing();
+                ImGui::Text("Current Memory Used: %.2f MB (%zu entries)",
+                    (double)g_undoManager.getTotalMemoryUsage() / (1024.0 * 1024.0), g_undoManager.getUndoCount());
+
+                ImGui::Spacing();
+                if (ImGui::Button("Clear Undo History")) {
+                    g_undoManager.clear();
+                }
+
+                ImGui::EndTabItem();
+            }
+
+            ImGui::EndTabBar();
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (ImGui::Button("Save Settings", ImVec2(130.0f * scale, 28.0f * scale))) {
+            IniFile ini;
+            saveSettings(ini);
+            sculpt.saveSettings(ini);
+            ini.save("app_settings.cfg");
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save settings to app_settings.cfg");
+
+        ImGui::SameLine();
+        if (ImGui::Button("Close", ImVec2(100.0f * scale, 28.0f * scale))) {
+            m_showPreferencesPanel = false;
         }
     }
     ImGui::End();

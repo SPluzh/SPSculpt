@@ -49,6 +49,7 @@ private:
     bool m_showDebugLogPanel = false;
     bool m_showFloatingIsland = true;
     bool m_showTimelapsePanel = false;
+    bool m_showPreferencesPanel = false;
 
     // Timelapse export settings
     int m_exportStepsPerFrame = 1;
@@ -78,6 +79,7 @@ private:
     float m_gizmoSize = 0.10f;
     float m_dpiScale = 1.0f;
     float m_uiScale = 1.0f;
+    float m_floatingIslandScale = 1.0f;
     bool m_pendingUiScaleRefresh = false;
     SDL_Window* m_window = nullptr;
 
@@ -90,6 +92,9 @@ private:
 
     void rebuildFontsAndStyles();
     float getUiScale() const { return m_dpiScale * m_uiScale; }
+    float getFloatingIslandScaleMultiplier() const { return m_floatingIslandScale; }
+    void setFloatingIslandScaleMultiplier(float val) { m_floatingIslandScale = std::max(0.5f, std::min(val, 2.5f)); }
+    float getFloatingIslandScale() const { return m_dpiScale * m_floatingIslandScale; }
 
     // File path state
     std::string m_currentScenePath = "";
@@ -141,6 +146,7 @@ private:
     void updateWindowTitle(SDL_Window* window, bool isModified);
     void drawUnsavedChangesModal(Scene& scene, bool& quitApp);
     void drawTimelapsePanel(Scene& scene, AngleRenderer& renderer);
+    void drawPreferencesPanel(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer);
 
 public:
     GuiManager();
@@ -194,6 +200,10 @@ public:
     void toggleDebugLogPanel() { m_showDebugLogPanel = !m_showDebugLogPanel; }
     void toggleFloatingIsland() { m_showFloatingIsland = !m_showFloatingIsland; }
     void toggleTimelapsePanel() { m_showTimelapsePanel = !m_showTimelapsePanel; }
+    void togglePreferencesPanel() { m_showPreferencesPanel = !m_showPreferencesPanel; }
+
+    bool getShowPreferencesPanel() const { return m_showPreferencesPanel; }
+    void setShowPreferencesPanel(bool show) { m_showPreferencesPanel = show; }
 
     bool getShowTimelapsePanel() const { return m_showTimelapsePanel; }
     void setShowTimelapsePanel(bool show) { m_showTimelapsePanel = show; }
