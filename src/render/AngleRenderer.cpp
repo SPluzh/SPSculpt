@@ -1848,6 +1848,7 @@ void AngleRenderer::drawClipCurve() {
     const float ARROW_SPACING = 35.0f; // pixels between arrows
     const float ARROW_LENGTH  = 16.0f; // length of arrow stem in pixels
     const float WING_SIZE     = 6.0f;  // size of arrow head wings in pixels
+    const float LINE_OFFSET   = 5.0f;  // offset gap in pixels from the main curve line
 
     float distSinceLastArrow = ARROW_SPACING * 0.5f; // start with an arrow near beginning
 
@@ -1868,9 +1869,9 @@ void AngleRenderer::drawClipCurve() {
             t += step;
             distSinceLastArrow = 0.0f;
 
-            glm::vec2 pLine = pA + t * segDir;
-            glm::vec2 pTip   = pLine;
-            glm::vec2 pStart = pLine - clipNormal * ARROW_LENGTH;
+            glm::vec2 pLine  = pA + t * segDir;
+            glm::vec2 pTip   = pLine - clipNormal * LINE_OFFSET;
+            glm::vec2 pStart = pTip - clipNormal * ARROW_LENGTH;
             glm::vec2 wing1  = pTip - clipNormal * WING_SIZE + segDir * (WING_SIZE * 0.7f);
             glm::vec2 wing2  = pTip - clipNormal * WING_SIZE - segDir * (WING_SIZE * 0.7f);
 
