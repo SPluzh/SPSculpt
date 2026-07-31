@@ -4,6 +4,7 @@
 #include <string>
 #include <unordered_map>
 #include <memory>
+#include <chrono>
 #include <GLES3/gl3.h>
 #include <glm/glm.hpp>
 #include "scene/Camera.h"
@@ -157,6 +158,20 @@ public:
     BrushType getActiveBrush() const { return m_activeBrush; }
     void setShowSymmetryLine(bool show) { m_showSymmetryLine = show; }
     bool getShowSymmetryLine() const { return m_showSymmetryLine; }
+    void triggerTempSymmetryLine(float durationSeconds = 1.8f) {
+        m_tempSymLineEndTime = std::chrono::steady_clock::now() + 
+            std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                std::chrono::duration<float>(durationSeconds));
+    }
+    void cancelTempSymmetryLine() {
+        m_tempSymLineEndTime = std::chrono::steady_clock::time_point();
+    }
+    bool isTempSymmetryLineActive() const {
+        return std::chrono::steady_clock::now() < m_tempSymLineEndTime;
+    }
+    bool isSymmetryLineVisible() const {
+        return m_showSymmetryLine || isTempSymmetryLineActive();
+    }
     void setSymmetryLineWidth(float width) { m_symmetryLineWidth = width; }
     float getSymmetryLineWidth() const { return m_symmetryLineWidth; }
     void setContourColor(const glm::vec4& color) { m_contourColor = color; }
@@ -377,6 +392,7 @@ private:
     // Symmetry parameters
     bool m_showSymmetryLine = false;
     float m_symmetryLineWidth = 0.11f;
+    std::chrono::steady_clock::time_point m_tempSymLineEndTime;
     glm::vec3 m_planeOrigin{0.0f};
     glm::vec3 m_planeNormal{0.0f, 0.0f, 1.0f};
     glm::vec3 m_planeColor{1.0f, 0.25f, 0.25f};

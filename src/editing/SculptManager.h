@@ -264,30 +264,49 @@ public:
     void setNegative(bool val) { getCurrentSettings().negative = val; }
     void toggleNegative() { getCurrentSettings().negative = !getCurrentSettings().negative; }
 
+    bool consumeSymmetryLineTrigger() {
+        bool result = m_symmetryLineTriggered;
+        m_symmetryLineTriggered = false;
+        return result;
+    }
+    void triggerSymmetryLineNotice() {
+        m_symmetryLineTriggered = true;
+    }
+
     bool getUseSym() const { return m_useSym && (m_symX || m_symY || m_symZ); }
     void setUseSym(bool val) {
+        bool prev = getUseSym();
         m_useSym = val;
         if (val && !m_symX && !m_symY && !m_symZ) {
             m_symX = true;
+        }
+        if (!prev && getUseSym()) {
+            m_symmetryLineTriggered = true;
         }
     }
 
     bool getSymX() const { return m_symX; }
     void setSymX(bool val) {
+        bool prev = m_symX;
         m_symX = val;
         if (m_symX || m_symY || m_symZ) m_useSym = true;
+        if (!prev && val) m_symmetryLineTriggered = true;
     }
 
     bool getSymY() const { return m_symY; }
     void setSymY(bool val) {
+        bool prev = m_symY;
         m_symY = val;
         if (m_symX || m_symY || m_symZ) m_useSym = true;
+        if (!prev && val) m_symmetryLineTriggered = true;
     }
 
     bool getSymZ() const { return m_symZ; }
     void setSymZ(bool val) {
+        bool prev = m_symZ;
         m_symZ = val;
         if (m_symX || m_symY || m_symZ) m_useSym = true;
+        if (!prev && val) m_symmetryLineTriggered = true;
     }
 
     int getSymAxis() const {
@@ -301,10 +320,14 @@ public:
         m_symY = (val == 1);
         m_symZ = (val == 2);
         m_useSym = true;
+        m_symmetryLineTriggered = true;
     }
 
     SymmetryMode getSymmetryMode() const { return m_symmetryMode; }
     void setSymmetryMode(SymmetryMode mode) {
+        if (m_symmetryMode != mode && getUseSym()) {
+            m_symmetryLineTriggered = true;
+        }
         m_symmetryMode = mode;
     }
 
@@ -413,6 +436,7 @@ public:
     ArmatureTool* getArmatureTool() const { return m_armatureTool.get(); }
 
 private:
+    bool m_symmetryLineTriggered = false;
     float m_stylusPressure = 1.0f;
     bool m_usingStylus = false;
     uint32_t m_lastStylusTime = 0;

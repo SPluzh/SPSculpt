@@ -611,7 +611,11 @@ int main(int argc, char* argv[]) {
         renderer.setClipCurveOverlay(sculpt.isClipCurveActive(), sculpt.getClipCurvePoints(), sculpt.getClipCurveAlt());
         renderer.setActiveBrush(sculpt.getBrush());
 
-        if (renderer.getShowSymmetryLine()) {
+        if (sculpt.consumeSymmetryLineTrigger()) {
+            renderer.triggerTempSymmetryLine(1.8f);
+        }
+
+        if (renderer.isSymmetryLineVisible()) {
             Mesh* activeMesh = scene.getSelected();
             if (activeMesh && sculpt.getUseSym()) {
                 std::vector<SymmetryPlaneData> planes;
@@ -637,10 +641,12 @@ int main(int argc, char* argv[]) {
                         glm::vec3(0.25f, 0.6f, 1.0f)
                     });
                 }
-                renderer.setSymmetryPlanes(true, planes);
+                renderer.setSymmetryPlanes(renderer.getShowSymmetryLine(), planes);
             } else {
                 renderer.setSymmetryPlanes(renderer.getShowSymmetryLine(), {});
             }
+        } else {
+            renderer.setSymmetryPlanes(renderer.getShowSymmetryLine(), {});
         }
         bool isSculptingActive = sculpt.isSculpting();
         auto tRenderStart = std::chrono::high_resolution_clock::now();

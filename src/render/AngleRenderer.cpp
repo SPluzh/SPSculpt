@@ -1313,7 +1313,7 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
     glUniform3fv(glGetUniformLocation(program, "uAlbedo"), 1, &effectiveAlbedo[0]);
     glUniform1i(glGetUniformLocation(program, "uFlat"), m_flatShading ? 1 : 0);
 
-    int symCount = (m_showSymmetryLine && !m_symmetryPlanes.empty()) ? static_cast<int>(m_symmetryPlanes.size()) : 0;
+    int symCount = (isSymmetryLineVisible() && !m_symmetryPlanes.empty()) ? static_cast<int>(m_symmetryPlanes.size()) : 0;
     if (symCount > 3) symCount = 3;
     glUniform1i(glGetUniformLocation(program, "uSymCount"), symCount);
     glUniform1i(glGetUniformLocation(program, "uSym"), symCount > 0 ? 1 : 0);
