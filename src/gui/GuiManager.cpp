@@ -4865,11 +4865,8 @@ void GuiManager::drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRend
         ImGui::MenuItem("Camera & Viewport", nullptr, &m_showCameraPanel);
         ImGui::MenuItem("Rendering Quality", nullptr, &m_showRenderingPanel);
         ImGui::MenuItem("Reference Images", nullptr, &m_showReferenceImagesPanel);
-        ImGui::MenuItem("Navigation Cube", nullptr, &m_showGizmoCube);
-        ImGui::MenuItem("Mesh Statistics & FPS", nullptr, &m_showMeshInfo);
         ImGui::MenuItem("Undo History", nullptr, &m_showUndoDiagPanel);
         ImGui::MenuItem("Debug Log", nullptr, &m_showDebugLogPanel);
-        ImGui::MenuItem("Floating Island HUD", nullptr, &m_showFloatingIsland);
         ImGui::MenuItem("Sculpt Timelapse", nullptr, &m_showTimelapsePanel);
         bool hasSnapshot = renderer.hasActiveSnapshot();
         if (ImGui::MenuItem("Model Snapshot (Screen Reference)", nullptr, &hasSnapshot)) {
@@ -6155,6 +6152,8 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                 ImGui::Spacing();
                 ImGui::Checkbox("Show Floating Island HUD", &m_showFloatingIsland);
                 ImGui::Checkbox("Show Navigation Cube", &m_showGizmoCube);
+                ImGui::Checkbox("Show Point Count & FPS HUD", &m_showMeshInfo);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle the Mesh Statistics HUD (active/total points and FPS) in the bottom-right corner");
 
                 ImGui::EndTabItem();
             }

@@ -205,6 +205,9 @@ public:
     bool getShowPreferencesPanel() const { return m_showPreferencesPanel; }
     void setShowPreferencesPanel(bool show) { m_showPreferencesPanel = show; }
 
+    bool getShowMeshInfo() const { return m_showMeshInfo; }
+    void setShowMeshInfo(bool show) { m_showMeshInfo = show; }
+
     bool getShowTimelapsePanel() const { return m_showTimelapsePanel; }
     void setShowTimelapsePanel(bool show) { m_showTimelapsePanel = show; }
     TimelapsePlayer& getTimelapsePlayer() { return m_timelapsePlayer; }

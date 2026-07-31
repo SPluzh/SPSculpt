@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.9]
+- **UI**: Added a toggle checkbox ("Show Point Count & FPS HUD") with tooltip to the Preferences & Application Settings panel (Interface & Display tab) to easily show or hide the Mesh Statistics HUD overlay.
+- **UI**: Removed "Mesh Statistics & FPS" (HUD), "Floating Island HUD", and "Navigation Cube" entries from the main "Panels" menu to declutter the menu layout (now centralized in Preferences).
+
 ## [1.3.8]
 - **Camera**: Added Camera Undo (`Alt + Z`) and Camera Redo (`Alt + Shift + Z`) shortcuts to easily step backward and forward through viewport view changes.
 - **Camera**: Integrated automatic state history recording into mouse navigation gestures (orbit, pan, zoom, roll), mouse wheel zoom, projection mode switches, and view snapping.
