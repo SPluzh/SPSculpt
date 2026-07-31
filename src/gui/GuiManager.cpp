@@ -2673,7 +2673,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         ImGui::End();
     }
 
-
+    drawPreferencesPanel(sculpt, scene, renderer, window);
 
     // 8. Gizmo Cube Window
     if (m_showGizmoCube) {
@@ -4862,11 +4862,8 @@ void GuiManager::drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRend
         ImGui::MenuItem("Scene Outliner", nullptr, &m_showScenePanel);
         ImGui::MenuItem("Topology & Remesh", nullptr, &m_showTopologyPanel);
         ImGui::MenuItem("Multiresolution", nullptr, &m_showMultiresPanel);
-        ImGui::MenuItem("Camera & Viewport", nullptr, &m_showCameraPanel);
-        ImGui::MenuItem("Rendering Quality", nullptr, &m_showRenderingPanel);
         ImGui::MenuItem("Reference Images", nullptr, &m_showReferenceImagesPanel);
         ImGui::MenuItem("Undo History", nullptr, &m_showUndoDiagPanel);
-        ImGui::MenuItem("Debug Log", nullptr, &m_showDebugLogPanel);
         ImGui::MenuItem("Sculpt Timelapse", nullptr, &m_showTimelapsePanel);
         bool hasSnapshot = renderer.hasActiveSnapshot();
         if (ImGui::MenuItem("Model Snapshot (Screen Reference)", nullptr, &hasSnapshot)) {
@@ -6090,13 +6087,13 @@ void GuiManager::drawTimelapsePanel(Scene& scene, AngleRenderer& renderer) {
     ImGui::End();
 }
 
-void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer) {
+void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer, SDL_Window* window) {
     if (!m_showPreferencesPanel) return;
 
     float scale = getUiScale();
 
     ImGui::SetNextWindowPos(ImVec2(120.0f * scale, 120.0f * scale), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(480.0f * scale, 420.0f * scale), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(640.0f * scale, 520.0f * scale), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin("Preferences & Application Settings", &m_showPreferencesPanel, ImGuiWindowFlags_NoCollapse)) {
         if (ImGui::BeginTabBar("##PreferencesTabs")) {
@@ -6158,7 +6155,635 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                 ImGui::EndTabItem();
             }
 
-            // 2. Performance Tab
+            // 2. Camera & Viewport Tab
+            ImGuiTabItemFlags cameraTabFlags = (m_preferencesActiveTab == 1) ? ImGuiTabItemFlags_SetSelected : 0;
+            if (ImGui::BeginTabItem("Camera & Viewport", nullptr, cameraTabFlags)) {
+                Camera& camera = scene.getCamera();
+
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Projection & View Mode");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                bool ortho = camera.isOrthographic();
+                if (ImGui::Checkbox("Orthographic Projection", &ortho)) {
+                    camera.setProjectionType(ortho ? CameraEnums::Projection::ORTHOGRAPHIC : CameraEnums::Projection::PERSPECTIVE);
+                }
+
+                float fov = camera.getFov();
+                if (ImGui::SliderFloat("FOV", &fov, 10.0f, 120.0f, "%.0f")) {
+                    camera.setFov(fov);
+                }
+
+                bool usePivot = camera.getUsePivot();
+                if (ImGui::Checkbox("Picking pivot", &usePivot)) {
+                    camera.setUsePivot(usePivot);
+                }
+
+                const char* modes[] = { "Orbit", "Plane Trackball", "Spherical Trackball" };
+                int currentMode = (int)camera.getMode();
+                if (ImGui::Combo("Camera Mode", &currentMode, modes, IM_ARRAYSIZE(modes))) {
+                    camera.setMode((CameraEnums::CameraMode)currentMode);
+                }
+
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Safe Frames Overlay");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                bool showSafeFrames = renderer.getShowSafeFrames();
+                if (ImGui::Checkbox("Enable Safe Frames", &showSafeFrames)) {
+                    renderer.setShowSafeFrames(showSafeFrames);
+                }
+                if (showSafeFrames) {
+                    ImGui::Indent();
+                    float sfMargin = renderer.getSafeFramesMargin();
+                    if (ImGui::SliderFloat("Margin##SFMargin", &sfMargin, 5.0f, 200.0f, "%.0f px")) {
+                        renderer.setSafeFramesMargin(sfMargin);
+                    }
+                    float sfThickness = renderer.getSafeFramesThickness();
+                    if (ImGui::SliderFloat("Line Thickness##SFThickness", &sfThickness, 0.1f, 5.0f, "%.1f px")) {
+                        renderer.setSafeFramesThickness(sfThickness);
+                    }
+                    ImGui::Unindent();
+                }
+
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Camera Movement Speeds");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                float rot = camera.getSpeedRotate();
+                if (ImGui::SliderFloat("Rotate Speed", &rot, 0.1f, 5.0f, "%.1f")) {
+                    camera.setSpeedRotate(rot);
+                }
+
+                float pan = camera.getSpeedTranslate();
+                if (ImGui::SliderFloat("Pan Speed", &pan, 0.1f, 5.0f, "%.1f")) {
+                    camera.setSpeedTranslate(pan);
+                }
+
+                float zm = camera.getSpeedZoom();
+                if (ImGui::SliderFloat("Zoom Speed", &zm, 0.1f, 5.0f, "%.1f")) {
+                    camera.setSpeedZoom(zm);
+                }
+
+                float roll = camera.getSpeedRoll();
+                if (ImGui::SliderFloat("Roll Speed", &roll, 0.1f, 5.0f, "%.1f")) {
+                    camera.setSpeedRoll(roll);
+                }
+
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Snap Views & Actions");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                float btnW = 75.0f * scale;
+                if (ImGui::Button("Front", ImVec2(btnW, 0))) {
+                    camera.setOrbitAngles(0.0f, 0.0f);
+                    camera.setProjectionType(CameraEnums::Projection::ORTHOGRAPHIC);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Back", ImVec2(btnW, 0))) {
+                    camera.setOrbitAngles(0.0f, 3.14159265f);
+                    camera.setProjectionType(CameraEnums::Projection::ORTHOGRAPHIC);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Top", ImVec2(btnW, 0))) {
+                    camera.setOrbitAngles(-3.14159265f * 0.49f, 0.0f);
+                    camera.setProjectionType(CameraEnums::Projection::ORTHOGRAPHIC);
+                }
+
+                if (ImGui::Button("Bottom", ImVec2(btnW, 0))) {
+                    camera.setOrbitAngles(3.14159265f * 0.49f, 0.0f);
+                    camera.setProjectionType(CameraEnums::Projection::ORTHOGRAPHIC);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Left", ImVec2(btnW, 0))) {
+                    camera.setOrbitAngles(0.0f, 3.14159265f * 0.5f);
+                    camera.setProjectionType(CameraEnums::Projection::ORTHOGRAPHIC);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Right", ImVec2(btnW, 0))) {
+                    camera.setOrbitAngles(0.0f, -3.14159265f * 0.5f);
+                    camera.setProjectionType(CameraEnums::Projection::ORTHOGRAPHIC);
+                }
+
+                ImGui::Spacing();
+                if (ImGui::Button("Frame Selection (F)", ImVec2(160.0f * scale, 0))) {
+                    std::vector<Mesh*> selected = scene.getSelectedMeshes();
+                    if (selected.empty() && scene.getSelected()) selected.push_back(scene.getSelected());
+                    if (selected.empty()) {
+                        for (Mesh* m : scene.getMeshes()) {
+                            if (m && m->isVisible(scene.getActiveViewport())) selected.push_back(m);
+                        }
+                    }
+                    if (!selected.empty()) camera.resetViewToMeshes(selected);
+                    else camera.resetView();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Reset Camera", ImVec2(120.0f * scale, 0))) {
+                    camera.resetView();
+                }
+
+                ImGui::Spacing();
+                if (ImGui::Button("Take Model Snapshot", ImVec2(180.0f * scale, 0))) {
+                    renderer.createSnapshot(scene);
+                }
+
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Split Viewport");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                int splitModeVal = static_cast<int>(scene.getSplitMode());
+                bool splitChanged = false;
+                if (ImGui::RadioButton("Off", &splitModeVal, 0)) splitChanged = true;
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Mirror", &splitModeVal, 1)) splitChanged = true;
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Independent", &splitModeVal, 2)) splitChanged = true;
+
+                if (splitChanged) {
+                    scene.setSplitMode(static_cast<Scene::SplitMode>(splitModeVal));
+                    int w = (int)ImGui::GetIO().DisplaySize.x;
+                    int h = (int)ImGui::GetIO().DisplaySize.y;
+                    if (window) SDL_GetWindowSize(window, &w, &h);
+                    renderer.resize(w, h);
+                    if (scene.getSplitMode() != Scene::SplitMode::OFF) {
+                        int halfW = w / 2;
+                        scene.getCamera().onResize(halfW, h);
+                        if (scene.getCameraRight()) {
+                            scene.getCameraRight()->onResize(w - halfW, h);
+                        }
+                    } else {
+                        scene.getCamera().onResize(w, h);
+                    }
+                }
+
+                if (scene.getSplitMode() != Scene::SplitMode::OFF) {
+                    bool showInactive = scene.getSplitShowInactiveCursor();
+                    if (ImGui::Checkbox("Show cursor in inactive viewport", &showInactive)) {
+                        scene.setSplitShowInactiveCursor(showInactive);
+                    }
+                }
+
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Screenshot Export");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                const char* screenshotPresets[] = { "Viewport Size", "1080p (1920x1080)", "2K (2560x1440)", "4K (3840x2160)", "Custom" };
+                ImGui::Combo("Preset##Screenshot", &m_screenshotPreset, screenshotPresets, IM_ARRAYSIZE(screenshotPresets));
+
+                if (m_screenshotPreset == 4) { // Custom
+                    ImGui::InputInt("Width##Screenshot", &m_screenshotWidth);
+                    ImGui::InputInt("Height##Screenshot", &m_screenshotHeight);
+                    if (m_screenshotWidth < 256) m_screenshotWidth = 256;
+                    if (m_screenshotWidth > 7680) m_screenshotWidth = 7680;
+                    if (m_screenshotHeight < 256) m_screenshotHeight = 256;
+                    if (m_screenshotHeight > 4320) m_screenshotHeight = 4320;
+                }
+
+                ImGui::Checkbox("Show Grid##Screenshot", &m_screenshotShowGrid);
+                ImGui::Checkbox("Show Contour##Screenshot", &m_screenshotShowContour);
+
+                if (ImGui::Button("Take Screenshot", ImVec2(160.0f * scale, 0))) {
+                    takeScreenshot(scene, renderer);
+                }
+
+                ImGui::EndTabItem();
+            }
+
+            // 3. Rendering Quality Tab
+            ImGuiTabItemFlags renderTabFlags = (m_preferencesActiveTab == 2) ? ImGuiTabItemFlags_SetSelected : 0;
+            if (ImGui::BeginTabItem("Rendering Quality", nullptr, renderTabFlags)) {
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Material & Shading Mode");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                const char* shaders[] = { "PBR Shader", "Matcap Shading", "Wet Clay Shading", "Normal Shader", "Voxel Checker Shader", "Flat Shading", "Silhouette Shader" };
+                int type = renderer.getShaderType();
+                if (ImGui::Combo("Material Shader", &type, shaders, IM_ARRAYSIZE(shaders))) {
+                    renderer.setShaderType(type);
+                }
+
+                float curvatureVal = renderer.getCurvature() * 20.0f;
+                if (ImGui::SliderFloat("Curvature", &curvatureVal, 0.0f, 100.0f, "%.0f")) {
+                    renderer.setCurvature(curvatureVal / 20.0f);
+                }
+
+                if (type == 0) { // PBR Shader
+                    const auto& envs = renderer.getEnvironments();
+                    if (!envs.empty()) {
+                        std::vector<const char*> envNames;
+                        for (const auto& env : envs) {
+                            envNames.push_back(env.name.c_str());
+                        }
+                        int currentEnvIdx = renderer.getCurrentEnvIdx();
+                        if (ImGui::Combo("Environment Preset", &currentEnvIdx, envNames.data(), static_cast<int>(envNames.size()))) {
+                            renderer.setEnvironmentPreset(currentEnvIdx);
+                        }
+                    }
+                } else if (type == 1) { // Matcap Shading
+                    const auto& matcaps = renderer.getMatcaps();
+                    if (!matcaps.empty()) {
+                        std::vector<const char*> matcapNames;
+                        for (const auto& mc : matcaps) {
+                            matcapNames.push_back(mc.name.c_str());
+                        }
+                        int matcapIdx = renderer.getMatcap();
+                        if (ImGui::Combo("Matcap Preset", &matcapIdx, matcapNames.data(), static_cast<int>(matcapNames.size()))) {
+                            renderer.setMatcap(matcapIdx);
+                        }
+                    }
+
+                    static char matcapPath[256] = "";
+                    ImGui::InputText("Matcap Path", matcapPath, sizeof(matcapPath));
+                    ImGui::SameLine();
+                    if (ImGui::Button("Import Matcap")) {
+                        std::string pathStr(matcapPath);
+                        size_t lastSlash = pathStr.find_last_of("/\\");
+                        std::string name = (lastSlash != std::string::npos) ? pathStr.substr(lastSlash + 1) : pathStr;
+                        renderer.importMatcap(name, pathStr);
+                    }
+                } else if (type == 2) { // Wet Clay Shading
+                    float wetness = renderer.getWetClayWetness();
+                    if (ImGui::SliderFloat("Wetness", &wetness, 0.0f, 1.0f, "%.2f")) {
+                        renderer.setWetClayWetness(wetness);
+                    }
+                    float bumpStrength = renderer.getWetClayBumpStrength();
+                    if (ImGui::SliderFloat("Bump Strength", &bumpStrength, 0.0f, 1.0f, "%.2f")) {
+                        renderer.setWetClayBumpStrength(bumpStrength);
+                    }
+                    float noiseScale = renderer.getWetClayNoiseScale();
+                    if (ImGui::SliderFloat("Noise Scale", &noiseScale, 1.0f, 30.0f, "%.1f")) {
+                        renderer.setWetClayNoiseScale(noiseScale);
+                    }
+                    float sssIntensity = renderer.getWetClaySSSIntensity();
+                    if (ImGui::SliderFloat("SSS Intensity", &sssIntensity, 0.0f, 1.0f, "%.2f")) {
+                        renderer.setWetClaySSSIntensity(sssIntensity);
+                    }
+                    glm::vec3 sssColor = renderer.getWetClaySSSColor();
+                    if (ImGui::ColorEdit3("SSS Color", glm::value_ptr(sssColor))) {
+                        renderer.setWetClaySSSColor(sssColor);
+                    }
+                }
+
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Viewport Overlays & Shading Features");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                bool wire = renderer.getShowWireframe();
+                if (ImGui::Checkbox("Show Wireframe", &wire)) {
+                    renderer.setShowWireframe(wire);
+                }
+                ImGui::SameLine();
+                bool polyGroups = renderer.getShowPolyGroups();
+                if (ImGui::Checkbox("Show PolyGroups", &polyGroups)) {
+                    renderer.setShowPolyGroups(polyGroups);
+                }
+
+                bool flat = renderer.getFlatShading();
+                if (ImGui::Checkbox("Flat Shading Mode", &flat)) {
+                    renderer.setFlatShading(flat);
+                }
+
+                bool darkenUnselected = renderer.getDarkenUnselected();
+                if (ImGui::Checkbox("Darken unselected", &darkenUnselected)) {
+                    renderer.setDarkenUnselected(darkenUnselected);
+                }
+
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Post-Processing Effects");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                bool bevel = renderer.getBevelEnabled();
+                if (ImGui::Checkbox("Screen-space Bevel (Melt)", &bevel)) {
+                    renderer.setBevelEnabled(bevel);
+                }
+                if (bevel) {
+                    ImGui::Indent();
+                    float radius = renderer.getBevelRadius();
+                    if (ImGui::SliderFloat("Bevel Radius", &radius, 1.0f, 8.0f, "%.1f px")) {
+                        renderer.setBevelRadius(radius);
+                    }
+                    float strength = renderer.getBevelStrength();
+                    if (ImGui::SliderFloat("Bevel Strength", &strength, 0.1f, 5.0f, "%.2f")) {
+                        renderer.setBevelStrength(strength);
+                    }
+                    bool scaleBevel = renderer.getBevelScaleWithDistance();
+                    if (ImGui::Checkbox("Constant World-space Size", &scaleBevel)) {
+                        renderer.setBevelScaleWithDistance(scaleBevel);
+                    }
+                    ImGui::Unindent();
+                }
+
+                bool filmic = renderer.getFilmic();
+                if (ImGui::Checkbox("Filmic Tonemapping", &filmic)) {
+                    renderer.setFilmic(filmic);
+                }
+
+                bool useFxaa = renderer.getUseFxaa();
+                if (ImGui::Checkbox("FXAA Anti-aliasing", &useFxaa)) {
+                    renderer.setUseFxaa(useFxaa);
+                }
+
+                bool useSsao = renderer.getUseSsao();
+                if (ImGui::Checkbox("SSAO Ambient Occlusion", &useSsao)) {
+                    renderer.setUseSsao(useSsao);
+                }
+                if (useSsao) {
+                    ImGui::Indent();
+                    float ssaoRad = renderer.getSsaoRadius();
+                    if (ImGui::SliderFloat("SSAO Radius", &ssaoRad, 0.05f, 2.0f, "%.2f")) {
+                        renderer.setSsaoRadius(ssaoRad);
+                    }
+                    float ssaoBias = renderer.getSsaoBias();
+                    if (ImGui::SliderFloat("SSAO Bias", &ssaoBias, 0.001f, 0.2f, "%.3f")) {
+                        renderer.setSsaoBias(ssaoBias);
+                    }
+                    float ssaoInt = renderer.getSsaoIntensity();
+                    if (ImGui::SliderFloat("SSAO Intensity", &ssaoInt, 0.0f, 3.0f, "%.2f")) {
+                        renderer.setSsaoIntensity(ssaoInt);
+                    }
+                    ImGui::Unindent();
+                }
+
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Advanced GPU Pipeline");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                int renderMode = (int)renderer.getRenderMode();
+                const char* renderModes[] = { "Real-time PBR", "Progressive Path Tracing (SSPT)" };
+                if (ImGui::Combo("Engine Mode", &renderMode, renderModes, 2)) {
+                    renderer.setRenderMode((RenderMode)renderMode);
+                }
+
+                bool shadowEnabled = renderer.getUseShadows();
+                if (ImGui::Checkbox("Shadow Mapping", &shadowEnabled)) {
+                    renderer.setUseShadows(shadowEnabled);
+                }
+
+                bool useSsr = renderer.getUseSsr();
+                if (ImGui::Checkbox("Screen Space Reflections (SSR)", &useSsr)) {
+                    renderer.setUseSsr(useSsr);
+                }
+                if (useSsr) {
+                    ImGui::Indent();
+                    float ssrIntensity = renderer.getSsrIntensity();
+                    if (ImGui::SliderFloat("SSR Intensity", &ssrIntensity, 0.0f, 2.0f, "%.2f")) {
+                        renderer.setSsrIntensity(ssrIntensity);
+                    }
+                    ImGui::Unindent();
+                }
+
+                ImGui::Spacing();
+                if (ImGui::TreeNode("Light Source Management")) {
+                    auto& lights = const_cast<Scene&>(scene).getLights();
+                    if (ImGui::Button("Add Light", ImVec2(100, 24))) {
+                        LightSource newLight;
+                        newLight.name = "Light " + std::to_string(lights.size() + 1);
+                        newLight.type = LightType::POINT;
+                        newLight.position = glm::vec3(0.0f, 10.0f, 10.0f);
+                        newLight.color = glm::vec3(1.0f, 1.0f, 1.0f);
+                        newLight.intensity = 2.0f;
+                        const_cast<Scene&>(scene).addLight(newLight);
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("(Max 8 lights)");
+
+                    int lightToRemove = -1;
+                    for (size_t i = 0; i < lights.size(); ++i) {
+                        auto& L = lights[i];
+                        std::string label = L.name + "##light_" + std::to_string(i);
+                        if (ImGui::TreeNode(label.c_str())) {
+                            ImGui::Checkbox("Enabled", &L.enabled);
+                            ImGui::SameLine();
+                            ImGui::Checkbox("Cast Shadow", &L.castShadow);
+
+                            int lType = (int)L.type;
+                            const char* lTypeNames[] = { "Directional", "Point", "Spot" };
+                            if (ImGui::Combo("Type", &lType, lTypeNames, 3)) {
+                                L.type = (LightType)lType;
+                            }
+
+                            if (L.type == LightType::DIRECTIONAL) {
+                                ImGui::SliderFloat3("Direction", glm::value_ptr(L.direction), -1.0f, 1.0f);
+                                if (glm::length(L.direction) > 0.001f) {
+                                    L.direction = glm::normalize(L.direction);
+                                }
+                            } else {
+                                ImGui::DragFloat3("Position", glm::value_ptr(L.position), 0.5f);
+                                if (L.type == LightType::SPOT) {
+                                    ImGui::SliderFloat3("Direction", glm::value_ptr(L.direction), -1.0f, 1.0f);
+                                    if (glm::length(L.direction) > 0.001f) {
+                                        L.direction = glm::normalize(L.direction);
+                                    }
+                                    ImGui::SliderFloat("Inner Angle", &L.innerAngle, 1.0f, 89.0f);
+                                    ImGui::SliderFloat("Outer Angle", &L.outerAngle, L.innerAngle, 89.0f);
+                                }
+                                ImGui::SliderFloat("Range", &L.range, 1.0f, 100.0f);
+                            }
+
+                            ImGui::ColorEdit3("Color", glm::value_ptr(L.color));
+                            ImGui::SliderFloat("Intensity", &L.intensity, 0.0f, 20.0f);
+
+                            if (lights.size() > 1) {
+                                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.2f, 0.2f, 1.0f));
+                                if (ImGui::Button("Remove Light")) {
+                                    lightToRemove = (int)i;
+                                }
+                                ImGui::PopStyleColor();
+                            }
+
+                            ImGui::TreePop();
+                        }
+                    }
+
+                    if (lightToRemove >= 0) {
+                        const_cast<Scene&>(scene).removeLight(lightToRemove);
+                    }
+
+                    ImGui::TreePop();
+                }
+
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Selection Outline & Cursor");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                bool showContour = renderer.getShowContour();
+                if (ImGui::Checkbox("Show Selection Outline", &showContour)) {
+                    renderer.setShowContour(showContour);
+                }
+
+                if (showContour) {
+                    glm::vec4 cColor = renderer.getContourColor();
+                    if (ImGui::ColorEdit4("Outline Color", glm::value_ptr(cColor))) {
+                        renderer.setContourColor(cColor);
+                    }
+                }
+
+                float cursorThickness = renderer.getCursorThickness();
+                if (ImGui::SliderFloat("Brush Cursor Thickness", &cursorThickness, 1.0f, 5.0f, "%.1f px")) {
+                    renderer.setCursorThickness(cursorThickness);
+                }
+
+                bool smoothCursor = renderer.getSmoothCursor();
+                if (ImGui::Checkbox("Smooth (Antialiased) Cursor", &smoothCursor)) {
+                    renderer.setSmoothCursor(smoothCursor);
+                }
+
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Material Settings");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                float alpha = renderer.getAlpha();
+                if (ImGui::SliderFloat("Transparency (Alpha)", &alpha, 0.0f, 1.0f, "%.2f")) {
+                    renderer.setAlpha(alpha);
+                }
+
+                bool useVertexColors = renderer.getUseVertexColors();
+                if (ImGui::Checkbox("Use Vertex Colors", &useVertexColors)) {
+                    renderer.setUseVertexColors(useVertexColors);
+                }
+                ImGui::SameLine();
+                bool useVertexMaterials = renderer.getUseVertexMaterials();
+                if (ImGui::Checkbox("Use Vertex Materials", &useVertexMaterials)) {
+                    renderer.setUseVertexMaterials(useVertexMaterials);
+                }
+
+                ImGui::BeginDisabled(useVertexColors);
+                float albedo[3] = { renderer.getAlbedo()[0], renderer.getAlbedo()[1], renderer.getAlbedo()[2] };
+                if (ImGui::ColorEdit3("Albedo Base Color", albedo)) {
+                    renderer.setAlbedo(albedo[0], albedo[1], albedo[2]);
+                }
+                ImGui::EndDisabled();
+
+                if (type == 0) { // PBR Shader settings
+                    ImGui::BeginDisabled(useVertexMaterials);
+                    float roughness = renderer.getRoughness();
+                    if (ImGui::SliderFloat("Roughness", &roughness, 0.0f, 1.0f, "%.2f")) {
+                        renderer.setRoughness(roughness);
+                    }
+                    float metallic = renderer.getMetallic();
+                    if (ImGui::SliderFloat("Metallic", &metallic, 0.0f, 1.0f, "%.2f")) {
+                        renderer.setMetallic(metallic);
+                    }
+                    ImGui::EndDisabled();
+
+                    ImGui::Separator();
+                    ImGui::Text("Glass / Transmission Settings:");
+                    float transmission = renderer.getTransmission();
+                    if (ImGui::SliderFloat("Glass Transmission", &transmission, 0.0f, 1.0f, "%.2f")) {
+                        renderer.setTransmission(transmission);
+                    }
+                    ImGui::BeginDisabled(transmission <= 0.0f);
+                    float ior = renderer.getIor();
+                    if (ImGui::SliderFloat("Index of Refraction (IOR)", &ior, 1.0f, 2.5f, "%.2f")) {
+                        renderer.setIor(ior);
+                    }
+                    ImGui::EndDisabled();
+
+                    ImGui::Separator();
+                    ImGui::Text("Subsurface Scattering (SSS):");
+                    float sssIntensity = renderer.getSssIntensity();
+                    if (ImGui::SliderFloat("SSS Intensity", &sssIntensity, 0.0f, 2.0f, "%.2f")) {
+                        renderer.setSssIntensity(sssIntensity);
+                    }
+                    float sssDepth = renderer.getSssDepth();
+                    if (ImGui::SliderFloat("SSS Depth (Radius)", &sssDepth, 0.1f, 5.0f, "%.2f")) {
+                        renderer.setSssDepth(sssDepth);
+                    }
+                    glm::vec3 sssCol = renderer.getSssColor();
+                    if (ImGui::ColorEdit3("SSS Color", glm::value_ptr(sssCol))) {
+                        renderer.setSssColor(sssCol);
+                    }
+
+                    ImGui::Separator();
+
+                    static char texturePath[256] = "";
+                    ImGui::InputText("UV Texture Path", texturePath, sizeof(texturePath));
+                    ImGui::SameLine();
+                    if (ImGui::Button("Import UV Texture")) {
+                        int w, h, channels;
+                        unsigned char* data = stbi_load(texturePath, &w, &h, &channels, 4);
+                        if (data) {
+                            GLuint tid = renderer.getTextureId();
+                            if (tid != 0) glDeleteTextures(1, &tid);
+                            GLuint newTexId = 0;
+                            glGenTextures(1, &newTexId);
+                            glBindTexture(GL_TEXTURE_2D, newTexId);
+                            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+                            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+                            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+                            glBindTexture(GL_TEXTURE_2D, 0);
+                            stbi_image_free(data);
+                            renderer.setTextureId(newTexId);
+                            renderer.setHasUV(true);
+                        } else {
+                            std::cerr << "Failed to load UV texture: " << texturePath << std::endl;
+                        }
+                    }
+                }
+
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Background Settings");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                bool showBg = renderer.getShowBackground();
+                if (ImGui::Checkbox("Show Background", &showBg)) {
+                    renderer.setShowBackground(showBg);
+                }
+
+                if (showBg) {
+                    const char* bgTypes[] = { "Image", "Environment", "Ambient env" };
+                    int bgType = renderer.getBackgroundType();
+                    int selectedIdx = bgType;
+                    if (selectedIdx < 0 || selectedIdx > 2) selectedIdx = 0;
+                    if (ImGui::Combo("Type##bg", &selectedIdx, bgTypes, IM_ARRAYSIZE(bgTypes))) {
+                        renderer.setBackgroundType(selectedIdx);
+                    }
+
+                    if (bgType == 1) { // Environment
+                        float bgBlur = renderer.getBgBlur();
+                        if (ImGui::SliderFloat("Blur##bg", &bgBlur, 0.0f, 1.0f, "%.2f")) {
+                            renderer.setBgBlur(bgBlur);
+                        }
+                    }
+
+                    if (bgType == 0) { // Image
+                        bool bgFill = renderer.getBgFill();
+                        if (ImGui::Checkbox("Fill##bg", &bgFill)) {
+                            renderer.setBgFill(bgFill);
+                        }
+
+                        std::string path = renderer.getBgTexturePath();
+                        static char bgImagePath[256] = "";
+                        if (bgImagePath[0] == '\0' && !path.empty()) {
+                            strncpy(bgImagePath, path.c_str(), sizeof(bgImagePath));
+                        }
+                        ImGui::InputText("Bg Image Path", bgImagePath, sizeof(bgImagePath));
+                        ImGui::SameLine();
+                        if (ImGui::Button("Import Bg Image")) {
+                            renderer.setBgTexturePath(bgImagePath);
+                        }
+                    }
+                }
+
+                ImGui::EndTabItem();
+            }
+
+            // 4. Performance Tab
             if (ImGui::BeginTabItem("Performance")) {
                 ImGui::Spacing();
                 ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Frame Rate Control");
@@ -6186,7 +6811,7 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                 ImGui::EndTabItem();
             }
 
-            // 3. Undo & System Tab
+            // 5. Undo & System Tab
             if (ImGui::BeginTabItem("Undo & System")) {
                 ImGui::Spacing();
                 ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Undo History Allocation");
@@ -6215,6 +6840,47 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                 }
 
                 ImGui::EndTabItem();
+            }
+
+            // 6. Debug Log Tab
+            ImGuiTabItemFlags debugTabFlags = (m_preferencesActiveTab == 5) ? ImGuiTabItemFlags_SetSelected : 0;
+            if (ImGui::BeginTabItem("Debug Log", nullptr, debugTabFlags)) {
+                ImGui::Spacing();
+                if (ImGui::Button(ICON_LC_TRASH_2 " Clear Log")) {
+                    Logger::instance().clear();
+                }
+                ImGui::SameLine();
+                static bool autoScroll = true;
+                ImGui::Checkbox("Auto-scroll", &autoScroll);
+
+                ImGui::Separator();
+
+                if (ImGui::BeginChild("LogRegionInPrefs", ImVec2(0, 300.0f * scale), true, ImGuiWindowFlags_HorizontalScrollbar)) {
+                    const auto& entries = Logger::instance().getEntries();
+                    for (const auto& entry : entries) {
+                        ImVec4 color;
+                        switch (entry.level) {
+                            case LogLevel::Debug:   color = ImVec4(0.65f, 0.65f, 0.65f, 1.0f); break;
+                            case LogLevel::Info:    color = ImVec4(0.85f, 0.95f, 1.0f, 1.0f); break;
+                            case LogLevel::Warning: color = ImVec4(1.0f, 0.85f, 0.2f, 1.0f); break;
+                            case LogLevel::Error:   color = ImVec4(1.0f, 0.35f, 0.35f, 1.0f); break;
+                        }
+                        ImGui::PushStyleColor(ImGuiCol_Text, color);
+                        ImGui::Text("[%s] %s", entry.timestamp.c_str(), entry.message.c_str());
+                        ImGui::PopStyleColor();
+                    }
+
+                    if (autoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
+                        ImGui::SetScrollHereY(1.0f);
+                    }
+                    ImGui::EndChild();
+                }
+
+                ImGui::EndTabItem();
+            }
+
+            if (m_preferencesActiveTab >= 0) {
+                m_preferencesActiveTab = -1;
             }
 
             ImGui::EndTabBar();

@@ -146,7 +146,9 @@ private:
     void updateWindowTitle(SDL_Window* window, bool isModified);
     void drawUnsavedChangesModal(Scene& scene, bool& quitApp);
     void drawTimelapsePanel(Scene& scene, AngleRenderer& renderer);
-    void drawPreferencesPanel(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer);
+    void drawPreferencesPanel(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer, SDL_Window* window = nullptr);
+
+    int m_preferencesActiveTab = -1;
 
 public:
     GuiManager();
@@ -187,8 +189,8 @@ public:
     void toggleSculptingPanel() { m_showSculptingPanel = !m_showSculptingPanel; }
     void toggleScenePanel() { m_showScenePanel = !m_showScenePanel; }
     void toggleTopologyPanel() { m_showTopologyPanel = !m_showTopologyPanel; }
-    void toggleCameraPanel() { m_showCameraPanel = !m_showCameraPanel; }
-    void toggleRenderingPanel() { m_showRenderingPanel = !m_showRenderingPanel; }
+    void toggleCameraPanel() { m_showPreferencesPanel = true; m_preferencesActiveTab = 1; }
+    void toggleRenderingPanel() { m_showPreferencesPanel = true; m_preferencesActiveTab = 2; }
     void toggleMaskingPanel() { m_showMaskingPanel = !m_showMaskingPanel; }
     void toggleMultiresPanel() { m_showMultiresPanel = !m_showMultiresPanel; }
     void toggleSymmetryPanel() { m_showSymmetryPanel = !m_showSymmetryPanel; }
@@ -197,7 +199,7 @@ public:
     void toggleGizmoCube() { m_showGizmoCube = !m_showGizmoCube; }
     void toggleMeshInfo() { m_showMeshInfo = !m_showMeshInfo; }
     void toggleUndoDiagPanel() { m_showUndoDiagPanel = !m_showUndoDiagPanel; }
-    void toggleDebugLogPanel() { m_showDebugLogPanel = !m_showDebugLogPanel; }
+    void toggleDebugLogPanel() { m_showPreferencesPanel = true; m_preferencesActiveTab = 5; }
     void toggleFloatingIsland() { m_showFloatingIsland = !m_showFloatingIsland; }
     void toggleTimelapsePanel() { m_showTimelapsePanel = !m_showTimelapsePanel; }
     void togglePreferencesPanel() { m_showPreferencesPanel = !m_showPreferencesPanel; }

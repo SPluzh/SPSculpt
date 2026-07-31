@@ -3,8 +3,9 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.3.9]
+- **UI**: Migrated "Camera & Viewport", "Rendering Quality", and "Debug Log" controls into dedicated tabs inside the centralized "Preferences & Application Settings" modal.
 - **UI**: Added a toggle checkbox ("Show Point Count & FPS HUD") with tooltip to the Preferences & Application Settings panel (Interface & Display tab) to easily show or hide the Mesh Statistics HUD overlay.
-- **UI**: Removed "Mesh Statistics & FPS" (HUD), "Floating Island HUD", and "Navigation Cube" entries from the main "Panels" menu to declutter the menu layout (now centralized in Preferences).
+- **UI**: Removed "Camera & Viewport", "Rendering Quality", "Debug Log", "Mesh Statistics & FPS" (HUD), "Floating Island HUD", and "Navigation Cube" entries from the main "Panels" menu to declutter the top-level menu layout.
 
 ## [1.3.8]
 - **Camera**: Added Camera Undo (`Alt + Z`) and Camera Redo (`Alt + Shift + Z`) shortcuts to easily step backward and forward through viewport view changes.
