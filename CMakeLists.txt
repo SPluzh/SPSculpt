@@ -97,6 +97,7 @@ add_executable(SPSculpt
     src/files/MeshUtils.cpp
     # editing
     src/editing/SculptManager.cpp
+    src/editing/ClipCurveTool.cpp
     src/editing/CameraController.cpp
     src/editing/BrushCursor.cpp
     src/editing/ArmatureTool.cpp

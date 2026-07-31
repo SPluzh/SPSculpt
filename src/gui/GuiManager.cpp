@@ -174,6 +174,7 @@ static const char* getBrushNameLocal(BrushType brush) {
         case BRUSH_ARMATURE_SPHERES: return "Armature Spheres";
         case BRUSH_BRUSH:     return "Brush";
         case BRUSH_POLYGROUP: return "PolyGroup";
+        case BRUSH_CLIP_CURVE: return "Clip Curve";
     }
     return "Unknown";
 }

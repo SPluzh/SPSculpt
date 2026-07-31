@@ -4,6 +4,7 @@
 #include "sculpt/SculptEngine.h"
 #include "mesh/NormalCalc.h"
 #include "editing/ArmatureTool.h"
+#include "editing/ClipCurveTool.h"
 #include "editing/undo/UndoManager.h"
 #include "common/Logger.h"
 #include <glm/gtc/matrix_transform.hpp>
@@ -287,6 +288,7 @@ SculptManager::SculptManager() {
     m_brushSettings[BRUSH_MEASURE].culling = false;
     m_brushSettings[BRUSH_DIVIDER].culling = false;
     m_brushSettings[BRUSH_TRANSFORM].culling = false;
+    m_brushSettings[BRUSH_CLIP_CURVE].culling = false;
 
     m_brushSettings[BRUSH_BRUSH].radius = 50.0f;
     m_brushSettings[BRUSH_BRUSH].intensity = 0.5f;
@@ -1915,6 +1917,14 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 return;
             }
 
+            if (m_currentBrush == BRUSH_CLIP_CURVE) {
+                m_isClipCurveActive = true;
+                m_clipCurveAlt = (mod & KMOD_ALT) != 0;
+                m_clipCurvePoints.clear();
+                m_clipCurvePoints.push_back(glm::vec2((float)mouseX, (float)mouseY));
+                return;
+            }
+
             if (m_currentBrush == BRUSH_MASK_GRADIENT_BLUR && mesh) {
                 if (mod & KMOD_ALT) {
                     return;
@@ -2581,6 +2591,29 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             return;
         }
 
+        if (m_isClipCurveActive) {
+            m_isClipCurveActive = false;
+
+            if (m_clipCurvePoints.size() >= 2 && mesh) {
+                scene.pushHistoryState();
+                std::vector<glm::vec3> symScales = getActiveSymmetryScales();
+                bool modified = ClipCurveTool::execute(
+                    mesh,
+                    scene.getCamera(),
+                    m_clipCurvePoints,
+                    m_clipCurveAlt,
+                    m_useSym,
+                    m_symmetryMode,
+                    symScales
+                );
+                if (modified) {
+                    scene.setModified(true);
+                }
+            }
+            m_clipCurvePoints.clear();
+            return;
+        }
+
         if (m_isSculpting) {
             m_isSculpting = false;
             m_currentIntersectionValid = false;
@@ -2857,6 +2890,20 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 }
             }
             m_lassoAlt = (SDL_GetModState() & KMOD_ALT) != 0;
+            return;
+        }
+
+        if (m_isClipCurveActive) {
+            glm::vec2 newPt((float)mouseX, (float)mouseY);
+            if (m_clipCurvePoints.empty()) {
+                m_clipCurvePoints.push_back(newPt);
+            } else {
+                glm::vec2 diff = newPt - m_clipCurvePoints.back();
+                if (glm::dot(diff, diff) >= 4.0f) {
+                    m_clipCurvePoints.push_back(newPt);
+                }
+            }
+            m_clipCurveAlt = (SDL_GetModState() & KMOD_ALT) != 0;
             return;
         }
 

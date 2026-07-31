@@ -1041,6 +1041,7 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
             glScissor(0, 0, m_width, m_height);
             glEnable(GL_SCISSOR_TEST);
             drawLasso();
+            drawClipCurve();
             glDisable(GL_SCISSOR_TEST);
         } else {
             int w2 = m_width / 2;
@@ -1050,11 +1051,13 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
                 glScissor(0, 0, w2, m_height);
                 glEnable(GL_SCISSOR_TEST);
                 drawLasso();
+                drawClipCurve();
             } else {
                 glViewport(w2, 0, m_width - w2, m_height);
                 glScissor(w2, 0, m_width - w2, m_height);
                 glEnable(GL_SCISSOR_TEST);
                 drawLasso();
+                drawClipCurve();
             }
             glDisable(GL_SCISSOR_TEST);
         }
@@ -1800,6 +1803,64 @@ void AngleRenderer::drawLasso() {
     if (locDashed != -1) glUniform1i(locDashed, 1);
     glLineWidth(2.0f);
     glDrawArrays(GL_LINE_LOOP, 0, (GLsizei)m_lassoPoints.size());
+    glLineWidth(1.0f);
+
+    glDisable(GL_BLEND);
+    glEnable(GL_DEPTH_TEST);
+    glBindVertexArray(0);
+}
+
+void AngleRenderer::setClipCurveOverlay(bool active, const std::vector<glm::vec2>& points, bool altMode) {
+    m_clipCurveActive = active;
+    m_clipCurvePoints = points;
+    m_clipCurveAlt = altMode;
+}
+
+void AngleRenderer::drawClipCurve() {
+    if (!m_clipCurveActive || m_clipCurvePoints.size() < 2 || m_selectionProgram == 0) return;
+
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    float viewportWidth = (m_splitMode ? m_width * 0.5f : (float)m_width) / m_dpiScale;
+    float viewportHeight = (float)m_height / m_dpiScale;
+
+    std::vector<float> ndcPoints;
+    ndcPoints.reserve(m_clipCurvePoints.size() * 3);
+    for (const auto& p : m_clipCurvePoints) {
+        float x = (p.x / viewportWidth) * 2.0f - 1.0f;
+        float y = 1.0f - (p.y / viewportHeight) * 2.0f;
+        ndcPoints.push_back(x);
+        ndcPoints.push_back(y);
+        ndcPoints.push_back(0.0f);
+    }
+
+    glBindVertexArray(m_lassoVao);
+    glBindBuffer(GL_ARRAY_BUFFER, m_lassoVbo);
+    glBufferData(GL_ARRAY_BUFFER, ndcPoints.size() * sizeof(float), ndcPoints.data(), GL_DYNAMIC_DRAW);
+
+    glUseProgram(m_selectionProgram);
+    GLint locColor = glGetUniformLocation(m_selectionProgram, "uColor");
+    GLint locMVP = glGetUniformLocation(m_selectionProgram, "uMVP");
+    GLint locAlpha = glGetUniformLocation(m_selectionProgram, "uAlpha");
+    GLint locDashed = glGetUniformLocation(m_selectionProgram, "uDashed");
+    GLint locOffsetPixels = glGetUniformLocation(m_selectionProgram, "uOffsetPixels");
+    if (locOffsetPixels != -1) glUniform1f(locOffsetPixels, 0.0f);
+    GLint locRef2DMode = glGetUniformLocation(m_selectionProgram, "uRef2DMode");
+    if (locRef2DMode != -1) glUniform1i(locRef2DMode, 0);
+
+    glm::vec3 curveColor = m_clipCurveAlt ? glm::vec3(1.0f, 0.4f, 0.1f) : glm::vec3(0.0f, 0.85f, 1.0f);
+    glUniform3fv(locColor, 1, &curveColor[0]);
+
+    glm::mat4 identityMVP(1.0f);
+    glUniformMatrix4fv(locMVP, 1, GL_FALSE, &identityMVP[0][0]);
+
+    if (locAlpha != -1) glUniform1f(locAlpha, 1.0f);
+    if (locDashed != -1) glUniform1i(locDashed, 0);
+    glLineWidth(2.5f);
+    glDrawArrays(GL_LINE_STRIP, 0, (GLsizei)m_clipCurvePoints.size());
     glLineWidth(1.0f);
 
     glDisable(GL_BLEND);

@@ -122,7 +122,8 @@ void BrushCursor::update(int mouseX, int mouseY,
                           SymmetryMode symMode,
                           ModalMode modalMode) {
     if (brushType == BRUSH_VISIBILITY || brushType == BRUSH_MASK_GRADIENT_BLUR ||
-        brushType == BRUSH_MEASURE || brushType == BRUSH_DIVIDER || brushType == BRUSH_TRANSFORM) {
+        brushType == BRUSH_MEASURE || brushType == BRUSH_DIVIDER || brushType == BRUSH_TRANSFORM ||
+        brushType == BRUSH_CLIP_CURVE) {
         m_state.visible = false;
         return;
     }
