@@ -1868,19 +1868,20 @@ void AngleRenderer::drawClipCurve() {
             t += step;
             distSinceLastArrow = 0.0f;
 
-            glm::vec2 pBase = pA + t * segDir;
-            glm::vec2 pTip  = pBase + clipNormal * ARROW_LENGTH;
-            glm::vec2 wing1 = pTip - clipNormal * WING_SIZE + segDir * (WING_SIZE * 0.7f);
-            glm::vec2 wing2 = pTip - clipNormal * WING_SIZE - segDir * (WING_SIZE * 0.7f);
+            glm::vec2 pLine = pA + t * segDir;
+            glm::vec2 pTip   = pLine;
+            glm::vec2 pStart = pLine - clipNormal * ARROW_LENGTH;
+            glm::vec2 wing1  = pTip - clipNormal * WING_SIZE + segDir * (WING_SIZE * 0.7f);
+            glm::vec2 wing2  = pTip - clipNormal * WING_SIZE - segDir * (WING_SIZE * 0.7f);
 
-            glm::vec3 ndcBase  = toNDC(pBase);
+            glm::vec3 ndcStart = toNDC(pStart);
             glm::vec3 ndcTip   = toNDC(pTip);
             glm::vec3 ndcWing1 = toNDC(wing1);
             glm::vec3 ndcWing2 = toNDC(wing2);
 
-            // Stem: pBase -> pTip
-            arrowNdcPoints.push_back(ndcBase.x); arrowNdcPoints.push_back(ndcBase.y); arrowNdcPoints.push_back(ndcBase.z);
-            arrowNdcPoints.push_back(ndcTip.x);  arrowNdcPoints.push_back(ndcTip.y);  arrowNdcPoints.push_back(ndcTip.z);
+            // Stem: pStart -> pTip
+            arrowNdcPoints.push_back(ndcStart.x); arrowNdcPoints.push_back(ndcStart.y); arrowNdcPoints.push_back(ndcStart.z);
+            arrowNdcPoints.push_back(ndcTip.x);   arrowNdcPoints.push_back(ndcTip.y);   arrowNdcPoints.push_back(ndcTip.z);
 
             // Wing 1: pTip -> wing1
             arrowNdcPoints.push_back(ndcTip.x);   arrowNdcPoints.push_back(ndcTip.y);   arrowNdcPoints.push_back(ndcTip.z);
