@@ -1945,6 +1945,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             }
 
             ImGui::Checkbox("Keep PolyGroups", &m_remeshKeepPolyGroups);
+            ImGui::Checkbox("Align Symmetry Axes", &m_remeshAlignSymmetry);
 
             if (ImGui::Button("Remesh", ImVec2(-1, 0))) {
                 std::cout << "[Topology] Trigger remesh with resolution: " << m_remeshResolution << std::endl;
@@ -3712,6 +3713,7 @@ void GuiManager::performRemesh(Scene& scene) {
         materials = std::move(materials),
         triFaceGroups = std::move(triFaceGroups),
         keepGroups,
+        alignSymmetry = m_remeshAlignSymmetry,
         nbVerts,
         bboxArr = std::array<float,6>{bbox[0],bbox[1],bbox[2],bbox[3],bbox[4],bbox[5]},
         resolution,
@@ -3738,6 +3740,7 @@ void GuiManager::performRemesh(Scene& scene) {
                 hasColors,
                 hasMaterials,
                 keepGroups,
+                alignSymmetry,
                 [this](int stage, int pct) {
                     m_remeshAsync.stage = stage;
                     m_remeshAsync.progress = pct;
@@ -4425,6 +4428,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             }
             ImGui::PopItemWidth();
             ImGui::Checkbox("Keep PolyGroups", &m_remeshKeepPolyGroups);
+            ImGui::Checkbox("Align Symmetry Axes", &m_remeshAlignSymmetry);
             ImGui::Separator();
             if (ImGui::Button("Remesh Now", ImVec2(-1.0f, 0.0f))) {
                 scene.updateVoxelPreview(0.0f, {});

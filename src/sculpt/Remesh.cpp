@@ -1245,10 +1245,11 @@ RemeshResult doRemesh(
     bool hasColors,
     bool hasMaterials,
     bool hasFaceGroups,
+    bool alignSymmetry,
     std::function<void(int stage, int progress)> onProgress
 ) {
-    sculpt_log("[C++ doRemesh] Start. nbVerts=%d, nbTris=%d, resolution=%.2f, block=%d, smooth=%d, manifold=%d, hasColors=%d, hasMaterials=%d, hasFaceGroups=%d\n",
-               nbVerts, nbTris, resolution, block, smooth, manifold, hasColors, hasMaterials, hasFaceGroups);
+    sculpt_log("[C++ doRemesh] Start. nbVerts=%d, nbTris=%d, resolution=%.2f, block=%d, smooth=%d, manifold=%d, hasColors=%d, hasMaterials=%d, hasFaceGroups=%d, alignSymmetry=%d\n",
+               nbVerts, nbTris, resolution, block, smooth, manifold, hasColors, hasMaterials, hasFaceGroups, alignSymmetry);
     if (box) {
         sculpt_log("[C++ doRemesh] box: [%.4f, %.4f, %.4f, %.4f, %.4f, %.4f]\n", box[0], box[1], box[2], box[3], box[4], box[5]);
     } else {
@@ -1266,17 +1267,37 @@ RemeshResult doRemesh(
 
     VoxelGrid voxels;
     voxels.step = step;
-    voxels.minCoord[0] = box[0] - stepMin;
-    voxels.minCoord[1] = box[1] - stepMin;
-    voxels.minCoord[2] = box[2] - stepMin;
 
-    voxels.maxCoord[0] = box[3] + stepMax;
-    voxels.maxCoord[1] = box[4] + stepMax;
-    voxels.maxCoord[2] = box[5] + stepMax;
+    if (alignSymmetry) {
+        // Offset by 0.5 * step so dual cell centers land exactly on 0.0 (origin axes)
+        int minIdxX = (int)std::floor((box[0] - stepMin) / step - 0.5f);
+        int minIdxY = (int)std::floor((box[1] - stepMin) / step - 0.5f);
+        int minIdxZ = (int)std::floor((box[2] - stepMin) / step - 0.5f);
 
-    voxels.dims[0] = (int)std::ceil((voxels.maxCoord[0] - voxels.minCoord[0]) / step);
-    voxels.dims[1] = (int)std::ceil((voxels.maxCoord[1] - voxels.minCoord[1]) / step);
-    voxels.dims[2] = (int)std::ceil((voxels.maxCoord[2] - voxels.minCoord[2]) / step);
+        voxels.minCoord[0] = (minIdxX + 0.5f) * step;
+        voxels.minCoord[1] = (minIdxY + 0.5f) * step;
+        voxels.minCoord[2] = (minIdxZ + 0.5f) * step;
+
+        int maxIdxX = (int)std::ceil((box[3] + stepMax) / step - 0.5f);
+        int maxIdxY = (int)std::ceil((box[4] + stepMax) / step - 0.5f);
+        int maxIdxZ = (int)std::ceil((box[5] + stepMax) / step - 0.5f);
+
+        voxels.dims[0] = maxIdxX - minIdxX + 1;
+        voxels.dims[1] = maxIdxY - minIdxY + 1;
+        voxels.dims[2] = maxIdxZ - minIdxZ + 1;
+    } else {
+        voxels.minCoord[0] = box[0] - stepMin;
+        voxels.minCoord[1] = box[1] - stepMin;
+        voxels.minCoord[2] = box[2] - stepMin;
+
+        voxels.maxCoord[0] = box[3] + stepMax;
+        voxels.maxCoord[1] = box[4] + stepMax;
+        voxels.maxCoord[2] = box[5] + stepMax;
+
+        voxels.dims[0] = (int)std::ceil((voxels.maxCoord[0] - voxels.minCoord[0]) / step);
+        voxels.dims[1] = (int)std::ceil((voxels.maxCoord[1] - voxels.minCoord[1]) / step);
+        voxels.dims[2] = (int)std::ceil((voxels.maxCoord[2] - voxels.minCoord[2]) / step);
+    }
 
     int rx = voxels.dims[0];
     int ry = voxels.dims[1];
@@ -1323,10 +1344,21 @@ RemeshResult doRemesh(
         r = surfaceNetsReconstruct(voxels, block, onProgress);
     }
 
+    float snapTol = step * 0.45f;
     for (size_t i = 0; i < r.vertices.size(); i += 3) {
-        r.vertices[i]     = voxels.minCoord[0] + r.vertices[i] * step;
-        r.vertices[i + 1] = voxels.minCoord[1] + r.vertices[i + 1] * step;
-        r.vertices[i + 2] = voxels.minCoord[2] + r.vertices[i + 2] * step;
+        float vx = voxels.minCoord[0] + r.vertices[i] * step;
+        float vy = voxels.minCoord[1] + r.vertices[i + 1] * step;
+        float vz = voxels.minCoord[2] + r.vertices[i + 2] * step;
+
+        if (alignSymmetry) {
+            if (std::abs(vx) < snapTol) vx = 0.0f;
+            if (std::abs(vy) < snapTol) vy = 0.0f;
+            if (std::abs(vz) < snapTol) vz = 0.0f;
+        }
+
+        r.vertices[i]     = vx;
+        r.vertices[i + 1] = vy;
+        r.vertices[i + 2] = vz;
     }
 
     // 6. PolyGroup Transfer via Direct Spatial Mesh-to-Mesh Projection
