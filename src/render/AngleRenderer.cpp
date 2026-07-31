@@ -411,16 +411,28 @@ void AngleRenderer::setEnvironmentParametersFast(float exposure, uintptr_t sphPt
 
 void AngleRenderer::setSymmetryParameters(bool showSymmetryLine, const std::vector<float>& planeOrigin, const std::vector<float>& planeNormal) {
     m_showSymmetryLine = showSymmetryLine;
+    m_symmetryPlanes.clear();
     if (planeOrigin.size() == 3) {
         m_planeOrigin = glm::vec3(planeOrigin[0], planeOrigin[1], planeOrigin[2]);
     }
     if (planeNormal.size() == 3) {
         m_planeNormal = glm::normalize(glm::vec3(planeNormal[0], planeNormal[1], planeNormal[2]));
     }
+    glm::vec3 absN = glm::abs(m_planeNormal);
+    m_planeColor = absN.x * glm::vec3(1.0f, 0.25f, 0.25f) +
+                   absN.y * glm::vec3(0.25f, 0.95f, 0.3f) +
+                   absN.z * glm::vec3(0.25f, 0.6f, 1.0f);
+    if (glm::length(m_planeColor) > 0.001f) {
+        m_planeColor = glm::normalize(m_planeColor);
+    }
+    if (showSymmetryLine) {
+        m_symmetryPlanes.push_back({m_planeOrigin, m_planeNormal, m_planeColor});
+    }
 }
 
 void AngleRenderer::setSymmetryParametersFast(bool showSymmetryLine, uintptr_t planeOriginPtr, uintptr_t planeNormalPtr) {
     m_showSymmetryLine = showSymmetryLine;
+    m_symmetryPlanes.clear();
     if (planeOriginPtr) {
         const float* o = reinterpret_cast<const float*>(planeOriginPtr);
         m_planeOrigin = glm::vec3(o[0], o[1], o[2]);
@@ -429,6 +441,21 @@ void AngleRenderer::setSymmetryParametersFast(bool showSymmetryLine, uintptr_t p
         const float* n = reinterpret_cast<const float*>(planeNormalPtr);
         m_planeNormal = glm::normalize(glm::vec3(n[0], n[1], n[2]));
     }
+    glm::vec3 absN = glm::abs(m_planeNormal);
+    m_planeColor = absN.x * glm::vec3(1.0f, 0.25f, 0.25f) +
+                   absN.y * glm::vec3(0.25f, 0.95f, 0.3f) +
+                   absN.z * glm::vec3(0.25f, 0.6f, 1.0f);
+    if (glm::length(m_planeColor) > 0.001f) {
+        m_planeColor = glm::normalize(m_planeColor);
+    }
+    if (showSymmetryLine) {
+        m_symmetryPlanes.push_back({m_planeOrigin, m_planeNormal, m_planeColor});
+    }
+}
+
+void AngleRenderer::setSymmetryPlanes(bool showSymmetryLine, const std::vector<SymmetryPlaneData>& planes) {
+    m_showSymmetryLine = showSymmetryLine;
+    m_symmetryPlanes = planes;
 }
 
 void AngleRenderer::setCursorParameters(
@@ -1286,16 +1313,32 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
     glUniform3fv(glGetUniformLocation(program, "uAlbedo"), 1, &effectiveAlbedo[0]);
     glUniform1i(glGetUniformLocation(program, "uFlat"), m_flatShading ? 1 : 0);
 
-    if (m_showSymmetryLine) {
-        glm::vec3 O_view = glm::vec3(mesh->mvMatrix * glm::vec4(m_planeOrigin, 1.0f));
-        glm::vec3 N_view = glm::normalize(mesh->nMatrix * m_planeNormal);
-        glUniform3f(glGetUniformLocation(program, "uPlaneN"), N_view.x, N_view.y, N_view.z);
-        glUniform3f(glGetUniformLocation(program, "uPlaneO"), O_view.x, O_view.y, O_view.z);
-    } else {
-        glUniform3f(glGetUniformLocation(program, "uPlaneN"), m_planeNormal.x, m_planeNormal.y, m_planeNormal.z);
-        glUniform3f(glGetUniformLocation(program, "uPlaneO"), m_planeOrigin.x, m_planeOrigin.y, m_planeOrigin.z);
+    int symCount = (m_showSymmetryLine && !m_symmetryPlanes.empty()) ? static_cast<int>(m_symmetryPlanes.size()) : 0;
+    if (symCount > 3) symCount = 3;
+    glUniform1i(glGetUniformLocation(program, "uSymCount"), symCount);
+    glUniform1i(glGetUniformLocation(program, "uSym"), symCount > 0 ? 1 : 0);
+
+    if (symCount > 0) {
+        float nBuf[9] = {0.0f};
+        float oBuf[9] = {0.0f};
+        float cBuf[9] = {0.0f};
+        for (int i = 0; i < symCount; ++i) {
+            glm::vec3 O_view = glm::vec3(mesh->mvMatrix * glm::vec4(m_symmetryPlanes[i].origin, 1.0f));
+            glm::vec3 N_view = glm::normalize(mesh->nMatrix * m_symmetryPlanes[i].normal);
+            nBuf[i * 3 + 0] = N_view.x;
+            nBuf[i * 3 + 1] = N_view.y;
+            nBuf[i * 3 + 2] = N_view.z;
+            oBuf[i * 3 + 0] = O_view.x;
+            oBuf[i * 3 + 1] = O_view.y;
+            oBuf[i * 3 + 2] = O_view.z;
+            cBuf[i * 3 + 0] = m_symmetryPlanes[i].color.r;
+            cBuf[i * 3 + 1] = m_symmetryPlanes[i].color.g;
+            cBuf[i * 3 + 2] = m_symmetryPlanes[i].color.b;
+        }
+        glUniform3fv(glGetUniformLocation(program, "uPlaneN"), symCount, nBuf);
+        glUniform3fv(glGetUniformLocation(program, "uPlaneO"), symCount, oBuf);
+        glUniform3fv(glGetUniformLocation(program, "uPlaneColor"), symCount, cBuf);
     }
-    glUniform1i(glGetUniformLocation(program, "uSym"), m_showSymmetryLine ? 1 : 0);
     
     bool darken = false;
     if (m_darkenUnselected && scene.getMeshes().size() > 1 && scene.getSelected() && scene.getSelected() != mesh) {

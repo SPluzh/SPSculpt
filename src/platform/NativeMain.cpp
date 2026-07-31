@@ -610,6 +610,38 @@ int main(int argc, char* argv[]) {
         renderer.setLassoParameters(sculpt.isLassoActive(), sculpt.getLassoPoints(), sculpt.getLassoAlt(), sculpt.isMaskLasso());
         renderer.setClipCurveOverlay(sculpt.isClipCurveActive(), sculpt.getClipCurvePoints(), sculpt.getClipCurveAlt());
         renderer.setActiveBrush(sculpt.getBrush());
+
+        if (renderer.getShowSymmetryLine()) {
+            Mesh* activeMesh = scene.getSelected();
+            if (activeMesh && sculpt.getUseSym()) {
+                std::vector<SymmetryPlaneData> planes;
+                SymmetryMode mode = sculpt.getSymmetryMode();
+                if (sculpt.getSymX()) {
+                    planes.push_back({
+                        activeMesh->getSymmetryOriginForAxis(0, mode),
+                        activeMesh->getSymmetryNormalForAxis(0, mode),
+                        glm::vec3(1.0f, 0.25f, 0.25f)
+                    });
+                }
+                if (sculpt.getSymY()) {
+                    planes.push_back({
+                        activeMesh->getSymmetryOriginForAxis(1, mode),
+                        activeMesh->getSymmetryNormalForAxis(1, mode),
+                        glm::vec3(0.25f, 0.95f, 0.3f)
+                    });
+                }
+                if (sculpt.getSymZ()) {
+                    planes.push_back({
+                        activeMesh->getSymmetryOriginForAxis(2, mode),
+                        activeMesh->getSymmetryNormalForAxis(2, mode),
+                        glm::vec3(0.25f, 0.6f, 1.0f)
+                    });
+                }
+                renderer.setSymmetryPlanes(true, planes);
+            } else {
+                renderer.setSymmetryPlanes(renderer.getShowSymmetryLine(), {});
+            }
+        }
         bool isSculptingActive = sculpt.isSculpting();
         auto tRenderStart = std::chrono::high_resolution_clock::now();
         renderer.render(scene);

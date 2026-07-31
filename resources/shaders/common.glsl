@@ -1,8 +1,11 @@
 #define PI 3.14159265358979323846f
 #define PI_2 (2.0f * PI)
 
-uniform vec3 uPlaneN;
-uniform vec3 uPlaneO;
+#define MAX_SYM_PLANES 3
+uniform vec3 uPlaneN[MAX_SYM_PLANES];
+uniform vec3 uPlaneO[MAX_SYM_PLANES];
+uniform vec3 uPlaneColor[MAX_SYM_PLANES];
+uniform int uSymCount;
 uniform int uSym;
 uniform int uDarken;
 uniform float uCurvature;
@@ -75,8 +78,15 @@ vec4 encodeFragColor(const in vec3 frag, const in float alpha) {
     vec3 col = computeCurvature(vVertex, getAlignedNormal(), frag, uCurvature, uFov);
     if (uDarken == 1) col *= 0.3;
     col *= (0.15 + 0.85 * vMasking);
-    if (uSym == 1 && abs(dot(uPlaneN, vVertex - uPlaneO)) < 0.15) {
-        col = min(col * 1.5, vec3(1.0));
+    int activePlanes = uSymCount > 0 ? uSymCount : (uSym == 1 ? 1 : 0);
+    for (int i = 0; i < 3; ++i) {
+        if (i >= activePlanes) break;
+        float dist = abs(dot(uPlaneN[i], vVertex - uPlaneO[i]));
+        if (dist < 0.22) {
+            float factor = smoothstep(0.22, 0.03, dist);
+            vec3 vibrantColor = uPlaneColor[i] * 1.8;
+            col = mix(col, vibrantColor, factor * 0.85) + uPlaneColor[i] * (factor * 0.4);
+        }
     }
     return alpha != 1.0 ? vec4(col * alpha, alpha) : encodeRGBM(col);
 }

@@ -15,6 +15,12 @@ class Mesh;
 class Scene;
 class ArmatureGraph;
 
+struct SymmetryPlaneData {
+    glm::vec3 origin{0.0f};
+    glm::vec3 normal{0.0f, 0.0f, 1.0f};
+    glm::vec3 color{1.0f, 0.25f, 0.25f};
+};
+
 struct ModelSnapshot {
     Camera frozenCamera;
     RenderTarget rt;
@@ -260,6 +266,7 @@ public:
     
     void setSymmetryParameters(bool showSymmetryLine, const std::vector<float>& planeOrigin, const std::vector<float>& planeNormal);
     void setSymmetryParametersFast(bool showSymmetryLine, uintptr_t planeOriginPtr, uintptr_t planeNormalPtr);
+    void setSymmetryPlanes(bool showSymmetryLine, const std::vector<SymmetryPlaneData>& planes);
 
     // Selection cursor drawing parameters
     void setCursorParameters(
@@ -369,6 +376,8 @@ private:
     bool m_showSymmetryLine = false;
     glm::vec3 m_planeOrigin{0.0f};
     glm::vec3 m_planeNormal{0.0f, 0.0f, 1.0f};
+    glm::vec3 m_planeColor{1.0f, 0.25f, 0.25f};
+    std::vector<SymmetryPlaneData> m_symmetryPlanes;
 
     // Selection parameters
     bool m_showCursor = false;

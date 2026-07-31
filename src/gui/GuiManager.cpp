@@ -5145,11 +5145,31 @@ void GuiManager::drawSymmetryPanel(SculptManager& sculpt, Scene& scene, AngleRen
     }
 
     Mesh* activeMesh = scene.getSelected();
-    if (showSymLine && activeMesh) {
-        int axis = sculpt.getSymAxis();
-        glm::vec3 orig = activeMesh->getSymmetryOriginForAxis(axis, sculpt.getSymmetryMode());
-        glm::vec3 norm = activeMesh->getSymmetryNormalForAxis(axis, sculpt.getSymmetryMode());
-        renderer.setSymmetryParameters(showSymLine, {orig.x, orig.y, orig.z}, {norm.x, norm.y, norm.z});
+    if (showSymLine && activeMesh && sculpt.getUseSym()) {
+        std::vector<SymmetryPlaneData> planes;
+        SymmetryMode mode = sculpt.getSymmetryMode();
+        if (sculpt.getSymX()) {
+            planes.push_back({
+                activeMesh->getSymmetryOriginForAxis(0, mode),
+                activeMesh->getSymmetryNormalForAxis(0, mode),
+                glm::vec3(1.0f, 0.25f, 0.25f)
+            });
+        }
+        if (sculpt.getSymY()) {
+            planes.push_back({
+                activeMesh->getSymmetryOriginForAxis(1, mode),
+                activeMesh->getSymmetryNormalForAxis(1, mode),
+                glm::vec3(0.25f, 0.95f, 0.3f)
+            });
+        }
+        if (sculpt.getSymZ()) {
+            planes.push_back({
+                activeMesh->getSymmetryOriginForAxis(2, mode),
+                activeMesh->getSymmetryNormalForAxis(2, mode),
+                glm::vec3(0.25f, 0.6f, 1.0f)
+            });
+        }
+        renderer.setSymmetryPlanes(showSymLine, planes);
     }
 
     // 5. Symmetry Offset Slider
