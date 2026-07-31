@@ -1827,19 +1827,71 @@ void AngleRenderer::drawClipCurve() {
     float viewportWidth = (m_splitMode ? m_width * 0.5f : (float)m_width) / m_dpiScale;
     float viewportHeight = (float)m_height / m_dpiScale;
 
-    std::vector<float> ndcPoints;
-    ndcPoints.reserve(m_clipCurvePoints.size() * 3);
-    for (const auto& p : m_clipCurvePoints) {
+    auto toNDC = [&](const glm::vec2& p) -> glm::vec3 {
         float x = (p.x / viewportWidth) * 2.0f - 1.0f;
         float y = 1.0f - (p.y / viewportHeight) * 2.0f;
-        ndcPoints.push_back(x);
-        ndcPoints.push_back(y);
-        ndcPoints.push_back(0.0f);
+        return glm::vec3(x, y, 0.0f);
+    };
+
+    // 1. Convert curve points to NDC for main line
+    std::vector<float> lineNdcPoints;
+    lineNdcPoints.reserve(m_clipCurvePoints.size() * 3);
+    for (const auto& p : m_clipCurvePoints) {
+        glm::vec3 ndc = toNDC(p);
+        lineNdcPoints.push_back(ndc.x);
+        lineNdcPoints.push_back(ndc.y);
+        lineNdcPoints.push_back(ndc.z);
     }
 
-    glBindVertexArray(m_lassoVao);
-    glBindBuffer(GL_ARRAY_BUFFER, m_lassoVbo);
-    glBufferData(GL_ARRAY_BUFFER, ndcPoints.size() * sizeof(float), ndcPoints.data(), GL_DYNAMIC_DRAW);
+    // 2. Generate arrow lines along the curve pointing to the clipped side
+    std::vector<float> arrowNdcPoints;
+    const float ARROW_SPACING = 35.0f; // pixels between arrows
+    const float ARROW_LENGTH  = 16.0f; // length of arrow stem in pixels
+    const float WING_SIZE     = 6.0f;  // size of arrow head wings in pixels
+
+    float distSinceLastArrow = ARROW_SPACING * 0.5f; // start with an arrow near beginning
+
+    for (size_t i = 0; i < m_clipCurvePoints.size() - 1; ++i) {
+        glm::vec2 pA = m_clipCurvePoints[i];
+        glm::vec2 pB = m_clipCurvePoints[i + 1];
+        glm::vec2 d = pB - pA;
+        float segLen = glm::length(d);
+        if (segLen < 1e-4f) continue;
+
+        glm::vec2 segDir = d / segLen;
+        // clipNormal points toward the clipped region
+        glm::vec2 clipNormal = m_clipCurveAlt ? glm::vec2(-segDir.y, segDir.x) : glm::vec2(segDir.y, -segDir.x);
+
+        float t = 0.0f;
+        while (distSinceLastArrow + (segLen - t) >= ARROW_SPACING) {
+            float step = ARROW_SPACING - distSinceLastArrow;
+            t += step;
+            distSinceLastArrow = 0.0f;
+
+            glm::vec2 pBase = pA + t * segDir;
+            glm::vec2 pTip  = pBase + clipNormal * ARROW_LENGTH;
+            glm::vec2 wing1 = pTip - clipNormal * WING_SIZE + segDir * (WING_SIZE * 0.7f);
+            glm::vec2 wing2 = pTip - clipNormal * WING_SIZE - segDir * (WING_SIZE * 0.7f);
+
+            glm::vec3 ndcBase  = toNDC(pBase);
+            glm::vec3 ndcTip   = toNDC(pTip);
+            glm::vec3 ndcWing1 = toNDC(wing1);
+            glm::vec3 ndcWing2 = toNDC(wing2);
+
+            // Stem: pBase -> pTip
+            arrowNdcPoints.push_back(ndcBase.x); arrowNdcPoints.push_back(ndcBase.y); arrowNdcPoints.push_back(ndcBase.z);
+            arrowNdcPoints.push_back(ndcTip.x);  arrowNdcPoints.push_back(ndcTip.y);  arrowNdcPoints.push_back(ndcTip.z);
+
+            // Wing 1: pTip -> wing1
+            arrowNdcPoints.push_back(ndcTip.x);   arrowNdcPoints.push_back(ndcTip.y);   arrowNdcPoints.push_back(ndcTip.z);
+            arrowNdcPoints.push_back(ndcWing1.x); arrowNdcPoints.push_back(ndcWing1.y); arrowNdcPoints.push_back(ndcWing1.z);
+
+            // Wing 2: pTip -> wing2
+            arrowNdcPoints.push_back(ndcTip.x);   arrowNdcPoints.push_back(ndcTip.y);   arrowNdcPoints.push_back(ndcTip.z);
+            arrowNdcPoints.push_back(ndcWing2.x); arrowNdcPoints.push_back(ndcWing2.y); arrowNdcPoints.push_back(ndcWing2.z);
+        }
+        distSinceLastArrow += (segLen - t);
+    }
 
     glUseProgram(m_selectionProgram);
     GLint locColor = glGetUniformLocation(m_selectionProgram, "uColor");
@@ -1859,10 +1911,23 @@ void AngleRenderer::drawClipCurve() {
 
     if (locAlpha != -1) glUniform1f(locAlpha, 1.0f);
     if (locDashed != -1) glUniform1i(locDashed, 0);
+
+    glBindVertexArray(m_lassoVao);
+    glBindBuffer(GL_ARRAY_BUFFER, m_lassoVbo);
+
+    // Draw main polyline
+    glBufferData(GL_ARRAY_BUFFER, lineNdcPoints.size() * sizeof(float), lineNdcPoints.data(), GL_DYNAMIC_DRAW);
     glLineWidth(2.5f);
     glDrawArrays(GL_LINE_STRIP, 0, (GLsizei)m_clipCurvePoints.size());
-    glLineWidth(1.0f);
 
+    // Draw directional arrows pointing into clipped region
+    if (!arrowNdcPoints.empty()) {
+        glBufferData(GL_ARRAY_BUFFER, arrowNdcPoints.size() * sizeof(float), arrowNdcPoints.data(), GL_DYNAMIC_DRAW);
+        glLineWidth(2.0f);
+        glDrawArrays(GL_LINES, 0, (GLsizei)(arrowNdcPoints.size() / 3));
+    }
+
+    glLineWidth(1.0f);
     glDisable(GL_BLEND);
     glEnable(GL_DEPTH_TEST);
     glBindVertexArray(0);
