@@ -1317,6 +1317,7 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
     if (symCount > 3) symCount = 3;
     glUniform1i(glGetUniformLocation(program, "uSymCount"), symCount);
     glUniform1i(glGetUniformLocation(program, "uSym"), symCount > 0 ? 1 : 0);
+    glUniform1f(glGetUniformLocation(program, "uSymLineWidth"), m_symmetryLineWidth);
 
     if (symCount > 0) {
         float nBuf[9] = {0.0f};

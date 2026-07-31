@@ -157,6 +157,8 @@ public:
     BrushType getActiveBrush() const { return m_activeBrush; }
     void setShowSymmetryLine(bool show) { m_showSymmetryLine = show; }
     bool getShowSymmetryLine() const { return m_showSymmetryLine; }
+    void setSymmetryLineWidth(float width) { m_symmetryLineWidth = width; }
+    float getSymmetryLineWidth() const { return m_symmetryLineWidth; }
     void setContourColor(const glm::vec4& color) { m_contourColor = color; }
     glm::vec4 getContourColor() const { return m_contourColor; }
     void setSplitMode(bool split) { m_splitMode = split; }
@@ -374,6 +376,7 @@ private:
 
     // Symmetry parameters
     bool m_showSymmetryLine = false;
+    float m_symmetryLineWidth = 0.11f;
     glm::vec3 m_planeOrigin{0.0f};
     glm::vec3 m_planeNormal{0.0f, 0.0f, 1.0f};
     glm::vec3 m_planeColor{1.0f, 0.25f, 0.25f};

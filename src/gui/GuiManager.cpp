@@ -5143,6 +5143,14 @@ void GuiManager::drawSymmetryPanel(SculptManager& sculpt, Scene& scene, AngleRen
     if (ImGui::Checkbox("Show Symmetry Line", &showSymLine)) {
         renderer.setShowSymmetryLine(showSymLine);
     }
+    if (showSymLine) {
+        ImGui::Indent();
+        float symLineWidth = renderer.getSymmetryLineWidth();
+        if (ImGui::SliderFloat("Line Width", &symLineWidth, 0.01f, 0.5f, "%.3f")) {
+            renderer.setSymmetryLineWidth(symLineWidth);
+        }
+        ImGui::Unindent();
+    }
 
     Mesh* activeMesh = scene.getSelected();
     if (showSymLine && activeMesh && sculpt.getUseSym()) {

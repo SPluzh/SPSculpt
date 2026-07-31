@@ -21,6 +21,7 @@ bool RenderSettings::save(IniFile& ini, const AngleRenderer& renderer, const Sce
     ini.setFloat(sec, "safeFramesMargin", renderer.getSafeFramesMargin());
     ini.setFloat(sec, "safeFramesThickness", renderer.getSafeFramesThickness());
     ini.setBool(sec, "showSymmetryLine", renderer.getShowSymmetryLine());
+    ini.setFloat(sec, "symmetryLineWidth", renderer.getSymmetryLineWidth());
     ini.setBool(sec, "darkenUnselected", renderer.getDarkenUnselected());
     
     glm::vec4 cColor = renderer.getContourColor();
@@ -104,6 +105,7 @@ bool RenderSettings::load(const IniFile& ini, AngleRenderer& renderer, Scene& sc
     if (ini.hasKey(sec, "safeFramesMargin")) renderer.setSafeFramesMargin(ini.getFloat(sec, "safeFramesMargin", 20.0f));
     if (ini.hasKey(sec, "safeFramesThickness")) renderer.setSafeFramesThickness(ini.getFloat(sec, "safeFramesThickness", 1.5f));
     if (ini.hasKey(sec, "showSymmetryLine")) renderer.setShowSymmetryLine(ini.getBool(sec, "showSymmetryLine"));
+    if (ini.hasKey(sec, "symmetryLineWidth")) renderer.setSymmetryLineWidth(ini.getFloat(sec, "symmetryLineWidth", 0.11f));
     if (ini.hasKey(sec, "darkenUnselected")) renderer.setDarkenUnselected(ini.getBool(sec, "darkenUnselected"));
     
     if (ini.hasKey(sec, "contourColor")) {
