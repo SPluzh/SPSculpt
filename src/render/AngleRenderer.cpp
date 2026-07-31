@@ -1860,7 +1860,7 @@ void AngleRenderer::drawClipCurve() {
 
         glm::vec2 segDir = d / segLen;
         // clipNormal points toward the clipped region
-        glm::vec2 clipNormal = m_clipCurveAlt ? glm::vec2(-segDir.y, segDir.x) : glm::vec2(segDir.y, -segDir.x);
+        glm::vec2 clipNormal = m_clipCurveAlt ? glm::vec2(segDir.y, -segDir.x) : glm::vec2(-segDir.y, segDir.x);
 
         float t = 0.0f;
         while (distSinceLastArrow + (segLen - t) >= ARROW_SPACING) {
