@@ -1,6 +1,7 @@
 #include "mesh/Mesh.h"
 #include <cstring>
 #include <algorithm>
+#include <map>
 #include "mesh/NormalCalc.h"
 #include "mesh/Topology.h"
 #include "common/Constants.h"
@@ -552,15 +553,31 @@ void Mesh::mirror(int axisIndex, bool positiveToNegative, SymmetryMode mode) {
     std::vector<float> distances(nbVerts);
     for (int i = 0; i < nbVerts; ++i) {
         int idx = i * 3;
-        float vx = verts[idx] - origin.x;
+        float vx = verts[idx]     - origin.x;
         float vy = verts[idx + 1] - origin.y;
         float vz = verts[idx + 2] - origin.z;
         distances[i] = vx * normal.x + vy * normal.y + vz * normal.z;
     }
 
-    // 2. Identify which faces are kept
-    std::vector<int> keptFaces;
-    keptFaces.reserve(nbFaces);
+    // 2. Classify vertices: Keep, Discard, or OnPlane
+    enum class Side { Keep, Discard, OnPlane };
+    const float eps = 1e-6f;
+    std::vector<Side> vertSide(nbVerts);
+    for (int i = 0; i < nbVerts; ++i) {
+        float d = distances[i];
+        if (std::abs(d) <= eps) {
+            vertSide[i] = Side::OnPlane;
+            distances[i] = 0.0f;
+        } else if (positiveToNegative ? (d > 0.0f) : (d < 0.0f)) {
+            vertSide[i] = Side::Keep;
+        } else {
+            vertSide[i] = Side::Discard;
+        }
+    }
+
+    // 3. Classify faces: Kept, Discarded, or Crossing
+    enum class FaceType { Kept, Discarded, Crossing };
+    std::vector<FaceType> faceTypes(nbFaces);
     for (int i = 0; i < nbFaces; ++i) {
         int idx = i * 4;
         uint32_t iv1 = faces[idx];
@@ -568,34 +585,34 @@ void Mesh::mirror(int axisIndex, bool positiveToNegative, SymmetryMode mode) {
         uint32_t iv3 = faces[idx + 2];
         uint32_t iv4 = faces[idx + 3];
 
-        float dSum = distances[iv1] + distances[iv2] + distances[iv3];
-        int count = 3;
-        if (iv4 != TRI_INDEX) {
-            dSum += distances[iv4];
-            count = 4;
-        }
-        float avgDist = dSum / count;
-        float snapTol = std::max(1e-4f, computeLocalRadius() * 0.005f);
-        bool keep = positiveToNegative ? (avgDist >= -snapTol) : (avgDist <= snapTol);
-        if (keep) {
-            keptFaces.push_back(i);
+        bool hasKeep = (vertSide[iv1] == Side::Keep || vertSide[iv2] == Side::Keep || vertSide[iv3] == Side::Keep || (iv4 != TRI_INDEX && vertSide[iv4] == Side::Keep));
+        bool hasDiscard = (vertSide[iv1] == Side::Discard || vertSide[iv2] == Side::Discard || vertSide[iv3] == Side::Discard || (iv4 != TRI_INDEX && vertSide[iv4] == Side::Discard));
+
+        if (hasKeep && !hasDiscard) {
+            faceTypes[i] = FaceType::Kept;
+        } else if (hasDiscard && !hasKeep) {
+            faceTypes[i] = FaceType::Discarded;
+        } else if (hasKeep && hasDiscard) {
+            faceTypes[i] = FaceType::Crossing;
+        } else { // All vertices are OnPlane
+            faceTypes[i] = FaceType::Kept;
         }
     }
 
-    if (keptFaces.empty()) return;
-
-    // 3. For all kept faces, mark their vertices.
-    std::vector<int32_t> newVertsMap(nbVerts, -1);
+    // 4. Construct kept half-mesh geometry
     std::vector<float> tempVertices;
     std::vector<float> tempColors;
     std::vector<float> tempMaterials;
     std::vector<bool> boundaryFlags;
+    std::vector<uint32_t> tempFaces;
+    std::vector<uint32_t> tempFaceGroups;
+    std::vector<int32_t> newVertsMap(nbVerts, -1);
 
-    bool hasColors = (colors.size() == static_cast<size_t>(nbVerts * 3));
-    bool hasMats = (materials.size() == static_cast<size_t>(nbVerts * 3));
-    bool hasUVs = hasUV && !facesTexCoord.empty();
+    bool hasColors  = (colors.size() == static_cast<size_t>(nbVerts * 3));
+    bool hasMats    = (materials.size() == static_cast<size_t>(nbVerts * 3));
+    bool hasFaceGps = (faceGroups.size() == static_cast<size_t>(nbFaces));
 
-    auto addVertex = [&](uint32_t origIdx) -> uint32_t {
+    auto addKeptVertex = [&](uint32_t origIdx) -> uint32_t {
         if (newVertsMap[origIdx] != -1) {
             return static_cast<uint32_t>(newVertsMap[origIdx]);
         }
@@ -608,19 +625,12 @@ void Mesh::mirror(int axisIndex, bool positiveToNegative, SymmetryMode mode) {
         float vy = verts[o3 + 1];
         float vz = verts[o3 + 2];
 
-        float dist = distances[origIdx];
-        bool onBoundary = false;
-        float snapTol = std::max(1e-4f, computeLocalRadius() * 0.005f);
-        if (positiveToNegative ? (dist < 0.0f) : (dist > 0.0f)) {
-            vx = vx - dist * normal.x;
-            vy = vy - dist * normal.y;
-            vz = vz - dist * normal.z;
-            onBoundary = true;
-        } else if (std::abs(dist) <= snapTol) {
-            vx = vx - dist * normal.x;
-            vy = vy - dist * normal.y;
-            vz = vz - dist * normal.z;
-            onBoundary = true;
+        bool onBoundary = (vertSide[origIdx] == Side::OnPlane);
+        if (onBoundary) {
+            float dist = distances[origIdx];
+            vx -= dist * normal.x;
+            vy -= dist * normal.y;
+            vz -= dist * normal.z;
         }
 
         tempVertices.push_back(vx);
@@ -642,39 +652,163 @@ void Mesh::mirror(int axisIndex, bool positiveToNegative, SymmetryMode mode) {
         return newIdx;
     };
 
-    std::vector<uint32_t> newFacesOriginal;
-    newFacesOriginal.reserve(keptFaces.size() * 4);
-    std::vector<uint32_t> newFacesUVOriginal;
-    if (hasUVs) newFacesUVOriginal.reserve(keptFaces.size() * 4);
+    std::map<std::pair<uint32_t, uint32_t>, uint32_t> clipVertexCache;
 
-    for (int fIdx : keptFaces) {
-        int idx = fIdx * 4;
+    auto addClipVertex = [&](uint32_t idxA, uint32_t idxB) -> uint32_t {
+        auto key = std::make_pair(std::min(idxA, idxB), std::max(idxA, idxB));
+        auto it = clipVertexCache.find(key);
+        if (it != clipVertexCache.end()) {
+            return it->second;
+        }
+
+        float dA = distances[idxA];
+        float dB = distances[idxB];
+
+        float denom = dA - dB;
+        float t = 0.5f;
+        if (std::abs(denom) > 1e-12f) {
+            t = dA / denom;
+        }
+        if (t < 0.0f) t = 0.0f;
+        if (t > 1.0f) t = 1.0f;
+
+        uint32_t a3 = idxA * 3;
+        uint32_t b3 = idxB * 3;
+
+        float vx = verts[a3]   + t * (verts[b3]   - verts[a3]);
+        float vy = verts[a3+1] + t * (verts[b3+1] - verts[a3+1]);
+        float vz = verts[a3+2] + t * (verts[b3+2] - verts[a3+2]);
+
+        // Snap position exactly onto plane
+        float dx = vx - origin.x;
+        float dy = vy - origin.y;
+        float dz = vz - origin.z;
+        float projDist = dx * normal.x + dy * normal.y + dz * normal.z;
+        vx -= projDist * normal.x;
+        vy -= projDist * normal.y;
+        vz -= projDist * normal.z;
+
+        uint32_t newIdx = static_cast<uint32_t>(tempVertices.size() / 3);
+        tempVertices.push_back(vx);
+        tempVertices.push_back(vy);
+        tempVertices.push_back(vz);
+
+        if (hasColors) {
+            tempColors.push_back(colors[a3]   + t * (colors[b3]   - colors[a3]));
+            tempColors.push_back(colors[a3+1] + t * (colors[b3+1] - colors[a3+1]));
+            tempColors.push_back(colors[a3+2] + t * (colors[b3+2] - colors[a3+2]));
+        }
+        if (hasMats) {
+            tempMaterials.push_back(materials[a3]   + t * (materials[b3]   - materials[a3]));
+            tempMaterials.push_back(materials[a3+1] + t * (materials[b3+1] - materials[a3+1]));
+            tempMaterials.push_back(materials[a3+2] + t * (materials[b3+2] - materials[a3+2]));
+        }
+
+        boundaryFlags.push_back(true);
+        clipVertexCache[key] = newIdx;
+        return newIdx;
+    };
+
+    for (int i = 0; i < nbFaces; ++i) {
+        if (faceTypes[i] == FaceType::Discarded) {
+            continue;
+        }
+
+        uint32_t gid = hasFaceGps ? faceGroups[i] : 0;
+        int idx = i * 4;
         uint32_t iv1 = faces[idx];
         uint32_t iv2 = faces[idx + 1];
         uint32_t iv3 = faces[idx + 2];
         uint32_t iv4 = faces[idx + 3];
 
-        uint32_t nv1 = addVertex(iv1);
-        uint32_t nv2 = addVertex(iv2);
-        uint32_t nv3 = addVertex(iv3);
-        uint32_t nv4 = (iv4 != TRI_INDEX) ? addVertex(iv4) : TRI_INDEX;
+        if (faceTypes[i] == FaceType::Kept) {
+            uint32_t nv1 = addKeptVertex(iv1);
+            uint32_t nv2 = addKeptVertex(iv2);
+            uint32_t nv3 = addKeptVertex(iv3);
+            uint32_t nv4 = (iv4 != TRI_INDEX) ? addKeptVertex(iv4) : TRI_INDEX;
 
-        newFacesOriginal.push_back(nv1);
-        newFacesOriginal.push_back(nv2);
-        newFacesOriginal.push_back(nv3);
-        newFacesOriginal.push_back(nv4);
+            tempFaces.push_back(nv1);
+            tempFaces.push_back(nv2);
+            tempFaces.push_back(nv3);
+            tempFaces.push_back(nv4);
+            tempFaceGroups.push_back(gid);
+        } else if (faceTypes[i] == FaceType::Crossing) {
+            std::vector<uint32_t> fVerts = {iv1, iv2, iv3};
+            if (iv4 != TRI_INDEX) fVerts.push_back(iv4);
 
-        if (hasUVs) {
-            newFacesUVOriginal.push_back(facesTexCoord[idx]);
-            newFacesUVOriginal.push_back(facesTexCoord[idx + 1]);
-            newFacesUVOriginal.push_back(facesTexCoord[idx + 2]);
-            newFacesUVOriginal.push_back(facesTexCoord[idx + 3]);
+            size_t nCorner = fVerts.size();
+            std::vector<uint32_t> outPolygon;
+
+            for (size_t c = 0; c < nCorner; ++c) {
+                uint32_t curr = fVerts[c];
+                uint32_t next = fVerts[(c + 1) % nCorner];
+
+                Side sideCurr = vertSide[curr];
+                Side sideNext = vertSide[next];
+
+                bool currInside = (sideCurr == Side::Keep || sideCurr == Side::OnPlane);
+                bool nextInside = (sideNext == Side::Keep || sideNext == Side::OnPlane);
+
+                if (currInside) {
+                    uint32_t vCurrIdx = addKeptVertex(curr);
+                    if (outPolygon.empty() || outPolygon.back() != vCurrIdx) {
+                        outPolygon.push_back(vCurrIdx);
+                    }
+
+                    if (!nextInside) {
+                        if (sideCurr != Side::OnPlane) {
+                            uint32_t vClip = addClipVertex(curr, next);
+                            if (outPolygon.empty() || outPolygon.back() != vClip) {
+                                outPolygon.push_back(vClip);
+                            }
+                        }
+                    }
+                } else {
+                    if (nextInside) {
+                        if (sideNext != Side::OnPlane) {
+                            uint32_t vClip = addClipVertex(curr, next);
+                            if (outPolygon.empty() || outPolygon.back() != vClip) {
+                                outPolygon.push_back(vClip);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (outPolygon.size() > 1 && outPolygon.front() == outPolygon.back()) {
+                outPolygon.pop_back();
+            }
+
+            if (outPolygon.size() == 3) {
+                tempFaces.push_back(outPolygon[0]);
+                tempFaces.push_back(outPolygon[1]);
+                tempFaces.push_back(outPolygon[2]);
+                tempFaces.push_back(TRI_INDEX);
+                tempFaceGroups.push_back(gid);
+            } else if (outPolygon.size() == 4) {
+                tempFaces.push_back(outPolygon[0]);
+                tempFaces.push_back(outPolygon[1]);
+                tempFaces.push_back(outPolygon[2]);
+                tempFaces.push_back(outPolygon[3]);
+                tempFaceGroups.push_back(gid);
+            } else if (outPolygon.size() > 4) {
+                for (size_t k = 1; k + 1 < outPolygon.size(); ++k) {
+                    tempFaces.push_back(outPolygon[0]);
+                    tempFaces.push_back(outPolygon[k]);
+                    tempFaces.push_back(outPolygon[k + 1]);
+                    tempFaces.push_back(TRI_INDEX);
+                    tempFaceGroups.push_back(gid);
+                }
+            }
         }
     }
 
-    // 4. Duplicate and mirror strictly-source vertices
+    if (tempFaces.empty()) return;
+
+    // 5. Mirror strictly source-side vertices
     size_t numKeptVerts = tempVertices.size() / 3;
     std::vector<uint32_t> mirrorMap(numKeptVerts);
+
     for (size_t i = 0; i < numKeptVerts; ++i) {
         if (boundaryFlags[i]) {
             mirrorMap[i] = static_cast<uint32_t>(i);
@@ -713,28 +847,27 @@ void Mesh::mirror(int axisIndex, bool positiveToNegative, SymmetryMode mode) {
         }
     }
 
-    // 5. Build final face array with original and mirrored faces
+    // 6. Build final face list combining kept faces and mirrored faces with reversed winding
     std::vector<uint32_t> finalFaces;
-    finalFaces.reserve(newFacesOriginal.size() * 2);
-    std::vector<uint32_t> finalFacesUV;
-    if (hasUVs) finalFacesUV.reserve(newFacesUVOriginal.size() * 2);
+    size_t numKeptFaceCount = tempFaces.size() / 4;
+    finalFaces.reserve(tempFaces.size() * 2);
 
-    for (uint32_t f : newFacesOriginal) {
-        finalFaces.push_back(f);
+    std::vector<uint32_t> finalFaceGroups;
+    finalFaceGroups.reserve(tempFaceGroups.size() * 2);
+
+    for (size_t f = 0; f < tempFaces.size(); ++f) {
+        finalFaces.push_back(tempFaces[f]);
     }
-    if (hasUVs) {
-        for (uint32_t fuv : newFacesUVOriginal) {
-            finalFacesUV.push_back(fuv);
-        }
+    for (size_t fg : tempFaceGroups) {
+        finalFaceGroups.push_back(fg);
     }
 
-    size_t numKeptFaceCount = newFacesOriginal.size() / 4;
     for (size_t i = 0; i < numKeptFaceCount; ++i) {
         size_t idx = i * 4;
-        uint32_t nv1 = newFacesOriginal[idx];
-        uint32_t nv2 = newFacesOriginal[idx + 1];
-        uint32_t nv3 = newFacesOriginal[idx + 2];
-        uint32_t nv4 = newFacesOriginal[idx + 3];
+        uint32_t nv1 = tempFaces[idx];
+        uint32_t nv2 = tempFaces[idx + 1];
+        uint32_t nv3 = tempFaces[idx + 2];
+        uint32_t nv4 = tempFaces[idx + 3];
 
         uint32_t mv1 = mirrorMap[nv1];
         uint32_t mv2 = mirrorMap[nv2];
@@ -753,26 +886,10 @@ void Mesh::mirror(int axisIndex, bool positiveToNegative, SymmetryMode mode) {
             finalFaces.push_back(mv2);
         }
 
-        if (hasUVs) {
-            uint32_t uv1 = newFacesUVOriginal[idx];
-            uint32_t uv2 = newFacesUVOriginal[idx + 1];
-            uint32_t uv3 = newFacesUVOriginal[idx + 2];
-            uint32_t uv4 = newFacesUVOriginal[idx + 3];
-            if (uv4 == TRI_INDEX) {
-                finalFacesUV.push_back(uv1);
-                finalFacesUV.push_back(uv3);
-                finalFacesUV.push_back(uv2);
-                finalFacesUV.push_back(TRI_INDEX);
-            } else {
-                finalFacesUV.push_back(uv1);
-                finalFacesUV.push_back(uv4);
-                finalFacesUV.push_back(uv3);
-                finalFacesUV.push_back(uv2);
-            }
-        }
+        finalFaceGroups.push_back(tempFaceGroups[i]);
     }
 
-    // 6. Update mesh data
+    // 7. Update Mesh data
     nbVerts = static_cast<int>(tempVertices.size() / 3);
     nbFaces = static_cast<int>(finalFaces.size() / 4);
 
@@ -784,16 +901,14 @@ void Mesh::mirror(int axisIndex, bool positiveToNegative, SymmetryMode mode) {
     else {
         materials.resize(nbVerts * 3);
         for (int i = 0; i < nbVerts; ++i) {
-            materials[i * 3] = 0.5f;
+            materials[i * 3]     = 0.5f;
             materials[i * 3 + 1] = 0.0f;
             materials[i * 3 + 2] = 1.0f;
         }
     }
 
     faces = std::move(finalFaces);
-    if (hasUVs) {
-        facesTexCoord = std::move(finalFacesUV);
-    }
+    faceGroups = std::move(finalFaceGroups);
 
     vrfStartCount.clear();
     vertRingFace.clear();
@@ -805,3 +920,4 @@ void Mesh::mirror(int axisIndex, bool positiveToNegative, SymmetryMode mode) {
     isDirty = true;
     isTopologyDirty = true;
 }
+
