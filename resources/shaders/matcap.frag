@@ -29,6 +29,12 @@ vec3 groupColor(uint gid) {
 
 void main() {
     vec3 normal = getNormal();
+    vec3 dNdx = dFdx(normal);
+    vec3 dNdy = dFdy(normal);
+    float normalVar = max(dot(dNdx, dNdx), dot(dNdy, dNdy));
+    if (normalVar > 0.001) {
+        normal = normalize(normal - (dNdx + dNdy) * 0.05);
+    }
     vec3 color;
     vec3 baseColor = (uAlbedo.r >= 0.0) ? uAlbedo : ((vColor.r > 0.0 || vColor.g > 0.0 || vColor.b > 0.0) ? vColor : vec3(0.72, 0.52, 0.45));
     if (uShowPolyGroups) {

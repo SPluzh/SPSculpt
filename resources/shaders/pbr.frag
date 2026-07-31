@@ -171,7 +171,14 @@ float PCF(vec3 viewPos) {
 
 void main() {
     vec3 normal = getNormal();
-    float roughness = max(0.001, (uRoughness >= 0.0 ? uRoughness : vMaterial.x));
+    
+    // Geometric Specular & Normal Filtering (Screen-Space Derivative Roughness Modification)
+    vec3 dNdx = dFdx(normal);
+    vec3 dNdy = dFdy(normal);
+    float normalVariance = max(dot(dNdx, dNdx), dot(dNdy, dNdy));
+
+    float baseRoughness = max(0.001, (uRoughness >= 0.0 ? uRoughness : vMaterial.x));
+    float roughness = clamp(sqrt(baseRoughness * baseRoughness + normalVariance * 0.5), 0.001, 1.0);
     float metallic = (uMetallic >= 0.0 ? uMetallic : vMaterial.y);
     vec3 rawColor = (uAlbedo.r >= 0.0 ? uAlbedo : vColor);
     if (uShowPolyGroups && vFaceGroup > 0u) {

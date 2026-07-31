@@ -122,6 +122,39 @@ public:
     bool getFilmic() const { return m_filmic; }
     void setUseFxaa(bool enable) { m_useFxaa = enable; }
     bool getUseFxaa() const { return m_useFxaa; }
+    void setFxaaSharpMode(bool sharp) { m_fxaaSharpMode = sharp; }
+    bool getFxaaSharpMode() const { return m_fxaaSharpMode; }
+
+    // TAA & Anti-Aliasing controls
+    void setUseTaa(bool enable) { m_useTaa = enable; resetTaaHistory(); }
+    bool getUseTaa() const { return m_useTaa; }
+    void setTaaResetOnStroke(bool enable) { m_taaResetOnStroke = enable; }
+    bool getTaaResetOnStroke() const { return m_taaResetOnStroke; }
+    void resetTaaHistory() { m_taaResetHistory = true; }
+
+    void setUseMotionVectors(bool enable) { m_useMotionVectors = enable; }
+    bool getUseMotionVectors() const { return m_useMotionVectors; }
+
+    // Depth Precision & Polygon Offset
+    void setUseReverseZ(bool enable) { m_useReverseZ = enable; }
+    bool getUseReverseZ() const { return m_useReverseZ; }
+
+    void setUsePolygonOffset(bool enable) { m_usePolygonOffset = enable; }
+    bool getUsePolygonOffset() const { return m_usePolygonOffset; }
+    void setPolygonOffsetFactor(float factor) { m_polyOffsetFactor = factor; }
+    float getPolygonOffsetFactor() const { return m_polyOffsetFactor; }
+    void setPolygonOffsetUnits(float units) { m_polyOffsetUnits = units; }
+    float getPolygonOffsetUnits() const { return m_polyOffsetUnits; }
+
+    // Anisotropy & Subpixel Culling
+    void setAnisotropyLevel(int level) { m_anisotropyLevel = level; }
+    int getAnisotropyLevel() const { return m_anisotropyLevel; }
+
+    void setUseSubpixelCulling(bool enable) { m_useSubpixelCulling = enable; }
+    bool getUseSubpixelCulling() const { return m_useSubpixelCulling; }
+    void setSubpixelCullThreshold(float threshold) { m_subpixelCullThreshold = threshold; }
+    float getSubpixelCullThreshold() const { return m_subpixelCullThreshold; }
+
     void setUseSsao(bool enable) { m_useSsao = enable; }
     bool getUseSsao() const { return m_useSsao; }
     void setSsaoRadius(float radius) { m_ssaoRadius = radius; }
@@ -369,6 +402,7 @@ private:
     void initSsaoNoiseTexture();
     void drawGrid(const Scene& scene, const Camera& camera);
     void drawFullscreenMerge(const Scene& scene);
+    void drawFullscreenTaa();
     void drawFullscreenFxaa();
     void drawFullscreenViewport2D(const Scene& scene);
     void drawContourOverlay(const Scene& scene);
@@ -458,6 +492,7 @@ private:
     GLuint m_ssptProgram = 0;
     GLuint m_svgfTemporalProgram = 0;
     GLuint m_svgfSpatialProgram = 0;
+    GLuint m_taaProgram = 0;
 
     // RTT Targets
     RenderTarget m_rttContour;
@@ -476,6 +511,9 @@ private:
     RenderTarget m_rttAccumB;
     RenderTarget m_rttSvgfA;
     RenderTarget m_rttSvgfB;
+    RenderTarget m_rttMotionVectors;
+    RenderTarget m_rttTaaAccumA;
+    RenderTarget m_rttTaaAccumB;
 
     RenderMode m_renderMode = RenderMode::PBR;
     bool m_shadowEnabled = true;
@@ -486,6 +524,7 @@ private:
     static constexpr int SHADOW_MAP_SIZE = 2048;
 
     bool m_accumPing = true;
+    bool m_taaPing = true;
     int m_accumFrameCount = 0;
     int m_frameIndex = 0;
 
@@ -498,8 +537,26 @@ private:
     GLuint m_gridVbo = 0;
     int m_gridLineCount = 0;
 
-    // Settings
+    // Anti-Aliasing & Depth Precision Settings
     bool m_useFxaa = true;
+    bool m_fxaaSharpMode = true;
+    bool m_useTaa = true;
+    bool m_taaResetOnStroke = true;
+    bool m_taaResetHistory = true;
+    bool m_useMotionVectors = true;
+    bool m_useReverseZ = false;
+    bool m_usePolygonOffset = true;
+    float m_polyOffsetFactor = -1.0f;
+    float m_polyOffsetUnits = -1.0f;
+    int m_anisotropyLevel = 4;
+    bool m_useSubpixelCulling = false;
+    float m_subpixelCullThreshold = 0.5f;
+
+    struct TaaState {
+        int frameIndex = 0;
+        glm::vec2 currentJitter{0.0f};
+        glm::vec2 prevJitter{0.0f};
+    } m_taaState;
     bool m_useSsao = true;
     float m_ssaoRadius = 0.5f;
     float m_ssaoBias = 0.025f;

@@ -8,6 +8,7 @@ layout(location = 3) in vec3 aMaterial;
 
 uniform mat4 uMV;
 uniform mat4 uMVP;
+uniform mat4 uPrevMVP;
 uniform mat3 uN;
 uniform mat4 uEM;
 uniform mat3 uEN;
@@ -17,6 +18,8 @@ out vec3 vNormal;
 out vec3 vColor;
 out vec3 vMaterial;
 out float vMasking;
+out vec4 vCurrPos;
+out vec4 vPrevPos;
 
 void main() {
     vec4 v = vec4(aVertex, 1.0);
@@ -31,5 +34,7 @@ void main() {
     vMaterial = aMaterial;
     vMasking = aMaterial.z;
 
-    gl_Position = uMVP * v;
+    vCurrPos = uMVP * v;
+    vPrevPos = uPrevMVP * v;
+    gl_Position = vCurrPos;
 }

@@ -4,12 +4,15 @@ precision highp float;
 layout(location = 0) out vec4 gAlbedo;
 layout(location = 1) out vec4 gNormal;
 layout(location = 2) out vec4 gMaterial;
+layout(location = 3) out vec2 gMotionVec;
 
 in vec3 vVertex;
 in vec3 vNormal;
 in vec3 vColor;
 in vec3 vMaterial;
 in float vMasking;
+in vec4 vCurrPos;
+in vec4 vPrevPos;
 
 uniform vec3 uAlbedo;
 uniform float uRoughness;
@@ -27,4 +30,8 @@ void main() {
     gAlbedo = vec4(linColor, metallic);
     gNormal = vec4(normalize(normal) * 0.5 + 0.5, 1.0);
     gMaterial = vec4(roughness, vMasking, length(vVertex), 1.0);
+
+    vec2 currScreen = (vCurrPos.xy / vCurrPos.w) * 0.5 + 0.5;
+    vec2 prevScreen = (vPrevPos.xy / vPrevPos.w) * 0.5 + 0.5;
+    gMotionVec = currScreen - prevScreen;
 }

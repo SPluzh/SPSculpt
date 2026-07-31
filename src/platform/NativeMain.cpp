@@ -649,6 +649,9 @@ int main(int argc, char* argv[]) {
             renderer.setSymmetryPlanes(renderer.getShowSymmetryLine(), {});
         }
         bool isSculptingActive = sculpt.isSculpting();
+        if (isSculptingActive && renderer.getTaaResetOnStroke()) {
+            renderer.resetTaaHistory();
+        }
         auto tRenderStart = std::chrono::high_resolution_clock::now();
         renderer.render(scene);
         double renderMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tRenderStart).count();

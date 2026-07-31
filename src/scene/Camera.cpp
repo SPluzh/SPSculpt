@@ -228,6 +228,12 @@ void Camera::optimizeNearFar(const float* bbox) {
 
 void Camera::updateProjection() {
     if (m_width <= 0 || m_height <= 0) return;
+
+    // Dynamically adjust near and far planes based on distance to prevent Z-fighting & depth precision loss
+    float eyeDist = std::max(0.1f, getTransZ());
+    m_near = std::clamp(eyeDist * 0.005f, 0.05f, 50.0f);
+    m_far = std::max(m_near + 10.0f, eyeDist * 10.0f + 1000.0f);
+
     if (m_projectionType == CameraEnums::Projection::PERSPECTIVE) {
         m_projMatrix = glm::perspective(getFovDegrees() * (float)M_PI / 180.0f, (float)m_width / m_height, m_near, m_far);
         m_projMatrix[2][2] = -1.0f;

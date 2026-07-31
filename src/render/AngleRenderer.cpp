@@ -53,6 +53,7 @@ AngleRenderer::~AngleRenderer() {
     if (m_ssptProgram) glDeleteProgram(m_ssptProgram);
     if (m_svgfTemporalProgram) glDeleteProgram(m_svgfTemporalProgram);
     if (m_svgfSpatialProgram) glDeleteProgram(m_svgfSpatialProgram);
+    if (m_taaProgram) glDeleteProgram(m_taaProgram);
 
     if (m_bgVao) glDeleteVertexArrays(1, &m_bgVao);
     if (m_bgVbo) glDeleteBuffers(1, &m_bgVbo);
@@ -104,6 +105,9 @@ AngleRenderer::~AngleRenderer() {
     m_rttAccumB.release();
     m_rttSvgfA.release();
     m_rttSvgfB.release();
+    m_rttMotionVectors.release();
+    m_rttTaaAccumA.release();
+    m_rttTaaAccumB.release();
 }
 
 GLuint AngleRenderer::compileShader(GLenum type, const std::string& source) {
@@ -241,6 +245,7 @@ bool AngleRenderer::init(int width, int height) {
     m_ssptProgram = loadAndCompileProgram("merge.vert", "sspt.frag");
     m_svgfTemporalProgram = loadAndCompileProgram("merge.vert", "svgf_temporal.frag");
     m_svgfSpatialProgram = loadAndCompileProgram("merge.vert", "svgf_spatial.frag");
+    m_taaProgram = loadAndCompileProgram("merge.vert", "taa.frag");
 
     // Check if critical shader programs failed to load/link
     if (!m_bgProgram || !m_selectionProgram || !m_refImageProgram || !m_wireframeProgram ||
@@ -248,7 +253,7 @@ bool AngleRenderer::init(int width, int height) {
         !m_normalProgram || !m_voxelCheckerProgram || !m_mergeProgram || !m_fxaaProgram ||
         !m_viewport2DProgram || !m_contourProgram || !m_bevelPrepassProgram || !m_bevelFilterProgram ||
         !m_ssaoNormalsProgram || !m_ssaoProgram || !m_ssaoBlurProgram || !m_armatureProgram || !m_armatureNormalsProgram ||
-        !m_shadowProgram || !m_ssrProgram) {
+        !m_shadowProgram || !m_ssrProgram || !m_taaProgram) {
         std::cerr << "Error: One or more shader programs failed to compile and link." << std::endl;
         return false;
     }
@@ -366,6 +371,9 @@ bool AngleRenderer::init(int width, int height) {
     m_rttAccumB.initFloat(width, height, false);
     m_rttSvgfA.initFloat(width, height, false);
     m_rttSvgfB.initFloat(width, height, false);
+    m_rttMotionVectors.initFloat(width, height, false);
+    m_rttTaaAccumA.initFloat(width, height, false);
+    m_rttTaaAccumB.initFloat(width, height, false);
 
     return true;
 }
@@ -391,6 +399,9 @@ void AngleRenderer::resize(int width, int height, float dpiScale) {
     m_rttAccumB.resize(width, height);
     m_rttSvgfA.resize(width, height);
     m_rttSvgfB.resize(width, height);
+    m_rttMotionVectors.resize(width, height);
+    m_rttTaaAccumA.resize(width, height);
+    m_rttTaaAccumB.resize(width, height);
 
     updateBackgroundGeometry();
 }
@@ -582,6 +593,28 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
             m_snapshot.needsUpdate = true;
             updateSnapshotIfNeeded(scene);
         }
+    }
+
+    static auto haltonSequence = [](int index, int base) -> float {
+        float f = 1.0f;
+        float r = 0.0f;
+        while (index > 0) {
+            f /= (float)base;
+            r += f * (float)(index % base);
+            index /= base;
+        }
+        return r;
+    };
+
+    m_taaState.frameIndex++;
+    if (m_useTaa) {
+        int idx = (m_taaState.frameIndex % 16) + 1;
+        m_taaState.prevJitter = m_taaState.currentJitter;
+        m_taaState.currentJitter.x = (haltonSequence(idx, 2) - 0.5f) / (float)m_width;
+        m_taaState.currentJitter.y = (haltonSequence(idx, 3) - 0.5f) / (float)m_height;
+    } else {
+        m_taaState.currentJitter = glm::vec2(0.0f);
+        m_taaState.prevJitter = glm::vec2(0.0f);
     }
 
     // Whether the active shader actually consumes shadow/SSAO/SSR data.
@@ -972,6 +1005,11 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
     glClear(GL_COLOR_BUFFER_BIT);
     drawFullscreenMerge(scene);
 
+    // 4b. TAA Pass (FBO Merge -> TAA Accumulation Buffer)
+    if (m_useTaa && m_taaProgram != 0) {
+        drawFullscreenTaa();
+    }
+
     // 5. FXAA Pass (FBO Merge -> FBO Composite)
     glBindFramebuffer(GL_FRAMEBUFFER, m_rttComposite.fbo);
     glViewport(0, 0, m_width, m_height);
@@ -1298,8 +1336,14 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
 
     mesh->updateMatrices(camera);
 
+    glm::mat4 mvp = mesh->mvpMatrix;
+    if (m_useTaa) {
+        mvp[2][0] += m_taaState.currentJitter.x * 2.0f;
+        mvp[2][1] += m_taaState.currentJitter.y * 2.0f;
+    }
+
     glUniformMatrix4fv(glGetUniformLocation(program, "uMV"), 1, GL_FALSE, glm::value_ptr(mesh->mvMatrix));
-    glUniformMatrix4fv(glGetUniformLocation(program, "uMVP"), 1, GL_FALSE, glm::value_ptr(mesh->mvpMatrix));
+    glUniformMatrix4fv(glGetUniformLocation(program, "uMVP"), 1, GL_FALSE, glm::value_ptr(mvp));
     glUniformMatrix3fv(glGetUniformLocation(program, "uN"), 1, GL_FALSE, glm::value_ptr(mesh->nMatrix));
     glUniformMatrix4fv(glGetUniformLocation(program, "uEM"), 1, GL_FALSE, glm::value_ptr(mesh->editMatrix));
     glUniformMatrix3fv(glGetUniformLocation(program, "uEN"), 1, GL_FALSE, glm::value_ptr(mesh->enMatrix));
@@ -2831,6 +2875,46 @@ void AngleRenderer::drawFullscreenMerge(const Scene& scene) {
     glEnable(GL_DEPTH_TEST);
 }
 
+void AngleRenderer::drawFullscreenTaa() {
+    if (m_taaProgram == 0 || !m_useTaa) return;
+
+    RenderTarget& currentAccum = m_taaPing ? m_rttTaaAccumA : m_rttTaaAccumB;
+    RenderTarget& prevAccum = m_taaPing ? m_rttTaaAccumB : m_rttTaaAccumA;
+
+    glBindFramebuffer(GL_FRAMEBUFFER, currentAccum.fbo);
+    glViewport(0, 0, m_width, m_height);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+
+    glUseProgram(m_taaProgram);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, m_rttMerge.texture);
+    glUniform1i(glGetUniformLocation(m_taaProgram, "uCurrentTex"), 0);
+
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, prevAccum.texture);
+    glUniform1i(glGetUniformLocation(m_taaProgram, "uPrevAccumTex"), 1);
+
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, m_rttMotionVectors.texture);
+    glUniform1i(glGetUniformLocation(m_taaProgram, "uMotionVec"), 2);
+
+    glm::vec2 invSize(1.0f / m_width, 1.0f / m_height);
+    glUniform2fv(glGetUniformLocation(m_taaProgram, "uInvSize"), 1, glm::value_ptr(invSize));
+    glUniform2fv(glGetUniformLocation(m_taaProgram, "uCurrentJitter"), 1, glm::value_ptr(m_taaState.currentJitter));
+    glUniform1f(glGetUniformLocation(m_taaProgram, "uResetHistory"), m_taaResetHistory ? 1.0f : 0.0f);
+
+    glBindVertexArray(m_fsqVao);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindVertexArray(0);
+
+    m_taaResetHistory = false;
+    m_taaPing = !m_taaPing;
+
+    glEnable(GL_DEPTH_TEST);
+}
+
 void AngleRenderer::drawFullscreenFxaa() {
     if (m_fxaaProgram == 0) return;
 
@@ -2840,12 +2924,14 @@ void AngleRenderer::drawFullscreenFxaa() {
     glUseProgram(m_fxaaProgram);
 
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, m_rttMerge.texture);
+    GLuint inputTex = (m_useTaa && m_taaProgram != 0) ? (m_taaPing ? m_rttTaaAccumB.texture : m_rttTaaAccumA.texture) : m_rttMerge.texture;
+    glBindTexture(GL_TEXTURE_2D, inputTex);
     glUniform1i(glGetUniformLocation(m_fxaaProgram, "uTexture0"), 0);
 
     glm::vec2 invSize(1.0f / m_width, 1.0f / m_height);
     glUniform2fv(glGetUniformLocation(m_fxaaProgram, "uInvSize"), 1, &invSize[0]);
     glUniform1i(glGetUniformLocation(m_fxaaProgram, "uEnabled"), m_useFxaa ? 1 : 0);
+    glUniform1i(glGetUniformLocation(m_fxaaProgram, "uSharpMode"), m_fxaaSharpMode ? 1 : 0);
 
     glBindVertexArray(m_fsqVao);
     glDrawArrays(GL_TRIANGLES, 0, 3);

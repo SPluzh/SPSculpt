@@ -5860,9 +5860,69 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                     renderer.setFilmic(filmic);
                 }
 
+                // Anti-Aliasing & Temporal Stability Controls
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Anti-Aliasing & Temporal Stability");
+                ImGui::Separator();
+                ImGui::Spacing();
+
                 bool useFxaa = renderer.getUseFxaa();
                 if (ImGui::Checkbox("FXAA Anti-aliasing", &useFxaa)) {
                     renderer.setUseFxaa(useFxaa);
+                }
+                if (useFxaa) {
+                    ImGui::Indent();
+                    bool fxaaSharp = renderer.getFxaaSharpMode();
+                    if (ImGui::Checkbox("FXAA High Sharpness Mode", &fxaaSharp)) {
+                        renderer.setFxaaSharpMode(fxaaSharp);
+                    }
+                    ImGui::Unindent();
+                }
+
+                bool useTaa = renderer.getUseTaa();
+                if (ImGui::Checkbox("Temporal Anti-Aliasing (TAA)", &useTaa)) {
+                    renderer.setUseTaa(useTaa);
+                }
+                if (useTaa) {
+                    ImGui::Indent();
+                    bool taaResetStroke = renderer.getTaaResetOnStroke();
+                    if (ImGui::Checkbox("Reset TAA History on Sculpting Stroke", &taaResetStroke)) {
+                        renderer.setTaaResetOnStroke(taaResetStroke);
+                    }
+                    ImGui::Unindent();
+                }
+
+                bool useMotionVec = renderer.getUseMotionVectors();
+                if (ImGui::Checkbox("Motion Vectors Buffer (gMotionVec)", &useMotionVec)) {
+                    renderer.setUseMotionVectors(useMotionVec);
+                }
+
+                bool useReverseZ = renderer.getUseReverseZ();
+                if (ImGui::Checkbox("Reverse-Z Depth Buffer (Depth Precision)", &useReverseZ)) {
+                    renderer.setUseReverseZ(useReverseZ);
+                }
+
+                bool usePolyOffset = renderer.getUsePolygonOffset();
+                if (ImGui::Checkbox("Polygon Offset Overlays (Reduce Z-Fighting)", &usePolyOffset)) {
+                    renderer.setUsePolygonOffset(usePolyOffset);
+                }
+
+                int anisotropyLevel = renderer.getAnisotropyLevel();
+                if (ImGui::SliderInt("Anisotropic Filtering Level", &anisotropyLevel, 1, 16)) {
+                    renderer.setAnisotropyLevel(anisotropyLevel);
+                }
+
+                bool useSubpixelCull = renderer.getUseSubpixelCulling();
+                if (ImGui::Checkbox("Sub-pixel Mesh Culling", &useSubpixelCull)) {
+                    renderer.setUseSubpixelCulling(useSubpixelCull);
+                }
+                if (useSubpixelCull) {
+                    ImGui::Indent();
+                    float cullThresh = renderer.getSubpixelCullThreshold();
+                    if (ImGui::SliderFloat("Cull Radius Threshold", &cullThresh, 0.1f, 2.0f, "%.2f px")) {
+                        renderer.setSubpixelCullThreshold(cullThresh);
+                    }
+                    ImGui::Unindent();
                 }
 
                 bool useSsao = renderer.getUseSsao();
