@@ -713,9 +713,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             if (ImGui::Checkbox("Enable Symmetry", &useSym)) {
                 sculpt.setUseSym(useSym);
             }
-            if (ImGui::Button("Open Symmetry Window", ImVec2(-1, 26))) {
-                m_showSymmetryPanel = true;
-            }
         }
 
         // 3. Tool-Specific Parameters Section
@@ -1314,11 +1311,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         }
 
         ImGui::End();
-    }
-
-    // 3.4 Symmetry Settings Panel
-    if (m_showSymmetryPanel) {
-        drawSymmetryPanel(sculpt, scene, renderer);
     }
 
     // 3.5 Multiresolution Sculpting Panel
@@ -4003,7 +3995,6 @@ bool GuiManager::saveSettings(IniFile& ini) {
     ini.setBool(panelSec, "showUndoDiagPanel", m_showUndoDiagPanel);
     ini.setBool(panelSec, "showDebugLogPanel", m_showDebugLogPanel);
     ini.setBool(panelSec, "showFloatingIsland", m_showFloatingIsland);
-    ini.setBool(panelSec, "showSymmetryPanel", m_showSymmetryPanel);
     ini.setBool(panelSec, "showTimelapsePanel", m_showTimelapsePanel);
     ini.setBool(panelSec, "showPreferencesPanel", m_showPreferencesPanel);
 
@@ -4048,7 +4039,6 @@ bool GuiManager::loadSettings(const IniFile& ini) {
         if (ini.hasKey(panelSec, "showUndoDiagPanel")) m_showUndoDiagPanel = ini.getBool(panelSec, "showUndoDiagPanel");
         if (ini.hasKey(panelSec, "showDebugLogPanel")) m_showDebugLogPanel = ini.getBool(panelSec, "showDebugLogPanel");
         if (ini.hasKey(panelSec, "showFloatingIsland")) m_showFloatingIsland = ini.getBool(panelSec, "showFloatingIsland");
-        if (ini.hasKey(panelSec, "showSymmetryPanel")) m_showSymmetryPanel = ini.getBool(panelSec, "showSymmetryPanel");
         if (ini.hasKey(panelSec, "showTimelapsePanel")) m_showTimelapsePanel = ini.getBool(panelSec, "showTimelapsePanel");
         if (ini.hasKey(panelSec, "showPreferencesPanel")) m_showPreferencesPanel = ini.getBool(panelSec, "showPreferencesPanel");
     }
@@ -4223,7 +4213,6 @@ void GuiManager::drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRend
     if (ImGui::BeginMenu("Panels")) {
         ImGui::MenuItem("Toolbar", nullptr, &m_showToolbar);
         ImGui::MenuItem("Sculpting Settings", nullptr, &m_showSculptingPanel);
-        ImGui::MenuItem("Symmetry Settings", nullptr, &m_showSymmetryPanel);
         ImGui::MenuItem("Scene Outliner", nullptr, &m_showScenePanel);
         ImGui::MenuItem("Topology & Remesh", nullptr, &m_showTopologyPanel);
         ImGui::MenuItem("Multiresolution", nullptr, &m_showMultiresPanel);
@@ -4493,8 +4482,162 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Symmetry (Alt+X)");
 
+        ImVec2 symMin = ImGui::GetItemRectMin();
+
+        // Arrow button flush against Symmetry button
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, ImGui::GetStyle().FramePadding.y));
+        ImGui::SetWindowFontScale(fontScale * 0.65f);
+        bool openSymPopup = ImGui::Button(ICON_LC_CHEVRON_DOWN "##hudSymArrow", halfSquareBtn);
+        ImGui::SetWindowFontScale(fontScale);
+        ImGui::PopStyleVar();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Symmetry Settings, Flip & Mirror");
+
+        ImVec2 symMax = ImGui::GetItemRectMax();
+
         if (useSym) {
             ImGui::PopStyleColor(3);
+        }
+
+        float symCenterX = (symMin.x + symMax.x) * 0.5f;
+        float symBottomY = symMax.y + 4.0f * scale;
+
+        if (openSymPopup) {
+            ImGui::OpenPopup("##hudSymPopup");
+        }
+
+        ImGui::SetNextWindowPos(ImVec2(symCenterX, symBottomY), ImGuiCond_Appearing, ImVec2(0.5f, 0.0f));
+        if (ImGui::BeginPopup("##hudSymPopup")) {
+            ImGui::SetWindowFontScale(fontScale);
+
+            // 1. Enable Symmetry Toggle
+            bool symEnabled = sculpt.getUseSym();
+            if (ImGui::Checkbox("Enable Symmetry", &symEnabled)) {
+                sculpt.setUseSym(symEnabled);
+            }
+
+            ImGui::Separator();
+
+            // 2. Symmetry Space (Local / World)
+            ImGui::TextUnformatted("Symmetry Space:");
+            SymmetryMode symModePopup = sculpt.getSymmetryMode();
+            int modeIdx = (symModePopup == SymmetryMode::World) ? 1 : 0;
+            if (ImGui::RadioButton("Local Space", &modeIdx, 0)) {
+                sculpt.setSymmetryMode(SymmetryMode::Local);
+            }
+            ImGui::SameLine();
+            if (ImGui::RadioButton("World Space", &modeIdx, 1)) {
+                sculpt.setSymmetryMode(SymmetryMode::World);
+            }
+
+            ImGui::Separator();
+
+            // 3. Symmetry Axes
+            ImGui::TextUnformatted("Active Axes:");
+            bool symXPop = sculpt.getSymX();
+            bool symYPop = sculpt.getSymY();
+            bool symZPop = sculpt.getSymZ();
+            if (ImGui::Checkbox("X", &symXPop)) sculpt.setSymX(symXPop);
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Y", &symYPop)) sculpt.setSymY(symYPop);
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Z", &symZPop)) sculpt.setSymZ(symZPop);
+
+            ImGui::Separator();
+
+            // 4. Show Symmetry Line / Guide & Offset
+            bool showSymLine = renderer.getShowSymmetryLine();
+            if (ImGui::Checkbox("Show Symmetry Line", &showSymLine)) {
+                renderer.setShowSymmetryLine(showSymLine);
+            }
+            if (showSymLine) {
+                ImGui::Indent();
+                float symLineWidth = renderer.getSymmetryLineWidth();
+                ImGui::PushItemWidth(140.0f * scale);
+                if (ImGui::SliderFloat("Line Width", &symLineWidth, 0.01f, 0.5f, "%.3f")) {
+                    renderer.setSymmetryLineWidth(symLineWidth);
+                }
+                ImGui::PopItemWidth();
+                ImGui::Unindent();
+            }
+
+            Mesh* activeMesh = scene.getSelected();
+            if (activeMesh) {
+                float symOffset = activeMesh->getSymmetryOffset();
+                ImGui::PushItemWidth(160.0f * scale);
+                if (ImGui::SliderFloat("Symmetry Offset", &symOffset, -1.0f, 1.0f, "%.3f")) {
+                    activeMesh->setSymmetryOffset(symOffset);
+                }
+                ImGui::PopItemWidth();
+            }
+
+            ImGui::Separator();
+
+            // 5. Flip Object
+            ImGui::TextUnformatted("Flip Object:");
+            float btnWidth = 65.0f * scale;
+            if (ImGui::Button("Flip X", ImVec2(btnWidth, 24.0f * scale))) {
+                std::vector<Mesh*> selected = scene.getSelectedMeshes();
+                if (selected.empty() && scene.getSelected()) selected.push_back(scene.getSelected());
+                if (!selected.empty()) {
+                    scene.pushHistoryState();
+                    for (Mesh* m : selected) {
+                        if (m) m->flip(0);
+                    }
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Flip Y", ImVec2(btnWidth, 24.0f * scale))) {
+                std::vector<Mesh*> selected = scene.getSelectedMeshes();
+                if (selected.empty() && scene.getSelected()) selected.push_back(scene.getSelected());
+                if (!selected.empty()) {
+                    scene.pushHistoryState();
+                    for (Mesh* m : selected) {
+                        if (m) m->flip(1);
+                    }
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Flip Z", ImVec2(btnWidth, 24.0f * scale))) {
+                std::vector<Mesh*> selected = scene.getSelectedMeshes();
+                if (selected.empty() && scene.getSelected()) selected.push_back(scene.getSelected());
+                if (!selected.empty()) {
+                    scene.pushHistoryState();
+                    for (Mesh* m : selected) {
+                        if (m) m->flip(2);
+                    }
+                }
+            }
+
+            ImGui::Separator();
+
+            // 6. Mirror Object
+            ImGui::TextUnformatted("Mirror Object:");
+            ImGui::RadioButton("X##hudMirror", &m_mirrorAxis, 0); ImGui::SameLine();
+            ImGui::RadioButton("Y##hudMirror", &m_mirrorAxis, 1); ImGui::SameLine();
+            ImGui::RadioButton("Z##hudMirror", &m_mirrorAxis, 2);
+
+            int dirIdx = m_mirrorPositiveToNegative ? 0 : 1;
+            if (ImGui::RadioButton("+ to -", &dirIdx, 0)) {
+                m_mirrorPositiveToNegative = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::RadioButton("- to +", &dirIdx, 1)) {
+                m_mirrorPositiveToNegative = false;
+            }
+
+            if (ImGui::Button("Mirror Object", ImVec2(-1.0f, 26.0f * scale))) {
+                std::vector<Mesh*> selected = scene.getSelectedMeshes();
+                if (selected.empty() && scene.getSelected()) selected.push_back(scene.getSelected());
+                if (!selected.empty()) {
+                    scene.pushHistoryState();
+                    for (Mesh* m : selected) {
+                        if (m) m->mirror(m_mirrorAxis, m_mirrorPositiveToNegative, sculpt.getSymmetryMode());
+                    }
+                }
+            }
+
+            ImGui::EndPopup();
         }
 
         ImGui::SameLine();
@@ -5095,174 +5238,7 @@ void GuiManager::drawDebugLogPanel() {
     ImGui::End();
 }
 
-void GuiManager::drawSymmetryPanel(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer) {
-    float scale = getUiScale();
-    ImGui::SetNextWindowPos({160.0f * scale, 100.0f * scale}, ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize({320.0f * scale, 420.0f * scale}, ImGuiCond_FirstUseEver);
-    ImGui::Begin("Symmetry Settings", &m_showSymmetryPanel, ImGuiWindowFlags_AlwaysAutoResize);
 
-    // 1. Enable Symmetry Toggle
-    bool useSym = sculpt.getUseSym();
-    if (ImGui::Checkbox("Enable Symmetry", &useSym)) {
-        sculpt.setUseSym(useSym);
-    }
-    
-    ImGui::Separator();
-
-    // 2. Symmetry Space (Local / World)
-    ImGui::Text("Symmetry Space:");
-    SymmetryMode currentMode = sculpt.getSymmetryMode();
-    int modeIdx = (currentMode == SymmetryMode::World) ? 1 : 0;
-    
-    if (ImGui::RadioButton("Local Space", &modeIdx, 0)) {
-        sculpt.setSymmetryMode(SymmetryMode::Local);
-    }
-    ImGui::SameLine();
-    if (ImGui::RadioButton("World Space", &modeIdx, 1)) {
-        sculpt.setSymmetryMode(SymmetryMode::World);
-    }
-
-    ImGui::Separator();
-
-    // 3. Symmetry Axes (Multi-Axis Toggle)
-    ImGui::Text("Active Axes:");
-    bool symX = sculpt.getSymX();
-    bool symY = sculpt.getSymY();
-    bool symZ = sculpt.getSymZ();
-
-    if (ImGui::Checkbox("X Axis", &symX)) sculpt.setSymX(symX);
-    ImGui::SameLine();
-    if (ImGui::Checkbox("Y Axis", &symY)) sculpt.setSymY(symY);
-    ImGui::SameLine();
-    if (ImGui::Checkbox("Z Axis", &symZ)) sculpt.setSymZ(symZ);
-
-    ImGui::Separator();
-
-    // 4. Show Symmetry Line / Guide
-    bool showSymLine = renderer.getShowSymmetryLine();
-    if (ImGui::Checkbox("Show Symmetry Line", &showSymLine)) {
-        renderer.setShowSymmetryLine(showSymLine);
-    }
-    if (showSymLine) {
-        ImGui::Indent();
-        float symLineWidth = renderer.getSymmetryLineWidth();
-        if (ImGui::SliderFloat("Line Width", &symLineWidth, 0.01f, 0.5f, "%.3f")) {
-            renderer.setSymmetryLineWidth(symLineWidth);
-        }
-        ImGui::Unindent();
-    }
-
-    Mesh* activeMesh = scene.getSelected();
-    if (showSymLine && activeMesh && sculpt.getUseSym()) {
-        std::vector<SymmetryPlaneData> planes;
-        SymmetryMode mode = sculpt.getSymmetryMode();
-        if (sculpt.getSymX()) {
-            planes.push_back({
-                activeMesh->getSymmetryOriginForAxis(0, mode),
-                activeMesh->getSymmetryNormalForAxis(0, mode),
-                glm::vec3(1.0f, 0.25f, 0.25f)
-            });
-        }
-        if (sculpt.getSymY()) {
-            planes.push_back({
-                activeMesh->getSymmetryOriginForAxis(1, mode),
-                activeMesh->getSymmetryNormalForAxis(1, mode),
-                glm::vec3(0.25f, 0.95f, 0.3f)
-            });
-        }
-        if (sculpt.getSymZ()) {
-            planes.push_back({
-                activeMesh->getSymmetryOriginForAxis(2, mode),
-                activeMesh->getSymmetryNormalForAxis(2, mode),
-                glm::vec3(0.25f, 0.6f, 1.0f)
-            });
-        }
-        renderer.setSymmetryPlanes(showSymLine, planes);
-    }
-
-    // 5. Symmetry Offset Slider
-    if (activeMesh) {
-        float symOffset = activeMesh->getSymmetryOffset();
-        if (ImGui::SliderFloat("Symmetry Offset", &symOffset, -1.0f, 1.0f, "%.3f")) {
-            activeMesh->setSymmetryOffset(symOffset);
-        }
-    } else {
-        ImGui::TextDisabled("Symmetry Offset (No Mesh Selected)");
-    }
-
-    ImGui::Separator();
-
-    // 6. Flip Object Section
-    if (ImGui::CollapsingHeader("Flip Object", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Text("Flip geometry across local center:");
-        float btnWidth = 85.0f * scale;
-        if (ImGui::Button("Flip X", ImVec2(btnWidth, 28.0f * scale))) {
-            std::vector<Mesh*> selected = scene.getSelectedMeshes();
-            if (selected.empty() && scene.getSelected()) selected.push_back(scene.getSelected());
-            if (!selected.empty()) {
-                scene.pushHistoryState();
-                for (Mesh* m : selected) {
-                    if (m) m->flip(0);
-                }
-            }
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Flip Y", ImVec2(btnWidth, 28.0f * scale))) {
-            std::vector<Mesh*> selected = scene.getSelectedMeshes();
-            if (selected.empty() && scene.getSelected()) selected.push_back(scene.getSelected());
-            if (!selected.empty()) {
-                scene.pushHistoryState();
-                for (Mesh* m : selected) {
-                    if (m) m->flip(1);
-                }
-            }
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Flip Z", ImVec2(btnWidth, 28.0f * scale))) {
-            std::vector<Mesh*> selected = scene.getSelectedMeshes();
-            if (selected.empty() && scene.getSelected()) selected.push_back(scene.getSelected());
-            if (!selected.empty()) {
-                scene.pushHistoryState();
-                for (Mesh* m : selected) {
-                    if (m) m->flip(2);
-                }
-            }
-        }
-    }
-
-    ImGui::Separator();
-
-    // 7. Mirror Object Section
-    if (ImGui::CollapsingHeader("Mirror Object", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Text("Mirror Axis:");
-        ImGui::RadioButton("X##Mirror", &m_mirrorAxis, 0); ImGui::SameLine();
-        ImGui::RadioButton("Y##Mirror", &m_mirrorAxis, 1); ImGui::SameLine();
-        ImGui::RadioButton("Z##Mirror", &m_mirrorAxis, 2);
-
-        ImGui::Text("Direction:");
-        int dirIdx = m_mirrorPositiveToNegative ? 0 : 1;
-        if (ImGui::RadioButton("+ to - (+ -> -)", &dirIdx, 0)) {
-            m_mirrorPositiveToNegative = true;
-        }
-        ImGui::SameLine();
-        if (ImGui::RadioButton("- to + (- -> +)", &dirIdx, 1)) {
-            m_mirrorPositiveToNegative = false;
-        }
-
-        if (ImGui::Button("Mirror Object", ImVec2(-1.0f, 32.0f * scale))) {
-            std::vector<Mesh*> selected = scene.getSelectedMeshes();
-            if (selected.empty() && scene.getSelected()) selected.push_back(scene.getSelected());
-            if (!selected.empty()) {
-                scene.pushHistoryState();
-                for (Mesh* m : selected) {
-                    if (m) m->mirror(m_mirrorAxis, m_mirrorPositiveToNegative, sculpt.getSymmetryMode());
-                }
-            }
-        }
-    }
-
-    ImGui::End();
-}
 
 void GuiManager::drawSafeFramesOverlay(const AngleRenderer& renderer, const Scene& scene) {
     ImDrawList* drawList = ImGui::GetForegroundDrawList();

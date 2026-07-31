@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.0]
+- **UI**: Added a dropdown arrow button (`ICON_LC_CHEVRON_DOWN`) directly attached to the symmetry toggle button in the Floating Island HUD, providing instant access to symmetry settings (local/world space, X/Y/Z active axes, guide lines, line width, symmetry offset), geometry flipping (Flip X, Y, Z), and object mirroring.
+- **UI**: Removed the standalone "Symmetry Settings" window panel, streamlining symmetry management into the unified Floating Island HUD dropdown.
+
 ## [1.3.9]
 - **UI**: Migrated "Camera & Viewport", "Rendering Quality", and "Debug Log" controls into dedicated tabs inside the centralized "Preferences & Application Settings" modal.
 - **UI**: Added a toggle checkbox ("Show Point Count & FPS HUD") with tooltip to the Preferences & Application Settings panel (Interface & Display tab) to easily show or hide the Mesh Statistics HUD overlay.

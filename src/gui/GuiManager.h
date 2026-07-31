@@ -39,7 +39,6 @@ private:
     bool m_showRenderingPanel = true;
     bool m_showMaskingPanel = true;
     bool m_showMultiresPanel = true;
-    bool m_showSymmetryPanel = true;
     bool m_showZSpheresPanel = true;
     bool m_showReferenceImagesPanel = true;
     bool m_showGizmoCube = true;
@@ -141,7 +140,6 @@ private:
     void drawModelSnapshotWindow(const Scene& scene, AngleRenderer& renderer);
     void drawUndoDiagPanel(Scene& scene);
     void drawDebugLogPanel();
-    void drawSymmetryPanel(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer);
     void drawSafeFramesOverlay(const AngleRenderer& renderer, const Scene& scene);
     void updateWindowTitle(SDL_Window* window, bool isModified);
     void drawUnsavedChangesModal(Scene& scene, bool& quitApp);
@@ -193,7 +191,6 @@ public:
     void toggleRenderingPanel() { m_showPreferencesPanel = true; m_preferencesActiveTab = 2; }
     void toggleMaskingPanel() { m_showMaskingPanel = !m_showMaskingPanel; }
     void toggleMultiresPanel() { m_showMultiresPanel = !m_showMultiresPanel; }
-    void toggleSymmetryPanel() { m_showSymmetryPanel = !m_showSymmetryPanel; }
     void toggleZSpheresPanel() { m_showZSpheresPanel = !m_showZSpheresPanel; }
     void toggleReferenceImagesPanel() { m_showReferenceImagesPanel = !m_showReferenceImagesPanel; }
     void toggleGizmoCube() { m_showGizmoCube = !m_showGizmoCube; }
@@ -213,9 +210,6 @@ public:
     bool getShowTimelapsePanel() const { return m_showTimelapsePanel; }
     void setShowTimelapsePanel(bool show) { m_showTimelapsePanel = show; }
     TimelapsePlayer& getTimelapsePlayer() { return m_timelapsePlayer; }
-
-    bool getShowSymmetryPanel() const { return m_showSymmetryPanel; }
-    void setShowSymmetryPanel(bool show) { m_showSymmetryPanel = show; }
 
     bool getShowTopologyPanel() const { return m_showTopologyPanel; }
     void setShowTopologyPanel(bool show) { m_showTopologyPanel = show; }
