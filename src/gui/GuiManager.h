@@ -49,6 +49,7 @@ private:
     bool m_showFloatingIsland = true;
     bool m_showTimelapsePanel = false;
     bool m_showPreferencesPanel = false;
+    bool m_showHotkeyHUD = true;
 
     // Timelapse export settings
     int m_exportStepsPerFrame = 1;
@@ -146,6 +147,7 @@ private:
     void drawUnsavedChangesModal(Scene& scene, bool& quitApp);
     void drawTimelapsePanel(Scene& scene, AngleRenderer& renderer);
     void drawPreferencesPanel(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer, SDL_Window* window = nullptr);
+    void drawHotkeyHUD();
 
     int m_preferencesActiveTab = -1;
 

@@ -2328,69 +2328,90 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
     // 9. Mesh Statistics & FPS HUD Window (bottom-right)
     if (m_showMeshInfo) {
-        int wWidth, wHeight;
-        SDL_GetWindowSize(window, &wWidth, &wHeight);
+        ImGuiViewport* viewport = ImGui::GetMainViewport();
 
-        // Position it at the bottom-right corner, with a small padding
-        float padX = 10.0f * scale;
-        float padY = 10.0f * scale;
-        ImGui::SetNextWindowPos(ImVec2((float)wWidth - padX, (float)wHeight - padY), ImGuiCond_Always, ImVec2(1.0f, 1.0f));
-        ImGui::SetNextWindowBgAlpha(0.75f); // Transparent background
+        ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x, viewport->Pos.y + viewport->Size.y), ImGuiCond_Always, ImVec2(1.0f, 1.0f));
+        ImGui::SetNextWindowBgAlpha(0.75f);
 
-        // Use custom style colors for the window bg/border to match the sleek dark theme/CSS
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.27f, 0.27f, 0.27f, 0.75f));
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.18f, 0.20f, 0.22f, 0.60f));
-        
-        ImGui::Begin("Mesh Statistics HUD", nullptr, 
-            ImGuiWindowFlags_NoTitleBar | 
-            ImGuiWindowFlags_NoResize | 
-            ImGuiWindowFlags_NoScrollbar | 
-            ImGuiWindowFlags_NoSavedSettings |
-            ImGuiWindowFlags_AlwaysAutoResize |
-            ImGuiWindowFlags_NoFocusOnAppearing |
-            ImGuiWindowFlags_NoNav |
-            ImGuiWindowFlags_NoMove);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.09f, 0.10f, 0.80f));
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.01f, 0.52f, 0.45f, 0.40f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f * scale);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.0f * scale, 6.0f * scale));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.0f * scale, 2.0f * scale));
 
-        // Get mesh stats
-        Mesh* activeMesh = scene.getSelected();
-        int activePoints = activeMesh ? activeMesh->getNbVertices() : 0;
-        
-        int totalPoints = 0;
-        for (Mesh* m : scene.getMeshes()) {
-            if (m) {
-                totalPoints += m->getNbVertices();
+        ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar |
+                                 ImGuiWindowFlags_NoResize |
+                                 ImGuiWindowFlags_NoScrollbar |
+                                 ImGuiWindowFlags_NoSavedSettings |
+                                 ImGuiWindowFlags_AlwaysAutoResize |
+                                 ImGuiWindowFlags_NoFocusOnAppearing |
+                                 ImGuiWindowFlags_NoNav |
+                                 ImGuiWindowFlags_NoMove;
+
+        if (ImGui::Begin("Mesh Statistics HUD", nullptr, flags)) {
+            // Get mesh stats
+            Mesh* activeMesh = scene.getSelected();
+            int activePoints = activeMesh ? activeMesh->getNbVertices() : 0;
+            
+            int totalPoints = 0;
+            for (Mesh* m : scene.getMeshes()) {
+                if (m) {
+                    totalPoints += m->getNbVertices();
+                }
+            }
+
+            // Calculate sliding-window FPS
+            m_fpsTimes.push_back(std::chrono::steady_clock::now());
+            while (m_fpsTimes.size() > 60) {
+                m_fpsTimes.pop_front();
+            }
+
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_fpsLastUpdate).count();
+            if (elapsed > 500 && m_fpsTimes.size() >= 2) {
+                auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_fpsTimes.front()).count();
+                if (duration > 0) {
+                    m_fpsValue = (int)std::round(((m_fpsTimes.size() - 1) * 1000.0f) / duration);
+                }
+                m_fpsLastUpdate = now;
+            }
+
+            if (ImGui::BeginTable("##MeshStatsHUDTable", 2, ImGuiTableFlags_SizingFixedFit)) {
+                ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed, 60.0f * scale);
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextDisabled("Active points");
+                ImGui::TableNextColumn();
+                ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.35f, 1.0f), "%s", formatCount(activePoints).c_str());
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextDisabled("Total points");
+                ImGui::TableNextColumn();
+                ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.35f, 1.0f), "%s", formatCount(totalPoints).c_str());
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextDisabled("FPS");
+                ImGui::TableNextColumn();
+                if (m_fpsValue > 0) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.35f, 1.0f), "%d", m_fpsValue);
+                } else {
+                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.35f, 1.0f), "--");
+                }
+
+                ImGui::EndTable();
             }
         }
-
-        // Calculate sliding-window FPS
-        m_fpsTimes.push_back(std::chrono::steady_clock::now());
-        while (m_fpsTimes.size() > 60) {
-            m_fpsTimes.pop_front();
-        }
-
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_fpsLastUpdate).count();
-        if (elapsed > 500 && m_fpsTimes.size() >= 2) {
-            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_fpsTimes.front()).count();
-            if (duration > 0) {
-                m_fpsValue = (int)std::round(((m_fpsTimes.size() - 1) * 1000.0f) / duration);
-            }
-            m_fpsLastUpdate = now;
-        }
-
-        // Display
-        ImGui::Text("Active points: %s", formatCount(activePoints).c_str());
-        ImGui::Text("Total points: %s", formatCount(totalPoints).c_str());
-        if (m_fpsValue > 0) {
-            ImGui::Text("FPS: %d", m_fpsValue);
-        } else {
-            ImGui::Text("FPS: --");
-        }
-
         ImGui::End();
         
+        ImGui::PopStyleVar(3);
         ImGui::PopStyleColor(2);
     }
+
+    drawHotkeyHUD();
 
 #ifdef _WIN32
     if (m_showTabletDiagPanel) {
@@ -4000,6 +4021,7 @@ bool GuiManager::saveSettings(IniFile& ini) {
     ini.setBool(panelSec, "showFloatingIsland", m_showFloatingIsland);
     ini.setBool(panelSec, "showTimelapsePanel", m_showTimelapsePanel);
     ini.setBool(panelSec, "showPreferencesPanel", m_showPreferencesPanel);
+    ini.setBool(panelSec, "showHotkeyHUD", m_showHotkeyHUD);
 
     std::string genSec = "GuiGeneral";
     ini.setFloat(genSec, "uiScaleMultiplier", m_uiScale);
@@ -4044,6 +4066,7 @@ bool GuiManager::loadSettings(const IniFile& ini) {
         if (ini.hasKey(panelSec, "showFloatingIsland")) m_showFloatingIsland = ini.getBool(panelSec, "showFloatingIsland");
         if (ini.hasKey(panelSec, "showTimelapsePanel")) m_showTimelapsePanel = ini.getBool(panelSec, "showTimelapsePanel");
         if (ini.hasKey(panelSec, "showPreferencesPanel")) m_showPreferencesPanel = ini.getBool(panelSec, "showPreferencesPanel");
+        if (ini.hasKey(panelSec, "showHotkeyHUD")) m_showHotkeyHUD = ini.getBool(panelSec, "showHotkeyHUD");
     }
 
     std::string genSec = "GuiGeneral";
@@ -5524,6 +5547,8 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                 ImGui::Checkbox("Show Navigation Cube", &m_showGizmoCube);
                 ImGui::Checkbox("Show Point Count & FPS HUD", &m_showMeshInfo);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle the Mesh Statistics HUD (active/total points and FPS) in the bottom-right corner");
+                ImGui::Checkbox("Show Hotkey HUD (Bottom-Left)", &m_showHotkeyHUD);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle the Keyboard Shortcuts HUD overlay in the bottom-left corner");
 
                 ImGui::EndTabItem();
             }
@@ -6337,6 +6362,71 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
         }
     }
     ImGui::End();
+}
+
+void GuiManager::drawHotkeyHUD() {
+    if (!m_showHotkeyHUD) return;
+
+    float scale = getUiScale();
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+
+    ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x, viewport->Pos.y + viewport->Size.y), ImGuiCond_Always, ImVec2(0.0f, 1.0f));
+    ImGui::SetNextWindowBgAlpha(0.75f);
+
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.09f, 0.10f, 0.80f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.01f, 0.52f, 0.45f, 0.40f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f * scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.0f * scale, 6.0f * scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.0f * scale, 2.0f * scale));
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar |
+                             ImGuiWindowFlags_NoResize |
+                             ImGuiWindowFlags_NoScrollbar |
+                             ImGuiWindowFlags_NoSavedSettings |
+                             ImGuiWindowFlags_AlwaysAutoResize |
+                             ImGuiWindowFlags_NoFocusOnAppearing |
+                             ImGuiWindowFlags_NoNav |
+                             ImGuiWindowFlags_NoMove;
+
+    if (ImGui::Begin("Hotkey HUD", nullptr, flags)) {
+        struct HotkeyEntry {
+            const char* key;
+            const char* desc;
+        };
+
+        static const HotkeyEntry shortcuts[] = {
+            { "Q",      "Move Brush" },
+            { "W",      "Clay Buildup" },
+            { "E",      "Dam Standard" },
+            { "R",      "Pinch Brush" },
+            { "A",      "Intensity" },
+            { "S",      "Radius / Size" },
+            { "D",      "Focal Shift" },
+            { "F",      "Frame View" },
+            { "G",      "Camera FOV" },
+            { "X",      "Remesh Res" },
+            { "Ctrl+X", "Voxel Remesh" },
+            { "C",      "Solo Mode" }
+        };
+
+        if (ImGui::BeginTable("##HotkeyHUDTable", 2, ImGuiTableFlags_SizingFixedFit)) {
+            ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthFixed, 50.0f * scale);
+            ImGui::TableSetupColumn("Desc", ImGuiTableColumnFlags_WidthStretch);
+
+            for (const auto& item : shortcuts) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.35f, 1.0f), "%s", item.key);
+                ImGui::TableNextColumn();
+                ImGui::TextDisabled("%s", item.desc);
+            }
+            ImGui::EndTable();
+        }
+    }
+    ImGui::End();
+
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor(2);
 }
 
 
