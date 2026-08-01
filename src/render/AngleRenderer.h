@@ -469,6 +469,7 @@ private:
     GLuint m_flatProgram = 0;
     GLuint m_wireframeProgram = 0;
     GLuint m_bgProgram = 0;
+    GLuint m_gridProgram = 0;
     GLuint m_selectionProgram = 0;
     GLuint m_refImageProgram = 0;
     GLuint m_mergeProgram = 0;

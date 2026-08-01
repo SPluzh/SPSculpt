@@ -30,6 +30,7 @@ AngleRenderer::~AngleRenderer() {
     if (m_flatProgram) glDeleteProgram(m_flatProgram);
     if (m_wireframeProgram) glDeleteProgram(m_wireframeProgram);
     if (m_bgProgram) glDeleteProgram(m_bgProgram);
+    if (m_gridProgram) glDeleteProgram(m_gridProgram);
     if (m_selectionProgram) glDeleteProgram(m_selectionProgram);
     if (m_refImageProgram) glDeleteProgram(m_refImageProgram);
     if (m_mergeProgram) glDeleteProgram(m_mergeProgram);
@@ -216,6 +217,7 @@ bool AngleRenderer::init(int width, int height) {
 
     // Compile Shaders from files
     m_bgProgram = loadAndCompileProgram("background.vert", "background.frag");
+    m_gridProgram = loadAndCompileProgram("grid.vert", "grid.frag");
     m_selectionProgram = loadAndCompileProgram("selection.vert", "selection.frag");
     m_refImageProgram = loadAndCompileProgram("reference_image.vert", "reference_image.frag");
     m_wireframeProgram = loadAndCompileProgram("wireframe.vert", "wireframe.frag");
@@ -248,7 +250,7 @@ bool AngleRenderer::init(int width, int height) {
     m_taaProgram = loadAndCompileProgram("merge.vert", "taa.frag");
 
     // Check if critical shader programs failed to load/link
-    if (!m_bgProgram || !m_selectionProgram || !m_refImageProgram || !m_wireframeProgram ||
+    if (!m_bgProgram || !m_gridProgram || !m_selectionProgram || !m_refImageProgram || !m_wireframeProgram ||
         !m_flatProgram || !m_matcapProgram || !m_pbrProgram || !m_wetClayProgram || !m_silhouetteProgram ||
         !m_normalProgram || !m_voxelCheckerProgram || !m_mergeProgram || !m_fxaaProgram ||
         !m_viewport2DProgram || !m_contourProgram || !m_bevelPrepassProgram || !m_bevelFilterProgram ||
@@ -2509,32 +2511,44 @@ void AngleRenderer::drawReferenceImages(const Scene& scene, const Camera& camera
 }
 
 void AngleRenderer::drawGrid(const Scene& scene, const Camera& camera) {
-    if (!m_showGrid || m_selectionProgram == 0 || m_gridLineCount == 0) return;
+    if (!m_showGrid || m_gridProgram == 0 || m_gridLineCount == 0) return;
 
+    // Render floor grid with per-fragment distance fog
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    glUseProgram(m_selectionProgram);
-    
-    GLint locAlpha = glGetUniformLocation(m_selectionProgram, "uAlpha");
-    GLint locDashed = glGetUniformLocation(m_selectionProgram, "uDashed");
-    if (locAlpha != -1) glUniform1f(locAlpha, 1.0f);
-    if (locDashed != -1) glUniform1i(locDashed, 0);
-    GLint locOffsetPixels = glGetUniformLocation(m_selectionProgram, "uOffsetPixels");
-    if (locOffsetPixels != -1) glUniform1f(locOffsetPixels, 0.0f);
-
-    glm::vec3 gridColor(0.4f, 0.4f, 0.4f);
-    glUniform3fv(glGetUniformLocation(m_selectionProgram, "uColor"), 1, &gridColor[0]);
+    glUseProgram(m_gridProgram);
 
     glm::mat4 mvp = camera.getProjMatrix() * camera.getViewMatrix();
-    glUniformMatrix4fv(glGetUniformLocation(m_selectionProgram, "uMVP"), 1, GL_FALSE, glm::value_ptr(mvp));
+    glUniformMatrix4fv(glGetUniformLocation(m_gridProgram, "uMVP"), 1, GL_FALSE, glm::value_ptr(mvp));
+
+    glm::vec3 pivotPos = camera.getPivot();
+    glUniform3fv(glGetUniformLocation(m_gridProgram, "uPivot"), 1, glm::value_ptr(pivotPos));
+
+    glm::vec3 camPos = camera.computePosition();
+    float distToPivot = glm::length(camPos - pivotPos);
+    
+    float fogNear = std::clamp(distToPivot * 1.2f, 30.0f, 180.0f);
+    float fogFar  = std::clamp(distToPivot * 3.5f, 90.0f, 450.0f);
+
+    if (camera.isOrthographic()) {
+        float orthoZoom = camera.getOrthoZoom();
+        fogNear = std::clamp(orthoZoom * 1.2f, 35.0f, 180.0f);
+        fogFar  = std::clamp(orthoZoom * 3.5f, 100.0f, 450.0f);
+    }
+
+    glUniform1f(glGetUniformLocation(m_gridProgram, "uFogNear"), fogNear);
+    glUniform1f(glGetUniformLocation(m_gridProgram, "uFogFar"), fogFar);
+
+    glLineWidth(1.2f);
 
     glBindVertexArray(m_gridVao);
     glDrawArrays(GL_LINES, 0, m_gridLineCount);
     glBindVertexArray(0);
 
+    glLineWidth(1.0f);
     glDisable(GL_BLEND);
 }
 
@@ -2768,31 +2782,70 @@ void AngleRenderer::initArmatureGeometry() {
 }
 
 void AngleRenderer::initGrid() {
-    std::vector<float> gridVerts;
-    float size = 10.0f;
-    float step = 0.5f;
-    int lines = 0;
-    for (float x = -size; x <= size; x += step) {
-        gridVerts.push_back(x); gridVerts.push_back(0.0f); gridVerts.push_back(-size);
-        gridVerts.push_back(x); gridVerts.push_back(0.0f); gridVerts.push_back(size);
-        lines++;
+    std::vector<float> gridData; // 7 floats per vertex: x, y, z, r, g, b, a
 
-        gridVerts.push_back(-size); gridVerts.push_back(0.0f); gridVerts.push_back(x);
-        gridVerts.push_back(size); gridVerts.push_back(0.0f); gridVerts.push_back(x);
-        lines++;
+    auto addLine = [&](float x1, float y1, float z1, float x2, float y2, float z2, const glm::vec4& color) {
+        gridData.push_back(x1); gridData.push_back(y1); gridData.push_back(z1);
+        gridData.push_back(color.r); gridData.push_back(color.g); gridData.push_back(color.b); gridData.push_back(color.a);
+
+        gridData.push_back(x2); gridData.push_back(y2); gridData.push_back(z2);
+        gridData.push_back(color.r); gridData.push_back(color.g); gridData.push_back(color.b); gridData.push_back(color.a);
+    };
+
+    float maxDist = 500.0f;
+    glm::vec4 minorColor(0.55f, 0.55f, 0.60f, 0.45f);
+    glm::vec4 majorColor(0.75f, 0.75f, 0.80f, 0.75f);
+
+    // 1. Primary grid (-150 to +150, step 2.0, skipping axes 0)
+    for (int i = -75; i <= 75; ++i) {
+        if (i == 0) continue;
+        float v = (float)(i * 2);
+        glm::vec4 col = (i % 5 == 0) ? majorColor : minorColor;
+        addLine(v, 0.0f, -maxDist, v, 0.0f, maxDist, col);
+        addLine(-maxDist, 0.0f, v, maxDist, 0.0f, v, col);
     }
 
-    m_gridLineCount = lines * 2;
+    // 2. Macro grid (-500 to +500, step 10.0, outer region)
+    for (int i = -50; i <= 50; ++i) {
+        if (i >= -15 && i <= 15) continue;
+        float v = (float)(i * 10);
+        glm::vec4 col = (i % 5 == 0) ? majorColor : minorColor;
+        addLine(v, 0.0f, -maxDist, v, 0.0f, maxDist, col);
+        addLine(-maxDist, 0.0f, v, maxDist, 0.0f, v, col);
+    }
 
-    glGenVertexArrays(1, &m_gridVao);
-    glGenBuffers(1, &m_gridVbo);
+    // 3. Colored Axes (X = Red, Z = Blue) - raised slightly (y = 0.002) to prevent Z-fighting
+    glm::vec4 xAxisColor(1.0f, 0.15f, 0.15f, 1.0f); // Vibrant Red
+    glm::vec4 zAxisColor(0.15f, 0.55f, 1.0f, 1.0f); // Vibrant Blue
+
+    // X Axis line (runs along X: y=0.002, z=0)
+    addLine(-maxDist, 0.002f, 0.0f, maxDist, 0.002f, 0.0f, xAxisColor);
+    // Add parallel offset lines to make X axis line bolder/thicker visually
+    addLine(-maxDist, 0.002f, 0.02f, maxDist, 0.002f, 0.02f, xAxisColor);
+    addLine(-maxDist, 0.002f, -0.02f, maxDist, 0.002f, -0.02f, xAxisColor);
+
+    // Z Axis line (runs along Z: x=0, y=0.002)
+    addLine(0.0f, 0.002f, -maxDist, 0.0f, 0.002f, maxDist, zAxisColor);
+    // Add parallel offset lines to make Z axis line bolder/thicker visually
+    addLine(0.02f, 0.002f, -maxDist, 0.02f, 0.002f, maxDist, zAxisColor);
+    addLine(-0.02f, 0.002f, -maxDist, -0.02f, 0.002f, maxDist, zAxisColor);
+
+    m_gridLineCount = static_cast<int>(gridData.size() / 7);
+
+    if (m_gridVao == 0) glGenVertexArrays(1, &m_gridVao);
+    if (m_gridVbo == 0) glGenBuffers(1, &m_gridVbo);
 
     glBindVertexArray(m_gridVao);
     glBindBuffer(GL_ARRAY_BUFFER, m_gridVbo);
-    glBufferData(GL_ARRAY_BUFFER, gridVerts.size() * sizeof(float), gridVerts.data(), GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, gridData.size() * sizeof(float), gridData.data(), GL_STATIC_DRAW);
 
+    // Attrib 0: vec3 aVertex
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)0);
+
+    // Attrib 1: vec4 aColor
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)(3 * sizeof(float)));
 
     glBindVertexArray(0);
 }
