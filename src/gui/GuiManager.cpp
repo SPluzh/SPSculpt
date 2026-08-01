@@ -4296,6 +4296,36 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         float squareSize = ImGui::GetFrameHeight();
         float vSliderH = 80.0f * scale;
 
+        // Main Menu Button (Top)
+        if (ImGui::Button(ICON_LC_MENU "##hudVertAppMenu", ImVec2(squareSize, squareSize))) {
+            ImGui::OpenPopup("##hudVertAppMenuPopup");
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Main Menu (File, Panels, Options)");
+
+        if (ImGui::BeginPopup("##hudVertAppMenuPopup")) {
+            ImGui::SetWindowFontScale(fontScale);
+            drawAppMenuItems(sculpt, scene, renderer);
+            ImGui::EndPopup();
+        }
+
+        // Scene Outliner Button (Below Menu)
+        if (m_showScenePanel) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+
+        if (ImGui::Button(ICON_LC_LIST "##hudVertOutlinerBtn", ImVec2(squareSize, squareSize))) {
+            m_showScenePanel = !m_showScenePanel;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scene Outliner");
+
+        if (m_showScenePanel) {
+            ImGui::PopStyleColor(3);
+        }
+
+        ImGui::Separator();
+
         // Brush Selection Button & Popup List
         BrushType currentBrush = sculpt.getBrush();
         const char* brushName = getBrushNameLocal(currentBrush);
@@ -4461,19 +4491,6 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::EndPopup();
         }
 
-        ImGui::Separator();
-
-        // Bottom Menu Button
-        if (ImGui::Button(ICON_LC_MENU "##hudVertAppMenu", ImVec2(squareSize, squareSize))) {
-            ImGui::OpenPopup("##hudVertAppMenuPopup");
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Main Menu (File, Panels, Options)");
-
-        if (ImGui::BeginPopup("##hudVertAppMenuPopup")) {
-            ImGui::SetWindowFontScale(fontScale);
-            drawAppMenuItems(sculpt, scene, renderer);
-            ImGui::EndPopup();
-        }
     }
     ImGui::End();
 
