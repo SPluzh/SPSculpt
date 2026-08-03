@@ -359,9 +359,9 @@ bool AngleRenderer::init(int width, int height) {
     // F. Initialize RTT Targets
     m_rttOpaque.init(width, height, true, 0, true);
     m_rttContour.init(width, height, false);
-    m_rttTransparent.init(width, height, true, m_rttOpaque.depth);
+    m_rttTransparent.init(width, height, true, m_rttOpaque.depth, true);
     m_rttMerge.init(width, height, false);
-    m_rttComposite.init(width, height, true, m_rttOpaque.depth);
+    m_rttComposite.init(width, height, true, m_rttOpaque.depth, true);
     m_rttPrepass.init(width, height, true, 0, true);
     m_rttBevel.init(width, height, false);
     m_rttNormals.init(width, height, true, 0, false);
@@ -1260,7 +1260,7 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             glEnable(GL_DEPTH_TEST);
-            glDepthMask(GL_TRUE);
+            glDepthMask(GL_FALSE);
             glDepthFunc(GL_LEQUAL);
             glEnable(GL_CULL_FACE);
             glCullFace(GL_BACK);
@@ -1286,6 +1286,7 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
 
             glDisable(GL_CULL_FACE);
             glDisable(GL_BLEND);
+            glDepthMask(GL_TRUE);
         }
         if (scene.getVoxelPreview()) {
             drawVoxelPreview(scene, camera, viewportIdx);
