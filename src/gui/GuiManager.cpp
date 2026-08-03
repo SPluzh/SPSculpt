@@ -1,3 +1,4 @@
+#include <GLES3/gl3.h>
 #include "gui/GuiManager.h"
 #include "common/IniFile.h"
 #include "mesh/Multimesh.h"
@@ -183,6 +184,73 @@ GuiManager::GuiManager() {}
 
 GuiManager::~GuiManager() {
     shutdown();
+}
+
+GLuint GuiManager::getIconTexture(const std::string& iconName) {
+    auto it = m_iconCache.find(iconName);
+    if (it != m_iconCache.end()) {
+        return it->second;
+    }
+
+    int w = 0, h = 0, channels = 0;
+    unsigned char* data = nullptr;
+
+    std::vector<std::string> searchPaths = {
+        "resources/icons/" + iconName + ".png",
+        "../resources/icons/" + iconName + ".png",
+        "dist/resources/icons/" + iconName + ".png",
+        "build/resources/icons/" + iconName + ".png"
+    };
+
+    char* basePath = SDL_GetBasePath();
+    if (basePath) {
+        std::string base(basePath);
+        SDL_free(basePath);
+        searchPaths.push_back(base + "resources/icons/" + iconName + ".png");
+        searchPaths.push_back(base + "../resources/icons/" + iconName + ".png");
+        searchPaths.push_back(base + "../../resources/icons/" + iconName + ".png");
+    }
+
+    std::string foundPath = "";
+    std::filesystem::file_time_type newestTime;
+    bool foundAny = false;
+
+    for (const auto& path : searchPaths) {
+        std::error_code ec;
+        if (std::filesystem::exists(path, ec)) {
+            auto ftime = std::filesystem::last_write_time(path, ec);
+            if (!ec && (!foundAny || ftime > newestTime)) {
+                newestTime = ftime;
+                foundPath = path;
+                foundAny = true;
+            }
+        }
+    }
+
+    if (!foundPath.empty()) {
+        data = stbi_load(foundPath.c_str(), &w, &h, &channels, 4);
+    }
+
+    GLuint texID = 0;
+    if (data) {
+        glGenTextures(1, &texID);
+        glBindTexture(GL_TEXTURE_2D, texID);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        stbi_image_free(data);
+    }
+
+    m_iconCache[iconName] = texID;
+    return texID;
+}
+
+GLuint GuiManager::getXrayIconTexture() {
+    return getIconTexture("xray-outline");
 }
 
 void GuiManager::openScene(Scene& scene, SculptManager* sculpt) {
@@ -429,6 +497,13 @@ void GuiManager::init(SDL_Window* window, SDL_GLContext glContext) {
 }
 
 void GuiManager::shutdown() {
+    for (auto& [name, texID] : m_iconCache) {
+        if (texID != 0) {
+            glDeleteTextures(1, &texID);
+        }
+    }
+    m_iconCache.clear();
+
     if (!m_imguiInitialized) return;
 
     ImGui_ImplOpenGL3_Shutdown();
@@ -4428,7 +4503,22 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.75f, 0.35f, 0.00f, 1.0f));
         }
 
-        if (ImGui::Button(ICON_LC_BOXES "##hudVertVoxelRemesh", ImVec2(squareSize, squareSize))) {
+        GLuint vrTex = getIconTexture("voxelremesh");
+        bool clickedVr = false;
+        if (vrTex != 0) {
+            clickedVr = ImGui::Button("##hudVertVoxelRemesh", ImVec2(squareSize, squareSize));
+            ImVec2 pMin = ImGui::GetItemRectMin();
+            ImVec2 pMax = ImGui::GetItemRectMax();
+            float pad = 1.0f * scale;
+            ImVec2 imgMin(pMin.x + pad, pMin.y + pad);
+            ImVec2 imgMax(pMax.x - pad, pMax.y - pad);
+            ImU32 tintCol = runningRemesh ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 240);
+            ImGui::GetWindowDrawList()->AddImage((ImTextureID)(uintptr_t)vrTex, imgMin, imgMax, ImVec2(0, 1), ImVec2(1, 0), tintCol);
+        } else {
+            clickedVr = ImGui::Button(ICON_LC_BOXES "##hudVertVoxelRemesh", ImVec2(squareSize, squareSize));
+        }
+
+        if (clickedVr) {
             performRemesh(scene);
         }
         if (ImGui::IsItemHovered()) {
@@ -4521,7 +4611,22 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
         }
 
-        if (ImGui::Button(ICON_LC_SPLIT "##hudSym", squareBtn)) {
+        GLuint symTex = getIconTexture("symmetry");
+        bool clickedSym = false;
+        if (symTex != 0) {
+            clickedSym = ImGui::Button("##hudSym", squareBtn);
+            ImVec2 pMin = ImGui::GetItemRectMin();
+            ImVec2 pMax = ImGui::GetItemRectMax();
+            float pad = 1.0f * scale;
+            ImVec2 imgMin(pMin.x + pad, pMin.y + pad);
+            ImVec2 imgMax(pMax.x - pad, pMax.y - pad);
+            ImU32 tintCol = useSym ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 240);
+            ImGui::GetWindowDrawList()->AddImage((ImTextureID)(uintptr_t)symTex, imgMin, imgMax, ImVec2(0, 1), ImVec2(1, 0), tintCol);
+        } else {
+            clickedSym = ImGui::Button(ICON_LC_SPLIT "##hudSym", squareBtn);
+        }
+
+        if (clickedSym) {
             sculpt.setUseSym(!useSym);
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Symmetry (Alt+X)");
@@ -4769,7 +4874,22 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
         }
-        if (ImGui::Button(ICON_LC_GRID "##hudGrid", squareBtn)) {
+        GLuint gridTex = getIconTexture("grid");
+        bool clickedGrid = false;
+        if (gridTex != 0) {
+            clickedGrid = ImGui::Button("##hudGrid", squareBtn);
+            ImVec2 pMin = ImGui::GetItemRectMin();
+            ImVec2 pMax = ImGui::GetItemRectMax();
+            float pad = 1.0f * scale;
+            ImVec2 imgMin(pMin.x + pad, pMin.y + pad);
+            ImVec2 imgMax(pMax.x - pad, pMax.y - pad);
+            ImU32 tintCol = showGrid ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 240);
+            ImGui::GetWindowDrawList()->AddImage((ImTextureID)(uintptr_t)gridTex, imgMin, imgMax, ImVec2(0, 1), ImVec2(1, 0), tintCol);
+        } else {
+            clickedGrid = ImGui::Button(ICON_LC_GRID "##hudGrid", squareBtn);
+        }
+
+        if (clickedGrid) {
             renderer.setShowGrid(!showGrid);
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Grid Display");
@@ -4785,7 +4905,22 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
         }
-        if (ImGui::Button(ICON_LC_CUBOID "##hudFlatShading", squareBtn)) {
+        GLuint fsTex = getIconTexture("flatshading");
+        bool clickedFs = false;
+        if (fsTex != 0) {
+            clickedFs = ImGui::Button("##hudFlatShading", squareBtn);
+            ImVec2 pMin = ImGui::GetItemRectMin();
+            ImVec2 pMax = ImGui::GetItemRectMax();
+            float pad = 1.0f * scale;
+            ImVec2 imgMin(pMin.x + pad, pMin.y + pad);
+            ImVec2 imgMax(pMax.x - pad, pMax.y - pad);
+            ImU32 tintCol = flatShading ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 240);
+            ImGui::GetWindowDrawList()->AddImage((ImTextureID)(uintptr_t)fsTex, imgMin, imgMax, ImVec2(0, 1), ImVec2(1, 0), tintCol);
+        } else {
+            clickedFs = ImGui::Button(ICON_LC_CUBOID "##hudFlatShading", squareBtn);
+        }
+
+        if (clickedFs) {
             renderer.setFlatShading(!flatShading);
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Flat Shading");
@@ -4801,7 +4936,22 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
         }
-        if (ImGui::Button(ICON_LC_TRIANGLE "##hudWireframe", squareBtn)) {
+        GLuint wfTex = getIconTexture("wireframe");
+        bool clickedWf = false;
+        if (wfTex != 0) {
+            clickedWf = ImGui::Button("##hudWireframe", squareBtn);
+            ImVec2 pMin = ImGui::GetItemRectMin();
+            ImVec2 pMax = ImGui::GetItemRectMax();
+            float pad = 1.0f * scale;
+            ImVec2 imgMin(pMin.x + pad, pMin.y + pad);
+            ImVec2 imgMax(pMax.x - pad, pMax.y - pad);
+            ImU32 tintCol = showWireframe ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 240);
+            ImGui::GetWindowDrawList()->AddImage((ImTextureID)(uintptr_t)wfTex, imgMin, imgMax, ImVec2(0, 1), ImVec2(1, 0), tintCol);
+        } else {
+            clickedWf = ImGui::Button(ICON_LC_TRIANGLE "##hudWireframe", squareBtn);
+        }
+
+        if (clickedWf) {
             renderer.setShowWireframe(!showWireframe);
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Wireframe Shading");
@@ -4817,7 +4967,22 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
         }
-        if (ImGui::Button(ICON_LC_LAYERS "##hudPolyGroups", squareBtn)) {
+        GLuint pgTex = getIconTexture("polygroup");
+        bool clickedPg = false;
+        if (pgTex != 0) {
+            clickedPg = ImGui::Button("##hudPolyGroups", squareBtn);
+            ImVec2 pMin = ImGui::GetItemRectMin();
+            ImVec2 pMax = ImGui::GetItemRectMax();
+            float pad = 1.0f * scale;
+            ImVec2 imgMin(pMin.x + pad, pMin.y + pad);
+            ImVec2 imgMax(pMax.x - pad, pMax.y - pad);
+            ImU32 tintCol = showPolyGroups ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 240);
+            ImGui::GetWindowDrawList()->AddImage((ImTextureID)(uintptr_t)pgTex, imgMin, imgMax, ImVec2(0, 1), ImVec2(1, 0), tintCol);
+        } else {
+            clickedPg = ImGui::Button(ICON_LC_LAYERS "##hudPolyGroups", squareBtn);
+        }
+
+        if (clickedPg) {
             renderer.setShowPolyGroups(!renderer.getShowPolyGroups());
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle PolyGroups Display");
@@ -4833,7 +4998,22 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
         }
-        if (ImGui::Button(ICON_LC_CONTRAST "##hudSilhouette", squareBtn)) {
+        GLuint silTex = getIconTexture("silhouette");
+        bool clickedSil = false;
+        if (silTex != 0) {
+            clickedSil = ImGui::Button("##hudSilhouette", squareBtn);
+            ImVec2 pMin = ImGui::GetItemRectMin();
+            ImVec2 pMax = ImGui::GetItemRectMax();
+            float pad = 1.0f * scale;
+            ImVec2 imgMin(pMin.x + pad, pMin.y + pad);
+            ImVec2 imgMax(pMax.x - pad, pMax.y - pad);
+            ImU32 tintCol = isSilhouette ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 240);
+            ImGui::GetWindowDrawList()->AddImage((ImTextureID)(uintptr_t)silTex, imgMin, imgMax, ImVec2(0, 1), ImVec2(1, 0), tintCol);
+        } else {
+            clickedSil = ImGui::Button(ICON_LC_CONTRAST "##hudSilhouette", squareBtn);
+        }
+
+        if (clickedSil) {
             if (isSilhouette) {
                 renderer.setShaderType(m_previousShaderType);
             } else {
@@ -4854,7 +5034,22 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
         }
-        if (ImGui::Button(ICON_LC_FRAME "##hudSafeFrames", squareBtn)) {
+        GLuint frameTex = getIconTexture("frame");
+        bool clickedFrame = false;
+        if (frameTex != 0) {
+            clickedFrame = ImGui::Button("##hudSafeFrames", squareBtn);
+            ImVec2 pMin = ImGui::GetItemRectMin();
+            ImVec2 pMax = ImGui::GetItemRectMax();
+            float pad = 1.0f * scale;
+            ImVec2 imgMin(pMin.x + pad, pMin.y + pad);
+            ImVec2 imgMax(pMax.x - pad, pMax.y - pad);
+            ImU32 tintCol = showSafeFrames ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 240);
+            ImGui::GetWindowDrawList()->AddImage((ImTextureID)(uintptr_t)frameTex, imgMin, imgMax, ImVec2(0, 1), ImVec2(1, 0), tintCol);
+        } else {
+            clickedFrame = ImGui::Button(ICON_LC_FRAME "##hudSafeFrames", squareBtn);
+        }
+
+        if (clickedFrame) {
             renderer.setShowSafeFrames(!showSafeFrames);
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Safe Frames Overlay");
@@ -4872,7 +5067,23 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
         }
 
-        if (ImGui::Button(ICON_LC_SCAN "##hudXray", squareBtn)) {
+        GLuint xrayTex = getXrayIconTexture();
+        bool clickedXray = false;
+
+        if (xrayTex != 0) {
+            clickedXray = ImGui::Button("##hudXray", squareBtn);
+            ImVec2 pMin = ImGui::GetItemRectMin();
+            ImVec2 pMax = ImGui::GetItemRectMax();
+            float pad = 1.0f * scale;
+            ImVec2 imgMin(pMin.x + pad, pMin.y + pad);
+            ImVec2 imgMax(pMax.x - pad, pMax.y - pad);
+            ImU32 tintCol = xrayEnabled ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 240);
+            ImGui::GetWindowDrawList()->AddImage((ImTextureID)(uintptr_t)xrayTex, imgMin, imgMax, ImVec2(0, 1), ImVec2(1, 0), tintCol);
+        } else {
+            clickedXray = ImGui::Button(ICON_LC_SCAN_FACE "##hudXray", squareBtn);
+        }
+
+        if (clickedXray) {
             renderer.setXrayEnabled(!xrayEnabled);
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle X-Ray Mode");
@@ -4946,7 +5157,22 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         }
 
         // Split-button: Perspective toggle (left) + FOV arrow (right)
-        if (ImGui::Button(ICON_LC_CAMERA "##hudPerspective", squareBtn)) {
+        GLuint fovTex = getIconTexture("persp");
+        bool clickedFov = false;
+        if (fovTex != 0) {
+            clickedFov = ImGui::Button("##hudPerspective", squareBtn);
+            ImVec2 pMin = ImGui::GetItemRectMin();
+            ImVec2 pMax = ImGui::GetItemRectMax();
+            float pad = 1.0f * scale;
+            ImVec2 imgMin(pMin.x + pad, pMin.y + pad);
+            ImVec2 imgMax(pMax.x - pad, pMax.y - pad);
+            ImU32 tintCol = isPerspective ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 240);
+            ImGui::GetWindowDrawList()->AddImage((ImTextureID)(uintptr_t)fovTex, imgMin, imgMax, ImVec2(0, 1), ImVec2(1, 0), tintCol);
+        } else {
+            clickedFov = ImGui::Button(ICON_LC_CAMERA "##hudPerspective", squareBtn);
+        }
+
+        if (clickedFov) {
             scene.getCamera().setProjectionType(isPerspective ? CameraEnums::Projection::ORTHOGRAPHIC : CameraEnums::Projection::PERSPECTIVE);
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Perspective Projection (P)");
@@ -5017,7 +5243,22 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             }
         };
 
-        if (ImGui::Button(ICON_LC_COLUMNS "##hudSplitView", squareBtn)) {
+        GLuint splitTex = getIconTexture("splitviewport");
+        bool clickedSplit = false;
+        if (splitTex != 0) {
+            clickedSplit = ImGui::Button("##hudSplitView", squareBtn);
+            ImVec2 pMin = ImGui::GetItemRectMin();
+            ImVec2 pMax = ImGui::GetItemRectMax();
+            float pad = 1.0f * scale;
+            ImVec2 imgMin(pMin.x + pad, pMin.y + pad);
+            ImVec2 imgMax(pMax.x - pad, pMax.y - pad);
+            ImU32 tintCol = isSplit ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 240);
+            ImGui::GetWindowDrawList()->AddImage((ImTextureID)(uintptr_t)splitTex, imgMin, imgMax, ImVec2(0, 1), ImVec2(1, 0), tintCol);
+        } else {
+            clickedSplit = ImGui::Button(ICON_LC_COLUMNS "##hudSplitView", squareBtn);
+        }
+
+        if (clickedSplit) {
             applySplitMode(isSplit ? Scene::SplitMode::OFF : Scene::SplitMode::MIRROR);
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Split Viewport");

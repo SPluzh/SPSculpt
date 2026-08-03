@@ -12,6 +12,8 @@
 #include "editing/SculptManager.h"
 #include "scene/Scene.h"
 #include "sculpt/Remesh.h"
+#include <unordered_map>
+#include <string>
 #include "timelapse/TimelapsePlayer.h"
 
 class AngleRenderer;
@@ -150,6 +152,10 @@ private:
     void drawHotkeyHUD();
 
     int m_preferencesActiveTab = -1;
+
+    std::unordered_map<std::string, GLuint> m_iconCache;
+    GLuint getIconTexture(const std::string& iconName);
+    GLuint getXrayIconTexture();
 
 public:
     GuiManager();
