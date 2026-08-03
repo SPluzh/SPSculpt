@@ -4864,6 +4864,80 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
 
         ImGui::SameLine();
 
+        // X-Ray Mode Toggle + Settings Arrow
+        bool xrayEnabled = renderer.getXrayEnabled();
+        if (xrayEnabled) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+
+        if (ImGui::Button(ICON_LC_SCAN "##hudXray", squareBtn)) {
+            renderer.setXrayEnabled(!xrayEnabled);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle X-Ray Mode");
+
+        ImVec2 xrayMin = ImGui::GetItemRectMin();
+
+        // Flush narrow arrow button directly attached to X-Ray button
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, ImGui::GetStyle().FramePadding.y));
+        ImGui::SetWindowFontScale(fontScale * 0.65f);
+        bool openXrayPopup = ImGui::Button(ICON_LC_CHEVRON_DOWN "##hudXrayArrow", halfSquareBtn);
+        ImGui::SetWindowFontScale(fontScale);
+        ImGui::PopStyleVar();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("X-Ray Settings");
+
+        ImVec2 xrayMax = ImGui::GetItemRectMax();
+
+        if (xrayEnabled) {
+            ImGui::PopStyleColor(3);
+        }
+
+        float xrayCenterX = (xrayMin.x + xrayMax.x) * 0.5f;
+        float xrayBottomY = xrayMax.y + 4.0f * scale;
+
+        if (openXrayPopup) {
+            ImGui::OpenPopup("##hudXrayPopup");
+        }
+
+        ImGui::SetNextWindowPos(ImVec2(xrayCenterX, xrayBottomY), ImGuiCond_Appearing, ImVec2(0.5f, 0.0f));
+        if (ImGui::BeginPopup("##hudXrayPopup")) {
+            ImGui::SetWindowFontScale(fontScale);
+            ImGui::TextUnformatted("X-Ray Settings");
+            ImGui::Separator();
+
+            bool enable = renderer.getXrayEnabled();
+            if (ImGui::Checkbox("Enable X-Ray Mode", &enable)) {
+                renderer.setXrayEnabled(enable);
+            }
+
+            ImGui::Separator();
+            ImGui::TextUnformatted("Target:");
+
+            int target = renderer.getXrayTarget(); // 0: Unselected (default), 1: Selected, 2: All
+            bool changedTarget = false;
+            if (ImGui::RadioButton("Unselected (default)", &target, 0)) changedTarget = true;
+            if (ImGui::RadioButton("Selected", &target, 1)) changedTarget = true;
+            if (ImGui::RadioButton("All", &target, 2)) changedTarget = true;
+            if (changedTarget) {
+                renderer.setXrayTarget(target);
+            }
+
+            ImGui::Separator();
+            ImGui::TextUnformatted("X-Ray Color:");
+            glm::vec4 xrayCol = renderer.getXrayColor();
+            if (ImGui::ColorEdit4("##hudXrayColor", &xrayCol.r, ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_NoInputs)) {
+                renderer.setXrayColor(xrayCol);
+            }
+            ImGui::SameLine();
+            ImGui::TextUnformatted("Color & Alpha");
+
+            ImGui::EndPopup();
+        }
+
+        ImGui::SameLine();
+
         bool isPerspective = (scene.getCamera().getProjectionType() == CameraEnums::Projection::PERSPECTIVE);
         if (isPerspective) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));

@@ -57,6 +57,10 @@ bool RenderSettings::save(IniFile& ini, const AngleRenderer& renderer, const Sce
     ini.setFloat(sec, "ssaoBias", renderer.getSsaoBias());
     ini.setFloat(sec, "ssaoIntensity", renderer.getSsaoIntensity());
 
+    ini.setInt(sec, "xrayTarget", renderer.getXrayTarget());
+    glm::vec4 xrayCol = renderer.getXrayColor();
+    ini.set(sec, "xrayColor", std::to_string(xrayCol.r) + " " + std::to_string(xrayCol.g) + " " + std::to_string(xrayCol.b) + " " + std::to_string(xrayCol.a));
+
     const Camera* mainCam = scene.getCameraByIndex(0);
     if (mainCam) {
         ini.setInt(sec, "cameraMode", static_cast<int>(mainCam->getMode()));
@@ -229,6 +233,15 @@ bool RenderSettings::load(const IniFile& ini, AngleRenderer& renderer, Scene& sc
     if (ini.hasKey(sec, "ssaoRadius")) renderer.setSsaoRadius(ini.getFloat(sec, "ssaoRadius", 0.5f));
     if (ini.hasKey(sec, "ssaoBias")) renderer.setSsaoBias(ini.getFloat(sec, "ssaoBias", 0.025f));
     if (ini.hasKey(sec, "ssaoIntensity")) renderer.setSsaoIntensity(ini.getFloat(sec, "ssaoIntensity", 1.0f));
+
+    if (ini.hasKey(sec, "xrayTarget")) renderer.setXrayTarget(ini.getInt(sec, "xrayTarget", 0));
+    if (ini.hasKey(sec, "xrayColor")) {
+        std::stringstream ss(ini.get(sec, "xrayColor"));
+        float r, g, b, a;
+        if (ss >> r >> g >> b >> a) {
+            renderer.setXrayColor(glm::vec4(r, g, b, a));
+        }
+    }
 
     if (ini.hasKey(sec, "useVertexColors")) renderer.setUseVertexColors(ini.getBool(sec, "useVertexColors"));
     if (ini.hasKey(sec, "useVertexMaterials")) renderer.setUseVertexMaterials(ini.getBool(sec, "useVertexMaterials"));

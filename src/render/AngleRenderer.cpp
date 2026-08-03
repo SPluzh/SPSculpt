@@ -1131,6 +1131,36 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
     }
 }
 
+bool AngleRenderer::isMeshXRay(const Scene& scene, Mesh* mesh) const {
+    if (!m_xrayEnabled || !mesh) return false;
+
+    bool isSelected = false;
+    const auto& selectedMeshes = scene.getSelectedMeshes();
+    if (!selectedMeshes.empty()) {
+        isSelected = (std::find(selectedMeshes.begin(), selectedMeshes.end(), mesh) != selectedMeshes.end());
+    } else {
+        isSelected = (scene.getSelected() == mesh);
+    }
+
+    if (m_xrayTarget == 0) { // Unselected (default)
+        return !isSelected;
+    } else if (m_xrayTarget == 1) { // Selected
+        return isSelected;
+    } else if (m_xrayTarget == 2) { // All
+        return true;
+    }
+    return false;
+}
+
+GLuint AngleRenderer::getXrayMatcapTexture() const {
+    for (const auto& m : m_matcaps) {
+        if (m.texPath == "silvermindyaar_black_stone.png" && m.textureId != 0) {
+            return m.textureId;
+        }
+    }
+    return 0;
+}
+
 void AngleRenderer::renderScenePass(const Scene& scene, int passType) {
     if (!m_splitMode) {
         glViewport(0, 0, m_width, m_height);
@@ -1183,22 +1213,26 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
         }
     } else if (passType == 1) {
         // Opaque meshes (alpha == 1.0)
+        // 1. Render non-XRay meshes (solid depth + color)
         for (auto* mesh : scene.getMeshes()) {
             if (scene.isMeshRenderVisible(mesh, viewportIdx) && m_alpha == 1.0f) {
-                if (mesh->isArmature && mesh->armatureGraph) {
-                    if (mesh == scene.getSelected()) {
-                        drawArmature(*mesh->armatureGraph, camera, m_armatureSelectedNode, m_armatureHoveredParent, m_armatureHoveredChild, m_armatureHasSymmetry);
+                if (!isMeshXRay(scene, mesh)) {
+                    if (mesh->isArmature && mesh->armatureGraph) {
+                        if (mesh == scene.getSelected()) {
+                            drawArmature(*mesh->armatureGraph, camera, m_armatureSelectedNode, m_armatureHoveredParent, m_armatureHoveredChild, m_armatureHasSymmetry);
+                        } else {
+                            drawArmature(*mesh->armatureGraph, camera, nullptr, nullptr, nullptr, m_armatureHasSymmetry);
+                        }
                     } else {
-                        drawArmature(*mesh->armatureGraph, camera, nullptr, nullptr, nullptr, m_armatureHasSymmetry);
-                    }
-                } else {
-                    drawMeshSolid(mesh, scene, camera);
-                    if (m_showWireframe) {
-                        drawWireframe(mesh, scene, camera);
+                        drawMeshSolid(mesh, scene, camera);
+                        if (m_showWireframe) {
+                            drawWireframe(mesh, scene, camera);
+                        }
                     }
                 }
             }
         }
+
         if (scene.getVoxelPreview()) {
             drawVoxelPreview(scene, camera, viewportIdx);
         }
@@ -1220,6 +1254,39 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
                 }
             }
         }
+
+        // Render X-Ray meshes (translucent X-Ray color, rendered into transparent buffer over solid geometry)
+        if (m_xrayEnabled) {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glEnable(GL_DEPTH_TEST);
+            glDepthMask(GL_TRUE);
+            glDepthFunc(GL_LEQUAL);
+            glEnable(GL_CULL_FACE);
+            glCullFace(GL_BACK);
+
+            for (auto* mesh : scene.getMeshes()) {
+                if (scene.isMeshRenderVisible(mesh, viewportIdx)) {
+                    if (isMeshXRay(scene, mesh)) {
+                        if (mesh->isArmature && mesh->armatureGraph) {
+                            if (mesh == scene.getSelected()) {
+                                drawArmature(*mesh->armatureGraph, camera, m_armatureSelectedNode, m_armatureHoveredParent, m_armatureHoveredChild, m_armatureHasSymmetry);
+                            } else {
+                                drawArmature(*mesh->armatureGraph, camera, nullptr, nullptr, nullptr, m_armatureHasSymmetry);
+                            }
+                        } else {
+                            drawMeshSolid(mesh, scene, camera);
+                            if (m_showWireframe) {
+                                drawWireframe(mesh, scene, camera);
+                            }
+                        }
+                    }
+                }
+            }
+
+            glDisable(GL_CULL_FACE);
+            glDisable(GL_BLEND);
+        }
         if (scene.getVoxelPreview()) {
             drawVoxelPreview(scene, camera, viewportIdx);
         }
@@ -1233,7 +1300,7 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
     } else if (passType == 5) {
         // Normals pre-pass for SSAO
         for (auto* mesh : scene.getMeshes()) {
-            if (scene.isMeshRenderVisible(mesh, viewportIdx)) {
+            if (scene.isMeshRenderVisible(mesh, viewportIdx) && !isMeshXRay(scene, mesh)) {
                 if (mesh->isArmature && mesh->armatureGraph) {
                     if (mesh == scene.getSelected()) {
                         drawArmature(*mesh->armatureGraph, camera, m_armatureSelectedNode, m_armatureHoveredParent, m_armatureHoveredChild, m_armatureHasSymmetry, true);
@@ -1320,12 +1387,20 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
     if (it == m_meshBuffers.end() || it->second->triIndexCount == 0) return;
     auto& bufs = it->second;
 
+    bool isXRay = isMeshXRay(scene, mesh);
+
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
-    glDisable(GL_CULL_FACE);
+    if (isXRay) {
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
+    } else {
+        glDisable(GL_CULL_FACE);
+    }
 
     GLuint program = m_flatProgram;
-    if (m_showPolyGroups || m_activeBrush == BRUSH_POLYGROUP || m_shaderType == 5) program = m_polygroupProgram;
+    if (isXRay) program = m_matcapProgram;
+    else if (m_showPolyGroups || m_activeBrush == BRUSH_POLYGROUP || m_shaderType == 5) program = m_polygroupProgram;
     else if (m_shaderType == 0) program = m_pbrProgram;
     else if (m_shaderType == 1) program = m_matcapProgram;
     else if (m_shaderType == 2) program = m_wetClayProgram;
@@ -1349,9 +1424,15 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
     glUniformMatrix3fv(glGetUniformLocation(program, "uN"), 1, GL_FALSE, glm::value_ptr(mesh->nMatrix));
     glUniformMatrix4fv(glGetUniformLocation(program, "uEM"), 1, GL_FALSE, glm::value_ptr(mesh->editMatrix));
     glUniformMatrix3fv(glGetUniformLocation(program, "uEN"), 1, GL_FALSE, glm::value_ptr(mesh->enMatrix));
-    glUniform1f(glGetUniformLocation(program, "uAlpha"), m_alpha);
+    float alphaToUse = isXRay ? m_xrayColor.a : m_alpha;
+    glUniform1f(glGetUniformLocation(program, "uAlpha"), alphaToUse);
+
     float effectiveAlbedo[3] = { m_albedo[0], m_albedo[1], m_albedo[2] };
-    if (m_useVertexColors) {
+    if (isXRay) {
+        effectiveAlbedo[0] = m_xrayColor.r;
+        effectiveAlbedo[1] = m_xrayColor.g;
+        effectiveAlbedo[2] = m_xrayColor.b;
+    } else if (m_useVertexColors) {
         effectiveAlbedo[0] = -1.0f;
         effectiveAlbedo[1] = -1.0f;
         effectiveAlbedo[2] = -1.0f;
@@ -1395,8 +1476,9 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
     glUniform1f(glGetUniformLocation(program, "uCurvature"), m_curvature);
     glUniform1f(glGetUniformLocation(program, "uFov"), camera.getFov());
 
-    glUniform1i(glGetUniformLocation(program, "uBevelEnabled"), m_bevelEnabled ? 1 : 0);
-    if (m_bevelEnabled) {
+    bool useBevel = m_bevelEnabled && !isXRay;
+    glUniform1i(glGetUniformLocation(program, "uBevelEnabled"), useBevel ? 1 : 0);
+    if (useBevel) {
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, m_rttBevel.texture);
         glUniform1i(glGetUniformLocation(program, "uBevelNormalMap"), 1);
@@ -1404,7 +1486,16 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
     }
 
     glActiveTexture(GL_TEXTURE0);
-    if (m_textureId != 0) {
+    if (isXRay) {
+        GLuint xrayTex = getXrayMatcapTexture();
+        if (xrayTex != 0) {
+            glBindTexture(GL_TEXTURE_2D, xrayTex);
+        } else if (m_matcapIdx >= 0 && m_matcapIdx < static_cast<int>(m_matcaps.size()) && m_matcaps[m_matcapIdx].textureId != 0) {
+            glBindTexture(GL_TEXTURE_2D, m_matcaps[m_matcapIdx].textureId);
+        } else {
+            glBindTexture(GL_TEXTURE_2D, 0);
+        }
+    } else if (m_textureId != 0) {
         glBindTexture(GL_TEXTURE_2D, m_textureId);
     } else if (m_shaderType == 0 && m_envTexture != 0) {
         glBindTexture(GL_TEXTURE_2D, m_envTexture);
@@ -1414,7 +1505,12 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
         glBindTexture(GL_TEXTURE_2D, 0);
     }
 
-    if (m_shaderType == 0) {
+    if (isXRay || m_shaderType == 1) {
+        glUniform1i(glGetUniformLocation(program, "uTexture0"), 0);
+        bool hasMatcap = isXRay ? (getXrayMatcapTexture() != 0 || (m_matcapIdx >= 0 && m_matcapIdx < static_cast<int>(m_matcaps.size()) && m_matcaps[m_matcapIdx].textureId != 0)) : ((m_textureId != 0) || (m_matcapIdx >= 0 && m_matcapIdx < static_cast<int>(m_matcaps.size()) && m_matcaps[m_matcapIdx].textureId != 0));
+        glUniform1i(glGetUniformLocation(program, "uUseTexture"), hasMatcap ? 1 : 0);
+        glUniform1i(glGetUniformLocation(program, "uIsXRay"), isXRay ? 1 : 0);
+    } else if (m_shaderType == 0) {
         float effectiveRoughness = m_useVertexMaterials ? -1.0f : m_roughness;
         float effectiveMetallic = m_useVertexMaterials ? -1.0f : m_metallic;
         glUniform1f(glGetUniformLocation(program, "uRoughness"), effectiveRoughness);
@@ -2796,18 +2892,9 @@ void AngleRenderer::initGrid() {
     glm::vec4 minorColor(0.55f, 0.55f, 0.60f, 0.45f);
     glm::vec4 majorColor(0.75f, 0.75f, 0.80f, 0.75f);
 
-    // 1. Primary grid (-150 to +150, step 2.0, skipping axes 0)
-    for (int i = -75; i <= 75; ++i) {
-        if (i == 0) continue;
-        float v = (float)(i * 2);
-        glm::vec4 col = (i % 5 == 0) ? majorColor : minorColor;
-        addLine(v, 0.0f, -maxDist, v, 0.0f, maxDist, col);
-        addLine(-maxDist, 0.0f, v, maxDist, 0.0f, v, col);
-    }
-
-    // 2. Macro grid (-500 to +500, step 10.0, outer region)
+    // Uniform grid (-500 to +500, step 10.0, skipping axes 0)
     for (int i = -50; i <= 50; ++i) {
-        if (i >= -15 && i <= 15) continue;
+        if (i == 0) continue;
         float v = (float)(i * 10);
         glm::vec4 col = (i % 5 == 0) ? majorColor : minorColor;
         addLine(v, 0.0f, -maxDist, v, 0.0f, maxDist, col);
@@ -3233,6 +3320,9 @@ void AngleRenderer::initMatcaps() {
         std::string texPath;
     };
     std::vector<TempPreset> temps = {
+        { "Black Stone", "silvermindyaar_black_stone.png" },
+        { "Clay Brown", "silvermindyaar_clay_brown.png" },
+        { "Metal Putty", "silvermindyaar_metal_putty.png" },
         { "Matcap FV", "matcapFV.jpg" },
         { "Red clay", "redClay.jpg" },
         { "Skin hazardousarts", "skinHazardousarts.jpg" },

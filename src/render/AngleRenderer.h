@@ -237,6 +237,18 @@ public:
     bool getDarkenUnselected() const { return m_darkenUnselected; }
     void setShowWireframe(bool show) { m_showWireframe = show; }
     bool getShowWireframe() const { return m_showWireframe; }
+
+    // X-Ray mode controls
+    void setXrayEnabled(bool enable) { m_xrayEnabled = enable; }
+    bool getXrayEnabled() const { return m_xrayEnabled; }
+    void setXrayTarget(int target) { m_xrayTarget = target; } // 0: Unselected (default), 1: Selected, 2: All
+    int getXrayTarget() const { return m_xrayTarget; }
+    void setXrayColor(const glm::vec4& col) { m_xrayColor = col; }
+    const glm::vec4& getXrayColor() const { return m_xrayColor; }
+    glm::vec4& getXrayColorRef() { return m_xrayColor; }
+    bool isMeshXRay(const Scene& scene, Mesh* mesh) const;
+    GLuint getXrayMatcapTexture() const;
+
     void setCurvature(float c) { m_curvature = c; }
     float getCurvature() const { return m_curvature; }
 
@@ -588,6 +600,9 @@ private:
     bool m_darkenUnselected = true;
     bool m_showWireframe = false;
     bool m_showPolyGroups = false;
+    bool m_xrayEnabled = false;
+    int m_xrayTarget = 0; // 0: Unselected (default), 1: Selected, 2: All
+    glm::vec4 m_xrayColor{0.2f, 0.6f, 1.0f, 0.5f};
     BrushType m_activeBrush = BRUSH_FLATTEN;
     float m_curvature = 0.0f;
 

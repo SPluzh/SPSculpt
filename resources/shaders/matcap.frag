@@ -28,33 +28,37 @@ vec3 groupColor(uint gid) {
 }
 
 void main() {
-    vec3 normal = getNormal();
-    vec3 dNdx = dFdx(normal);
-    vec3 dNdy = dFdy(normal);
-    float normalVar = max(dot(dNdx, dNdx), dot(dNdy, dNdy));
-    if (normalVar > 0.001) {
-        normal = normalize(normal - (dNdx + dNdy) * 0.05);
-    }
+    vec3 normal = (uIsXRay == 1) ? normalize(vNormal) : getNormal();
     vec3 color;
     vec3 baseColor = (uAlbedo.r >= 0.0) ? uAlbedo : ((vColor.r > 0.0 || vColor.g > 0.0 || vColor.b > 0.0) ? vColor : vec3(0.72, 0.52, 0.45));
     if (uShowPolyGroups) {
         baseColor = groupColor(vFaceGroup);
     }
+
+    float alphaToUse = uAlpha;
+
     if (uUseTexture == 1) {
-        vec3 nm_z = normalize(vVertexPres);
-        vec3 nm_x = vec3(-nm_z.z, 0.0, nm_z.x);
-        vec3 nm_y = cross(nm_x, nm_z);
-        vec2 texCoord = 0.5 + 0.5 * vec2(dot(normal, nm_x), dot(normal, nm_y));
+        vec3 eye = normalize(-vVertex);
+        vec3 r = reflect(-eye, normal);
+        float m = 2.0 * sqrt(max(0.0, r.x*r.x + r.y*r.y + (r.z + 1.0)*(r.z + 1.0)));
+        vec2 texCoord = (m > 0.0001) ? (r.xy / m + 0.5) : vec2(0.5);
+
         vec3 matcapColor = texture(uTexture0, texCoord).rgb;
-        if (uShowPolyGroups) {
-            color = mix(matcapColor * baseColor, baseColor, 0.5);
+
+        if (uIsXRay == 1) {
+            float luma = max(matcapColor.r, max(matcapColor.g, matcapColor.b));
+            float NdotV = clamp(abs(dot(normal, eye)), 0.0, 1.0);
+            float fresnel = 1.0 - NdotV;
+            float smoothIntensity = pow(max(luma, fresnel), 0.7);
+            alphaToUse = uAlpha * smoothIntensity;
+            color = sRGBToLinear(baseColor) * smoothIntensity;
+        } else if (uShowPolyGroups) {
+            color = sRGBToLinear(mix(matcapColor * baseColor, baseColor, 0.5));
         } else {
-            color = matcapColor * baseColor;
+            color = sRGBToLinear(matcapColor * baseColor);
         }
-        color = sRGBToLinear(color);
     } else {
         vec3 r = reflect(normalize(vVertex), normal);
-        float m = 2.0 * sqrt(r.x*r.x + r.y*r.y + (r.z+1.0)*(r.z+1.0));
         float diffuse = max(dot(normal, vec3(0.5, 0.8, 1.0)), 0.0);
         vec3 lightColor = vec3(0.9, 0.85, 0.8) * diffuse + vec3(0.18, 0.18, 0.22);
         color = baseColor * lightColor;
@@ -62,5 +66,5 @@ void main() {
         color += vec3(0.15) * spec;
         color = sRGBToLinear(color);
     }
-    fragColor = encodeFragColor(color, uAlpha);
+    fragColor = encodeFragColor(color, alphaToUse);
 }

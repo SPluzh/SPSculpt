@@ -12,6 +12,7 @@ uniform int uDarken;
 uniform float uCurvature;
 uniform float uFov;
 uniform int uFlat;
+uniform int uIsXRay;
 
 uniform int uBevelEnabled;
 uniform sampler2D uBevelNormalMap;
@@ -76,6 +77,9 @@ vec3 computeCurvature(const in vec3 vertex, const in vec3 normal, const in vec3 
 }
 
 vec4 encodeFragColor(const in vec3 frag, const in float alpha) {
+    if (uIsXRay == 1) {
+        return vec4(frag * alpha, alpha);
+    }
     vec3 col = computeCurvature(vVertex, getAlignedNormal(), frag, uCurvature, uFov);
     if (uDarken == 1) col *= 0.3;
     col *= (0.15 + 0.85 * vMasking);
