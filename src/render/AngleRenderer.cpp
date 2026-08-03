@@ -2903,20 +2903,14 @@ void AngleRenderer::initGrid() {
     }
 
     // 3. Colored Axes (X = Red, Z = Blue) - raised slightly (y = 0.002) to prevent Z-fighting
-    glm::vec4 xAxisColor(1.0f, 0.15f, 0.15f, 1.0f); // Vibrant Red
-    glm::vec4 zAxisColor(0.15f, 0.55f, 1.0f, 1.0f); // Vibrant Blue
+    glm::vec4 xAxisColor(1.0f, 0.0f, 0.05f, 1.0f); // High-saturation Red
+    glm::vec4 zAxisColor(0.0f, 0.35f, 1.0f, 1.0f); // High-saturation Blue
 
     // X Axis line (runs along X: y=0.002, z=0)
     addLine(-maxDist, 0.002f, 0.0f, maxDist, 0.002f, 0.0f, xAxisColor);
-    // Add parallel offset lines to make X axis line bolder/thicker visually
-    addLine(-maxDist, 0.002f, 0.02f, maxDist, 0.002f, 0.02f, xAxisColor);
-    addLine(-maxDist, 0.002f, -0.02f, maxDist, 0.002f, -0.02f, xAxisColor);
 
     // Z Axis line (runs along Z: x=0, y=0.002)
     addLine(0.0f, 0.002f, -maxDist, 0.0f, 0.002f, maxDist, zAxisColor);
-    // Add parallel offset lines to make Z axis line bolder/thicker visually
-    addLine(0.02f, 0.002f, -maxDist, 0.02f, 0.002f, maxDist, zAxisColor);
-    addLine(-0.02f, 0.002f, -maxDist, -0.02f, 0.002f, maxDist, zAxisColor);
 
     m_gridLineCount = static_cast<int>(gridData.size() / 7);
 
