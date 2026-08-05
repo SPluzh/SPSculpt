@@ -4581,6 +4581,124 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::EndPopup();
         }
 
+        ImGui::Separator();
+
+        // Divider Tool Button with attached Arrow dropdown
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 0.0f));
+
+        bool isDividerActive = (currentBrush == BRUSH_DIVIDER);
+        if (isDividerActive) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+
+        GLuint dividerTex = getIconTexture("dividertool");
+        bool clickedDivider = false;
+        if (dividerTex != 0) {
+            clickedDivider = ImGui::Button("##hudVertDividerTool", ImVec2(squareSize, squareSize));
+            ImVec2 pMin = ImGui::GetItemRectMin();
+            ImVec2 pMax = ImGui::GetItemRectMax();
+            float pad = 1.0f * scale;
+            ImVec2 imgMin(pMin.x + pad, pMin.y + pad);
+            ImVec2 imgMax(pMax.x - pad, pMax.y - pad);
+            ImU32 tintCol = isDividerActive ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 240);
+            ImGui::GetWindowDrawList()->AddImage((ImTextureID)(uintptr_t)dividerTex, imgMin, imgMax, ImVec2(0, 1), ImVec2(1, 0), tintCol);
+        } else {
+            clickedDivider = ImGui::Button(ICON_LC_RULER "##hudVertDividerTool", ImVec2(squareSize, squareSize));
+        }
+
+        if (clickedDivider) {
+            sculpt.setBrush(BRUSH_DIVIDER);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Divider Tool (Divisions: %d)", sculpt.getDividerDivisions());
+        }
+
+        // Half-Height Arrow Button attached directly below (0 gap)
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 0.0f));
+        ImGui::SetWindowFontScale(fontScale * 0.65f);
+        bool openDividerPopup = ImGui::Button(ICON_LC_CHEVRON_DOWN "##hudVertDividerArrow", ImVec2(squareSize, squareSize * 0.45f));
+        ImGui::SetWindowFontScale(fontScale);
+        ImGui::PopStyleVar();
+
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Divider Settings");
+        }
+
+        if (isDividerActive) {
+            ImGui::PopStyleColor(3);
+        }
+
+        ImGui::PopStyleVar(); // Restore ItemSpacing
+
+        ImVec2 divArrowMin = ImGui::GetItemRectMin();
+        ImVec2 divArrowMax = ImGui::GetItemRectMax();
+
+        if (openDividerPopup) {
+            ImGui::OpenPopup("##hudVertDividerPopup");
+        }
+
+        ImGui::SetNextWindowPos(ImVec2(divArrowMax.x + 6.0f * scale, divArrowMin.y), ImGuiCond_Appearing);
+        if (ImGui::BeginPopup("##hudVertDividerPopup")) {
+            ImGui::SetWindowFontScale(fontScale);
+            ImGui::TextUnformatted("Divider Settings");
+            ImGui::Separator();
+
+            int divs = sculpt.getDividerDivisions();
+            ImGui::Text("Divisions / Segments: %d", divs);
+            ImGui::PushItemWidth(140.0f * scale);
+            if (ImGui::SliderInt("##hudDividerDivsSlider", &divs, 2, 10)) {
+                sculpt.setDividerDivisions(divs);
+            }
+            ImGui::PopItemWidth();
+
+            bool useDist = sculpt.getMeasureUseDistanceThickness();
+            if (ImGui::Checkbox("Perspective Thickness", &useDist)) {
+                sculpt.setMeasureUseDistanceThickness(useDist);
+            }
+
+            ImGui::Separator();
+            if (ImGui::Button("Clear Dividers", ImVec2(-1.0f, 0.0f))) {
+                sculpt.clearMeasurements();
+            }
+            ImGui::EndPopup();
+        }
+
+        // Measure Tool Button
+        bool isMeasureActive = (currentBrush == BRUSH_MEASURE);
+        if (isMeasureActive) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+
+        GLuint measureTex = getIconTexture("measuretool");
+        bool clickedMeasure = false;
+        if (measureTex != 0) {
+            clickedMeasure = ImGui::Button("##hudVertMeasureTool", ImVec2(squareSize, squareSize));
+            ImVec2 pMin = ImGui::GetItemRectMin();
+            ImVec2 pMax = ImGui::GetItemRectMax();
+            float pad = 1.0f * scale;
+            ImVec2 imgMin(pMin.x + pad, pMin.y + pad);
+            ImVec2 imgMax(pMax.x - pad, pMax.y - pad);
+            ImU32 tintCol = isMeasureActive ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 240);
+            ImGui::GetWindowDrawList()->AddImage((ImTextureID)(uintptr_t)measureTex, imgMin, imgMax, ImVec2(0, 1), ImVec2(1, 0), tintCol);
+        } else {
+            clickedMeasure = ImGui::Button(ICON_LC_RULER "##hudVertMeasureTool", ImVec2(squareSize, squareSize));
+        }
+
+        if (clickedMeasure) {
+            sculpt.setBrush(BRUSH_MEASURE);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Measure Tool");
+        }
+
+        if (isMeasureActive) {
+            ImGui::PopStyleColor(3);
+        }
+
     }
     ImGui::End();
 
