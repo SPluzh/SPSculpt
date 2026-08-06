@@ -2594,6 +2594,9 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
         if (m_isClipCurveActive) {
             m_isClipCurveActive = false;
 
+            sculpt_log("[SculptManager] ClipCurve mouse up released. Points: %zu, Mesh: %p (verts: %d)\n",
+                       m_clipCurvePoints.size(), (void*)mesh, mesh ? mesh->nbVerts : 0);
+
             if (m_clipCurvePoints.size() >= 2 && mesh) {
                 scene.pushHistoryState();
                 std::vector<glm::vec3> symScales = getActiveSymmetryScales();
@@ -2606,9 +2609,12 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     m_symmetryMode,
                     symScales
                 );
+                sculpt_log("[SculptManager] ClipCurveTool::execute result = %s\n", modified ? "TRUE (modified)" : "FALSE (unmodified)");
                 if (modified) {
                     scene.setModified(true);
                 }
+            } else {
+                sculpt_log("[SculptManager] ClipCurve skipped execution (points < 2 or mesh is null)\n");
             }
             m_clipCurvePoints.clear();
             return;
