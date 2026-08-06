@@ -609,6 +609,7 @@ int main(int argc, char* argv[]) {
         sculpt.getCursor().applyToRenderer(renderer);
         renderer.setLassoParameters(sculpt.isLassoActive(), sculpt.getLassoPoints(), sculpt.getLassoAlt(), sculpt.isMaskLasso());
         renderer.setClipCurveOverlay(sculpt.isClipCurveActive(), sculpt.getClipCurvePoints(), sculpt.getClipCurveAlt());
+        renderer.setTrimLassoOverlay(sculpt.isTrimLassoActive(), sculpt.getTrimLassoPoints(), sculpt.getTrimLassoAlt());
         renderer.setActiveBrush(sculpt.getBrush());
 
         if (sculpt.consumeSymmetryLineTrigger()) {

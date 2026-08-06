@@ -176,6 +176,7 @@ static const char* getBrushNameLocal(BrushType brush) {
         case BRUSH_BRUSH:     return "Brush";
         case BRUSH_POLYGROUP: return "PolyGroup";
         case BRUSH_CLIP_CURVE: return "Clip Curve";
+        case BRUSH_TRIM:       return "Trim";
     }
     return "Unknown";
 }
@@ -600,7 +601,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         const char* tools[] = { 
             "Flatten", "Smooth", "Inflate", "Pinch", "Crease", "V-Tool", "Move", "Drag", "Elastic", 
             "Mask", "Paint", "Twist", "Local Scale", "Clay", "Clay Buildup", "Dam Standard", "Square Brush", "Visibility", "Mask Gradient Blur",
-            "Measure", "Divider", "Transform", "Armature Spheres", "Brush", "PolyGroup"
+            "Measure", "Divider", "Transform", "Armature Spheres", "Brush", "PolyGroup", "Clip Curve", "Trim"
         };
         BrushType current = sculpt.getBrush();
         for (int i = 0; i < BRUSH_COUNT; i++) {

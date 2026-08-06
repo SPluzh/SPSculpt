@@ -351,6 +351,10 @@ public:
     const std::vector<glm::vec2>& getClipCurvePoints() const { return m_clipCurvePoints; }
     bool getClipCurveAlt() const { return m_clipCurveAlt; }
 
+    bool isTrimLassoActive() const { return m_isTrimLassoActive; }
+    const std::vector<glm::vec2>& getTrimLassoPoints() const { return m_trimLassoPoints; }
+    bool getTrimLassoAlt() const { return m_trimLassoAlt; }
+
     std::vector<uint32_t> getVerticesInLasso(Mesh* mesh, const Camera& camera);
 
     void clearMask(Mesh* mesh, Scene* scene = nullptr);
@@ -449,6 +453,10 @@ private:
     bool m_isClipCurveActive = false;
     std::vector<glm::vec2> m_clipCurvePoints;
     bool m_clipCurveAlt = false;
+
+    bool m_isTrimLassoActive = false;
+    std::vector<glm::vec2> m_trimLassoPoints;
+    bool m_trimLassoAlt = false;
 
     // Cache buffers for fast dirty faces lookup
     std::vector<uint32_t> m_tagFlags;

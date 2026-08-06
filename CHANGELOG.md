@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.3]
+- **Trim Tool**: Implemented exact screen-space edge splitting along the 2D lasso contour, eliminating stair-stepped jagged edges ("края лесенкой") and inaccurate face removal ("обрезается чтото лишнее").
+- **Trim Tool**: Added topology hole filling (capping) by extracting directed boundary loops of cut edges and generating fan cap geometry with Newell's normal calculation ("дырка не закрыта").
+- **Trim Tool**: Interpolated vertex positions, surface normals, vertex colors, and materials along cut edge intersections for clean surface transitions.
+
 ## [1.4.2]
 - **ClipCurve Tool**: Implemented strict constrained tangential relaxation: all affected vertices are projected onto the cut plane (`targetScreen`) on every relaxation iteration, allowing them to slide in-plane to equalize polygon spacing while maintaining 100% flat surface alignment (preventing 3D volume distortion).
 - **ClipCurve Tool**: Implemented 2-stage "Relax → Final Snap" pipeline: after initial clipping projection, 8 iterations of constrained Laplacian relaxation evenly redistribute polygon density around corners and internal regions, followed by a final crisp boundary snap pass back to the polyline cut plane.

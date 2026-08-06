@@ -5,6 +5,7 @@
 #include "mesh/NormalCalc.h"
 #include "editing/ArmatureTool.h"
 #include "editing/ClipCurveTool.h"
+#include "editing/TrimTool.h"
 #include "editing/undo/UndoManager.h"
 #include "common/Logger.h"
 #include <glm/gtc/matrix_transform.hpp>
@@ -1660,7 +1661,9 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
     if (mesh && !scene.isMeshRenderVisible(mesh, activeVp)) {
         mesh = nullptr;
     }
-    Camera& camera = scene.getCamera();
+    Camera& camera = (scene.getSplitMode() != Scene::SplitMode::OFF && activeVp == 1 && scene.getCameraRight()) 
+                     ? *scene.getCameraRight() 
+                     : scene.getCamera();
 
     if (event.type == SDL_MOUSEBUTTONDOWN) {
         int mouseX = event.button.x;
@@ -1922,6 +1925,16 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 m_clipCurveAlt = (mod & KMOD_ALT) != 0;
                 m_clipCurvePoints.clear();
                 m_clipCurvePoints.push_back(glm::vec2((float)mouseX, (float)mouseY));
+                return;
+            }
+
+            if (m_currentBrush == BRUSH_TRIM) {
+                m_isTrimLassoActive = true;
+                m_trimLassoAlt = (mod & KMOD_ALT) != 0;
+                m_trimLassoPoints.clear();
+                m_trimLassoPoints.push_back(glm::vec2((float)mouseX, (float)mouseY));
+                sculpt_log("[TrimLasso] MouseDown: started lasso at (%.0f, %.0f), alt=%d\n",
+                           (float)mouseX, (float)mouseY, m_trimLassoAlt ? 1 : 0);
                 return;
             }
 
@@ -2620,6 +2633,53 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             return;
         }
 
+        if (m_isTrimLassoActive) {
+            m_isTrimLassoActive = false;
+
+            sculpt_log("[TrimLasso] MouseUp: lasso completed. Points: %zu, Mesh: %p (verts: %d), alt=%d, activeVp=%d\n",
+                       m_trimLassoPoints.size(), (void*)mesh, mesh ? mesh->nbVerts : 0, m_trimLassoAlt ? 1 : 0, activeVp);
+
+            if (m_trimLassoPoints.size() >= 3 && mesh) {
+                float lassoMinX = 1e9f, lassoMinY = 1e9f, lassoMaxX = -1e9f, lassoMaxY = -1e9f;
+                for (const auto& pt : m_trimLassoPoints) {
+                    lassoMinX = std::min(lassoMinX, pt.x);
+                    lassoMinY = std::min(lassoMinY, pt.y);
+                    lassoMaxX = std::max(lassoMaxX, pt.x);
+                    lassoMaxY = std::max(lassoMaxY, pt.y);
+                }
+                sculpt_log("[TrimLasso] Lasso Screen AABB: min=(%.1f, %.1f), max=(%.1f, %.1f), Start=(%.1f, %.1f), End=(%.1f, %.1f)\n",
+                           lassoMinX, lassoMinY, lassoMaxX, lassoMaxY,
+                           m_trimLassoPoints.front().x, m_trimLassoPoints.front().y,
+                           m_trimLassoPoints.back().x, m_trimLassoPoints.back().y);
+
+                scene.pushHistoryState();
+                TrimConfig config;
+                bool modified = TrimTool::execute(
+                    mesh,
+                    camera,
+                    m_trimLassoPoints,
+                    m_trimLassoAlt,
+                    getUseSym(),
+                    m_symmetryMode,
+                    getActiveSymmetryScales(),
+                    config
+                );
+
+                if (modified) {
+                    scene.setModified(true);
+                    sculpt_log("[TrimLasso] TrimTool execution modified the mesh successfully.\n");
+                } else {
+                    sculpt_log("[TrimLasso] TrimTool execution returned false (unmodified).\n");
+                }
+            } else {
+                sculpt_log("[TrimLasso] Lasso too small (points=%zu) or no mesh. Skipping execution.\n",
+                           m_trimLassoPoints.size());
+            }
+
+            m_trimLassoPoints.clear();
+            return;
+        }
+
         if (m_isSculpting) {
             m_isSculpting = false;
             m_currentIntersectionValid = false;
@@ -2913,6 +2973,20 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             return;
         }
 
+        if (m_isTrimLassoActive) {
+            glm::vec2 newPt((float)mouseX, (float)mouseY);
+            if (m_trimLassoPoints.empty()) {
+                m_trimLassoPoints.push_back(newPt);
+            } else {
+                glm::vec2 diff = newPt - m_trimLassoPoints.back();
+                if (glm::dot(diff, diff) >= 4.0f) {
+                    m_trimLassoPoints.push_back(newPt);
+                }
+            }
+            m_trimLassoAlt = (SDL_GetModState() & KMOD_ALT) != 0;
+            return;
+        }
+
         if (m_cameraController.isDragging()) {
             m_cameraController.handleEvent(event, camera, scene.getMeshes());
         } else if (m_isSculpting && mesh) {
@@ -2982,6 +3056,9 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 void SculptManager::processFrame(Scene& scene) {
     if (m_isClipCurveActive) {
         m_clipCurveAlt = (SDL_GetModState() & KMOD_ALT) != 0;
+    }
+    if (m_isTrimLassoActive) {
+        m_trimLassoAlt = (SDL_GetModState() & KMOD_ALT) != 0;
     }
 
     if (m_cameraController.isDragging() || m_currentBrush == BRUSH_MEASURE || m_currentBrush == BRUSH_DIVIDER || m_currentBrush == BRUSH_TRANSFORM) {

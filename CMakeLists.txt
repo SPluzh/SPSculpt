@@ -98,6 +98,7 @@ add_executable(SPSculpt
     # editing
     src/editing/SculptManager.cpp
     src/editing/ClipCurveTool.cpp
+    src/editing/TrimTool.cpp
     src/editing/CameraController.cpp
     src/editing/BrushCursor.cpp
     src/editing/ArmatureTool.cpp

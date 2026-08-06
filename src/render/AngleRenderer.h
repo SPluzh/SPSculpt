@@ -363,6 +363,7 @@ public:
 
     void setLassoParameters(bool active, const std::vector<glm::vec2>& points, bool altMode, bool isMaskLasso);
     void setClipCurveOverlay(bool active, const std::vector<glm::vec2>& points, bool altMode = false);
+    void setTrimLassoOverlay(bool active, const std::vector<glm::vec2>& points, bool altMode = false);
 
     void drawArmature(const ArmatureGraph& graph, const Camera& camera, void* selectedNode = nullptr, void* hoveredParent = nullptr, void* hoveredChild = nullptr, bool hasSymmetry = false, bool normalsPass = false);
 
@@ -407,6 +408,7 @@ private:
     void drawSelectionCursor(const Scene& scene, bool isRight = false);
     void drawLasso();
     void drawClipCurve();
+    void drawTrimLasso();
 
     void initGrid();
     void initArmatureGeometry();
@@ -473,6 +475,11 @@ private:
     bool m_clipCurveActive = false;
     std::vector<glm::vec2> m_clipCurvePoints;
     bool m_clipCurveAlt = false;
+
+    // Trim lasso parameters
+    bool m_trimLassoActive = false;
+    std::vector<glm::vec2> m_trimLassoPoints;
+    bool m_trimLassoAlt = false;
 
     // Shader programs
     GLuint m_pbrProgram = 0;
