@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.1]
+- **ClipCurve Tool**: Fixed reversed-clipping projection and polygon inversion by switching from dual-plane rotation to camera-ray depth unprojection (`camera.unproject`).
+- **ClipCurve Tool**: Fixed half-mesh projection artifacts when symmetry is enabled by using an immutable initial vertex snapshot (`origVerts`), preventing symmetric passes from reflecting displaced geometry across mirror planes.
+- **ClipCurve Tool**: Fixed Laplacian relaxation on symmetric vertices by preserving local relaxed positions for kept interior vertices (`finalLocal = bLocal`).
+- **ClipCurve Tool**: Added Z-depth range clamping (`vProj.z` in `(0, 1)`) to discard vertices behind the view frustum during projection.
+
 ## [1.4.0]
 - **UI**: Added a dropdown arrow button (`ICON_LC_CHEVRON_DOWN`) directly attached to the symmetry toggle button in the Floating Island HUD, providing instant access to symmetry settings (local/world space, X/Y/Z active axes, guide lines, line width, symmetry offset), geometry flipping (Flip X, Y, Z), and object mirroring.
 - **UI**: Removed the standalone "Symmetry Settings" window panel, streamlining symmetry management into the unified Floating Island HUD dropdown.
