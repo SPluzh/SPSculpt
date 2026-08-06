@@ -18,8 +18,10 @@ walkthrough.md
 # Configuration files
 *.cfg
 
-# Executables
+# Executables & Object files
 *.exe
+*.o
+*.obj
 
 # Debug logs
 debug_log.txt
