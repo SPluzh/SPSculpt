@@ -80,10 +80,7 @@ bool HotkeyDispatcher::processEvent(const SDL_Event& event, SculptManager& sculp
                         gui.setRemeshResolution(std::max(10, std::min(1000, r)));
                         Mesh* selected = scene.getSelected();
                         if (selected) {
-                            float bbox[6];
-                            selected->computeBbox(bbox);
-                            float maxDim = std::max({bbox[3] - bbox[0], bbox[4] - bbox[1], bbox[5] - bbox[2]});
-                            float step = maxDim / (float)gui.getRemeshResolution();
+                            float step = selected->computeWorldStep(gui.getRemeshResolution());
                             scene.updateVoxelPreview(step, {selected});
                         }
                         break;
@@ -340,10 +337,7 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
 
                     Mesh* selected = scene.getSelected();
                     if (selected) {
-                        float bbox[6];
-                        selected->computeBbox(bbox);
-                        float maxDim = std::max({bbox[3] - bbox[0], bbox[4] - bbox[1], bbox[5] - bbox[2]});
-                        float step = maxDim / (float)gui.getRemeshResolution();
+                        float step = selected->computeWorldStep(gui.getRemeshResolution());
                         scene.updateVoxelPreview(step, {selected});
                     }
                 }

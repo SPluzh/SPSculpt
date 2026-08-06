@@ -2010,10 +2010,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGui::SliderFloat("Detail Factor", &m_dyntopoDetail, 10.0f, 500.0f, "%.1f");
             ImGui::SliderInt("Remesh Resolution", &m_remeshResolution, 10, 1000);
             if (ImGui::IsItemActive()) {
-                float bbox[6];
-                selectedMesh->computeBbox(bbox);
-                float maxDim = std::max({bbox[3] - bbox[0], bbox[4] - bbox[1], bbox[5] - bbox[2]});
-                float step = maxDim / (float)m_remeshResolution;
+                float step = selectedMesh->computeWorldStep(m_remeshResolution);
                 scene.updateVoxelPreview(step, {selectedMesh});
             } else if (ImGui::IsItemDeactivated()) {
                 scene.updateVoxelPreview(0.0f, {});
@@ -3788,6 +3785,12 @@ void GuiManager::performRemesh(Scene& scene) {
     selectedMesh->computeBbox(bbox);
     float resolution = (float)m_remeshResolution;
     
+    float scaleX = glm::length(glm::vec3(selectedMesh->matrix[0]));
+    float scaleY = glm::length(glm::vec3(selectedMesh->matrix[1]));
+    float scaleZ = glm::length(glm::vec3(selectedMesh->matrix[2]));
+    float meshScale = std::max({scaleX, scaleY, scaleZ});
+    if (meshScale <= 1e-5f) meshScale = 1.0f;
+    
     float uniformColor[3] = { 0.72f, 0.52f, 0.45f };
     float uniformMaterial[3] = { 0.5f, 0.0f, 1.0f };
     if (m_renderer) {
@@ -3813,6 +3816,7 @@ void GuiManager::performRemesh(Scene& scene) {
         nbVerts,
         bboxArr = std::array<float,6>{bbox[0],bbox[1],bbox[2],bbox[3],bbox[4],bbox[5]},
         resolution,
+        meshScale,
         uniColorArr = std::array<float,3>{uniformColor[0], uniformColor[1], uniformColor[2]},
         uniMatArr = std::array<float,3>{uniformMaterial[0], uniformMaterial[1], uniformMaterial[2]}
     ]() mutable
@@ -3840,7 +3844,8 @@ void GuiManager::performRemesh(Scene& scene) {
                 [this](int stage, int pct) {
                     m_remeshAsync.stage = stage;
                     m_remeshAsync.progress = pct;
-                }
+                },
+                meshScale
             );
             m_remeshAsync.result = std::move(result);
             m_remeshAsync.state = RemeshState::Done;
@@ -4560,10 +4565,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             if (ImGui::IsItemActive()) {
                 Mesh* selectedMesh = scene.getSelected();
                 if (selectedMesh) {
-                    float bbox[6];
-                    selectedMesh->computeBbox(bbox);
-                    float maxDim = std::max({bbox[3] - bbox[0], bbox[4] - bbox[1], bbox[5] - bbox[2]});
-                    float step = maxDim / (float)m_remeshResolution;
+                    float step = selectedMesh->computeWorldStep(m_remeshResolution);
                     scene.updateVoxelPreview(step, {selectedMesh});
                 }
             } else if (ImGui::IsItemDeactivated()) {

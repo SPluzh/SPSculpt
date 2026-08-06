@@ -29,7 +29,8 @@ RemeshResult doRemesh(
     bool hasMaterials,
     bool hasFaceGroups,
     bool alignSymmetry = true,
-    std::function<void(int stage, int progress)> onProgress = nullptr
+    std::function<void(int stage, int progress)> onProgress = nullptr,
+    float matrixScale = 1.0f
 );
 RemeshResult doSurfaceNetsFromSDF(
     int resolution, 

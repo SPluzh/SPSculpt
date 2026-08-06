@@ -1246,21 +1246,31 @@ RemeshResult doRemesh(
     bool hasMaterials,
     bool hasFaceGroups,
     bool alignSymmetry,
-    std::function<void(int stage, int progress)> onProgress
+    std::function<void(int stage, int progress)> onProgress,
+    float matrixScale
 ) {
-    sculpt_log("[C++ doRemesh] Start. nbVerts=%d, nbTris=%d, resolution=%.2f, block=%d, smooth=%d, manifold=%d, hasColors=%d, hasMaterials=%d, hasFaceGroups=%d, alignSymmetry=%d\n",
-               nbVerts, nbTris, resolution, block, smooth, manifold, hasColors, hasMaterials, hasFaceGroups, alignSymmetry);
+    sculpt_log("[C++ doRemesh] Start. nbVerts=%d, nbTris=%d, resolution=%.2f, block=%d, smooth=%d, manifold=%d, hasColors=%d, hasMaterials=%d, hasFaceGroups=%d, alignSymmetry=%d, scale=%.4f\n",
+               nbVerts, nbTris, resolution, block, smooth, manifold, hasColors, hasMaterials, hasFaceGroups, alignSymmetry, matrixScale);
     if (box) {
         sculpt_log("[C++ doRemesh] box: [%.4f, %.4f, %.4f, %.4f, %.4f, %.4f]\n", box[0], box[1], box[2], box[3], box[4], box[5]);
     } else {
         sculpt_log("[C++ doRemesh] WARNING: box is null!\n");
     }
 
-    // 1. Compute voxel grid step and dimensions
-    float boxWidth = box[3] - box[0];
-    float boxHeight = box[4] - box[1];
-    float boxDepth = box[5] - box[2];
-    float step = std::max({boxWidth, boxHeight, boxDepth}) / resolution;
+    // 1. Compute voxel grid step based on scene reference scale (100.0 world units)
+    float refWorldScale = 100.0f;
+    float mScale = (matrixScale > 1e-5f) ? matrixScale : 1.0f;
+    float worldStep = refWorldScale / (resolution > 0.0f ? resolution : 1.0f);
+    float step = worldStep / mScale;
+
+    float boxWidth = box ? (box[3] - box[0]) : 1.0f;
+    float boxHeight = box ? (box[4] - box[1]) : 1.0f;
+    float boxDepth = box ? (box[5] - box[2]) : 1.0f;
+    float maxBoxDim = std::max({boxWidth, boxHeight, boxDepth});
+    if (step <= 0.0f) step = 0.001f;
+    if (maxBoxDim / step > 1200.0f) {
+        step = maxBoxDim / 1200.0f;
+    }
 
     float stepMin = step * 1.51f;
     float stepMax = step * 1.51f;

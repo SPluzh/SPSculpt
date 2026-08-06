@@ -220,4 +220,6 @@ public:
     void initTexCoordsDataFromOBJData(const std::vector<float>& uvAr, const std::vector<uint32_t>& uvfArOrig);
     void updateMatrices(const Camera& camera);
     void computeBbox(float* outBbox) const;
+    float computeWorldStep(int resolution) const;
 };
+

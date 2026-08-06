@@ -307,6 +307,11 @@ void Mesh::computeBbox(float* outBbox) const {
     outBbox[3] = maxX; outBbox[4] = maxY; outBbox[5] = maxZ;
 }
 
+float Mesh::computeWorldStep(int resolution) const {
+    if (resolution <= 0) return 0.0f;
+    return 100.0f / static_cast<float>(resolution);
+}
+
 #include "common/Constants.h"
 void Mesh::initTexCoordsDataFromOBJData(const std::vector<float>& uvAr, const std::vector<uint32_t>& uvfArOrig) {
     size_t len = faces.size();
