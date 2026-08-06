@@ -413,14 +413,26 @@ static void generateUVSphere(
     std::vector<float>& colors,
     std::vector<float>& normals
 ) {
-    float const R = 1.0f / (float)(rings - 1);
-    float const S = 1.0f / (float)(sectors - 1);
+    if (rings < 3) rings = 3;
+    if (sectors < 3) sectors = 3;
 
-    for (int r = 0; r < rings; ++r) {
+    // South Pole (r = 0)
+    vertices.push_back(0.0f);
+    vertices.push_back(-radius);
+    vertices.push_back(0.0f);
+    colors.push_back(1.0f); colors.push_back(1.0f); colors.push_back(1.0f);
+    normals.push_back(0.0f); normals.push_back(-1.0f); normals.push_back(0.0f);
+
+    // Intermediate rings (r = 1 to rings - 2)
+    for (int r = 1; r < rings - 1; ++r) {
+        float phi = -M_PI_2 + M_PI * (float)r / (float)(rings - 1);
+        float y = radius * std::sin(phi);
+        float cos_phi = std::cos(phi);
+
         for (int s = 0; s < sectors; ++s) {
-            float const y = radius * std::sin(-M_PI_2 + M_PI * r * R);
-            float const x = radius * std::cos(2 * M_PI * s * S) * std::sin(M_PI * r * R);
-            float const z = radius * std::sin(2 * M_PI * s * S) * std::sin(M_PI * r * R);
+            float theta = 2.0f * (float)M_PI * (float)s / (float)sectors;
+            float x = radius * cos_phi * std::cos(theta);
+            float z = radius * cos_phi * std::sin(theta);
 
             vertices.push_back(x);
             vertices.push_back(y);
@@ -436,12 +448,35 @@ static void generateUVSphere(
         }
     }
 
-    for (int r = 0; r < rings - 1; ++r) {
-        for (int s = 0; s < sectors - 1; ++s) {
-            uint32_t v0 = r * sectors + s;
-            uint32_t v1 = r * sectors + (s + 1);
-            uint32_t v2 = (r + 1) * sectors + (s + 1);
-            uint32_t v3 = (r + 1) * sectors + s;
+    // North Pole (r = rings - 1)
+    uint32_t northPoleIdx = static_cast<uint32_t>(vertices.size() / 3);
+    vertices.push_back(0.0f);
+    vertices.push_back(radius);
+    vertices.push_back(0.0f);
+    colors.push_back(1.0f); colors.push_back(1.0f); colors.push_back(1.0f);
+    normals.push_back(0.0f); normals.push_back(1.0f); normals.push_back(0.0f);
+
+    // South pole faces (r = 0 to r = 1)
+    uint32_t southPoleIdx = 0;
+    for (int s = 0; s < sectors; ++s) {
+        int s_next = (s + 1) % sectors;
+        uint32_t v_curr = 1 + s;
+        uint32_t v_next = 1 + s_next;
+
+        faces.push_back(southPoleIdx);
+        faces.push_back(v_curr);
+        faces.push_back(v_next);
+        faces.push_back(TRI_INDEX);
+    }
+
+    // Intermediate ring faces (r = 1 to r = rings - 3)
+    for (int r = 1; r < rings - 2; ++r) {
+        for (int s = 0; s < sectors; ++s) {
+            int s_next = (s + 1) % sectors;
+            uint32_t v0 = 1 + (r - 1) * sectors + s;
+            uint32_t v1 = 1 + (r - 1) * sectors + s_next;
+            uint32_t v2 = 1 + r * sectors + s_next;
+            uint32_t v3 = 1 + r * sectors + s;
 
             faces.push_back(v0);
             faces.push_back(v3);
@@ -449,7 +484,21 @@ static void generateUVSphere(
             faces.push_back(v1);
         }
     }
+
+    // North pole faces (r = rings - 2 to r = rings - 1)
+    int lastRingStart = 1 + (rings - 3) * sectors;
+    for (int s = 0; s < sectors; ++s) {
+        int s_next = (s + 1) % sectors;
+        uint32_t v_curr = lastRingStart + s;
+        uint32_t v_next = lastRingStart + s_next;
+
+        faces.push_back(v_curr);
+        faces.push_back(northPoleIdx);
+        faces.push_back(v_next);
+        faces.push_back(TRI_INDEX);
+    }
 }
+
 
 static void generateGeosphere(
     float radius, int subdivision,
