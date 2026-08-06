@@ -19,6 +19,8 @@ struct PolySegment2D {
     glm::vec2 dir;
     glm::vec2 norm2D; // Normal pointing toward the 'keep' side in 2D
     float len;
+    glm::vec2 miterNormStart; // Miter normal at start joint
+    glm::vec2 miterNormEnd;   // Miter normal at end joint
 };
 
 static void douglasPeucker(
@@ -54,7 +56,81 @@ static void douglasPeucker(
     }
 }
 
-static bool projectToPolylinePlane(
+static std::vector<PolySegment2D> buildSegmentsWithMiters(
+    const std::vector<glm::vec2>& pts,
+    bool altMode
+) {
+    std::vector<PolySegment2D> segs;
+    if (pts.size() < 2) return segs;
+
+    int n = static_cast<int>(pts.size());
+    std::vector<glm::vec2> normals(n - 1);
+    std::vector<glm::vec2> dirs(n - 1);
+    std::vector<float> lens(n - 1);
+
+    for (int i = 0; i < n - 1; ++i) {
+        glm::vec2 d = pts[i + 1] - pts[i];
+        float len = glm::length(d);
+        lens[i] = len;
+        if (len > 1e-5f) {
+            d /= len;
+        } else {
+            d = glm::vec2(1.0f, 0.0f);
+        }
+        dirs[i] = d;
+        normals[i] = altMode ? glm::vec2(d.y, -d.x) : glm::vec2(-d.y, d.x);
+    }
+
+    segs.reserve(n - 1);
+    for (int i = 0; i < n - 1; ++i) {
+        if (lens[i] < 1e-5f) continue;
+
+        PolySegment2D seg;
+        seg.pA = pts[i];
+        seg.pB = pts[i + 1];
+        seg.dir = dirs[i];
+        seg.len = lens[i];
+        seg.norm2D = normals[i];
+
+        // Miter normal at start
+        if (i == 0) {
+            seg.miterNormStart = normals[i];
+        } else {
+            glm::vec2 avg = normals[i - 1] + normals[i];
+            float lenAvg = glm::length(avg);
+            if (lenAvg > 1e-5f) {
+                avg /= lenAvg;
+                float cosA = glm::dot(avg, normals[i]);
+                float clampedLen = std::max(cosA, 0.2f);
+                seg.miterNormStart = avg / clampedLen;
+            } else {
+                seg.miterNormStart = normals[i];
+            }
+        }
+
+        // Miter normal at end
+        if (i == n - 2) {
+            seg.miterNormEnd = normals[i];
+        } else {
+            glm::vec2 avg = normals[i] + normals[i + 1];
+            float lenAvg = glm::length(avg);
+            if (lenAvg > 1e-5f) {
+                avg /= lenAvg;
+                float cosA = glm::dot(avg, normals[i]);
+                float clampedLen = std::max(cosA, 0.2f);
+                seg.miterNormEnd = avg / clampedLen;
+            } else {
+                seg.miterNormEnd = normals[i];
+            }
+        }
+
+        segs.push_back(seg);
+    }
+
+    return segs;
+}
+
+static bool projectToPolylineMiter(
     const glm::vec2& p,
     const std::vector<PolySegment2D>& segments,
     glm::vec2& outTargetScreen,
@@ -63,29 +139,40 @@ static bool projectToPolylinePlane(
 ) {
     if (segments.empty()) return false;
 
-    float minSqDist = 1e18f;
+    float bestScore = 1e18f;
     outBestSegIdx = 0;
 
     for (size_t s = 0; s < segments.size(); ++s) {
         const auto& seg = segments[s];
         glm::vec2 rel = p - seg.pA;
-        float t = glm::dot(rel, seg.dir);
-        float tClamped = std::clamp(t, 0.0f, seg.len);
-        glm::vec2 closestOnSeg = seg.pA + tClamped * seg.dir;
-        float sqDist = glm::distance2(p, closestOnSeg);
+        float tAlong = glm::dot(rel, seg.dir);
 
-        if (sqDist < minSqDist) {
-            minSqDist = sqDist;
+        float tClamped = std::clamp(tAlong, 0.0f, seg.len);
+        glm::vec2 closestOnSeg = seg.pA + tClamped * seg.dir;
+        float dist = glm::distance(p, closestOnSeg);
+
+        // Additional penalty if point falls outside segment's miter sector
+        if (tAlong < 0.0f) {
+            float mDot = glm::dot(p - seg.pA, seg.miterNormStart);
+            if (mDot < 0.0f) dist += 1000.0f;
+        } else if (tAlong > seg.len) {
+            float mDot = glm::dot(p - seg.pB, seg.miterNormEnd);
+            if (mDot < 0.0f) dist += 1000.0f;
+        }
+
+        if (dist < bestScore) {
+            bestScore = dist;
             outBestSegIdx = s;
         }
     }
 
-    const auto& bestSeg = segments[outBestSegIdx];
-    glm::vec2 rel = p - bestSeg.pA;
-    outSignedDist = glm::dot(rel, bestSeg.norm2D);
+    const auto& seg = segments[outBestSegIdx];
+    glm::vec2 relA = p - seg.pA;
+    outSignedDist = glm::dot(relA, seg.norm2D);
 
-    // Orthogonal projection onto the cut plane line (preserving t along segment direction)
-    outTargetScreen = p - outSignedDist * bestSeg.norm2D;
+    // Continuous orthogonal projection onto segment line plane (miter sector defines sector ownership)
+    outTargetScreen = p - outSignedDist * seg.norm2D;
+
     return true;
 }
 
@@ -120,13 +207,15 @@ static void constrainedLaplacianRelax(
             uint32_t count = mesh->vrvStartCount[i * 2 + 1];
             if (count < 2) continue;
 
-            // Option 4: Respect vertOnEdge in Laplacian averaging if available
-            if (!mesh->vertOnEdge.empty() && mesh->vertOnEdge[i] == 1) {
+            // Respect boundary vertices (vertBoundary or vertOnEdge) in Laplacian averaging
+            bool isCutBoundary = vertBoundary[i] || (!mesh->vertOnEdge.empty() && mesh->vertOnEdge[i] == 1);
+            if (isCutBoundary) {
                 int nbEdgeNeighbors = 0;
                 float ax = 0.0f, ay = 0.0f, az = 0.0f;
                 for (uint32_t j = start; j < start + count; ++j) {
                     uint32_t nid = mesh->vertRingVert[j];
-                    if (mesh->vertOnEdge[nid] == 1) {
+                    bool nidIsCutBoundary = vertBoundary[nid] || (!mesh->vertOnEdge.empty() && mesh->vertOnEdge[nid] == 1);
+                    if (nidIsCutBoundary) {
                         ax += mesh->verts[nid * 3];
                         ay += mesh->verts[nid * 3 + 1];
                         az += mesh->verts[nid * 3 + 2];
@@ -182,20 +271,12 @@ static void constrainedLaplacianRelax(
             glm::vec2 targetScreen;
             float sDist;
             size_t segIdx;
-            if (projectToPolylinePlane(glm::vec2(bProj.x, bProj.y), segments, targetScreen, sDist, segIdx)) {
-                bool isBoundary = vertBoundary[i] || (!mesh->vertOnEdge.empty() && mesh->vertOnEdge[i] == 1);
-
-                glm::vec3 finalLocal;
-                if (isBoundary || sDist < 0.0f) {
-                    // Snap boundary vertices or clamped interior vertices to cut line
-                    float safeZ = std::clamp(bProj.z, 0.0001f, 0.9999f);
-                    glm::vec3 wCut = camera.unproject(targetScreen.x, targetScreen.y, safeZ);
-                    glm::vec3 vCutLocal = glm::vec3(worldToLocal * glm::vec4(wCut, 1.0f));
-                    finalLocal = isSymPass ? reflectPointSymmetry(vCutLocal, sScale, mesh, symMode) : vCutLocal;
-                } else {
-                    // Keep relaxed interior position (already in vertex local space)
-                    finalLocal = bLocal;
-                }
+            if (projectToPolylineMiter(glm::vec2(bProj.x, bProj.y), segments, targetScreen, sDist, segIdx)) {
+                // Tangential relaxation: project all affected vertices onto the cut plane so they slide in-plane
+                float safeZ = std::clamp(bProj.z, 0.0001f, 0.9999f);
+                glm::vec3 wCut = camera.unproject(targetScreen.x, targetScreen.y, safeZ);
+                glm::vec3 vCutLocal = glm::vec3(worldToLocal * glm::vec4(wCut, 1.0f));
+                glm::vec3 finalLocal = isSymPass ? reflectPointSymmetry(vCutLocal, sScale, mesh, symMode) : vCutLocal;
 
                 mesh->verts[i3]     = finalLocal.x;
                 mesh->verts[i3 + 1] = finalLocal.y;
@@ -242,26 +323,8 @@ bool ClipCurveTool::execute(
 
     if (simplified.size() < 2) return false;
 
-    // Build 2D polyline segments
-    std::vector<PolySegment2D> segments;
-    segments.reserve(simplified.size() - 1);
-    for (size_t i = 0; i < simplified.size() - 1; ++i) {
-        glm::vec2 pA = simplified[i];
-        glm::vec2 pB = simplified[i + 1];
-        glm::vec2 d = pB - pA;
-        float len = glm::length(d);
-        if (len < 1e-5f) continue;
-
-        PolySegment2D seg;
-        seg.pA = pA;
-        seg.pB = pB;
-        seg.dir = d / len;
-        seg.len = len;
-
-        // Normal pointing toward 'keep' side (left side of curve if altMode is false)
-        seg.norm2D = altMode ? glm::vec2(seg.dir.y, -seg.dir.x) : glm::vec2(-seg.dir.y, seg.dir.x);
-        segments.push_back(seg);
-    }
+    // Build 2D polyline segments with miter joint sectors
+    std::vector<PolySegment2D> segments = buildSegmentsWithMiters(simplified, altMode);
 
     if (segments.empty()) return false;
 
@@ -279,7 +342,7 @@ bool ClipCurveTool::execute(
         origVerts[i] = glm::vec3(mesh->verts[i * 3], mesh->verts[i * 3 + 1], mesh->verts[i * 3 + 2]);
     }
 
-    constexpr float BOUNDARY_THRESHOLD_PX = 3.0f; // boundary threshold in pixels
+    constexpr float BOUNDARY_THRESHOLD_PX = 10.0f; // boundary threshold in pixels
 
     // Symmetry passes
     std::vector<glm::vec3> passes = { glm::vec3(1.0f) };
@@ -293,47 +356,55 @@ bool ClipCurveTool::execute(
     float globalMinDist = 1e18f;
     float globalMaxDist = -1e18f;
 
-    for (size_t passIdx = 0; passIdx < passes.size(); ++passIdx) {
-        const auto& sScale = passes[passIdx];
-        bool isSymPass = (sScale != glm::vec3(1.0f));
+    // Run 2 projection passes to handle overlapping clipped half-spaces at 90° / acute corners
+    constexpr int NUM_PROJECTION_PASSES = 2;
 
-        #pragma omp parallel for schedule(dynamic, 1024) reduction(min:globalMinDist) reduction(max:globalMaxDist)
-        for (int i = 0; i < nbVerts; ++i) {
-            if (!mesh->vertVisible[i]) continue;
+    for (int projPass = 0; projPass < NUM_PROJECTION_PASSES; ++projPass) {
+        for (size_t passIdx = 0; passIdx < passes.size(); ++passIdx) {
+            const auto& sScale = passes[passIdx];
+            bool isSymPass = (sScale != glm::vec3(1.0f));
 
-            glm::vec3 vOrigLocal = origVerts[i];
-            glm::vec3 vLocal = isSymPass ? reflectPointSymmetry(vOrigLocal, sScale, mesh, symMode) : vOrigLocal;
+            #pragma omp parallel for schedule(dynamic, 1024) reduction(min:globalMinDist) reduction(max:globalMaxDist)
+            for (int i = 0; i < nbVerts; ++i) {
+                if (!mesh->vertVisible[i]) continue;
 
-            glm::vec3 vWorld = glm::vec3(localToWorld * glm::vec4(vLocal, 1.0f));
-            glm::vec3 vProj = camera.project(vWorld);
-            if (vProj.z <= 0.0f || vProj.z >= 1.0f) continue;
+                // In first pass use origVerts; in second pass re-evaluate updated mesh->verts for affected vertices
+                glm::vec3 vLocalCurrent = (projPass == 0) ? origVerts[i] : glm::vec3(mesh->verts[i * 3], mesh->verts[i * 3 + 1], mesh->verts[i * 3 + 2]);
+                if (projPass > 0 && !vertAffected[i]) continue;
 
-            glm::vec2 vScreen(vProj.x, vProj.y);
+                glm::vec3 vLocal = isSymPass ? reflectPointSymmetry(vLocalCurrent, sScale, mesh, symMode) : vLocalCurrent;
 
-            glm::vec2 targetScreen;
-            float signedDist;
-            size_t segIdx;
-            if (projectToPolylinePlane(vScreen, segments, targetScreen, signedDist, segIdx)) {
-                if (signedDist < globalMinDist) globalMinDist = signedDist;
-                if (signedDist > globalMaxDist) globalMaxDist = signedDist;
+                glm::vec3 vWorld = glm::vec3(localToWorld * glm::vec4(vLocal, 1.0f));
+                glm::vec3 vProj = camera.project(vWorld);
+                if (vProj.z <= 0.0f || vProj.z >= 1.0f) continue;
 
-                if (signedDist < 0.0f) { // Clipped side
-                    float safeZ = std::clamp(vProj.z, 0.0001f, 0.9999f);
-                    glm::vec3 wCut = camera.unproject(targetScreen.x, targetScreen.y, safeZ);
-                    glm::vec3 clippedLocal = glm::vec3(worldToLocal * glm::vec4(wCut, 1.0f));
-                    glm::vec3 finalLocal = isSymPass ? reflectPointSymmetry(clippedLocal, sScale, mesh, symMode) : clippedLocal;
+                glm::vec2 vScreen(vProj.x, vProj.y);
 
-                    mesh->verts[i * 3]     = finalLocal.x;
-                    mesh->verts[i * 3 + 1] = finalLocal.y;
-                    mesh->verts[i * 3 + 2] = finalLocal.z;
+                glm::vec2 targetScreen;
+                float signedDist;
+                size_t segIdx;
+                if (projectToPolylineMiter(vScreen, segments, targetScreen, signedDist, segIdx)) {
+                    if (signedDist < globalMinDist) globalMinDist = signedDist;
+                    if (signedDist > globalMaxDist) globalMaxDist = signedDist;
 
-                    if (!vertAffected[i] || !isSymPass) {
-                        vertAffected[i] = 1;
-                        vertSymScale[i] = sScale;
-                    }
+                    if (signedDist < -0.01f) { // Clipped side
+                        float safeZ = std::clamp(vProj.z, 0.0001f, 0.9999f);
+                        glm::vec3 wCut = camera.unproject(targetScreen.x, targetScreen.y, safeZ);
+                        glm::vec3 clippedLocal = glm::vec3(worldToLocal * glm::vec4(wCut, 1.0f));
+                        glm::vec3 finalLocal = isSymPass ? reflectPointSymmetry(clippedLocal, sScale, mesh, symMode) : clippedLocal;
 
-                    if (signedDist > -BOUNDARY_THRESHOLD_PX) {
-                        vertBoundary[i] = 1;
+                        mesh->verts[i * 3]     = finalLocal.x;
+                        mesh->verts[i * 3 + 1] = finalLocal.y;
+                        mesh->verts[i * 3 + 2] = finalLocal.z;
+
+                        if (!vertAffected[i] || !isSymPass) {
+                            vertAffected[i] = 1;
+                            vertSymScale[i] = sScale;
+                        }
+
+                        if (signedDist > -BOUNDARY_THRESHOLD_PX) {
+                            vertBoundary[i] = 1;
+                        }
                     }
                 }
             }
@@ -361,10 +432,43 @@ bool ClipCurveTool::execute(
         }
     }
 
-    // Post-clip continuous relaxation pass
-    constexpr int RELAX_ITERATIONS = 3;
+    // Post-clip continuous relaxation pass (redistributes polygons around corners and interior)
+    constexpr int RELAX_ITERATIONS = 8;
     sculpt_log("[ClipCurveTool] Running continuous Laplacian relaxation (%d iterations)...\n", RELAX_ITERATIONS);
     constrainedLaplacianRelax(mesh, vertAffected, vertBoundary, vertSymScale, symMode, segments, camera, localToWorld, worldToLocal, RELAX_ITERATIONS);
+
+    // Final post-relaxation crisp boundary snap pass
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < nbVerts; ++i) {
+        if (!vertAffected[i]) continue;
+        bool isBoundary = vertBoundary[i] || (!mesh->vertOnEdge.empty() && mesh->vertOnEdge[i] == 1);
+        if (!isBoundary) continue;
+
+        int i3 = i * 3;
+        const glm::vec3& sScale = vertSymScale[i];
+        bool isSymPass = (sScale != glm::vec3(1.0f));
+
+        glm::vec3 vLocal(mesh->verts[i3], mesh->verts[i3 + 1], mesh->verts[i3 + 2]);
+        glm::vec3 vEvalLocal = isSymPass ? reflectPointSymmetry(vLocal, sScale, mesh, symMode) : vLocal;
+        glm::vec3 vWorld = glm::vec3(localToWorld * glm::vec4(vEvalLocal, 1.0f));
+        glm::vec3 vProj = camera.project(vWorld);
+
+        if (vProj.z <= 0.0f || vProj.z >= 1.0f) continue;
+
+        glm::vec2 targetScreen;
+        float sDist;
+        size_t segIdx;
+        if (projectToPolylineMiter(glm::vec2(vProj.x, vProj.y), segments, targetScreen, sDist, segIdx)) {
+            float safeZ = std::clamp(vProj.z, 0.0001f, 0.9999f);
+            glm::vec3 wCut = camera.unproject(targetScreen.x, targetScreen.y, safeZ);
+            glm::vec3 vCutLocal = glm::vec3(worldToLocal * glm::vec4(wCut, 1.0f));
+            glm::vec3 finalLocal = isSymPass ? reflectPointSymmetry(vCutLocal, sScale, mesh, symMode) : vCutLocal;
+
+            mesh->verts[i3]     = finalLocal.x;
+            mesh->verts[i3 + 1] = finalLocal.y;
+            mesh->verts[i3 + 2] = finalLocal.z;
+        }
+    }
 
     // Recalculate face and vertex normals & update octree
     std::vector<uint32_t> iFaces(mesh->nbFaces);

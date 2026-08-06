@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.2]
+- **ClipCurve Tool**: Implemented strict constrained tangential relaxation: all affected vertices are projected onto the cut plane (`targetScreen`) on every relaxation iteration, allowing them to slide in-plane to equalize polygon spacing while maintaining 100% flat surface alignment (preventing 3D volume distortion).
+- **ClipCurve Tool**: Implemented 2-stage "Relax → Final Snap" pipeline: after initial clipping projection, 8 iterations of constrained Laplacian relaxation evenly redistribute polygon density around corners and internal regions, followed by a final crisp boundary snap pass back to the polyline cut plane.
+- **ClipCurve Tool**: Expanded `BOUNDARY_THRESHOLD_PX` to 10.0px to capture the full edge boundary region for edge-neighbor smoothing.
+- **ClipCurve Tool**: Fixed core point-collapse artifact ("потяги") on curve corners by removing artificial 2D endpoint snapping (`outTargetScreen = seg.pA/pB`) in `projectToPolylineMiter`, ensuring continuous 2D orthogonal projection across miter sector boundaries.
+- **ClipCurve Tool**: Updated `constrainedLaplacianRelax` to treat `vertBoundary` vertices as dedicated edge neighbors during Laplacian smoothing, preventing interior mesh vertices from pulling boundary geometry into the model volume.
+- **ClipCurve Tool**: Added 2-pass projection pipeline (`NUM_PROJECTION_PASSES = 2`) to re-evaluate displaced vertex positions against intersecting segment half-spaces, flattening overlapping cut regions at 90° and sharp corners.
+
 ## [1.4.1]
 - **ClipCurve Tool**: Fixed reversed-clipping projection and polygon inversion by switching from dual-plane rotation to camera-ray depth unprojection (`camera.unproject`).
 - **ClipCurve Tool**: Fixed half-mesh projection artifacts when symmetry is enabled by using an immutable initial vertex snapshot (`origVerts`), preventing symmetric passes from reflecting displaced geometry across mirror planes.
