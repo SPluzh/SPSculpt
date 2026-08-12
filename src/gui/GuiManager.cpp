@@ -181,6 +181,22 @@ static const char* getBrushNameLocal(BrushType brush) {
     return "Unknown";
 }
 
+static const char* getBrushIconKey(BrushType brush) {
+    switch (brush) {
+        case BRUSH_CLAY:        return "clay_tool";
+        case BRUSH_CLAYBUILDUP: return "claybuildup_tool";
+        case BRUSH_DAMSTANDARD: return "damstandart_tool";
+        case BRUSH_MOVE:        return "move_tool";
+        case BRUSH_PINCH:       return "pinch_tool";
+        case BRUSH_SMOOTH:      return "smooth_tool";
+        case BRUSH_MASK:        return "mask_tool";
+        case BRUSH_DIVIDER:     return "dividertool";
+        case BRUSH_MEASURE:     return "measuretool";
+        case BRUSH_POLYGROUP:   return "polygroup";
+        default:                return nullptr;
+    }
+}
+
 GuiManager::GuiManager() {}
 
 GuiManager::~GuiManager() {
@@ -604,13 +620,35 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             "Measure", "Divider", "Transform", "Armature Spheres", "Brush", "PolyGroup", "Clip Curve", "Trim"
         };
         BrushType current = sculpt.getBrush();
+        float btnH = 26.0f * scale;
         for (int i = 0; i < BRUSH_COUNT; i++) {
-            bool selected = (current == (BrushType)i);
+            BrushType bType = static_cast<BrushType>(i);
+            bool selected = (current == bType);
             if (selected) {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_HeaderActive]);
             }
-            if (ImGui::Button(tools[i], ImVec2(-1, 26))) {
-                sculpt.setBrush((BrushType)i);
+            const char* iconKey = getBrushIconKey(bType);
+            GLuint iconTex = iconKey ? getIconTexture(iconKey) : 0;
+            std::string btnId = "##tbTool_" + std::to_string(i);
+            bool clicked = ImGui::Button(btnId.c_str(), ImVec2(-1, btnH));
+            ImVec2 pMin = ImGui::GetItemRectMin();
+            ImVec2 pMax = ImGui::GetItemRectMax();
+
+            if (iconTex != 0) {
+                float imgSz = btnH - 4.0f * scale;
+                ImVec2 imgMin(pMin.x + 4.0f * scale, pMin.y + 2.0f * scale);
+                ImVec2 imgMax(imgMin.x + imgSz, imgMin.y + imgSz);
+                ImU32 tint = selected ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 240);
+                ImGui::GetWindowDrawList()->AddImage((ImTextureID)(uintptr_t)iconTex, imgMin, imgMax, ImVec2(0, 1), ImVec2(1, 0), tint);
+                ImGui::GetWindowDrawList()->AddText(ImVec2(imgMax.x + 6.0f * scale, pMin.y + (btnH - ImGui::GetFontSize()) * 0.5f),
+                    selected ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 255), tools[i]);
+            } else {
+                ImGui::GetWindowDrawList()->AddText(ImVec2(pMin.x + 8.0f * scale, pMin.y + (btnH - ImGui::GetFontSize()) * 0.5f),
+                    selected ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 255), tools[i]);
+            }
+
+            if (clicked) {
+                sculpt.setBrush(bType);
             }
             if (selected) {
                 ImGui::PopStyleColor();
@@ -4528,9 +4566,125 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
                              ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove;
 
     // ------------------------------------------------------------------------
-    // 1. VERTICAL BRUSH HUD (Top-Left)
+    // 1. TOP ACTIVE TOOL & ALT ISLAND (Above Left Vertical HUD)
     // ------------------------------------------------------------------------
-    ImVec2 posTopLeft = ImVec2(viewport->Pos.x, viewport->Pos.y);
+    ImVec2 posTopIsland = ImVec2(viewport->Pos.x, viewport->Pos.y);
+    ImGui::SetNextWindowPos(posTopIsland, ImGuiCond_Always, ImVec2(0.0f, 0.0f));
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4.0f * scale, 4.0f * scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f * scale, 4.0f * scale));
+
+    float topIslandHeight = 0.0f;
+
+    if (ImGui::Begin("##FloatingIslandActiveToolTop", nullptr, flags)) {
+        ImGui::SetWindowFontScale(fontScale);
+        float squareSize = ImGui::GetFrameHeight();
+        float bigBtnSize = squareSize * 2.0f; // 2x larger active tool button
+
+        BrushType activeBrush = sculpt.getBrush();
+        const char* activeIconKey = getBrushIconKey(activeBrush);
+        GLuint activeIconTex = activeIconKey ? getIconTexture(activeIconKey) : 0;
+        const char* activeBrushName = getBrushNameLocal(activeBrush);
+
+        // 1. Large Active Brush Button (2x)
+        bool clickedActive = ImGui::Button("##hudActiveToolBtnTop", ImVec2(bigBtnSize, bigBtnSize));
+
+        if (activeIconTex != 0) {
+            ImVec2 pMin = ImGui::GetItemRectMin();
+            ImVec2 pMax = ImGui::GetItemRectMax();
+            float pad = 3.0f * scale;
+            ImVec2 imgMin(pMin.x + pad, pMin.y + pad);
+            ImVec2 imgMax(pMax.x - pad, pMax.y - pad);
+            ImGui::GetWindowDrawList()->AddImage((ImTextureID)(uintptr_t)activeIconTex, imgMin, imgMax, ImVec2(0, 1), ImVec2(1, 0), IM_COL32(255, 255, 255, 255));
+        } else {
+            ImVec2 pMin = ImGui::GetItemRectMin();
+            ImVec2 textSz = ImGui::CalcTextSize(activeBrushName);
+            ImGui::GetWindowDrawList()->AddText(
+                ImVec2(pMin.x + (bigBtnSize - textSz.x) * 0.5f, pMin.y + (bigBtnSize - textSz.y) * 0.5f),
+                IM_COL32(255, 255, 255, 240), activeBrushName);
+        }
+
+        if (clickedActive) {
+            ImGui::OpenPopup("##hudActiveToolPopupTop");
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Active Tool: %s (Click to switch)", activeBrushName);
+        }
+
+        if (ImGui::BeginPopup("##hudActiveToolPopupTop")) {
+            ImGui::SetWindowFontScale(fontScale);
+            ImGui::TextUnformatted("Select Tool");
+            ImGui::Separator();
+            for (int i = 0; i < BRUSH_COUNT; i++) {
+                BrushType bType = static_cast<BrushType>(i);
+                bool isSelected = (activeBrush == bType);
+                const char* iconKey = getBrushIconKey(bType);
+                GLuint iconTex = iconKey ? getIconTexture(iconKey) : 0;
+                if (iconTex != 0) {
+                    float icH = ImGui::GetFrameHeight();
+                    ImGui::Image((ImTextureID)(uintptr_t)iconTex, ImVec2(icH, icH), ImVec2(0, 1), ImVec2(1, 0));
+                    ImGui::SameLine();
+                }
+                if (ImGui::Selectable(getBrushNameLocal(bType), isSelected)) {
+                    sculpt.setBrush(bType);
+                }
+                if (isSelected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndPopup();
+        }
+
+        // 2. Alt Button & Brush Settings Toggle Button (Side by side below Active Tool Button)
+        bool isAltPhysicallyPressed = ImGui::GetIO().KeyAlt || ((SDL_GetModState() & KMOD_ALT) != 0);
+        bool isAltActive = isAltPhysicallyPressed || sculpt.getNegative();
+
+        if (isAltActive) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+
+        if (ImGui::Button("Alt##hudAltBtnTop", ImVec2(squareSize, squareSize))) {
+            sculpt.toggleNegative();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Invert Brush Mode (Alt)");
+        }
+
+        if (isAltActive) {
+            ImGui::PopStyleColor(3);
+        }
+
+        ImGui::SameLine(0.0f, 0.0f);
+
+        // Brush Settings Panel Toggle Button
+        if (m_showSculptingPanel) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+
+        if (ImGui::Button(ICON_LC_SLIDERS "##hudBrushSettingsBtnTop", ImVec2(squareSize, squareSize))) {
+            m_showSculptingPanel = !m_showSculptingPanel;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Brush & Sculpting Settings Panel");
+        }
+
+        if (m_showSculptingPanel) {
+            ImGui::PopStyleColor(3);
+        }
+
+        topIslandHeight = ImGui::GetWindowSize().y;
+    }
+    ImGui::End();
+
+    ImGui::PopStyleVar(2); // WindowPadding, ItemSpacing
+
+    // ------------------------------------------------------------------------
+    // 2. VERTICAL BRUSH HUD (Left, below Top Active Tool Island)
+    // ------------------------------------------------------------------------
+    float topGap = (topIslandHeight > 0.0f) ? topIslandHeight : 56.0f * scale;
+    ImVec2 posTopLeft = ImVec2(viewport->Pos.x, viewport->Pos.y + topGap);
     ImGui::SetNextWindowPos(posTopLeft, ImGuiCond_Always, ImVec2(0.0f, 0.0f));
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4.0f * scale, 4.0f * scale));
@@ -4540,6 +4694,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         ImGui::SetWindowFontScale(fontScale);
         float squareSize = ImGui::GetFrameHeight();
         float vSliderH = 80.0f * scale;
+        BrushType currentBrush = sculpt.getBrush();
 
         // Main Menu Button (Top)
         if (ImGui::Button(ICON_LC_MENU "##hudVertAppMenu", ImVec2(squareSize, squareSize))) {
@@ -4566,51 +4721,6 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scene Outliner");
 
         if (m_showScenePanel) {
-            ImGui::PopStyleColor(3);
-        }
-
-        ImGui::Separator();
-
-        // Brush Selection Button & Popup List
-        BrushType currentBrush = sculpt.getBrush();
-        const char* brushName = getBrushNameLocal(currentBrush);
-
-        if (ImGui::Button(ICON_LC_BRUSH "##hudVertBrushBtn", ImVec2(squareSize, squareSize))) {
-            ImGui::OpenPopup("##hudVertBrushPopup");
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Brush: %s", brushName);
-
-        if (ImGui::BeginPopup("##hudVertBrushPopup")) {
-            ImGui::SetWindowFontScale(fontScale);
-            for (int i = 0; i < BRUSH_COUNT; i++) {
-                BrushType bType = static_cast<BrushType>(i);
-                bool isSelected = (currentBrush == bType);
-                if (ImGui::Selectable(getBrushNameLocal(bType), isSelected)) {
-                    sculpt.setBrush(bType);
-                }
-                if (isSelected) ImGui::SetItemDefaultFocus();
-            }
-            ImGui::EndPopup();
-        }
-
-        // Alt (Invert / Subtractive Mode) Toggle Button
-        bool isAltPhysicallyPressed = ImGui::GetIO().KeyAlt || ((SDL_GetModState() & KMOD_ALT) != 0);
-        bool isAltActive = isAltPhysicallyPressed || sculpt.getNegative();
-
-        if (isAltActive) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
-        }
-
-        if (ImGui::Button("Alt##hudVertAltBtn", ImVec2(squareSize, squareSize))) {
-            sculpt.toggleNegative();
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Invert Brush Mode (Alt)");
-        }
-
-        if (isAltActive) {
             ImGui::PopStyleColor(3);
         }
 
