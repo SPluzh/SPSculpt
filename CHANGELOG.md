@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.5]
+- **Tools**: Added Brush Icon Capture Tool allowing users to frame a square viewport region and export transparent PNG brush icons directly to `resources/icons/`.
+- **Performance**: Optimized offscreen buffer capture (`renderToBuffer`) by skipping redundant FBO texture re-allocations when target resolution matches viewport dimensions.
+- **UI**: Added DPI-aware viewport framing overlay and a dedicated Brush Icon Capture panel with icon size presets and frame position controls.
+
 ## [1.4.4]
 - **Sculpt Engine**: Fixed bounds checking in `strokeElastic`, `getFallOff`, and `getElasticFallOff` to prevent vertices outside the brush radius from exploding to extreme coordinates and corrupting mesh topology.
 - **Brushes**: Upgraded Elastic Brush falloff profile to use `getMoveFallOff` (`base = 1.0 - dist * dist`), ensuring smooth, continuous decay from brush center to border and responsive control via Elasticity and Focal Shift parameters.

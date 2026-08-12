@@ -53,6 +53,13 @@ private:
     bool m_showPreferencesPanel = false;
     bool m_showHotkeyHUD = true;
 
+    // Brush Icon Capture settings
+    bool  m_showBrushIconCapture = false;
+    int   m_brushIconSize        = 256;
+    float m_iconFrameCenterX     = 0.5f;
+    float m_iconFrameCenterY     = 0.5f;
+    char  m_iconFileName[128]    = "";
+
     // Timelapse export settings
     int m_exportStepsPerFrame = 1;
     int m_exportWidth = 1920;
@@ -150,6 +157,9 @@ private:
     void drawTimelapsePanel(Scene& scene, AngleRenderer& renderer);
     void drawPreferencesPanel(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer, SDL_Window* window = nullptr);
     void drawHotkeyHUD();
+    void drawBrushIconCapturePanel(const Scene& scene, AngleRenderer& renderer);
+    void drawBrushIconFrameOverlay();
+    void captureBrushIcon(const Scene& scene, AngleRenderer& renderer);
 
     int m_preferencesActiveTab = -1;
 
@@ -209,6 +219,10 @@ public:
     void toggleFloatingIsland() { m_showFloatingIsland = !m_showFloatingIsland; }
     void toggleTimelapsePanel() { m_showTimelapsePanel = !m_showTimelapsePanel; }
     void togglePreferencesPanel() { m_showPreferencesPanel = !m_showPreferencesPanel; }
+    void toggleBrushIconCapturePanel();
+
+    bool getShowBrushIconCapture() const { return m_showBrushIconCapture; }
+    void setShowBrushIconCapture(bool show) { m_showBrushIconCapture = show; }
 
     bool getShowPreferencesPanel() const { return m_showPreferencesPanel; }
     void setShowPreferencesPanel(bool show) { m_showPreferencesPanel = show; }

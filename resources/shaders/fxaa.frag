@@ -15,7 +15,7 @@ out vec4 fragColor;
 
 void main() {
     if (uEnabled) {
-        fragColor = vec4(fxaa(uTexture0, vUVNW, vUVNE, vUVSW, vUVSE, vUVM, uInvSize, uSharpMode), 1.0);
+        fragColor = vec4(fxaa(uTexture0, vUVNW, vUVNE, vUVSW, vUVSE, vUVM, uInvSize, uSharpMode), texture(uTexture0, vUVM).a);
     } else {
         fragColor = texture(uTexture0, vUVM);
     }

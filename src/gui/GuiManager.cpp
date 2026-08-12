@@ -3738,6 +3738,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     drawDebugLogPanel();
     drawTimelapsePanel(scene, renderer);
     drawPreferencesPanel(sculpt, scene, renderer, window);
+    drawBrushIconFrameOverlay();
+    drawBrushIconCapturePanel(scene, renderer);
     drawUnsavedChangesModal(scene, m_pendingQuit);
     updateWindowTitle(window, scene.isModified());
 
@@ -4265,6 +4267,165 @@ void GuiManager::takeScreenshot(const Scene& scene, AngleRenderer& renderer) {
     }
 }
 
+void GuiManager::toggleBrushIconCapturePanel() {
+    m_showBrushIconCapture = !m_showBrushIconCapture;
+    if (m_showBrushIconCapture && std::strlen(m_iconFileName) == 0) {
+        auto now = std::chrono::system_clock::now();
+        std::time_t t = std::chrono::system_clock::to_time_t(now);
+        std::tm tm{};
+#ifdef _WIN32
+        localtime_s(&tm, &t);
+#else
+        localtime_r(&t, &tm);
+#endif
+        std::strftime(m_iconFileName, sizeof(m_iconFileName),
+                      "brush_%Y%m%d_%H%M%S", &tm);
+    }
+}
+
+void GuiManager::drawBrushIconFrameOverlay() {
+    if (!m_showBrushIconCapture) return;
+
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    ImVec2 dispSize = ImGui::GetIO().DisplaySize;
+    float vpW = dispSize.x;
+    float vpH = dispSize.y;
+    float half = m_brushIconSize * 0.5f;
+    float cx   = vpW * m_iconFrameCenterX;
+    float cy   = vpH * m_iconFrameCenterY;
+    ImVec2 tl(cx - half, cy - half);
+    ImVec2 br(cx + half, cy + half);
+
+    // Darken background outside framing rectangle
+    ImU32 dim = IM_COL32(0, 0, 0, 120);
+    dl->AddRectFilled(ImVec2(0.0f, 0.0f), ImVec2(vpW, tl.y), dim);
+    dl->AddRectFilled(ImVec2(0.0f, br.y), ImVec2(vpW, vpH), dim);
+    dl->AddRectFilled(ImVec2(0.0f, tl.y), ImVec2(tl.x, br.y), dim);
+    dl->AddRectFilled(ImVec2(br.x, tl.y), ImVec2(vpW, br.y), dim);
+
+    // White frame border
+    dl->AddRect(tl, br, IM_COL32(255, 255, 255, 220), 0.0f, 0, 2.0f);
+
+    // Corner markers (yellow, 12px)
+    float a = 12.0f;
+    ImU32 c = IM_COL32(255, 220, 60, 255);
+    dl->AddLine(tl, ImVec2(tl.x + a, tl.y), c, 3.0f);
+    dl->AddLine(tl, ImVec2(tl.x, tl.y + a), c, 3.0f);
+    dl->AddLine(ImVec2(br.x, tl.y), ImVec2(br.x - a, tl.y), c, 3.0f);
+    dl->AddLine(ImVec2(br.x, tl.y), ImVec2(br.x, tl.y + a), c, 3.0f);
+    dl->AddLine(ImVec2(tl.x, br.y), ImVec2(tl.x + a, br.y), c, 3.0f);
+    dl->AddLine(ImVec2(tl.x, br.y), ImVec2(tl.x, br.y - a), c, 3.0f);
+    dl->AddLine(br, ImVec2(br.x - a, br.y), c, 3.0f);
+    dl->AddLine(br, ImVec2(br.x, br.y - a), c, 3.0f);
+
+    // Dimension label under frame
+    char label[32];
+    std::snprintf(label, sizeof(label), "%dx%d", m_brushIconSize, m_brushIconSize);
+    dl->AddText(ImVec2(cx - 18.0f, br.y + 5.0f), IM_COL32(255, 255, 255, 180), label);
+}
+
+void GuiManager::drawBrushIconCapturePanel(const Scene& scene, AngleRenderer& renderer) {
+    if (!m_showBrushIconCapture) return;
+
+    float scale = getUiScale();
+    ImGui::SetNextWindowSize(ImVec2(300.0f * scale, 215.0f * scale), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(20.0f * scale, 80.0f * scale), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Brush Icon Capture", &m_showBrushIconCapture)) {
+        ImGui::End();
+        return;
+    }
+
+    // Icon size selector
+    ImGui::Text("Icon size:");
+    ImGui::SameLine();
+    for (int s : {128, 256, 512}) {
+        char lbl[16]; std::snprintf(lbl, sizeof(lbl), "%d", s);
+        if (ImGui::RadioButton(lbl, m_brushIconSize == s)) {
+            m_brushIconSize = s;
+        }
+        ImGui::SameLine();
+    }
+    ImGui::NewLine();
+
+    // Frame position sliders
+    ImGui::Separator();
+    ImGui::Text("Frame position:");
+    ImGui::SliderFloat("X##ix", &m_iconFrameCenterX, 0.05f, 0.95f);
+    ImGui::SliderFloat("Y##iy", &m_iconFrameCenterY, 0.05f, 0.95f);
+
+    // Filename input
+    ImGui::Separator();
+    ImGui::TextDisabled("resources/icons/[name].png");
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputText("##iconname", m_iconFileName, sizeof(m_iconFileName));
+
+    // Capture Action Button
+    ImGui::Spacing();
+    if (ImGui::Button("Capture & Save Icon", ImVec2(-1, 36.0f * scale))) {
+        captureBrushIcon(scene, renderer);
+    }
+
+    ImGui::End();
+}
+
+void GuiManager::captureBrushIcon(const Scene& scene, AngleRenderer& renderer) {
+    // 1. Resolve output name
+    std::string name = (std::strlen(m_iconFileName) > 0) ? m_iconFileName : "brush_icon";
+    if (name.size() >= 4 && name.substr(name.size() - 4) == ".png") {
+        name = name.substr(0, name.size() - 4);
+    }
+
+    // 2. Ensure resources/icons directory exists
+    std::error_code ec;
+    std::filesystem::create_directories("resources/icons", ec);
+
+    // 3. Final target path
+    std::string outPath = "resources/icons/" + name + ".png";
+
+    // 4. Offscreen render with transparent clear
+    renderer.setTransparentClear(true);
+    int vpW = renderer.getWidth();
+    int vpH = renderer.getHeight();
+    auto fullBuf = renderer.renderToBuffer(scene, vpW, vpH);
+    renderer.setTransparentClear(false);
+
+    // 5. Crop square region from center of frame
+    int half  = m_brushIconSize / 2;
+    int cx    = (int)(vpW * m_iconFrameCenterX);
+    int cy    = (int)(vpH * m_iconFrameCenterY);
+    int x0    = std::max(0, std::min(cx - half, vpW));
+    int y0    = std::max(0, std::min(cy - half, vpH));
+    int x1    = std::max(0, std::min(cx + half, vpW));
+    int y1    = std::max(0, std::min(cy + half, vpH));
+    int cropW = x1 - x0;
+    int cropH = y1 - y0;
+
+    // Square output buffer initialized to zero (fully transparent)
+    std::vector<uint8_t> iconBuf(m_brushIconSize * m_brushIconSize * 4, 0);
+    for (int row = 0; row < cropH; ++row) {
+        std::memcpy(
+            iconBuf.data() + row * m_brushIconSize * 4,
+            fullBuf.data() + (y0 + row) * vpW * 4 + x0 * 4,
+            cropW * 4
+        );
+    }
+
+    // 6. Write PNG file using stb_image_write
+    int ok = stbi_write_png(outPath.c_str(),
+        m_brushIconSize, m_brushIconSize, 4,
+        iconBuf.data(), m_brushIconSize * 4);
+
+    if (ok) {
+        m_iconCache.erase(name);
+        m_iconCache.erase(name + ".png");
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION,
+            "Icon saved", outPath.c_str(), m_window);
+    } else {
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,
+            "Error", ("Failed to write: " + outPath).c_str(), m_window);
+    }
+}
+
 void GuiManager::drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer) {
     float scale = getUiScale();
     if (ImGui::BeginMenu("File")) {
@@ -4326,6 +4487,9 @@ void GuiManager::drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRend
         ImGui::MenuItem("Reference Images", nullptr, &m_showReferenceImagesPanel);
         ImGui::MenuItem("Undo History", nullptr, &m_showUndoDiagPanel);
         ImGui::MenuItem("Sculpt Timelapse", nullptr, &m_showTimelapsePanel);
+        if (ImGui::MenuItem("Brush Icon Capture...", nullptr, m_showBrushIconCapture)) {
+            toggleBrushIconCapturePanel();
+        }
         bool hasSnapshot = renderer.hasActiveSnapshot();
         if (ImGui::MenuItem("Model Snapshot (Screen Reference)", nullptr, &hasSnapshot)) {
             renderer.toggleSnapshot(scene);

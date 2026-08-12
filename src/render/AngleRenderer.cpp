@@ -1096,7 +1096,11 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
     // 7. Final Blit to Screen (or Viewport2D Zoom/Pan)
     glBindFramebuffer(GL_FRAMEBUFFER, targetFbo);
     glViewport(0, 0, m_width, m_height);
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    if (m_transparentClear) {
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    } else {
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    }
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     drawFullscreenViewport2D(scene);
@@ -1208,10 +1212,10 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
         }
     } else if (passType == 3) {
         // Background and Grid
-        if (m_showBackground) {
+        if (m_showBackground && !m_transparentClear) {
             drawBackground(scene, camera);
         }
-        if (m_showGrid) {
+        if (m_showGrid && !m_transparentClear) {
             drawGrid(scene, camera);
         }
     } else if (passType == 1) {
@@ -3326,14 +3330,19 @@ std::vector<uint8_t> AngleRenderer::renderToBuffer(const Scene& scene, int w, in
     
     m_isTakingScreenshot = true;
     
-    // Resize renderer and all its RTTs to target width & height
-    resize(w, h);
+    // Resize renderer and all its RTTs only if target dimensions differ from current
+    bool needsResize = (w != oldW || h != oldH);
+    if (needsResize) {
+        resize(w, h);
+    }
     
     // Resize active camera temporarily to match screenshot dimensions/aspect ratio
     Camera& camera = const_cast<Camera&>(scene.getCamera());
     int oldCamW = camera.getWidth();
     int oldCamH = camera.getHeight();
-    camera.onResize(w, h);
+    if (needsResize) {
+        camera.onResize(w, h);
+    }
     
     // Create temporary offscreen framebuffer & texture to render the final blit
     GLuint tempFbo = 0;
@@ -3366,8 +3375,10 @@ std::vector<uint8_t> AngleRenderer::renderToBuffer(const Scene& scene, int w, in
     
     // Restore states
     m_isTakingScreenshot = false;
-    camera.onResize(oldCamW, oldCamH);
-    resize(oldW, oldH);
+    if (needsResize) {
+        camera.onResize(oldCamW, oldCamH);
+        resize(oldW, oldH);
+    }
     
     // Flip pixels vertically (since OpenGL coords start from bottom-left)
     std::vector<uint8_t> flippedBuffer(w * h * 4);

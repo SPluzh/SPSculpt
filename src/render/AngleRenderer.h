@@ -107,6 +107,8 @@ public:
     void render(const Scene& scene, unsigned int targetFbo = 0);
     void setShowBackground(bool show) { m_showBackground = show; }
     bool getShowBackground() const { return m_showBackground; }
+    void setTransparentClear(bool v) { m_transparentClear = v; }
+    bool getTransparentClear() const { return m_transparentClear; }
 
     void setBackgroundType(int type) { m_backgroundType = type; updateBackgroundGeometry(); }
     int getBackgroundType() const { return m_backgroundType; }
@@ -432,6 +434,7 @@ private:
     int m_height = 0;
     float m_dpiScale = 1.0f;
     bool m_showBackground = true;
+    bool m_transparentClear = false;
 
     // Environmental parameters
     float m_exposure = 1.0f;

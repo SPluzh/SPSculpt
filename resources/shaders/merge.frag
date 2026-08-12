@@ -35,11 +35,12 @@ void main() {
     }
 
     vec3 color = opaqueColor * (1.0 - transp.a) + transp.rgb;
+    float alphaOut = (opaqueSample.a > 0.0 || transp.a > 0.0) ? 1.0 : 0.0;
 
     if (uFilmic == 1) {
         vec3 x = max(vec3(0.0), color - 0.004);
-        fragColor = vec4((x * (6.2 * x + 0.5)) / (x * (6.2 * x + 1.7) + 0.06), 1.0);
+        fragColor = vec4((x * (6.2 * x + 0.5)) / (x * (6.2 * x + 1.7) + 0.06), alphaOut);
     } else {
-        fragColor = vec4(linearTosRGB(color), 1.0);
+        fragColor = vec4(linearTosRGB(color), alphaOut);
     }
 }
