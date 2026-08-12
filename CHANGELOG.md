@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.1]
+- **Outliner / Previews**: Integrated deferred, frame-budgeted offscreen rendering for object preview thumbnails in the Scene Outliner panel (`AngleRenderer::drawMeshForThumbnail`).
+- **Outliner / Previews**: Added single-shared-depth buffer framebuffer caching (`MeshThumbnail` with `m_thumbSharedDepth`), caching 48x48 textures and updating at most 1 thumbnail per frame to guarantee zero FPS drop during complex scene editing.
+- **Outliner / Previews**: Updated the Scene Outliner table layout with a dedicated preview image column (`##Thumb`), automatic aspect-ratio framing via isometric camera alignment (`resetViewToMesh`), and real-time cache invalidation triggered upon sculpting stroke completion.
+
 ## [1.4.10]
 - **Brushes**: Fixed an issue where the Move tool (and other grab brushes: Drag, Elastic) failed to respect the "Lock Single PolyGroup" setting on frame 2+ of a stroke due to premature vertex caching prior to polygroup filtering.
 - **Sculpt Engine**: Ensured `m_grabbedVertices` caches filtered vertices after Stage 3 culling and polygroup filtering, updated symmetry settings lookups to use `activeBrush` settings, and initialized target polygroup context on mouse-down.

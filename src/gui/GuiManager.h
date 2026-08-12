@@ -295,4 +295,23 @@ public:
     // Context popup request
     bool m_openContextPopup = false;
     int m_previousShaderType = 0;
+
+    // Outliner Thumbnails
+    static constexpr int THUMB_SIZE = 48;
+    struct MeshThumbnail {
+        GLuint fbo     = 0;
+        GLuint texture = 0;
+        bool   dirty   = true;
+    };
+
+    void thumbInvalidate(uint32_t meshId);
+    void thumbInvalidateAll();
+
+private:
+    GLuint m_thumbSharedDepth = 0;
+    std::unordered_map<uint32_t, MeshThumbnail> m_thumbCache;
+
+    void thumbEnsureFbo(MeshThumbnail& t);
+    void thumbRender(MeshThumbnail& t, Mesh* mesh, AngleRenderer& renderer);
+    void thumbCleanup(const Scene& scene);
 };
