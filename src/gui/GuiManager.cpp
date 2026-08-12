@@ -5995,7 +5995,7 @@ void GuiManager::drawDebugLogPanel() {
 
 
 void GuiManager::drawSafeFramesOverlay(const AngleRenderer& renderer, const Scene& scene) {
-    ImDrawList* drawList = ImGui::GetForegroundDrawList();
+    ImDrawList* drawList = ImGui::GetBackgroundDrawList();
     float viewportWidth = ImGui::GetIO().DisplaySize.x;
     float viewportHeight = ImGui::GetIO().DisplaySize.y;
     float scale = getUiScale();
@@ -6016,12 +6016,12 @@ void GuiManager::drawSafeFramesOverlay(const AngleRenderer& renderer, const Scen
 
         if (x1 <= x0 || y1 <= y0) return;
 
-        ImGui::GetForegroundDrawList()->PushClipRect(ImVec2(vx0, vy0), ImVec2(vx1, vy1), true);
+        drawList->PushClipRect(ImVec2(vx0, vy0), ImVec2(vx1, vy1), true);
 
         // Clean Safe Frame Rect with pure line color
         drawList->AddRect(ImVec2(x0, y0), ImVec2(x1, y1), lineColor, 0.0f, 0, thickness);
 
-        ImGui::GetForegroundDrawList()->PopClipRect();
+        drawList->PopClipRect();
     };
 
     if (!renderer.getSplitMode()) {
