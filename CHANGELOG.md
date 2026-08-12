@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.0]
+- **Sculpt Layers**: Enhanced the "Sculpt Layers" panel UI with an interactive Eye visibility toggle icon (`ICON_LC_EYE` / `ICON_LC_EYE_OFF`), double-click inline renaming for layers, and real-time intensity slider updates.
+- **Sculpt Layers**: Added a `[⋮]` Context Menu for sculpt layers providing **Rename**, **Duplicate** (`duplicateLayer`), **Merge Down** (`mergeDown`), and **Delete** actions.
+- **Sculpt Layers**: Added **Merge to Base** functionality for the bottom-most layer (Layer 0), allowing its displacement deltas to be baked directly into the base mesh geometry (`m_baseVerts`).
+
 ## [1.4.9]
 - **UI / Settings**: Fixed an issue where the open/closed visibility state of the Sculpt Layers window was not preserved across application restarts by adding persistent saving and loading for the setting. Added a "Sculpt Layers" menu item under the main Panels menu.
 

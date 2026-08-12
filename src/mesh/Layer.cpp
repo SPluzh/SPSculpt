@@ -47,8 +47,29 @@ void LayerStack::duplicateLayer(int idx) {
     m_activeIdx = idx + 1;
 }
 
-void LayerStack::mergeDown(int idx) {
-    if (idx <= 0 || idx >= (int)m_layers.size()) return;
+void LayerStack::mergeDown(int idx, std::vector<float>* outMeshVerts) {
+    if (idx < 0 || idx >= (int)m_layers.size()) return;
+
+    if (idx == 0) {
+        const Layer& source = m_layers[0];
+        size_t count = std::min(m_baseVerts.size(), source.deltaVerts.size());
+        for (size_t i = 0; i < count; ++i) {
+            m_baseVerts[i] += source.deltaVerts[i] * source.intensity;
+        }
+        if (outMeshVerts && outMeshVerts->size() == m_baseVerts.size()) {
+            *outMeshVerts = m_baseVerts;
+        }
+
+        removeLayer(0);
+        if (m_layers.empty()) {
+            m_baseVerts.clear();
+            m_activeIdx = -1;
+        } else {
+            m_activeIdx = 0;
+        }
+        return;
+    }
+
     Layer& target = m_layers[idx - 1];
     const Layer& source = m_layers[idx];
 

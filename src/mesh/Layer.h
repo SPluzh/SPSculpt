@@ -28,7 +28,7 @@ public:
     void removeLayer(int idx);
     void moveLayer(int from, int to);
     void duplicateLayer(int idx);
-    void mergeDown(int idx);
+    void mergeDown(int idx, std::vector<float>* outMeshVerts = nullptr);
 
     int getActiveIdx() const { return m_activeIdx; }
     void setActiveIdx(int idx) {

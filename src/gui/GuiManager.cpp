@@ -1575,7 +1575,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     // 3.6 Sculpt Layers Panel
     if (m_showLayersPanel) {
         ImGui::SetNextWindowPos({160.0f * scale, 450.0f * scale}, ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize({300.0f * scale, 240.0f * scale}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize({340.0f * scale, 260.0f * scale}, ImGuiCond_FirstUseEver);
         ImGui::Begin("Sculpt Layers", &m_showLayersPanel);
 
         Mesh* selectedMesh = scene.getSelected();
@@ -1584,7 +1584,10 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         } else {
             LayerStack& stack = selectedMesh->layerStack;
 
-            if (ImGui::Button("Add Layer (+)", ImVec2(120, 26))) {
+            static int renameLayerIdx = -1;
+            static char renameLayerBuf[128] = "";
+
+            if (ImGui::Button("[+] Add Layer", ImVec2(110, 26))) {
                 scene.pushHistoryState();
                 selectedMesh = scene.getSelected();
                 if (selectedMesh) {
@@ -1594,9 +1597,11 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     selectedMesh->layerStack.addLayer(selectedMesh->nbVerts, "Layer " + std::to_string(selectedMesh->layerStack.count() + 1));
                 }
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add new sculpt layer (initializes base mesh snapshot if needed)");
+
             ImGui::SameLine();
             if (stack.getActiveIdx() >= 0) {
-                if (ImGui::Button("Delete Active (-)", ImVec2(130, 26))) {
+                if (ImGui::Button("[-] Delete Active", ImVec2(120, 26))) {
                     scene.pushHistoryState();
                     selectedMesh = scene.getSelected();
                     if (selectedMesh) {
@@ -1605,9 +1610,10 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         selectedMesh->updateAfterLayerBake();
                     }
                 }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Delete active sculpt layer");
             } else {
                 ImGui::BeginDisabled();
-                ImGui::Button("Delete Active (-)", ImVec2(130, 26));
+                ImGui::Button("[-] Delete Active", ImVec2(120, 26));
                 ImGui::EndDisabled();
             }
 
@@ -1622,28 +1628,99 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     ImGui::PushID(i);
 
                     bool isActive = (i == stack.getActiveIdx());
-                    if (ImGui::Selectable(l.name.c_str(), isActive, 0, ImVec2(110, 0))) {
-                        stack.setActiveIdx(i);
-                    }
-                    ImGui::SameLine();
 
-                    bool vis = l.visible;
-                    if (ImGui::Checkbox("##vis", &vis)) {
-                        l.visible = vis;
+                    // 1. Visibility Eye toggle: ICON_LC_EYE / ICON_LC_EYE_OFF
+                    const char* visIcon = l.visible ? ICON_LC_EYE : ICON_LC_EYE_OFF;
+                    if (l.visible) {
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.9f, 0.9f, 1.0f));
+                    } else {
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
+                    }
+                    if (ImGui::Button(visIcon, ImVec2(26, 24))) {
+                        l.visible = !l.visible;
                         stack.bake(stack.getBase(), selectedMesh->verts);
                         selectedMesh->updateAfterLayerBake();
                     }
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Layer Visibility");
+                    ImGui::PopStyleColor();
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip(l.visible ? "Hide Layer" : "Show Layer");
 
                     ImGui::SameLine();
+
+                    // 2. Layer Name (Double click to rename)
+                    if (renameLayerIdx == i) {
+                        ImGui::SetNextItemWidth(90.0f);
+                        if (ImGui::InputText("##renameLayer", renameLayerBuf, sizeof(renameLayerBuf), ImGuiInputTextFlags_EnterReturnsTrue)) {
+                            l.name = renameLayerBuf;
+                            renameLayerIdx = -1;
+                        }
+                        if (ImGui::IsItemDeactivated() && !ImGui::IsItemDeactivatedAfterEdit()) {
+                            l.name = renameLayerBuf;
+                            renameLayerIdx = -1;
+                        }
+                    } else {
+                        if (isActive) ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.20f, 0.45f, 0.70f, 0.8f));
+                        bool selected = isActive;
+                        if (ImGui::Selectable(l.name.c_str(), selected, 0, ImVec2(90, 24))) {
+                            stack.setActiveIdx(i);
+                        }
+                        if (isActive) ImGui::PopStyleColor();
+
+                        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+                            renameLayerIdx = i;
+                            strncpy(renameLayerBuf, l.name.c_str(), sizeof(renameLayerBuf));
+                        }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to activate, Double click to rename");
+                    }
+
+                    ImGui::SameLine();
+
+                    // 3. Intensity slider (0-100%, calls bake in realtime)
                     float intensityPct = l.intensity * 100.0f;
-                    ImGui::PushItemWidth(-1);
+                    ImGui::SetNextItemWidth(85.0f);
                     if (ImGui::SliderFloat("##intensity", &intensityPct, 0.0f, 100.0f, "%.0f%%")) {
                         l.intensity = intensityPct * 0.01f;
                         stack.bake(stack.getBase(), selectedMesh->verts);
                         selectedMesh->updateAfterLayerBake();
                     }
-                    ImGui::PopItemWidth();
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Layer Intensity (0-100%)");
+
+                    ImGui::SameLine();
+
+                    // 4. [⋮] Context Menu Button
+                    if (ImGui::Button("[⋮]##menu", ImVec2(24, 24))) {
+                        ImGui::OpenPopup("LayerContextMenu");
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Layer Context Menu");
+
+                    if (ImGui::BeginPopup("LayerContextMenu")) {
+                        if (ImGui::MenuItem("Rename")) {
+                            renameLayerIdx = i;
+                            strncpy(renameLayerBuf, l.name.c_str(), sizeof(renameLayerBuf));
+                        }
+                        if (ImGui::MenuItem("Duplicate")) {
+                            scene.pushHistoryState();
+                            stack.duplicateLayer(i);
+                            stack.bake(stack.getBase(), selectedMesh->verts);
+                            selectedMesh->updateAfterLayerBake();
+                        }
+                        const char* mergeLabel = (i == 0) ? "Merge to Base" : "Merge Down";
+                        if (ImGui::MenuItem(mergeLabel)) {
+                            scene.pushHistoryState();
+                            stack.mergeDown(i, &selectedMesh->verts);
+                            if (stack.hasBase()) {
+                                stack.bake(stack.getBase(), selectedMesh->verts);
+                            }
+                            selectedMesh->updateAfterLayerBake();
+                        }
+                        ImGui::Separator();
+                        if (ImGui::MenuItem("Delete")) {
+                            scene.pushHistoryState();
+                            stack.removeLayer(i);
+                            stack.bake(stack.getBase(), selectedMesh->verts);
+                            selectedMesh->updateAfterLayerBake();
+                        }
+                        ImGui::EndPopup();
+                    }
 
                     ImGui::PopID();
                 }
