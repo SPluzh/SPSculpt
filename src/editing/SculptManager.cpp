@@ -345,15 +345,42 @@ int SculptManager::doStrokePass(
     const glm::vec3& sScale
 ) {
     std::vector<float> preVerts;
+    std::vector<float> preColors;
+    std::vector<float> preMaterials;
+
     bool isLayerDeform = mesh && mesh->isLayerActive() && activeBrush != BRUSH_DELETE_LAYER &&
                          activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_POLYGROUP;
-    if (isLayerDeform && !pickedVertices.empty()) {
+    bool isBaseDeformWithLayers = mesh && !mesh->isLayerActive() && mesh->layerStack.hasBase() &&
+                                  activeBrush != BRUSH_DELETE_LAYER && activeBrush != BRUSH_MASK && activeBrush != BRUSH_POLYGROUP;
+
+    if ((isLayerDeform || isBaseDeformWithLayers) && !pickedVertices.empty()) {
         preVerts.resize(pickedVertices.size() * 3);
         for (size_t i = 0; i < pickedVertices.size(); ++i) {
             uint32_t v = pickedVertices[i];
             preVerts[i * 3 + 0] = mesh->verts[v * 3 + 0];
             preVerts[i * 3 + 1] = mesh->verts[v * 3 + 1];
             preVerts[i * 3 + 2] = mesh->verts[v * 3 + 2];
+        }
+    }
+
+    if (mesh && !mesh->isLayerActive() && mesh->layerStack.hasBase() && activeBrush == BRUSH_PAINT && !pickedVertices.empty()) {
+        if (!mesh->colors.empty()) {
+            preColors.resize(pickedVertices.size() * 3);
+            for (size_t i = 0; i < pickedVertices.size(); ++i) {
+                uint32_t v = pickedVertices[i];
+                preColors[i * 3 + 0] = mesh->colors[v * 3 + 0];
+                preColors[i * 3 + 1] = mesh->colors[v * 3 + 1];
+                preColors[i * 3 + 2] = mesh->colors[v * 3 + 2];
+            }
+        }
+        if (!mesh->materials.empty()) {
+            preMaterials.resize(pickedVertices.size() * 3);
+            for (size_t i = 0; i < pickedVertices.size(); ++i) {
+                uint32_t v = pickedVertices[i];
+                preMaterials[i * 3 + 0] = mesh->materials[v * 3 + 0];
+                preMaterials[i * 3 + 1] = mesh->materials[v * 3 + 1];
+                preMaterials[i * 3 + 2] = mesh->materials[v * 3 + 2];
+            }
         }
     }
 
@@ -1151,6 +1178,67 @@ int SculptManager::doStrokePass(
                     layer->deltaMaterials[v * 3 + 1] = std::clamp((mesh->materials[v * 3 + 1] - refM[v * 3 + 1]) * invLI, -1.0f, 1.0f);
                     layer->deltaMaterials[v * 3 + 2] = std::clamp((mesh->materials[v * 3 + 2] - refM[v * 3 + 2]) * invLI, -1.0f, 1.0f);
                 }
+                mesh->isMaterialDirty = true;
+            }
+        }
+    }
+
+    bool isBasePaintWithLayers = mesh && !mesh->isLayerActive() && mesh->layerStack.hasBase() && activeBrush == BRUSH_PAINT;
+
+    if ((isBaseDeformWithLayers || isBasePaintWithLayers) && deformedCount > 0 && mesh) {
+        auto& baseVerts = mesh->layerStack.getBase();
+        auto& baseColors = mesh->layerStack.getBaseColors();
+        auto& baseMaterials = mesh->layerStack.getBaseMaterials();
+
+        if (isBaseDeformWithLayers) {
+            for (int i = 0; i < deformedCount; ++i) {
+                uint32_t v = pickedVertices[i];
+                if (v * 3 + 2 < mesh->verts.size() && v * 3 + 2 < baseVerts.size()) {
+                    float dx = mesh->verts[v * 3 + 0] - preVerts[i * 3 + 0];
+                    float dy = mesh->verts[v * 3 + 1] - preVerts[i * 3 + 1];
+                    float dz = mesh->verts[v * 3 + 2] - preVerts[i * 3 + 2];
+
+                    if (!std::isnan(dx) && !std::isnan(dy) && !std::isnan(dz) &&
+                        !std::isinf(dx) && !std::isinf(dy) && !std::isinf(dz)) {
+                        baseVerts[v * 3 + 0] += dx;
+                        baseVerts[v * 3 + 1] += dy;
+                        baseVerts[v * 3 + 2] += dz;
+                    }
+                }
+            }
+            mesh->layerStack.bake(baseVerts, mesh->verts);
+        }
+
+        if (isBasePaintWithLayers) {
+            if (!baseColors.empty() && !preColors.empty()) {
+                for (int i = 0; i < deformedCount; ++i) {
+                    uint32_t v = pickedVertices[i];
+                    if (v * 3 + 2 < mesh->colors.size() && v * 3 + 2 < baseColors.size()) {
+                        float dcx = mesh->colors[v * 3 + 0] - preColors[i * 3 + 0];
+                        float dcy = mesh->colors[v * 3 + 1] - preColors[i * 3 + 1];
+                        float dcz = mesh->colors[v * 3 + 2] - preColors[i * 3 + 2];
+                        baseColors[v * 3 + 0] = std::clamp(baseColors[v * 3 + 0] + dcx, 0.0f, 1.0f);
+                        baseColors[v * 3 + 1] = std::clamp(baseColors[v * 3 + 1] + dcy, 0.0f, 1.0f);
+                        baseColors[v * 3 + 2] = std::clamp(baseColors[v * 3 + 2] + dcz, 0.0f, 1.0f);
+                    }
+                }
+                mesh->layerStack.bakeColors(baseColors, mesh->colors);
+                mesh->isColorDirty = true;
+            }
+
+            if (!baseMaterials.empty() && !preMaterials.empty()) {
+                for (int i = 0; i < deformedCount; ++i) {
+                    uint32_t v = pickedVertices[i];
+                    if (v * 3 + 2 < mesh->materials.size() && v * 3 + 2 < baseMaterials.size()) {
+                        float dmx = mesh->materials[v * 3 + 0] - preMaterials[i * 3 + 0];
+                        float dmy = mesh->materials[v * 3 + 1] - preMaterials[i * 3 + 1];
+                        float dmz = mesh->materials[v * 3 + 2] - preMaterials[i * 3 + 2];
+                        baseMaterials[v * 3 + 0] = std::clamp(baseMaterials[v * 3 + 0] + dmx, 0.0f, 1.0f);
+                        baseMaterials[v * 3 + 1] = std::clamp(baseMaterials[v * 3 + 1] + dmy, 0.0f, 1.0f);
+                        baseMaterials[v * 3 + 2] = std::clamp(baseMaterials[v * 3 + 2] + dmz, 0.0f, 1.0f);
+                    }
+                }
+                mesh->layerStack.bakeMaterials(baseMaterials, mesh->materials);
                 mesh->isMaterialDirty = true;
             }
         }

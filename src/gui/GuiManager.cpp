@@ -1756,146 +1756,178 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGui::Separator();
 
             int numLayers = stack.count();
-            if (numLayers == 0) {
-                ImGui::TextDisabled("No sculpt layers. Base mesh active.");
-            } else {
-                for (int i = numLayers - 1; i >= 0; --i) {
-                    Layer& l = stack.at(i);
-                    ImGui::PushID(i);
+            for (int i = numLayers - 1; i >= 0; --i) {
+                Layer& l = stack.at(i);
+                ImGui::PushID(i);
 
-                    bool isActive = (i == stack.getActiveIdx());
+                bool isActive = (i == stack.getActiveIdx());
 
-                    // 1. Visibility Eye toggle: ICON_LC_EYE / ICON_LC_EYE_OFF
-                    const char* visIcon = l.visible ? ICON_LC_EYE : ICON_LC_EYE_OFF;
-                    if (l.visible) {
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.9f, 0.9f, 1.0f));
-                    } else {
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
-                    }
-                    if (ImGui::Button(visIcon, ImVec2(26, 24))) {
-                        l.visible = !l.visible;
-                        selectedMesh->updateAfterLayerBake();
-                    }
-                    ImGui::PopStyleColor();
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip(l.visible ? "Hide Layer" : "Show Layer");
-
-                    ImGui::SameLine();
-
-                    // Color Chip indicator (only shown when layer contains polypaint modifications)
-                    bool hasPaint = false;
-                    ImVec4 chipColor(0.0f, 0.0f, 0.0f, 0.0f);
-                    if (!l.deltaColors.empty()) {
-                        double r = 0, g = 0, b = 0;
-                        size_t paintedCount = 0;
-                        size_t n = l.deltaColors.size() / 3;
-                        const auto& baseC = stack.getBaseColors();
-
-                        for (size_t k = 0; k < n; ++k) {
-                            float dx = l.deltaColors[k * 3 + 0];
-                            float dy = l.deltaColors[k * 3 + 1];
-                            float dz = l.deltaColors[k * 3 + 2];
-                            if (std::abs(dx) > 1e-3f || std::abs(dy) > 1e-3f || std::abs(dz) > 1e-3f) {
-                                float baseR = (k * 3 + 2 < baseC.size()) ? baseC[k * 3 + 0] : 1.0f;
-                                float baseG = (k * 3 + 2 < baseC.size()) ? baseC[k * 3 + 1] : 1.0f;
-                                float baseB = (k * 3 + 2 < baseC.size()) ? baseC[k * 3 + 2] : 1.0f;
-                                r += std::clamp(baseR + dx * l.intensity, 0.0f, 1.0f);
-                                g += std::clamp(baseG + dy * l.intensity, 0.0f, 1.0f);
-                                b += std::clamp(baseB + dz * l.intensity, 0.0f, 1.0f);
-                                paintedCount++;
-                            }
-                        }
-                        if (paintedCount > 0) {
-                            hasPaint = true;
-                            chipColor = ImVec4(
-                                (float)(r / paintedCount),
-                                (float)(g / paintedCount),
-                                (float)(b / paintedCount),
-                                1.0f
-                            );
-                        }
-                    }
-
-                    if (hasPaint) {
-                        ImGui::ColorButton("##layerColor", chipColor,
-                            ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoBorder,
-                            ImVec2(14, 14));
-                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Polypaint Color Preview");
-                        ImGui::SameLine();
-                    }
-
-                    // 2. Layer Name (Double click to rename)
-                    if (renameLayerIdx == i) {
-                        ImGui::SetNextItemWidth(75.0f);
-                        if (ImGui::InputText("##renameLayer", renameLayerBuf, sizeof(renameLayerBuf), ImGuiInputTextFlags_EnterReturnsTrue)) {
-                            l.name = renameLayerBuf;
-                            renameLayerIdx = -1;
-                        }
-                        if (ImGui::IsItemDeactivated() && !ImGui::IsItemDeactivatedAfterEdit()) {
-                            l.name = renameLayerBuf;
-                            renameLayerIdx = -1;
-                        }
-                    } else {
-                        if (isActive) ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.20f, 0.45f, 0.70f, 0.8f));
-                        bool selected = isActive;
-                        if (ImGui::Selectable(l.name.c_str(), selected, 0, ImVec2(75, 24))) {
-                            stack.setActiveIdx(i);
-                        }
-                        if (isActive) ImGui::PopStyleColor();
-
-                        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
-                            renameLayerIdx = i;
-                            strncpy(renameLayerBuf, l.name.c_str(), sizeof(renameLayerBuf));
-                        }
-                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to activate, Double click to rename");
-                    }
-
-                    ImGui::SameLine();
-
-                    // 3. Intensity slider (0-100%, calls bake in realtime)
-                    float intensityPct = l.intensity * 100.0f;
-                    ImGui::SetNextItemWidth(85.0f);
-                    if (ImGui::SliderFloat("##intensity", &intensityPct, 0.0f, 100.0f, "%.0f%%")) {
-                        l.intensity = intensityPct * 0.01f;
-                        selectedMesh->updateAfterLayerBake();
-                    }
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Layer Intensity (0-100%)");
-
-                    ImGui::SameLine();
-
-                    // 4. [⋮] Context Menu Button
-                    if (ImGui::Button("[⋮]##menu", ImVec2(24, 24))) {
-                        ImGui::OpenPopup("LayerContextMenu");
-                    }
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Layer Context Menu");
-
-                    if (ImGui::BeginPopup("LayerContextMenu")) {
-                        if (ImGui::MenuItem("Rename")) {
-                            renameLayerIdx = i;
-                            strncpy(renameLayerBuf, l.name.c_str(), sizeof(renameLayerBuf));
-                        }
-                        if (ImGui::MenuItem("Duplicate")) {
-                            scene.pushHistoryState();
-                            stack.duplicateLayer(i);
-                            selectedMesh->updateAfterLayerBake();
-                        }
-                        const char* mergeLabel = (i == 0) ? "Merge to Base" : "Merge Down";
-                        if (ImGui::MenuItem(mergeLabel)) {
-                            scene.pushHistoryState();
-                            stack.mergeDown(i, &selectedMesh->verts);
-                            selectedMesh->updateAfterLayerBake();
-                        }
-                        ImGui::Separator();
-                        if (ImGui::MenuItem("Delete")) {
-                            scene.pushHistoryState();
-                            stack.removeLayer(i);
-                            selectedMesh->updateAfterLayerBake();
-                        }
-                        ImGui::EndPopup();
-                    }
-
-                    ImGui::PopID();
+                // 1. Visibility Eye toggle: ICON_LC_EYE / ICON_LC_EYE_OFF
+                const char* visIcon = l.visible ? ICON_LC_EYE : ICON_LC_EYE_OFF;
+                if (l.visible) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.9f, 0.9f, 1.0f));
+                } else {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
                 }
+                if (ImGui::Button(visIcon, ImVec2(26, 24))) {
+                    l.visible = !l.visible;
+                    selectedMesh->updateAfterLayerBake();
+                }
+                ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip(l.visible ? "Hide Layer" : "Show Layer");
+
+                ImGui::SameLine();
+
+                // Color Chip indicator (only shown when layer contains polypaint modifications)
+                bool hasPaint = false;
+                ImVec4 chipColor(0.0f, 0.0f, 0.0f, 0.0f);
+                if (!l.deltaColors.empty()) {
+                    double r = 0, g = 0, b = 0;
+                    size_t paintedCount = 0;
+                    size_t n = l.deltaColors.size() / 3;
+                    const auto& baseC = stack.getBaseColors();
+
+                    for (size_t k = 0; k < n; ++k) {
+                        float dx = l.deltaColors[k * 3 + 0];
+                        float dy = l.deltaColors[k * 3 + 1];
+                        float dz = l.deltaColors[k * 3 + 2];
+                        if (std::abs(dx) > 1e-3f || std::abs(dy) > 1e-3f || std::abs(dz) > 1e-3f) {
+                            float baseR = (k * 3 + 2 < baseC.size()) ? baseC[k * 3 + 0] : 1.0f;
+                            float baseG = (k * 3 + 2 < baseC.size()) ? baseC[k * 3 + 1] : 1.0f;
+                            float baseB = (k * 3 + 2 < baseC.size()) ? baseC[k * 3 + 2] : 1.0f;
+                            r += std::clamp(baseR + dx * l.intensity, 0.0f, 1.0f);
+                            g += std::clamp(baseG + dy * l.intensity, 0.0f, 1.0f);
+                            b += std::clamp(baseB + dz * l.intensity, 0.0f, 1.0f);
+                            paintedCount++;
+                        }
+                    }
+                    if (paintedCount > 0) {
+                        hasPaint = true;
+                        chipColor = ImVec4(
+                            (float)(r / paintedCount),
+                            (float)(g / paintedCount),
+                            (float)(b / paintedCount),
+                            1.0f
+                        );
+                    }
+                }
+
+                if (hasPaint) {
+                    ImGui::ColorButton("##layerColor", chipColor,
+                        ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoBorder,
+                        ImVec2(14, 14));
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Polypaint Color Preview");
+                    ImGui::SameLine();
+                }
+
+                // 2. Layer Name (Double click to rename)
+                if (renameLayerIdx == i) {
+                    ImGui::SetNextItemWidth(75.0f);
+                    if (ImGui::InputText("##renameLayer", renameLayerBuf, sizeof(renameLayerBuf), ImGuiInputTextFlags_EnterReturnsTrue)) {
+                        l.name = renameLayerBuf;
+                        renameLayerIdx = -1;
+                    }
+                    if (ImGui::IsItemDeactivated() && !ImGui::IsItemDeactivatedAfterEdit()) {
+                        l.name = renameLayerBuf;
+                        renameLayerIdx = -1;
+                    }
+                } else {
+                    if (isActive) ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.20f, 0.45f, 0.70f, 0.8f));
+                    bool selected = isActive;
+                    if (ImGui::Selectable(l.name.c_str(), selected, 0, ImVec2(75, 24))) {
+                        stack.setActiveIdx(i);
+                    }
+                    if (isActive) ImGui::PopStyleColor();
+
+                    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+                        renameLayerIdx = i;
+                        strncpy(renameLayerBuf, l.name.c_str(), sizeof(renameLayerBuf));
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to activate, Double click to rename");
+                }
+
+                ImGui::SameLine();
+
+                // 3. Intensity slider (0-100%, calls bake in realtime)
+                float intensityPct = l.intensity * 100.0f;
+                ImGui::SetNextItemWidth(85.0f);
+                if (ImGui::SliderFloat("##intensity", &intensityPct, 0.0f, 100.0f, "%.0f%%")) {
+                    l.intensity = intensityPct * 0.01f;
+                    selectedMesh->updateAfterLayerBake();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Layer Intensity (0-100%)");
+
+                ImGui::SameLine();
+
+                // 4. Context Menu Button
+                if (ImGui::Button(ICON_LC_MORE_VERTICAL "##menu", ImVec2(26, 24))) {
+                    ImGui::OpenPopup("LayerContextMenu");
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Layer Context Menu");
+
+                if (ImGui::BeginPopup("LayerContextMenu")) {
+                    if (ImGui::MenuItem("Rename")) {
+                        renameLayerIdx = i;
+                        strncpy(renameLayerBuf, l.name.c_str(), sizeof(renameLayerBuf));
+                    }
+                    if (ImGui::MenuItem("Duplicate")) {
+                        scene.pushHistoryState();
+                        stack.duplicateLayer(i);
+                        selectedMesh->updateAfterLayerBake();
+                    }
+                    const char* mergeLabel = (i == 0) ? "Merge to Base" : "Merge Down";
+                    if (ImGui::MenuItem(mergeLabel)) {
+                        scene.pushHistoryState();
+                        stack.mergeDown(i, &selectedMesh->verts);
+                        selectedMesh->updateAfterLayerBake();
+                    }
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Delete")) {
+                        scene.pushHistoryState();
+                        stack.removeLayer(i);
+                        selectedMesh->updateAfterLayerBake();
+                    }
+                    ImGui::EndPopup();
+                }
+
+                ImGui::PopID();
             }
+
+            // Always render Base Layer at the bottom of the stack
+            ImGui::PushID(-1000);
+            bool isBaseActive = (stack.getActiveIdx() == -1);
+
+            // Base Visibility icon (always visible)
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.9f, 0.9f, 1.0f));
+            ImGui::Button(ICON_LC_EYE, ImVec2(26, 24));
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Base Mesh (Always Visible)");
+
+            ImGui::SameLine();
+
+            // Base Layer Name
+            if (isBaseActive) ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.20f, 0.45f, 0.70f, 0.8f));
+            if (ImGui::Selectable("Base", isBaseActive, 0, ImVec2(75, 24))) {
+                stack.setActiveIdx(-1);
+            }
+            if (isBaseActive) ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Base Mesh Layer (Click to select base mesh)");
+
+            ImGui::SameLine();
+
+            // Base Intensity indicator
+            ImGui::SetNextItemWidth(85.0f);
+            ImGui::TextDisabled("  (Base)");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Base Mesh Layer");
+
+            ImGui::SameLine();
+
+            // Context menu button for Base (disabled)
+            ImGui::BeginDisabled();
+            ImGui::Button(ICON_LC_MORE_VERTICAL "##menuBase", ImVec2(26, 24));
+            ImGui::EndDisabled();
+
+            ImGui::PopID();
         }
         ImGui::End();
     }

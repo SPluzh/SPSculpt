@@ -35,7 +35,7 @@ public:
     int getActiveIdx() const { return m_activeIdx; }
     void setActiveIdx(int idx) {
         if (m_layers.empty()) m_activeIdx = -1;
-        else m_activeIdx = std::clamp(idx, 0, (int)m_layers.size() - 1);
+        else m_activeIdx = std::clamp(idx, -1, (int)m_layers.size() - 1);
     }
     Layer* getActive() {
         if (m_activeIdx >= 0 && m_activeIdx < (int)m_layers.size()) {

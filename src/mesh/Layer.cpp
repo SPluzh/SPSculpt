@@ -24,7 +24,7 @@ void LayerStack::removeLayer(int idx) {
     if (m_layers.empty()) {
         m_activeIdx = -1;
     } else {
-        m_activeIdx = std::clamp(m_activeIdx, 0, (int)m_layers.size() - 1);
+        m_activeIdx = std::clamp(m_activeIdx, -1, (int)m_layers.size() - 1);
     }
 }
 
@@ -77,12 +77,9 @@ void LayerStack::mergeDown(int idx, std::vector<float>* outMeshVerts) {
 
         removeLayer(0);
         if (m_layers.empty()) {
-            m_baseVerts.clear();
-            m_baseColors.clear();
-            m_baseMaterials.clear();
             m_activeIdx = -1;
         } else {
-            m_activeIdx = 0;
+            m_activeIdx = std::clamp(m_activeIdx, -1, (int)m_layers.size() - 1);
         }
         return;
     }
