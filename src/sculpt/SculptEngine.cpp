@@ -512,8 +512,8 @@ bool computeAreaNormalAndCenter(
 }
 
 inline float getFallOff(float dist, float focalShift, bool useAccuCurve, const float* accuCurveLut) {
+    if (dist >= 1.0f) return 0.0f;
     if (useAccuCurve && accuCurveLut) {
-        if (dist >= 1.0f) return 0.0f;
         float floatIndex = dist * 255.0f;
         if (floatIndex > 254.0f) floatIndex = 254.0f;
         int index = static_cast<int>(floatIndex);
@@ -595,7 +595,8 @@ inline float getMoveFallOff(float dist, float focalShift, bool useAccuCurve, con
 }
 
 inline float getElasticFallOff(float dist, float focalShift, bool useAccuCurve, const float* accuCurveLut, float elasticity) {
-    float baseFalloff = getFallOff(dist, focalShift, useAccuCurve, accuCurveLut);
+    if (dist >= 1.0f) return 0.0f;
+    float baseFalloff = getMoveFallOff(dist, focalShift, useAccuCurve, accuCurveLut);
     return std::pow(baseFalloff, elasticity);
 }
 
@@ -1061,6 +1062,10 @@ int strokeElastic(
     bool useAccuCurve, const float* accuCurveLut
 ) {
 
+    if (radius <= 1e-7f || nbIVerts <= 0 || !verts || !vertProxy || !materials || !iVerts) {
+        return 0;
+    }
+
     const float radiusSq = radius * radius;
     const float eps = radius;
     const float eps2 = radiusSq;
@@ -1069,6 +1074,7 @@ int strokeElastic(
     float a = 1.0f;
     float b = 3.0f - 4.0f * nu;
     float S = (1.5f * a - b) / eps;
+    if (std::abs(S) < 1e-7f) S = 1.0f;
 
     #pragma omp parallel for schedule(static) if(nbIVerts > 1000)
     for (int i = 0; i < nbIVerts; ++i) {
@@ -1089,7 +1095,16 @@ int strokeElastic(
         float dz = vz - cz;
 
         float r2 = dx * dx + dy * dy + dz * dz;
+        if (r2 >= radiusSq) {
+            continue;
+        }
+
         float r = std::sqrt(r2);
+        float dist = r / radius;
+        if (dist >= 1.0f) {
+            continue;
+        }
+
         float r_eps = std::sqrt(r2 + eps2);
         float r_eps3 = r_eps * r_eps * r_eps;
 
@@ -1102,7 +1117,6 @@ int strokeElastic(
         float uy = k1 * diry + k2 * dot_r_f * dy;
         float uz = k1 * dirz + k2 * dot_r_f * dz;
 
-        float dist = r / radius;
         float fallOff = getElasticFallOff(dist, focalShift, useAccuCurve, accuCurveLut, elasticity);
         float alphaVal = getAlphaVal(
             vx, vy, vz,
@@ -1113,7 +1127,7 @@ int strokeElastic(
         );
         fallOff *= matVal * alphaVal;
 
-        if (fallOff == 0.0f) {
+        if (fallOff <= 0.0f) {
             continue;
         }
 

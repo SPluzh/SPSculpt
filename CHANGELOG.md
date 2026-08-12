@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.4]
+- **Sculpt Engine**: Fixed bounds checking in `strokeElastic`, `getFallOff`, and `getElasticFallOff` to prevent vertices outside the brush radius from exploding to extreme coordinates and corrupting mesh topology.
+- **Brushes**: Upgraded Elastic Brush falloff profile to use `getMoveFallOff` (`base = 1.0 - dist * dist`), ensuring smooth, continuous decay from brush center to border and responsive control via Elasticity and Focal Shift parameters.
+
 ## [1.4.3]
 - **Trim Tool**: Implemented exact screen-space edge splitting along the 2D lasso contour, eliminating stair-stepped jagged edges ("края лесенкой") and inaccurate face removal ("обрезается чтото лишнее").
 - **Trim Tool**: Added topology hole filling (capping) by extracting directed boundary loops of cut edges and generating fan cap geometry with Newell's normal calculation ("дырка не закрыта").
