@@ -4657,7 +4657,8 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         ImGui::SameLine(0.0f, 0.0f);
 
         // Brush Settings Panel Toggle Button
-        if (m_showSculptingPanel) {
+        bool isSculptingPanelActive = m_showSculptingPanel;
+        if (isSculptingPanelActive) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
@@ -4670,7 +4671,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::SetTooltip("Brush & Sculpting Settings Panel");
         }
 
-        if (m_showSculptingPanel) {
+        if (isSculptingPanelActive) {
             ImGui::PopStyleColor(3);
         }
 
@@ -4709,7 +4710,8 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         }
 
         // Scene Outliner Button (Below Menu)
-        if (m_showScenePanel) {
+        bool isScenePanelActive = m_showScenePanel;
+        if (isScenePanelActive) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
@@ -4720,7 +4722,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scene Outliner");
 
-        if (m_showScenePanel) {
+        if (isScenePanelActive) {
             ImGui::PopStyleColor(3);
         }
 
