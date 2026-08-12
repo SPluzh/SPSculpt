@@ -4171,6 +4171,11 @@ bool GuiManager::saveSettings(IniFile& ini) {
     ini.setBool(genSec, "fpsLimitEnabled", m_fpsLimitEnabled);
     ini.setInt(genSec, "fpsLimit", m_fpsLimit);
 
+    std::string remeshSec = "Remesh";
+    ini.setInt(remeshSec, "resolution", m_remeshResolution);
+    ini.setBool(remeshSec, "keepPolyGroups", m_remeshKeepPolyGroups);
+    ini.setBool(remeshSec, "alignSymmetry", m_remeshAlignSymmetry);
+
     std::string winSec = "Window";
     ini.setInt(winSec, "width", m_winWidth);
     ini.setInt(winSec, "height", m_winHeight);
@@ -4234,6 +4239,17 @@ bool GuiManager::loadSettings(const IniFile& ini) {
             if (m_fpsLimit < 15) m_fpsLimit = 15;
             if (m_fpsLimit > 240) m_fpsLimit = 240;
         }
+    }
+
+    std::string remeshSec = "Remesh";
+    if (ini.hasSection(remeshSec)) {
+        if (ini.hasKey(remeshSec, "resolution")) m_remeshResolution = ini.getInt(remeshSec, "resolution", 150);
+        if (ini.hasKey(remeshSec, "keepPolyGroups")) m_remeshKeepPolyGroups = ini.getBool(remeshSec, "keepPolyGroups");
+        if (ini.hasKey(remeshSec, "alignSymmetry")) m_remeshAlignSymmetry = ini.getBool(remeshSec, "alignSymmetry");
+    } else if (ini.hasSection("GuiGeneral")) {
+        if (ini.hasKey("GuiGeneral", "remeshAlignSymmetry")) m_remeshAlignSymmetry = ini.getBool("GuiGeneral", "remeshAlignSymmetry");
+        if (ini.hasKey("GuiGeneral", "remeshResolution")) m_remeshResolution = ini.getInt("GuiGeneral", "remeshResolution", 150);
+        if (ini.hasKey("GuiGeneral", "remeshKeepPolyGroups")) m_remeshKeepPolyGroups = ini.getBool("GuiGeneral", "remeshKeepPolyGroups");
     }
 
     std::string winSec = "Window";
