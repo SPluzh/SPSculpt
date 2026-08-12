@@ -12,6 +12,8 @@ struct Layer {
 
     // Per-vertex displacement from base pose (nbVerts * 3 floats)
     std::vector<float> deltaVerts;
+    std::vector<float> deltaColors;     // RGB delta (nbVerts * 3)
+    std::vector<float> deltaMaterials;  // roughness/metalness/mask delta (nbVerts * 3)
 
     Layer() {
         static uint32_t s_id = 0;
@@ -66,10 +68,21 @@ public:
     }
 
     void bake(const std::vector<float>& baseVerts, std::vector<float>& outVerts) const;
+    void bakeColors(const std::vector<float>& baseColors, std::vector<float>& outColors) const;
+    void bakeColorsExcept(int skipIdx, const std::vector<float>& baseColors, std::vector<float>& outColors) const;
+    void bakeMaterials(const std::vector<float>& baseMaterials, std::vector<float>& outMaterials) const;
+    void bakeMaterialsExcept(int skipIdx, const std::vector<float>& baseMaterials, std::vector<float>& outMaterials) const;
 
     void initBase(const std::vector<float>& currentVerts);
+    void initBaseColors(const std::vector<float>& currentColors);
+    void initBaseMaterials(const std::vector<float>& currentMaterials);
+
     const std::vector<float>& getBase() const { return m_baseVerts; }
     std::vector<float>& getBase() { return m_baseVerts; }
+    const std::vector<float>& getBaseColors() const { return m_baseColors; }
+    std::vector<float>& getBaseColors() { return m_baseColors; }
+    const std::vector<float>& getBaseMaterials() const { return m_baseMaterials; }
+    std::vector<float>& getBaseMaterials() { return m_baseMaterials; }
     bool hasBase() const { return !m_baseVerts.empty(); }
 
     void onRemesh(const std::vector<float>& newVerts);
@@ -78,5 +91,7 @@ public:
 private:
     std::vector<Layer> m_layers;
     std::vector<float> m_baseVerts;
+    std::vector<float> m_baseColors;
+    std::vector<float> m_baseMaterials;
     int m_activeIdx = -1;
 };

@@ -1106,6 +1106,56 @@ int SculptManager::doStrokePass(
         }
     }
 
+    bool isLayerPaint = mesh && mesh->isLayerActive() && activeBrush == BRUSH_PAINT;
+    if (isLayerPaint && deformedCount > 0 && mesh) {
+        Layer* layer = mesh->layerStack.getActive();
+        if (layer) {
+            int activeIdx = mesh->layerStack.getActiveIdx();
+            size_t nb3 = (size_t)mesh->nbVerts * 3;
+            const auto& settings = getCurrentSettings();
+
+            if (settings.writeAlbedo && !mesh->layerStack.getBaseColors().empty()) {
+                if (layer->deltaColors.size() != nb3) {
+                    layer->deltaColors.assign(nb3, 0.0f);
+                }
+
+                float li = layer->intensity;
+                float invLI = (std::abs(li) > 1e-4f) ? 1.0f / li : 0.0f;
+                std::vector<float> refC;
+                mesh->layerStack.bakeColorsExcept(activeIdx, mesh->layerStack.getBaseColors(), refC);
+
+                for (int i = 0; i < deformedCount; ++i) {
+                    uint32_t v = pickedVertices[i];
+                    if (v * 3 + 2 >= mesh->colors.size() || v * 3 + 2 >= refC.size()) continue;
+                    layer->deltaColors[v * 3 + 0] = std::clamp((mesh->colors[v * 3 + 0] - refC[v * 3 + 0]) * invLI, -1.0f, 1.0f);
+                    layer->deltaColors[v * 3 + 1] = std::clamp((mesh->colors[v * 3 + 1] - refC[v * 3 + 1]) * invLI, -1.0f, 1.0f);
+                    layer->deltaColors[v * 3 + 2] = std::clamp((mesh->colors[v * 3 + 2] - refC[v * 3 + 2]) * invLI, -1.0f, 1.0f);
+                }
+                mesh->isColorDirty = true;
+            }
+
+            if ((settings.writeRoughness || settings.writeMetalness) && !mesh->layerStack.getBaseMaterials().empty()) {
+                if (layer->deltaMaterials.size() != nb3) {
+                    layer->deltaMaterials.assign(nb3, 0.0f);
+                }
+
+                float li = layer->intensity;
+                float invLI = (std::abs(li) > 1e-4f) ? 1.0f / li : 0.0f;
+                std::vector<float> refM;
+                mesh->layerStack.bakeMaterialsExcept(activeIdx, mesh->layerStack.getBaseMaterials(), refM);
+
+                for (int i = 0; i < deformedCount; ++i) {
+                    uint32_t v = pickedVertices[i];
+                    if (v * 3 + 2 >= mesh->materials.size() || v * 3 + 2 >= refM.size()) continue;
+                    layer->deltaMaterials[v * 3 + 0] = std::clamp((mesh->materials[v * 3 + 0] - refM[v * 3 + 0]) * invLI, -1.0f, 1.0f);
+                    layer->deltaMaterials[v * 3 + 1] = std::clamp((mesh->materials[v * 3 + 1] - refM[v * 3 + 1]) * invLI, -1.0f, 1.0f);
+                    layer->deltaMaterials[v * 3 + 2] = std::clamp((mesh->materials[v * 3 + 2] - refM[v * 3 + 2]) * invLI, -1.0f, 1.0f);
+                }
+                mesh->isMaterialDirty = true;
+            }
+        }
+    }
+
     return deformedCount;
 }
 

@@ -57,8 +57,8 @@ public:
 std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& scene, const AngleRenderer& renderer, const SculptManager& sculpt) {
     BinaryWriter writer;
     
-    // Version 7
-    writer.writeU32(7);
+    // Version 8
+    writer.writeU32(8);
 
     // Misc settings
     writer.writeU32(renderer.getShowGrid() ? 1 : 0);
@@ -159,6 +159,28 @@ std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& sc
             writer.writeU32(nbDelta);
             if (nbDelta > 0) {
                 writer.writeF32Array(layer.deltaVerts.data(), nbDelta);
+            }
+            uint32_t nbDeltaC = static_cast<uint32_t>(layer.deltaColors.size());
+            writer.writeU32(nbDeltaC);
+            if (nbDeltaC > 0) {
+                writer.writeF32Array(layer.deltaColors.data(), nbDeltaC);
+            }
+            uint32_t nbDeltaM = static_cast<uint32_t>(layer.deltaMaterials.size());
+            writer.writeU32(nbDeltaM);
+            if (nbDeltaM > 0) {
+                writer.writeF32Array(layer.deltaMaterials.data(), nbDeltaM);
+            }
+        }
+        if (nbLayers > 0) {
+            uint32_t nbBaseC = static_cast<uint32_t>(layerStack.getBaseColors().size());
+            writer.writeU32(nbBaseC);
+            if (nbBaseC > 0) {
+                writer.writeF32Array(layerStack.getBaseColors().data(), nbBaseC);
+            }
+            uint32_t nbBaseM = static_cast<uint32_t>(layerStack.getBaseMaterials().size());
+            writer.writeU32(nbBaseM);
+            if (nbBaseM > 0) {
+                writer.writeF32Array(layerStack.getBaseMaterials().data(), nbBaseM);
             }
         }
     }

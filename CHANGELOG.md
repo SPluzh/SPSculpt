@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.2]
+- **Sculpt Layers / Polypaint**: Extended the sculpt layer system (`Layer`, `LayerStack`) to fully support per-vertex Polypaint (RGB color and roughness/metalness material attributes).
+- **Sculpt Layers / Polypaint**: Implemented non-destructive paint delta tracking (`deltaColors`, `deltaMaterials`) relative to active reference layer states, enabling real-time paint stroke isolation, layer visibility toggles, and intensity slider scaling for polypaint.
+- **Sculpt Layers / Polypaint**: Updated `SculptManager::doStrokePass` to intercept `BRUSH_PAINT` operations when an active sculpt layer is selected, storing isolated color and material deltas per vertex.
+- **Sculpt Layers / Polypaint**: Enhanced the "Sculpt Layers" panel UI with a live color preview chip (`ColorButton`) for each layer, providing immediate visual feedback of polypaint modifications.
+- **Sculpt Layers / Polypaint**: Updated layer operations (`bakeColors`, `bakeMaterials`, `mergeDown`, `onRemesh`, `restoreState`) and bumped SGL binary format to Version 8 to persist polypaint deltas and base attribute buffers cleanly across sessions and undo/redo states.
+
 ## [1.5.1]
 - **Outliner / Previews**: Integrated deferred, frame-budgeted offscreen rendering for object preview thumbnails in the Scene Outliner panel (`AngleRenderer::drawMeshForThumbnail`).
 - **Outliner / Previews**: Added single-shared-depth buffer framebuffer caching (`MeshThumbnail` with `m_thumbSharedDepth`), caching 48x48 textures and updating at most 1 thumbnail per frame to guarantee zero FPS drop during complex scene editing.

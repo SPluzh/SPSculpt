@@ -1728,6 +1728,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 if (selectedMesh) {
                     if (!selectedMesh->layerStack.hasBase()) {
                         selectedMesh->layerStack.initBase(selectedMesh->verts);
+                        selectedMesh->layerStack.initBaseColors(selectedMesh->colors);
+                        selectedMesh->layerStack.initBaseMaterials(selectedMesh->materials);
                     }
                     selectedMesh->layerStack.addLayer(selectedMesh->nbVerts, "Layer " + std::to_string(selectedMesh->layerStack.count() + 1));
                 }
@@ -1741,7 +1743,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     selectedMesh = scene.getSelected();
                     if (selectedMesh) {
                         selectedMesh->layerStack.removeLayer(selectedMesh->layerStack.getActiveIdx());
-                        selectedMesh->layerStack.bake(selectedMesh->layerStack.getBase(), selectedMesh->verts);
                         selectedMesh->updateAfterLayerBake();
                     }
                 }
@@ -1773,7 +1774,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     }
                     if (ImGui::Button(visIcon, ImVec2(26, 24))) {
                         l.visible = !l.visible;
-                        stack.bake(stack.getBase(), selectedMesh->verts);
                         selectedMesh->updateAfterLayerBake();
                     }
                     ImGui::PopStyleColor();
@@ -1781,9 +1781,51 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
                     ImGui::SameLine();
 
+                    // Color Chip indicator (only shown when layer contains polypaint modifications)
+                    bool hasPaint = false;
+                    ImVec4 chipColor(0.0f, 0.0f, 0.0f, 0.0f);
+                    if (!l.deltaColors.empty()) {
+                        double r = 0, g = 0, b = 0;
+                        size_t paintedCount = 0;
+                        size_t n = l.deltaColors.size() / 3;
+                        const auto& baseC = stack.getBaseColors();
+
+                        for (size_t k = 0; k < n; ++k) {
+                            float dx = l.deltaColors[k * 3 + 0];
+                            float dy = l.deltaColors[k * 3 + 1];
+                            float dz = l.deltaColors[k * 3 + 2];
+                            if (std::abs(dx) > 1e-3f || std::abs(dy) > 1e-3f || std::abs(dz) > 1e-3f) {
+                                float baseR = (k * 3 + 2 < baseC.size()) ? baseC[k * 3 + 0] : 1.0f;
+                                float baseG = (k * 3 + 2 < baseC.size()) ? baseC[k * 3 + 1] : 1.0f;
+                                float baseB = (k * 3 + 2 < baseC.size()) ? baseC[k * 3 + 2] : 1.0f;
+                                r += std::clamp(baseR + dx * l.intensity, 0.0f, 1.0f);
+                                g += std::clamp(baseG + dy * l.intensity, 0.0f, 1.0f);
+                                b += std::clamp(baseB + dz * l.intensity, 0.0f, 1.0f);
+                                paintedCount++;
+                            }
+                        }
+                        if (paintedCount > 0) {
+                            hasPaint = true;
+                            chipColor = ImVec4(
+                                (float)(r / paintedCount),
+                                (float)(g / paintedCount),
+                                (float)(b / paintedCount),
+                                1.0f
+                            );
+                        }
+                    }
+
+                    if (hasPaint) {
+                        ImGui::ColorButton("##layerColor", chipColor,
+                            ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoBorder,
+                            ImVec2(14, 14));
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Polypaint Color Preview");
+                        ImGui::SameLine();
+                    }
+
                     // 2. Layer Name (Double click to rename)
                     if (renameLayerIdx == i) {
-                        ImGui::SetNextItemWidth(90.0f);
+                        ImGui::SetNextItemWidth(75.0f);
                         if (ImGui::InputText("##renameLayer", renameLayerBuf, sizeof(renameLayerBuf), ImGuiInputTextFlags_EnterReturnsTrue)) {
                             l.name = renameLayerBuf;
                             renameLayerIdx = -1;
@@ -1795,7 +1837,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     } else {
                         if (isActive) ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.20f, 0.45f, 0.70f, 0.8f));
                         bool selected = isActive;
-                        if (ImGui::Selectable(l.name.c_str(), selected, 0, ImVec2(90, 24))) {
+                        if (ImGui::Selectable(l.name.c_str(), selected, 0, ImVec2(75, 24))) {
                             stack.setActiveIdx(i);
                         }
                         if (isActive) ImGui::PopStyleColor();
@@ -1814,7 +1856,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     ImGui::SetNextItemWidth(85.0f);
                     if (ImGui::SliderFloat("##intensity", &intensityPct, 0.0f, 100.0f, "%.0f%%")) {
                         l.intensity = intensityPct * 0.01f;
-                        stack.bake(stack.getBase(), selectedMesh->verts);
                         selectedMesh->updateAfterLayerBake();
                     }
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Layer Intensity (0-100%)");
@@ -1835,23 +1876,18 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         if (ImGui::MenuItem("Duplicate")) {
                             scene.pushHistoryState();
                             stack.duplicateLayer(i);
-                            stack.bake(stack.getBase(), selectedMesh->verts);
                             selectedMesh->updateAfterLayerBake();
                         }
                         const char* mergeLabel = (i == 0) ? "Merge to Base" : "Merge Down";
                         if (ImGui::MenuItem(mergeLabel)) {
                             scene.pushHistoryState();
                             stack.mergeDown(i, &selectedMesh->verts);
-                            if (stack.hasBase()) {
-                                stack.bake(stack.getBase(), selectedMesh->verts);
-                            }
                             selectedMesh->updateAfterLayerBake();
                         }
                         ImGui::Separator();
                         if (ImGui::MenuItem("Delete")) {
                             scene.pushHistoryState();
                             stack.removeLayer(i);
-                            stack.bake(stack.getBase(), selectedMesh->verts);
                             selectedMesh->updateAfterLayerBake();
                         }
                         ImGui::EndPopup();

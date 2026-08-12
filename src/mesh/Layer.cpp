@@ -11,6 +11,8 @@ int LayerStack::addLayer(int nbVerts, const std::string& name) {
         layer.name = "Layer " + std::to_string(m_layers.size() + 1);
     }
     layer.deltaVerts.assign(nbVerts * 3, 0.0f);
+    layer.deltaColors.assign(nbVerts * 3, 0.0f);
+    layer.deltaMaterials.assign(nbVerts * 3, 0.0f);
     m_layers.push_back(layer);
     m_activeIdx = (int)m_layers.size() - 1;
     return m_activeIdx;
@@ -60,9 +62,24 @@ void LayerStack::mergeDown(int idx, std::vector<float>* outMeshVerts) {
             *outMeshVerts = m_baseVerts;
         }
 
+        if (!m_baseColors.empty()) {
+            size_t countC = std::min(m_baseColors.size(), source.deltaColors.size());
+            for (size_t i = 0; i < countC; ++i) {
+                m_baseColors[i] = std::clamp(m_baseColors[i] + source.deltaColors[i] * source.intensity, 0.0f, 1.0f);
+            }
+        }
+        if (!m_baseMaterials.empty()) {
+            size_t countM = std::min(m_baseMaterials.size(), source.deltaMaterials.size());
+            for (size_t i = 0; i < countM; ++i) {
+                m_baseMaterials[i] = std::clamp(m_baseMaterials[i] + source.deltaMaterials[i] * source.intensity, 0.0f, 1.0f);
+            }
+        }
+
         removeLayer(0);
         if (m_layers.empty()) {
             m_baseVerts.clear();
+            m_baseColors.clear();
+            m_baseMaterials.clear();
             m_activeIdx = -1;
         } else {
             m_activeIdx = 0;
@@ -76,6 +93,22 @@ void LayerStack::mergeDown(int idx, std::vector<float>* outMeshVerts) {
     size_t count = std::min(target.deltaVerts.size(), source.deltaVerts.size());
     for (size_t i = 0; i < count; ++i) {
         target.deltaVerts[i] += source.deltaVerts[i] * source.intensity;
+    }
+
+    if (target.deltaColors.size() != source.deltaColors.size()) {
+        target.deltaColors.resize(source.deltaColors.size(), 0.0f);
+    }
+    size_t countC = std::min(target.deltaColors.size(), source.deltaColors.size());
+    for (size_t i = 0; i < countC; ++i) {
+        target.deltaColors[i] += source.deltaColors[i] * source.intensity;
+    }
+
+    if (target.deltaMaterials.size() != source.deltaMaterials.size()) {
+        target.deltaMaterials.resize(source.deltaMaterials.size(), 0.0f);
+    }
+    size_t countM = std::min(target.deltaMaterials.size(), source.deltaMaterials.size());
+    for (size_t i = 0; i < countM; ++i) {
+        target.deltaMaterials[i] += source.deltaMaterials[i] * source.intensity;
     }
 
     removeLayer(idx);
@@ -106,19 +139,69 @@ void LayerStack::bake(const std::vector<float>& baseVerts, std::vector<float>& o
     sculpt_log_lvl(LogLevel::Debug, "[LayerStack bake] Baked %d layers into mesh (%zu floats).\n", activeLayersCount, nbVerts3);
 }
 
+void LayerStack::bakeColors(const std::vector<float>& baseColors, std::vector<float>& outColors) const {
+    bakeColorsExcept(-1, baseColors, outColors);
+}
+
+void LayerStack::bakeColorsExcept(int skipIdx, const std::vector<float>& baseColors, std::vector<float>& outColors) const {
+    if (baseColors.empty()) return;
+    outColors = baseColors;
+    for (int idx = 0; idx < (int)m_layers.size(); ++idx) {
+        if (idx == skipIdx) continue;
+        const auto& layer = m_layers[idx];
+        if (!layer.visible || std::abs(layer.intensity) <= 1e-6f) continue;
+        size_t count = std::min(outColors.size(), layer.deltaColors.size());
+        for (size_t i = 0; i < count; ++i) {
+            outColors[i] = std::clamp(outColors[i] + layer.deltaColors[i] * layer.intensity, 0.0f, 1.0f);
+        }
+    }
+}
+
+void LayerStack::bakeMaterials(const std::vector<float>& baseMaterials, std::vector<float>& outMaterials) const {
+    bakeMaterialsExcept(-1, baseMaterials, outMaterials);
+}
+
+void LayerStack::bakeMaterialsExcept(int skipIdx, const std::vector<float>& baseMaterials, std::vector<float>& outMaterials) const {
+    if (baseMaterials.empty()) return;
+    outMaterials = baseMaterials;
+    for (int idx = 0; idx < (int)m_layers.size(); ++idx) {
+        if (idx == skipIdx) continue;
+        const auto& layer = m_layers[idx];
+        if (!layer.visible || std::abs(layer.intensity) <= 1e-6f) continue;
+        size_t count = std::min(outMaterials.size(), layer.deltaMaterials.size());
+        for (size_t i = 0; i < count; ++i) {
+            outMaterials[i] = std::clamp(outMaterials[i] + layer.deltaMaterials[i] * layer.intensity, 0.0f, 1.0f);
+        }
+    }
+}
+
 void LayerStack::initBase(const std::vector<float>& currentVerts) {
     m_baseVerts = currentVerts;
 }
 
+void LayerStack::initBaseColors(const std::vector<float>& currentColors) {
+    m_baseColors = currentColors;
+}
+
+void LayerStack::initBaseMaterials(const std::vector<float>& currentMaterials) {
+    m_baseMaterials = currentMaterials;
+}
+
 void LayerStack::onRemesh(const std::vector<float>& newVerts) {
     m_baseVerts = newVerts;
+    m_baseColors.assign(newVerts.size(), 1.0f);
+    m_baseMaterials.assign(newVerts.size(), 0.0f);
     for (auto& layer : m_layers) {
         layer.deltaVerts.assign(newVerts.size(), 0.0f);
+        layer.deltaColors.assign(newVerts.size(), 0.0f);
+        layer.deltaMaterials.assign(newVerts.size(), 0.0f);
     }
 }
 
 void LayerStack::clear() {
     m_layers.clear();
     m_baseVerts.clear();
+    m_baseColors.clear();
+    m_baseMaterials.clear();
     m_activeIdx = -1;
 }

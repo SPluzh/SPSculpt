@@ -277,9 +277,20 @@ void Mesh::postInit() {
 }
 
 void Mesh::updateAfterLayerBake() {
+    if (layerStack.hasBase()) {
+        layerStack.bake(layerStack.getBase(), verts);
+        if (!layerStack.getBaseColors().empty()) {
+            layerStack.bakeColors(layerStack.getBaseColors(), colors);
+        }
+        if (!layerStack.getBaseMaterials().empty()) {
+            layerStack.bakeMaterials(layerStack.getBaseMaterials(), materials);
+        }
+    }
     vertProxy = verts;
     isDirty = true;
     isVertexDirty = true;
+    isColorDirty = true;
+    isMaterialDirty = true;
     if (nbVerts > 0) {
         dirtyVertMin = 0;
         dirtyVertMax = static_cast<uint32_t>(nbVerts - 1);

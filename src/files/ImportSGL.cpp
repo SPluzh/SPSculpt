@@ -67,7 +67,7 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
 
     BinaryReader reader(buffer.data(), buffer.size());
     uint32_t version = reader.readU32();
-    if (version > 7) {
+    if (version > 8) {
         std::cerr << "Unsupported SGL version: " << version << std::endl;
         return {};
     }
@@ -233,6 +233,20 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
                     deltas.resize(nbDelta);
                     reader.readF32Array(deltas.data(), nbDelta);
                 }
+                std::vector<float> deltaC;
+                std::vector<float> deltaM;
+                if (version >= 8) {
+                    uint32_t nbC = reader.readU32();
+                    if (nbC > 0) {
+                        deltaC.resize(nbC);
+                        reader.readF32Array(deltaC.data(), nbC);
+                    }
+                    uint32_t nbM = reader.readU32();
+                    if (nbM > 0) {
+                        deltaM.resize(nbM);
+                        reader.readF32Array(deltaM.data(), nbM);
+                    }
+                }
                 mesh->layerStack.addLayer(mesh->nbVerts, lName);
                 Layer* added = mesh->layerStack.getActive();
                 if (added) {
@@ -241,7 +255,34 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
                     if (!deltas.empty()) {
                         added->deltaVerts = std::move(deltas);
                     }
+                    if (!deltaC.empty()) {
+                        added->deltaColors = std::move(deltaC);
+                    }
+                    if (!deltaM.empty()) {
+                        added->deltaMaterials = std::move(deltaM);
+                    }
                 }
+            }
+            if (version >= 8 && nbLayers > 0) {
+                uint32_t nbBaseC = reader.readU32();
+                if (nbBaseC > 0) {
+                    std::vector<float> baseC(nbBaseC);
+                    reader.readF32Array(baseC.data(), nbBaseC);
+                    mesh->layerStack.initBaseColors(baseC);
+                } else {
+                    mesh->layerStack.initBaseColors(mesh->colors);
+                }
+                uint32_t nbBaseM = reader.readU32();
+                if (nbBaseM > 0) {
+                    std::vector<float> baseM(nbBaseM);
+                    reader.readF32Array(baseM.data(), nbBaseM);
+                    mesh->layerStack.initBaseMaterials(baseM);
+                } else {
+                    mesh->layerStack.initBaseMaterials(mesh->materials);
+                }
+            } else if (nbLayers > 0) {
+                mesh->layerStack.initBaseColors(mesh->colors);
+                mesh->layerStack.initBaseMaterials(mesh->materials);
             }
             mesh->layerStack.setActiveIdx(activeIdx);
         }

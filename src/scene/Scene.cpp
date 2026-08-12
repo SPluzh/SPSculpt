@@ -163,6 +163,9 @@ void Scene::restoreState(const HistoryState& hs) {
         m->visibleV2 = ms.visibleV2;
 
         m->postInit();
+        if (m->hasLayers()) {
+            m->updateAfterLayerBake();
+        }
         m->isDirty = true;
         m_meshes.push_back(m);
     }
