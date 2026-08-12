@@ -25,6 +25,8 @@ struct MeshState {
 
     glm::mat4 matrix = glm::mat4(1.0f);
 
+    LayerStack layerStack;
+
     uint32_t id = 0;
     std::string outlinerName;
     bool visibleV1 = true;

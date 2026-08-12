@@ -465,8 +465,9 @@ private:
     std::vector<uint32_t> m_pickedVerticesCache;
     std::vector<uint32_t> m_allAffectedVertsCache;
 
-    // Cache for computeAreaNormalAndCenter & inverse mesh matrix
+    // Cache for computeAreaNormalAndCenter & inverse mesh matrix & stroke start layer deltas
     bool m_firstStrokeFrame = false;
+    std::vector<float> m_strokeStartLayerDeltas;
     glm::vec3 m_cachedAreaNormal{0.0f};
     glm::vec3 m_cachedAreaCenter{0.0f};
     glm::mat4 m_cachedInvMatrix{1.0f};

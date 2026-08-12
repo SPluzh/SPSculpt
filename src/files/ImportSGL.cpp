@@ -67,7 +67,7 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
 
     BinaryReader reader(buffer.data(), buffer.size());
     uint32_t version = reader.readU32();
-    if (version > 6) {
+    if (version > 7) {
         std::cerr << "Unsupported SGL version: " << version << std::endl;
         return {};
     }
@@ -209,6 +209,41 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
 
         if (!uv.empty() && !fuv.empty()) {
             mesh->initTexCoordsDataFromOBJData(uv, fuv);
+        }
+
+        if (version >= 7) {
+            uint32_t nbLayers = reader.readU32();
+            int32_t activeIdx = reader.readI32();
+            mesh->layerStack.clear();
+            if (nbLayers > 0) {
+                mesh->layerStack.initBase(mesh->verts);
+            }
+            for (uint32_t l = 0; l < nbLayers; ++l) {
+                uint32_t nameLen = reader.readU32();
+                std::vector<uint8_t> nameBytes(nameLen);
+                if (nameLen > 0) {
+                    reader.readBytes(nameBytes.data(), nameLen);
+                }
+                std::string lName(nameBytes.begin(), nameBytes.end());
+                bool lVis = (reader.readU32() != 0);
+                float lIntensity = reader.readF32();
+                uint32_t nbDelta = reader.readU32();
+                std::vector<float> deltas;
+                if (nbDelta > 0) {
+                    deltas.resize(nbDelta);
+                    reader.readF32Array(deltas.data(), nbDelta);
+                }
+                mesh->layerStack.addLayer(mesh->nbVerts, lName);
+                Layer* added = mesh->layerStack.getActive();
+                if (added) {
+                    added->visible = lVis;
+                    added->intensity = lIntensity;
+                    if (!deltas.empty()) {
+                        added->deltaVerts = std::move(deltas);
+                    }
+                }
+            }
+            mesh->layerStack.setActiveIdx(activeIdx);
         }
 
         // Compute topology

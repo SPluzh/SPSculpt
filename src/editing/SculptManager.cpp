@@ -298,6 +298,10 @@ SculptManager::SculptManager() {
     m_brushSettings[BRUSH_BRUSH].stampBlur = 0.0f;
     m_brushSettings[BRUSH_BRUSH].stampLockRotation = false;
     m_brushSettings[BRUSH_BRUSH].stampUseTilt = false;
+
+    m_brushSettings[BRUSH_DELETE_LAYER].radius = 50.0f;
+    m_brushSettings[BRUSH_DELETE_LAYER].intensity = 0.5f;
+    m_brushSettings[BRUSH_DELETE_LAYER].culling = true;
 }
 
 std::vector<glm::vec3> SculptManager::getActiveSymmetryScales() const {
@@ -340,6 +344,19 @@ int SculptManager::doStrokePass(
     bool isSymmetry,
     const glm::vec3& sScale
 ) {
+    std::vector<float> preVerts;
+    bool isLayerDeform = mesh && mesh->isLayerActive() && activeBrush != BRUSH_DELETE_LAYER &&
+                         activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_POLYGROUP;
+    if (isLayerDeform && !pickedVertices.empty()) {
+        preVerts.resize(pickedVertices.size() * 3);
+        for (size_t i = 0; i < pickedVertices.size(); ++i) {
+            uint32_t v = pickedVertices[i];
+            preVerts[i * 3 + 0] = mesh->verts[v * 3 + 0];
+            preVerts[i * 3 + 1] = mesh->verts[v * 3 + 1];
+            preVerts[i * 3 + 2] = mesh->verts[v * 3 + 2];
+        }
+    }
+
     int deformedCount = 0;
 
     switch (activeBrush) {
@@ -1006,8 +1023,87 @@ int SculptManager::doStrokePass(
             );
             break;
         }
+        case BRUSH_DELETE_LAYER: {
+            if (!mesh->isLayerActive()) break;
+            Layer* layer = mesh->layerStack.getActive();
+            if (!layer || !layer->visible) break;
+            if (layer->deltaVerts.size() != mesh->verts.size()) {
+                layer->deltaVerts.resize(mesh->verts.size(), 0.0f);
+            }
+            deformedCount = strokeDeleteLayer(
+                mesh->layerStack.getBase().data(),
+                layer->deltaVerts.data(),
+                mesh->verts.data(),
+                mesh->materials.data(),
+                pickedVertices.data(),
+                pickedVertices.size(),
+                currentIntersection.x, currentIntersection.y, currentIntersection.z,
+                localRadius, intensity,
+                layer->intensity,
+                getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
+                false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
+            );
+            break;
+        }
         default:
             break;
+    }
+
+    if (isLayerDeform && deformedCount > 0 && mesh) {
+        Layer* layer = mesh->layerStack.getActive();
+        if (layer) {
+            if (layer->deltaVerts.size() != mesh->verts.size()) {
+                sculpt_log_lvl(LogLevel::Warning, "[Layer WARNING] Layer '%s' deltaVerts size mismatch (%zu vs %zu). Resizing.\n",
+                               layer->name.c_str(), layer->deltaVerts.size(), mesh->verts.size());
+                layer->deltaVerts.resize(mesh->verts.size(), 0.0f);
+            }
+            if (m_firstStrokeFrame || m_strokeStartLayerDeltas.size() != layer->deltaVerts.size()) {
+                m_strokeStartLayerDeltas = layer->deltaVerts;
+            }
+
+            float layerIntensity = layer->intensity;
+            float invIntensity = 0.0f;
+            if (std::abs(layerIntensity) > 1e-4f) {
+                invIntensity = std::clamp(1.0f / layerIntensity, -100.0f, 100.0f);
+            }
+
+            float radius = getCurrentSettings().radius;
+            float maxStep = std::max(1.0f, radius * 2.0f);
+
+            bool isGrabBrush = (activeBrush == BRUSH_MOVE || activeBrush == BRUSH_DRAG || activeBrush == BRUSH_ELASTIC);
+
+            for (int i = 0; i < deformedCount; ++i) {
+                uint32_t v = pickedVertices[i];
+                if (v * 3 + 2 < mesh->verts.size() && v * 3 + 2 < layer->deltaVerts.size()) {
+                    float dx = (mesh->verts[v * 3 + 0] - mesh->vertProxy[v * 3 + 0]) * invIntensity;
+                    float dy = (mesh->verts[v * 3 + 1] - mesh->vertProxy[v * 3 + 1]) * invIntensity;
+                    float dz = (mesh->verts[v * 3 + 2] - mesh->vertProxy[v * 3 + 2]) * invIntensity;
+
+                    if (std::isnan(dx) || std::isnan(dy) || std::isnan(dz) ||
+                        std::isinf(dx) || std::isinf(dy) || std::isinf(dz)) {
+                        continue;
+                    }
+
+                    dx = std::clamp(dx, -maxStep, maxStep);
+                    dy = std::clamp(dy, -maxStep, maxStep);
+                    dz = std::clamp(dz, -maxStep, maxStep);
+
+                    if (isGrabBrush) {
+                        layer->deltaVerts[v * 3 + 0] = m_strokeStartLayerDeltas[v * 3 + 0] + dx;
+                        layer->deltaVerts[v * 3 + 1] = m_strokeStartLayerDeltas[v * 3 + 1] + dy;
+                        layer->deltaVerts[v * 3 + 2] = m_strokeStartLayerDeltas[v * 3 + 2] + dz;
+                    } else {
+                        layer->deltaVerts[v * 3 + 0] += dx;
+                        layer->deltaVerts[v * 3 + 1] += dy;
+                        layer->deltaVerts[v * 3 + 2] += dz;
+                    }
+
+                    mesh->verts[v * 3 + 0] = mesh->vertProxy[v * 3 + 0] + dx * layerIntensity;
+                    mesh->verts[v * 3 + 1] = mesh->vertProxy[v * 3 + 1] + dy * layerIntensity;
+                    mesh->verts[v * 3 + 2] = mesh->vertProxy[v * 3 + 2] + dz * layerIntensity;
+                }
+            }
+        }
     }
 
     return deformedCount;
@@ -1033,6 +1129,16 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     if (m_firstStrokeFrame) {
         m_cachedInvMatrix = glm::inverse(mesh->matrix);
         m_cachedCamWorldMatrix = glm::inverse(camera.getViewMatrix());
+        if (mesh && mesh->isLayerActive()) {
+            Layer* layer = mesh->layerStack.getActive();
+            if (layer) {
+                m_strokeStartLayerDeltas = layer->deltaVerts;
+            } else {
+                m_strokeStartLayerDeltas.clear();
+            }
+        } else {
+            m_strokeStartLayerDeltas.clear();
+        }
     }
     const glm::mat4& invMatrix = m_cachedInvMatrix;
 
@@ -1487,6 +1593,16 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             mesh->isFaceGroupDirty = true;
         } else {
             mesh->isVertexDirty = true;
+        }
+
+        if (!isGrabBrush && mesh->vertProxy.size() == mesh->verts.size()) {
+            for (uint32_t v : allAffectedVerts) {
+                if (v * 3 + 2 < mesh->verts.size()) {
+                    mesh->vertProxy[v * 3 + 0] = mesh->verts[v * 3 + 0];
+                    mesh->vertProxy[v * 3 + 1] = mesh->verts[v * 3 + 1];
+                    mesh->vertProxy[v * 3 + 2] = mesh->verts[v * 3 + 2];
+                }
+            }
         }
     }
 
@@ -2802,6 +2918,10 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 }
             } else {
                 g_undoManager.endSculptStroke(scene);
+                if (mesh && mesh->isLayerActive()) {
+                    mesh->layerStack.bake(mesh->layerStack.getBase(), mesh->verts);
+                    mesh->updateAfterLayerBake();
+                }
             }
         }
         m_cameraController.handleEvent(event, camera, scene.getMeshes());

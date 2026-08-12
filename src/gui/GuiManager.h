@@ -41,6 +41,7 @@ private:
     bool m_showRenderingPanel = true;
     bool m_showMaskingPanel = true;
     bool m_showMultiresPanel = true;
+    bool m_showLayersPanel = true;
     bool m_showZSpheresPanel = true;
     bool m_showReferenceImagesPanel = true;
     bool m_showGizmoCube = true;
@@ -210,6 +211,7 @@ public:
     void toggleRenderingPanel() { m_showPreferencesPanel = true; m_preferencesActiveTab = 2; }
     void toggleMaskingPanel() { m_showMaskingPanel = !m_showMaskingPanel; }
     void toggleMultiresPanel() { m_showMultiresPanel = !m_showMultiresPanel; }
+    void toggleLayersPanel() { m_showLayersPanel = !m_showLayersPanel; }
     void toggleZSpheresPanel() { m_showZSpheresPanel = !m_showZSpheresPanel; }
     void toggleReferenceImagesPanel() { m_showReferenceImagesPanel = !m_showReferenceImagesPanel; }
     void toggleGizmoCube() { m_showGizmoCube = !m_showGizmoCube; }

@@ -276,6 +276,41 @@ void Mesh::postInit() {
     );
 }
 
+void Mesh::updateAfterLayerBake() {
+    vertProxy = verts;
+    isDirty = true;
+    isVertexDirty = true;
+    if (nbVerts > 0) {
+        dirtyVertMin = 0;
+        dirtyVertMax = static_cast<uint32_t>(nbVerts - 1);
+    }
+    if (!vrfStartCount.empty() && !vertRingFace.empty() && faceNormals.size() == static_cast<size_t>(nbFaces * 3)) {
+        updateFaceNormalsAndBoxes(
+            verts.data(), nbVerts,
+            faces.data(), nbFaces,
+            nullptr, -1,
+            faceNormals.data(),
+            faceBoxes.data(),
+            faceCenters.data()
+        );
+        updateVertexNormals(
+            nullptr, -1, nbVerts,
+            vrfStartCount.data(),
+            vertRingFace.data(),
+            faceNormals.data(),
+            normals.data()
+        );
+        if (!faceCenters.empty() && !faceBoxes.empty()) {
+            octree.update(
+                verts.data(), nbVerts,
+                faces.data(), nbFaces,
+                faceBoxes.data(),
+                nullptr, -1
+            );
+        }
+    }
+}
+
 #include "scene/Camera.h"
 void Mesh::updateMatrices(const Camera& camera) {
     enMatrix = glm::transpose(glm::inverse(glm::mat3(editMatrix)));

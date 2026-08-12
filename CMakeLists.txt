@@ -72,6 +72,7 @@ add_executable(SPSculpt
     src/mesh/Octree.cpp
     src/mesh/NormalCalc.cpp
     src/mesh/Topology.cpp
+    src/mesh/Layer.cpp
     # sculpt algorithms
     src/sculpt/SculptEngine.cpp
     src/sculpt/Remesh.cpp

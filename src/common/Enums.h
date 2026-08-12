@@ -30,6 +30,7 @@ enum BrushType {
     BRUSH_POLYGROUP,
     BRUSH_CLIP_CURVE,
     BRUSH_TRIM,
+    BRUSH_DELETE_LAYER,
     BRUSH_COUNT
 };
 

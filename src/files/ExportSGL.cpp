@@ -57,8 +57,8 @@ public:
 std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& scene, const AngleRenderer& renderer, const SculptManager& sculpt) {
     BinaryWriter writer;
     
-    // Version 6
-    writer.writeU32(6);
+    // Version 7
+    writer.writeU32(7);
 
     // Misc settings
     writer.writeU32(renderer.getShowGrid() ? 1 : 0);
@@ -141,6 +141,25 @@ std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& sc
         writer.writeU32(nbFacesTexCoords);
         if (nbFacesTexCoords > 0) {
             writer.writeU32Array(mesh->facesTexCoord.data(), nbFaces * 4);
+        }
+
+        // Layers (Version >= 7)
+        const auto& layerStack = mesh->layerStack;
+        uint32_t nbLayers = static_cast<uint32_t>(layerStack.count());
+        writer.writeU32(nbLayers);
+        writer.writeI32(layerStack.getActiveIdx());
+        for (int lIdx = 0; lIdx < static_cast<int>(nbLayers); ++lIdx) {
+            const auto& layer = layerStack.at(lIdx);
+            uint32_t nameLen = static_cast<uint32_t>(layer.name.size());
+            writer.writeU32(nameLen);
+            writer.writeBytes(reinterpret_cast<const uint8_t*>(layer.name.data()), nameLen);
+            writer.writeU32(layer.visible ? 1 : 0);
+            writer.writeF32(layer.intensity);
+            uint32_t nbDelta = static_cast<uint32_t>(layer.deltaVerts.size());
+            writer.writeU32(nbDelta);
+            if (nbDelta > 0) {
+                writer.writeF32Array(layer.deltaVerts.data(), nbDelta);
+            }
         }
     }
 

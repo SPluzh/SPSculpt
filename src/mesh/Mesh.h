@@ -6,6 +6,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include "mesh/Octree.h"
+#include "mesh/Layer.h"
 
 #include "sculpt/ArmatureGraph.h"
 
@@ -45,6 +46,11 @@ public:
 
     // Octree
     Octree octree;
+
+    // Layers
+    LayerStack layerStack;
+    bool hasLayers() const { return layerStack.hasBase(); }
+    bool isLayerActive() const { return layerStack.hasBase() && layerStack.getActiveIdx() >= 0; }
 
     int nbVerts = 0;
     int nbFaces = 0;
@@ -153,6 +159,7 @@ public:
         outlinerName = other.outlinerName;
         matrix = other.matrix;
         editMatrix = other.editMatrix;
+        layerStack = other.layerStack;
     }
 
     virtual ~Mesh() = default;
@@ -161,6 +168,7 @@ public:
 
     void allocate(int nbV, int nbF, int nbRF, int nbRV);
     void postInit();
+    void updateAfterLayerBake();
 
     // Pointer getters for WASM / bindings
 

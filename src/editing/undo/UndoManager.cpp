@@ -70,6 +70,13 @@ void UndoManager::recordAffectedVertices(Scene& scene,
     }
     uint32_t currentStamp = s_recordedCurrentStamp;
 
+    Layer* activeLayer = mesh->isLayerActive() ? mesh->layerStack.getActive() : nullptr;
+    int activeLayerIdx = mesh->isLayerActive() ? mesh->layerStack.getActiveIdx() : -1;
+    if (activeLayer) {
+        delta.hasLayerDeltas = true;
+        delta.activeLayerIdx = activeLayerIdx;
+    }
+
     for (uint32_t v : affectedVerts) {
         if (v >= (uint32_t)mesh->nbVerts) continue;
         if (stamps[v] != currentStamp) {
@@ -79,6 +86,18 @@ void UndoManager::recordAffectedVertices(Scene& scene,
             delta.prevVerts.push_back(mesh->verts[v * 3 + 0]);
             delta.prevVerts.push_back(mesh->verts[v * 3 + 1]);
             delta.prevVerts.push_back(mesh->verts[v * 3 + 2]);
+
+            if (activeLayer) {
+                if (v * 3 + 2 < activeLayer->deltaVerts.size()) {
+                    delta.prevLayerDeltas.push_back(activeLayer->deltaVerts[v * 3 + 0]);
+                    delta.prevLayerDeltas.push_back(activeLayer->deltaVerts[v * 3 + 1]);
+                    delta.prevLayerDeltas.push_back(activeLayer->deltaVerts[v * 3 + 2]);
+                } else {
+                    delta.prevLayerDeltas.push_back(0.0f);
+                    delta.prevLayerDeltas.push_back(0.0f);
+                    delta.prevLayerDeltas.push_back(0.0f);
+                }
+            }
 
             if (affectsColors && !mesh->colors.empty()) {
                 delta.prevColors.push_back(mesh->colors[v * 3 + 0]);
@@ -115,10 +134,31 @@ void UndoManager::endSculptStroke(Scene& scene) {
             delta.nextMaterials.reserve(delta.indices.size() * 3);
         }
 
+        Layer* activeLayer = (delta.hasLayerDeltas && mesh->isLayerActive()) ? mesh->layerStack.getLayer(delta.activeLayerIdx) : nullptr;
+        if (!activeLayer && delta.hasLayerDeltas && mesh->isLayerActive()) {
+            activeLayer = mesh->layerStack.getActive();
+        }
+        if (activeLayer) {
+            delta.nextLayerDeltas.clear();
+            delta.nextLayerDeltas.reserve(delta.indices.size() * 3);
+        }
+
         for (uint32_t v : delta.indices) {
             delta.nextVerts.push_back(mesh->verts[v * 3 + 0]);
             delta.nextVerts.push_back(mesh->verts[v * 3 + 1]);
             delta.nextVerts.push_back(mesh->verts[v * 3 + 2]);
+
+            if (activeLayer) {
+                if (v * 3 + 2 < activeLayer->deltaVerts.size()) {
+                    delta.nextLayerDeltas.push_back(activeLayer->deltaVerts[v * 3 + 0]);
+                    delta.nextLayerDeltas.push_back(activeLayer->deltaVerts[v * 3 + 1]);
+                    delta.nextLayerDeltas.push_back(activeLayer->deltaVerts[v * 3 + 2]);
+                } else {
+                    delta.nextLayerDeltas.push_back(0.0f);
+                    delta.nextLayerDeltas.push_back(0.0f);
+                    delta.nextLayerDeltas.push_back(0.0f);
+                }
+            }
 
             if (delta.hasColors && !mesh->colors.empty()) {
                 delta.nextColors.push_back(mesh->colors[v * 3 + 0]);
@@ -133,6 +173,7 @@ void UndoManager::endSculptStroke(Scene& scene) {
         }
 
         if (delta.prevVerts != delta.nextVerts ||
+            (delta.hasLayerDeltas && delta.prevLayerDeltas != delta.nextLayerDeltas) ||
             (delta.hasColors && delta.prevColors != delta.nextColors) ||
             (delta.hasMaterials && delta.prevMaterials != delta.nextMaterials)) {
             hasAnyChange = true;
@@ -295,6 +336,13 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
             const auto& srcVerts = isUndo ? delta.prevVerts : delta.nextVerts;
             const auto& srcColors = isUndo ? delta.prevColors : delta.nextColors;
             const auto& srcMats = isUndo ? delta.prevMaterials : delta.nextMaterials;
+            const auto& srcLayerDeltas = isUndo ? delta.prevLayerDeltas : delta.nextLayerDeltas;
+
+            bool restoreLayer = delta.hasLayerDeltas && mesh->isLayerActive();
+            Layer* targetLayer = restoreLayer ? mesh->layerStack.getLayer(delta.activeLayerIdx) : nullptr;
+            if (restoreLayer && !targetLayer) {
+                targetLayer = mesh->layerStack.getActive();
+            }
 
             size_t count = delta.indices.size();
             for (size_t i = 0; i < count; ++i) {
@@ -304,6 +352,12 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
                 mesh->verts[vi * 3 + 0] = srcVerts[i * 3 + 0];
                 mesh->verts[vi * 3 + 1] = srcVerts[i * 3 + 1];
                 mesh->verts[vi * 3 + 2] = srcVerts[i * 3 + 2];
+
+                if (targetLayer && i * 3 + 2 < srcLayerDeltas.size() && vi * 3 + 2 < targetLayer->deltaVerts.size()) {
+                    targetLayer->deltaVerts[vi * 3 + 0] = srcLayerDeltas[i * 3 + 0];
+                    targetLayer->deltaVerts[vi * 3 + 1] = srcLayerDeltas[i * 3 + 1];
+                    targetLayer->deltaVerts[vi * 3 + 2] = srcLayerDeltas[i * 3 + 2];
+                }
 
                 if (delta.hasColors && i * 3 + 2 < srcColors.size() && vi * 3 + 2 < mesh->colors.size()) {
                     mesh->colors[vi * 3 + 0] = srcColors[i * 3 + 0];
@@ -315,6 +369,11 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
                     mesh->materials[vi * 3 + 1] = srcMats[i * 3 + 1];
                     mesh->materials[vi * 3 + 2] = srcMats[i * 3 + 2];
                 }
+            }
+
+            if (targetLayer) {
+                sculpt_log_lvl(LogLevel::Debug, "[Undo] Restored layer '%s' deltas for %zu vertices (%s)\n",
+                               targetLayer->name.c_str(), count, isUndo ? "UNDO" : "REDO");
             }
 
             if (!delta.indices.empty()) {

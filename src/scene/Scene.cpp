@@ -117,6 +117,7 @@ HistoryState Scene::saveCurrentState() const {
         ms.nbFaces = m->nbFaces;
         
         ms.matrix = m->matrix;
+        ms.layerStack = m->layerStack;
         
         ms.id = m->m_id;
         ms.outlinerName = m->outlinerName;
@@ -154,6 +155,7 @@ void Scene::restoreState(const HistoryState& hs) {
         m->nbFaces = ms.nbFaces;
 
         m->matrix = ms.matrix;
+        m->layerStack = ms.layerStack;
 
         m->m_id = ms.id;
         m->outlinerName = ms.outlinerName;

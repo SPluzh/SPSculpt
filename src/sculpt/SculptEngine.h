@@ -268,6 +268,22 @@ int strokeBrush(
     const float* alphaLookAt, bool alphaXSym
 );
 
+int strokeDeleteLayer(
+    const float* baseVerts,
+    float* layerDeltaVerts,
+    float* finalVerts,
+    const float* materials,
+    uint32_t* iVerts, int nbIVerts,
+    float cx, float cy, float cz,
+    float radius, float intensity,
+    float layerIntensity,
+    float focalShift, bool focalShiftFalloff,
+    bool hasAlpha, const uint8_t* alphaTex, int alphaWidth, int alphaHeight,
+    float alphaRatioX, float alphaRatioY, float alphaSide,
+    const float* alphaLookAt, bool alphaXSym
+);
+
+
 
 int blurMask(
     const uint32_t* iVerts, int nbIVerts,

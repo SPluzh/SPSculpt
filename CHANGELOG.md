@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.8]
+- **Sculpt Engine / Layers**: Implemented non-destructive Sculpt Layer system (`Layer`, `LayerStack`) with SGL file persistence and multi-layer undo/redo support in `UndoManager`.
+- **Sculpt Engine / Layers**: Fixed severe performance lag during `BRUSH_DELETE_LAYER` strokes by removing per-frame disk I/O log calls, adding OpenMP multi-threading to `strokeDeleteLayer`, and buffering `Logger` file writes.
+- **Sculpt Engine / Layers**: Fixed `BRUSH_DELETE_LAYER` layer targeting and isolation: delta erasure now operates incrementally on the selected active layer without corrupting or wiping out deformations on other visible layers in the stack.
+
+## [1.4.7]
+- **Sculpt Engine / Layers**: Fixed severe vertex explosion artifacts when sculpting on active layers by safely clamping single-sample displacement steps, clamping inverse intensity scaling (`invIntensity`), and locking start-of-stroke layer delta snapshots (`m_strokeStartLayerDeltas`).
+- **Sculpt Engine / Layers**: Optimized active layer deformation performance by replacing full-mesh `LayerStack::bake` calls on every stroke sample frame (~60–120 times/sec) with fast $O(N)$ incremental vertex updates, reducing CPU stroke time from ~17ms to <0.01ms and eliminating stutter/lag. Full-mesh `bake` is now executed once upon stroke completion.
+- **Brushes**: Synchronized `mesh->vertProxy` positions for modified vertices during non-grab incremental strokes (e.g. Crease, DamStandard, VTool), preventing cumulative displacement feedback loops.
+
 ## [1.4.6]
 - **Remeshing**: Changed the default state of "Align Symmetry Axes" in Voxel Remesh to off (`false`), and implemented persistent saving and restoring for voxel remesh settings in `app_settings.cfg`.
 

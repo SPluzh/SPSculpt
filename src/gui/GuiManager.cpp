@@ -177,6 +177,7 @@ static const char* getBrushNameLocal(BrushType brush) {
         case BRUSH_POLYGROUP: return "PolyGroup";
         case BRUSH_CLIP_CURVE: return "Clip Curve";
         case BRUSH_TRIM:       return "Trim";
+        case BRUSH_DELETE_LAYER: return "Delete Layer";
     }
     return "Unknown";
 }
@@ -638,7 +639,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         const char* tools[] = { 
             "Flatten", "Smooth", "Inflate", "Pinch", "Crease", "V-Tool", "Move", "Drag", "Elastic", 
             "Mask", "Paint", "Twist", "Local Scale", "Clay", "Clay Buildup", "Dam Standard", "Square Brush", "Visibility", "Mask Gradient Blur",
-            "Measure", "Divider", "Transform", "Armature Spheres", "Brush", "PolyGroup", "Clip Curve", "Trim"
+            "Measure", "Divider", "Transform", "Armature Spheres", "Brush", "PolyGroup", "Clip Curve", "Trim", "Delete Layer"
         };
         BrushType current = sculpt.getBrush();
         float btnH = 26.0f * scale;
@@ -1564,6 +1565,86 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 ImGui::BeginDisabled();
                 ImGui::Button("Delete Higher", ImVec2(135, 24));
                 ImGui::EndDisabled();
+            }
+        }
+        ImGui::End();
+    }
+
+    // 3.6 Sculpt Layers Panel
+    if (m_showLayersPanel) {
+        ImGui::SetNextWindowPos({160.0f * scale, 450.0f * scale}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize({300.0f * scale, 240.0f * scale}, ImGuiCond_FirstUseEver);
+        ImGui::Begin("Sculpt Layers", &m_showLayersPanel);
+
+        Mesh* selectedMesh = scene.getSelected();
+        if (!selectedMesh) {
+            ImGui::TextDisabled("No mesh selected");
+        } else {
+            LayerStack& stack = selectedMesh->layerStack;
+
+            if (ImGui::Button("Add Layer (+)", ImVec2(120, 26))) {
+                scene.pushHistoryState();
+                selectedMesh = scene.getSelected();
+                if (selectedMesh) {
+                    if (!selectedMesh->layerStack.hasBase()) {
+                        selectedMesh->layerStack.initBase(selectedMesh->verts);
+                    }
+                    selectedMesh->layerStack.addLayer(selectedMesh->nbVerts, "Layer " + std::to_string(selectedMesh->layerStack.count() + 1));
+                }
+            }
+            ImGui::SameLine();
+            if (stack.getActiveIdx() >= 0) {
+                if (ImGui::Button("Delete Active (-)", ImVec2(130, 26))) {
+                    scene.pushHistoryState();
+                    selectedMesh = scene.getSelected();
+                    if (selectedMesh) {
+                        selectedMesh->layerStack.removeLayer(selectedMesh->layerStack.getActiveIdx());
+                        selectedMesh->layerStack.bake(selectedMesh->layerStack.getBase(), selectedMesh->verts);
+                        selectedMesh->updateAfterLayerBake();
+                    }
+                }
+            } else {
+                ImGui::BeginDisabled();
+                ImGui::Button("Delete Active (-)", ImVec2(130, 26));
+                ImGui::EndDisabled();
+            }
+
+            ImGui::Separator();
+
+            int numLayers = stack.count();
+            if (numLayers == 0) {
+                ImGui::TextDisabled("No sculpt layers. Base mesh active.");
+            } else {
+                for (int i = numLayers - 1; i >= 0; --i) {
+                    Layer& l = stack.at(i);
+                    ImGui::PushID(i);
+
+                    bool isActive = (i == stack.getActiveIdx());
+                    if (ImGui::Selectable(l.name.c_str(), isActive, 0, ImVec2(110, 0))) {
+                        stack.setActiveIdx(i);
+                    }
+                    ImGui::SameLine();
+
+                    bool vis = l.visible;
+                    if (ImGui::Checkbox("##vis", &vis)) {
+                        l.visible = vis;
+                        stack.bake(stack.getBase(), selectedMesh->verts);
+                        selectedMesh->updateAfterLayerBake();
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Layer Visibility");
+
+                    ImGui::SameLine();
+                    float intensityPct = l.intensity * 100.0f;
+                    ImGui::PushItemWidth(-1);
+                    if (ImGui::SliderFloat("##intensity", &intensityPct, 0.0f, 100.0f, "%.0f%%")) {
+                        l.intensity = intensityPct * 0.01f;
+                        stack.bake(stack.getBase(), selectedMesh->verts);
+                        selectedMesh->updateAfterLayerBake();
+                    }
+                    ImGui::PopItemWidth();
+
+                    ImGui::PopID();
+                }
             }
         }
         ImGui::End();
@@ -3988,6 +4069,7 @@ void GuiManager::applyRemeshResult(Scene& scene, const RemeshResult& r) {
 
     sculpt_log("[DEBUG applyRemeshResult] Finalizing mesh initialization (postInit)...\n");
     selectedMesh->postInit();
+    selectedMesh->layerStack.onRemesh(selectedMesh->verts);
     sculpt_log("[DEBUG applyRemeshResult] postInit completed successfully.\n");
 
     Multimesh* multimesh = dynamic_cast<Multimesh*>(selectedMesh);

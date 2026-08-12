@@ -323,7 +323,10 @@ std::vector<uint32_t> Octree::pickVerticesInSphere(
 void Octree::update(const float* vertsPtrVal, int nbVertsVal,
                     const uint32_t* facesPtrVal, int nbFacesVal,
                     const float* boxesPtrVal, const uint32_t* iFacesPtr, int nbIFacesVal) {
-    if (!root) return;
+    if (!root) {
+        build(nbVertsVal, nbFacesVal, faceCentersData, boxesPtrVal, vertsPtrVal, facesPtrVal);
+        return;
+    }
 
     nbVerts = nbVertsVal;
     nbFaces = nbFacesVal;
@@ -339,8 +342,12 @@ void Octree::update(const float* vertsPtrVal, int nbVertsVal,
         facePosInLeaf.resize(nbFaces, 0);
     }
 
-    if (nbIFacesVal > nbFaces * 0.60f) {
+    if (iFacesPtr == nullptr || nbIFacesVal < 0 || nbIFacesVal > nbFaces * 0.60f) {
         rebuildInternal();
+        return;
+    }
+
+    if (nbIFacesVal == 0) {
         return;
     }
 
@@ -376,7 +383,7 @@ void Octree::update(const float* vertsPtrVal, int nbVertsVal,
     }
 
     std::vector<std::pair<uint32_t, OctreeCell*>> facesToMove;
-    facesToMove.reserve(nbIFacesVal);
+    facesToMove.reserve(std::max(0, nbIFacesVal));
 
     bool overMovedLimit = false;
     size_t movedThreshold = std::max((size_t)100000, (size_t)(nbFaces * 0.25f));

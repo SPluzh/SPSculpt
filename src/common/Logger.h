@@ -31,12 +31,20 @@ public:
         return inst;
     }
 
+    ~Logger() {
+        if (m_logFile.is_open()) {
+            m_logFile.close();
+        }
+    }
+
     void init() {
         std::lock_guard<std::mutex> lock(m_mutex);
-        std::ofstream logFile("sculpt_log.txt", std::ios::out | std::ios::trunc);
-        if (logFile.is_open()) {
-            logFile << "[LOG INITIALIZED]\n";
-            logFile.flush();
+        if (m_logFile.is_open()) {
+            m_logFile.close();
+        }
+        m_logFile.open("sculpt_log.txt", std::ios::out | std::ios::trunc);
+        if (m_logFile.is_open()) {
+            m_logFile << "[LOG INITIALIZED]\n";
         }
         m_entries.clear();
     }
@@ -55,18 +63,16 @@ public:
            << '.' << std::setfill('0') << std::setw(3) << ms.count();
         std::string timeStr = ss.str();
 
+        std::lock_guard<std::mutex> lock(m_mutex);
+        
         // Output to stdout
         printf("[%s] %s", timeStr.c_str(), msg.c_str());
-        fflush(stdout);
 
-        // Write to log file
-        std::ofstream logFile("sculpt_log.txt", std::ios::out | std::ios::app);
-        if (logFile.is_open()) {
-            logFile << "[" << timeStr << "] " << msg;
-            logFile.flush();
+        // Write to log file if open
+        if (m_logFile.is_open()) {
+            m_logFile << "[" << timeStr << "] " << msg;
         }
 
-        std::lock_guard<std::mutex> lock(m_mutex);
         m_entries.push_back({level, timeStr, msg});
         if (m_entries.size() > 1000) {
             m_entries.erase(m_entries.begin());
@@ -84,6 +90,7 @@ public:
 
 private:
     std::vector<LogEntry> m_entries;
+    std::ofstream m_logFile;
     mutable std::mutex m_mutex;
 };
 

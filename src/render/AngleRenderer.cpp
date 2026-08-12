@@ -2204,6 +2204,7 @@ void AngleRenderer::drawClipCurve() {
 
 void AngleRenderer::generateTriangleIndices(const Mesh* mesh, std::vector<uint32_t>& outIndices) {
     outIndices.clear();
+    if (!mesh || mesh->nbFaces <= 0) return;
     outIndices.reserve(mesh->nbFaces * 6);
     const auto& visible = mesh->vertVisible;
     const auto& fVisible = mesh->faceVisible;
@@ -2243,6 +2244,7 @@ void AngleRenderer::generateTriangleIndices(const Mesh* mesh, std::vector<uint32
 
 void AngleRenderer::generateWireframeIndices(const Mesh* mesh, std::vector<uint32_t>& outEdges) {
     outEdges.clear();
+    if (!mesh || mesh->nbFaces <= 0) return;
     outEdges.reserve(mesh->nbFaces * 8);
     const auto& visible = mesh->vertVisible;
     const auto& fVisible = mesh->faceVisible;

@@ -1958,5 +1958,96 @@ int strokeBrush(
     return writeIdx;
 }
 
+int strokeDeleteLayer(
+    const float* baseVerts,
+    float* layerDeltaVerts,
+    float* finalVerts,
+    const float* materials,
+    uint32_t* iVerts, int nbIVerts,
+    float cx, float cy, float cz,
+    float radius, float intensity,
+    float layerIntensity,
+    float focalShift, bool focalShiftFalloff,
+    bool hasAlpha, const uint8_t* alphaTex, int alphaWidth, int alphaHeight,
+    float alphaRatioX, float alphaRatioY, float alphaSide,
+    const float* alphaLookAt, bool alphaXSym
+) {
+    if (nbIVerts <= 0 || !baseVerts || !layerDeltaVerts || !finalVerts || !iVerts) return 0;
+    const float radiusSq = radius * radius;
+
+    int writeIdx = 0;
+
+    #pragma omp parallel if(nbIVerts > 500)
+    {
+        std::vector<uint32_t> localVerts;
+        #pragma omp for schedule(static)
+        for (int i = 0; i < nbIVerts; ++i) {
+            if (i + 8 < nbIVerts) {
+                uint32_t nextId = iVerts[i + 8];
+                __builtin_prefetch(&finalVerts[nextId * 3], 1, 1);
+                __builtin_prefetch(&layerDeltaVerts[nextId * 3], 1, 1);
+                __builtin_prefetch(&baseVerts[nextId * 3], 0, 1);
+            }
+
+            uint32_t id = iVerts[i];
+            int ind = id * 3;
+
+            float matVal = materials ? materials[ind + 2] : 1.0f;
+            if (matVal <= 0.0f) continue;
+
+            float vx = finalVerts[ind];
+            float vy = finalVerts[ind + 1];
+            float vz = finalVerts[ind + 2];
+
+            float dx = vx - cx;
+            float dy = vy - cy;
+            float dz = vz - cz;
+            float distSq = (dx * dx + dy * dy + dz * dz) / radiusSq;
+            if (distSq >= 1.0f) continue;
+
+            float dist = std::sqrt(distSq);
+            float fallOff = getFallOff(dist, focalShift, false, nullptr);
+            float alphaVal = getAlphaVal(
+                vx, vy, vz,
+                hasAlpha, alphaTex, alphaWidth, alphaHeight,
+                alphaRatioX, alphaRatioY, alphaSide,
+                alphaLookAt, alphaXSym,
+                focalShift, focalShiftFalloff
+            );
+            float eraseFactor = std::min(1.0f, std::max(0.0f, fallOff * intensity * matVal * alphaVal));
+            if (eraseFactor <= 0.0f) continue;
+
+            float oldDx = layerDeltaVerts[ind];
+            float oldDy = layerDeltaVerts[ind + 1];
+            float oldDz = layerDeltaVerts[ind + 2];
+
+            float factor = 1.0f - eraseFactor;
+            float newDx = oldDx * factor;
+            float newDy = oldDy * factor;
+            float newDz = oldDz * factor;
+
+            layerDeltaVerts[ind]     = newDx;
+            layerDeltaVerts[ind + 1] = newDy;
+            layerDeltaVerts[ind + 2] = newDz;
+
+            // Update final position incrementally for the selected layer
+            finalVerts[ind]     += (newDx - oldDx) * layerIntensity;
+            finalVerts[ind + 1] += (newDy - oldDy) * layerIntensity;
+            finalVerts[ind + 2] += (newDz - oldDz) * layerIntensity;
+
+            localVerts.push_back(id);
+        }
+
+        #pragma omp critical
+        {
+            for (uint32_t id : localVerts) {
+                iVerts[writeIdx++] = id;
+            }
+        }
+    }
+    return writeIdx;
+}
+
+
 
 

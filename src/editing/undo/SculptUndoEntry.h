@@ -21,6 +21,12 @@ struct VertexDelta {
 
     bool hasColors    = false;
     bool hasMaterials = false;
+
+    // Layer delta tracking
+    bool hasLayerDeltas = false;
+    int activeLayerIdx = -1;
+    std::vector<float> prevLayerDeltas;
+    std::vector<float> nextLayerDeltas;
 };
 
 class SculptUndoEntry : public UndoEntry {
@@ -43,6 +49,10 @@ public:
             if (d.hasMaterials) {
                 total += d.prevMaterials.capacity() * sizeof(float);
                 total += d.nextMaterials.capacity() * sizeof(float);
+            }
+            if (d.hasLayerDeltas) {
+                total += d.prevLayerDeltas.capacity() * sizeof(float);
+                total += d.nextLayerDeltas.capacity() * sizeof(float);
             }
         }
         return total;
