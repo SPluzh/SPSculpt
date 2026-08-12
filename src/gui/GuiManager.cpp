@@ -534,6 +534,11 @@ void GuiManager::init(SDL_Window* window, SDL_GLContext glContext) {
     ImGui_ImplSDL2_InitForOpenGL(window, glContext);
     ImGui_ImplOpenGL3_Init(nullptr);
 
+    glGenRenderbuffers(1, &m_thumbSharedDepth);
+    glBindRenderbuffer(GL_RENDERBUFFER, m_thumbSharedDepth);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, THUMB_SIZE, THUMB_SIZE);
+    glBindRenderbuffer(GL_RENDERBUFFER, 0);
+
     m_imguiInitialized = true;
 }
 
@@ -545,6 +550,16 @@ void GuiManager::shutdown() {
     }
     m_iconCache.clear();
 
+    for (auto& [id, t] : m_thumbCache) {
+        if (t.fbo)     glDeleteFramebuffers(1, &t.fbo);
+        if (t.texture) glDeleteTextures(1, &t.texture);
+    }
+    m_thumbCache.clear();
+    if (m_thumbSharedDepth) {
+        glDeleteRenderbuffers(1, &m_thumbSharedDepth);
+        m_thumbSharedDepth = 0;
+    }
+
     if (!m_imguiInitialized) return;
 
     ImGui_ImplOpenGL3_Shutdown();
@@ -552,6 +567,104 @@ void GuiManager::shutdown() {
     ImGui::DestroyContext();
 
     m_imguiInitialized = false;
+}
+
+void GuiManager::thumbEnsureFbo(MeshThumbnail& t) {
+    if (t.fbo) return;
+
+    glGenTextures(1, &t.texture);
+    glBindTexture(GL_TEXTURE_2D, t.texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8,
+                 THUMB_SIZE, THUMB_SIZE, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    glGenFramebuffers(1, &t.fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, t.fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D, t.texture, 0);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                              GL_RENDERBUFFER, m_thumbSharedDepth);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+void GuiManager::thumbRender(MeshThumbnail& t, Mesh* mesh, AngleRenderer& renderer) {
+    if (!mesh || mesh->nbVerts == 0) return;
+    thumbEnsureFbo(t);
+
+    GLint prevFbo = 0, prevVp[4] = {0};
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+    glGetIntegerv(GL_VIEWPORT, prevVp);
+
+    GLboolean prevScissor = glIsEnabled(GL_SCISSOR_TEST);
+    glDisable(GL_SCISSOR_TEST);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, t.fbo);
+    glViewport(0, 0, THUMB_SIZE, THUMB_SIZE);
+    glClearColor(0.18f, 0.18f, 0.20f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+
+    Camera thumbCam;
+    thumbCam.onResize(THUMB_SIZE, THUMB_SIZE);
+    thumbCam.resetViewToMesh(mesh);
+    thumbCam.update(1.0f);
+    thumbCam.setOrbitAngles(glm::radians(25.0f), glm::radians(45.0f));
+    thumbCam.updateView();
+    thumbCam.updateProjection();
+
+    renderer.uploadIfDirty(mesh);
+    renderer.drawMeshForThumbnail(mesh, thumbCam);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
+    glViewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
+
+    if (prevScissor) {
+        glEnable(GL_SCISSOR_TEST);
+    }
+
+    t.dirty = false;
+}
+
+void GuiManager::thumbInvalidate(uint32_t meshId) {
+    auto it = m_thumbCache.find(meshId);
+    if (it != m_thumbCache.end()) {
+        it->second.dirty = true;
+    }
+}
+
+void GuiManager::thumbInvalidateAll() {
+    for (auto& [id, t] : m_thumbCache) {
+        t.dirty = true;
+    }
+}
+
+void GuiManager::thumbCleanup(const Scene& scene) {
+    const auto& meshes = scene.getMeshes();
+    std::vector<uint32_t> toRemove;
+
+    for (auto& [id, t] : m_thumbCache) {
+        bool alive = false;
+        for (auto* m : meshes) {
+            if (m->getID() == id) {
+                alive = true;
+                break;
+            }
+        }
+        if (!alive) {
+            toRemove.push_back(id);
+        }
+    }
+
+    for (uint32_t id : toRemove) {
+        auto& t = m_thumbCache[id];
+        if (t.fbo)     glDeleteFramebuffers(1, &t.fbo);
+        if (t.texture) glDeleteTextures(1, &t.texture);
+        m_thumbCache.erase(id);
+    }
 }
 
 static bool isPointOverImGuiWindow(const ImVec2& pt) {
@@ -573,6 +686,28 @@ static bool isPointOverImGuiWindow(const ImVec2& pt) {
 void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer, SDL_Window* window) {
     m_renderer = &renderer;
     if (!m_imguiInitialized) return;
+
+    static bool s_wasSculpting = false;
+    bool nowSculpting = sculpt.isSculpting();
+    if (s_wasSculpting && !nowSculpting) {
+        if (auto* m = scene.getSelected()) {
+            thumbInvalidate(m->getID());
+        }
+    }
+    s_wasSculpting = nowSculpting;
+
+    if (m_showScenePanel && !nowSculpting) {
+        thumbCleanup(scene);
+
+        for (auto* mesh : scene.getMeshes()) {
+            uint32_t id = mesh->getID();
+            auto& thumb = m_thumbCache[id];
+            if (thumb.dirty) {
+                thumbRender(thumb, mesh, renderer);
+                break;
+            }
+        }
+    }
 
     if (m_pendingUiScaleRefresh) {
         rebuildFontsAndStyles();
@@ -1793,8 +1928,12 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         static int renameTargetId = -1;
         static char renameBuf[128] = "";
 
-        ImGui::BeginChild("MeshList", ImVec2(0, 180), true);
-        if (ImGui::BeginTable("MeshListTable", 5, ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV)) {
+        float rowH = (float)THUMB_SIZE + 6.0f;
+        float listH = std::max(180.0f, std::min((float)meshes.size() * rowH + 40.0f, 340.0f));
+
+        ImGui::BeginChild("MeshList", ImVec2(0, listH), true);
+        if (ImGui::BeginTable("MeshListTable", 6, ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV)) {
+            ImGui::TableSetupColumn("##Thumb", ImGuiTableColumnFlags_WidthFixed, (float)THUMB_SIZE + 4.0f);
             ImGui::TableSetupColumn("Act", ImGuiTableColumnFlags_WidthFixed, 30.0f);
             ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableSetupColumn("Verts", ImGuiTableColumnFlags_WidthFixed, 60.0f);
@@ -1804,9 +1943,22 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
             for (int i = 0; i < (int)meshes.size(); i++) {
                 Mesh* mesh = meshes[i];
-                ImGui::TableNextRow();
+                ImGui::TableNextRow(0, (float)THUMB_SIZE + 6.0f);
 
-                // Column 0: Act (Active checkbox)
+                // Column 0: Preview Thumbnail
+                ImGui::TableNextColumn();
+                auto it = m_thumbCache.find(mesh->getID());
+                if (it != m_thumbCache.end() && it->second.texture != 0) {
+                    ImGui::Image(
+                        (ImTextureID)(uintptr_t)it->second.texture,
+                        ImVec2((float)THUMB_SIZE, (float)THUMB_SIZE),
+                        ImVec2(0, 1), ImVec2(1, 0)
+                    );
+                } else {
+                    ImGui::Dummy(ImVec2((float)THUMB_SIZE, (float)THUMB_SIZE));
+                }
+
+                // Column 1: Act (Active checkbox)
                 ImGui::TableNextColumn();
                 ImGui::PushID(mesh->getID() * 10 + 3);
                 bool isActive = (scene.getSelected() == mesh);
@@ -1819,7 +1971,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 }
                 ImGui::PopID();
 
-                // Column 1: Name (Selectable / Renaming input)
+                // Column 2: Name (Selectable / Renaming input)
                 ImGui::TableNextColumn();
                 ImGui::PushID(mesh->getID());
 
@@ -1863,11 +2015,11 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 }
                 ImGui::PopID();
 
-                // Column 2: Verts Count
+                // Column 3: Verts Count
                 ImGui::TableNextColumn();
                 ImGui::Text("%s", formatCount(mesh->nbVerts).c_str());
 
-                // Column 3: V1 Toggle
+                // Column 4: V1 Toggle
                 ImGui::TableNextColumn();
                 ImGui::PushID(mesh->getID() * 10 + 1);
                 bool v1 = mesh->visibleV1;
@@ -1876,7 +2028,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 }
                 ImGui::PopID();
 
-                // Column 4: V2 Toggle
+                // Column 5: V2 Toggle
                 ImGui::TableNextColumn();
                 ImGui::PushID(mesh->getID() * 10 + 2);
                 bool v2 = mesh->visibleV2;
@@ -1890,6 +2042,9 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             bool showMeasureRow = !sculpt.getMeasureSegments().empty() || (sculpt.getBrush() == BRUSH_MEASURE);
             if (showMeasureRow) {
                 ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Dummy(ImVec2((float)THUMB_SIZE, 0));
+
                 ImGui::TableNextColumn();
                 ImGui::PushID(88801);
                 bool isMeasureToolActive = (sculpt.getBrush() == BRUSH_MEASURE);
@@ -1927,6 +2082,9 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             bool showDividerRow = !sculpt.getDividerSegments().empty() || (sculpt.getBrush() == BRUSH_DIVIDER);
             if (showDividerRow) {
                 ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Dummy(ImVec2((float)THUMB_SIZE, 0));
+
                 ImGui::TableNextColumn();
                 ImGui::PushID(88804);
                 bool isDividerToolActive = (sculpt.getBrush() == BRUSH_DIVIDER);

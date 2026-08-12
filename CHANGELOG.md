@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.1]
+- **Outliner / Previews**: Integrated deferred, frame-budgeted offscreen rendering for object preview thumbnails in the Scene Outliner panel (`AngleRenderer::drawMeshForThumbnail`).
+- **Outliner / Previews**: Added single-shared-depth buffer framebuffer caching (`MeshThumbnail` with `m_thumbSharedDepth`), caching 48x48 textures and updating at most 1 thumbnail per frame to guarantee zero FPS drop during complex scene editing.
+- **Outliner / Previews**: Updated the Scene Outliner table layout with a dedicated preview image column (`##Thumb`), automatic aspect-ratio framing via isometric camera alignment (`resetViewToMesh`), and real-time cache invalidation triggered upon sculpting stroke completion.
+
 ## [1.5.0]
 - **Sculpt Layers**: Enhanced the "Sculpt Layers" panel UI with an interactive Eye visibility toggle icon (`ICON_LC_EYE` / `ICON_LC_EYE_OFF`), double-click inline renaming for layers, and real-time intensity slider updates.
 - **Sculpt Layers**: Added a `[⋮]` Context Menu for sculpt layers providing **Rename**, **Duplicate** (`duplicateLayer`), **Merge Down** (`mergeDown`), and **Delete** actions.

@@ -304,6 +304,7 @@ public:
     void importMatcap(const std::string& name, const std::string& path);
 
     std::vector<uint8_t> renderToBuffer(const Scene& scene, int w, int h);
+    void drawMeshForThumbnail(Mesh* mesh, const Camera& cam);
 
     // Model Snapshot (Render-to-Texture frozen camera overlay)
     void createSnapshot(const Scene& scene);

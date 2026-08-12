@@ -1390,6 +1390,60 @@ void AngleRenderer::drawMesh(Mesh* mesh, const Scene& scene) {
     }
 }
 
+void AngleRenderer::drawMeshForThumbnail(Mesh* mesh, const Camera& cam) {
+    if (!m_matcapProgram) return;
+    auto it = m_meshBuffers.find(mesh);
+    if (it == m_meshBuffers.end() || !it->second->triIndexCount) return;
+
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+    glUseProgram(m_matcapProgram);
+
+    mesh->updateMatrices(cam);
+
+    glUniformMatrix4fv(glGetUniformLocation(m_matcapProgram, "uMV"), 1, GL_FALSE, glm::value_ptr(mesh->mvMatrix));
+    glUniformMatrix4fv(glGetUniformLocation(m_matcapProgram, "uMVP"), 1, GL_FALSE, glm::value_ptr(mesh->mvpMatrix));
+    glUniformMatrix3fv(glGetUniformLocation(m_matcapProgram, "uN"), 1, GL_FALSE, glm::value_ptr(mesh->nMatrix));
+    glUniformMatrix4fv(glGetUniformLocation(m_matcapProgram, "uEM"), 1, GL_FALSE, glm::value_ptr(mesh->editMatrix));
+    glUniformMatrix3fv(glGetUniformLocation(m_matcapProgram, "uEN"), 1, GL_FALSE, glm::value_ptr(mesh->enMatrix));
+
+    glUniform1f(glGetUniformLocation(m_matcapProgram, "uAlpha"), 1.0f);
+    float effectiveAlbedo[3] = { m_albedo[0], m_albedo[1], m_albedo[2] };
+    if (m_useVertexColors) {
+        effectiveAlbedo[0] = -1.0f;
+        effectiveAlbedo[1] = -1.0f;
+        effectiveAlbedo[2] = -1.0f;
+    }
+    glUniform3fv(glGetUniformLocation(m_matcapProgram, "uAlbedo"), 1, effectiveAlbedo);
+    glUniform1i(glGetUniformLocation(m_matcapProgram, "uFlat"), 0);
+    glUniform1i(glGetUniformLocation(m_matcapProgram, "uDarken"), 0);
+    glUniform1i(glGetUniformLocation(m_matcapProgram, "uSymCount"), 0);
+    glUniform1i(glGetUniformLocation(m_matcapProgram, "uSym"), 0);
+    glUniform1f(glGetUniformLocation(m_matcapProgram, "uCurvature"), 0.0f);
+    glUniform1f(glGetUniformLocation(m_matcapProgram, "uFov"), cam.getFov());
+    glUniform1i(glGetUniformLocation(m_matcapProgram, "uBevelEnabled"), 0);
+    glUniform1i(glGetUniformLocation(m_matcapProgram, "uShowPolyGroups"), 0);
+    glUniform1i(glGetUniformLocation(m_matcapProgram, "uIsThumbnail"), 1);
+
+    GLuint matcapTex = 0;
+    if (m_matcapIdx >= 0 && m_matcapIdx < static_cast<int>(m_matcaps.size()) && m_matcaps[m_matcapIdx].textureId != 0) {
+        matcapTex = m_matcaps[m_matcapIdx].textureId;
+    }
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, matcapTex);
+    glUniform1i(glGetUniformLocation(m_matcapProgram, "uTexture0"), 0);
+    glUniform1i(glGetUniformLocation(m_matcapProgram, "uUseTexture"), matcapTex != 0 ? 1 : 0);
+    glUniform1i(glGetUniformLocation(m_matcapProgram, "uIsXRay"), 0);
+
+    glBindVertexArray(it->second->vao);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, it->second->eboTriangles);
+    glDrawElements(GL_TRIANGLES,
+                   static_cast<GLsizei>(it->second->triIndexCount),
+                   GL_UNSIGNED_INT, nullptr);
+    glBindVertexArray(0);
+    glUniform1i(glGetUniformLocation(m_matcapProgram, "uIsThumbnail"), 0);
+}
+
 void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& camera) {
     auto it = m_meshBuffers.find(mesh);
     if (it == m_meshBuffers.end() || it->second->triIndexCount == 0) return;
