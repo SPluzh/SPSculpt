@@ -216,6 +216,7 @@ static const char* getBrushIconKey(BrushType brush) {
         case BRUSH_DIVIDER:     return "dividertool";
         case BRUSH_MEASURE:     return "measuretool";
         case BRUSH_POLYGROUP:   return "polygroup";
+        case BRUSH_TRANSFORM:   return "transformtool";
         default:                return nullptr;
     }
 }
