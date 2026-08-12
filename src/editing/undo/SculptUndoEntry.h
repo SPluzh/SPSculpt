@@ -27,6 +27,15 @@ struct VertexDelta {
     int activeLayerIdx = -1;
     std::vector<float> prevLayerDeltas;
     std::vector<float> nextLayerDeltas;
+
+    // Base layer tracking when layers exist
+    bool hasBaseDeltas = false;
+    std::vector<float> prevBaseVerts;
+    std::vector<float> nextBaseVerts;
+    std::vector<float> prevBaseColors;
+    std::vector<float> nextBaseColors;
+    std::vector<float> prevBaseMaterials;
+    std::vector<float> nextBaseMaterials;
 };
 
 class SculptUndoEntry : public UndoEntry {
@@ -53,6 +62,14 @@ public:
             if (d.hasLayerDeltas) {
                 total += d.prevLayerDeltas.capacity() * sizeof(float);
                 total += d.nextLayerDeltas.capacity() * sizeof(float);
+            }
+            if (d.hasBaseDeltas) {
+                total += d.prevBaseVerts.capacity() * sizeof(float);
+                total += d.nextBaseVerts.capacity() * sizeof(float);
+                total += d.prevBaseColors.capacity() * sizeof(float);
+                total += d.nextBaseColors.capacity() * sizeof(float);
+                total += d.prevBaseMaterials.capacity() * sizeof(float);
+                total += d.nextBaseMaterials.capacity() * sizeof(float);
             }
         }
         return total;

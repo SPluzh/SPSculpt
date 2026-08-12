@@ -468,6 +468,10 @@ private:
     // Cache for computeAreaNormalAndCenter & inverse mesh matrix & stroke start layer deltas
     bool m_firstStrokeFrame = false;
     std::vector<float> m_strokeStartLayerDeltas;
+    std::vector<float> m_strokeStartBaseVerts;
+    std::vector<float> m_preVerts;
+    std::vector<float> m_preColors;
+    std::vector<float> m_preMaterials;
     glm::vec3 m_cachedAreaNormal{0.0f};
     glm::vec3 m_cachedAreaCenter{0.0f};
     glm::mat4 m_cachedInvMatrix{1.0f};

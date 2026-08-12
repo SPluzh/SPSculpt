@@ -72,9 +72,14 @@ void UndoManager::recordAffectedVertices(Scene& scene,
 
     Layer* activeLayer = mesh->isLayerActive() ? mesh->layerStack.getActive() : nullptr;
     int activeLayerIdx = mesh->isLayerActive() ? mesh->layerStack.getActiveIdx() : -1;
+    bool hasBase = mesh->layerStack.hasBase();
+
     if (activeLayer) {
         delta.hasLayerDeltas = true;
         delta.activeLayerIdx = activeLayerIdx;
+    } else if (hasBase) {
+        delta.hasBaseDeltas = true;
+        delta.activeLayerIdx = -1;
     }
 
     for (uint32_t v : affectedVerts) {
@@ -96,6 +101,29 @@ void UndoManager::recordAffectedVertices(Scene& scene,
                     delta.prevLayerDeltas.push_back(0.0f);
                     delta.prevLayerDeltas.push_back(0.0f);
                     delta.prevLayerDeltas.push_back(0.0f);
+                }
+            } else if (hasBase) {
+                const auto& baseV = mesh->layerStack.getBase();
+                if (v * 3 + 2 < baseV.size()) {
+                    delta.prevBaseVerts.push_back(baseV[v * 3 + 0]);
+                    delta.prevBaseVerts.push_back(baseV[v * 3 + 1]);
+                    delta.prevBaseVerts.push_back(baseV[v * 3 + 2]);
+                }
+                if (affectsColors) {
+                    const auto& baseC = mesh->layerStack.getBaseColors();
+                    if (v * 3 + 2 < baseC.size()) {
+                        delta.prevBaseColors.push_back(baseC[v * 3 + 0]);
+                        delta.prevBaseColors.push_back(baseC[v * 3 + 1]);
+                        delta.prevBaseColors.push_back(baseC[v * 3 + 2]);
+                    }
+                }
+                if (affectsMaterials) {
+                    const auto& baseM = mesh->layerStack.getBaseMaterials();
+                    if (v * 3 + 2 < baseM.size()) {
+                        delta.prevBaseMaterials.push_back(baseM[v * 3 + 0]);
+                        delta.prevBaseMaterials.push_back(baseM[v * 3 + 1]);
+                        delta.prevBaseMaterials.push_back(baseM[v * 3 + 2]);
+                    }
                 }
             }
 
@@ -143,6 +171,39 @@ void UndoManager::endSculptStroke(Scene& scene) {
             delta.nextLayerDeltas.reserve(delta.indices.size() * 3);
         }
 
+        if (delta.hasBaseDeltas && mesh->layerStack.hasBase()) {
+            const auto& baseV = mesh->layerStack.getBase();
+            const auto& baseC = mesh->layerStack.getBaseColors();
+            const auto& baseM = mesh->layerStack.getBaseMaterials();
+            delta.nextBaseVerts.clear();
+            delta.nextBaseVerts.reserve(delta.indices.size() * 3);
+            if (delta.hasColors) {
+                delta.nextBaseColors.clear();
+                delta.nextBaseColors.reserve(delta.indices.size() * 3);
+            }
+            if (delta.hasMaterials) {
+                delta.nextBaseMaterials.clear();
+                delta.nextBaseMaterials.reserve(delta.indices.size() * 3);
+            }
+            for (uint32_t v : delta.indices) {
+                if (v * 3 + 2 < baseV.size()) {
+                    delta.nextBaseVerts.push_back(baseV[v * 3 + 0]);
+                    delta.nextBaseVerts.push_back(baseV[v * 3 + 1]);
+                    delta.nextBaseVerts.push_back(baseV[v * 3 + 2]);
+                }
+                if (delta.hasColors && v * 3 + 2 < baseC.size()) {
+                    delta.nextBaseColors.push_back(baseC[v * 3 + 0]);
+                    delta.nextBaseColors.push_back(baseC[v * 3 + 1]);
+                    delta.nextBaseColors.push_back(baseC[v * 3 + 2]);
+                }
+                if (delta.hasMaterials && v * 3 + 2 < baseM.size()) {
+                    delta.nextBaseMaterials.push_back(baseM[v * 3 + 0]);
+                    delta.nextBaseMaterials.push_back(baseM[v * 3 + 1]);
+                    delta.nextBaseMaterials.push_back(baseM[v * 3 + 2]);
+                }
+            }
+        }
+
         for (uint32_t v : delta.indices) {
             delta.nextVerts.push_back(mesh->verts[v * 3 + 0]);
             delta.nextVerts.push_back(mesh->verts[v * 3 + 1]);
@@ -174,6 +235,7 @@ void UndoManager::endSculptStroke(Scene& scene) {
 
         if (delta.prevVerts != delta.nextVerts ||
             (delta.hasLayerDeltas && delta.prevLayerDeltas != delta.nextLayerDeltas) ||
+            (delta.hasBaseDeltas && delta.prevBaseVerts != delta.nextBaseVerts) ||
             (delta.hasColors && delta.prevColors != delta.nextColors) ||
             (delta.hasMaterials && delta.prevMaterials != delta.nextMaterials)) {
             hasAnyChange = true;
@@ -344,6 +406,8 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
                 targetLayer = mesh->layerStack.getActive();
             }
 
+            bool restoreBase = delta.hasBaseDeltas && mesh->layerStack.hasBase();
+
             size_t count = delta.indices.size();
             for (size_t i = 0; i < count; ++i) {
                 uint32_t vi = delta.indices[i];
@@ -357,6 +421,32 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
                     targetLayer->deltaVerts[vi * 3 + 0] = srcLayerDeltas[i * 3 + 0];
                     targetLayer->deltaVerts[vi * 3 + 1] = srcLayerDeltas[i * 3 + 1];
                     targetLayer->deltaVerts[vi * 3 + 2] = srcLayerDeltas[i * 3 + 2];
+                }
+
+                if (restoreBase) {
+                    const auto& srcBaseV = isUndo ? delta.prevBaseVerts : delta.nextBaseVerts;
+                    const auto& srcBaseC = isUndo ? delta.prevBaseColors : delta.nextBaseColors;
+                    const auto& srcBaseM = isUndo ? delta.prevBaseMaterials : delta.nextBaseMaterials;
+
+                    auto& baseV = mesh->layerStack.getBase();
+                    auto& baseC = mesh->layerStack.getBaseColors();
+                    auto& baseM = mesh->layerStack.getBaseMaterials();
+
+                    if (i * 3 + 2 < srcBaseV.size() && vi * 3 + 2 < baseV.size()) {
+                        baseV[vi * 3 + 0] = srcBaseV[i * 3 + 0];
+                        baseV[vi * 3 + 1] = srcBaseV[i * 3 + 1];
+                        baseV[vi * 3 + 2] = srcBaseV[i * 3 + 2];
+                    }
+                    if (delta.hasColors && i * 3 + 2 < srcBaseC.size() && vi * 3 + 2 < baseC.size()) {
+                        baseC[vi * 3 + 0] = srcBaseC[i * 3 + 0];
+                        baseC[vi * 3 + 1] = srcBaseC[i * 3 + 1];
+                        baseC[vi * 3 + 2] = srcBaseC[i * 3 + 2];
+                    }
+                    if (delta.hasMaterials && i * 3 + 2 < srcBaseM.size() && vi * 3 + 2 < baseM.size()) {
+                        baseM[vi * 3 + 0] = srcBaseM[i * 3 + 0];
+                        baseM[vi * 3 + 1] = srcBaseM[i * 3 + 1];
+                        baseM[vi * 3 + 2] = srcBaseM[i * 3 + 2];
+                    }
                 }
 
                 if (delta.hasColors && i * 3 + 2 < srcColors.size() && vi * 3 + 2 < mesh->colors.size()) {
@@ -374,6 +464,13 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
             if (targetLayer) {
                 sculpt_log_lvl(LogLevel::Debug, "[Undo] Restored layer '%s' deltas for %zu vertices (%s)\n",
                                targetLayer->name.c_str(), count, isUndo ? "UNDO" : "REDO");
+            } else if (restoreBase) {
+                sculpt_log_lvl(LogLevel::Debug, "[Undo] Restored Base Layer deltas for %zu vertices (%s)\n",
+                               count, isUndo ? "UNDO" : "REDO");
+            }
+
+            if (mesh->layerStack.hasBase()) {
+                mesh->updateAfterLayerBake();
             }
 
             if (!delta.indices.empty()) {

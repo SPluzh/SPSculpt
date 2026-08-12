@@ -51,6 +51,7 @@ public:
     }
 
     int count() const { return (int)m_layers.size(); }
+    const std::vector<Layer>& getLayers() const { return m_layers; }
     Layer& at(int i) { return m_layers[i]; }
     const Layer& at(int i) const { return m_layers[i]; }
 

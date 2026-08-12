@@ -5160,6 +5160,38 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::PopStyleColor(3);
         }
 
+        // Sculpt Layers Button (Below Outliner)
+        bool isLayersPanelActive = m_showLayersPanel;
+        if (isLayersPanelActive) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+
+        GLuint layersTex = getIconTexture("layers");
+        bool clickedLayers = false;
+        if (layersTex != 0) {
+            clickedLayers = ImGui::Button("##hudVertLayersBtn", ImVec2(squareSize, squareSize));
+            ImVec2 pMin = ImGui::GetItemRectMin();
+            ImVec2 pMax = ImGui::GetItemRectMax();
+            float pad = 1.0f * scale;
+            ImVec2 imgMin(pMin.x + pad, pMin.y + pad);
+            ImVec2 imgMax(pMax.x - pad, pMax.y - pad);
+            ImU32 tintCol = isLayersPanelActive ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 240);
+            ImGui::GetWindowDrawList()->AddImage((ImTextureID)(uintptr_t)layersTex, imgMin, imgMax, ImVec2(0, 1), ImVec2(1, 0), tintCol);
+        } else {
+            clickedLayers = ImGui::Button(ICON_LC_LAYERS "##hudVertLayersBtn", ImVec2(squareSize, squareSize));
+        }
+
+        if (clickedLayers) {
+            m_showLayersPanel = !m_showLayersPanel;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sculpt Layers");
+
+        if (isLayersPanelActive) {
+            ImGui::PopStyleColor(3);
+        }
+
         ImGui::Separator();
 
         // Top Vertical Slider: Size
