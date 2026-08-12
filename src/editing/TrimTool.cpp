@@ -653,7 +653,7 @@ bool TrimTool::execute(
     float meshProjMinX = 1e9f, meshProjMinY = 1e9f, meshProjMaxX = -1e9f, meshProjMaxY = -1e9f;
 
     for (int i = 0; i < oldNbVerts; ++i) {
-        if (!mesh->vertVisible.empty() && !mesh->vertVisible[i]) {
+        if (!mesh->vertVisible.empty() && i < (int)mesh->vertVisible.size() && !mesh->vertVisible[i]) {
             removeVert[i] = isAlt ? 1 : 0;
             continue;
         }

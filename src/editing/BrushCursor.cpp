@@ -68,8 +68,15 @@ static bool checkOcclusion(const glm::vec3& worldPos, const Camera& camera, Mesh
         uint32_t v2Id = mesh->faces[faceId * 4 + 2];
         uint32_t v3Id = mesh->faces[faceId * 4 + 3];
 
-        if (!mesh->vertVisible[v0Id] || !mesh->vertVisible[v1Id] || !mesh->vertVisible[v2Id] || (v3Id != 0xffffffff && !mesh->vertVisible[v3Id])) {
-            continue;
+        if (v0Id == 0xffffffff || v1Id == 0xffffffff || v2Id == 0xffffffff) continue;
+        if (v0Id >= (uint32_t)mesh->nbVerts || v1Id >= (uint32_t)mesh->nbVerts || v2Id >= (uint32_t)mesh->nbVerts) continue;
+        if (v3Id != 0xffffffff && v3Id >= (uint32_t)mesh->nbVerts) continue;
+        if ((v0Id * 3 + 2 >= mesh->verts.size()) || (v1Id * 3 + 2 >= mesh->verts.size()) || (v2Id * 3 + 2 >= mesh->verts.size()) || (v3Id != 0xffffffff && v3Id * 3 + 2 >= mesh->verts.size())) continue;
+        if (!mesh->vertVisible.empty()) {
+            if (v0Id < mesh->vertVisible.size() && !mesh->vertVisible[v0Id]) continue;
+            if (v1Id < mesh->vertVisible.size() && !mesh->vertVisible[v1Id]) continue;
+            if (v2Id < mesh->vertVisible.size() && !mesh->vertVisible[v2Id]) continue;
+            if (v3Id != 0xffffffff && v3Id < mesh->vertVisible.size() && !mesh->vertVisible[v3Id]) continue;
         }
 
         glm::vec3 v0(mesh->verts[v0Id * 3], mesh->verts[v0Id * 3 + 1], mesh->verts[v0Id * 3 + 2]);
@@ -177,8 +184,12 @@ void BrushCursor::update(int mouseX, int mouseY,
             uint32_t v2Id = mesh->faces[faceId * 4 + 2];
             uint32_t v3Id = mesh->faces[faceId * 4 + 3];
 
-            if (!mesh->vertVisible[v0Id] || !mesh->vertVisible[v1Id] || !mesh->vertVisible[v2Id] || (v3Id != 0xffffffff && !mesh->vertVisible[v3Id])) {
-                continue;
+            if ((v0Id * 3 + 2 >= mesh->verts.size()) || (v1Id * 3 + 2 >= mesh->verts.size()) || (v2Id * 3 + 2 >= mesh->verts.size()) || (v3Id != 0xffffffff && v3Id * 3 + 2 >= mesh->verts.size())) continue;
+            if (!mesh->vertVisible.empty()) {
+                if (v0Id < mesh->vertVisible.size() && !mesh->vertVisible[v0Id]) continue;
+                if (v1Id < mesh->vertVisible.size() && !mesh->vertVisible[v1Id]) continue;
+                if (v2Id < mesh->vertVisible.size() && !mesh->vertVisible[v2Id]) continue;
+                if (v3Id != 0xffffffff && v3Id < mesh->vertVisible.size() && !mesh->vertVisible[v3Id]) continue;
             }
 
             glm::vec3 v0(mesh->verts[v0Id * 3], mesh->verts[v0Id * 3 + 1], mesh->verts[v0Id * 3 + 2]);
@@ -207,11 +218,15 @@ void BrushCursor::update(int mouseX, int mouseY,
         if (intersectFaceId != 0xffffffff) {
             hitMesh = true;
             localPt = localRayOrigin + minT * localRayDir;
-            localNormal = glm::vec3(
-                mesh->faceNormals[intersectFaceId * 3],
-                mesh->faceNormals[intersectFaceId * 3 + 1],
-                mesh->faceNormals[intersectFaceId * 3 + 2]
-            );
+            if (intersectFaceId < (uint32_t)mesh->nbFaces && (intersectFaceId * 3 + 2) < mesh->faceNormals.size()) {
+                localNormal = glm::vec3(
+                    mesh->faceNormals[intersectFaceId * 3],
+                    mesh->faceNormals[intersectFaceId * 3 + 1],
+                    mesh->faceNormals[intersectFaceId * 3 + 2]
+                );
+            } else {
+                localNormal = glm::vec3(0.0f, 0.0f, 1.0f);
+            }
 
             worldPt = glm::vec3(mesh->matrix * glm::vec4(localPt, 1.0f));
             glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(mesh->matrix)));

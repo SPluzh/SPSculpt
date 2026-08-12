@@ -7280,6 +7280,19 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                     }
                 }
 
+                bool enableFlash = renderer.getEnableSelectionFlash();
+                if (ImGui::Checkbox("Flash Outline on Select", &enableFlash)) {
+                    renderer.setEnableSelectionFlash(enableFlash);
+                }
+                if (enableFlash) {
+                    ImGui::Indent();
+                    float flashDuration = renderer.getSelectionAnimDuration();
+                    if (ImGui::SliderFloat("Flash Duration", &flashDuration, 0.1f, 2.0f, "%.2f s")) {
+                        renderer.setSelectionAnimDuration(flashDuration);
+                    }
+                    ImGui::Unindent();
+                }
+
                 float cursorThickness = renderer.getCursorThickness();
                 if (ImGui::SliderFloat("Brush Cursor Thickness", &cursorThickness, 1.0f, 5.0f, "%.1f px")) {
                     renderer.setCursorThickness(cursorThickness);

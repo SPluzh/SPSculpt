@@ -366,7 +366,7 @@ bool ClipCurveTool::execute(
 
             #pragma omp parallel for schedule(dynamic, 1024) reduction(min:globalMinDist) reduction(max:globalMaxDist)
             for (int i = 0; i < nbVerts; ++i) {
-                if (!mesh->vertVisible[i]) continue;
+                if (!mesh->vertVisible.empty() && i < (int)mesh->vertVisible.size() && !mesh->vertVisible[i]) continue;
 
                 // In first pass use origVerts; in second pass re-evaluate updated mesh->verts for affected vertices
                 glm::vec3 vLocalCurrent = (projPass == 0) ? origVerts[i] : glm::vec3(mesh->verts[i * 3], mesh->verts[i * 3 + 1], mesh->verts[i * 3 + 2]);

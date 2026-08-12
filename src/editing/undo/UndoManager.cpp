@@ -83,7 +83,7 @@ void UndoManager::recordAffectedVertices(Scene& scene,
     }
 
     for (uint32_t v : affectedVerts) {
-        if (v >= (uint32_t)mesh->nbVerts) continue;
+        if (v >= (uint32_t)mesh->nbVerts || (v * 3 + 2) >= mesh->verts.size()) continue;
         if (stamps[v] != currentStamp) {
             stamps[v] = currentStamp;
             // First time this vertex is recorded in this stroke
@@ -127,12 +127,12 @@ void UndoManager::recordAffectedVertices(Scene& scene,
                 }
             }
 
-            if (affectsColors && !mesh->colors.empty()) {
+            if (affectsColors && !mesh->colors.empty() && (v * 3 + 2) < mesh->colors.size()) {
                 delta.prevColors.push_back(mesh->colors[v * 3 + 0]);
                 delta.prevColors.push_back(mesh->colors[v * 3 + 1]);
                 delta.prevColors.push_back(mesh->colors[v * 3 + 2]);
             }
-            if (affectsMaterials && !mesh->materials.empty()) {
+            if (affectsMaterials && !mesh->materials.empty() && (v * 3 + 2) < mesh->materials.size()) {
                 delta.prevMaterials.push_back(mesh->materials[v * 3 + 0]);
                 delta.prevMaterials.push_back(mesh->materials[v * 3 + 1]);
                 delta.prevMaterials.push_back(mesh->materials[v * 3 + 2]);

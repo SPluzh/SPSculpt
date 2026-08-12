@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.4]
+- **Stability / Selection**: Fixed Alt+Click object selection crash (SIGSEGV) in `SculptManager::handleEvent` while preserving subtractive/inverted sculpting strokes (`Alt + Drag`) on the active mesh.
+- **Stability / Selection**: Guaranteed active sculpting stroke cancellation (`g_undoManager.cancelSculptStroke()`) and stroke state reset (`m_isSculpting = false`) prior to switching scene object selections.
+- **Stability / Bounds Checking**: Added strict 0xffffffff sentinel validation and explicit vertex bounds checking (`v0Id < mesh->nbVerts`) across octree ray-triangle intersection loops in `SculptManager` and `BrushCursor`.
+- **Renderer / Safety**: Added robust null checks and buffer initialization validation to `AngleRenderer::drawMeshFlatColor`, `drawMeshSolid`, `drawMeshPrepass`, and `drawWireframe` to prevent invalid memory dereferences during rapid object selection switches.
+
 ## [1.5.3]
 - **Sculpt Masking / Performance**: Preserved standard full-mesh mask inversion in `SculptManager::invertMask` so that inverting an unmasked object masks the entire mesh as expected in standard sculpting workflows.
 - **Sculpt Masking / Performance**: Eliminated redundant undo history pushes (`scene.pushHistoryState()`) on empty mask clear operations, preventing multi-megabyte history stack bloat and lag during off-mesh clicks.

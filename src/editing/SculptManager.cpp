@@ -130,7 +130,8 @@ static std::vector<uint32_t> pickVerticesInSphereTopological(
     for (int i = 0; i < 4; ++i) {
         uint32_t vid = fv[i];
         if (vid == 0xffffffff) continue;
-        if (!mesh->vertVisible[vid]) continue;
+        if (vid >= mesh->vertVisible.size() || !mesh->vertVisible[vid]) continue;
+        if (vid * 3 + 2 >= mesh->verts.size()) continue;
 
         float vx = mesh->verts[vid * 3];
         float vy = mesh->verts[vid * 3 + 1];
@@ -156,7 +157,8 @@ static std::vector<uint32_t> pickVerticesInSphereTopological(
             if (visited[v]) continue;
             visited[v] = 1;
 
-            if (!mesh->vertVisible[v]) continue;
+            if (v >= mesh->vertVisible.size() || !mesh->vertVisible[v]) continue;
+            if (v * 3 + 2 >= mesh->verts.size()) continue;
 
             float vx = mesh->verts[v * 3];
             float vy = mesh->verts[v * 3 + 1];
@@ -1403,8 +1405,12 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             uint32_t v2Id = mesh->faces[faceId * 4 + 2];
             uint32_t v3Id = mesh->faces[faceId * 4 + 3];
 
-            if (!mesh->vertVisible[v0Id] || !mesh->vertVisible[v1Id] || !mesh->vertVisible[v2Id] || (v3Id != 0xffffffff && !mesh->vertVisible[v3Id])) {
-                continue;
+            if ((v0Id * 3 + 2 >= mesh->verts.size()) || (v1Id * 3 + 2 >= mesh->verts.size()) || (v2Id * 3 + 2 >= mesh->verts.size()) || (v3Id != 0xffffffff && v3Id * 3 + 2 >= mesh->verts.size())) continue;
+            if (!mesh->vertVisible.empty()) {
+                if (v0Id < mesh->vertVisible.size() && !mesh->vertVisible[v0Id]) continue;
+                if (v1Id < mesh->vertVisible.size() && !mesh->vertVisible[v1Id]) continue;
+                if (v2Id < mesh->vertVisible.size() && !mesh->vertVisible[v2Id]) continue;
+                if (v3Id != 0xffffffff && v3Id < mesh->vertVisible.size() && !mesh->vertVisible[v3Id]) continue;
             }
 
             glm::vec3 v0(mesh->verts[v0Id * 3], mesh->verts[v0Id * 3 + 1], mesh->verts[v0Id * 3 + 2]);
@@ -1438,11 +1444,15 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 
         m_currentIntersectionValid = true;
         m_currentIntersection = localRayOrigin + minT * localRayDir;
-        m_currentIntersectionNormal = glm::vec3(
-            mesh->faceNormals[intersectFaceId * 3],
-            mesh->faceNormals[intersectFaceId * 3 + 1],
-            mesh->faceNormals[intersectFaceId * 3 + 2]
-        );
+        if (intersectFaceId < (uint32_t)mesh->nbFaces && (intersectFaceId * 3 + 2) < mesh->faceNormals.size()) {
+            m_currentIntersectionNormal = glm::vec3(
+                mesh->faceNormals[intersectFaceId * 3],
+                mesh->faceNormals[intersectFaceId * 3 + 1],
+                mesh->faceNormals[intersectFaceId * 3 + 2]
+            );
+        } else {
+            m_currentIntersectionNormal = glm::vec3(0.0f, 0.0f, 1.0f);
+        }
 
         // Save last valid intersection to prevent cursor jitter (Step 1b)
         m_lastValidIntersection = m_currentIntersection;
@@ -1885,8 +1895,12 @@ MeasurementAnchor SculptManager::pickAnchor(float mouseX, float mouseY, Scene& s
             uint32_t v2Id = mesh->faces[faceId * 4 + 2];
             uint32_t v3Id = mesh->faces[faceId * 4 + 3];
 
-            if (!mesh->vertVisible[v0Id] || !mesh->vertVisible[v1Id] || !mesh->vertVisible[v2Id] || (v3Id != 0xffffffff && !mesh->vertVisible[v3Id])) {
-                continue;
+            if ((v0Id * 3 + 2 >= mesh->verts.size()) || (v1Id * 3 + 2 >= mesh->verts.size()) || (v2Id * 3 + 2 >= mesh->verts.size()) || (v3Id != 0xffffffff && v3Id * 3 + 2 >= mesh->verts.size())) continue;
+            if (!mesh->vertVisible.empty()) {
+                if (v0Id < mesh->vertVisible.size() && !mesh->vertVisible[v0Id]) continue;
+                if (v1Id < mesh->vertVisible.size() && !mesh->vertVisible[v1Id]) continue;
+                if (v2Id < mesh->vertVisible.size() && !mesh->vertVisible[v2Id]) continue;
+                if (v3Id != 0xffffffff && v3Id < mesh->vertVisible.size() && !mesh->vertVisible[v3Id]) continue;
             }
 
             glm::vec3 v0(mesh->verts[v0Id * 3], mesh->verts[v0Id * 3 + 1], mesh->verts[v0Id * 3 + 2]);
@@ -2045,9 +2059,15 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                         uint32_t v2Id = m->faces[faceId * 4 + 2];
                         uint32_t v3Id = m->faces[faceId * 4 + 3];
 
-                        if (!m->vertVisible[v0Id] || !m->vertVisible[v1Id] || !m->vertVisible[v2Id] || 
-                            (v3Id != 0xffffffff && !m->vertVisible[v3Id])) {
-                            continue;
+                        if (v0Id == 0xffffffff || v1Id == 0xffffffff || v2Id == 0xffffffff) continue;
+                        if (v0Id >= (uint32_t)m->nbVerts || v1Id >= (uint32_t)m->nbVerts || v2Id >= (uint32_t)m->nbVerts) continue;
+                        if (v3Id != 0xffffffff && v3Id >= (uint32_t)m->nbVerts) continue;
+                        if ((v0Id * 3 + 2 >= m->verts.size()) || (v1Id * 3 + 2 >= m->verts.size()) || (v2Id * 3 + 2 >= m->verts.size()) || (v3Id != 0xffffffff && v3Id * 3 + 2 >= m->verts.size())) continue;
+                        if (!m->vertVisible.empty()) {
+                            if (v0Id < m->vertVisible.size() && !m->vertVisible[v0Id]) continue;
+                            if (v1Id < m->vertVisible.size() && !m->vertVisible[v1Id]) continue;
+                            if (v2Id < m->vertVisible.size() && !m->vertVisible[v2Id]) continue;
+                            if (v3Id != 0xffffffff && v3Id < m->vertVisible.size() && !m->vertVisible[v3Id]) continue;
                         }
 
                         glm::vec3 v0(m->verts[v0Id * 3], m->verts[v0Id * 3 + 1], m->verts[v0Id * 3 + 2]);
@@ -2089,6 +2109,10 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
                 if (closestMesh) {
                     if (closestMesh != scene.getSelected()) {
+                        if (m_isSculpting) {
+                            g_undoManager.cancelSculptStroke();
+                            m_isSculpting = false;
+                        }
                         scene.setOrUnsetMesh(closestMesh, false);
                         return;
                     }
@@ -2096,7 +2120,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     if (m_currentBrush == BRUSH_TRANSFORM) {
                         glm::vec3 localPt = closestLocalRayOrigin + closestLocalMinT * closestLocalRayDir;
                         glm::vec3 localNormal(0.0f, 0.0f, 1.0f);
-                        if (closestFaceId < (uint32_t)closestMesh->nbFaces && !closestMesh->faceNormals.empty()) {
+                        if (closestFaceId < (uint32_t)closestMesh->nbFaces && (closestFaceId * 3 + 2) < closestMesh->faceNormals.size()) {
                             localNormal = glm::vec3(
                                 closestMesh->faceNormals[closestFaceId * 3],
                                 closestMesh->faceNormals[closestFaceId * 3 + 1],
@@ -2107,10 +2131,15 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                             uint32_t v0Id = closestMesh->faces[closestFaceId * 4];
                             uint32_t v1Id = closestMesh->faces[closestFaceId * 4 + 1];
                             uint32_t v2Id = closestMesh->faces[closestFaceId * 4 + 2];
-                            glm::vec3 v0(closestMesh->verts[v0Id * 3], closestMesh->verts[v0Id * 3 + 1], closestMesh->verts[v0Id * 3 + 2]);
-                            glm::vec3 v1(closestMesh->verts[v1Id * 3], closestMesh->verts[v1Id * 3 + 1], closestMesh->verts[v1Id * 3 + 2]);
-                            glm::vec3 v2(closestMesh->verts[v2Id * 3], closestMesh->verts[v2Id * 3 + 1], closestMesh->verts[v2Id * 3 + 2]);
-                            localNormal = glm::cross(v1 - v0, v2 - v0);
+                            if (v0Id != 0xffffffff && v1Id != 0xffffffff && v2Id != 0xffffffff &&
+                                v0Id * 3 + 2 < closestMesh->verts.size() &&
+                                v1Id * 3 + 2 < closestMesh->verts.size() &&
+                                v2Id * 3 + 2 < closestMesh->verts.size()) {
+                                glm::vec3 v0(closestMesh->verts[v0Id * 3], closestMesh->verts[v0Id * 3 + 1], closestMesh->verts[v0Id * 3 + 2]);
+                                glm::vec3 v1(closestMesh->verts[v1Id * 3], closestMesh->verts[v1Id * 3 + 1], closestMesh->verts[v1Id * 3 + 2]);
+                                glm::vec3 v2(closestMesh->verts[v2Id * 3], closestMesh->verts[v2Id * 3 + 1], closestMesh->verts[v2Id * 3 + 2]);
+                                localNormal = glm::cross(v1 - v0, v2 - v0);
+                            }
                         }
                         if (glm::length(localNormal) > 1e-6f) {
                             localNormal = glm::normalize(localNormal);
@@ -2168,10 +2197,11 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                         closestMesh->isDirty = true;
                         return;
                     }
+
+                    // Alt-click on currently selected mesh allows execution to continue into stroke handling for subtractive/inverted sculpting strokes
                 } else {
-                    if (m_currentBrush == BRUSH_TRANSFORM) {
-                        return;
-                    }
+                    // Alt-click on empty background confirms click without starting a sculpt stroke
+                    return;
                 }
             }
 
@@ -2373,8 +2403,12 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     uint32_t v2Id = mesh->faces[faceId * 4 + 2];
                     uint32_t v3Id = mesh->faces[faceId * 4 + 3];
 
-                    if (!mesh->vertVisible[v0Id] || !mesh->vertVisible[v1Id] || !mesh->vertVisible[v2Id] || (v3Id != 0xffffffff && !mesh->vertVisible[v3Id])) {
-                        continue;
+                    if ((v0Id * 3 + 2 >= mesh->verts.size()) || (v1Id * 3 + 2 >= mesh->verts.size()) || (v2Id * 3 + 2 >= mesh->verts.size()) || (v3Id != 0xffffffff && v3Id * 3 + 2 >= mesh->verts.size())) continue;
+                    if (!mesh->vertVisible.empty()) {
+                        if (v0Id < mesh->vertVisible.size() && !mesh->vertVisible[v0Id]) continue;
+                        if (v1Id < mesh->vertVisible.size() && !mesh->vertVisible[v1Id]) continue;
+                        if (v2Id < mesh->vertVisible.size() && !mesh->vertVisible[v2Id]) continue;
+                        if (v3Id != 0xffffffff && v3Id < mesh->vertVisible.size() && !mesh->vertVisible[v3Id]) continue;
                     }
 
                     glm::vec3 v0(mesh->verts[v0Id * 3], mesh->verts[v0Id * 3 + 1], mesh->verts[v0Id * 3 + 2]);
@@ -2426,11 +2460,15 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 m_firstStrokeFrame = true;
                 m_hasAlphaOrigin = false;
                 m_initialIntersection = localRayOrigin + minT * localRayDir;
-                m_initialIntersectionNormal = glm::vec3(
-                    mesh->faceNormals[intersectFaceId * 3],
-                    mesh->faceNormals[intersectFaceId * 3 + 1],
-                    mesh->faceNormals[intersectFaceId * 3 + 2]
-                );
+                if (intersectFaceId < (uint32_t)mesh->nbFaces && (intersectFaceId * 3 + 2) < mesh->faceNormals.size()) {
+                    m_initialIntersectionNormal = glm::vec3(
+                        mesh->faceNormals[intersectFaceId * 3],
+                        mesh->faceNormals[intersectFaceId * 3 + 1],
+                        mesh->faceNormals[intersectFaceId * 3 + 2]
+                    );
+                } else {
+                    m_initialIntersectionNormal = glm::vec3(0.0f, 0.0f, 1.0f);
+                }
                 m_currentIntersection = m_initialIntersection;
                 m_currentIntersectionNormal = m_initialIntersectionNormal;
 
@@ -2744,8 +2782,12 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                             continue;
                         }
 
-                        if (!mesh->vertVisible[v0Id] || !mesh->vertVisible[v1Id] || !mesh->vertVisible[v2Id] || (v3Id != 0xffffffff && !mesh->vertVisible[v3Id])) {
-                            continue;
+                        if ((v0Id * 3 + 2 >= mesh->verts.size()) || (v1Id * 3 + 2 >= mesh->verts.size()) || (v2Id * 3 + 2 >= mesh->verts.size()) || (v3Id != 0xffffffff && v3Id * 3 + 2 >= mesh->verts.size())) continue;
+                        if (!mesh->vertVisible.empty()) {
+                            if (v0Id < mesh->vertVisible.size() && !mesh->vertVisible[v0Id]) continue;
+                            if (v1Id < mesh->vertVisible.size() && !mesh->vertVisible[v1Id]) continue;
+                            if (v2Id < mesh->vertVisible.size() && !mesh->vertVisible[v2Id]) continue;
+                            if (v3Id != 0xffffffff && v3Id < mesh->vertVisible.size() && !mesh->vertVisible[v3Id]) continue;
                         }
 
                         glm::vec3 v0(mesh->verts[v0Id * 3], mesh->verts[v0Id * 3 + 1], mesh->verts[v0Id * 3 + 2]);
@@ -3051,8 +3093,12 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     uint32_t v2Id = mesh->faces[faceId * 4 + 2];
                     uint32_t v3Id = mesh->faces[faceId * 4 + 3];
 
-                    if (!mesh->vertVisible[v0Id] || !mesh->vertVisible[v1Id] || !mesh->vertVisible[v2Id] || (v3Id != 0xffffffff && !mesh->vertVisible[v3Id])) {
-                        continue;
+                    if ((v0Id * 3 + 2 >= mesh->verts.size()) || (v1Id * 3 + 2 >= mesh->verts.size()) || (v2Id * 3 + 2 >= mesh->verts.size()) || (v3Id != 0xffffffff && v3Id * 3 + 2 >= mesh->verts.size())) continue;
+                    if (!mesh->vertVisible.empty()) {
+                        if (v0Id < mesh->vertVisible.size() && !mesh->vertVisible[v0Id]) continue;
+                        if (v1Id < mesh->vertVisible.size() && !mesh->vertVisible[v1Id]) continue;
+                        if (v2Id < mesh->vertVisible.size() && !mesh->vertVisible[v2Id]) continue;
+                        if (v3Id != 0xffffffff && v3Id < mesh->vertVisible.size() && !mesh->vertVisible[v3Id]) continue;
                     }
 
                     glm::vec3 v0(mesh->verts[v0Id * 3], mesh->verts[v0Id * 3 + 1], mesh->verts[v0Id * 3 + 2]);
@@ -3512,7 +3558,7 @@ std::vector<uint32_t> SculptManager::getVerticesInLasso(Mesh* mesh, const Camera
         std::vector<uint32_t> localSelected;
         #pragma omp for nowait
         for (int i = 0; i < nbVerts; ++i) {
-            if (!mesh->vertVisible[i]) continue;
+            if (!mesh->vertVisible.empty() && i < (int)mesh->vertVisible.size() && !mesh->vertVisible[i]) continue;
 
             int ind = i * 3;
             glm::vec3 lPos(verts[ind], verts[ind + 1], verts[ind + 2]);

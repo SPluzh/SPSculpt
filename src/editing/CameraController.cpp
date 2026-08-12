@@ -73,8 +73,12 @@ void CameraController::startDrag(DragMode mode, int mouseX, int mouseY, Camera& 
                 uint32_t v2Id = mesh->faces[faceId * 4 + 2];
                 uint32_t v3Id = mesh->faces[faceId * 4 + 3];
 
-                if (!mesh->vertVisible[v0Id] || !mesh->vertVisible[v1Id] || !mesh->vertVisible[v2Id] || (v3Id != 0xffffffff && !mesh->vertVisible[v3Id])) {
-                    continue;
+                if ((v0Id * 3 + 2 >= mesh->verts.size()) || (v1Id * 3 + 2 >= mesh->verts.size()) || (v2Id * 3 + 2 >= mesh->verts.size()) || (v3Id != 0xffffffff && v3Id * 3 + 2 >= mesh->verts.size())) continue;
+                if (!mesh->vertVisible.empty()) {
+                    if (v0Id < mesh->vertVisible.size() && !mesh->vertVisible[v0Id]) continue;
+                    if (v1Id < mesh->vertVisible.size() && !mesh->vertVisible[v1Id]) continue;
+                    if (v2Id < mesh->vertVisible.size() && !mesh->vertVisible[v2Id]) continue;
+                    if (v3Id != 0xffffffff && v3Id < mesh->vertVisible.size() && !mesh->vertVisible[v3Id]) continue;
                 }
 
                 glm::vec3 v0(mesh->verts[v0Id * 3], mesh->verts[v0Id * 3 + 1], mesh->verts[v0Id * 3 + 2]);

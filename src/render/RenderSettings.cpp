@@ -16,6 +16,8 @@ bool RenderSettings::save(IniFile& ini, const AngleRenderer& renderer, const Sce
     ini.set(sec, "bgTexturePath", renderer.getBgTexturePath());
     ini.setBool(sec, "filmic", renderer.getFilmic());
     ini.setBool(sec, "showContour", renderer.getShowContour());
+    ini.setBool(sec, "enableSelectionFlash", renderer.getEnableSelectionFlash());
+    ini.setFloat(sec, "selectionAnimDuration", renderer.getSelectionAnimDuration());
     ini.setBool(sec, "showGrid", renderer.getShowGrid());
     ini.setBool(sec, "showSafeFrames", renderer.getShowSafeFrames());
     ini.setFloat(sec, "safeFramesMargin", renderer.getSafeFramesMargin());
@@ -113,6 +115,8 @@ bool RenderSettings::load(const IniFile& ini, AngleRenderer& renderer, Scene& sc
     if (ini.hasKey(sec, "bgTexturePath")) renderer.loadBackgroundTexture(ini.get(sec, "bgTexturePath"));
     if (ini.hasKey(sec, "filmic")) renderer.setFilmic(ini.getBool(sec, "filmic"));
     if (ini.hasKey(sec, "showContour")) renderer.setShowContour(ini.getBool(sec, "showContour"));
+    if (ini.hasKey(sec, "enableSelectionFlash")) renderer.setEnableSelectionFlash(ini.getBool(sec, "enableSelectionFlash"));
+    if (ini.hasKey(sec, "selectionAnimDuration")) renderer.setSelectionAnimDuration(ini.getFloat(sec, "selectionAnimDuration", 1.2f));
     if (ini.hasKey(sec, "showGrid")) renderer.setShowGrid(ini.getBool(sec, "showGrid"));
     if (ini.hasKey(sec, "showSafeFrames")) renderer.setShowSafeFrames(ini.getBool(sec, "showSafeFrames"));
     if (ini.hasKey(sec, "safeFramesMargin")) renderer.setSafeFramesMargin(ini.getFloat(sec, "safeFramesMargin", 20.0f));
