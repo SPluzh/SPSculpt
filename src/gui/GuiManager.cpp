@@ -7257,6 +7257,7 @@ void GuiManager::drawHotkeyHUD() {
             { "R",      "Pinch Brush" },
             { "1",      "Inflate Brush" },
             { "2",      "Flatten Brush" },
+            { "3",      "V-Tool" },
             { "4",      "Transform Tool" },
             { "A",      "Intensity" },
             { "S",      "Radius / Size" },
