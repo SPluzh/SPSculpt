@@ -1327,9 +1327,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     }
                     ImGui::SameLine();
                     if (ImGui::Button("Invert Mask", ImVec2(120, 26))) {
-                        scene.pushHistoryState();
                         selectedMesh = scene.getSelected();
-                        if (selectedMesh) sculpt.invertMask(selectedMesh);
+                        if (selectedMesh) sculpt.invertMask(selectedMesh, &scene);
                     }
                     if (ImGui::Button("Blur Mask", ImVec2(120, 26))) {
                         sculpt.blurMask(selectedMesh);
@@ -1357,9 +1356,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     }
                     ImGui::SameLine();
                     if (ImGui::Button("Invert Mask", ImVec2(120, 26))) {
-                        scene.pushHistoryState();
                         selectedMesh = scene.getSelected();
-                        if (selectedMesh) sculpt.invertMask(selectedMesh);
+                        if (selectedMesh) sculpt.invertMask(selectedMesh, &scene);
                     }
                     ImGui::PopStyleColor();
 

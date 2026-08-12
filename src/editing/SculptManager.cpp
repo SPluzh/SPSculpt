@@ -2800,8 +2800,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 if (m_isMaskLasso) {
                     if (!hitMesh && mesh) {
                         std::cout << "[MaskClick] Canvas Ctrl+Click detected (maxDragDist=" << maxDragDist << "px). Inverting mask..." << std::endl;
-                        scene.pushHistoryState();
-                        invertMask(mesh);
+                        invertMask(mesh, &scene);
                     } else if (hitMesh && mesh) {
                         SDL_Keymod mod = SDL_GetModState();
                         bool ctrlKey = (mod & KMOD_CTRL) != 0;
@@ -3122,10 +3121,9 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     }
                 } else {
                     sculpt_log("[MaskClick] Ray missed mesh. Inverting mask...\n");
-                    scene.pushHistoryState();
                     mesh = scene.getSelected();
                     if (mesh) {
-                        invertMask(mesh);
+                        invertMask(mesh, &scene);
                     }
                 }
             } else {
@@ -3582,9 +3580,11 @@ std::vector<uint32_t> SculptManager::getVerticesInLasso(Mesh* mesh, const Camera
             }
         }
 
-        #pragma omp critical
-        {
-            insideVertices.insert(insideVertices.end(), localSelected.begin(), localSelected.end());
+        if (!localSelected.empty()) {
+            #pragma omp critical
+            {
+                insideVertices.insert(insideVertices.end(), localSelected.begin(), localSelected.end());
+            }
         }
     }
 
@@ -3787,24 +3787,36 @@ void SculptManager::clearMask(Mesh* mesh, Scene* scene) {
               nbVerts, histMs, totalMs);
 }
 
-void SculptManager::invertMask(Mesh* mesh) {
+void SculptManager::invertMask(Mesh* mesh, Scene* scene) {
     sculpt_log("[invertMask] Inverting mask for mesh %p (nbVerts=%d)...\n", mesh, mesh ? mesh->nbVerts : 0);
     if (!mesh) return;
     if (mesh->materials.size() < (size_t)mesh->nbVerts * 3) return;
 
-    auto t0 = std::chrono::high_resolution_clock::now();
     float* materials = mesh->materials.data();
     int nbVerts = mesh->nbVerts;
+
+    auto t0 = std::chrono::high_resolution_clock::now();
+
+    double histMs = 0.0;
+    if (scene) {
+        auto tHist0 = std::chrono::high_resolution_clock::now();
+        scene->pushHistoryState();
+        auto tHist1 = std::chrono::high_resolution_clock::now();
+        histMs = std::chrono::duration<double, std::milli>(tHist1 - tHist0).count();
+    }
+
     for (int i = 0; i < nbVerts; ++i) {
         materials[i * 3 + 2] = 1.0f - materials[i * 3 + 2];
     }
     mesh->isMaterialDirty = true;
     mesh->dirtyVertMin = 0;
     mesh->dirtyVertMax = nbVerts - 1;
+    mesh->isDirty = true;
 
     auto t1 = std::chrono::high_resolution_clock::now();
-    double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-    sculpt_log("[invertMask] Mask inverted on %d verts in %.2f ms.\n", nbVerts, ms);
+    double totalMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    sculpt_log("[invertMask] Mask inverted on %d verts (HistoryPush: %.2f ms, Total: %.2f ms)\n",
+              nbVerts, histMs, totalMs);
 }
 
 void SculptManager::blurMask(Mesh* mesh, int iterations) {

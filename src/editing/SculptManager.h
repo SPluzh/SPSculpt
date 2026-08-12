@@ -358,7 +358,7 @@ public:
     std::vector<uint32_t> getVerticesInLasso(Mesh* mesh, const Camera& camera);
 
     void clearMask(Mesh* mesh, Scene* scene = nullptr);
-    void invertMask(Mesh* mesh);
+    void invertMask(Mesh* mesh, Scene* scene = nullptr);
     void blurMask(Mesh* mesh, int iterations = 2);
     void sharpenMask(Mesh* mesh, int iterations = 2);
 

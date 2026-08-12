@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.3]
+- **Sculpt Masking / Performance**: Preserved standard full-mesh mask inversion in `SculptManager::invertMask` so that inverting an unmasked object masks the entire mesh as expected in standard sculpting workflows.
+- **Sculpt Masking / Performance**: Eliminated redundant undo history pushes (`scene.pushHistoryState()`) on empty mask clear operations, preventing multi-megabyte history stack bloat and lag during off-mesh clicks.
+- **Sculpt Masking / Performance**: Optimized `SculptManager::getVerticesInLasso` by guarding `#pragma omp critical` section locks against empty local thread selections, resolving CPU thread contention during lasso evaluation.
+
 ## [1.5.2]
 - **Sculpt Layers / Polypaint**: Extended the sculpt layer system (`Layer`, `LayerStack`) to fully support per-vertex Polypaint (RGB color and roughness/metalness material attributes).
 - **Sculpt Layers / Polypaint**: Implemented non-destructive paint delta tracking (`deltaColors`, `deltaMaterials`) relative to active reference layer states, enabling real-time paint stroke isolation, layer visibility toggles, and intensity slider scaling for polypaint.
