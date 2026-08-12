@@ -181,8 +181,29 @@ static const char* getBrushNameLocal(BrushType brush) {
     return "Unknown";
 }
 
+static const char* getBrushHotkey(BrushType brush) {
+    switch (brush) {
+        case BRUSH_INFLATE:     return "1";
+        case BRUSH_FLATTEN:     return "2";
+        case BRUSH_TRANSFORM:   return "4";
+        case BRUSH_MOVE:        return "Q";
+        case BRUSH_CLAYBUILDUP: return "W";
+        case BRUSH_DAMSTANDARD: return "E";
+        case BRUSH_PINCH:       return "R";
+        case BRUSH_SMOOTH:      return "Shift";
+        case BRUSH_BRUSH:       return "6";
+        case BRUSH_TWIST:       return "3";
+        case BRUSH_CREASE:      return "8";
+        case BRUSH_DRAG:        return "9";
+        case BRUSH_PAINT:       return "0";
+        default:                return nullptr;
+    }
+}
+
 static const char* getBrushIconKey(BrushType brush) {
     switch (brush) {
+        case BRUSH_FLATTEN:     return "flatten_tool";
+        case BRUSH_INFLATE:     return "inflate_tool";
         case BRUSH_CLAY:        return "clay_tool";
         case BRUSH_CLAYBUILDUP: return "claybuildup_tool";
         case BRUSH_DAMSTANDARD: return "damstandart_tool";
@@ -2522,8 +2543,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         ImGui::PopStyleColor(2);
     }
 
-    drawHotkeyHUD();
-
 #ifdef _WIN32
     if (m_showTabletDiagPanel) {
         ImGui::Begin("Tablet Diagnostics", &m_showTabletDiagPanel, ImGuiWindowFlags_AlwaysAutoResize);
@@ -3778,6 +3797,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     drawPreferencesPanel(sculpt, scene, renderer, window);
     drawBrushIconFrameOverlay();
     drawBrushIconCapturePanel(scene, renderer);
+    drawHotkeyHUD();
     drawUnsavedChangesModal(scene, m_pendingQuit);
     updateWindowTitle(window, scene.isModified());
 
@@ -4525,6 +4545,7 @@ void GuiManager::drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRend
         ImGui::MenuItem("Reference Images", nullptr, &m_showReferenceImagesPanel);
         ImGui::MenuItem("Undo History", nullptr, &m_showUndoDiagPanel);
         ImGui::MenuItem("Sculpt Timelapse", nullptr, &m_showTimelapsePanel);
+        ImGui::MenuItem("Hotkey HUD", nullptr, &m_showHotkeyHUD);
         if (ImGui::MenuItem("Brush Icon Capture...", nullptr, m_showBrushIconCapture)) {
             toggleBrushIconCapturePanel();
         }
@@ -4608,7 +4629,12 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::OpenPopup("##hudActiveToolPopupTop");
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Active Tool: %s (Click to switch)", activeBrushName);
+            const char* hkStr = getBrushHotkey(activeBrush);
+            if (hkStr) {
+                ImGui::SetTooltip("Active Tool: %s [%s] (Click to switch)", activeBrushName, hkStr);
+            } else {
+                ImGui::SetTooltip("Active Tool: %s (Click to switch)", activeBrushName);
+            }
         }
 
         if (ImGui::BeginPopup("##hudActiveToolPopupTop")) {
@@ -4625,7 +4651,9 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
                     ImGui::Image((ImTextureID)(uintptr_t)iconTex, ImVec2(icH, icH), ImVec2(0, 1), ImVec2(1, 0));
                     ImGui::SameLine();
                 }
-                if (ImGui::Selectable(getBrushNameLocal(bType), isSelected)) {
+                const char* hk = getBrushHotkey(bType);
+                std::string itemLabel = hk ? (std::string(getBrushNameLocal(bType)) + " [" + hk + "]") : getBrushNameLocal(bType);
+                if (ImGui::Selectable(itemLabel.c_str(), isSelected)) {
                     sculpt.setBrush(bType);
                 }
                 if (isSelected) ImGui::SetItemDefaultFocus();
@@ -7128,6 +7156,9 @@ void GuiManager::drawHotkeyHUD() {
             { "W",      "Clay Buildup" },
             { "E",      "Dam Standard" },
             { "R",      "Pinch Brush" },
+            { "1",      "Inflate Brush" },
+            { "2",      "Flatten Brush" },
+            { "4",      "Transform Tool" },
             { "A",      "Intensity" },
             { "S",      "Radius / Size" },
             { "D",      "Focal Shift" },

@@ -51,7 +51,7 @@ private:
     bool m_showFloatingIsland = true;
     bool m_showTimelapsePanel = false;
     bool m_showPreferencesPanel = false;
-    bool m_showHotkeyHUD = true;
+    bool m_showHotkeyHUD = false;
 
     // Brush Icon Capture settings
     bool  m_showBrushIconCapture = false;

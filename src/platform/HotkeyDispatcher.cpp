@@ -234,12 +234,12 @@ HKAction HotkeyDispatcher::mapKeyToAction(const SDL_Keysym& keysym, bool ctrlPre
     // Normal keys
     switch (sym) {
         case SDLK_0: return HKAction::ToolPaint;
-        case SDLK_1: return HKAction::ToolBrush;
-        case SDLK_2: return HKAction::ToolInflate;
+        case SDLK_1: return HKAction::ToolInflate;
+        case SDLK_2: return HKAction::ToolFlatten;
         case SDLK_3: return HKAction::ToolTwist;
         case SDLK_4: return HKAction::ToolTransform;
         case SDLK_5: return HKAction::ToolSmooth;
-        case SDLK_6: return HKAction::ToolFlatten;
+        case SDLK_6: return HKAction::ToolBrush;
         case SDLK_7: return HKAction::ToolPinch;
         case SDLK_8: return HKAction::ToolCrease;
         case SDLK_9: return HKAction::ToolDrag;
