@@ -916,13 +916,12 @@ int strokeVTool(
             continue;
         }
 
-        // Linear V-groove displacement with sharp center pinch
+        // Linear V-groove displacement
         float brushModifier = fallOff * brushFactor;
-        float pinchFactor = std::pow(fallOff, 3.0f) * deformIntensity * 2.0f;
 
-        verts[ind] = vx + dx * pinchFactor + anx * brushModifier;
-        verts[ind + 1] = vy + dy * pinchFactor + any * brushModifier;
-        verts[ind + 2] = vz + dz * pinchFactor + anz * brushModifier;
+        verts[ind] = vx + anx * brushModifier;
+        verts[ind + 1] = vy + any * brushModifier;
+        verts[ind + 2] = vz + anz * brushModifier;
 
         iVerts[writeIdx++] = id;
     }

@@ -236,7 +236,7 @@ HKAction HotkeyDispatcher::mapKeyToAction(const SDL_Keysym& keysym, bool ctrlPre
         case SDLK_0: return HKAction::ToolPaint;
         case SDLK_1: return HKAction::ToolInflate;
         case SDLK_2: return HKAction::ToolFlatten;
-        case SDLK_3: return HKAction::ToolTwist;
+        case SDLK_3: return HKAction::ToolVTool;
         case SDLK_4: return HKAction::ToolTransform;
         case SDLK_5: return HKAction::ToolSmooth;
         case SDLK_6: return HKAction::ToolBrush;
@@ -296,6 +296,7 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
             case HKAction::ToolDamStandard: sculpt.setBrush(BRUSH_DAMSTANDARD); break;
             case HKAction::ToolPaint: sculpt.setBrush(BRUSH_PAINT); break;
             case HKAction::ToolTwist: sculpt.setBrush(BRUSH_TWIST); break;
+            case HKAction::ToolVTool: sculpt.setBrush(BRUSH_VTOOL); break;
             case HKAction::ToolTransform: sculpt.setBrush(BRUSH_TRANSFORM); break;
             
             case HKAction::BrushNegative: sculpt.toggleNegative(); break;

@@ -3,6 +3,9 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.4.8]
+- **Brushes**: Removed pinch deformation from the V-Tool brush (`strokeVTool`), ensuring clean V-groove / V-ridge surface displacements without drawing vertices toward the stroke center.
+- **Input / Hotkey**: Assigned hotkey `3` to activate the V-Tool brush.
+- **UI**: Assigned `vtool.png` icon to the V-Tool brush across the Toolbar and Floating Island HUD.
 - **Sculpt Engine / Layers**: Implemented non-destructive Sculpt Layer system (`Layer`, `LayerStack`) with SGL file persistence and multi-layer undo/redo support in `UndoManager`.
 - **Sculpt Engine / Layers**: Fixed severe performance lag during `BRUSH_DELETE_LAYER` strokes by removing per-frame disk I/O log calls, adding OpenMP multi-threading to `strokeDeleteLayer`, and buffering `Logger` file writes.
 - **Sculpt Engine / Layers**: Fixed `BRUSH_DELETE_LAYER` layer targeting and isolation: delta erasure now operates incrementally on the selected active layer without corrupting or wiping out deformations on other visible layers in the stack.

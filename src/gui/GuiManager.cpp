@@ -193,7 +193,7 @@ static const char* getBrushHotkey(BrushType brush) {
         case BRUSH_PINCH:       return "R";
         case BRUSH_SMOOTH:      return "Shift";
         case BRUSH_BRUSH:       return "6";
-        case BRUSH_TWIST:       return "3";
+        case BRUSH_VTOOL:       return "3";
         case BRUSH_CREASE:      return "8";
         case BRUSH_DRAG:        return "9";
         case BRUSH_PAINT:       return "0";
@@ -203,6 +203,7 @@ static const char* getBrushHotkey(BrushType brush) {
 
 static const char* getBrushIconKey(BrushType brush) {
     switch (brush) {
+        case BRUSH_VTOOL:       return "vtool";
         case BRUSH_FLATTEN:     return "flatten_tool";
         case BRUSH_INFLATE:     return "inflate_tool";
         case BRUSH_CLAY:        return "clay_tool";

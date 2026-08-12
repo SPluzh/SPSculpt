@@ -10,6 +10,7 @@ enum class HKAction {
     ToolBrush,
     ToolInflate,
     ToolTwist,
+    ToolVTool,
     ToolTransform,
     ToolSmooth,
     ToolFlatten,
