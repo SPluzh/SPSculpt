@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.9]
+- **UI / Settings**: Fixed an issue where the open/closed visibility state of the Sculpt Layers window was not preserved across application restarts by adding persistent saving and loading for the setting. Added a "Sculpt Layers" menu item under the main Panels menu.
+
 ## [1.4.8]
 - **Brushes**: Removed pinch deformation from the V-Tool brush (`strokeVTool`), ensuring clean V-groove / V-ridge surface displacements without drawing vertices toward the stroke center.
 - **Input / Hotkey**: Assigned hotkey `3` to activate the V-Tool brush.

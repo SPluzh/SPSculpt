@@ -239,6 +239,9 @@ public:
     bool getShowTopologyPanel() const { return m_showTopologyPanel; }
     void setShowTopologyPanel(bool show) { m_showTopologyPanel = show; }
 
+    bool getShowLayersPanel() const { return m_showLayersPanel; }
+    void setShowLayersPanel(bool show) { m_showLayersPanel = show; }
+
     // FPS limiter accessors
     bool getFpsLimitEnabled() const { return m_fpsLimitEnabled; }
     void setFpsLimitEnabled(bool v) { m_fpsLimitEnabled = v; }

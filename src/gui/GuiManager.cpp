@@ -4236,6 +4236,7 @@ bool GuiManager::saveSettings(IniFile& ini) {
     ini.setBool(panelSec, "showRenderingPanel", m_showRenderingPanel);
     ini.setBool(panelSec, "showMaskingPanel", m_showMaskingPanel);
     ini.setBool(panelSec, "showMultiresPanel", m_showMultiresPanel);
+    ini.setBool(panelSec, "showLayersPanel", m_showLayersPanel);
     ini.setBool(panelSec, "showZSpheresPanel", m_showZSpheresPanel);
     ini.setBool(panelSec, "showReferenceImagesPanel", m_showReferenceImagesPanel);
     ini.setBool(panelSec, "showGizmoCube", m_showGizmoCube);
@@ -4286,6 +4287,7 @@ bool GuiManager::loadSettings(const IniFile& ini) {
         if (ini.hasKey(panelSec, "showRenderingPanel")) m_showRenderingPanel = ini.getBool(panelSec, "showRenderingPanel");
         if (ini.hasKey(panelSec, "showMaskingPanel")) m_showMaskingPanel = ini.getBool(panelSec, "showMaskingPanel");
         if (ini.hasKey(panelSec, "showMultiresPanel")) m_showMultiresPanel = ini.getBool(panelSec, "showMultiresPanel");
+        if (ini.hasKey(panelSec, "showLayersPanel")) m_showLayersPanel = ini.getBool(panelSec, "showLayersPanel");
         if (ini.hasKey(panelSec, "showZSpheresPanel")) m_showZSpheresPanel = ini.getBool(panelSec, "showZSpheresPanel");
         if (ini.hasKey(panelSec, "showReferenceImagesPanel")) m_showReferenceImagesPanel = ini.getBool(panelSec, "showReferenceImagesPanel");
         if (ini.hasKey(panelSec, "showGizmoCube")) m_showGizmoCube = ini.getBool(panelSec, "showGizmoCube");
@@ -4641,6 +4643,7 @@ void GuiManager::drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRend
         ImGui::MenuItem("Sculpting Settings", nullptr, &m_showSculptingPanel);
         ImGui::MenuItem("Scene Outliner", nullptr, &m_showScenePanel);
         ImGui::MenuItem("Topology & Remesh", nullptr, &m_showTopologyPanel);
+        ImGui::MenuItem("Sculpt Layers", nullptr, &m_showLayersPanel);
         ImGui::MenuItem("Multiresolution", nullptr, &m_showMultiresPanel);
         ImGui::MenuItem("Reference Images", nullptr, &m_showReferenceImagesPanel);
         ImGui::MenuItem("Undo History", nullptr, &m_showUndoDiagPanel);
