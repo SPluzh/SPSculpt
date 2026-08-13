@@ -1107,16 +1107,8 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
     // Contour Outlines (Sobel filter of the Contour Pass)
     bool renderContourOverlay = m_showContour || (m_enableSelectionFlash && m_selectionAnimTimer > 0.0f);
     if (renderContourOverlay) {
-        if (!m_splitMode) {
-            glViewport(0, 0, m_width, m_height);
-            drawContourOverlay(scene);
-        } else {
-            int w2 = m_width / 2;
-            glViewport(0, 0, w2, m_height);
-            drawContourOverlay(scene);
-            glViewport(w2, 0, m_width - w2, m_height);
-            drawContourOverlay(scene);
-        }
+        glViewport(0, 0, m_width, m_height);
+        drawContourOverlay(scene);
     }
 
     // Selection Cursor
@@ -1266,7 +1258,14 @@ void AngleRenderer::renderScenePass(const Scene& scene, int passType) {
 void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Camera& camera, int viewportIdx) {
     if (passType == 0) {
         // Contour pass
-        if (scene.getSelected() && scene.isMeshRenderVisible(scene.getSelected(), viewportIdx)) {
+        const auto& selectedMeshes = scene.getSelectedMeshes();
+        if (!selectedMeshes.empty()) {
+            for (auto* m : selectedMeshes) {
+                if (m && scene.isMeshRenderVisible(m, viewportIdx)) {
+                    drawMeshFlatColor(m, scene, camera, glm::vec4(1.0f));
+                }
+            }
+        } else if (scene.getSelected() && scene.isMeshRenderVisible(scene.getSelected(), viewportIdx)) {
             drawMeshFlatColor(scene.getSelected(), scene, camera, glm::vec4(1.0f));
         }
     } else if (passType == 3) {

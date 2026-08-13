@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 - **Primitives**: Welded edge vertices on Subdivided Cube primitives to ensure a continuous manifold mesh for sculpting.
 - **Primitives**: Added high-density concentric ring quad subdivisions to Cylinder top and bottom caps for smooth deformation.
 - **Rendering**: Set "Matcap FV" as the default matcap preset and fixed reliable matcap loading and saving across scene files (.sgl) and app restarts.
+- **Rendering**: Fixed object selection outline distortion and offset when using Split Viewport screen mode.
 
 ## [0.1.0]
 - **App Icon**: Added custom 3D clay app icon with teal accent branding for Windows executable (.exe) and SDL window title bar.
