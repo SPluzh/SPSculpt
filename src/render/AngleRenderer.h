@@ -199,19 +199,23 @@ public:
     void setShowSymmetryLine(bool show) { m_showSymmetryLine = show; }
     bool getShowSymmetryLine() const { return m_showSymmetryLine; }
     void triggerTempSymmetryLine(float durationSeconds = 1.8f) {
-        m_tempSymLineEndTime = std::chrono::steady_clock::now() + 
-            std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                std::chrono::duration<float>(durationSeconds));
+        m_tempSymLineDuration = std::max(0.05f, durationSeconds);
+        m_symmetryAnimTimer = m_tempSymLineDuration;
     }
     void cancelTempSymmetryLine() {
-        m_tempSymLineEndTime = std::chrono::steady_clock::time_point();
+        m_symmetryAnimTimer = 0.0f;
+        m_symmetryCurrentAlpha = 0.0f;
     }
     bool isTempSymmetryLineActive() const {
-        return std::chrono::steady_clock::now() < m_tempSymLineEndTime;
+        return m_symmetryAnimTimer > 0.0f || m_symmetryCurrentAlpha > 0.001f;
     }
     bool isSymmetryLineVisible() const {
         return m_showSymmetryLine || isTempSymmetryLineActive();
     }
+    float getSymmetryAlpha() const {
+        return m_symmetryCurrentAlpha;
+    }
+    const std::vector<SymmetryPlaneData>& getSymmetryPlanes() const { return m_symmetryPlanes; }
     void setSymmetryLineWidth(float width) { m_symmetryLineWidth = width; }
     float getSymmetryLineWidth() const { return m_symmetryLineWidth; }
     void setContourColor(const glm::vec4& color) { m_contourColor = color; }
@@ -449,7 +453,9 @@ private:
     // Symmetry parameters
     bool m_showSymmetryLine = false;
     float m_symmetryLineWidth = 0.11f;
-    std::chrono::steady_clock::time_point m_tempSymLineEndTime;
+    float m_symmetryAnimTimer = 0.0f;
+    float m_symmetryCurrentAlpha = 0.0f;
+    float m_tempSymLineDuration = 1.8f;
     glm::vec3 m_planeOrigin{0.0f};
     glm::vec3 m_planeNormal{0.0f, 0.0f, 1.0f};
     glm::vec3 m_planeColor{1.0f, 0.25f, 0.25f};

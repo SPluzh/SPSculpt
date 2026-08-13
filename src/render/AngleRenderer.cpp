@@ -602,6 +602,36 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
         }
     }
 
+    if (m_symmetryAnimTimer > 0.0f) {
+        m_symmetryAnimTimer -= dt;
+        if (m_symmetryAnimTimer < 0.0f) {
+            m_symmetryAnimTimer = 0.0f;
+        }
+    }
+
+    // Update smooth symmetry alpha transition (Fade-In + Fade-Out envelope with smooth lerp)
+    float targetSymAlpha = 0.0f;
+    if (m_showSymmetryLine) {
+        targetSymAlpha = 1.0f;
+    } else if (m_symmetryAnimTimer > 0.0f && m_tempSymLineDuration > 0.0001f) {
+        float elapsed = m_tempSymLineDuration - m_symmetryAnimTimer;
+        float fadeInTime = 0.25f;
+        float fadeOutTime = std::max(0.1f, m_tempSymLineDuration - fadeInTime);
+        if (elapsed < fadeInTime) {
+            float t = elapsed / fadeInTime;
+            targetSymAlpha = t * t * (3.0f - 2.0f * t);
+        } else {
+            float t = std::clamp(m_symmetryAnimTimer / fadeOutTime, 0.0f, 1.0f);
+            targetSymAlpha = t * t * (3.0f - 2.0f * t);
+        }
+    }
+
+    float symAlphaSpeed = (targetSymAlpha > m_symmetryCurrentAlpha) ? 14.0f : 5.0f;
+    m_symmetryCurrentAlpha += (targetSymAlpha - m_symmetryCurrentAlpha) * std::min(1.0f, dt * symAlphaSpeed);
+    if (m_symmetryCurrentAlpha < 0.001f) {
+        m_symmetryCurrentAlpha = 0.0f;
+    }
+
     // Sync split mode and right camera from scene
     m_splitMode = m_isTakingScreenshot ? false : (scene.getSplitMode() != Scene::SplitMode::OFF);
     m_cameraRight = scene.getCameraRight();
@@ -1536,6 +1566,7 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
     glUniform1i(glGetUniformLocation(program, "uSymCount"), symCount);
     glUniform1i(glGetUniformLocation(program, "uSym"), symCount > 0 ? 1 : 0);
     glUniform1f(glGetUniformLocation(program, "uSymLineWidth"), m_symmetryLineWidth);
+    glUniform1f(glGetUniformLocation(program, "uSymAlpha"), getSymmetryAlpha());
 
     if (symCount > 0) {
         float nBuf[9] = {0.0f};

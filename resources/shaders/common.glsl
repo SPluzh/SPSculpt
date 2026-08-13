@@ -8,6 +8,7 @@ uniform vec3 uPlaneColor[MAX_SYM_PLANES];
 uniform int uSymCount;
 uniform int uSym;
 uniform float uSymLineWidth;
+uniform float uSymAlpha;
 uniform int uDarken;
 uniform float uCurvature;
 uniform float uFov;
@@ -90,11 +91,12 @@ vec4 encodeFragColor(const in vec3 frag, const in float alpha) {
     int activePlanes = uSymCount > 0 ? uSymCount : (uSym == 1 ? 1 : 0);
     float symWidth = uSymLineWidth > 0.0001 ? uSymLineWidth : 0.11;
     float innerWidth = symWidth * (0.03 / 0.22);
+    float symAlpha = uSymAlpha > 0.0001 ? uSymAlpha : (uSymAlpha < 0.0 ? 0.0 : 1.0);
     for (int i = 0; i < 3; ++i) {
         if (i >= activePlanes) break;
         float dist = abs(dot(uPlaneN[i], vVertex - uPlaneO[i]));
         if (dist < symWidth) {
-            float factor = smoothstep(symWidth, innerWidth, dist);
+            float factor = smoothstep(symWidth, innerWidth, dist) * symAlpha;
             vec3 vibrantColor = uPlaneColor[i] * 1.8;
             col = mix(col, vibrantColor, factor * 0.85) + uPlaneColor[i] * (factor * 0.4);
         }

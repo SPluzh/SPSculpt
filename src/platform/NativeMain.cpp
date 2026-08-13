@@ -643,6 +643,8 @@ int main(int argc, char* argv[]) {
                     });
                 }
                 renderer.setSymmetryPlanes(renderer.getShowSymmetryLine(), planes);
+            } else if (!sculpt.getUseSym() && renderer.isTempSymmetryLineActive() && !renderer.getSymmetryPlanes().empty()) {
+                renderer.setSymmetryPlanes(renderer.getShowSymmetryLine(), renderer.getSymmetryPlanes());
             } else {
                 renderer.setSymmetryPlanes(renderer.getShowSymmetryLine(), {});
             }
