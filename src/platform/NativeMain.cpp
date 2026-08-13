@@ -384,8 +384,9 @@ int main(int argc, char* argv[]) {
     scene.getCamera().onResize(width, height);
     scene.loadDefaultSphere();
 
-    // Apply matcap clay preset globally to the renderer
-    renderer.setMatcap(5); // "Clay" matcap preset index
+    // Apply default matcap preset globally to the renderer
+    int defaultFvIdx = renderer.findMatcapIndexByName("Matcap FV");
+    renderer.setMatcap(defaultFvIdx >= 0 ? defaultFvIdx : 3); // Default to "Matcap FV"
     renderer.setShaderType(1); // MATCAP
     renderer.setTextureId(0);
 

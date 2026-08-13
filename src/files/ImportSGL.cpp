@@ -67,7 +67,7 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
 
     BinaryReader reader(buffer.data(), buffer.size());
     uint32_t version = reader.readU32();
-    if (version > 7) {
+    if (version > 8) {
         std::cerr << "Unsupported SGL version: " << version << std::endl;
         return {};
     }
@@ -102,11 +102,18 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
             uint32_t mIdx = reader.readU32();
             bool wire = reader.readU32() != 0;
             bool flat = reader.readU32() != 0;
+            float alpha = reader.readF32();
+
             renderer.setShaderType(sType);
-            renderer.setMatcap(mIdx);
+            
+            // Legacy SGL versions (< 8) used matcap indices before 3 new presets were prepended.
+            if (version < 8 && mIdx < 9) {
+                mIdx += 3;
+            }
+            renderer.setMatcap(static_cast<int>(mIdx));
             renderer.setShowWireframe(wire);
             renderer.setFlatShading(flat);
-            renderer.setAlpha(reader.readF32());
+            renderer.setAlpha(alpha);
         }
 
         if (version >= 4) {

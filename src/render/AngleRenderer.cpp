@@ -3708,6 +3708,24 @@ void AngleRenderer::importMatcap(const std::string& name, const std::string& pat
     m_matcaps.push_back(preset);
 }
 
+int AngleRenderer::findMatcapIndexByName(const std::string& name) const {
+    for (size_t i = 0; i < m_matcaps.size(); ++i) {
+        if (m_matcaps[i].name == name) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+void AngleRenderer::setMatcap(int idx) {
+    if (idx >= 0 && idx < static_cast<int>(m_matcaps.size())) {
+        m_matcapIdx = idx;
+    } else {
+        int defaultIdx = findMatcapIndexByName("Matcap FV");
+        m_matcapIdx = (defaultIdx >= 0) ? defaultIdx : 0;
+    }
+}
+
 void AngleRenderer::initSsaoKernel() {
     m_ssaoKernel.clear();
     std::default_random_engine generator(12345);

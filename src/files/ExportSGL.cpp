@@ -57,8 +57,8 @@ public:
 std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& scene, const AngleRenderer& renderer, const SculptManager& sculpt) {
     BinaryWriter writer;
     
-    // Version 7
-    writer.writeU32(7);
+    // Version 8
+    writer.writeU32(8);
 
     // Misc settings
     writer.writeU32(renderer.getShowGrid() ? 1 : 0);

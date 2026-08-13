@@ -215,7 +215,12 @@ bool RenderSettings::load(const IniFile& ini, AngleRenderer& renderer, Scene& sc
     }
 
     if (ini.hasKey(sec, "shaderType")) renderer.setShaderType(ini.getInt(sec, "shaderType", 0));
-    if (ini.hasKey(sec, "matcapIdx")) renderer.setMatcap(ini.getInt(sec, "matcapIdx", 0));
+    if (ini.hasKey(sec, "matcapIdx")) {
+        int mIdx = ini.getInt(sec, "matcapIdx", 0);
+        if (mIdx >= 0 && mIdx < static_cast<int>(renderer.getMatcaps().size())) {
+            renderer.setMatcap(mIdx);
+        }
+    }
     if (ini.hasKey(sec, "showWireframe")) renderer.setShowWireframe(ini.getBool(sec, "showWireframe"));
     if (ini.hasKey(sec, "flatShading")) renderer.setFlatShading(ini.getBool(sec, "flatShading"));
     if (ini.hasKey(sec, "curvature")) renderer.setCurvature(ini.getFloat(sec, "curvature", 0.0f));

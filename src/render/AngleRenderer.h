@@ -240,7 +240,7 @@ public:
 
     void setShaderType(int type) { m_shaderType = type; }
     int getShaderType() const { return m_shaderType; }
-    void setMatcap(int idx) { m_matcapIdx = idx; }
+    void setMatcap(int idx);
     int getMatcap() const { return m_matcapIdx; }
     void setFlatShading(bool flat) { m_flatShading = flat; }
     bool getFlatShading() const { return m_flatShading; }
@@ -311,6 +311,7 @@ public:
     };
     const std::vector<MatcapPreset>& getMatcaps() const { return m_matcaps; }
     void importMatcap(const std::string& name, const std::string& path);
+    int findMatcapIndexByName(const std::string& name) const;
 
     std::vector<uint8_t> renderToBuffer(const Scene& scene, int w, int h);
     void drawMeshForThumbnail(Mesh* mesh, const Camera& cam);
