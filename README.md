@@ -1,4 +1,4 @@
-# SPSculpt
+# SPSculpt Desktop Native
 
 ![SPSculpt Preview](attachments/SPSculpt_PpFSHSIi4B.gif)
 
