@@ -1504,6 +1504,11 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     m_lastFrameProfile.affectedVertCount = (int)allAffectedVerts.size();
 
     if (!allAffectedVerts.empty()) {
+        // Sort and deduplicate affected vertices to ensure optimal L1/L2 cache locality during Face Lookup & Normals update
+        std::sort(allAffectedVerts.begin(), allAffectedVerts.end());
+        allAffectedVerts.erase(std::unique(allAffectedVerts.begin(), allAffectedVerts.end()), allAffectedVerts.end());
+        m_lastFrameProfile.affectedVertCount = (int)allAffectedVerts.size();
+
         bool isSculptDeform = (activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_MASK_GRADIENT_BLUR && activeBrush != BRUSH_POLYGROUP);
 
         if (isSculptDeform) {
@@ -1563,13 +1568,8 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             m_lastFrameProfile.octreeUpdateMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
         }
 
-        uint32_t minV = allAffectedVerts[0];
-        uint32_t maxV = allAffectedVerts[0];
-        for (size_t i = 1; i < allAffectedVerts.size(); ++i) {
-            uint32_t v = allAffectedVerts[i];
-            if (v < minV) minV = v;
-            if (v > maxV) maxV = v;
-        }
+        uint32_t minV = allAffectedVerts.front();
+        uint32_t maxV = allAffectedVerts.back();
 
         if (mesh->isVertexDirty || mesh->isColorDirty || mesh->isMaterialDirty) {
             mesh->dirtyVertMin = std::min(mesh->dirtyVertMin, minV);
