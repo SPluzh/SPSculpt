@@ -1,6 +1,14 @@
-# SPSculpt Desktop Native
+# SPSculpt
+
+![SPSculpt Preview](attachments/SPSculpt_PpFSHSIi4B.gif)
 
 SPSculpt is a 3D sculpting desktop application written in C++.
+
+## How to Run
+
+1. Download the `SPSculpt_vX.X.X.zip` archive from [Releases](https://github.com/SPluzh/SPSculpt/releases).
+2. Extract the contents to any convenient folder on your computer.
+3. Open the extracted folder and run `SPSculpt.exe`.
 
 ## Relationship to SculptGL
 
