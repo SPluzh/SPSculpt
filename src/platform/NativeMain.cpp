@@ -36,6 +36,24 @@
 #include "common/IniFile.h"
 #include "common/Version.h"
 #include "brushes/BrushPresetManager.h"
+#include "stb_image.h"
+
+static void setAppWindowIcon(SDL_Window* window, const char* iconPath) {
+    int w = 0, h = 0, channels = 0;
+    stbi_set_flip_vertically_on_load(false);
+    unsigned char* pixels = stbi_load(iconPath, &w, &h, &channels, 4);
+    if (pixels) {
+        SDL_Surface* surface = SDL_CreateRGBSurfaceFrom(
+            pixels, w, h, 32, w * 4,
+            0x000000FF, 0x0000FF00, 0x00FF0000, 0xFF000000
+        );
+        if (surface) {
+            SDL_SetWindowIcon(window, surface);
+            SDL_FreeSurface(surface);
+        }
+        stbi_image_free(pixels);
+    }
+}
 
 #ifdef _WIN32
 #include <windows.h>
@@ -327,6 +345,8 @@ int main(int argc, char* argv[]) {
         SDL_Quit();
         return -1;
     }
+
+    setAppWindowIcon(window, "resources/icons/app_icon.png");
 
     // Retrieve actual size in case the window started maximized or OS adjusted it
     SDL_GetWindowSize(window, &width, &height);

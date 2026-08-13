@@ -3,6 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [0.1.0]
+- **App Icon**: Added custom 3D clay app icon with teal accent branding for Windows executable (.exe) and SDL window title bar.
 - **Outliner**: Added real-time thumbnail previews for scene objects with background rendering for smooth performance.
 - **Version System**: Established unified application versioning system at 0.1.0 across builds, headers, and UI.
 
