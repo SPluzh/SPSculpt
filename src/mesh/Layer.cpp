@@ -187,7 +187,12 @@ void LayerStack::initBaseMaterials(const std::vector<float>& currentMaterials) {
 void LayerStack::onRemesh(const std::vector<float>& newVerts) {
     m_baseVerts = newVerts;
     m_baseColors.assign(newVerts.size(), 1.0f);
-    m_baseMaterials.assign(newVerts.size(), 0.0f);
+    m_baseMaterials.resize(newVerts.size());
+    for (size_t i = 0; i < newVerts.size() / 3; ++i) {
+        m_baseMaterials[i * 3 + 0] = 0.5f; // roughness
+        m_baseMaterials[i * 3 + 1] = 0.0f; // metalness
+        m_baseMaterials[i * 3 + 2] = 1.0f; // mask (1.0f = unmasked)
+    }
     for (auto& layer : m_layers) {
         layer.deltaVerts.assign(newVerts.size(), 0.0f);
         layer.deltaColors.assign(newVerts.size(), 0.0f);

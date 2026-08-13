@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.6]
+- **Sculpting Engine / Brushes**: Fixed a critical issue where the "Lock Single PolyGroup" feature (`singlePolyGroup`) failed on grab-based brushes (Move, Drag, Elastic) after the initial stroke frame by ensuring `m_grabbedVertices` is populated *after* PolyGroup and Backface Culling filtering passes.
+- **Sculpting Engine / Symmetry**: Updated Stage 6 symmetry pass checks in `SculptManager::executeStroke` to evaluate `getSettings(activeBrush)` for backface culling and single polygroup flags, maintaining consistency when temporary brush modifiers (e.g. Shift for Smooth) are active.
+- **Brushes / Presets**: Added `singlePolyGroup` and `single_poly_group` field parsing to `normalizeBrushJSON` in `BrushPreset.cpp`.
+- **Brushes / Settings**: Added persistent saving and loading for `singlePolyGroup` in `SculptManager::saveSettings` and `SculptManager::loadSettings`.
+
+## [1.5.5]
+- **Sculpt Masking / LayerStack**: Resolved issue where completing a sculpt stroke fully masked the active mesh by fixing `LayerStack::onRemesh` to initialize base materials mask channel (`baseMaterials[i*3+2]`) to `1.0f` (unmasked) instead of `0.0f`.
+- **Sculpt Masking / LayerStack**: Synchronized base materials mask data (`baseMaterials[i*3+2]`) during `BRUSH_MASK`, `BRUSH_MASK_GRADIENT_BLUR`, `clearMask`, `invertMask`, `blurMask`, `sharpenMask`, and `LassoRelease` operations, ensuring layer stack bakes (`updateAfterLayerBake`) preserve active mask states upon stroke release.
+- **Sculpt Masking / LayerStack**: Updated layer material updates (`isLayerPaint` / `isBasePaintWithLayers`) in `SculptManager::doStrokePass` to support mask brush operations on layered meshes.
+
 ## [1.5.4]
 - **Stability / Selection**: Fixed Alt+Click object selection crash (SIGSEGV) in `SculptManager::handleEvent` while preserving subtractive/inverted sculpting strokes (`Alt + Drag`) on the active mesh.
 - **Stability / Selection**: Guaranteed active sculpting stroke cancellation (`g_undoManager.cancelSculptStroke()`) and stroke state reset (`m_isSculpting = false`) prior to switching scene object selections.

@@ -53,6 +53,8 @@ BrushPreset normalizeBrushJSON(const nlohmann::json& raw, const std::string& nam
     p.focalShiftFalloff = raw.value("focalShiftFalloff", p.focalShiftFalloff);
     p.negative = raw.value("negative", p.negative);
     p.culling = raw.value("culling", p.culling);
+    p.singlePolyGroup = raw.value("singlePolyGroup", p.singlePolyGroup);
+    p.singlePolyGroup = raw.value("single_poly_group", p.singlePolyGroup); // fallback
     p.accumulate = raw.value("accumulate", p.accumulate);
     p.lockPosition = raw.value("lockPosition", p.lockPosition);
     p.altmode = raw.value("altmode", p.altmode);

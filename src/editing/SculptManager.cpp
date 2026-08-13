@@ -1140,7 +1140,8 @@ int SculptManager::doStrokePass(
         }
     }
 
-    bool isLayerPaint = mesh && mesh->isLayerActive() && activeBrush == BRUSH_PAINT;
+    bool isMaskBrush = (activeBrush == BRUSH_MASK || activeBrush == BRUSH_MASK_GRADIENT_BLUR);
+    bool isLayerPaint = mesh && mesh->isLayerActive() && (activeBrush == BRUSH_PAINT || isMaskBrush);
     if (isLayerPaint && deformedCount > 0 && mesh) {
         Layer* layer = mesh->layerStack.getActive();
         if (layer) {
@@ -1168,7 +1169,7 @@ int SculptManager::doStrokePass(
                 mesh->isColorDirty = true;
             }
 
-            if ((settings.writeRoughness || settings.writeMetalness) && !mesh->layerStack.getBaseMaterials().empty()) {
+            if ((settings.writeRoughness || settings.writeMetalness || isMaskBrush) && !mesh->layerStack.getBaseMaterials().empty()) {
                 if (layer->deltaMaterials.size() != nb3) {
                     layer->deltaMaterials.assign(nb3, 0.0f);
                 }
@@ -1190,7 +1191,7 @@ int SculptManager::doStrokePass(
         }
     }
 
-    bool isBasePaintWithLayers = mesh && !mesh->isLayerActive() && mesh->layerStack.hasBase() && activeBrush == BRUSH_PAINT;
+    bool isBasePaintWithLayers = mesh && !mesh->isLayerActive() && mesh->layerStack.hasBase() && (activeBrush == BRUSH_PAINT || isMaskBrush);
 
     if ((isBaseDeformWithLayers || isBasePaintWithLayers) && deformedCount > 0 && mesh) {
         auto& baseVerts = mesh->layerStack.getBase();
@@ -1530,11 +1531,6 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z, radius2, mesh->vertVisible.data()
             );
         }
-        if (isGrabBrush) {
-            if (m_firstStrokeFrame || m_grabbedVertices.empty()) {
-                m_grabbedVertices = pickedVertices;
-            }
-        }
     }
     m_lastFrameProfile.pickVertsMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
     m_lastFrameProfile.pickedVertCount = (int)pickedVertices.size();
@@ -1547,6 +1543,11 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         }
         if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty()) {
             filterPolyGroupVertices(pickedVertices, mesh, m_strokeTargetPolyGroup);
+        }
+        if (isGrabBrush) {
+            if (m_firstStrokeFrame || m_grabbedVertices.empty()) {
+                m_grabbedVertices = pickedVertices;
+            }
         }
     }
     m_lastFrameProfile.cullingMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
@@ -1671,12 +1672,12 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                         radius2, mesh->vertVisible.data()
                     );
 
-                    if (getCurrentSettings().culling && !symVerts.empty()) {
+                    if (getSettings(activeBrush).culling && !symVerts.empty()) {
                         glm::vec3 symRayDir = reflectVectorSymmetry(localRayDir, sScale, mesh, m_symmetryMode);
                         filterCullingVertices(symVerts, mesh, symRayDir);
                     }
 
-                    if (getCurrentSettings().singlePolyGroup && !mesh->faceGroups.empty() && !symVerts.empty()) {
+                    if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty() && !symVerts.empty()) {
                         filterPolyGroupVertices(symVerts, mesh, m_strokeTargetPolyGroup);
                     }
 
@@ -2681,6 +2682,16 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                         for (uint32_t vid : selectedVertices) {
                             materials[vid * 3 + 2] = maskVal;
                         }
+                        if (mesh->layerStack.hasBase()) {
+                            auto& baseMat = mesh->layerStack.getBaseMaterials();
+                            if (baseMat.size() == mesh->materials.size()) {
+                                for (uint32_t vid : selectedVertices) {
+                                    if (vid * 3 + 2 < baseMat.size()) {
+                                        baseMat[vid * 3 + 2] = maskVal;
+                                    }
+                                }
+                            }
+                        }
                         mesh->isMaterialDirty = true;
                         mesh->dirtyVertMin = 0;
                         mesh->dirtyVertMax = mesh->nbVerts - 1;
@@ -3173,10 +3184,20 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     }
                 }
             } else {
+                sculpt_log("[StrokeEnd] Ending sculpt stroke for mesh %p (nbVerts=%d, hasBase=%d)...\n",
+                          mesh, mesh ? mesh->nbVerts : 0, (mesh && mesh->layerStack.hasBase()) ? 1 : 0);
                 g_undoManager.endSculptStroke(scene);
                 if (mesh && mesh->layerStack.hasBase()) {
+                    float mBefore = (!mesh->materials.empty() && mesh->materials.size() >= 3) ? mesh->materials[2] : -1.0f;
+                    float bBefore = (!mesh->layerStack.getBaseMaterials().empty() && mesh->layerStack.getBaseMaterials().size() >= 3) ? mesh->layerStack.getBaseMaterials()[2] : -1.0f;
+                    sculpt_log("[StrokeEnd] LayerStack bake starting. Sample mask before bake: mesh.mask[0]=%.2f, base.mask[0]=%.2f\n",
+                               mBefore, bBefore);
+
                     mesh->layerStack.bake(mesh->layerStack.getBase(), mesh->verts);
                     mesh->updateAfterLayerBake();
+
+                    float mAfter = (!mesh->materials.empty() && mesh->materials.size() >= 3) ? mesh->materials[2] : -1.0f;
+                    sculpt_log("[StrokeEnd] LayerStack bake completed. Sample mask after bake: mesh.mask[0]=%.2f\n", mAfter);
                 }
             }
         }
@@ -3654,6 +3675,7 @@ bool SculptManager::saveSettings(IniFile& ini) {
         ini.setFloat(sec, "spacing", m_brushSettings[i].spacing);
         ini.setBool(sec, "negative", m_brushSettings[i].negative);
         ini.setBool(sec, "culling", m_brushSettings[i].culling);
+        ini.setBool(sec, "singlePolyGroup", m_brushSettings[i].singlePolyGroup);
         ini.setBool(sec, "accumulate", m_brushSettings[i].accumulate);
         ini.setBool(sec, "lockPosition", m_brushSettings[i].lockPosition);
         ini.setInt(sec, "idAlpha", m_brushSettings[i].idAlpha);
@@ -3717,6 +3739,7 @@ bool SculptManager::loadSettings(const IniFile& ini) {
         if (ini.hasKey(sec, "spacing")) m_brushSettings[i].spacing = ini.getFloat(sec, "spacing", 0.15f);
         if (ini.hasKey(sec, "negative")) m_brushSettings[i].negative = ini.getBool(sec, "negative");
         if (ini.hasKey(sec, "culling")) m_brushSettings[i].culling = ini.getBool(sec, "culling");
+        if (ini.hasKey(sec, "singlePolyGroup")) m_brushSettings[i].singlePolyGroup = ini.getBool(sec, "singlePolyGroup");
         if (ini.hasKey(sec, "accumulate")) m_brushSettings[i].accumulate = ini.getBool(sec, "accumulate");
         if (ini.hasKey(sec, "lockPosition")) m_brushSettings[i].lockPosition = ini.getBool(sec, "lockPosition");
         if (ini.hasKey(sec, "idAlpha")) m_brushSettings[i].idAlpha = ini.getInt(sec, "idAlpha", 0);
@@ -3788,7 +3811,7 @@ bool SculptManager::loadSettings(const IniFile& ini) {
 }
 
 void SculptManager::clearMask(Mesh* mesh, Scene* scene) {
-    sculpt_log("[clearMask] Called for mesh %p...\n", mesh);
+    sculpt_log("[clearMask] Called for mesh %p (nbVerts=%d)...\n", mesh, mesh ? mesh->nbVerts : 0);
     if (!mesh) return;
     if (mesh->materials.size() < (size_t)mesh->nbVerts * 3) {
         sculpt_log("[clearMask] Error: materials buffer size mismatch!\n");
@@ -3823,6 +3846,24 @@ void SculptManager::clearMask(Mesh* mesh, Scene* scene) {
     for (int i = 0; i < nbVerts; ++i) {
         materials[i * 3 + 2] = 1.0f;
     }
+
+    if (mesh->layerStack.hasBase()) {
+        auto& baseMat = mesh->layerStack.getBaseMaterials();
+        if (baseMat.size() == mesh->materials.size()) {
+            for (int i = 0; i < nbVerts; ++i) {
+                baseMat[i * 3 + 2] = 1.0f;
+            }
+        }
+        for (auto& layer : mesh->layerStack.getLayers()) {
+            if (layer.deltaMaterials.size() == mesh->materials.size()) {
+                for (int i = 0; i < nbVerts; ++i) {
+                    layer.deltaMaterials[i * 3 + 2] = 0.0f;
+                }
+            }
+        }
+        sculpt_log("[clearMask] Synchronized LayerStack base & delta materials mask to 1.0f (unmasked)\n");
+    }
+
     mesh->isMaterialDirty = true;
     mesh->dirtyVertMin = 0;
     mesh->dirtyVertMax = nbVerts - 1;
@@ -3854,6 +3895,24 @@ void SculptManager::invertMask(Mesh* mesh, Scene* scene) {
     for (int i = 0; i < nbVerts; ++i) {
         materials[i * 3 + 2] = 1.0f - materials[i * 3 + 2];
     }
+
+    if (mesh->layerStack.hasBase()) {
+        auto& baseMat = mesh->layerStack.getBaseMaterials();
+        if (baseMat.size() == mesh->materials.size()) {
+            for (int i = 0; i < nbVerts; ++i) {
+                baseMat[i * 3 + 2] = materials[i * 3 + 2];
+            }
+        }
+        for (auto& layer : mesh->layerStack.getLayers()) {
+            if (layer.deltaMaterials.size() == mesh->materials.size()) {
+                for (int i = 0; i < nbVerts; ++i) {
+                    layer.deltaMaterials[i * 3 + 2] = 0.0f;
+                }
+            }
+        }
+        sculpt_log("[invertMask] Synchronized LayerStack baseMaterials mask for %d verts\n", nbVerts);
+    }
+
     mesh->isMaterialDirty = true;
     mesh->dirtyVertMin = 0;
     mesh->dirtyVertMax = nbVerts - 1;
