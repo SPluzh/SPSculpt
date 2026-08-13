@@ -2,403 +2,102 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.5.1]
-- **Outliner / Previews**: Integrated deferred, frame-budgeted offscreen rendering for object preview thumbnails in the Scene Outliner panel (`AngleRenderer::drawMeshForThumbnail`).
-- **Outliner / Previews**: Added single-shared-depth buffer framebuffer caching (`MeshThumbnail` with `m_thumbSharedDepth`), caching 48x48 textures and updating at most 1 thumbnail per frame to guarantee zero FPS drop during complex scene editing.
-- **Outliner / Previews**: Updated the Scene Outliner table layout with a dedicated preview image column (`##Thumb`), automatic aspect-ratio framing via isometric camera alignment (`resetViewToMesh`), and real-time cache invalidation triggered upon sculpting stroke completion.
+## [0.1.0]
+- **Outliner**: Added real-time thumbnail previews for scene objects with background rendering for smooth performance.
+- **Version System**: Established unified application versioning system at 0.1.0 across builds, headers, and UI.
 
-## [1.4.10]
-- **Brushes**: Fixed an issue where the Move tool (and other grab brushes: Drag, Elastic) failed to respect the "Lock Single PolyGroup" setting on frame 2+ of a stroke due to premature vertex caching prior to polygroup filtering.
-- **Sculpt Engine**: Ensured `m_grabbedVertices` caches filtered vertices after Stage 3 culling and polygroup filtering, updated symmetry settings lookups to use `activeBrush` settings, and initialized target polygroup context on mouse-down.
+## [0.0.32]
+- **Brushes**: Fixed an issue where Move, Drag, and Elastic brushes did not respect "Lock Single PolyGroup" after the first frame of a stroke.
 
-## [1.4.9]
-- **UI / Settings**: Fixed an issue where the open/closed visibility state of the Sculpt Layers window was not preserved across application restarts by adding persistent saving and loading for the setting. Added a "Sculpt Layers" menu item under the main Panels menu.
+## [0.0.31]
+- **UI**: Saved Sculpt Layers panel open/closed visibility across application restarts and added a shortcut in the Panels menu.
 
-## [1.4.8]
-- **Brushes**: Removed pinch deformation from the V-Tool brush (`strokeVTool`), ensuring clean V-groove / V-ridge surface displacements without drawing vertices toward the stroke center.
-- **Input / Hotkey**: Assigned hotkey `3` to activate the V-Tool brush.
-- **UI**: Assigned `vtool.png` icon to the V-Tool brush across the Toolbar and Floating Island HUD.
-- **Sculpt Engine / Layers**: Implemented non-destructive Sculpt Layer system (`Layer`, `LayerStack`) with SGL file persistence and multi-layer undo/redo support in `UndoManager`.
-- **Sculpt Engine / Layers**: Fixed severe performance lag during `BRUSH_DELETE_LAYER` strokes by removing per-frame disk I/O log calls, adding OpenMP multi-threading to `strokeDeleteLayer`, and buffering `Logger` file writes.
-- **Sculpt Engine / Layers**: Fixed `BRUSH_DELETE_LAYER` layer targeting and isolation: delta erasure now operates incrementally on the selected active layer without corrupting or wiping out deformations on other visible layers in the stack.
+## [0.0.30]
+- **Brushes**: Removed center pinch from V-Tool brush for cleaner V-grooves. Assigned hotkey `3` and custom tool icon.
+- **Sculpt Layers**: Added non-destructive sculpt layer system with multi-layer undo/redo support and disk logging optimizations.
 
-## [1.4.7]
-- **Sculpt Engine / Layers**: Fixed severe vertex explosion artifacts when sculpting on active layers by safely clamping single-sample displacement steps, clamping inverse intensity scaling (`invIntensity`), and locking start-of-stroke layer delta snapshots (`m_strokeStartLayerDeltas`).
-- **Sculpt Engine / Layers**: Optimized active layer deformation performance by replacing full-mesh `LayerStack::bake` calls on every stroke sample frame (~60–120 times/sec) with fast $O(N)$ incremental vertex updates, reducing CPU stroke time from ~17ms to <0.01ms and eliminating stutter/lag. Full-mesh `bake` is now executed once upon stroke completion.
-- **Brushes**: Synchronized `mesh->vertProxy` positions for modified vertices during non-grab incremental strokes (e.g. Crease, DamStandard, VTool), preventing cumulative displacement feedback loops.
+## [0.0.29]
+- **Sculpt Layers**: Optimized active layer sculpting performance to eliminate stroke latency and fixed vertex displacement artifacts.
 
-## [1.4.6]
-- **Remeshing**: Changed the default state of "Align Symmetry Axes" in Voxel Remesh to off (`false`), and implemented persistent saving and restoring for voxel remesh settings in `app_settings.cfg`.
+## [0.0.28]
+- **Remeshing**: Saved Voxel Remesh settings persistently and set "Align Symmetry Axes" off by default.
 
-## [1.4.5]
-- **Tools**: Added Brush Icon Capture Tool allowing users to frame a square viewport region and export transparent PNG brush icons directly to `resources/icons/`.
-- **Performance**: Optimized offscreen buffer capture (`renderToBuffer`) by skipping redundant FBO texture re-allocations when target resolution matches viewport dimensions.
-- **UI**: Added DPI-aware viewport framing overlay and a dedicated Brush Icon Capture panel with icon size presets and frame position controls.
+## [0.0.27]
+- **Tools**: Added Brush Icon Capture tool to frame and export transparent PNG brush icons directly to resources.
 
-## [1.4.4]
-- **Sculpt Engine**: Fixed bounds checking in `strokeElastic`, `getFallOff`, and `getElasticFallOff` to prevent vertices outside the brush radius from exploding to extreme coordinates and corrupting mesh topology.
-- **Brushes**: Upgraded Elastic Brush falloff profile to use `getMoveFallOff` (`base = 1.0 - dist * dist`), ensuring smooth, continuous decay from brush center to border and responsive control via Elasticity and Focal Shift parameters.
+## [0.0.26]
+- **Brushes**: Fixed vertex explosion bug on Elastic brush boundaries and updated falloff profile for smoother decay.
 
-## [1.4.3]
-- **Trim Tool**: Implemented exact screen-space edge splitting along the 2D lasso contour, eliminating stair-stepped jagged edges ("края лесенкой") and inaccurate face removal ("обрезается чтото лишнее").
-- **Trim Tool**: Added topology hole filling (capping) by extracting directed boundary loops of cut edges and generating fan cap geometry with Newell's normal calculation ("дырка не закрыта").
-- **Trim Tool**: Interpolated vertex positions, surface normals, vertex colors, and materials along cut edge intersections for clean surface transitions.
+## [0.0.25]
+- **Trim Tool**: Improved cut accuracy along 2D lasso contours with automatic hole filling and interpolated edge attributes.
 
-## [1.4.2]
-- **ClipCurve Tool**: Implemented strict constrained tangential relaxation: all affected vertices are projected onto the cut plane (`targetScreen`) on every relaxation iteration, allowing them to slide in-plane to equalize polygon spacing while maintaining 100% flat surface alignment (preventing 3D volume distortion).
-- **ClipCurve Tool**: Implemented 2-stage "Relax → Final Snap" pipeline: after initial clipping projection, 8 iterations of constrained Laplacian relaxation evenly redistribute polygon density around corners and internal regions, followed by a final crisp boundary snap pass back to the polyline cut plane.
-- **ClipCurve Tool**: Expanded `BOUNDARY_THRESHOLD_PX` to 10.0px to capture the full edge boundary region for edge-neighbor smoothing.
-- **ClipCurve Tool**: Fixed core point-collapse artifact ("потяги") on curve corners by removing artificial 2D endpoint snapping (`outTargetScreen = seg.pA/pB`) in `projectToPolylineMiter`, ensuring continuous 2D orthogonal projection across miter sector boundaries.
-- **ClipCurve Tool**: Updated `constrainedLaplacianRelax` to treat `vertBoundary` vertices as dedicated edge neighbors during Laplacian smoothing, preventing interior mesh vertices from pulling boundary geometry into the model volume.
-- **ClipCurve Tool**: Added 2-pass projection pipeline (`NUM_PROJECTION_PASSES = 2`) to re-evaluate displaced vertex positions against intersecting segment half-spaces, flattening overlapping cut regions at 90° and sharp corners.
+## [0.0.24]
+- **ClipCurve Tool**: Added smooth 2-stage projection and constrained relaxation pipeline for crisp, flat surface cuts.
 
-## [1.4.1]
-- **ClipCurve Tool**: Fixed reversed-clipping projection and polygon inversion by switching from dual-plane rotation to camera-ray depth unprojection (`camera.unproject`).
-- **ClipCurve Tool**: Fixed half-mesh projection artifacts when symmetry is enabled by using an immutable initial vertex snapshot (`origVerts`), preventing symmetric passes from reflecting displaced geometry across mirror planes.
-- **ClipCurve Tool**: Fixed Laplacian relaxation on symmetric vertices by preserving local relaxed positions for kept interior vertices (`finalLocal = bLocal`).
-- **ClipCurve Tool**: Added Z-depth range clamping (`vProj.z` in `(0, 1)`) to discard vertices behind the view frustum during projection.
+## [0.0.23]
+- **ClipCurve Tool**: Fixed projection flip artifacts and improved symmetry support during curve clipping operations.
 
-## [1.4.0]
-- **UI**: Added a dropdown arrow button (`ICON_LC_CHEVRON_DOWN`) directly attached to the symmetry toggle button in the Floating Island HUD, providing instant access to symmetry settings (local/world space, X/Y/Z active axes, guide lines, line width, symmetry offset), geometry flipping (Flip X, Y, Z), and object mirroring.
-- **UI**: Removed the standalone "Symmetry Settings" window panel, streamlining symmetry management into the unified Floating Island HUD dropdown.
+## [0.0.22]
+- **UI**: Added a symmetry dropdown attached directly to the Floating HUD for quick axis toggles and geometry mirroring.
 
-## [1.3.9]
-- **UI**: Migrated "Camera & Viewport", "Rendering Quality", and "Debug Log" controls into dedicated tabs inside the centralized "Preferences & Application Settings" modal.
-- **UI**: Added a toggle checkbox ("Show Point Count & FPS HUD") with tooltip to the Preferences & Application Settings panel (Interface & Display tab) to easily show or hide the Mesh Statistics HUD overlay.
-- **UI**: Removed "Camera & Viewport", "Rendering Quality", "Debug Log", "Mesh Statistics & FPS" (HUD), "Floating Island HUD", and "Navigation Cube" entries from the main "Panels" menu to declutter the top-level menu layout.
+## [0.0.21]
+- **UI**: Consolidated camera, rendering, and log settings into a unified Preferences modal and added a mesh statistics HUD toggle.
 
-## [1.3.8]
-- **Camera**: Added Camera Undo (`Alt + Z`) and Camera Redo (`Alt + Shift + Z`) shortcuts to easily step backward and forward through viewport view changes.
-- **Camera**: Integrated automatic state history recording into mouse navigation gestures (orbit, pan, zoom, roll), mouse wheel zoom, projection mode switches, and view snapping.
-- **Input**: Updated hotkey dispatcher to allow `Alt + Z` and `Alt + Shift + Z` camera navigation hotkeys through when ImGui interface elements are focused (unless actively typing text).
+## [0.0.19]
+- **UI**: Added a vertical Focal Shift slider to the Floating HUD for quick brush parameter adjustments.
 
-## [1.3.7]
-- **UI**: Added a vertical Focal Shift slider (`VSliderFloat`) to the left Floating Island HUD directly below the Intensity slider, complete with real-time percentage tooltip formatting and mouse-wheel adjustment support.
-- **UI**: Prevented brush cursor from being hidden when hovering over Floating Island HUD panels and popups.
+## [0.0.18]
+- **Performance**: Accelerated lasso mask selection and clear-mask actions on high-poly models with active symmetry.
 
-## [1.3.6]
-- **Masking & Symmetry**: Optimized `getVerticesInLasso` performance when symmetry is enabled by hoisting invariant symmetry plane origins and normals outside the high-density vertex loop, eliminating O(N²) `computeLocalRadius()` and matrix inversion recalculations per vertex.
-- **Masking & Symmetry**: Reduced lasso mask selection and clear-mask processing time on high-poly meshes with active symmetry from ~25 seconds to ~2-5 milliseconds.
+## [0.0.17]
+- **Snapshot**: Added a "Model Snapshot" feature to freeze reference viewports during active sculpting.
 
-## [1.3.5]
-- **Model Snapshot**: Added "Model Snapshot" feature (`ModelSnapshot` in `AngleRenderer`), allowing users to freeze a reference viewport image of the scene that stays stationary relative to the screen.
-- **Model Snapshot**: Added HUD toggle button (`ICON_LC_IMAGE`), Camera Panel manual trigger button, and `Panels` menu item.
-- **Model Snapshot**: Implemented automatic snapshot refresh logic, updating the offscreen buffer in real-time whenever mesh geometry, vertex colors, materials, or polygroups are modified during sculpting or transformation.
-- **Renderer**: Fixed camera viewport matrix jittering and aspect ratio distortion in split screen mode (Mirror / Independent) when Model Snapshot updates occur, by preserving split mode state and restoring camera aspect ratio parameters (`oldW`, `oldH`) after snapshot pass completion.
+## [0.0.16]
+- **Brushes**: Expanded max brush radius (1000px) and intensity (1000%), and upgraded Smooth brush to multi-pass smoothing.
 
-## [1.3.4]
-- **Brushes**: Expanded maximum brush radius limit to 1000px and intensity limit to 1000% across the interface, Floating Island HUD, and hotkey modal controls.
-- **Brushes**: Extended intensity slider behavior to operate as 0%–100% by default while allowing scrub-through dragging and mouse-wheel scrolling up to 1000%.
-- **Brushes**: Unified intensity percentage formatting (`0%` – `1000%`) consistently across panel sliders, Floating Island HUD, and hotkey modal HUD card.
-- **Brushes**: Smoothly scaled hotkey 'A' modal drag sensitivity and HUD progress bar mapping, eliminating jumps and layout shifts when crossing 100%.
-- **Sculpt Engine**: Upgraded Smooth brush (`strokeSmooth`) to perform multi-pass Laplacian smoothing (1 to 10 passes per stroke step for intensities 100%–1000%), providing 10x deeper smoothing power while guaranteeing topology stability and preventing polygon tearing.
-- **Sculpt Engine**: Clamped falloff in `strokePinch` to prevent mesh inversion during high-intensity pinch strokes.
+## [0.0.15]
+- **UI**: Redesigned Floating Island HUD with compact layout, Lucide vector icons, and projection toggles.
 
-## [1.3.3]
-- **UI**: Made the Floating Island HUD more compact by reducing its padding from `16px` to `8px` horizontally and `8px` to `4px` vertically, locking it flush against the absolute top edge of the window (overlapping the transparent menu bar area) and disabling manual dragging.
-- **UI**: Reduced the corner rounding (border radius) of the Floating Island HUD from `20px` to `8px` for a cleaner, sleeker look.
-- **UI**: Removed the Undo and Redo buttons from the Floating Island HUD to declutter and optimize space.
-- **UI**: Repositioned the symmetry controls (master toggle and X, Y, Z axis buttons) to be placed before the viewport toggles.
-- **UI**: Applied consistent subtle frame rounding (`3px` scaled) to all buttons in the Floating Island HUD, and packed the symmetry buttons group tightly (spacing of `1px` scaled) to look like a single segmented control.
-- **UI**: Adjusted the vertical baseline offset (`GlyphOffset.y`) of the Lucide icon font from `1.0 * scale` to `2.0 * scale` to align all viewport icons perfectly in the center of the buttons.
-- **UI**: Added a Perspective Projection toggle button (`ICON_LC_CAMERA`) to the Floating Island HUD with active state highlighting and tooltip (`Toggle Perspective Projection (P)`), enabling quick switching between Perspective and Orthographic camera modes directly from the viewport header.
+## [0.0.14]
+- **Camera**: Improved accuracy and scale parity when switching between Perspective and Orthographic projection modes.
 
-## [1.3.2]
-- **Camera**: Refactored perspective and orthographic camera conversion logic (`setProjectionType`, `getTransZ`, `toggleViewAngles`) to ensure strictly invertible, mathematically precise scale parity across view switches.
-- **Camera**: Eliminated translation drift and FOV-dependent scale jumps when toggling between perspective and orthographic projection modes.
+## [0.0.13]
+- **Symmetry**: Fixed World Space symmetry reflections across active sculpt brushes, raycasts, and cursor indicators.
 
-## [1.3.1]
-- **Symmetry**: Fixed World Space symmetry mode across the entire sculpting engine (`SculptManager`), brush cursors (`BrushCursor`), lasso selection (`getVerticesInLasso`), renderer plane indicators (`AngleRenderer`), and transform tool (`GuiManager`).
-- **Symmetry**: Replaced naive axis scaling with coordinate-space plane reflections (`reflectPointSymmetry` and `reflectVectorSymmetry`) using `Mesh::getSymmetryOriginForAxis` and `Mesh::getSymmetryNormalForAxis`.
-- **Symmetry**: Ensured symmetry planes stay fixed in World Space when scene meshes are rotated, scaled, or offset, correctly mirroring intersections, normals, ray directions, cursor overlays, and vertex transformations.
+## [0.0.12]
+- **Transform Tool**: Added vertex masking support and multi-axis symmetry handling to transform operations.
 
-## [1.3.0]
-- **Transform Tool**: Enabled vertex masking support for the Transform Tool, ensuring unmasked vertices transform relative to the active matrix while masked vertices stay stationary in world space.
-- **Transform Tool**: Added a "Center Pivot on Unmasked" UI button in the Transform Tool settings panel when masking is active, positioning the gizmo pivot directly at the unmasked geometry's center of mass.
-- **Transform Tool**: Ensured matrix resetting and target matrix applications respect active vertex masks.
-- **Transform Tool**: Added full symmetry support when manipulating the Transform Tool gizmo with off-center or arbitrary pivot locations, automatically calculating mirrored transformations around mirrored pivots (`S * deltaLocal * S`) and smoothly blending vertex movement across active symmetry planes.
-- **Masking & Symmetry**: Added full multi-axis symmetry support to Lasso Masking and Lasso Hiding by evaluating primary and mirrored vertex positions against the lasso selection boundary.
-- **Masking & Symmetry**: Fixed mask brush stroke sign to correctly decrease mask values towards 0.0 (masked) during standard strokes and increase towards 1.0 (unmasked) when holding Alt.
-- **Masking & Symmetry**: Fixed symmetry reflection calculation in Mask Gradient Blur tool for active symmetry axes.
+## [0.0.11]
+- **PolyGroups**: Fixed polygroup isolation toggle when clicking on isolated regions.
 
+## [0.0.10]
+- **Camera**: Improved frame-selection (`F` hotkey) bounding calculation for single and multi-object scene framing.
 
-## [1.2.9]
-- **PolyGroups**: Fixed an issue where `Ctrl + Shift + Click` on an already-isolated polygroup (including the main/default polygroup 0) failed to toggle isolation off and restore the visibility of other polygroups.
-- **PolyGroups**: Added automatic initialization check for `mesh->faceGroups` when executing visibility clicks on meshes without pre-existing explicit polygroup arrays.
+## [0.0.9]
+- **Application**: Renamed application executable to SPSculpt, optimized build size, and added optional `--console` launcher mode.
 
-## [1.2.8]
-- **Camera**: Refactored camera framing logic (`resetViewToWorldPoints` / `resetViewToMeshes`) to transform all mesh bounding points into camera view space using the active rotation matrix (`m_quatRot`) and world matrix (`mesh->matrix`).
-- **Camera**: Fixed a bug where setting `targetState.offset` equal to `targetState.center` caused double-translation inside `glm::lookAt()`, shifting the camera target vertically when framing high or tall objects and cropping them off the top of the viewport.
-- **Camera**: Fixed `targetState.offset` to `glm::vec3(0.0f)` and increased the frustum fitting safety margin factor to 15% (`1.15f`), ensuring objects of any aspect ratio or height are framed cleanly without touching viewport boundaries.
-- **Input / Hotkey**: Updated the 'F' hotkey (`HKAction::CameraFrame`) to frame selected mesh(es) if any are selected, or fall back to framing all visible scene meshes when no selection exists.
-- **UI**: Added a "Frame Selection (F)" button in the Camera Settings GUI panel.
+## [0.0.8]
+- **Symmetry**: Added multi-axis (X/Y/Z) bitmask symmetry support across all sculpting brushes, cursors, and primitive generators.
+- **UI**: Added Solo view mode (`C` hotkey) and quick symmetry toggle (`Alt + X`).
 
-## [1.2.7]
-- **Brand**: Renamed the application from SculptSP to SPSculpt.
-- **Build**: Updated the executable output name to SPSculpt.exe.
-- **UI**: Updated the window title from "SculptSP Native Engine" to "SPSculpt".
-- **Scripts**: Updated build, run, package, and production release batch scripts to use SPSculpt.exe.
-- **Build**: Added `build_prod.bat` for generating optimized production releases.
-- **Build**: Reduced executable file size from 55MB to ~4.5MB by removing debug symbols from release compile options and stripping final binaries.
-- **CLI**: Disabled console window by default when launching the application on Windows.
-- **CLI**: Added `--console` (also `-console`, `-c`, `--show-console`) command-line parameter to allocate/attach a console window when requested.
-- **Scripts**: Updated `run.bat` to pass `--console %*` to `sculptsp.exe`.
+## [0.0.7]
+- **Performance**: Multi-threaded grab brushes (Move, Drag, Elastic) using OpenMP for lag-free performance on heavy meshes.
 
-## [1.2.6]
-- **Fix**: Resolved asymmetrical displacement when using the Alt key (normal displacement) on the Move, Drag, and Elastic brushes with symmetry enabled. Drag direction is now calculated from screen-space mouse projection on the primary pass and scaled by `sScale` across mirror passes, ensuring identical and symmetric displacement along surface normals on both sides.
-- **Hotkey**: Assigned `Alt + X` hotkey combination to quickly toggle master symmetry on and off.
-- **UI**: Added Solo mode allowing users to isolate the active mesh for focused editing, accessible via the new Solo icon button on the Floating Island HUD or by pressing the 'C' hotkey.
-- **Fix**: Fixed Move and Elastic tools when symmetry is active by switching deformation calculations from hard assignment (`=`) to additive accumulation (`+=`) and pre-resetting grabbed vertex positions to `vertProxy`, preventing symmetry passes from overwriting primary stroke displacements.
-- **Symmetry**: Completely eliminated polygon stretching and brush offset artifacts along the symmetry axis by removing artificial sphere truncation filters (`filteredPrimary` and `filteredSym`), matching the JavaScript reference implementation's smooth radial falloff across mirror planes.
-- **Settings**: Saved camera control settings (projection type, camera mode, FOV, picking pivot option, and rotation/pan/zoom/roll navigation speeds) to `render_settings.cfg` so they automatically persist across application restarts.
-- **Symmetry**: Saved symmetry settings (Symmetry toggle, active X, Y, Z mirror axes, and local/world symmetry space) so they are preserved across application restarts.
-- **UI**: Saved the visibility state of the Symmetry Settings panel to persist it across application restarts.
-- **Fix**: Resolved an issue where enabling symmetry caused stamp rotation to freeze/lock on the Clay Buildup, Square, and Brush tools by isolating stroke direction tracking between primary and symmetry passes and preventing state corruption of `m_alphaOrigin`.
-- **Symmetry**: Upgraded the sculpting engine symmetry system from a single-axis selection to simultaneous multi-axis bitmask-style symmetry, supporting concurrent X, Y, and Z mirror passes across all brush tools (including Move, Drag, Elastic, and Paint).
-- **Symmetry**: Updated the `BrushCursor` rendering system to project and draw multiple symmetry indicator dots simultaneously across all enabled reflection planes in real-time.
-- **Symmetry**: Refactored `SculptManager` stroke initiation, initial intersection tracking (`m_initialSymIntersections`), plane snapping, vertex culling, and stroke pass loops to execute parallel mirror transformations across active symmetry combinations (up to 7 concurrent mirror passes).
-- **Symmetry**: Refactored primitive spawning (`addPrimitiveAtMask`) to mirror generated geometry simultaneously across all active symmetry axes when placing objects at masked bounding box locations.
-- **UI**: Overhauled the Floating Island HUD symmetry section, replacing the dropdown combo-box with individual icon-based toggle buttons (Split icon for master symmetry toggle, and dedicated X, Y, Z axis toggle buttons with active state highlighting).
-- **UI**: Updated the Side Panel "Symmetry Settings" section to use independent X, Y, Z axis checkboxes for multi-axis toggling.
+## [0.0.6]
+- **Brushes**: Added "Lock Single PolyGroup" setting and upgraded dynamic UI scaling options.
 
-## [1.2.5]
-- **Performance**: Optimized Grab-style brushes (**Move**, **Drag**, **Elastic**) on high-density meshes (70k+ vertices), completely eliminating lag and stutter during rapid cursor movement:
-  - Bypassed redundant stroke-step interpolation in `SculptManager`, executing grab brushes exactly once per mouse move frame.
-  - Parallelized `strokeMove`, `strokeDrag`, and `strokeElastic` algorithms using OpenMP, accelerating displacement calculations across all available CPU cores.
-  - Unified mesh updates so vertex normals, face normals, bounding boxes, and octree nodes recalculate once per mouse event rather than per sub-step.
-  - Consolidated primary and symmetry pass updates into a single batch, eliminating duplicate geometric recalculations when symmetry is enabled.
-  - Cached inverse world-to-local matrix per stroke to prevent redundant matrix inversions during active drag frames.
-- **UI**: Automatically hide the "Spacing" slider in the Sculpting Settings panel when Move, Drag, or Elastic brushes are active.
-- **UI**: Added Grid Display, Flat Shading, and Wireframe Shading toggle buttons with representative Lucide icons (Grid, Cuboid, and Triangle) and tooltips to the Floating Island HUD for rapid real-time viewport adjustments.
+## [0.0.5]
+- **Graphics**: Added High-DPI display support, Lucide icon font integration, tablet pressure curve editor, custom stamp parameters, SSAO ambient occlusion, and FXAA antialiasing.
 
-## [1.2.4]
-- **Remeshing**: Improved the accuracy of polygroup preservation during voxel remeshing, ensuring sharp, clean boundaries without jagged edges or bleeding on complex models.
-- **Remeshing**: Eliminated polygroup projection leaks across thin geometry parts (such as ears and fingers) during remeshing operations.
-- **Brushes**: Added a "Lock Single PolyGroup" setting (`singlePolyGroup`) to restrict brush influence exclusively to the polygroup targeted under the cursor at the start of a stroke.
-- **UI**: Added a "Lock Single PolyGroup" checkbox with descriptive tooltip under the General Parameters section of the Sculpting Settings panel.
-- **UI**: Repositioned the pivot lock floating button above and to the right of the camera translation square (center handle) and replaced its text label with lock/unlock icons for a cleaner look.
-- **Settings**: Added automatic saving and restoring of the window size, position, and maximized state to `gui_settings.cfg` to persist user window preferences across sessions.
-- **Brushes**: Removed the hardcoded pinch deformation effect from the Dam Standard brush (`BRUSH_DAMSTANDARD`), leaving only the sharp normal crease displacement.
-- **UI**: Added a user-accessible "UI Scale" option to the new "Options" menu in the main menu bar, allowing users to scale the entire interface from 0.5x up to 2.5x.
-- **UI**: Implemented dynamic font and style scaling, allowing scaling adjustments to update immediately in real-time without requiring an application restart.
-- **Settings**: Saved custom scaling preferences to the local configuration file to automatically persist adjustments across application restarts.
-- **Fix**: Resolved stability issues and application crashes when modifying the interface scale or loading GUI settings.
-- **Fix**: Resolved erratic slider dragging behavior when adjusting the interface scale, allowing smooth and precise scaling adjustments.
-- **UI**: Scaled the sizes, padding, and rounding of floating HUD overlays, modal indicators, and brush-related viewport overlay drawings when the UI scale changes.
-- **UI**: Scaled the progress bar height in the remeshing progress modal.
-- **UI**: Scaled item widths in the floating island HUD layout.
-- **UI**: Increased the mouse drag sensitivity when adjusting brush radius via the hotkey modal to make brush size changes much faster.
-- **UI**: Made the main menu bar background transparent, showing the viewport underneath, while keeping dropdown popups and menu active/hover states styled with opaque backgrounds.
+## [0.0.4]
+- **Graphics**: Added Wet Clay shader parameters, custom Matcap/Texture loading, split viewport support, smooth camera focus animations, and picking rotation pivots.
 
+## [0.0.3]
+- **Input**: Added full graphics tablet support (WinTab and Windows Ink) with pressure and pen tilt sensitivity.
+- **Performance**: Async multi-threaded Voxel Remeshing with live progress modal.
 
-## [1.2.3]
-- **UI**: Added full High-DPI (Retina/4K) display support by integrating Windows process-level DPI awareness and SDL allow-high-dpi window flags, preventing application interface blurriness on high-pixel-density screens.
-- **UI**: Implemented automatic and dynamic DPI-aware scaling for all ImGui interface elements, layouts, and window margins/paddings.
-- **UI**: Upgraded Dear ImGui to load and rasterize system fonts (Segoe UI/Arial) and merged Lucide icon vector shapes at the exact native pixel-density scaled size, ensuring crisp text and icon presentation.
-- **Renderer**: Updated viewport, framebuffer, scissor, lasso selection, and smooth brush cursor rendering to operate natively in physical pixel dimensions while scaling camera views and coordinates proportionally.
-- **UI**: Added a compact, draggable Floating Island HUD panel at the top of the viewport providing quick access to essential controls (Undo, Redo, Symmetry toggle, Brush size/strength sliders, and active brush selection).
-- **UI**: Integrated Lucide vector icons into the user interface (including the floating HUD and the outliner) by configuring the ImGui font atlas to load and merge the embedded Lucide font with vertical alignment adjustments.
-- **UI**: Added a customizable Tablet Pressure Curve editor in the Tablet Diagnostics panel, allowing users to interactively map stylus input pressure using custom control points, presets (Linear, Soft, Hard), and real-time visual tracking feedback.
-- **UI**: Added axis labels ("Input (Pen Force)" / "Output (Pressure / Size)") and scale markers (0.0, 1.0) to the pressure curve editor widget.
-- **UI**: Added an "Interpolation Mode" selector (Linear, Monotone Spline, Centripetal Catmull-Rom) to customize the mathematical interpolation of the tablet pressure curve.
-- **Settings**: Serialized the custom pressure curve configuration and selected interpolation mode to the local settings file (with backward-compatibility fallbacks) to automatically persist the adjustments across sculpting sessions.
-- **Brushes**: Added a new "Brush" tool with customizable, parametric stamp shapes (Circle, Polygon, Star, Ring, Rectangle) and real-time controls for sides/points count, aspect ratio/inner radius ratio, stamp rotation angle, edge blur, rotation lock toggle, pen tilt rotation toggle, and a clay deformation mode parameter.
-- **UI**: Added a "Stamp Settings" section to the Tool Specific Settings panel when the Brush tool is active, complete with a "Clay Mode" toggle, "Lock Rotation" toggle, "Use Pen Tilt" toggle, "Stamp Blur" slider, and a live 2D drawing preview of the active stamp shape (including guide lines representing the stamp edge blur boundary) that updates dynamically as settings are adjusted and responds to real-time pen tilt input.
-- **Settings**: Serialized the new parametric stamp settings (stamp type, sides, inner ratio, rotation angle, clay mode, stamp blur, stamp lock rotation, stamp use tilt) to the local brush settings configuration file to persist them across sessions.
-- **Brushes**: Changed the Clay Buildup brush stamp shape from circular to a procedurally generated square to match ZBrush reference aesthetics and sculpting characteristics. Added support for stamp rotation aligning with the stroke movement direction to match the reference JS implementation.
-- **Brushes**: Fixed the incorrect behavior of the DamStandard brush by aligning its stroke intensity and falloff profile with the reference implementation, and added support for focal shift adjustments to dynamically warp the crease width and sharpness.
-- **Renderer**: Fixed armature rendering in the SSAO pre-pass by creating a dedicated `armature_normals.frag` shader and drawing the armature in the normal/depth targets, resolving dark outlines and occlusion visual artifacts around armature elements.
-- **Renderer**: Transitioned armature spheres and cylinders to smooth-shaded views with front-facing normal alignment to improve three-dimensional definition.
-- **Renderer**: Brightened armature nodes and links default colors and added a minimum ambient factor to prevent the armature from turning pitch-black under dark environmental maps and matcaps.
-- **Renderer**: Added Screen Space Ambient Occlusion (SSAO) to enhance 3D visual depth and shadowing fidelity in the viewport.
-- **Renderer**: Added Fast Approximate Anti-Aliasing (FXAA) to reduce jagged edges and smooth viewport rendering.
-- **UI**: Added SSAO and FXAA toggle controls along with sliders for adjusting SSAO radius, bias, and intensity in the Rendering Quality panel.
-- **Settings**: Serialized the new SSAO and FXAA parameters to the local rendering settings file to persist them across sessions.
-- **Fix**: Resolved an issue where enabling "Use Vertex Colors" caused newly created primitives (Sphere, Cube, Cylinder, Torus) to turn brown. Changed the default vertex color initialization on generated primitives from the default albedo brown (0.72, 0.52, 0.45) to white (1.0, 1.0, 1.0) to serve as a clean, blank canvas matching imported models.
-- **UI**: Added the "Environment" option to the background type settings in the Rendering Quality panel, allowing the PBR environment panorama to be displayed as the viewport background.
-- **Fix**: Resolved visual stripe, seam, and projection artifacts on PBR-rendered models and the background by enabling vertical Y-flipping on loaded environment maps, matcaps, and custom textures to match the original WebGL alignment.
-- **Hotkey**: Mapped the 'D' hotkey to adjust the Paint brush's **Hardness** parameter instead of the default Focal Shift when the Paint tool is active. The modal viewport HUD is also updated to read "Hardness" and showcase the dynamic percentage change during drag operations.
-- **Fix**: Added real-time viewport mesh and brush cursor previews when modifying paint brush settings. While interacting with the Paint color, roughness, or metalness controls in the UI, the renderer temporarily suspends vertex attribute rendering to show a full-mesh preview of the selected paint properties, immediately reverting back once the interaction finishes. Additionally, the brush cursor circle and dot now draw using the active paint color when the Paint tool is selected.
-- **Fix**: Resolved an issue where using the "Paint All" (flood-fill) option did not redraw or update the viewport color immediately. This was fixed by setting the color and material dirty flags rather than the vertex flag, prompting the renderer to upload the updated buffers instantly.
-- **UI**: Added "Use Vertex Colors" and "Use Vertex Materials" checkboxes to the material settings panel to toggle rendering of painted details. Disables global sliders automatically when vertex attributes are active to prevent UI confusion.
-- **Brushes**: Automatically enables vertex color and material rendering when switching to the Paint brush or clicking "Paint All".
-- **Renderer**: Updated PBR, Matcap, Flat, and Wet Clay shaders to correctly render vertex colors, roughness, metalness, and clay base colors when vertex overrides are enabled.
-- **Settings**: Serialized the "Use Vertex Colors" and "Use Vertex Materials" options in `render_settings.cfg` to persist across sessions.
-- **Brushes**: Completed the Paint tool implementation by adding a "Color Picker" (dropper) utility to sample albedo, roughness, and metalness directly from the mesh surface.
-- **Brushes**: Added a "Paint All" (flood-fill) feature to paint the entire mesh (or unmasked areas) with the active paint color and material settings.
-- **Renderer**: Implemented optimized GPU buffer uploads by tracking separate dirty flags for vertex data, colors, and materials. Painting and masking operations now skip heavy geometric and octree recalculations, updating only color/material buffers for a massive performance boost.
-- **Undo/Redo**: Added support for undoing and redoing paint strokes, material updates, and mask edits by tracking the vertex materials buffer in the undo/redo history system.
-- **Input**: Fixed camera navigation snapping behavior when starting a drag with the Shift key already held down, and resolved an issue where the snap transition was immediately cancelled on mouse motion. Initiating a drag using the Right Mouse Button + Shift now correctly locks and smoothly snaps the view to the closest orthogonal angle. Also, fixed Ctrl + RMB Zoom behavior so it correctly updates the rotation and zoom pivot on mouse down, preventing the camera from translating sideways during zoom. Now renders the visual pivot marker (red ring and center dot) during camera zoom as well, matching the rotation behavior.
-- **Renderer**: Fixed voxel grid preview colors to match the web application. Using pre-multiplied alpha values in the voxel preview shader ensures blending occurs correctly through the deferred post-process compositor.
-- **Renderer**: Eliminated perspective distortion in the voxel grid preview. The preview squares are now projected from the camera's viewpoint, so they always appear as perfectly straight, unwarped squares on the screen and scale correctly with zoom level, matching the original web-based implementation.
-- **UI**: Added a dynamic voxel grid preview overlay when adjusting remesh resolution using the 'X' hotkey or the UI slider. This screen-space checkerboard visualization renders in real-time on the selected mesh, showing the density of the future voxel grid.
-- **UI**: Resolved keyboard capturing issues that blocked hotkeys on startup or after interacting with ImGui panels until the viewport was clicked. Commented out keyboard navigation inside ImGui to allow global hotkeys to be evaluated immediately.
-- **UI**: Removed the spacebar hotkey mapping (which previously triggered camera reset) to prevent accidental camera snap triggers.
-- **Fix**: Resolved an issue where pressing the '4' hotkey did not activate the Transform tool by adding the missing mapping in the hotkey execution handler.
-- **Fix**: Prevented random crashes and freezes when interacting with the model immediately after remeshing.
-- **Fix**: Resolved a bug where the Ctrl modifier key would remain stuck in an active state after triggering Ctrl + X remeshing, causing the masking brush to remain stuck until switching brushes manually.
-- **Stability**: Added automatic safety checks to ensure visual model buffers match actual shape data before drawing, preventing visual glitches and crashes.
-- **Stability**: Resetting active brush strokes and temporary mouse drag states when the shape structure changes to avoid data conflicts.
-- **Fix**: Resolved a critical application crash (segmentation fault) during mesh remeshing by implementing robust out-of-bounds index validation and automatic safe clamping on the reconstructed face buffer prior to topology calculation.
-- **Diagnostics**: Implemented a dual-logging system that dynamically writes execution events and crash signal details to both the console and a local persistent log file (`sculpt_log.txt`) on startup and during execution.
-- **UI**: Added a "Darken unselected" checkbox to the Rendering Quality panel to toggle darkening of non-selected meshes in multi-mesh scenes.
-- **Settings**: Serialized the "Darken unselected" setting in `render_settings.cfg` for persistence across sessions.
-- **Renderer**: Implemented a screen-space post-process Bevel (Melt) shader that detects intersection boundaries between meshes and blends their normals to visually fuse intersecting models.
-- **Renderer**: Resolved an issue where screen-space bevels disappeared when zooming out due to dynamic near and far plane camera optimizations. The camera's dynamic near and far parameters, as well as the active projection mode, are now bound as uniforms and computed correctly in the fragment shader.
-- **UI**: Added a "Screen-space Bevel (Melt)" toggle checkbox in the Rendering Quality panel along with "Bevel Radius" and "Bevel Strength" sliders to customize the size and intensity of the blending effect.
-- **Renderer**: Restructured shader file organization by consolidating all GLSL shader sources into the unified `dist/resources/shaders/` directory.
-- **UI**: Added a viewport screenshot feature to the Camera settings panel. Users can choose from several size presets ("Viewport Size", "1080p", "2K", "4K") or input custom dimensions (ranging from 256x256 to 7680x4320). Includes toggles to show or hide the grid and outline contours in the final screenshot.
-- **Renderer**: Implemented high-resolution offscreen rendering for capturing screenshots, temporarily resizing active viewport cameras and render targets to the target dimensions without altering the primary application window size.
-- **Renderer**: Automatically hides editor-only overlays (such as the selection brush cursor and lasso selection outlines) during screenshot capture to produce clean output images.
-- **Files**: Integrated automatic timestamp-based PNG image saving under a dedicated `screenshots/` directory, performing a vertical image flip to align OpenGL coordinate space with standard picture viewing software.
-- **Renderer**: Refactored the shader architecture by extracting all hardcoded GLSL shader source code from the C++ renderer into external `.vert`, `.frag`, and `.glsl` files in a dedicated `shaders/` directory.
-- **Renderer**: Implemented a custom preprocessor include mechanism (`#include "filename.glsl"`) to support modular shader development.
-- **Renderer**: Enabled dynamic runtime loading of external shader files with a clean, single source of truth structure.
-- **UI**: Added support for 2D View Mode, enabling viewport and reference images to be panned and zoomed in 2D space. Panning is performed by dragging the Right Mouse button while holding Alt, and zooming by dragging while holding Ctrl. Double right-clicking resets the 2D view offset and zoom. Toggles for 2D Pan/Zoom Mode and Reference Drag, along with a Reset button, have been added to the Reference Images panel. When 2D mode is active, standard 3D camera navigation (such as right-click dragging and mouse wheel zoom) is automatically blocked.
-- **UI**: Increased the size of the Navigation Cube window, increased the cube's render scale, and enlarged the text labels on the cube faces for improved readability. Aligned, capitalized, and projected the label text directly onto the 3D planes of the cube faces so they appear natively written on the faces in uppercase rather than billboarding toward the camera.
-- **UI**: Normalized camera snap and view transition logic for all 26 gizmo interaction parts (faces, edges, and corners), ensuring camera snaps always follow the shortest angular path without erratic spinning or rotational jumps.
-- **UI**: Added double-click prevention on the Snap Cube (navigation cube/gizmo) faces, preventing accidental view changes when double-clicking. Both JavaScript and C++ implementations now delay the view change by 250ms and cancel the snap transition entirely if a double-click is registered on the same face.
-- **UI**: Refined Snap Cube (navigation gizmo) text labels to be rendered directly onto the cube faces, aligned to the 3D plane of the faces. Changed labels to mixed-case, scaled down the font, rotated the text vertices to match the face's orientation on screen, and added face-angle thresholds so labels are only shown when a face is mostly facing the camera. Prevented redundant camera snaps and view transitions when repeatedly clicking on Snap Cube faces, including during active transitions, by comparing clicks to target camera orientations.
-- **UI**: Frozen brush cursor coordinates while modal hotkey adjustments are active, keeping the visual cursor circle projected stably on the mesh surface even as the mouse moves.
-- **UI**: Added a sleek, floating HUD popup card that displays real-time value and progress information directly under the cursor when adjusting brush settings (like Intensity, Focal Shift, and Radius) or scene parameters via keyboard hotkeys.
-- **Geometry**: Added a Geosphere (quad-sphere / cubed-sphere) primitive generator (constructed by subdividing a cube, projecting its vertices to a sphere of radius R, and merging boundary vertices for watertight topology) with quad polygons. Exposed it under both default scene loading and "At Masked BBox" spawning mechanisms.
-- **Fix**: Corrected the face winding order of the UV Sphere primitive (from clockwise to counter-clockwise), resolving the issue where sphere normals were inverted relative to other primitives.
-- **Input**: Implemented Alt + Left Click on any viewport object to select and make it the active mesh in the scene, facilitating faster multi-object scene navigation.
-- **Renderer**: Globalized all material settings (`albedo`, `roughness`, `metallic`, `alpha`, and texture maps) across all scene meshes, moving them from individual mesh properties to central renderer fields to maintain consistency when creating/rendering objects.
-- **Settings**: Updated `render_settings.cfg` serialization to save and load global material attributes under the `[Renderer]` section, with legacy compatibility fallbacks to restore older settings from `Mesh_0` when reading legacy configurations.
-- **UI**: Updated the "Rendering Quality" panel to directly display and modify the global material settings on the `AngleRenderer`, ensuring all meshes in the scene share a uniform material representation.
-- **Files**: Restructured SGL file import and export routines (`ImportSGL` / `ExportSGL`) to use global alpha values rather than storing opacity per-mesh.
-- **Renderer**: Globalized shading settings (`shaderType`, `matcapIdx`, `flatShading`, `showWireframe`, `curvature`) across all scene meshes, moving them from individual mesh properties to the central renderer.
-- **Settings**: Refactored the serialization of shading settings in `render_settings.cfg` to save them globally under the `[Renderer]` section, with backward-compatibility fallbacks to restore older mesh-specific settings.
-- **Settings**: Updated SGL scene importer and exporter to read/write shading settings globally instead of per-mesh.
-- **UI**: Reworked the Rendering Quality panel to separate global scene shading controls from active object material parameters (albedo, roughness, metallic, transparency, and textures).
-- **Settings**: Added persistence for camera movement speeds (rotation, panning, zoom, and roll), ensuring they are automatically saved to `render_settings.cfg` on exit and restored on startup.
-- **UI**: Added automatic saving and loading of GUI panel visibility states (toolbar, sculpting settings, scene outliner, etc.) to a local configuration file `gui_settings.cfg` on startup and shutdown.
-- **UI**: Added "Save GUI Settings" and "Load GUI Settings" options to the main File menu to allow manual GUI state persistence.
-- **Fix**: Resolved viewport visibility toggles (V1/V2) not correctly updating mesh rendering by routing the viewport index to the geometry drawing pass and filtering out hidden meshes.
-- **Fix**: Prevented brush cursor projection and sculpting raycasts on hidden meshes in the active viewport.
-- **UI**: Added a dedicated "Act" checkbox column to indicate and control the active mesh in the Scene Outliner, removing full-row selection highlighting.
-- **UI**: Redesigned the Scene Outliner panel with a comprehensive, professional table layout displaying each mesh's name, vertex count, and dual-viewport visibility toggles (V1 and V2) with interactive checkboxes.
-- **UI**: Added interactive inline renaming for meshes directly in the Scene Outliner by double-clicking on any mesh name.
-- **UI**: Added range selection support (holding Shift) and toggle selection support (holding Ctrl) to select multiple meshes simultaneously in the Outliner.
-- **UI**: Integrated quick-action buttons in the Scene Outliner to duplicate selection, merge multiple selected meshes into a single object, delete selected meshes, or clear the entire scene.
-- **UI**: Added primitive spawning options to create Spheres, Cubes, Cylinders, and Toruses with toggles to place them at the masked bounding box coordinates of the active mesh or spawn them symmetrically across the selected mirror axis.
-- **UI**: Exposes dedicated selection buttons for the Measure and Divider tools in the Outliner, along with sliders and check-boxes for active tool parameters and a button to clear all measurements.
+## [0.0.2]
+- **Tools**: Added Mask Gradient Blur tool and custom color-coded lasso selection overlays.
 
-## [1.2.2]
-- **UI**: Added a Curvature control slider, Wet Clay rendering sliders (Wetness, Bump Strength, Noise Scale, Subsurface Scattering Intensity and Color), and a Filmic Tonemapping checkbox to the Rendering Quality panel.
-- **UI**: Added path inputs and buttons to import custom UV textures and custom Matcap images from local files in the Rendering Quality panel.
-- **Renderer**: Dynamic rendering parameters (wetness, bump strength, noise scale, subsurface scattering intensity/color) are now correctly updated in the wet clay shader.
-- **Settings**: Serialized the new wet clay rendering options to `render_settings.cfg` for persistence across sessions.
-- **Camera**: Ported the legacy smooth camera transitions and zoom-to-focus behavior. Pressing the 'F' key to focus on a selected object, resetting the view, or switching between orthographic angles now smoothly animates the camera transition using quartic easing instead of instantly snapping. Focusing on the object preserves the current camera rotation (view angle) and calculates the correct zoom fit factor to fit the mesh bounds perfectly within the viewport, matching the legacy application's behavior.
-- **Input**: Configured camera animations to cancel instantly if the user initiates manual navigation (orbiting, panning, zooming) during a transition, ensuring seamless and responsive control.
-- **Brushes**: Fixed Move, Drag, and Elastic brush behavior to match the legacy JavaScript project:
-  - Vertices are now deformed relative to their initial (proxy) positions at the start of the stroke, rather than accumulating displacement cumulatively across stroke frames.
-  - Implemented the `vertexOnLine` mouse ray projection algorithm in C++ to compute drag directions stably relative to the initial intersection coordinates instead of relying on shifting dynamic raycast hits.
-  - Locked the grabbed vertex group (`pickedVertices`) on the first frame of the stroke for these grab-based brushes, preventing new vertices from being picked and old ones dropped as the mouse moves.
-  - Scaled the calculated drag direction by the brush's `intensity` parameter.
-  - Properly initialized and mirrored the start coordinates for the symmetry pass (`m_initialSymIntersection`), ensuring symmetrical strokes work correctly.
-
-## [1.2.1]
-- **UI**: Fixed a bug where the inner ring of the brush cursor did not scale dynamically when the "Focal Shift" parameter was adjusted.
-- **Brushes**: Fixed a bug where the clay and flatten brushes did not update their plane normals and centers dynamically per-frame, causing them to flatten geometry incorrectly relative to the starting point of the stroke.
-- **Brushes**: Implemented support for loading, managing, and applying 28 custom ZBrush brush presets directly from JSON files.
-- **UI**: Added a "ZBrush Brush Presets" collapsing header to the Sculpting Settings panel, featuring a preset selection dropdown, real-time read-only details of the active preset, and a button to load custom preset JSON files.
-- **Core**: Integrated a parallel brush settings track that dynamically maps ZBrush preset deformation and stroke modes to native brush tools at runtime.
-- **Viewport**: Fixed a bug where the brush cursor would render across the entire screen in the right viewport during split viewport modes, ensuring correct camera mapping and border-aligned clipping are applied to both viewports.
-- **UI**: Added a "Show cursor in inactive viewport" toggle checkbox under the Camera Settings panel when split viewport mode is active.
-- **Settings**: Serialized the "Show cursor in inactive viewport" setting to `render_settings.cfg` for cross-session persistence.
-- **Viewport**: Fixed the split viewport brush cursor rendering so that the cursor displays correctly in the active viewport (left or right).
-- **Viewport**: Implemented projection support for drawing the brush cursor in the inactive viewport when "Show cursor in inactive viewport" is enabled, fully compatible with both the smooth vector cursor and standard shader cursor.
-- **UI**: Added a "Split Viewport" setting ("Off", "Mirror", "Independent") with interactive radio buttons in the Camera Settings panel.
-- **Viewport**: Implemented scissor-based multi-viewport rendering, allowing the main viewport to be split into two separate screens.
-- **Camera**: Added secondary camera support with automatic synchronization and alignment to the orthographic right view upon entering independent split-screen mode.
-- **Input**: Added automatic active viewport detection based on mouse cursor position, routing navigation, sculpting brush strokes, and measuring/divider tools to the correct viewport camera with local coordinate space translation.
-- **Settings**: Serialized the split viewport mode setting to `render_settings.cfg` for cross-session persistence.
-- **Camera**: Ported the legacy "Plane Trackball" and "Spherical Trackball" camera rotation methods from JavaScript to C++.
-- **Camera**: Implemented camera "Roll" functionality (rotating the camera around the view direction Z-axis), triggered by the Shift + Alt key modifier combination during right-click or Alt + left-click viewport drags. Rolling the view with "Picking pivot" enabled correctly performs a raycast check on mouse-down to center the roll rotation directly around the mesh intersection point.
-- **UI**: Added a "Camera Mode" combo box select and a "Roll Speed" slider under the Camera Settings panel to configure and toggle between Orbit, Plane, and Spherical camera modes.
-- **Camera**: Ported the legacy "Picking pivot" camera rotation feature. When starting a viewport rotate/orbit drag with "Picking pivot" enabled, the camera performs a raycast intersection check against scene meshes and centers its rotation pivot directly on the surface intersection point.
-- **UI**: Renamed the "Use Pivot" camera setting checkbox to "Picking pivot" to align with the legacy JavaScript design.
-- **UI**: Implemented a visual pivot point indicator at the camera's pivot coordinates (red ring, center dot, and crosshair ticks) using the ImGui foreground draw list. The marker is gated by the "Picking pivot" state, is visible only when the camera is actively orbiting or rolling, and is automatically hidden when occluded by active ImGui panels or when split-screen viewports require offset projection.
-- **Symmetry**: Implemented highly-optimized CPU-based raycasting check using the mesh's octree traversal and Möller-Trumbore ray-triangle intersections. Symmetry cursor dots are dynamically dimmed/darkened to 0.3x opacity when hidden behind the mesh geometry, fully supporting both the vector-based Smooth Cursor (drawn in ImGui) and the standard OpenGL shader cursor.
-- **Symmetry**: Extracted brush logic switch into `doStrokePass` and implemented double-pass brush execution (primary coordinate and mirrored coordinate across the selected axis) inside `executeStroke`, resolving issues with broken symmetry for all brush types (including drag-based brushes).
-- **Symmetry**: Modified stroke frame throttling to cache the last valid raycast intersection, preventing the sculpting cursor from flickering and snapping back to screen-space coordinates during active strokes.
-
-## [1.2.0]
-- **UI**: Added "Use Pressure for Size" and "Use Pressure for Cursor Dot" toggles to both the Sculpting Settings and Tablet Diagnostics panels to dynamically scale the brush size and the cursor dot based on stylus pressure.
-- **Settings**: Serialized tablet pressure, pressure-size, pressure-cursor, and tilt settings to the local configuration file for persistence across sessions.
-- **Input**: Finalized high-precision tablet support by integrating thread-safe polling for both WinTab and Windows Ink APIs, retrieving real-time stylus pressure and tilt data engine-wide.
-- **Renderer**: Implemented interactive brush cursor deformation that dynamically squeezes/flattens the cursor circle along the tool's local tangent axes when the pen is tilted.
-- **UI**: Added a "Tablet Diagnostics" panel under the main toolbar to monitor connection health, active input mode (WinTab/WinInk/Auto), and raw packets in real-time, complete with a pressure-sensitive test canvas.
-- **Core**: Integrated `src/platform/TabletInput.cpp` into `CMakeLists.txt` and initialized/closed the Wintab context cleanly during application lifecycle.
-- **Renderer**: Added a smooth, vector-based rendering option for the brush cursor using screen-space projection, providing perfect anti-aliasing and subpixel precision. The cursor is automatically hidden when the mouse hovers over menu bars and settings panels.
-- **UI**: Added a "Smooth (Antialiased) Cursor" toggle option under Shading & Rendering settings to switch between the new smooth vector cursor and the legacy hardware shader cursor.
-- **Settings**: Serialized the smooth cursor toggle and cursor line thickness settings to the local configuration file for persistence across sessions.
-- **Performance**: Optimized floodFill by replacing `std::vector<bool>` with `std::vector<uint8_t>` to avoid bit-manipulation overhead and speed up the BFS traversal during remeshing.
-- **UI**: Customized the ImGui progress bar to use the premium teal accent color and replaced the default white/gray modal dimming background color with a dark translucent overlay to prevent white-washing.
-- **Performance**: Converted the remeshing process (Remesh) to run asynchronously in a background worker thread, eliminating application freezes during voxelization and surface reconstruction.
-- **UI**: Added a thread-safe progress modal popup in ImGui that tracks and displays real-time progress for voxelization, flood-filling, and reconstruction stages.
-- **Performance**: Optimized Marching Cubes reconstruction by replacing the expensive string-based vertex hash map with zero-overhead integer edge lookup arrays, achieving a massive speedup.
-- **Performance**: Optimized voxelization distance checks by comparing squared distances, avoiding millions of costly square root calculations.
-- **Performance**: Replaced sparse maps (`std::unordered_map`) for color and material fields with flat pre-allocated vectors for O(1) cache-friendly direct memory access.
-- **Input**: Blocked keyboard hotkeys and brush interactions while remeshing is active to prevent race conditions and ensure mesh data integrity.
-- **Tools**: Replaced the central sphere handle of the transform gizmo with camera-plane aligned corner brackets of a square that matches the diameter of the rotation rings (providing feature parity with the legacy JS `planeW` camera translation indicator), updating both visual rendering (with a subtle transparent background) and the screen-space picking boundaries so that activation/hovering only occurs when the cursor is positioned directly over the corners.
-- **Tools**: Replaced scale end-handle circles with squares (representing 3D cubes) and configured a yellow square in the center representing the universal/global scale cube (configured to be yellow always, larger, with dedicated center hover picking box supporting both `SCALE` and `SCALEU` universal operations) when scaling.
-- **Tools**: Increased the visual size and length of the Transform Tool gizmo axes by default (clip-space size 0.20) and decreased the diameter of the rotation rings and screen-space rotation circles to make the gizmo layout cleaner and more compact.
-- **Tools**: Fixed the Transform Tool gizmo axes orientation so they remain completely stable and do not rotate or shift when the camera angle is changed.
-- **Input**: Resolved conflict between camera navigation and gizmo manipulation by prioritizing gizmo interaction when the mouse is over the handles and disabling gizmo input during active viewport navigation.
-- **Tools**: Added interactive Measure and Divider tools featuring screen-space overlay lines, dynamic hover feedback, custom ticks/subdivisions, and rounded semi-transparent text badges showing distance or relative scale reference.
-- **Tools**: Upgraded the Transform Tool gizmo to support full feature and visual parity with the legacy JS application. Configured custom color coding and sizing via ImGuizmo styling, implemented interactive pivot translation/rotation (Alt hotkey or UI toggle) that offsets vertex geometry dynamically via the edit matrix, added a CPU baking step on drag release to commit the pivot modifications with automatic octree/normal/bounding-box rebuild, and integrated a floating screen-space Lock/Unlock Pivot toggle button projected at the gizmo's center.
-- **Core**: Added mesh matrix serialization to save/restore mesh transforms within the history stack for undo/redo support.
-- **Settings**: Serialized divider divisions and measure perspective settings to the general section of `brush_settings.cfg`.
-- **Camera**: Fixed a major perspective depth unprojection bug where clicking outside the mesh (`FREE` anchors) caused points to fly away to extreme distances due to linear z-depth interpolation in `Camera::unproject`. Now correctly uses the inverted viewport-view-projection matrix for exact, linear screen-to-world mapping.
-- **Input**: Fixed camera navigation getting stuck and orbiting/spinning continuously if the mouse cursor crossed over ImGui interface elements (such as the floating gizmo lock button or side panels) during drag rotation/panning.
-
-
-## [1.1.0]
-- **Tools**: Added interactive Mask Gradient Blur tool featuring screen-space dashed guides and interactive draggable handle controls.
-- **Input**: Fixed camera controls sticking/freezing when using camera shortcuts (Alt + Left Click, Right Click, Middle Click) while the Mask Gradient Blur tool is active.
-- **Tools**: Hides the circular brush cursor and center point entirely when the Visibility tool or Mask Gradient Blur tool is active.
-- **Input**: Automatically switches the active brush to the Visibility tool when the `Ctrl + Shift` modifier combination is held.
-- **Renderer**: Implemented custom lasso overlay colors to match the legacy JavaScript application: green (`#00E676`) for positive selection, red (`#FF3333`) for negative selection (`Ctrl + Shift + Alt`), cyan (`#00E5FF`) for mask lasso, and white (`#FFFFFF`) for negative mask lasso.
-- **Renderer**: Added a transparent fill (15% opacity) and a stippled/dashed border to the selection and mask lasso loops.
-
-## [1.0.0]
-- **Performance**: Eliminated sculpting cursor latency by polling raw mouse positions directly before rendering and rendering the cursor dot in screen-space.
-- **Input**: Added OS-level system mouse cursor hiding when actively sculpting to prevent distracting cursor duplication and improve tactile precision.
-- **Performance**: Switched frame rate regulation from a fixed delay to vertical synchronization (VSync).
-- **Input**: Added temporary masking brush activation (switches to Mask tool when holding down the `Ctrl` key and restores the previous brush when released), matching parity with the legacy version.
-- **Tools**: Fixed masking brush and lasso selection tool behavior to dynamically toggle between brush-based masking (dragging on mesh) and lasso selection (dragging from empty space/background with Ctrl held), matching the legacy JavaScript workflow.
-- **Tools**: Added support for masking lasso click actions (invert mask when clicking on background, blur/sharpen mask when clicking on mesh), matching parity with the legacy version.
-- **Settings**: Added automatic saving and loading of all brush parameters per brush type to `brush_settings.cfg`.
-- **UI**: Added a fully dynamic and interactive Sculpting Settings panel showing custom parameters for each tool, including sliders for spacing and hardness, and toggles for backface culling and topological constraints.
-- **UI**: Added interactive Masking buttons (Clear, Invert, Blur, and Sharpen) to the masking tool settings panel.
-- **Symmetry**: Exposed symmetry axis and toggle settings inside the Sculpting Settings panel.
-- **Core**: Optimized remeshing memory consumption to resolve crashes (out of memory std::bad_alloc) at high grid resolutions (e.g. 900+). Switched to sparse voxel structures for colors/materials, bit-vector tracking, and dynamically-sized stacks.
-- **UI**: Added a real-time Mesh Statistics & FPS HUD in the bottom-right corner of the viewport showing active points, total points, and a sliding-window frame rate counter, matching the legacy JavaScript version.
-- **UI**: Added a toggle in the Panels menu to show/hide the Mesh Statistics & FPS HUD.
-- **Performance**: Optimized sculpting responsiveness and GPU uploads to match WebGL/JavaScript speed.
-- **Performance**: Switched GPU buffer uploads to incremental updates (`glBufferSubData`) using vertex range tracking instead of full buffer re-uploads.
-- **Performance**: Implemented caching for sculpting area normal and center computations during brush strokes.
-- **Performance**: Eliminated per-frame memory allocations by implementing epoch-based tagging for visited arrays and dirty faces tracking.
-- **Performance**: Cached shader uniform locations in the renderer to eliminate driver overhead during rendering.
-- **Performance**: Removed performance-blocking logging output from the hot sculpting rendering path.
-- **Files**: Added native C++ support for importing and exporting all major 3D file formats, including SGL (native scene format), OBJ, STL, PLY, and GLTF/GLB.
-- **Files**: Integrated JSON parsing library for native GLTF file loading and scene structure traversal.
-- **UI**: Added a new "Import & Export" panel to manage loading/saving models, alongside new options in the main File menu.
-- **Core**: Refactored the core sculpting engine and manager to enforce native C++ pointer type-safety, completely eliminating unsafe typecasting and legacy pointer formats.
-- **Tools**: Added full native support for the remaining Group B brushes, including Masking, Painting, Twist, and Local Scale tools, and integrated them into the user interface and hotkey systems.
-- **Input**: Implemented hardware tablet input support on Windows, allowing automatic detection and pressure-sensitive brush scaling for pens and styluses with seamless fallback to normal mouse input.
-- **UI**: Added a "Show Selection Outline" checkbox (along with an outline color picker) to toggle the selected object's outline contour in the "Rendering Quality" panel.
-- **Renderer**: Added automatic and manual saving and loading of all render and shading parameters to/from a local configuration file (`render_settings.cfg`).
-- **UI**: Added manual Save/Load Profile buttons to the "Rendering Quality" panel and main "File" menu.
-- **Renderer**: Fixed a flat shading normal orientation issue by correcting cross-product derivative signs in the `getNormal` GLSL helper, preventing flipped shadows/shading on desktop OpenGL.
-- **Renderer**: Fully migrated the Matcap and environment library, enabling local loading and initialization of all 9 matcap textures and environmental maps.
-- **UI**: Added interactive selectors for Matcap and Environment presets under the Material Shader section of the Rendering Quality panel.
-- **UI**: Exposed metallic and roughness sliders when using the PBR shader.
-- **Migration**: Extracted native C++ sculpting engine into an independent standalone desktop application.
-- **UI**: Integrated ImGui interface panels natively with SDL2 and OpenGL ES 3.0 (via ANGLE).
-- **Core**: Removed WebAssembly (WASM) and Emscripten dependencies from the C++ codebase.
-- **Build System**: Implemented automated CMake and Ninja build configuration.
-- **Renderer**: Fixed a critical graphics bug where meshes, backgrounds, and the grid failed to render, leaving only the outline of the model visible.
+## [0.0.1]
+- **Initial Release**: Extracted native C++ desktop engine with multi-format 3D import/export (SGL, OBJ, STL, PLY, GLTF), PBR/Matcap shaders, performance optimizations, and full ImGui UI integration.
