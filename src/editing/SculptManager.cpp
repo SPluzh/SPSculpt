@@ -1111,6 +1111,7 @@ int SculptManager::doStrokePass(
 
 void SculptManager::cancelStroke() {
     m_isSculpting = false;
+    m_pendingOctreeUpdate = false;
     m_grabbedVertices.clear();
     m_grabbedVerticesSyms.clear();
     m_initialSymIntersections.clear();
@@ -1590,14 +1591,19 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             m_lastFrameProfile.vertNormalsMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
 
             // --- Stage 10: Octree Update ---
-            tStage = std::chrono::high_resolution_clock::now();
-            mesh->octree.update(
-                mesh->verts.data(), mesh->nbVerts,
-                mesh->faces.data(), mesh->nbFaces,
-                mesh->faceBoxes.data(),
-                m_iFacesCache.data(), numIFaces
-            );
-            m_lastFrameProfile.octreeUpdateMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
+            if (isGrabBrush && !m_firstStrokeFrame) {
+                m_pendingOctreeUpdate = true;
+                m_lastFrameProfile.octreeUpdateMs = 0.0;
+            } else {
+                tStage = std::chrono::high_resolution_clock::now();
+                mesh->octree.update(
+                    mesh->verts.data(), mesh->nbVerts,
+                    mesh->faces.data(), mesh->nbFaces,
+                    mesh->faceBoxes.data(),
+                    m_iFacesCache.data(), numIFaces
+                );
+                m_lastFrameProfile.octreeUpdateMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
+            }
         }
 
         uint32_t minV = allAffectedVerts.front();
@@ -2250,6 +2256,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 m_isSculpting = true;
                 m_currentIntersectionValid = true;
                 m_firstStrokeFrame = true;
+                m_pendingOctreeUpdate = false;
                 m_hasAlphaOrigin = false;
                 m_initialIntersection = localRayOrigin + minT * localRayDir;
                 m_initialIntersectionNormal = glm::vec3(
@@ -2959,6 +2966,15 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 }
             } else {
                 g_undoManager.endSculptStroke(scene);
+                if (mesh && m_pendingOctreeUpdate) {
+                    mesh->octree.update(
+                        mesh->verts.data(), mesh->nbVerts,
+                        mesh->faces.data(), mesh->nbFaces,
+                        mesh->faceBoxes.data(),
+                        nullptr, -1
+                    );
+                    m_pendingOctreeUpdate = false;
+                }
                 if (mesh && mesh->isLayerActive()) {
                     mesh->layerStack.bake(mesh->layerStack.getBase(), mesh->verts);
                     mesh->updateAfterLayerBake();

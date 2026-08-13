@@ -474,8 +474,20 @@ void Octree::update(const float* vertsPtrVal, int nbVertsVal,
         if (!leaf) continue;
 
         uint32_t idb = idFace * 6;
-        leaf->expandsAabbLoose(faceBoxesData[idb], faceBoxesData[idb + 1], faceBoxesData[idb + 2],
-                               faceBoxesData[idb + 3], faceBoxesData[idb + 4], faceBoxesData[idb + 5]);
+        float fx0 = faceBoxesData[idb];
+        float fy0 = faceBoxesData[idb + 1];
+        float fz0 = faceBoxesData[idb + 2];
+        float fx1 = faceBoxesData[idb + 3];
+        float fy1 = faceBoxesData[idb + 4];
+        float fz1 = faceBoxesData[idb + 5];
+
+        float* loose = leaf->aabbLoose;
+        if (fx0 >= loose[0] && fy0 >= loose[1] && fz0 >= loose[2] &&
+            fx1 <= loose[3] && fy1 <= loose[4] && fz1 <= loose[5]) {
+            continue;
+        }
+
+        leaf->expandsAabbLoose(fx0, fy0, fz0, fx1, fy1, fz1);
     }
     double expandMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tSub).count();
 
