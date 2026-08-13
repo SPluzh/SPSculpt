@@ -597,7 +597,7 @@ void Scene::loadDefaultSphere() {
     std::vector<float> colors;
     std::vector<float> normals;
 
-    generateUVSphere(50.0f, 100, 100, vertices, faces, colors, normals);
+    generateGeosphere(50.0f, 4, vertices, faces, colors, normals);
     int nbVerts = vertices.size() / 3;
     int nbFaces = faces.size() / 4;
 
@@ -625,7 +625,7 @@ void Scene::loadDefaultSphere() {
     addMesh(mesh);
     selectMesh(mesh);
 
-    m_camera.resetView();
+    m_camera.resetViewToMeshes({mesh}, false);
     m_isModified = false;
 }
 

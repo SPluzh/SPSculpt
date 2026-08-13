@@ -304,7 +304,7 @@ void Camera::resetView() {
     CameraState targetState;
     targetState.center = glm::vec3(0.0f);
     targetState.offset = glm::vec3(0.0f);
-    targetState.trans = glm::vec3(0.0f, 0.0f, 30.0f + speed / 3.0f);
+    targetState.trans = glm::vec3(0.0f, 0.0f, 195.0f);
     targetState.quatRot = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
     targetState.rotX = 0.0f;
     targetState.rotY = 0.0f;
@@ -324,7 +324,7 @@ void Camera::resetView() {
     pushState();
 }
 
-void Camera::resetViewToWorldPoints(const std::vector<glm::vec3>& worldPoints) {
+void Camera::resetViewToWorldPoints(const std::vector<glm::vec3>& worldPoints, bool animate) {
     if (worldPoints.empty()) {
         resetView();
         return;
@@ -414,11 +414,15 @@ void Camera::resetViewToWorldPoints(const std::vector<glm::vec3>& worldPoints) {
     float radius = glm::distance(minW, maxW) * 0.5f;
     m_speed = std::max(10.0f, radius * 1.5f);
 
-    startTransition(targetState, 0.2f);
+    if (animate) {
+        startTransition(targetState, 0.2f);
+    } else {
+        applyState(targetState);
+    }
     pushState();
 }
 
-void Camera::resetViewToMeshes(const std::vector<Mesh*>& meshes) {
+void Camera::resetViewToMeshes(const std::vector<Mesh*>& meshes, bool animate) {
     std::vector<glm::vec3> worldPoints;
     for (const Mesh* mesh : meshes) {
         if (!mesh || mesh->nbVerts == 0) continue;
@@ -442,18 +446,18 @@ void Camera::resetViewToMeshes(const std::vector<Mesh*>& meshes) {
         }
     }
 
-    resetViewToWorldPoints(worldPoints);
+    resetViewToWorldPoints(worldPoints, animate);
 }
 
-void Camera::resetViewToMesh(const Mesh* mesh) {
+void Camera::resetViewToMesh(const Mesh* mesh, bool animate) {
     if (!mesh) {
         resetView();
         return;
     }
-    resetViewToMeshes({const_cast<Mesh*>(mesh)});
+    resetViewToMeshes({const_cast<Mesh*>(mesh)}, animate);
 }
 
-void Camera::resetViewToMesh(const float* bbox) {
+void Camera::resetViewToMesh(const float* bbox, bool animate) {
     if (!bbox) {
         resetView();
         return;
@@ -469,7 +473,7 @@ void Camera::resetViewToMesh(const float* bbox) {
         {bbox[3], bbox[4], bbox[5]}
     };
 
-    resetViewToWorldPoints(worldPoints);
+    resetViewToWorldPoints(worldPoints, animate);
 }
 
 float Camera::computeFrustumFit() const {

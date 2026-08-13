@@ -88,10 +88,10 @@ public:
 
     glm::vec3 computePosition() const;
     void resetView();
-    void resetViewToMeshes(const std::vector<Mesh*>& meshes);
-    void resetViewToMesh(const Mesh* mesh);
-    void resetViewToMesh(const float* bbox);
-    void resetViewToWorldPoints(const std::vector<glm::vec3>& worldPoints);
+    void resetViewToMeshes(const std::vector<Mesh*>& meshes, bool animate = true);
+    void resetViewToMesh(const Mesh* mesh, bool animate = true);
+    void resetViewToMesh(const float* bbox, bool animate = true);
+    void resetViewToWorldPoints(const std::vector<glm::vec3>& worldPoints, bool animate = true);
     float computeFrustumFit() const;
     void snapClosestRotation();
     void toggleViewFront();

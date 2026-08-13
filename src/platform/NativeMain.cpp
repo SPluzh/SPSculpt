@@ -381,8 +381,8 @@ int main(int argc, char* argv[]) {
     renderer.resize(drawableWidth, drawableHeight, dpiScale);
 
     Scene scene;
-    scene.loadDefaultSphere();
     scene.getCamera().onResize(width, height);
+    scene.loadDefaultSphere();
 
     // Apply matcap clay preset globally to the renderer
     renderer.setMatcap(5); // "Clay" matcap preset index
