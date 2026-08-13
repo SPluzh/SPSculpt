@@ -1,4 +1,5 @@
 #include "sculpt/SculptEngine.h"
+#include "common/Logger.h"
 #include <cmath>
 #include <algorithm>
 #include <vector>
@@ -408,11 +409,15 @@ uint32_t getFacesFromVerticesFast(
     auto t0 = std::chrono::high_resolution_clock::now();
 
     uint32_t epoch = *tagEpoch + 1;
+    bool resetEpoch = false;
     if (epoch == 0) {
         std::fill(tagFlags, tagFlags + nbFaces, 0);
         epoch = 1;
+        resetEpoch = true;
     }
     *tagEpoch = epoch;
+
+    auto tEpochDone = std::chrono::high_resolution_clock::now();
 
     uint32_t acc = 0;
     for (uint32_t i = 0; i < nbIVerts; ++i) {
@@ -437,9 +442,12 @@ uint32_t getFacesFromVerticesFast(
     }
 
     auto t2 = std::chrono::high_resolution_clock::now();
-    double loop_ms = std::chrono::duration<double, std::milli>(t2 - t0).count();
-    if (loop_ms > 0.5) {
-        printf("[C++ getFacesFromVerticesFast] %u verts | loop took %.2fms\n", nbIVerts, loop_ms);
+    double total_ms = std::chrono::duration<double, std::milli>(t2 - t0).count();
+    double epoch_ms = std::chrono::duration<double, std::milli>(tEpochDone - t0).count();
+    double loop_ms = std::chrono::duration<double, std::milli>(t2 - tEpochDone).count();
+    if (total_ms > 0.5) {
+        sculpt_log("[C++ getFacesFromVerticesFast] %u verts -> %u faces | total: %.2fms (loop: %.2fms, epoch reset: %s, reset time: %.2fms)\n",
+                  nbIVerts, acc, total_ms, loop_ms, resetEpoch ? "true" : "false", epoch_ms);
     }
 
     return acc;

@@ -1613,21 +1613,23 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     // Log high CPU stroke durations (> 5ms)
     double totalCpuMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tFrameStart).count();
     if (totalCpuMs > 5.0) {
-        sculpt_log("[SCULPT CPU STROKE] Total CPU: %.2fms | Verts: %d (Picked: %d) | Faces: %d\n"
+        sculpt_log("[SCULPT CPU STROKE] '%s' | Total CPU: %.2fms | Verts: %d (Picked: %d) | Faces: %d\n"
                   "  |- Raycast:        %6.2f ms\n"
                   "  |- Pick Vertices:  %6.2f ms\n"
                   "  |- Culling/Group:  %6.2f ms\n"
                   "  |- Undo Record:    %6.2f ms\n"
                   "  |- Primary Deform: %6.2f ms\n"
                   "  |- Symmetry Pass:  %6.2f ms\n"
-                  "  |- Face Lookup:    %6.2f ms\n"
+                  "  |- Face Lookup:    %6.2f ms (Verts input: %d)\n"
                   "  |- Face Normals:   %6.2f ms\n"
                   "  |- Vert Normals:   %6.2f ms\n"
                   "  \\- Octree Update:  %6.2f ms\n",
+                  getBrushNameStr(activeBrush),
                   totalCpuMs, m_lastFrameProfile.affectedVertCount, m_lastFrameProfile.pickedVertCount, m_lastFrameProfile.affectedFaceCount,
                   m_lastFrameProfile.raycastMs, m_lastFrameProfile.pickVertsMs, m_lastFrameProfile.cullingMs,
                   m_lastFrameProfile.undoRecordMs, m_lastFrameProfile.primaryDeformMs, m_lastFrameProfile.symmetryMs,
-                  m_lastFrameProfile.faceLookupMs, m_lastFrameProfile.faceNormalsMs, m_lastFrameProfile.vertNormalsMs,
+                  m_lastFrameProfile.faceLookupMs, m_lastFrameProfile.affectedVertCount,
+                  m_lastFrameProfile.faceNormalsMs, m_lastFrameProfile.vertNormalsMs,
                   m_lastFrameProfile.octreeUpdateMs);
     }
 }

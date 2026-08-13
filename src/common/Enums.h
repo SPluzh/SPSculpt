@@ -49,3 +49,37 @@ enum class SymmetryMode {
     World = 1
 };
 
+inline const char* getBrushNameStr(BrushType brush) {
+    switch (brush) {
+        case BRUSH_FLATTEN: return "Flatten";
+        case BRUSH_SMOOTH: return "Smooth";
+        case BRUSH_INFLATE: return "Inflate";
+        case BRUSH_PINCH: return "Pinch";
+        case BRUSH_CREASE: return "Crease";
+        case BRUSH_VTOOL: return "V-Tool";
+        case BRUSH_MOVE: return "Move";
+        case BRUSH_DRAG: return "Drag";
+        case BRUSH_ELASTIC: return "Elastic";
+        case BRUSH_MASK: return "Mask";
+        case BRUSH_PAINT: return "Paint";
+        case BRUSH_TWIST: return "Twist";
+        case BRUSH_LOCALSCALE: return "Local Scale";
+        case BRUSH_CLAY: return "Clay";
+        case BRUSH_CLAYBUILDUP: return "ClayBuildup";
+        case BRUSH_DAMSTANDARD: return "Dam Standard";
+        case BRUSH_SQUAREBRUSH: return "Square Brush";
+        case BRUSH_VISIBILITY: return "Visibility";
+        case BRUSH_MASK_GRADIENT_BLUR: return "Mask Gradient/Blur";
+        case BRUSH_MEASURE: return "Measure";
+        case BRUSH_DIVIDER: return "Divider";
+        case BRUSH_TRANSFORM: return "Transform";
+        case BRUSH_ARMATURE_SPHERES: return "Armature Spheres";
+        case BRUSH_BRUSH: return "Standard Brush";
+        case BRUSH_POLYGROUP: return "PolyGroup";
+        case BRUSH_CLIP_CURVE: return "Clip Curve";
+        case BRUSH_TRIM: return "Trim";
+        case BRUSH_DELETE_LAYER: return "Delete Layer";
+        default: return "Unknown";
+    }
+}
+
