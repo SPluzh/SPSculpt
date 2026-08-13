@@ -1,4 +1,5 @@
 #include "mesh/Octree.h"
+#include "common/Logger.h"
 #include <cstring>
 #include <chrono>
 #include <iostream>
@@ -14,12 +15,12 @@ OctreeCell* Octree::getCell() {
         cell->aabbLoose[0] = std::numeric_limits<float>::infinity();
         cell->aabbLoose[1] = std::numeric_limits<float>::infinity();
         cell->aabbLoose[2] = std::numeric_limits<float>::infinity();
-        cell->aabbLoose[3] = -std::numeric_limits<float>::infinity();
-        cell->aabbLoose[4] = -std::numeric_limits<float>::infinity();
-        cell->aabbLoose[5] = -std::numeric_limits<float>::infinity();
         cell->aabbSplit[0] = std::numeric_limits<float>::infinity();
         cell->aabbSplit[1] = std::numeric_limits<float>::infinity();
         cell->aabbSplit[2] = std::numeric_limits<float>::infinity();
+        cell->aabbLoose[3] = -std::numeric_limits<float>::infinity();
+        cell->aabbLoose[4] = -std::numeric_limits<float>::infinity();
+        cell->aabbLoose[5] = -std::numeric_limits<float>::infinity();
         cell->aabbSplit[3] = -std::numeric_limits<float>::infinity();
         cell->aabbSplit[4] = -std::numeric_limits<float>::infinity();
         cell->aabbSplit[5] = -std::numeric_limits<float>::infinity();
@@ -323,6 +324,8 @@ std::vector<uint32_t> Octree::pickVerticesInSphere(
 void Octree::update(const float* vertsPtrVal, int nbVertsVal,
                     const uint32_t* facesPtrVal, int nbFacesVal,
                     const float* boxesPtrVal, const uint32_t* iFacesPtr, int nbIFacesVal) {
+    auto tStart = std::chrono::high_resolution_clock::now();
+
     if (!root) {
         build(nbVertsVal, nbFacesVal, faceCentersData, boxesPtrVal, vertsPtrVal, facesPtrVal);
         return;
@@ -351,6 +354,8 @@ void Octree::update(const float* vertsPtrVal, int nbVertsVal,
         return;
     }
 
+    auto tSub = std::chrono::high_resolution_clock::now();
+
     float* rootSplit = root->aabbSplit;
     float xmin = rootSplit[0];
     float ymin = rootSplit[1];
@@ -377,11 +382,14 @@ void Octree::update(const float* vertsPtrVal, int nbVertsVal,
         }
     }
 
+    double checkMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tSub).count();
+
     if (needRebuild) {
         rebuildInternal();
         return;
     }
 
+    tSub = std::chrono::high_resolution_clock::now();
     std::vector<std::pair<uint32_t, OctreeCell*>> facesToMove;
     facesToMove.reserve(std::max(0, nbIFacesVal));
 
@@ -425,11 +433,14 @@ void Octree::update(const float* vertsPtrVal, int nbVertsVal,
         }
     }
 
+    double findMovedMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tSub).count();
+
     if (overMovedLimit) {
         rebuildInternal();
         return;
     }
 
+    tSub = std::chrono::high_resolution_clock::now();
     std::vector<OctreeCell*> leavesToUpdate;
 
     for (const auto& item : facesToMove) {
@@ -453,7 +464,9 @@ void Octree::update(const float* vertsPtrVal, int nbVertsVal,
             leavesToUpdate.push_back(leaf);
         }
     }
+    double removeMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tSub).count();
 
+    tSub = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < nbIFacesVal; ++i) {
         uint32_t idFace = iFacesPtr[i];
         if (idFace >= (uint32_t)nbFaces) continue;
@@ -464,7 +477,9 @@ void Octree::update(const float* vertsPtrVal, int nbVertsVal,
         leaf->expandsAabbLoose(faceBoxesData[idb], faceBoxesData[idb + 1], faceBoxesData[idb + 2],
                                faceBoxesData[idb + 3], faceBoxesData[idb + 4], faceBoxesData[idb + 5]);
     }
+    double expandMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tSub).count();
 
+    tSub = std::chrono::high_resolution_clock::now();
     for (const auto& item : facesToMove) {
         uint32_t idFace = item.first;
         OctreeCell* oldLeaf = item.second;
@@ -493,8 +508,17 @@ void Octree::update(const float* vertsPtrVal, int nbVertsVal,
             }
         }
     }
+    double reinsertMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tSub).count();
 
+    tSub = std::chrono::high_resolution_clock::now();
     balanceOctree(leavesToUpdate);
+    double balanceMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tSub).count();
+
+    double totalUpdateMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStart).count();
+    if (totalUpdateMs > 3.0) {
+        sculpt_log("     (Octree Detail: Total=%.2fms | Check=%.2fms | FindMoved=%.2fms [%zu moved] | Remove=%.2fms | Expand=%.2fms | Reinsert=%.2fms | Balance=%.2fms)\n",
+                  totalUpdateMs, checkMs, findMovedMs, facesToMove.size(), removeMs, expandMs, reinsertMs, balanceMs);
+    }
 }
 
 void Octree::pruneIfPossible(OctreeCell* cell, std::unordered_set<OctreeCell*>& deletedCells) {

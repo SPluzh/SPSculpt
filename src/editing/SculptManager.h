@@ -22,9 +22,11 @@ struct SculptFrameProfile {
     double raycastMs = 0.0;
     double pickVertsMs = 0.0;
     double cullingMs = 0.0;
+    double vertProxyResetMs = 0.0;
     double undoRecordMs = 0.0;
     double primaryDeformMs = 0.0;
     double symmetryMs = 0.0;
+    double sortDedupMs = 0.0;
     double faceLookupMs = 0.0;
     double faceNormalsMs = 0.0;
     double vertNormalsMs = 0.0;
@@ -37,15 +39,15 @@ struct SculptFrameProfile {
     int affectedFaceCount = 0;
     
     void reset() {
-        raycastMs = pickVertsMs = cullingMs = undoRecordMs = 0.0;
-        primaryDeformMs = symmetryMs = faceLookupMs = faceNormalsMs = 0.0;
+        raycastMs = pickVertsMs = cullingMs = vertProxyResetMs = undoRecordMs = 0.0;
+        primaryDeformMs = symmetryMs = sortDedupMs = faceLookupMs = faceNormalsMs = 0.0;
         vertNormalsMs = octreeUpdateMs = gpuUploadMs = renderMs = 0.0;
         pickedVertCount = affectedVertCount = affectedFaceCount = 0;
     }
 
     double getTotalMs() const {
-        return raycastMs + pickVertsMs + cullingMs + undoRecordMs +
-               primaryDeformMs + symmetryMs + faceLookupMs + faceNormalsMs +
+        return raycastMs + pickVertsMs + cullingMs + vertProxyResetMs + undoRecordMs +
+               primaryDeformMs + symmetryMs + sortDedupMs + faceLookupMs + faceNormalsMs +
                vertNormalsMs + octreeUpdateMs + gpuUploadMs + renderMs;
     }
 };

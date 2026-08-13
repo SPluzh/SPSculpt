@@ -1334,6 +1334,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         bool negative = getSettings(activeBrush).negative ^ altPressed;
 
         if (isGrabBrush) {
+            tStage = std::chrono::high_resolution_clock::now();
             const float* vertProxyData = mesh->vertProxy.data();
             float* vertsData = mesh->verts.data();
             for (uint32_t v : pickedVertices) {
@@ -1350,6 +1351,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                     }
                 }
             }
+            m_lastFrameProfile.vertProxyResetMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
         }
 
         // Cache area normal and center for Clay/Flatten/Brush tools on first frame
@@ -1502,9 +1504,11 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     m_lastFrameProfile.affectedVertCount = (int)allAffectedVerts.size();
 
     if (!allAffectedVerts.empty()) {
+        tStage = std::chrono::high_resolution_clock::now();
         // Sort and deduplicate affected vertices to ensure optimal L1/L2 cache locality during Face Lookup & Normals update
         std::sort(allAffectedVerts.begin(), allAffectedVerts.end());
         allAffectedVerts.erase(std::unique(allAffectedVerts.begin(), allAffectedVerts.end()), allAffectedVerts.end());
+        m_lastFrameProfile.sortDedupMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
         m_lastFrameProfile.affectedVertCount = (int)allAffectedVerts.size();
 
         bool isSculptDeform = (activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_MASK_GRADIENT_BLUR && activeBrush != BRUSH_POLYGROUP);
@@ -1615,9 +1619,11 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                   "  |- Raycast:        %6.2f ms\n"
                   "  |- Pick Vertices:  %6.2f ms\n"
                   "  |- Culling/Group:  %6.2f ms\n"
+                  "  |- Proxy Reset:    %6.2f ms\n"
                   "  |- Undo Record:    %6.2f ms\n"
                   "  |- Primary Deform: %6.2f ms\n"
                   "  |- Symmetry Pass:  %6.2f ms\n"
+                  "  |- Sort & Dedup:   %6.2f ms\n"
                   "  |- Face Lookup:    %6.2f ms (Verts input: %d)\n"
                   "  |- Face Normals:   %6.2f ms\n"
                   "  |- Vert Normals:   %6.2f ms\n"
@@ -1625,7 +1631,9 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                   getBrushNameStr(activeBrush),
                   totalCpuMs, m_lastFrameProfile.affectedVertCount, m_lastFrameProfile.pickedVertCount, m_lastFrameProfile.affectedFaceCount,
                   m_lastFrameProfile.raycastMs, m_lastFrameProfile.pickVertsMs, m_lastFrameProfile.cullingMs,
+                  m_lastFrameProfile.vertProxyResetMs,
                   m_lastFrameProfile.undoRecordMs, m_lastFrameProfile.primaryDeformMs, m_lastFrameProfile.symmetryMs,
+                  m_lastFrameProfile.sortDedupMs,
                   m_lastFrameProfile.faceLookupMs, m_lastFrameProfile.affectedVertCount,
                   m_lastFrameProfile.faceNormalsMs, m_lastFrameProfile.vertNormalsMs,
                   m_lastFrameProfile.octreeUpdateMs);
