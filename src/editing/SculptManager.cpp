@@ -1308,11 +1308,6 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z, radius2, mesh->vertVisible.data()
             );
         }
-        if (isGrabBrush) {
-            if (m_firstStrokeFrame || m_grabbedVertices.empty()) {
-                m_grabbedVertices = pickedVertices;
-            }
-        }
     }
     m_lastFrameProfile.pickVertsMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
     m_lastFrameProfile.pickedVertCount = (int)pickedVertices.size();
@@ -1325,6 +1320,9 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         }
         if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty()) {
             filterPolyGroupVertices(pickedVertices, mesh, m_strokeTargetPolyGroup);
+        }
+        if (isGrabBrush) {
+            m_grabbedVertices = pickedVertices;
         }
     }
     m_lastFrameProfile.cullingMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
@@ -1449,12 +1447,12 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                         radius2, mesh->vertVisible.data()
                     );
 
-                    if (getCurrentSettings().culling && !symVerts.empty()) {
+                    if (getSettings(activeBrush).culling && !symVerts.empty()) {
                         glm::vec3 symRayDir = reflectVectorSymmetry(localRayDir, sScale, mesh, m_symmetryMode);
                         filterCullingVertices(symVerts, mesh, symRayDir);
                     }
 
-                    if (getCurrentSettings().singlePolyGroup && !mesh->faceGroups.empty() && !symVerts.empty()) {
+                    if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty() && !symVerts.empty()) {
                         filterPolyGroupVertices(symVerts, mesh, m_strokeTargetPolyGroup);
                     }
 
@@ -2223,6 +2221,9 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 );
                 m_currentIntersection = m_initialIntersection;
                 m_currentIntersectionNormal = m_initialIntersectionNormal;
+                if (intersectFaceId != 0xffffffff && !mesh->faceGroups.empty() && intersectFaceId < (uint32_t)mesh->nbFaces) {
+                    m_strokeTargetPolyGroup = mesh->faceGroups[intersectFaceId];
+                }
 
                 std::vector<glm::vec3> symScales = getActiveSymmetryScales();
                 m_initialSymIntersections.resize(symScales.size());

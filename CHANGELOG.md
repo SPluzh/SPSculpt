@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.10]
+- **Brushes**: Fixed an issue where the Move tool (and other grab brushes: Drag, Elastic) failed to respect the "Lock Single PolyGroup" setting on frame 2+ of a stroke due to premature vertex caching prior to polygroup filtering.
+- **Sculpt Engine**: Ensured `m_grabbedVertices` caches filtered vertices after Stage 3 culling and polygroup filtering, updated symmetry settings lookups to use `activeBrush` settings, and initialized target polygroup context on mouse-down.
+
 ## [1.4.9]
 - **UI / Settings**: Fixed an issue where the open/closed visibility state of the Sculpt Layers window was not preserved across application restarts by adding persistent saving and loading for the setting. Added a "Sculpt Layers" menu item under the main Panels menu.
 
