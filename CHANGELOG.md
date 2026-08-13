@@ -5,6 +5,8 @@ All notable changes to this project will be documented in this file.
 ## [0.1.1]
 - **Camera**: Automatically framed camera on scene startup to focus properly on the initial model.
 - **Primitives**: Replaced default initial mesh with a Geosphere primitive.
+- **Primitives**: Welded edge vertices on Subdivided Cube primitives to ensure a continuous manifold mesh for sculpting.
+- **Primitives**: Added high-density concentric ring quad subdivisions to Cylinder top and bottom caps for smooth deformation.
 
 ## [0.1.0]
 - **App Icon**: Added custom 3D clay app icon with teal accent branding for Windows executable (.exe) and SDL window title bar.
