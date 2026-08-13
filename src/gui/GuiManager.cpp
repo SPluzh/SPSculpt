@@ -3,6 +3,7 @@
 #include "common/IniFile.h"
 #include "mesh/Multimesh.h"
 #include "common/Constants.h"
+#include "common/Version.h"
 #include "common/Logger.h"
 #include "render/AngleRenderer.h"
 #include "render/RenderSettings.h"
@@ -343,7 +344,7 @@ void GuiManager::saveSceneAs(Scene& scene, SculptManager* sculpt) {
 
 void GuiManager::updateWindowTitle(SDL_Window* window, bool isModified) {
     if (!window) return;
-    std::string title = "SPSculpt";
+    std::string title = std::string("SPSculpt v") + Version::STRING;
     if (!m_currentScenePath.empty()) {
         title += " - " + m_currentScenePath;
     }

@@ -5,6 +5,7 @@
 #include "editing/undo/TopologyUndoEntry.h"
 #include "editing/undo/SceneMetaUndoEntry.h"
 #include "scene/Scene.h"
+#include "common/Version.h"
 #include <string>
 #include <vector>
 #include <memory>
@@ -14,7 +15,7 @@ struct TimelapseMetadata {
     std::string title = "Sculpt Session";
     std::string author = "Artist";
     std::string creationDate;
-    std::string appVersion = "1.0.0";
+    std::string appVersion = Version::STRING;
     int totalStrokes = 0;
 };
 
