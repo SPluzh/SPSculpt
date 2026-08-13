@@ -406,22 +406,14 @@ uint32_t getFacesFromVerticesFast(
         return 0;
     }
 
-    auto t0 = std::chrono::high_resolution_clock::now();
-
     uint32_t epoch = *tagEpoch + 1;
-    bool resetEpoch = false;
     if (epoch == 0) {
         std::fill(tagFlags, tagFlags + nbFaces, 0);
         epoch = 1;
-        resetEpoch = true;
     }
     *tagEpoch = epoch;
 
-    auto tEpochDone = std::chrono::high_resolution_clock::now();
-
     uint32_t acc = 0;
-    uint64_t totalTraversals = 0;
-    uint32_t duplicateHits = 0;
 
     for (uint32_t i = 0; i < nbIVerts; ++i) {
         if (i + 4 < nbIVerts) {
@@ -432,7 +424,6 @@ uint32_t getFacesFromVerticesFast(
         uint32_t idVert = iVerts[i];
         uint32_t start = vrfStartCount[idVert * 2];
         uint32_t count = vrfStartCount[idVert * 2 + 1];
-        totalTraversals += count;
 
         for (uint32_t j = start; j < start + count; ++j) {
             if (j + 4 < start + count) {
@@ -442,19 +433,8 @@ uint32_t getFacesFromVerticesFast(
             if (tagFlags[iFace] != epoch) {
                 tagFlags[iFace] = epoch;
                 outIFaces[acc++] = iFace;
-            } else {
-                duplicateHits++;
             }
         }
-    }
-
-    auto t2 = std::chrono::high_resolution_clock::now();
-    double total_ms = std::chrono::duration<double, std::milli>(t2 - t0).count();
-    double epoch_ms = std::chrono::duration<double, std::milli>(tEpochDone - t0).count();
-    double loop_ms = std::chrono::duration<double, std::milli>(t2 - tEpochDone).count();
-    if (total_ms > 0.5) {
-        sculpt_log("[C++ getFacesFromVerticesFast] %u verts -> %u unique faces | traversals: %llu (avg %.2f/vert), dup face hits: %u | total: %.2fms (loop: %.2fms, epoch reset: %s, reset time: %.2fms)\n",
-                  nbIVerts, acc, (unsigned long long)totalTraversals, nbIVerts > 0 ? (double)totalTraversals / nbIVerts : 0.0, duplicateHits, total_ms, loop_ms, resetEpoch ? "true" : "false", epoch_ms);
     }
 
     return acc;
