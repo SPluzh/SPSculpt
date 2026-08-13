@@ -938,6 +938,17 @@ int strokeMove(
     bool useAccuCurve, const float* accuCurveLut
 ) {
     const float radiusSq = radius * radius;
+    float moveFalloffLut[256];
+    bool canUseLut = !useAccuCurve && !hasAlpha;
+    if (canUseLut) {
+        float exponent = std::pow(2.0f, (focalShift - 0.6f) * 2.0f) * 3.0f;
+        for (int i = 0; i < 256; ++i) {
+            float distSqVal = (float)i / 255.0f;
+            float base = 1.0f - distSqVal;
+            moveFalloffLut[i] = std::pow(base, exponent);
+        }
+    }
+
     #pragma omp parallel for schedule(static) if(nbIVerts > 1000)
     for (int i = 0; i < nbIVerts; ++i) {
         uint32_t id = iVerts[i];
@@ -960,16 +971,25 @@ int strokeMove(
             continue;
         }
 
-        float dist = std::sqrt(distSq);
-        float fallOff = getMoveFallOff(dist, focalShift, useAccuCurve, accuCurveLut);
-        float alphaVal = getAlphaVal(
-            vx, vy, vz,
-            hasAlpha, alphaTex, alphaWidth, alphaHeight,
-            alphaRatioX, alphaRatioY, alphaSide,
-            alphaLookAt, alphaXSym,
-            focalShift, focalShiftFalloff
-        );
-        fallOff *= matVal * alphaVal;
+        float fallOff;
+        if (canUseLut) {
+            float floatIndex = distSq * 255.0f;
+            int index = static_cast<int>(floatIndex);
+            if (index > 254) index = 254;
+            float fract = floatIndex - (float)index;
+            fallOff = (moveFalloffLut[index] * (1.0f - fract) + moveFalloffLut[index + 1] * fract) * matVal;
+        } else {
+            float dist = std::sqrt(distSq);
+            fallOff = getMoveFallOff(dist, focalShift, useAccuCurve, accuCurveLut);
+            float alphaVal = getAlphaVal(
+                vx, vy, vz,
+                hasAlpha, alphaTex, alphaWidth, alphaHeight,
+                alphaRatioX, alphaRatioY, alphaSide,
+                alphaLookAt, alphaXSym,
+                focalShift, focalShiftFalloff
+            );
+            fallOff *= matVal * alphaVal;
+        }
 
         if (fallOff == 0.0f) {
             continue;

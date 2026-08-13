@@ -1337,17 +1337,32 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             tStage = std::chrono::high_resolution_clock::now();
             const float* vertProxyData = mesh->vertProxy.data();
             float* vertsData = mesh->verts.data();
-            for (uint32_t v : pickedVertices) {
-                vertsData[v * 3 + 0] = vertProxyData[v * 3 + 0];
-                vertsData[v * 3 + 1] = vertProxyData[v * 3 + 1];
-                vertsData[v * 3 + 2] = vertProxyData[v * 3 + 2];
-            }
-            if (m_useSym) {
-                for (const auto& symVertsList : m_grabbedVerticesSyms) {
-                    for (uint32_t v : symVertsList) {
-                        vertsData[v * 3 + 0] = vertProxyData[v * 3 + 0];
-                        vertsData[v * 3 + 1] = vertProxyData[v * 3 + 1];
-                        vertsData[v * 3 + 2] = vertProxyData[v * 3 + 2];
+            if (!m_firstStrokeFrame && !m_grabbedAffectedVerts.empty()) {
+                const uint32_t* affVerts = m_grabbedAffectedVerts.data();
+                int nbAff = (int)m_grabbedAffectedVerts.size();
+                #pragma omp parallel for schedule(static) if(nbAff > 1000)
+                for (int i = 0; i < nbAff; ++i) {
+                    uint32_t v = affVerts[i];
+                    uint32_t idx = v * 3;
+                    vertsData[idx]     = vertProxyData[idx];
+                    vertsData[idx + 1] = vertProxyData[idx + 1];
+                    vertsData[idx + 2] = vertProxyData[idx + 2];
+                }
+            } else {
+                for (uint32_t v : pickedVertices) {
+                    uint32_t idx = v * 3;
+                    vertsData[idx]     = vertProxyData[idx];
+                    vertsData[idx + 1] = vertProxyData[idx + 1];
+                    vertsData[idx + 2] = vertProxyData[idx + 2];
+                }
+                if (m_useSym) {
+                    for (const auto& symVertsList : m_grabbedVerticesSyms) {
+                        for (uint32_t v : symVertsList) {
+                            uint32_t idx = v * 3;
+                            vertsData[idx]     = vertProxyData[idx];
+                            vertsData[idx + 1] = vertProxyData[idx + 1];
+                            vertsData[idx + 2] = vertProxyData[idx + 2];
+                        }
                     }
                 }
             }
@@ -1501,16 +1516,22 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         m_lastFrameProfile.symmetryMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
     }
 
-    m_lastFrameProfile.affectedVertCount = (int)allAffectedVerts.size();
-
-    if (!allAffectedVerts.empty()) {
+    if (isGrabBrush && !m_firstStrokeFrame && !m_grabbedAffectedVerts.empty()) {
+        allAffectedVerts = m_grabbedAffectedVerts;
+        m_lastFrameProfile.sortDedupMs = 0.0;
+    } else if (!allAffectedVerts.empty()) {
         tStage = std::chrono::high_resolution_clock::now();
         // Sort and deduplicate affected vertices to ensure optimal L1/L2 cache locality during Face Lookup & Normals update
         std::sort(allAffectedVerts.begin(), allAffectedVerts.end());
         allAffectedVerts.erase(std::unique(allAffectedVerts.begin(), allAffectedVerts.end()), allAffectedVerts.end());
         m_lastFrameProfile.sortDedupMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
-        m_lastFrameProfile.affectedVertCount = (int)allAffectedVerts.size();
+        if (isGrabBrush) {
+            m_grabbedAffectedVerts = allAffectedVerts;
+        }
+    }
+    m_lastFrameProfile.affectedVertCount = (int)allAffectedVerts.size();
 
+    if (!allAffectedVerts.empty()) {
         bool isSculptDeform = (activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_MASK_GRADIENT_BLUR && activeBrush != BRUSH_POLYGROUP);
 
         if (isSculptDeform) {
@@ -1522,18 +1543,27 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             }
 
             // --- Stage 7: Face Lookup ---
-            tStage = std::chrono::high_resolution_clock::now();
-            uint32_t numIFaces = getFacesFromVerticesFast(
-                allAffectedVerts.data(),
-                allAffectedVerts.size(),
-                mesh->vrfStartCount.data(),
-                mesh->vertRingFace.data(),
-                m_iFacesCache.data(),
-                m_tagFlags.data(),
-                &m_tagEpoch,
-                mesh->nbFaces
-            );
-            m_lastFrameProfile.faceLookupMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
+            uint32_t numIFaces = 0;
+            if (isGrabBrush && !m_firstStrokeFrame && m_grabbedNumIFaces > 0) {
+                numIFaces = m_grabbedNumIFaces;
+                m_lastFrameProfile.faceLookupMs = 0.0;
+            } else {
+                tStage = std::chrono::high_resolution_clock::now();
+                numIFaces = getFacesFromVerticesFast(
+                    allAffectedVerts.data(),
+                    allAffectedVerts.size(),
+                    mesh->vrfStartCount.data(),
+                    mesh->vertRingFace.data(),
+                    m_iFacesCache.data(),
+                    m_tagFlags.data(),
+                    &m_tagEpoch,
+                    mesh->nbFaces
+                );
+                m_lastFrameProfile.faceLookupMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
+                if (isGrabBrush) {
+                    m_grabbedNumIFaces = numIFaces;
+                }
+            }
             m_lastFrameProfile.affectedFaceCount = (int)numIFaces;
 
             // --- Stage 8: Face Normals & Boxes ---

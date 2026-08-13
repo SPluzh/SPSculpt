@@ -487,9 +487,12 @@ private:
     std::vector<float> m_blurredMasks;
     std::vector<uint32_t> m_gradActiveVerts;
 
-    // Grab/Move/Elastic brush cached vertices
+    // Grab/Move/Elastic brush cached vertices and topology
     std::vector<uint32_t> m_grabbedVertices;
     std::vector<uint32_t> m_grabbedVerticesSym;
+    std::vector<uint32_t> m_grabbedAffectedVerts;
+    std::vector<uint32_t> m_grabbedIFacesCache;
+    uint32_t              m_grabbedNumIFaces = 0;
 
     // Measurement & Divider states
     std::vector<MeasurementSegment> m_measureSegments;
