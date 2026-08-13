@@ -636,39 +636,59 @@ static void generateSubdividedCube(
     std::vector<float>& colors,
     std::vector<float>& normals
 ) {
+    if (sub < 1) sub = 1;
     float half = side * 0.5f;
 
+    struct VecCompare {
+        bool operator()(const glm::vec3& a, const glm::vec3& b) const {
+            float eps = 1e-4f;
+            if (std::abs(a.x - b.x) > eps) return a.x < b.x;
+            if (std::abs(a.y - b.y) > eps) return a.y < b.y;
+            if (std::abs(a.z - b.z) > eps) return a.z < b.z;
+            return false;
+        }
+    };
+
+    std::map<glm::vec3, uint32_t, VecCompare> vertexMap;
+    std::vector<glm::vec3> uniqueVertices;
+    std::vector<glm::vec3> accumulatedNormals;
+
+    int startIdx = vertices.size() / 3;
+
+    auto getUniqueVertex = [&](const glm::vec3& pos, const glm::vec3& faceNormal) -> uint32_t {
+        auto it = vertexMap.find(pos);
+        if (it != vertexMap.end()) {
+            accumulatedNormals[it->second] += faceNormal;
+            return it->second;
+        }
+        uint32_t index = static_cast<uint32_t>(uniqueVertices.size());
+        uniqueVertices.push_back(pos);
+        accumulatedNormals.push_back(faceNormal);
+        vertexMap[pos] = index;
+        return index;
+    };
+
     auto generateFace = [&](glm::vec3 origin, glm::vec3 right, glm::vec3 up, glm::vec3 normal) {
-        int startIdx = vertices.size() / 3;
+        std::vector<std::vector<uint32_t>> grid(sub + 1, std::vector<uint32_t>(sub + 1));
         for (int y = 0; y <= sub; ++y) {
             float v = (float)y / sub;
             for (int x = 0; x <= sub; ++x) {
                 float u = (float)x / sub;
                 glm::vec3 pos = origin + (u - 0.5f) * side * right + (v - 0.5f) * side * up;
-                vertices.push_back(pos.x);
-                vertices.push_back(pos.y);
-                vertices.push_back(pos.z);
-
-                colors.push_back(1.0f);
-                colors.push_back(1.0f);
-                colors.push_back(1.0f);
-
-                normals.push_back(normal.x);
-                normals.push_back(normal.y);
-                normals.push_back(normal.z);
+                grid[y][x] = getUniqueVertex(pos, normal);
             }
         }
         for (int y = 0; y < sub; ++y) {
             for (int x = 0; x < sub; ++x) {
-                uint32_t v0 = startIdx + y * (sub + 1) + x;
-                uint32_t v1 = startIdx + y * (sub + 1) + (x + 1);
-                uint32_t v2 = startIdx + (y + 1) * (sub + 1) + (x + 1);
-                uint32_t v3 = startIdx + (y + 1) * (sub + 1) + x;
+                uint32_t v0 = grid[y][x];
+                uint32_t v1 = grid[y][x + 1];
+                uint32_t v2 = grid[y + 1][x + 1];
+                uint32_t v3 = grid[y + 1][x];
 
-                faces.push_back(v0);
-                faces.push_back(v1);
-                faces.push_back(v2);
-                faces.push_back(v3);
+                faces.push_back(startIdx + v0);
+                faces.push_back(startIdx + v1);
+                faces.push_back(startIdx + v2);
+                faces.push_back(startIdx + v3);
             }
         }
     };
@@ -679,7 +699,28 @@ static void generateSubdividedCube(
     generateFace(glm::vec3(-half, 0, 0), glm::vec3(0, 0, 1), glm::vec3(0, 1, 0), glm::vec3(-1, 0, 0));
     generateFace(glm::vec3(0, half, 0), glm::vec3(1, 0, 0), glm::vec3(0, 0, -1), glm::vec3(0, 1, 0));
     generateFace(glm::vec3(0, -half, 0), glm::vec3(1, 0, 0), glm::vec3(0, 0, 1), glm::vec3(0, -1, 0));
+
+    for (size_t i = 0; i < uniqueVertices.size(); ++i) {
+        const auto& v = uniqueVertices[i];
+        vertices.push_back(v.x);
+        vertices.push_back(v.y);
+        vertices.push_back(v.z);
+
+        colors.push_back(1.0f);
+        colors.push_back(1.0f);
+        colors.push_back(1.0f);
+
+        glm::vec3 n = accumulatedNormals[i];
+        float len = glm::length(n);
+        if (len > 1e-5f) n /= len;
+        else n = glm::vec3(0, 1, 0);
+
+        normals.push_back(n.x);
+        normals.push_back(n.y);
+        normals.push_back(n.z);
+    }
 }
+
 
 static void generateCylinder(
     float radiusTop, float radiusBottom, float height,
@@ -687,8 +728,13 @@ static void generateCylinder(
     std::vector<float>& vertices,
     std::vector<uint32_t>& faces,
     std::vector<float>& colors,
-    std::vector<float>& normals
+    std::vector<float>& normals,
+    int capRings = 0
 ) {
+    if (radSegments < 3) radSegments = 3;
+    if (heightSegments < 1) heightSegments = 1;
+    if (capRings <= 0) capRings = std::max(1, heightSegments / 2);
+
     float heightHalf = height * 0.5f;
     int startIdx = vertices.size() / 3;
 
@@ -733,49 +779,121 @@ static void generateCylinder(
     }
 
     if (topCap) {
-        uint32_t last = startIdx + (vertices.size() / 3 - startIdx);
+        uint32_t baseCapIdx = vertices.size() / 3;
+
+        // Center vertex
         vertices.push_back(0.0f);
         vertices.push_back(heightHalf);
         vertices.push_back(0.0f);
+        colors.push_back(1.0f); colors.push_back(1.0f); colors.push_back(1.0f);
+        normals.push_back(0.0f); normals.push_back(1.0f); normals.push_back(0.0f);
 
-        colors.push_back(1.0f);
-        colors.push_back(1.0f);
-        colors.push_back(1.0f);
+        // Intermediate rings (1 to capRings - 1)
+        for (int rIdx = 1; rIdx < capRings; ++rIdx) {
+            float rRatio = (float)rIdx / (float)capRings;
+            float ringRadius = rRatio * radiusTop;
+            for (int j = 0; j < radSegments; ++j) {
+                float u = (float)M_PI * 2.0f * j / radSegments;
+                float x = ringRadius * std::sin(u);
+                float z = ringRadius * std::cos(u);
 
-        normals.push_back(0.0f);
-        normals.push_back(1.0f);
-        normals.push_back(0.0f);
+                vertices.push_back(x);
+                vertices.push_back(heightHalf);
+                vertices.push_back(z);
+                colors.push_back(1.0f); colors.push_back(1.0f); colors.push_back(1.0f);
+                normals.push_back(0.0f); normals.push_back(1.0f); normals.push_back(0.0f);
+            }
+        }
 
+        // Center fan (triangles)
+        uint32_t ring1StartIdx = (capRings == 1) ? startIdx : (baseCapIdx + 1);
         for (int j = 0; j < radSegments; j++) {
             int next = (j == radSegments - 1) ? 0 : j + 1;
-            faces.push_back(startIdx + j);
-            faces.push_back(startIdx + next);
-            faces.push_back(last);
+            uint32_t outerJ = (capRings == 1) ? (startIdx + j) : (ring1StartIdx + j);
+            uint32_t outerNext = (capRings == 1) ? (startIdx + next) : (ring1StartIdx + next);
+
+            faces.push_back(outerJ);
+            faces.push_back(outerNext);
+            faces.push_back(baseCapIdx);
             faces.push_back(TRI_INDEX);
+        }
+
+        // Concentric ring quads
+        for (int rIdx = 1; rIdx < capRings; ++rIdx) {
+            uint32_t innerRingStart = baseCapIdx + 1 + (rIdx - 1) * radSegments;
+            uint32_t outerRingStart = (rIdx + 1 == capRings) ? startIdx : (baseCapIdx + 1 + rIdx * radSegments);
+            for (int j = 0; j < radSegments; ++j) {
+                int next = (j == radSegments - 1) ? 0 : j + 1;
+                uint32_t v0 = innerRingStart + j;
+                uint32_t v1 = innerRingStart + next;
+                uint32_t v2 = outerRingStart + next;
+                uint32_t v3 = outerRingStart + j;
+
+                faces.push_back(v0);
+                faces.push_back(v1);
+                faces.push_back(v2);
+                faces.push_back(v3);
+            }
         }
     }
 
     if (lowCap) {
-        uint32_t last = startIdx + (vertices.size() / 3 - startIdx);
+        uint32_t baseCapIdx = vertices.size() / 3;
+        int end = radSegments * heightSegments;
+
+        // Center vertex
         vertices.push_back(0.0f);
         vertices.push_back(-heightHalf);
         vertices.push_back(0.0f);
+        colors.push_back(1.0f); colors.push_back(1.0f); colors.push_back(1.0f);
+        normals.push_back(0.0f); normals.push_back(-1.0f); normals.push_back(0.0f);
 
-        colors.push_back(1.0f);
-        colors.push_back(1.0f);
-        colors.push_back(1.0f);
+        // Intermediate rings (1 to capRings - 1)
+        for (int rIdx = 1; rIdx < capRings; ++rIdx) {
+            float rRatio = (float)rIdx / (float)capRings;
+            float ringRadius = rRatio * radiusBottom;
+            for (int j = 0; j < radSegments; ++j) {
+                float u = (float)M_PI * 2.0f * j / radSegments;
+                float x = ringRadius * std::sin(u);
+                float z = ringRadius * std::cos(u);
 
-        normals.push_back(0.0f);
-        normals.push_back(-1.0f);
-        normals.push_back(0.0f);
+                vertices.push_back(x);
+                vertices.push_back(-heightHalf);
+                vertices.push_back(z);
+                colors.push_back(1.0f); colors.push_back(1.0f); colors.push_back(1.0f);
+                normals.push_back(0.0f); normals.push_back(-1.0f); normals.push_back(0.0f);
+            }
+        }
 
-        int end = radSegments * heightSegments;
+        // Center fan (triangles)
+        uint32_t ring1StartIdx = (capRings == 1) ? (startIdx + end) : (baseCapIdx + 1);
         for (int j = 0; j < radSegments; j++) {
-            int next = (j == radSegments - 1) ? end : end + j + 1;
-            faces.push_back(startIdx + next);
-            faces.push_back(startIdx + end + j);
-            faces.push_back(last);
+            int next = (j == radSegments - 1) ? 0 : j + 1;
+            uint32_t outerJ = (capRings == 1) ? (startIdx + end + j) : (ring1StartIdx + j);
+            uint32_t outerNext = (capRings == 1) ? (startIdx + (j == radSegments - 1 ? end : end + j + 1)) : (ring1StartIdx + next);
+
+            faces.push_back(outerNext);
+            faces.push_back(outerJ);
+            faces.push_back(baseCapIdx);
             faces.push_back(TRI_INDEX);
+        }
+
+        // Concentric ring quads
+        for (int rIdx = 1; rIdx < capRings; ++rIdx) {
+            uint32_t innerRingStart = baseCapIdx + 1 + (rIdx - 1) * radSegments;
+            uint32_t outerRingStart = (rIdx + 1 == capRings) ? (startIdx + end) : (baseCapIdx + 1 + rIdx * radSegments);
+            for (int j = 0; j < radSegments; ++j) {
+                int next = (j == radSegments - 1) ? 0 : j + 1;
+                uint32_t v0 = innerRingStart + next;
+                uint32_t v1 = innerRingStart + j;
+                uint32_t v2 = outerRingStart + j;
+                uint32_t v3 = outerRingStart + next;
+
+                faces.push_back(v0);
+                faces.push_back(v1);
+                faces.push_back(v2);
+                faces.push_back(v3);
+            }
         }
     }
 }
