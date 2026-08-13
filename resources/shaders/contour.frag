@@ -4,6 +4,7 @@ in vec2 vTexCoord;
 uniform sampler2D uTexture0;
 uniform vec2 uInvSize;
 uniform vec3 uColor;
+uniform float uAlpha;
 out vec4 fragColor;
 
 float outlineDistance(const in vec2 uv, const in sampler2D tex, const in vec2 invSize) {
@@ -28,5 +29,5 @@ void main() {
     float val = outlineDistance(vTexCoord, uTexture0, uInvSize);
     if (val < 1.5)
         discard;
-    fragColor = vec4(uColor, 1.0);
+    fragColor = vec4(uColor, uAlpha);
 }

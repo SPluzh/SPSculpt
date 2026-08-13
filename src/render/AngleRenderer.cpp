@@ -577,6 +577,31 @@ void AngleRenderer::setCursorParametersRightFast(
 }
 
 void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
+    // Delta time calculation for selection flash animation
+    auto now = std::chrono::high_resolution_clock::now();
+    float dt = 0.016f;
+    if (m_lastRenderTime.time_since_epoch().count() > 0) {
+        dt = std::chrono::duration<float>(now - m_lastRenderTime).count();
+        if (dt <= 0.0f || dt > 0.5f) dt = 0.016f;
+    }
+    m_lastRenderTime = now;
+
+    // Track selection changes to trigger flash animation
+    const Mesh* currentSelected = const_cast<Scene&>(scene).getSelected();
+    if (currentSelected != m_lastSelectedMesh) {
+        if (currentSelected != nullptr && m_enableSelectionFlash) {
+            m_selectionAnimTimer = m_selectionAnimDuration;
+        }
+        m_lastSelectedMesh = currentSelected;
+    }
+
+    if (m_selectionAnimTimer > 0.0f) {
+        m_selectionAnimTimer -= dt;
+        if (m_selectionAnimTimer < 0.0f) {
+            m_selectionAnimTimer = 0.0f;
+        }
+    }
+
     // Sync split mode and right camera from scene
     m_splitMode = m_isTakingScreenshot ? false : (scene.getSplitMode() != Scene::SplitMode::OFF);
     m_cameraRight = scene.getCameraRight();
@@ -751,10 +776,13 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
     }
 
     // 1. Contour Pass
-    glBindFramebuffer(GL_FRAMEBUFFER, m_rttContour.fbo);
-    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    renderScenePass(scene, 0); // 0 = Contour
+    bool renderContourPass = m_showContour || (m_enableSelectionFlash && m_selectionAnimTimer > 0.0f);
+    if (renderContourPass) {
+        glBindFramebuffer(GL_FRAMEBUFFER, m_rttContour.fbo);
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        renderScenePass(scene, 0); // 0 = Contour
+    }
 
     // 2. Opaque Pass
     glBindFramebuffer(GL_FRAMEBUFFER, m_rttOpaque.fbo);
@@ -1047,7 +1075,8 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
     }
 
     // Contour Outlines (Sobel filter of the Contour Pass)
-    if (m_showContour) {
+    bool renderContourOverlay = m_showContour || (m_enableSelectionFlash && m_selectionAnimTimer > 0.0f);
+    if (renderContourOverlay) {
         if (!m_splitMode) {
             glViewport(0, 0, m_width, m_height);
             drawContourOverlay(scene);
@@ -3243,7 +3272,24 @@ void AngleRenderer::drawFullscreenViewport2D(const Scene& scene) {
 }
 
 void AngleRenderer::drawContourOverlay(const Scene& scene) {
-    if (!m_showContour || m_contourProgram == 0) return;
+    bool renderContour = m_showContour || (m_enableSelectionFlash && m_selectionAnimTimer > 0.0f);
+    if (!renderContour || m_contourProgram == 0) return;
+
+    float alphaFactor = 1.0f;
+    if (m_enableSelectionFlash && m_selectionAnimTimer > 0.0f) {
+        float t = std::clamp(m_selectionAnimTimer / std::max(0.01f, m_selectionAnimDuration), 0.0f, 1.0f);
+        // Smooth Fade Out curve (smoothstep-like)
+        float smoothT = t * t * (3.0f - 2.0f * t);
+        if (m_showContour) {
+            // Permanent outline is ON: pulse from extra brightness down to normal 1.0
+            alphaFactor = 1.0f + 0.5f * smoothT;
+        } else {
+            // Permanent outline is OFF: fade out from 1.0 down to 0.0
+            alphaFactor = smoothT;
+        }
+    }
+
+    if (alphaFactor <= 0.001f) return;
 
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_CULL_FACE);
@@ -3259,8 +3305,11 @@ void AngleRenderer::drawContourOverlay(const Scene& scene) {
     glm::vec2 invSize(1.0f / m_width, 1.0f / m_height);
     glUniform2fv(glGetUniformLocation(m_contourProgram, "uInvSize"), 1, &invSize[0]);
 
-    glm::vec3 col(m_contourColor.r, m_contourColor.g, m_contourColor.b);
+    glm::vec3 col(m_contourColor.r * alphaFactor, m_contourColor.g * alphaFactor, m_contourColor.b * alphaFactor);
     glUniform3fv(glGetUniformLocation(m_contourProgram, "uColor"), 1, &col[0]);
+
+    float finalAlpha = std::min(m_contourColor.a * alphaFactor, 1.0f);
+    glUniform1f(glGetUniformLocation(m_contourProgram, "uAlpha"), finalAlpha);
 
     glBindVertexArray(m_fsqVao);
     glDrawArrays(GL_TRIANGLES, 0, 3);

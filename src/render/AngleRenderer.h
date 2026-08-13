@@ -175,6 +175,11 @@ public:
     bool getBevelScaleWithDistance() const { return m_bevelScaleWithDistance; }
     void setShowContour(bool show) { m_showContour = show; }
     bool getShowContour() const { return m_showContour; }
+    void setEnableSelectionFlash(bool enable) { m_enableSelectionFlash = enable; }
+    bool getEnableSelectionFlash() const { return m_enableSelectionFlash; }
+    void setSelectionAnimDuration(float dur) { m_selectionAnimDuration = std::max(0.05f, dur); }
+    float getSelectionAnimDuration() const { return m_selectionAnimDuration; }
+    void triggerSelectionFlash() { m_selectionAnimTimer = m_selectionAnimDuration; }
     void setCursorThickness(float thickness) { m_cursorThickness = thickness; }
     float getCursorThickness() const { return m_cursorThickness; }
     void setSmoothCursor(bool smooth) { m_smoothCursor = smooth; }
@@ -597,6 +602,11 @@ private:
     float m_bevelStrength = 1.5f;
     bool m_bevelScaleWithDistance = false;
     bool m_showContour = true;
+    bool m_enableSelectionFlash = true;
+    float m_selectionAnimTimer = 0.0f;
+    float m_selectionAnimDuration = 1.2f;
+    const Mesh* m_lastSelectedMesh = nullptr;
+    std::chrono::high_resolution_clock::time_point m_lastRenderTime;
     bool m_showGrid = true;
     bool m_showSafeFrames = false;
     float m_safeFramesMargin = 20.0f;
