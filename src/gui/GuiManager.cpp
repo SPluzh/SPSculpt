@@ -1984,6 +1984,24 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 }
             }
 
+            // --- Add Reference Image Button ---
+            static const std::vector<FileDialog::FilterSpec> refImageFilters = {
+                { "Image Files (*.png, *.jpg, *.jpeg, *.bmp, *.tga)", "*.png;*.jpg;*.jpeg;*.bmp;*.tga" },
+                { "PNG (*.png)", "*.png" },
+                { "JPEG (*.jpg, *.jpeg)", "*.jpg;*.jpeg" },
+                { "BMP (*.bmp)", "*.bmp" },
+                { "TGA (*.tga)", "*.tga" },
+                { "All Files (*.*)", "*.*" }
+            };
+
+            if (ImGui::Button(ICON_LC_IMAGE " + Add Reference Image##OutlinerTop", ImVec2(-1, 24 * scale))) {
+                std::string picked = FileDialog::openFile(refImageFilters, "Select Reference Image");
+                if (!picked.empty()) {
+                    scene.addReferenceImage(picked);
+                    m_selectedRefImageIdx = static_cast<int>(scene.getReferenceImages().size()) - 1;
+                }
+            }
+
             ImGui::Separator();
             ImGui::Spacing();
 
@@ -2021,7 +2039,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             const float cardH = previewSz + 12.0f * scale;
             const float thumbSz = previewSz;
 
-            float remainingAvailY = ImGui::GetContentRegionAvail().y - 45.0f * scale;
+            float remainingAvailY = ImGui::GetContentRegionAvail().y - 35.0f * scale;
             float listH = std::max(180.0f * scale, remainingAvailY);
 
             ImGui::BeginChild("MeshListCards", ImVec2(0, listH), true);
@@ -2846,115 +2864,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         if (ImGui::Button("Clear All", ImVec2(-1, 0))) {
             scene.clearScene();
             sculpt.clearMeasurements();
-        }
-
-
-
-        // Reference Images Section in Scene Outliner
-        ImGui::Separator();
-        ImGui::TextDisabled("REFERENCE IMAGES");
-
-        static const std::vector<FileDialog::FilterSpec> refImageFilters = {
-            { "Image Files (*.png, *.jpg, *.jpeg, *.bmp, *.tga)", "*.png;*.jpg;*.jpeg;*.bmp;*.tga" },
-            { "PNG (*.png)", "*.png" },
-            { "JPEG (*.jpg, *.jpeg)", "*.jpg;*.jpeg" },
-            { "BMP (*.bmp)", "*.bmp" },
-            { "TGA (*.tga)", "*.tga" },
-            { "All Files (*.*)", "*.*" }
-        };
-
-        if (ImGui::Button("+ Add Reference Image##Outliner", ImVec2(-1, 0))) {
-            std::string picked = FileDialog::openFile(refImageFilters, "Select Reference Image");
-            if (!picked.empty()) {
-                scene.addReferenceImage(picked);
-                m_selectedRefImageIdx = static_cast<int>(scene.getReferenceImages().size()) - 1;
-            }
-        }
-
-        if (refImages.empty()) {
-            ImGui::TextDisabled("No reference images loaded.");
-        } else {
-            if (m_selectedRefImageIdx < 0 || m_selectedRefImageIdx >= static_cast<int>(refImages.size())) {
-                m_selectedRefImageIdx = 0;
-            }
-
-            // Single Shared Controls Block for active selected reference image
-            if (m_selectedRefImageIdx >= 0 && m_selectedRefImageIdx < static_cast<int>(refImages.size())) {
-                auto& curImg = refImages[m_selectedRefImageIdx];
-                ImGui::Spacing();
-                ImGui::TextDisabled("SELECTED IMAGE PROPERTIES");
-
-                bool masterVis = scene.areAnyReferenceImagesVisible();
-                if (ImGui::Checkbox("Master Visible (Shift+Z)", &masterVis)) {
-                    scene.setAllReferenceImagesVisible(masterVis);
-                }
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Toggle visibility of all reference images (Shift+Z)");
-                }
-                ImGui::SameLine();
-                ImGui::Checkbox("Pinned 2D Overlay", &curImg.pinned2D);
-                ImGui::SameLine();
-                ImGui::Checkbox("Lock Image", &curImg.locked);
-
-                Camera& camera = scene.getCamera();
-                bool ref2D = camera.getRef2DMode();
-                if (ImGui::Checkbox("2D Pan/Zoom Mode", &ref2D)) {
-                    camera.setRef2DMode(ref2D);
-                }
-                ImGui::SameLine();
-                bool refDrag = camera.getRefDragEnabled();
-                if (ImGui::Checkbox("Edit Mode (Z)", &refDrag)) {
-                    camera.setRefDragEnabled(refDrag);
-                    if (scene.getCameraRight()) scene.getCameraRight()->setRefDragEnabled(refDrag);
-                }
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Toggle reference image manipulation gizmo mode (Z)");
-                }
-
-                int opacityPct = static_cast<int>(std::round(curImg.opacity * 100.0f));
-                if (ImGui::SliderInt("Opacity", &opacityPct, 0, 100, "%d%%")) {
-                    curImg.opacity = opacityPct / 100.0f;
-                    scene.setModified(true);
-                }
-                ImGui::SliderFloat("Scale", &curImg.scale, 0.1f, 10.0f, "%.2f");
-                ImGui::SliderFloat("Rotation", &curImg.rotation, -180.0f, 180.0f, "%.1f deg");
-
-                if (curImg.pinned2D) {
-                    ImGui::SliderFloat("Offset X", &curImg.offsetX, -1.0f, 1.0f, "%.2f");
-                    ImGui::SliderFloat("Offset Y", &curImg.offsetY, -1.0f, 1.0f, "%.2f");
-                } else {
-                    ImGui::SliderFloat("Position X", &curImg.offsetX, -200.0f, 200.0f, "%.1f");
-                    ImGui::SliderFloat("Position Y", &curImg.offsetY, -200.0f, 200.0f, "%.1f");
-                }
-
-                float btnW = 55.0f * scale;
-                if (ImGui::Button("Center", ImVec2(btnW, 0))) {
-                    curImg.offsetX = 0.0f;
-                    curImg.offsetY = 0.0f;
-                    scene.setModified(true);
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Reset Scale", ImVec2(btnW + 15.0f, 0))) {
-                    curImg.scale = 1.0f;
-                    scene.setModified(true);
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Reset Rot", ImVec2(btnW + 10.0f, 0))) {
-                    curImg.rotation = 0.0f;
-                    scene.setModified(true);
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Reload", ImVec2(btnW + 5.0f, 0))) {
-                    scene.reloadReferenceImage(m_selectedRefImageIdx);
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Remove", ImVec2(-1, 0))) {
-                    scene.removeReferenceImage(m_selectedRefImageIdx);
-                    if (m_selectedRefImageIdx >= static_cast<int>(scene.getReferenceImages().size())) {
-                        m_selectedRefImageIdx = static_cast<int>(scene.getReferenceImages().size()) - 1;
-                    }
-                }
-            }
         }
 
         ImGui::End();

@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 - **HD Card Previews**: Upgraded thumbnail resolution to 160×160 for crisp rendering without blur or pixelation.
 - **Tool Items Grouping**: Separated Measure and Divider tools into independent collapsible group cards, with individual division controls for each Divider segment.
 - **Reference Image Cards**: Added lock toggle button (lock/unlock transforms) and opacity percentage slider directly to cards in the Scene Outliner.
+- **Reference Image Controls Clean-up**: Moved "+ Add Reference Image" button to the top header of the Scene Outliner and removed redundant property sliders/settings from the bottom panel.
 - **Search & Category Filters**: Search by object name and quick filtering by categories (All / Meshes / Refs / Tools).
 - **Quick Action Buttons**: Direct card controls for per-viewport visibility (V1/V2), camera focus, duplicating, and deleting.
 
