@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [0.2.0]
 - **Glassmorphism Outliner UI**: Modern card-based Scene Outliner redesign with translucent glass visual style.
+- **Card Layout**: Fixed right-side clipping so action buttons and card content are always fully visible.
+- **Mouse Wheel Scroll**: Fixed inner card jitter when scrolling over cards so the outliner list scrolls smoothly.
 - **HD Card Previews**: Upgraded thumbnail resolution to 160×160 for crisp rendering without blur or pixelation.
 - **Tool Items Grouping**: Separated Measure and Divider tools into independent collapsible group cards, with individual division controls for each Divider segment.
 - **Search & Category Filters**: Search by object name and quick filtering by categories (All / Meshes / Refs / Tools).

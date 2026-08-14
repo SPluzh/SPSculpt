@@ -2054,7 +2054,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.25f, 0.28f, 0.32f, 0.45f));
                     }
 
-                    ImGui::BeginChild(("##card_mesh_" + std::to_string(mesh->getID())).c_str(), ImVec2(cardW, cardH), true, ImGuiWindowFlags_NoScrollbar);
+                    ImGui::BeginChild(("##card_mesh_" + std::to_string(mesh->getID())).c_str(), ImVec2(0, cardH), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
                     ImGui::PopStyleColor(2);
 
                     // Left Thumbnail (Dark Framed Background matching Camera Bookmarks)
@@ -2229,7 +2229,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.28f, 0.24f, 0.20f, 0.45f));
                     }
 
-                    ImGui::BeginChild(("##card_ref_" + std::to_string(i)).c_str(), ImVec2(cardW, cardH), true, ImGuiWindowFlags_NoScrollbar);
+                    ImGui::BeginChild(("##card_ref_" + std::to_string(i)).c_str(), ImVec2(0, cardH), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
                     ImGui::PopStyleColor(2);
 
                     // Left Thumbnail (Dark Framed Background matching Camera Bookmarks)
@@ -2352,7 +2352,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.25f, 0.12f, 0.35f, 0.45f));
                 ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.65f, 0.30f, 0.85f, 0.70f));
 
-                ImGui::BeginChild("##group_card_msr", ImVec2(cardW, cardH), true, ImGuiWindowFlags_NoScrollbar);
+                ImGui::BeginChild("##group_card_msr", ImVec2(0, cardH), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
                 ImGui::PopStyleColor(2);
 
                 // Left Icon Frame
@@ -2383,7 +2383,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 // Row 3: Buttons
                 float btnSz = 22.0f * scale;
 
-                if (ImGui::Button(msrGroupExpanded ? ICON_LC_CHEVRON_DOWN " Collapse" : ICON_LC_CHEVRON_RIGHT " Expand", ImVec2(btnSz * 3.6f, btnSz))) {
+                if (ImGui::Button(msrGroupExpanded ? ICON_LC_CHEVRON_DOWN " Fold" : ICON_LC_CHEVRON_RIGHT " Open", ImVec2(btnSz * 2.5f, btnSz))) {
                     msrGroupExpanded = !msrGroupExpanded;
                 }
 
@@ -2394,7 +2394,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 bool msrV1 = sculpt.getMeasureVisibleV1();
                 if (msrV1) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.90f, 0.60f, 1.0f, 1.0f));
                 else ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.40f, 0.40f, 0.40f, 1.0f));
-                if (ImGui::Button(msrV1 ? ICON_LC_EYE " V1" : ICON_LC_EYE_OFF " V1", ImVec2(btnSz * 1.8f, btnSz))) {
+                if (ImGui::Button(msrV1 ? ICON_LC_EYE " V1" : ICON_LC_EYE_OFF " V1", ImVec2(btnSz * 1.6f, btnSz))) {
                     sculpt.setMeasureVisibleV1(!msrV1);
                     scene.setModified(true);
                 }
@@ -2409,7 +2409,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 bool msrV2 = sculpt.getMeasureVisibleV2();
                 if (msrV2) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.90f, 0.60f, 1.0f, 1.0f));
                 else ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.40f, 0.40f, 0.40f, 1.0f));
-                if (ImGui::Button(msrV2 ? ICON_LC_EYE " V2" : ICON_LC_EYE_OFF " V2", ImVec2(btnSz * 1.8f, btnSz))) {
+                if (ImGui::Button(msrV2 ? ICON_LC_EYE " V2" : ICON_LC_EYE_OFF " V2", ImVec2(btnSz * 1.6f, btnSz))) {
                     sculpt.setMeasureVisibleV2(!msrV2);
                     scene.setModified(true);
                 }
@@ -2421,7 +2421,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.15f, 0.15f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.65f, 0.20f, 0.20f, 1.0f));
-                if (ImGui::Button(ICON_LC_TRASH_2 " Clear", ImVec2(btnSz * 2.8f, btnSz))) {
+                if (ImGui::Button(ICON_LC_TRASH_2 " Clear", ImVec2(btnSz * 2.4f, btnSz))) {
                     measureSegs.clear();
                 }
                 ImGui::PopStyleColor(2);
@@ -2443,9 +2443,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     int deleteMeasureIdx = -1;
 
                     ImGui::Indent(10.0f * scale);
-                    float subCardW = cardW - 10.0f * scale;
-
-
 
                     for (int i = 0; i < (int)measureSegs.size(); ++i) {
                         auto& seg = measureSegs[i];
@@ -2473,7 +2470,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.28f, 0.22f, 0.32f, 0.45f));
                         }
 
-                        ImGui::BeginChild(("##card_msr_" + std::to_string(i)).c_str(), ImVec2(subCardW, cardH), true, ImGuiWindowFlags_NoScrollbar);
+                        ImGui::BeginChild(("##card_msr_" + std::to_string(i)).c_str(), ImVec2(0, cardH), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
                         ImGui::PopStyleColor(2);
 
                         // Left Icon Frame
@@ -2589,7 +2586,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.25f, 0.35f, 0.45f));
                 ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.25f, 0.65f, 0.85f, 0.70f));
 
-                ImGui::BeginChild("##group_card_dvd", ImVec2(cardW, cardH), true, ImGuiWindowFlags_NoScrollbar);
+                ImGui::BeginChild("##group_card_dvd", ImVec2(0, cardH), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
                 ImGui::PopStyleColor(2);
 
                 // Left Icon Frame
@@ -2620,7 +2617,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 // Row 3: Buttons
                 float btnSz = 22.0f * scale;
 
-                if (ImGui::Button(dvdGroupExpanded ? ICON_LC_CHEVRON_DOWN " Collapse" : ICON_LC_CHEVRON_RIGHT " Expand", ImVec2(btnSz * 3.6f, btnSz))) {
+                if (ImGui::Button(dvdGroupExpanded ? ICON_LC_CHEVRON_DOWN " Fold" : ICON_LC_CHEVRON_RIGHT " Open", ImVec2(btnSz * 2.5f, btnSz))) {
                     dvdGroupExpanded = !dvdGroupExpanded;
                 }
 
@@ -2631,7 +2628,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 bool dvdV1 = sculpt.getDividerVisibleV1();
                 if (dvdV1) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.40f, 0.85f, 1.0f, 1.0f));
                 else ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.40f, 0.40f, 0.40f, 1.0f));
-                if (ImGui::Button(dvdV1 ? ICON_LC_EYE " V1" : ICON_LC_EYE_OFF " V1", ImVec2(btnSz * 1.8f, btnSz))) {
+                if (ImGui::Button(dvdV1 ? ICON_LC_EYE " V1" : ICON_LC_EYE_OFF " V1", ImVec2(btnSz * 1.6f, btnSz))) {
                     sculpt.setDividerVisibleV1(!dvdV1);
                     scene.setModified(true);
                 }
@@ -2646,7 +2643,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 bool dvdV2 = sculpt.getDividerVisibleV2();
                 if (dvdV2) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.40f, 0.85f, 1.0f, 1.0f));
                 else ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.40f, 0.40f, 0.40f, 1.0f));
-                if (ImGui::Button(dvdV2 ? ICON_LC_EYE " V2" : ICON_LC_EYE_OFF " V2", ImVec2(btnSz * 1.8f, btnSz))) {
+                if (ImGui::Button(dvdV2 ? ICON_LC_EYE " V2" : ICON_LC_EYE_OFF " V2", ImVec2(btnSz * 1.6f, btnSz))) {
                     sculpt.setDividerVisibleV2(!dvdV2);
                     scene.setModified(true);
                 }
@@ -2658,7 +2655,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.15f, 0.15f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.65f, 0.20f, 0.20f, 1.0f));
-                if (ImGui::Button(ICON_LC_TRASH_2 " Clear", ImVec2(btnSz * 2.8f, btnSz))) {
+                if (ImGui::Button(ICON_LC_TRASH_2 " Clear", ImVec2(btnSz * 2.4f, btnSz))) {
                     dividerSegs.clear();
                 }
                 ImGui::PopStyleColor(2);
@@ -2680,9 +2677,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     int deleteDividerIdx = -1;
 
                     ImGui::Indent(10.0f * scale);
-                    float subCardW = cardW - 10.0f * scale;
-
-
 
                     for (int j = 0; j < (int)dividerSegs.size(); ++j) {
                         auto& seg = dividerSegs[j];
@@ -2710,7 +2704,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.22f, 0.28f, 0.32f, 0.45f));
                         }
 
-                        ImGui::BeginChild(("##card_dvd_" + std::to_string(j)).c_str(), ImVec2(subCardW, cardH), true, ImGuiWindowFlags_NoScrollbar);
+                        ImGui::BeginChild(("##card_dvd_" + std::to_string(j)).c_str(), ImVec2(0, cardH), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
                         ImGui::PopStyleColor(2);
 
                         // Left Icon Frame
@@ -8666,8 +8660,8 @@ void GuiManager::drawCameraBookmarksPanel(Scene& scene, AngleRenderer& renderer)
         }
 
         ImGui::BeginChild(("##bm_" + std::to_string(i)).c_str(),
-                          ImVec2(cardW, previewSz + 12 * scale), true,
-                          ImGuiWindowFlags_NoScrollbar);
+                          ImVec2(0, previewSz + 12 * scale), true,
+                          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
         ImGui::PopStyleColor(2);
 
         // Left preview image (Dark Framed Background matching Outliner)
