@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.12]
+- **Reference Images**: Prevented the manipulation frame, corner handles, rotation stem, and overlay toolbar from appearing when editing mode (`Z`) is enabled for reference images that are hidden in the current viewport.
+
 ## [0.1.11]
 - **Reference Images**: Fixed edge pixel stretching on rectangular reference images.
 - **Reference Images**: Fixed aspect ratio distortion and shearing when rotating 2D reference images.

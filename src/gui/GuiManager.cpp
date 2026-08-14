@@ -4902,8 +4902,11 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
 
     // 1. Handle Active Dragging State
     if (m_activeRefDragTarget != RefDragTarget::None && m_draggingRefImageIdx >= 0 && m_draggingRefImageIdx < (int)images.size()) {
-        if (io.MouseDown[0]) {
-            auto& img = images[m_draggingRefImageIdx];
+        auto& img = images[m_draggingRefImageIdx];
+        if (!scene.isRefImageRenderVisible(img, activeVp)) {
+            m_activeRefDragTarget = RefDragTarget::None;
+            m_draggingRefImageIdx = -1;
+        } else if (io.MouseDown[0]) {
             sculpt.getCursor().hide();
             io.WantCaptureMouse = true;
 
@@ -5005,7 +5008,7 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
 
     for (int i = (int)images.size() - 1; i >= 0; --i) {
         auto& img = images[i];
-        if (!img.visible) continue;
+        if (!scene.isRefImageRenderVisible(img, activeVp)) continue;
 
         bool isSelected = (i == m_selectedRefImageIdx);
 
@@ -5154,7 +5157,7 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
     // 3. Render Rotated Overlay Toolbar for Selected Reference Image
     if (m_selectedRefImageIdx >= 0 && m_selectedRefImageIdx < (int)images.size()) {
         auto& selImg = images[m_selectedRefImageIdx];
-        if (selImg.visible) {
+        if (scene.isRefImageRenderVisible(selImg, activeVp)) {
             float imgAspect = (selImg.width > 0 && selImg.height > 0) ? ((float)selImg.width / (float)selImg.height) : 1.0f;
             float Cx = vpX + (selImg.offsetX * 0.5f + 0.5f) * vpW;
             float Cy = vpY + (0.5f - selImg.offsetY * 0.5f) * vpH;
