@@ -198,7 +198,7 @@ private:
     float m_view2DZoom = 1.0f;
 
     bool m_ref2DMode = false;
-    bool m_refDrag = true;
+    bool m_refDrag = false;
     bool m_isSplitViewport = false;
 
     CameraState m_startState;

@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [0.1.14]
+- **Camera**: Saved active camera state (position, rotation, target, FOV, and projection) in `.sgl` project files (SGL v12) and restored it upon opening.
+- **Reference Images**: Preserved reference image Edit Mode state in `.sgl` project files so loading a project keeps Edit Mode disabled if it was disabled upon saving.
 - **Camera Bookmarks**: Preview thumbnails now automatically frame and display the entire object in the icon.
 - **Camera Bookmarks**: Bookmark preview images are now saved directly into `.sgl` project files and restored upon opening.
 

@@ -73,8 +73,8 @@ public:
 std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& scene, const AngleRenderer& renderer, const SculptManager& sculpt) {
     BinaryWriter writer;
     
-    // Version 11
-    writer.writeU32(11);
+    // Version 12
+    writer.writeU32(12);
 
     // Misc settings
     writer.writeU32(renderer.getShowGrid() ? 1 : 0);
@@ -87,6 +87,34 @@ std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& sc
     writer.writeU32(static_cast<uint32_t>(cam.getMode()));
     writer.writeF32(cam.getFov());
     writer.writeU32(cam.getUsePivot() ? 1 : 0);
+
+    // Camera transform & state (Version >= 12)
+    Camera::CameraState camState = cam.getCurrentState();
+    writer.writeF32(camState.quatRot.x);
+    writer.writeF32(camState.quatRot.y);
+    writer.writeF32(camState.quatRot.z);
+    writer.writeF32(camState.quatRot.w);
+
+    writer.writeF32(camState.trans.x);
+    writer.writeF32(camState.trans.y);
+    writer.writeF32(camState.trans.z);
+
+    writer.writeF32(camState.center.x);
+    writer.writeF32(camState.center.y);
+    writer.writeF32(camState.center.z);
+
+    writer.writeF32(camState.offset.x);
+    writer.writeF32(camState.offset.y);
+    writer.writeF32(camState.offset.z);
+
+    writer.writeF32(camState.rotX);
+    writer.writeF32(camState.rotY);
+
+    writer.writeF32(camState.view2DOffsetX);
+    writer.writeF32(camState.view2DOffsetY);
+    writer.writeF32(camState.view2DZoom);
+    writer.writeU32(camState.ref2DMode ? 1 : 0);
+    writer.writeU32(camState.refDrag ? 1 : 0);
 
     // Meshes
     uint32_t nbMeshes = static_cast<uint32_t>(meshes.size());

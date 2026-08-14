@@ -67,7 +67,7 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
 
     BinaryReader reader(buffer.data(), buffer.size());
     uint32_t version = reader.readU32();
-    if (version > 11) {
+    if (version > 12) {
         std::cerr << "Unsupported SGL version: " << version << std::endl;
         return {};
     }
@@ -88,6 +88,50 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
         cam.setMode(static_cast<CameraEnums::CameraMode>(mode));
         cam.setFov(fov);
         cam.setUsePivot(usePivot != 0);
+
+        if (version >= 12) {
+            Camera::CameraState cs = cam.getCurrentState();
+            cs.projectionType = cam.getProjectionType();
+            cs.mode = cam.getMode();
+            cs.fov = cam.getFov();
+            cs.usePivot = cam.getUsePivot();
+
+            cs.quatRot.x = reader.readF32();
+            cs.quatRot.y = reader.readF32();
+            cs.quatRot.z = reader.readF32();
+            cs.quatRot.w = reader.readF32();
+
+            cs.trans.x = reader.readF32();
+            cs.trans.y = reader.readF32();
+            cs.trans.z = reader.readF32();
+
+            cs.center.x = reader.readF32();
+            cs.center.y = reader.readF32();
+            cs.center.z = reader.readF32();
+
+            cs.offset.x = reader.readF32();
+            cs.offset.y = reader.readF32();
+            cs.offset.z = reader.readF32();
+
+            cs.rotX = reader.readF32();
+            cs.rotY = reader.readF32();
+
+            cs.view2DOffsetX = reader.readF32();
+            cs.view2DOffsetY = reader.readF32();
+            cs.view2DZoom = reader.readF32();
+            cs.ref2DMode = (reader.readU32() != 0);
+            cs.refDrag = (reader.readU32() != 0);
+
+            cam.applyState(cs);
+            if (scene.getCameraRight()) {
+                scene.getCameraRight()->applyState(cs);
+            }
+        } else {
+            cam.setRefDragEnabled(false);
+            if (scene.getCameraRight()) {
+                scene.getCameraRight()->setRefDragEnabled(false);
+            }
+        }
     }
 
     uint32_t nbMeshes = reader.readU32();
