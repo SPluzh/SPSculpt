@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.14]
+- **Camera Bookmarks**: Preview thumbnails now automatically frame and display the entire object in the icon.
+- **Camera Bookmarks**: Bookmark preview images are now saved directly into `.sgl` project files and restored upon opening.
+
 ## [0.1.13]
 - **Reference Images**: Implemented full serialization and deserialization of Scene Reference Images in `.sgl` project files (SGL v10). Image properties (file path, opacity, scale, 2D offsets, rotation, global and per-viewport V1/V2 visibility, 2D pinning, and lock state) as well as embedded raw image data are now saved directly inside project files and restored upon opening.
 

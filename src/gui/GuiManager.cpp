@@ -733,6 +733,19 @@ void GuiManager::renderBookmarkPreview(int bmIdx, const Scene& scene, AngleRende
     Camera previewCam;
     previewCam.onResize(BOOKMARK_PREVIEW_SIZE, BOOKMARK_PREVIEW_SIZE);
     previewCam.applyState(bm.camState);
+
+    std::vector<Mesh*> visMeshes;
+    for (auto* m : scene.getMeshes()) {
+        if (scene.isMeshRenderVisible(m)) {
+            visMeshes.push_back(m);
+        }
+    }
+    if (!visMeshes.empty()) {
+        previewCam.resetViewToMeshes(visMeshes, false);
+    } else if (!scene.getMeshes().empty()) {
+        previewCam.resetViewToMeshes(scene.getMeshes(), false);
+    }
+
     previewCam.updateView();
     previewCam.updateProjection();
 
@@ -741,6 +754,24 @@ void GuiManager::renderBookmarkPreview(int bmIdx, const Scene& scene, AngleRende
         renderer.uploadIfDirty(mesh);
         renderer.drawMeshForThumbnail(mesh, previewCam);
     }
+
+    std::vector<uint8_t> rawPixels(BOOKMARK_PREVIEW_SIZE * BOOKMARK_PREVIEW_SIZE * 4);
+    glReadPixels(0, 0, BOOKMARK_PREVIEW_SIZE, BOOKMARK_PREVIEW_SIZE, GL_RGBA, GL_UNSIGNED_BYTE, rawPixels.data());
+
+    std::vector<uint8_t> flippedPixels(BOOKMARK_PREVIEW_SIZE * BOOKMARK_PREVIEW_SIZE * 4);
+    int stride = BOOKMARK_PREVIEW_SIZE * 4;
+    for (int y = 0; y < BOOKMARK_PREVIEW_SIZE; ++y) {
+        std::memcpy(&flippedPixels[y * stride],
+                    &rawPixels[(BOOKMARK_PREVIEW_SIZE - 1 - y) * stride],
+                    stride);
+    }
+
+    bm.previewData.clear();
+    stbi_write_png_to_func([](void* ctx, void* data, int size) {
+        auto* vec = static_cast<std::vector<uint8_t>*>(ctx);
+        const auto* b = static_cast<const uint8_t*>(data);
+        vec->insert(vec->end(), b, b + size);
+    }, &bm.previewData, BOOKMARK_PREVIEW_SIZE, BOOKMARK_PREVIEW_SIZE, 4, flippedPixels.data(), stride);
 
     glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
     glViewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
@@ -8265,7 +8296,22 @@ void GuiManager::drawCameraBookmarksPanel(Scene& scene, AngleRenderer& renderer)
         auto& bm = bookmarks[i];
         bool isActive = (i == activeIdx);
 
-        if (i < (int)m_bookmarkPreviews.size() && m_bookmarkPreviews[i].dirty) {
+        while ((int)m_bookmarkPreviews.size() <= i) {
+            m_bookmarkPreviews.push_back({});
+        }
+
+        auto& p = m_bookmarkPreviews[i];
+
+        if (p.texture == 0 && !bm.previewData.empty()) {
+            int w = 0, h = 0;
+            p.texture = loadTextureFromMemory(bm.previewData.data(), bm.previewData.size(), &w, &h);
+            if (p.texture != 0) {
+                p.dirty = false;
+                bm.previewTexId = p.texture;
+            }
+        }
+
+        if (p.dirty || p.texture == 0) {
             renderBookmarkPreview(i, scene, renderer);
         }
 

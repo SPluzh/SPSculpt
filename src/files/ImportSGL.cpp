@@ -67,7 +67,7 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
 
     BinaryReader reader(buffer.data(), buffer.size());
     uint32_t version = reader.readU32();
-    if (version > 10) {
+    if (version > 11) {
         std::cerr << "Unsupported SGL version: " << version << std::endl;
         return {};
     }
@@ -418,6 +418,15 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
                 snap.opacity   = reader.readF32();
                 bm.refImages.push_back(snap);
             }
+
+            if (version >= 11) {
+                uint32_t previewSize = reader.readU32();
+                if (previewSize > 0) {
+                    bm.previewData.resize(previewSize);
+                    reader.readBytes(bm.previewData.data(), previewSize);
+                }
+            }
+
             scene.addBookmark(bm);
         }
     }

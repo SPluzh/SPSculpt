@@ -28,4 +28,6 @@ struct CameraBookmark {
     int    previewW     = 128;
     int    previewH     = 128;
     std::string previewPath;
+    std::vector<uint8_t> previewData;
 };
+

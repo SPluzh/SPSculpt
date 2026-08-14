@@ -73,8 +73,8 @@ public:
 std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& scene, const AngleRenderer& renderer, const SculptManager& sculpt) {
     BinaryWriter writer;
     
-    // Version 10
-    writer.writeU32(10);
+    // Version 11
+    writer.writeU32(11);
 
     // Misc settings
     writer.writeU32(renderer.getShowGrid() ? 1 : 0);
@@ -275,6 +275,12 @@ std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& sc
             writer.writeF32(snap.scale);
             writer.writeF32(snap.rotation);
             writer.writeF32(snap.opacity);
+        }
+
+        uint32_t previewSize = static_cast<uint32_t>(bm.previewData.size());
+        writer.writeU32(previewSize);
+        if (previewSize > 0) {
+            writer.writeBytes(bm.previewData.data(), previewSize);
         }
     }
 
