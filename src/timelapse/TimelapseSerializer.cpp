@@ -4,6 +4,18 @@
 #include <cstdint>
 #include <cstring>
 
+#ifdef _WIN32
+#include <windows.h>
+static std::wstring utf8ToWide(const std::string& str) {
+    if (str.empty()) return L"";
+    int count = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.length(), NULL, 0);
+    if (count <= 0) return L"";
+    std::wstring wstr(count, 0);
+    MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.length(), &wstr[0], count);
+    return wstr;
+}
+#endif
+
 #pragma pack(push, 1)
 struct StlapseHeader {
     char magic[4] = {'S', 'T', 'L', 'P'};
@@ -161,7 +173,11 @@ bool TimelapseSerializer::saveToFile(
     const std::vector<std::unique_ptr<UndoEntry>>& timeline,
     const TimelapseMetadata& metadata)
 {
+#ifdef _WIN32
+    std::ofstream os(utf8ToWide(filepath).c_str(), std::ios::binary);
+#else
     std::ofstream os(filepath, std::ios::binary);
+#endif
     if (!os.is_open()) {
         sculpt_log("[TimelapseSerializer] Failed to open file for writing: %s\n", filepath.c_str());
         return false;
@@ -237,7 +253,11 @@ bool TimelapseSerializer::loadFromFile(
     std::vector<std::unique_ptr<UndoEntry>>& outTimeline,
     TimelapseMetadata& outMetadata)
 {
+#ifdef _WIN32
+    std::ifstream is(utf8ToWide(filepath).c_str(), std::ios::binary);
+#else
     std::ifstream is(filepath, std::ios::binary);
+#endif
     if (!is.is_open()) {
         sculpt_log("[TimelapseSerializer] Failed to open file for reading: %s\n", filepath.c_str());
         return false;

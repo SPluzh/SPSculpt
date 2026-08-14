@@ -1,4 +1,5 @@
 #define STB_IMAGE_IMPLEMENTATION
+#define STBI_WINDOWS_UTF8
 #include "../third_party/stb_image.h"
 #include "render/ReferenceImage.h"
 #include <iostream>

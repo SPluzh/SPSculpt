@@ -4,6 +4,18 @@
 #include <fstream>
 #include <algorithm>
 
+#ifdef _WIN32
+#include <windows.h>
+static std::wstring utf8ToWide(const std::string& str) {
+    if (str.empty()) return L"";
+    int count = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.length(), NULL, 0);
+    if (count <= 0) return L"";
+    std::wstring wstr(count, 0);
+    MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.length(), &wstr[0], count);
+    return wstr;
+}
+#endif
+
 BrushPresetManager& BrushPresetManager::instance() {
     static BrushPresetManager inst;
     return inst;
@@ -211,7 +223,11 @@ bool BrushPresetManager::savePreset(const BrushPreset& p, const std::string& pat
     j["subdivFactor"] = p.subdivFactor;
     j["decimFactor"] = p.decimFactor;
 
+#ifdef _WIN32
+    std::ofstream out(utf8ToWide(path).c_str());
+#else
     std::ofstream out(path);
+#endif
     if (!out.is_open()) return false;
     out << j.dump(4);
     return true;

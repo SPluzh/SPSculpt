@@ -6,11 +6,27 @@
 #include <fstream>
 #include <glm/gtc/type_ptr.hpp>
 
+#ifdef _WIN32
+#include <windows.h>
+static std::wstring utf8ToWide(const std::string& str) {
+    if (str.empty()) return L"";
+    int count = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.length(), NULL, 0);
+    if (count <= 0) return L"";
+    std::wstring wstr(count, 0);
+    MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.length(), &wstr[0], count);
+    return wstr;
+}
+#endif
+
 namespace ExportSGL {
 
 static std::vector<uint8_t> readBinaryFileHelper(const std::string& path) {
     if (path.empty()) return {};
+#ifdef _WIN32
+    std::ifstream file(utf8ToWide(path).c_str(), std::ios::binary | std::ios::ate);
+#else
     std::ifstream file(path, std::ios::binary | std::ios::ate);
+#endif
     if (!file.is_open()) return {};
     std::streamsize size = file.tellg();
     if (size <= 0) return {};

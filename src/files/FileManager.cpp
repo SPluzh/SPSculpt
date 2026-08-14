@@ -15,8 +15,24 @@
 #include <iostream>
 #include <algorithm>
 
+#ifdef _WIN32
+#include <windows.h>
+static std::wstring utf8ToWide(const std::string& str) {
+    if (str.empty()) return L"";
+    int count = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.length(), NULL, 0);
+    if (count <= 0) return L"";
+    std::wstring wstr(count, 0);
+    MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.length(), &wstr[0], count);
+    return wstr;
+}
+#endif
+
 static std::vector<uint8_t> readBinaryFile(const std::string& path) {
+#ifdef _WIN32
+    std::ifstream file(utf8ToWide(path).c_str(), std::ios::binary | std::ios::ate);
+#else
     std::ifstream file(path, std::ios::binary | std::ios::ate);
+#endif
     if (!file.is_open()) {
         std::cerr << "Failed to open file for reading: " << path << std::endl;
         return {};
@@ -31,7 +47,11 @@ static std::vector<uint8_t> readBinaryFile(const std::string& path) {
 }
 
 static std::string readTextFile(const std::string& path) {
+#ifdef _WIN32
+    std::ifstream file(utf8ToWide(path).c_str());
+#else
     std::ifstream file(path);
+#endif
     if (!file.is_open()) {
         std::cerr << "Failed to open file for reading: " << path << std::endl;
         return "";
@@ -42,7 +62,11 @@ static std::string readTextFile(const std::string& path) {
 }
 
 static bool writeBinaryFile(const std::string& path, const std::vector<uint8_t>& data) {
+#ifdef _WIN32
+    std::ofstream file(utf8ToWide(path).c_str(), std::ios::binary);
+#else
     std::ofstream file(path, std::ios::binary);
+#endif
     if (!file.is_open()) {
         std::cerr << "Failed to open file for writing: " << path << std::endl;
         return false;
@@ -52,7 +76,11 @@ static bool writeBinaryFile(const std::string& path, const std::vector<uint8_t>&
 }
 
 static bool writeTextFile(const std::string& path, const std::string& data) {
+#ifdef _WIN32
+    std::ofstream file(utf8ToWide(path).c_str());
+#else
     std::ofstream file(path);
+#endif
     if (!file.is_open()) {
         std::cerr << "Failed to open file for writing: " << path << std::endl;
         return false;

@@ -4,6 +4,18 @@
 #include <iostream>
 #include <algorithm>
 
+#ifdef _WIN32
+#include <windows.h>
+static std::wstring utf8ToWide(const std::string& str) {
+    if (str.empty()) return L"";
+    int count = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.length(), NULL, 0);
+    if (count <= 0) return L"";
+    std::wstring wstr(count, 0);
+    MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.length(), &wstr[0], count);
+    return wstr;
+}
+#endif
+
 static std::string trimStr(const std::string& str) {
     size_t first = str.find_first_not_of(" \t\r\n");
     if (first == std::string::npos) return "";
@@ -12,7 +24,11 @@ static std::string trimStr(const std::string& str) {
 }
 
 bool IniFile::load(const std::string& filepath) {
+#ifdef _WIN32
+    std::ifstream in(utf8ToWide(filepath).c_str());
+#else
     std::ifstream in(filepath);
+#endif
     if (!in.is_open()) {
         return false;
     }
@@ -56,7 +72,11 @@ bool IniFile::load(const std::string& filepath) {
 }
 
 bool IniFile::save(const std::string& filepath) const {
+#ifdef _WIN32
+    std::ofstream out(utf8ToWide(filepath).c_str());
+#else
     std::ofstream out(filepath);
+#endif
     if (!out.is_open()) {
         std::cerr << "Failed to open INI file for writing: " << filepath << std::endl;
         return false;

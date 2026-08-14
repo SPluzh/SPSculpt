@@ -33,6 +33,7 @@
 #include "sculpt/Remesh.h"
 #include "files/MeshUtils.h"
 #include "common/Logger.h"
+#define STBI_WINDOWS_UTF8
 #include "../third_party/stb_image.h"
 #include <filesystem>
 #include <chrono>
@@ -40,10 +41,33 @@
 #include <sstream>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
+#define STBIW_WINDOWS_UTF8
 #include "../third_party/stb_image_write.h"
 
+#ifdef _WIN32
+#include <windows.h>
+static std::wstring utf8ToWide(const std::string& str) {
+    if (str.empty()) return L"";
+    int count = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.length(), NULL, 0);
+    if (count <= 0) return L"";
+    std::wstring wstr(count, 0);
+    MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.length(), &wstr[0], count);
+    return wstr;
+}
+#endif
+
+static FILE* openFileUtf8(const std::string& path, const char* mode) {
+#ifdef _WIN32
+    std::wstring wpath = utf8ToWide(path);
+    std::wstring wmode = utf8ToWide(mode);
+    return _wfopen(wpath.c_str(), wmode.c_str());
+#else
+    return fopen(path.c_str(), mode);
+#endif
+}
+
 static void exportOBJ(const Mesh& mesh, const std::string& path) {
-    FILE* f = fopen(path.c_str(), "w");
+    FILE* f = openFileUtf8(path, "w");
     if (!f) {
         std::cerr << "Failed to open " << path << " for writing" << std::endl;
         return;
@@ -63,7 +87,7 @@ static void exportOBJ(const Mesh& mesh, const std::string& path) {
 }
 
 static bool importOBJ(Mesh& mesh, const std::string& path) {
-    FILE* f = fopen(path.c_str(), "r");
+    FILE* f = openFileUtf8(path, "r");
     if (!f) {
         std::cerr << "Failed to open " << path << " for reading" << std::endl;
         return false;
@@ -437,9 +461,9 @@ void GuiManager::rebuildFontsAndStyles() {
     ImFont* mainFont = nullptr;
 #ifdef _WIN32
     std::string fontPath = "C:\\Windows\\Fonts\\segoeui.ttf";
-    mainFont = io.Fonts->AddFontFromFileTTF(fontPath.c_str(), std::round(14.0f * combinedScale));
+    mainFont = io.Fonts->AddFontFromFileTTF(fontPath.c_str(), std::round(14.0f * combinedScale), nullptr, io.Fonts->GetGlyphRangesCyrillic());
     if (!mainFont) {
-        mainFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\arial.ttf", std::round(14.0f * combinedScale));
+        mainFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\arial.ttf", std::round(14.0f * combinedScale), nullptr, io.Fonts->GetGlyphRangesCyrillic());
     }
 #endif
 
