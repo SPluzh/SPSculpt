@@ -220,6 +220,15 @@ HKAction HotkeyDispatcher::mapKeyToAction(const SDL_Keysym& keysym, bool ctrlPre
         if (sym == SDLK_e) return HKAction::ExportOBJ;
         if (sym == SDLK_t) return HKAction::ToggleDyntopo;
         if (sym == SDLK_x) return HKAction::RunRemesh;
+        if (sym == SDLK_1) return HKAction::ApplyBookmark1;
+        if (sym == SDLK_2) return HKAction::ApplyBookmark2;
+        if (sym == SDLK_3) return HKAction::ApplyBookmark3;
+        if (sym == SDLK_4) return HKAction::ApplyBookmark4;
+        if (sym == SDLK_5) return HKAction::ApplyBookmark5;
+        if (sym == SDLK_6) return HKAction::ApplyBookmark6;
+        if (sym == SDLK_7) return HKAction::ApplyBookmark7;
+        if (sym == SDLK_8) return HKAction::ApplyBookmark8;
+        if (sym == SDLK_9) return HKAction::ApplyBookmark9;
     }
     
     // Check Alt combinations
@@ -402,6 +411,16 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
             case HKAction::CameraReset: scene.getCamera().resetView(); break;
             case HKAction::CameraUndo: scene.getCamera().undo(); break;
             case HKAction::CameraRedo: scene.getCamera().redo(); break;
+            
+            case HKAction::ApplyBookmark1: scene.applyBookmark(0, true); break;
+            case HKAction::ApplyBookmark2: scene.applyBookmark(1, true); break;
+            case HKAction::ApplyBookmark3: scene.applyBookmark(2, true); break;
+            case HKAction::ApplyBookmark4: scene.applyBookmark(3, true); break;
+            case HKAction::ApplyBookmark5: scene.applyBookmark(4, true); break;
+            case HKAction::ApplyBookmark6: scene.applyBookmark(5, true); break;
+            case HKAction::ApplyBookmark7: scene.applyBookmark(6, true); break;
+            case HKAction::ApplyBookmark8: scene.applyBookmark(7, true); break;
+            case HKAction::ApplyBookmark9: scene.applyBookmark(8, true); break;
             
             case HKAction::StrifeLeft: scene.getCamera().translate(-10.0f, 0.0f); break;
             case HKAction::StrifeRight: scene.getCamera().translate(10.0f, 0.0f); break;

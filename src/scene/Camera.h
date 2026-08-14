@@ -150,6 +150,7 @@ public:
     void undo();
     void redo();
     void applyState(const CameraState& state);
+    CameraState getCurrentState() const;
     void roll(float angle);
     float getTransZ() const;
 

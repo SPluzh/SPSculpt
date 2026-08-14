@@ -57,8 +57,8 @@ public:
 std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& scene, const AngleRenderer& renderer, const SculptManager& sculpt) {
     BinaryWriter writer;
     
-    // Version 8
-    writer.writeU32(8);
+    // Version 9
+    writer.writeU32(9);
 
     // Misc settings
     writer.writeU32(renderer.getShowGrid() ? 1 : 0);
@@ -204,6 +204,62 @@ std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& sc
     for (const auto& seg : dividerSegments) {
         writeAnchor(seg.vertA);
         writeAnchor(seg.vertB);
+    }
+
+    // Camera Bookmarks (Version >= 9)
+    const auto& bookmarks = scene.getCameraBookmarks();
+    writer.writeU32(static_cast<uint32_t>(bookmarks.size()));
+    for (const auto& bm : bookmarks) {
+        uint32_t nameLen = static_cast<uint32_t>(bm.name.size());
+        writer.writeU32(nameLen);
+        writer.writeBytes(reinterpret_cast<const uint8_t*>(bm.name.data()), nameLen);
+
+        writer.writeF32(bm.camState.quatRot.x);
+        writer.writeF32(bm.camState.quatRot.y);
+        writer.writeF32(bm.camState.quatRot.z);
+        writer.writeF32(bm.camState.quatRot.w);
+
+        writer.writeF32(bm.camState.trans.x);
+        writer.writeF32(bm.camState.trans.y);
+        writer.writeF32(bm.camState.trans.z);
+
+        writer.writeF32(bm.camState.center.x);
+        writer.writeF32(bm.camState.center.y);
+        writer.writeF32(bm.camState.center.z);
+
+        writer.writeF32(bm.camState.offset.x);
+        writer.writeF32(bm.camState.offset.y);
+        writer.writeF32(bm.camState.offset.z);
+
+        writer.writeF32(bm.camState.rotX);
+        writer.writeF32(bm.camState.rotY);
+
+        writer.writeF32(bm.camState.fov);
+        writer.writeU32(bm.camState.projectionType == CameraEnums::Projection::PERSPECTIVE ? 0 : 1);
+        writer.writeU32(static_cast<uint32_t>(bm.camState.mode));
+        writer.writeU32(bm.camState.usePivot ? 1 : 0);
+
+        writer.writeF32(bm.camState.view2DOffsetX);
+        writer.writeF32(bm.camState.view2DOffsetY);
+        writer.writeF32(bm.camState.view2DZoom);
+        writer.writeU32(bm.camState.ref2DMode ? 1 : 0);
+        writer.writeU32(bm.camState.refDrag ? 1 : 0);
+
+        writer.writeU32(static_cast<uint32_t>(bm.refImages.size()));
+        for (const auto& snap : bm.refImages) {
+            uint32_t pathLen = static_cast<uint32_t>(snap.path.size());
+            writer.writeU32(pathLen);
+            writer.writeBytes(reinterpret_cast<const uint8_t*>(snap.path.data()), pathLen);
+
+            writer.writeU32(snap.visible ? 1 : 0);
+            writer.writeU32(snap.visibleV1 ? 1 : 0);
+            writer.writeU32(snap.visibleV2 ? 1 : 0);
+            writer.writeF32(snap.offsetX);
+            writer.writeF32(snap.offsetY);
+            writer.writeF32(snap.scale);
+            writer.writeF32(snap.rotation);
+            writer.writeF32(snap.opacity);
+        }
     }
 
     return writer.getBuffer();

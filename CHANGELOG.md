@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.8]
+- **Camera Bookmarks**: Added camera bookmark system with FOV, reference image states, thumbnail previews, `Ctrl+1..9` hotkeys, and persistent `.sgl` saving.
+
 ## [0.1.7]
 - **Reference Images**: Integrated into Scene Outliner list with thumbnails, shared property inspector, drag-and-drop, and per-viewport (V1/V2) visibility toggles. Removed standalone window.
 

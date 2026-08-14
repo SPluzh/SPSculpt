@@ -67,7 +67,7 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
 
     BinaryReader reader(buffer.data(), buffer.size());
     uint32_t version = reader.readU32();
-    if (version > 8) {
+    if (version > 9) {
         std::cerr << "Unsupported SGL version: " << version << std::endl;
         return {};
     }
@@ -351,6 +351,74 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
             sculpt->setDividerVisibleV2(true);
             sculpt->setDividerDivisions(3);
             sculpt->getDividerSegments().clear();
+        }
+    }
+
+    if (version >= 9 && reader.hasData()) {
+        scene.getCameraBookmarks().clear();
+        uint32_t nbBookmarks = reader.readU32();
+        for (uint32_t b = 0; b < nbBookmarks; ++b) {
+            CameraBookmark bm;
+            uint32_t nameLen = reader.readU32();
+            if (nameLen > 0) {
+                std::vector<uint8_t> nBytes(nameLen);
+                reader.readBytes(nBytes.data(), nameLen);
+                bm.name = std::string(nBytes.begin(), nBytes.end());
+            }
+
+            bm.camState.quatRot.x = reader.readF32();
+            bm.camState.quatRot.y = reader.readF32();
+            bm.camState.quatRot.z = reader.readF32();
+            bm.camState.quatRot.w = reader.readF32();
+
+            bm.camState.trans.x = reader.readF32();
+            bm.camState.trans.y = reader.readF32();
+            bm.camState.trans.z = reader.readF32();
+
+            bm.camState.center.x = reader.readF32();
+            bm.camState.center.y = reader.readF32();
+            bm.camState.center.z = reader.readF32();
+
+            bm.camState.offset.x = reader.readF32();
+            bm.camState.offset.y = reader.readF32();
+            bm.camState.offset.z = reader.readF32();
+
+            bm.camState.rotX = reader.readF32();
+            bm.camState.rotY = reader.readF32();
+
+            bm.camState.fov = reader.readF32();
+            uint32_t projType = reader.readU32();
+            bm.camState.projectionType = (projType == 0 ? CameraEnums::Projection::PERSPECTIVE : CameraEnums::Projection::ORTHOGRAPHIC);
+            uint32_t mode = reader.readU32();
+            bm.camState.mode = static_cast<CameraEnums::CameraMode>(mode);
+            bm.camState.usePivot = (reader.readU32() != 0);
+
+            bm.camState.view2DOffsetX = reader.readF32();
+            bm.camState.view2DOffsetY = reader.readF32();
+            bm.camState.view2DZoom = reader.readF32();
+            bm.camState.ref2DMode = (reader.readU32() != 0);
+            bm.camState.refDrag = (reader.readU32() != 0);
+
+            uint32_t nbRefSnaps = reader.readU32();
+            for (uint32_t r = 0; r < nbRefSnaps; ++r) {
+                RefImageSnapshot snap;
+                uint32_t pathLen = reader.readU32();
+                if (pathLen > 0) {
+                    std::vector<uint8_t> pBytes(pathLen);
+                    reader.readBytes(pBytes.data(), pathLen);
+                    snap.path = std::string(pBytes.begin(), pBytes.end());
+                }
+                snap.visible   = (reader.readU32() != 0);
+                snap.visibleV1 = (reader.readU32() != 0);
+                snap.visibleV2 = (reader.readU32() != 0);
+                snap.offsetX   = reader.readF32();
+                snap.offsetY   = reader.readF32();
+                snap.scale     = reader.readF32();
+                snap.rotation  = reader.readF32();
+                snap.opacity   = reader.readF32();
+                bm.refImages.push_back(snap);
+            }
+            scene.addBookmark(bm);
         }
     }
 

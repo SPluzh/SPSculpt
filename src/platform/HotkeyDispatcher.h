@@ -42,6 +42,17 @@ enum class HKAction {
     CameraUndo,            // Alt+Z
     CameraRedo,            // Alt+Shift+Z
     
+    // Camera Bookmarks
+    ApplyBookmark1,
+    ApplyBookmark2,
+    ApplyBookmark3,
+    ApplyBookmark4,
+    ApplyBookmark5,
+    ApplyBookmark6,
+    ApplyBookmark7,
+    ApplyBookmark8,
+    ApplyBookmark9,
+    
     // Strife Camera (Arrow keys)
     StrifeLeft,            // Left
     StrifeRight,           // Right

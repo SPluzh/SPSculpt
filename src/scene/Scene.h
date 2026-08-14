@@ -5,6 +5,7 @@
 #include "scene/Camera.h"
 #include "render/ReferenceImage.h"
 
+#include "scene/CameraBookmark.h"
 #include "scene/LightSource.h"
 
 struct MeshState {
@@ -142,6 +143,17 @@ public:
     bool isMeshRenderVisible(const Mesh* mesh, int viewport = 0) const;
     bool isRefImageRenderVisible(const ReferenceImage& img, int viewport = 0) const;
 
+    // Camera Bookmarks
+    std::vector<CameraBookmark>& getCameraBookmarks() { return m_cameraBookmarks; }
+    const std::vector<CameraBookmark>& getCameraBookmarks() const { return m_cameraBookmarks; }
+    int getActiveCameraBookmarkIdx() const { return m_activeCameraBookmarkIdx; }
+    void setActiveCameraBookmarkIdx(int idx) { m_activeCameraBookmarkIdx = idx; }
+
+    CameraBookmark captureCurrentAsBookmark(const std::string& name = "") const;
+    void applyBookmark(int idx, bool animate = true);
+    void addBookmark(const CameraBookmark& bm);
+    void removeBookmark(int idx);
+
     // Modification tracking
     bool isModified() const { return m_isModified; }
     void setModified(bool mod = true) { m_isModified = mod; }
@@ -149,6 +161,8 @@ public:
 private:
     std::vector<LightSource> m_lights;
     std::vector<ReferenceImage> m_refImages;
+    std::vector<CameraBookmark> m_cameraBookmarks;
+    int m_activeCameraBookmarkIdx = -1;
     SplitMode m_splitMode = SplitMode::OFF;
     int m_activeViewport = 0;
     bool m_splitShowInactiveCursor = false;

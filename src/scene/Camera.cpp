@@ -1005,12 +1005,6 @@ void Camera::startTransition(const CameraState& targetState, float duration) {
         m_refDrag
     };
     m_targetState = targetState;
-    m_projectionType = targetState.projectionType;
-    m_mode = targetState.mode;
-    m_usePivot = targetState.usePivot;
-    m_ref2DMode = targetState.ref2DMode;
-    m_refDrag = targetState.refDrag;
-
     m_transitionDuration = duration;
     m_transitionTime = 0.0f;
     m_transitionActive = true;
@@ -1019,4 +1013,25 @@ void Camera::startTransition(const CameraState& targetState, float duration) {
 void Camera::cancelTransition() {
     m_transitionActive = false;
 }
+
+Camera::CameraState Camera::getCurrentState() const {
+    CameraState s;
+    s.quatRot = m_quatRot;
+    s.trans = m_trans;
+    s.center = m_center;
+    s.offset = m_offset;
+    s.rotX = m_rotX;
+    s.rotY = m_rotY;
+    s.fov = m_fov;
+    s.projectionType = m_projectionType;
+    s.mode = m_mode;
+    s.usePivot = m_usePivot;
+    s.view2DOffsetX = m_view2DOffsetX;
+    s.view2DOffsetY = m_view2DOffsetY;
+    s.view2DZoom = m_view2DZoom;
+    s.ref2DMode = m_ref2DMode;
+    s.refDrag = m_refDrag;
+    return s;
+}
+
 

@@ -540,6 +540,11 @@ void GuiManager::init(SDL_Window* window, SDL_GLContext glContext) {
     glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, THUMB_SIZE, THUMB_SIZE);
     glBindRenderbuffer(GL_RENDERBUFFER, 0);
 
+    glGenRenderbuffers(1, &m_bookmarkSharedDepth);
+    glBindRenderbuffer(GL_RENDERBUFFER, m_bookmarkSharedDepth);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, BOOKMARK_PREVIEW_SIZE, BOOKMARK_PREVIEW_SIZE);
+    glBindRenderbuffer(GL_RENDERBUFFER, 0);
+
     m_imguiInitialized = true;
 }
 
@@ -559,6 +564,16 @@ void GuiManager::shutdown() {
     if (m_thumbSharedDepth) {
         glDeleteRenderbuffers(1, &m_thumbSharedDepth);
         m_thumbSharedDepth = 0;
+    }
+
+    for (auto& p : m_bookmarkPreviews) {
+        if (p.fbo)     glDeleteFramebuffers(1, &p.fbo);
+        if (p.texture) glDeleteTextures(1, &p.texture);
+    }
+    m_bookmarkPreviews.clear();
+    if (m_bookmarkSharedDepth) {
+        glDeleteRenderbuffers(1, &m_bookmarkSharedDepth);
+        m_bookmarkSharedDepth = 0;
     }
 
     if (!m_imguiInitialized) return;
@@ -666,6 +681,76 @@ void GuiManager::thumbCleanup(const Scene& scene) {
         if (t.texture) glDeleteTextures(1, &t.texture);
         m_thumbCache.erase(id);
     }
+}
+
+void GuiManager::bookmarkEnsureFbo(BookmarkPreview& p) {
+    if (p.fbo) return;
+
+    glGenTextures(1, &p.texture);
+    glBindTexture(GL_TEXTURE_2D, p.texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8,
+                 BOOKMARK_PREVIEW_SIZE, BOOKMARK_PREVIEW_SIZE, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    glGenFramebuffers(1, &p.fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, p.fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D, p.texture, 0);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                              GL_RENDERBUFFER, m_bookmarkSharedDepth);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+void GuiManager::renderBookmarkPreview(int bmIdx, const Scene& scene, AngleRenderer& renderer) {
+    auto& bookmarks = const_cast<Scene&>(scene).getCameraBookmarks();
+    if (bmIdx < 0 || bmIdx >= (int)bookmarks.size()) return;
+
+    while ((int)m_bookmarkPreviews.size() <= bmIdx) {
+        m_bookmarkPreviews.push_back({});
+    }
+
+    auto& p  = m_bookmarkPreviews[bmIdx];
+    auto& bm = bookmarks[bmIdx];
+    bookmarkEnsureFbo(p);
+
+    GLint prevFbo = 0, prevVp[4] = {0};
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+    glGetIntegerv(GL_VIEWPORT, prevVp);
+
+    GLboolean prevScissor = glIsEnabled(GL_SCISSOR_TEST);
+    glDisable(GL_SCISSOR_TEST);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, p.fbo);
+    glViewport(0, 0, BOOKMARK_PREVIEW_SIZE, BOOKMARK_PREVIEW_SIZE);
+    glClearColor(0.12f, 0.13f, 0.14f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+
+    Camera previewCam;
+    previewCam.onResize(BOOKMARK_PREVIEW_SIZE, BOOKMARK_PREVIEW_SIZE);
+    previewCam.applyState(bm.camState);
+    previewCam.updateView();
+    previewCam.updateProjection();
+
+    for (auto* mesh : scene.getMeshes()) {
+        if (!scene.isMeshRenderVisible(mesh)) continue;
+        renderer.uploadIfDirty(mesh);
+        renderer.drawMeshForThumbnail(mesh, previewCam);
+    }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
+    glViewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
+
+    if (prevScissor) {
+        glEnable(GL_SCISSOR_TEST);
+    }
+
+    p.dirty = false;
+    bm.previewTexId = p.texture;
 }
 
 static bool isPointOverImGuiWindow(const ImVec2& pt) {
@@ -4157,6 +4242,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     drawBrushIconFrameOverlay();
     drawBrushIconCapturePanel(scene, renderer);
     drawReferenceImageManipulator(sculpt, scene, renderer);
+    drawCameraBookmarksPanel(scene, renderer);
     drawHotkeyHUD();
     drawUnsavedChangesModal(scene, m_pendingQuit);
     updateWindowTitle(window, scene.isModified());
@@ -4525,6 +4611,7 @@ bool GuiManager::saveSettings(IniFile& ini) {
     ini.setBool(panelSec, "showTimelapsePanel", m_showTimelapsePanel);
     ini.setBool(panelSec, "showPreferencesPanel", m_showPreferencesPanel);
     ini.setBool(panelSec, "showHotkeyHUD", m_showHotkeyHUD);
+    ini.setBool(panelSec, "showCameraBookmarksPanel", m_showCameraBookmarksPanel);
 
     std::string genSec = "GuiGeneral";
     ini.setFloat(genSec, "uiScaleMultiplier", m_uiScale);
@@ -4576,6 +4663,7 @@ bool GuiManager::loadSettings(const IniFile& ini) {
         if (ini.hasKey(panelSec, "showTimelapsePanel")) m_showTimelapsePanel = ini.getBool(panelSec, "showTimelapsePanel");
         if (ini.hasKey(panelSec, "showPreferencesPanel")) m_showPreferencesPanel = ini.getBool(panelSec, "showPreferencesPanel");
         if (ini.hasKey(panelSec, "showHotkeyHUD")) m_showHotkeyHUD = ini.getBool(panelSec, "showHotkeyHUD");
+        if (ini.hasKey(panelSec, "showCameraBookmarksPanel")) m_showCameraBookmarksPanel = ini.getBool(panelSec, "showCameraBookmarksPanel");
     }
 
     std::string genSec = "GuiGeneral";
@@ -5241,6 +5329,7 @@ void GuiManager::drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRend
             m_showScenePanel = true;
         }
         ImGui::MenuItem("Undo History", nullptr, &m_showUndoDiagPanel);
+        ImGui::MenuItem("Camera Bookmarks", nullptr, &m_showCameraBookmarksPanel);
         ImGui::MenuItem("Sculpt Timelapse", nullptr, &m_showTimelapsePanel);
         ImGui::MenuItem("Hotkey HUD", nullptr, &m_showHotkeyHUD);
         if (ImGui::MenuItem("Brush Icon Capture...", nullptr, m_showBrushIconCapture)) {
@@ -7989,6 +8078,149 @@ void GuiManager::drawHotkeyHUD() {
     ImGui::PopStyleVar(3);
     ImGui::PopStyleColor(2);
 }
+
+void GuiManager::drawCameraBookmarksPanel(Scene& scene, AngleRenderer& renderer) {
+    if (!m_showCameraBookmarksPanel) return;
+
+    float scale = getUiScale();
+    ImGui::SetNextWindowSize(ImVec2(340 * scale, 500 * scale), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin(ICON_LC_CAMERA " Camera Bookmarks", &m_showCameraBookmarksPanel)) {
+        ImGui::End();
+        return;
+    }
+
+    auto& bookmarks = scene.getCameraBookmarks();
+    int activeIdx   = scene.getActiveCameraBookmarkIdx();
+
+    // Button "+ Add Bookmark"
+    if (ImGui::Button(ICON_LC_PLUS " Add Bookmark", ImVec2(-1, 30 * scale))) {
+        CameraBookmark bm = scene.captureCurrentAsBookmark();
+        scene.addBookmark(bm);
+        int newIdx = (int)bookmarks.size() - 1;
+
+        if ((int)m_bookmarkPreviews.size() <= newIdx) {
+            m_bookmarkPreviews.resize(newIdx + 1);
+        }
+        m_bookmarkPreviews[newIdx].dirty = true;
+        renderBookmarkPreview(newIdx, scene, renderer);
+        scene.setActiveCameraBookmarkIdx(newIdx);
+    }
+
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    const float cardW = ImGui::GetContentRegionAvail().x;
+    const float previewSz = 72.0f * scale;
+
+    for (int i = 0; i < (int)bookmarks.size(); i++) {
+        auto& bm = bookmarks[i];
+        bool isActive = (i == activeIdx);
+
+        if (i < (int)m_bookmarkPreviews.size() && m_bookmarkPreviews[i].dirty) {
+            renderBookmarkPreview(i, scene, renderer);
+        }
+
+        ImGui::PushID(i);
+
+        if (isActive) {
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.01f, 0.52f, 0.45f, 0.25f));
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.13f, 0.14f, 0.95f));
+        }
+
+        ImGui::BeginChild(("##bm_" + std::to_string(i)).c_str(),
+                          ImVec2(cardW, previewSz + 12 * scale), true,
+                          ImGuiWindowFlags_NoScrollbar);
+        ImGui::PopStyleColor();
+
+        // Left preview image
+        GLuint previewTex = (i < (int)m_bookmarkPreviews.size())
+                            ? m_bookmarkPreviews[i].texture : 0;
+        if (previewTex != 0) {
+            ImGui::Image((ImTextureID)(uintptr_t)previewTex,
+                         ImVec2(previewSz, previewSz),
+                         ImVec2(0, 1), ImVec2(1, 0));
+        } else {
+            ImGui::Dummy(ImVec2(previewSz, previewSz));
+        }
+
+        ImGui::SameLine();
+
+        // Right side info & buttons
+        float rightW = ImGui::GetContentRegionAvail().x;
+        ImGui::BeginGroup();
+
+        char nameBuf[128];
+        snprintf(nameBuf, sizeof(nameBuf), "%s", bm.name.c_str());
+        ImGui::SetNextItemWidth(rightW);
+        if (ImGui::InputText("##bmname", nameBuf, sizeof(nameBuf))) {
+            bm.name = nameBuf;
+            scene.setModified(true);
+        }
+
+        float fovDeg = bm.camState.fov;
+        ImGui::TextDisabled("FOV: %.0f° | Refs: %zu", fovDeg, bm.refImages.size());
+
+        float btnSz = 24.0f * scale;
+
+        // Apply camera button
+        if (ImGui::Button(ICON_LC_PLAY "##apply", ImVec2(btnSz, btnSz))) {
+            scene.applyBookmark(i, true);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Restore camera view");
+
+        ImGui::SameLine();
+        // Update bookmark button
+        if (ImGui::Button(ICON_LC_REFRESH_CW "##update", ImVec2(btnSz, btnSz))) {
+            bookmarks[i] = scene.captureCurrentAsBookmark(bm.name);
+            if (i < (int)m_bookmarkPreviews.size()) {
+                m_bookmarkPreviews[i].dirty = true;
+            }
+            renderBookmarkPreview(i, scene, renderer);
+            scene.setActiveCameraBookmarkIdx(i);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Update bookmark from current view");
+
+        ImGui::SameLine();
+        // Delete button
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.12f, 0.12f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.18f, 0.18f, 1.0f));
+        if (ImGui::Button(ICON_LC_TRASH_2 "##del", ImVec2(btnSz, btnSz))) {
+            scene.removeBookmark(i);
+            if (i < (int)m_bookmarkPreviews.size()) {
+                auto& p = m_bookmarkPreviews[i];
+                if (p.fbo)     glDeleteFramebuffers(1, &p.fbo);
+                if (p.texture) glDeleteTextures(1, &p.texture);
+                m_bookmarkPreviews.erase(m_bookmarkPreviews.begin() + i);
+            }
+            ImGui::PopStyleColor(2);
+            ImGui::EndGroup();
+            ImGui::EndChild();
+            ImGui::PopID();
+            break;
+        }
+        ImGui::PopStyleColor(2);
+
+        ImGui::EndGroup();
+        ImGui::EndChild();
+
+        if (ImGui::IsItemClicked(0) && !ImGui::IsItemEdited()) {
+            scene.applyBookmark(i, true);
+        }
+
+        ImGui::PopID();
+        ImGui::Spacing();
+    }
+
+    if (bookmarks.empty()) {
+        ImGui::Spacing();
+        ImGui::TextDisabled("No camera bookmarks saved.");
+        ImGui::TextDisabled("Click 'Add Bookmark' to save current camera angle, FOV and reference image state.");
+    }
+
+    ImGui::End();
+}
+
 
 
 

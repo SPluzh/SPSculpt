@@ -54,6 +54,7 @@ private:
     bool m_showTimelapsePanel = false;
     bool m_showPreferencesPanel = false;
     bool m_showHotkeyHUD = false;
+    bool m_showCameraBookmarksPanel = false;
 
     // Brush Icon Capture settings
     bool  m_showBrushIconCapture = false;
@@ -176,6 +177,7 @@ private:
     glm::vec2 m_refDragStartIntersect3D{0.0f, 0.0f};
 
     void drawReferenceImageManipulator(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer);
+    void drawCameraBookmarksPanel(Scene& scene, AngleRenderer& renderer);
 
     int m_preferencesActiveTab = -1;
 
@@ -236,7 +238,11 @@ public:
     void toggleFloatingIsland() { m_showFloatingIsland = !m_showFloatingIsland; }
     void toggleTimelapsePanel() { m_showTimelapsePanel = !m_showTimelapsePanel; }
     void togglePreferencesPanel() { m_showPreferencesPanel = !m_showPreferencesPanel; }
+    void toggleCameraBookmarksPanel() { m_showCameraBookmarksPanel = !m_showCameraBookmarksPanel; }
     void toggleBrushIconCapturePanel();
+
+    bool getShowCameraBookmarksPanel() const { return m_showCameraBookmarksPanel; }
+    void setShowCameraBookmarksPanel(bool show) { m_showCameraBookmarksPanel = show; }
 
     bool getShowBrushIconCapture() const { return m_showBrushIconCapture; }
     void setShowBrushIconCapture(bool show) { m_showBrushIconCapture = show; }
@@ -337,4 +343,17 @@ private:
     void thumbEnsureFbo(MeshThumbnail& t);
     void thumbRender(MeshThumbnail& t, Mesh* mesh, AngleRenderer& renderer);
     void thumbCleanup(const Scene& scene);
+
+    // Bookmark Previews
+    static constexpr int BOOKMARK_PREVIEW_SIZE = 128;
+    struct BookmarkPreview {
+        GLuint fbo     = 0;
+        GLuint texture = 0;
+        bool   dirty   = true;
+    };
+    GLuint m_bookmarkSharedDepth = 0;
+    std::vector<BookmarkPreview> m_bookmarkPreviews;
+
+    void bookmarkEnsureFbo(BookmarkPreview& p);
+    void renderBookmarkPreview(int bmIdx, const Scene& scene, AngleRenderer& renderer);
 };

@@ -1462,3 +1462,77 @@ bool Scene::isRefImageRenderVisible(const ReferenceImage& img, int viewport) con
     if (viewport == 1) return img.visibleV2;
     return img.visibleV1;
 }
+
+CameraBookmark Scene::captureCurrentAsBookmark(const std::string& name) const {
+    CameraBookmark bm;
+    bm.name = name.empty() ? ("Bookmark " + std::to_string(m_cameraBookmarks.size() + 1)) : name;
+    bm.camState = m_camera.getCurrentState();
+    if (m_splitMode == SplitMode::INDEPENDENT && m_cameraRight) {
+        bm.camStateRight = m_cameraRight->getCurrentState();
+        bm.hasRightCam   = true;
+    }
+    for (const auto& img : m_refImages) {
+        RefImageSnapshot snap;
+        snap.path      = img.path;
+        snap.visible   = img.visible;
+        snap.visibleV1 = img.visibleV1;
+        snap.visibleV2 = img.visibleV2;
+        snap.offsetX   = img.offsetX;
+        snap.offsetY   = img.offsetY;
+        snap.scale     = img.scale;
+        snap.rotation  = img.rotation;
+        snap.opacity   = img.opacity;
+        bm.refImages.push_back(snap);
+    }
+    return bm;
+}
+
+void Scene::applyBookmark(int idx, bool animate) {
+    if (idx < 0 || idx >= (int)m_cameraBookmarks.size()) return;
+    const auto& bm = m_cameraBookmarks[idx];
+    if (animate) {
+        m_camera.startTransition(bm.camState, 0.35f);
+    } else {
+        m_camera.applyState(bm.camState);
+    }
+    if (bm.hasRightCam && m_splitMode == SplitMode::INDEPENDENT && m_cameraRight) {
+        if (animate) {
+            m_cameraRight->startTransition(bm.camStateRight, 0.35f);
+        } else {
+            m_cameraRight->applyState(bm.camStateRight);
+        }
+    }
+    for (const auto& snap : bm.refImages) {
+        for (auto& img : m_refImages) {
+            if (img.path == snap.path) {
+                img.visible   = snap.visible;
+                img.visibleV1 = snap.visibleV1;
+                img.visibleV2 = snap.visibleV2;
+                img.offsetX   = snap.offsetX;
+                img.offsetY   = snap.offsetY;
+                img.scale     = snap.scale;
+                img.rotation  = snap.rotation;
+                img.opacity   = snap.opacity;
+            }
+        }
+    }
+    m_activeCameraBookmarkIdx = idx;
+}
+
+void Scene::addBookmark(const CameraBookmark& bm) {
+    m_cameraBookmarks.push_back(bm);
+    m_isModified = true;
+}
+
+void Scene::removeBookmark(int idx) {
+    if (idx >= 0 && idx < (int)m_cameraBookmarks.size()) {
+        m_cameraBookmarks.erase(m_cameraBookmarks.begin() + idx);
+        if (m_activeCameraBookmarkIdx == idx) {
+            m_activeCameraBookmarkIdx = -1;
+        } else if (m_activeCameraBookmarkIdx > idx) {
+            m_activeCameraBookmarkIdx--;
+        }
+        m_isModified = true;
+    }
+}
+
