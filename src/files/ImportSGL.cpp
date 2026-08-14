@@ -67,7 +67,7 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
 
     BinaryReader reader(buffer.data(), buffer.size());
     uint32_t version = reader.readU32();
-    if (version > 9) {
+    if (version > 10) {
         std::cerr << "Unsupported SGL version: " << version << std::endl;
         return {};
     }
@@ -422,7 +422,62 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
         }
     }
 
+    if (version >= 10 && reader.hasData()) {
+        for (auto& oldImg : scene.getReferenceImages()) {
+            if (oldImg.texId != 0) {
+                glDeleteTextures(1, &oldImg.texId);
+            }
+        }
+        scene.getReferenceImages().clear();
+
+        uint32_t nbRefImages = reader.readU32();
+        for (uint32_t r = 0; r < nbRefImages; ++r) {
+            ReferenceImage img;
+            uint32_t pathLen = reader.readU32();
+            if (pathLen > 0) {
+                std::vector<uint8_t> pBytes(pathLen);
+                reader.readBytes(pBytes.data(), pathLen);
+                img.path = std::string(pBytes.begin(), pBytes.end());
+            }
+
+            img.visible   = (reader.readU32() != 0);
+            img.visibleV1 = (reader.readU32() != 0);
+            img.visibleV2 = (reader.readU32() != 0);
+            img.pinned2D  = (reader.readU32() != 0);
+            img.locked    = (reader.readU32() != 0);
+
+            img.opacity   = reader.readF32();
+            img.scale     = reader.readF32();
+            img.offsetX   = reader.readF32();
+            img.offsetY   = reader.readF32();
+            img.rotation  = reader.readF32();
+
+            uint32_t embedSize = reader.readU32();
+            if (embedSize > 0) {
+                img.embeddedData.resize(embedSize);
+                reader.readBytes(img.embeddedData.data(), embedSize);
+            }
+
+            int w = 0, h = 0;
+            GLuint texId = 0;
+            if (!img.path.empty()) {
+                texId = loadTextureFromFile(img.path, &w, &h);
+            }
+            if (texId == 0 && !img.embeddedData.empty()) {
+                texId = loadTextureFromMemory(img.embeddedData.data(), img.embeddedData.size(), &w, &h);
+            }
+
+            if (texId != 0) {
+                img.texId = texId;
+                img.width = w;
+                img.height = h;
+                scene.getReferenceImages().push_back(img);
+            }
+        }
+    }
+
     return meshes;
 }
 
 } // namespace ImportSGL
+

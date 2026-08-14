@@ -3,11 +3,27 @@
 #include <cstring>
 #include <cmath>
 #include <algorithm>
+#include <fstream>
 #include <glm/gtc/type_ptr.hpp>
 
 namespace ExportSGL {
 
+static std::vector<uint8_t> readBinaryFileHelper(const std::string& path) {
+    if (path.empty()) return {};
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file.is_open()) return {};
+    std::streamsize size = file.tellg();
+    if (size <= 0) return {};
+    file.seekg(0, std::ios::beg);
+    std::vector<uint8_t> buffer(size);
+    if (file.read(reinterpret_cast<char*>(buffer.data()), size)) {
+        return buffer;
+    }
+    return {};
+}
+
 class BinaryWriter {
+
     std::vector<uint8_t> m_buffer;
 public:
     void writeU32(uint32_t val) {
@@ -57,8 +73,8 @@ public:
 std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& scene, const AngleRenderer& renderer, const SculptManager& sculpt) {
     BinaryWriter writer;
     
-    // Version 9
-    writer.writeU32(9);
+    // Version 10
+    writer.writeU32(10);
 
     // Misc settings
     writer.writeU32(renderer.getShowGrid() ? 1 : 0);
@@ -262,7 +278,42 @@ std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& sc
         }
     }
 
+    // Scene Reference Images (Version >= 10)
+    const auto& refImages = scene.getReferenceImages();
+    writer.writeU32(static_cast<uint32_t>(refImages.size()));
+    for (const auto& img : refImages) {
+        uint32_t pathLen = static_cast<uint32_t>(img.path.size());
+        writer.writeU32(pathLen);
+        if (pathLen > 0) {
+            writer.writeBytes(reinterpret_cast<const uint8_t*>(img.path.data()), pathLen);
+        }
+
+        writer.writeU32(img.visible ? 1 : 0);
+        writer.writeU32(img.visibleV1 ? 1 : 0);
+        writer.writeU32(img.visibleV2 ? 1 : 0);
+        writer.writeU32(img.pinned2D ? 1 : 0);
+        writer.writeU32(img.locked ? 1 : 0);
+
+        writer.writeF32(img.opacity);
+        writer.writeF32(img.scale);
+        writer.writeF32(img.offsetX);
+        writer.writeF32(img.offsetY);
+        writer.writeF32(img.rotation);
+
+        std::vector<uint8_t> embedData = img.embeddedData;
+        if (embedData.empty() && !img.path.empty()) {
+            embedData = readBinaryFileHelper(img.path);
+        }
+
+        uint32_t embedSize = static_cast<uint32_t>(embedData.size());
+        writer.writeU32(embedSize);
+        if (embedSize > 0) {
+            writer.writeBytes(embedData.data(), embedSize);
+        }
+    }
+
     return writer.getBuffer();
 }
 
 } // namespace ExportSGL
+
