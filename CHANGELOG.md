@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.2]
+- **Wireframe**: Added high-quality anti-aliased wireframe rendering on objects.
+- **Floor Grid**: Added anti-aliased procedural floor grid with clear X/Z color axes.
+
 ## [0.1.1]
 - **Camera**: Automatically framed camera on scene startup to focus properly on the initial model.
 - **Primitives**: Replaced default initial mesh with a Geosphere primitive.

@@ -1535,8 +1535,13 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
 
     glm::mat4 mvp = mesh->mvpMatrix;
     if (m_useTaa) {
-        mvp[2][0] += m_taaState.currentJitter.x * 2.0f;
-        mvp[2][1] += m_taaState.currentJitter.y * 2.0f;
+        if (camera.isOrthographic()) {
+            mvp[3][0] += m_taaState.currentJitter.x * 2.0f;
+            mvp[3][1] += m_taaState.currentJitter.y * 2.0f;
+        } else {
+            mvp[2][0] += m_taaState.currentJitter.x * 2.0f;
+            mvp[2][1] += m_taaState.currentJitter.y * 2.0f;
+        }
     }
 
     glUniformMatrix4fv(glGetUniformLocation(program, "uMV"), 1, GL_FALSE, glm::value_ptr(mesh->mvMatrix));
@@ -1909,10 +1914,27 @@ void AngleRenderer::drawWireframe(Mesh* mesh, const Scene& scene, const Camera& 
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
+#ifndef GL_POLYGON_OFFSET_LINE
+#define GL_POLYGON_OFFSET_LINE 0x2A02
+#endif
+    glEnable(GL_POLYGON_OFFSET_LINE);
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(-1.0f, -2.0f);
+
     glUseProgram(m_wireframeProgram);
     
     mesh->updateMatrices(camera);
-    glUniformMatrix4fv(glGetUniformLocation(m_wireframeProgram, "uMVP"), 1, GL_FALSE, glm::value_ptr(mesh->mvpMatrix));
+    glm::mat4 mvp = mesh->mvpMatrix;
+    if (m_useTaa) {
+        if (camera.isOrthographic()) {
+            mvp[3][0] += m_taaState.currentJitter.x * 2.5f;
+            mvp[3][1] += m_taaState.currentJitter.y * 2.5f;
+        } else {
+            mvp[2][0] += m_taaState.currentJitter.x * 2.5f;
+            mvp[2][1] += m_taaState.currentJitter.y * 2.5f;
+        }
+    }
+    glUniformMatrix4fv(glGetUniformLocation(m_wireframeProgram, "uMVP"), 1, GL_FALSE, glm::value_ptr(mvp));
     glUniformMatrix4fv(glGetUniformLocation(m_wireframeProgram, "uEM"), 1, GL_FALSE, glm::value_ptr(mesh->editMatrix));
 
     glBindVertexArray(bufs->vao);
@@ -1920,6 +1942,8 @@ void AngleRenderer::drawWireframe(Mesh* mesh, const Scene& scene, const Camera& 
     glDrawElements(GL_LINES, static_cast<GLsizei>(bufs->wireIndexCount), GL_UNSIGNED_INT, nullptr);
 
     glBindVertexArray(0);
+    glDisable(GL_POLYGON_OFFSET_LINE);
+    glDisable(GL_POLYGON_OFFSET_FILL);
     glDisable(GL_BLEND);
 }
 
@@ -2813,6 +2837,15 @@ void AngleRenderer::drawGrid(const Scene& scene, const Camera& camera) {
     glUseProgram(m_gridProgram);
 
     glm::mat4 mvp = camera.getProjMatrix() * camera.getViewMatrix();
+    if (m_useTaa) {
+        if (camera.isOrthographic()) {
+            mvp[3][0] += m_taaState.currentJitter.x * 2.0f;
+            mvp[3][1] += m_taaState.currentJitter.y * 2.0f;
+        } else {
+            mvp[2][0] += m_taaState.currentJitter.x * 2.0f;
+            mvp[2][1] += m_taaState.currentJitter.y * 2.0f;
+        }
+    }
     glUniformMatrix4fv(glGetUniformLocation(m_gridProgram, "uMVP"), 1, GL_FALSE, glm::value_ptr(mvp));
 
     glm::vec3 pivotPos = camera.getPivot();
@@ -2833,13 +2866,12 @@ void AngleRenderer::drawGrid(const Scene& scene, const Camera& camera) {
     glUniform1f(glGetUniformLocation(m_gridProgram, "uFogNear"), fogNear);
     glUniform1f(glGetUniformLocation(m_gridProgram, "uFogFar"), fogFar);
 
-    glLineWidth(1.2f);
+    glDisable(GL_CULL_FACE);
 
     glBindVertexArray(m_gridVao);
-    glDrawArrays(GL_LINES, 0, m_gridLineCount);
+    glDrawArrays(GL_TRIANGLES, 0, m_gridLineCount);
     glBindVertexArray(0);
 
-    glLineWidth(1.0f);
     glDisable(GL_BLEND);
 }
 
@@ -3073,47 +3105,26 @@ void AngleRenderer::initArmatureGeometry() {
 }
 
 void AngleRenderer::initGrid() {
-    std::vector<float> gridData; // 7 floats per vertex: x, y, z, r, g, b, a
+    float size = 1000.0f;
+    float planeData[] = {
+        // x, y, z, r, g, b, a
+        -size, 0.0f, -size, 1.0f, 1.0f, 1.0f, 1.0f,
+         size, 0.0f, -size, 1.0f, 1.0f, 1.0f, 1.0f,
+        -size, 0.0f,  size, 1.0f, 1.0f, 1.0f, 1.0f,
 
-    auto addLine = [&](float x1, float y1, float z1, float x2, float y2, float z2, const glm::vec4& color) {
-        gridData.push_back(x1); gridData.push_back(y1); gridData.push_back(z1);
-        gridData.push_back(color.r); gridData.push_back(color.g); gridData.push_back(color.b); gridData.push_back(color.a);
-
-        gridData.push_back(x2); gridData.push_back(y2); gridData.push_back(z2);
-        gridData.push_back(color.r); gridData.push_back(color.g); gridData.push_back(color.b); gridData.push_back(color.a);
+        -size, 0.0f,  size, 1.0f, 1.0f, 1.0f, 1.0f,
+         size, 0.0f, -size, 1.0f, 1.0f, 1.0f, 1.0f,
+         size, 0.0f,  size, 1.0f, 1.0f, 1.0f, 1.0f
     };
 
-    float maxDist = 500.0f;
-    glm::vec4 minorColor(0.55f, 0.55f, 0.60f, 0.45f);
-    glm::vec4 majorColor(0.75f, 0.75f, 0.80f, 0.75f);
-
-    // Uniform grid (-500 to +500, step 10.0, skipping axes 0)
-    for (int i = -50; i <= 50; ++i) {
-        if (i == 0) continue;
-        float v = (float)(i * 10);
-        glm::vec4 col = (i % 5 == 0) ? majorColor : minorColor;
-        addLine(v, 0.0f, -maxDist, v, 0.0f, maxDist, col);
-        addLine(-maxDist, 0.0f, v, maxDist, 0.0f, v, col);
-    }
-
-    // 3. Colored Axes (X = Red, Z = Blue) - raised slightly (y = 0.002) to prevent Z-fighting
-    glm::vec4 xAxisColor(1.0f, 0.0f, 0.05f, 1.0f); // High-saturation Red
-    glm::vec4 zAxisColor(0.0f, 0.35f, 1.0f, 1.0f); // High-saturation Blue
-
-    // X Axis line (runs along X: y=0.002, z=0)
-    addLine(-maxDist, 0.002f, 0.0f, maxDist, 0.002f, 0.0f, xAxisColor);
-
-    // Z Axis line (runs along Z: x=0, y=0.002)
-    addLine(0.0f, 0.002f, -maxDist, 0.0f, 0.002f, maxDist, zAxisColor);
-
-    m_gridLineCount = static_cast<int>(gridData.size() / 7);
+    m_gridLineCount = 6;
 
     if (m_gridVao == 0) glGenVertexArrays(1, &m_gridVao);
     if (m_gridVbo == 0) glGenBuffers(1, &m_gridVbo);
 
     glBindVertexArray(m_gridVao);
     glBindBuffer(GL_ARRAY_BUFFER, m_gridVbo);
-    glBufferData(GL_ARRAY_BUFFER, gridData.size() * sizeof(float), gridData.data(), GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(planeData), planeData, GL_STATIC_DRAW);
 
     // Attrib 0: vec3 aVertex
     glEnableVertexAttribArray(0);
