@@ -74,12 +74,13 @@ void Scene::addReferenceImage(const std::string& path) {
         img.texId = texId;
         img.width = w;
         img.height = h;
-        img.opacity = 0.5f;
+        img.opacity = 1.0f;
         img.scale = 1.0f;
         img.offsetX = 0.0f;
         img.offsetY = 0.0f;
         img.visible = true;
         img.pinned2D = true;
+        img.locked = false;
         m_refImages.push_back(img);
     }
 }
@@ -1501,6 +1502,7 @@ CameraBookmark Scene::captureCurrentAsBookmark(const std::string& name) const {
         snap.scale     = img.scale;
         snap.rotation  = img.rotation;
         snap.opacity   = img.opacity;
+        snap.locked    = img.locked;
         bm.refImages.push_back(snap);
     }
     return bm;
@@ -1535,6 +1537,7 @@ void Scene::applyBookmark(int idx, bool animate) {
         img.scale     = snap.scale;
         img.rotation  = snap.rotation;
         img.opacity   = snap.opacity;
+        img.locked    = snap.locked;
     };
 
     // Pass 1: Direct 1-to-1 index match if paths match

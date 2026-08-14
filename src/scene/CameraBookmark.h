@@ -13,7 +13,8 @@ struct RefImageSnapshot {
     float offsetY  = 0.0f;
     float scale    = 1.0f;
     float rotation = 0.0f;
-    float opacity  = 0.5f;
+    float opacity  = 1.0f;
+    bool  locked   = false;
 };
 
 struct CameraBookmark {

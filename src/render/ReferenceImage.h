@@ -7,7 +7,7 @@ struct ReferenceImage {
     GLuint texId = 0;
     int    width = 0;
     int    height = 0;
-    float  opacity = 0.5f;
+    float  opacity = 1.0f;
     float  scale   = 1.0f;
     float  offsetX = 0.0f;
     float  offsetY = 0.0f;
@@ -16,6 +16,7 @@ struct ReferenceImage {
     bool   visibleV1 = true;
     bool   visibleV2 = true;
     bool   pinned2D = true; // true=overlay, false=3D plane
+    bool   locked = false;  // lock transformation/editing
 };
 
 GLuint loadTextureFromFile(const std::string& path, int* outWidth = nullptr, int* outHeight = nullptr);

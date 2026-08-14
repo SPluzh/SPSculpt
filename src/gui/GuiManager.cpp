@@ -2503,6 +2503,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 }
                 ImGui::SameLine();
                 ImGui::Checkbox("Pinned 2D Overlay", &curImg.pinned2D);
+                ImGui::SameLine();
+                ImGui::Checkbox("Lock Image", &curImg.locked);
 
                 Camera& camera = scene.getCamera();
                 bool ref2D = camera.getRef2DMode();
@@ -2519,7 +2521,11 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     ImGui::SetTooltip("Toggle reference image manipulation gizmo mode (Z)");
                 }
 
-                ImGui::SliderFloat("Opacity", &curImg.opacity, 0.0f, 1.0f, "%.2f");
+                int opacityPct = static_cast<int>(std::round(curImg.opacity * 100.0f));
+                if (ImGui::SliderInt("Opacity", &opacityPct, 0, 100, "%d%%")) {
+                    curImg.opacity = opacityPct / 100.0f;
+                    scene.setModified(true);
+                }
                 ImGui::SliderFloat("Scale", &curImg.scale, 0.1f, 10.0f, "%.2f");
                 ImGui::SliderFloat("Rotation", &curImg.rotation, -180.0f, 180.0f, "%.1f deg");
 
@@ -5058,8 +5064,8 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
             RotHandle = ImVec2(pScrRot.x + vpX, pScrRot.y + vpY);
         }
 
-        // Draw Bounding Quad in Accent Color
-        ImU32 borderColor = isSelected ? accentBright : borderInactive;
+        // Draw Bounding Quad in Accent Color (or Amber if Locked)
+        ImU32 borderColor = img.locked ? IM_COL32(235, 140, 40, 230) : (isSelected ? accentBright : borderInactive);
         float lineThick = isSelected ? (2.5f * scale) : (1.4f * scale);
         ImVec2 pts[4] = { TL, TR, BR, BL };
         drawList->AddPolyline(pts, 4, borderColor, ImDrawFlags_Closed, lineThick);
@@ -5079,34 +5085,41 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
                 io.WantCaptureMouse = true;
                 sculpt.getCursor().hide();
 
-                if (hoverTarget == RefDragTarget::Move) {
-                    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
-                } else if (hoverTarget == RefDragTarget::Rotate) {
-                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                } else if (hoverTarget == RefDragTarget::ScaleTL || hoverTarget == RefDragTarget::ScaleBR) {
-                    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE);
-                } else if (hoverTarget == RefDragTarget::ScaleTR || hoverTarget == RefDragTarget::ScaleBL) {
-                    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNESW);
-                }
+                if (img.locked) {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_NotAllowed);
+                    if (io.MouseClicked[0]) {
+                        m_selectedRefImageIdx = i;
+                    }
+                } else {
+                    if (hoverTarget == RefDragTarget::Move) {
+                        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+                    } else if (hoverTarget == RefDragTarget::Rotate) {
+                        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                    } else if (hoverTarget == RefDragTarget::ScaleTL || hoverTarget == RefDragTarget::ScaleBR) {
+                        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE);
+                    } else if (hoverTarget == RefDragTarget::ScaleTR || hoverTarget == RefDragTarget::ScaleBL) {
+                        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNESW);
+                    }
 
-                if (io.MouseClicked[0]) {
-                    m_selectedRefImageIdx = i;
-                    m_draggingRefImageIdx = i;
-                    m_activeRefDragTarget = hoverTarget;
-                    m_refDragStartMouse = mousePos;
-                    m_refDragStartOffsetX = img.offsetX;
-                    m_refDragStartOffsetY = img.offsetY;
-                    m_refDragStartScale = img.scale;
-                    m_refDragStartRotation = img.rotation;
-                    m_refDragStartAngleMouse = std::atan2(mousePos.y - C.y, mousePos.x - C.x);
+                    if (io.MouseClicked[0]) {
+                        m_selectedRefImageIdx = i;
+                        m_draggingRefImageIdx = i;
+                        m_activeRefDragTarget = hoverTarget;
+                        m_refDragStartMouse = mousePos;
+                        m_refDragStartOffsetX = img.offsetX;
+                        m_refDragStartOffsetY = img.offsetY;
+                        m_refDragStartScale = img.scale;
+                        m_refDragStartRotation = img.rotation;
+                        m_refDragStartAngleMouse = std::atan2(mousePos.y - C.y, mousePos.x - C.x);
 
-                    if (!img.pinned2D) {
-                        Ray ray = currentCamera.getRay(mousePos.x - vpX, mousePos.y - vpY);
-                        if (std::abs(ray.dir.z) > 1e-6f) {
-                            float t = -ray.origin.z / ray.dir.z;
-                            if (t > 0.0f) {
-                                glm::vec3 p3d = ray.origin + t * ray.dir;
-                                m_refDragStartIntersect3D = glm::vec2(p3d.x, p3d.y);
+                        if (!img.pinned2D) {
+                            Ray ray = currentCamera.getRay(mousePos.x - vpX, mousePos.y - vpY);
+                            if (std::abs(ray.dir.z) > 1e-6f) {
+                                float t = -ray.origin.z / ray.dir.z;
+                                if (t > 0.0f) {
+                                    glm::vec3 p3d = ray.origin + t * ray.dir;
+                                    m_refDragStartIntersect3D = glm::vec2(p3d.x, p3d.y);
+                                }
                             }
                         }
                     }
@@ -5129,12 +5142,167 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
         drawCornerHandle(BR, (m_draggingRefImageIdx == i) && (m_activeRefDragTarget == RefDragTarget::ScaleBR));
         drawCornerHandle(BL, (m_draggingRefImageIdx == i) && (m_activeRefDragTarget == RefDragTarget::ScaleBL));
 
-        // Top Rotation Handle & Stem line in Teal Accent
+        // Top Rotation Handle & Stem line in Teal Accent (or Amber if locked)
+        ImU32 rotColor = img.locked ? IM_COL32(235, 140, 40, 230) : accentBright;
         bool isRotHover = (m_draggingRefImageIdx == i) && (m_activeRefDragTarget == RefDragTarget::Rotate);
-        drawList->AddLine(TC, RotHandle, accentBright, 2.0f * scale);
+        drawList->AddLine(TC, RotHandle, rotColor, 2.0f * scale);
         float rotR = isRotHover ? (handleRadius * 1.45f) : (handleRadius * 1.2f);
-        drawList->AddCircleFilled(RotHandle, rotR, isRotHover ? accentActive : accentBright);
+        drawList->AddCircleFilled(RotHandle, rotR, isRotHover ? accentActive : rotColor);
         drawList->AddCircle(RotHandle, rotR, IM_COL32(255, 255, 255, 255), 0, 2.0f * scale);
+    }
+
+    // 3. Render Rotated Overlay Toolbar for Selected Reference Image
+    if (m_selectedRefImageIdx >= 0 && m_selectedRefImageIdx < (int)images.size()) {
+        auto& selImg = images[m_selectedRefImageIdx];
+        if (selImg.visible) {
+            float imgAspect = (selImg.width > 0 && selImg.height > 0) ? ((float)selImg.width / (float)selImg.height) : 1.0f;
+            float Cx = vpX + (selImg.offsetX * 0.5f + 0.5f) * vpW;
+            float Cy = vpY + (0.5f - selImg.offsetY * 0.5f) * vpH;
+            if (!selImg.pinned2D) {
+                glm::vec3 pScrC = currentCamera.project(glm::vec3(selImg.offsetX, selImg.offsetY, 0.0f));
+                Cx = pScrC.x + vpX;
+                Cy = pScrC.y + vpY;
+            }
+
+            float halfH_px = selImg.scale * 0.5f * vpH;
+            float halfW_px = halfH_px * imgAspect;
+            float rad = glm::radians(selImg.rotation);
+            float cosR = std::cos(rad);
+            float sinR = std::sin(rad);
+
+            auto rotVec = [&](const ImVec2& v) {
+                return ImVec2(v.x * cosR - v.y * sinR, v.x * sinR + v.y * cosR);
+            };
+
+            float halfBarW = 70.0f * scale;
+            float halfBarH = 15.0f * scale;
+            float attachGap = 8.0f * scale;
+
+            float barLocalX = halfW_px - halfBarW;
+            float barLocalY = -halfH_px - halfBarH - attachGap;
+
+            // Toolbar center: positioned on top of the frame, aligned to the right side
+            ImVec2 barCenter = ImVec2(Cx + rotVec(ImVec2(barLocalX, barLocalY)).x,
+                                      Cy + rotVec(ImVec2(barLocalX, barLocalY)).y);
+
+            auto localToWorld = [&](float lx, float ly) {
+                return ImVec2(barCenter.x + lx * cosR - ly * sinR, barCenter.y + lx * sinR + ly * cosR);
+            };
+            auto worldToLocal = [&](const ImVec2& pt) {
+                float dx = pt.x - barCenter.x;
+                float dy = pt.y - barCenter.y;
+                return ImVec2(dx * cosR + dy * sinR, -dx * sinR + dy * cosR);
+            };
+
+            ImVec2 mLoc = worldToLocal(mousePos);
+
+            bool isMouseOverBar = (mLoc.x >= -halfBarW && mLoc.x <= halfBarW && mLoc.y >= -halfBarH && mLoc.y <= halfBarH);
+
+            float sliderX0 = -58.0f * scale;
+            float sliderX1 =  28.0f * scale;
+            float lockX0   =  38.0f * scale;
+            float lockX1   =  62.0f * scale;
+
+            if (isMouseOverBar && m_activeRefDragTarget == RefDragTarget::None) {
+                io.WantCaptureMouse = true;
+                sculpt.getCursor().hide();
+
+                // Slider interaction check
+                if (mLoc.x >= sliderX0 - 8.0f * scale && mLoc.x <= sliderX1 + 8.0f * scale && mLoc.y >= -13.0f * scale && mLoc.y <= 13.0f * scale) {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+                    if (io.MouseDown[0]) {
+                        float t = (mLoc.x - sliderX0) / (sliderX1 - sliderX0);
+                        selImg.opacity = std::clamp(t, 0.0f, 1.0f);
+                        scene.setModified(true);
+                    }
+                }
+
+                // Lock button interaction check
+                if (mLoc.x >= lockX0 && mLoc.x <= lockX1 && mLoc.y >= -12.0f * scale && mLoc.y <= 12.0f * scale) {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                    if (io.MouseClicked[0]) {
+                        selImg.locked = !selImg.locked;
+                        scene.setModified(true);
+                    }
+                }
+            }
+
+            // Connecting stem from top-right frame border to bottom of toolbar
+            ImVec2 frameTopPt = ImVec2(Cx + rotVec(ImVec2(barLocalX, -halfH_px)).x,
+                                       Cy + rotVec(ImVec2(barLocalX, -halfH_px)).y);
+            ImVec2 barBottomPt = localToWorld(0.0f, halfBarH);
+            drawList->AddLine(frameTopPt, barBottomPt, selImg.locked ? IM_COL32(235, 140, 40, 200) : accentBright, 2.0f * scale);
+
+            // Background Quad
+            ImVec2 bTL = localToWorld(-halfBarW, -halfBarH);
+            ImVec2 bTR = localToWorld( halfBarW, -halfBarH);
+            ImVec2 bBR = localToWorld( halfBarW,  halfBarH);
+            ImVec2 bBL = localToWorld(-halfBarW,  halfBarH);
+
+            ImVec2 bgPts[4] = { bTL, bTR, bBR, bBL };
+            drawList->AddConvexPolyFilled(bgPts, 4, IM_COL32(20, 24, 30, 235));
+            drawList->AddPolyline(bgPts, 4, selImg.locked ? IM_COL32(235, 140, 40, 220) : accentBright, ImDrawFlags_Closed, 1.6f * scale);
+
+            // Slider Track
+            ImVec2 ts = localToWorld(sliderX0, 0.0f);
+            ImVec2 te = localToWorld(sliderX1, 0.0f);
+            drawList->AddLine(ts, te, IM_COL32(60, 75, 90, 255), 4.0f * scale);
+
+            float handleX = sliderX0 + selImg.opacity * (sliderX1 - sliderX0);
+            ImVec2 tf = localToWorld(handleX, 0.0f);
+            drawList->AddLine(ts, tf, selImg.locked ? IM_COL32(235, 140, 40, 255) : accentBright, 4.0f * scale);
+            drawList->AddCircleFilled(tf, 5.5f * scale, IM_COL32(255, 255, 255, 255));
+            drawList->AddCircle(tf, 5.5f * scale, selImg.locked ? IM_COL32(235, 140, 40, 255) : accentBright, 0, 1.5f * scale);
+
+            // Lock Button Quad
+            ImVec2 btnTL = localToWorld(lockX0, -10.0f * scale);
+            ImVec2 btnTR = localToWorld(lockX1, -10.0f * scale);
+            ImVec2 btnBR = localToWorld(lockX1,  10.0f * scale);
+            ImVec2 btnBL = localToWorld(lockX0,  10.0f * scale);
+
+            ImVec2 btnPts[4] = { btnTL, btnTR, btnBR, btnBL };
+            bool isLocked = selImg.locked;
+            ImU32 btnBg = isLocked ? IM_COL32(200, 50, 50, 230) : IM_COL32(18, 120, 95, 230);
+            ImU32 btnBrd = isLocked ? IM_COL32(255, 100, 100, 255) : IM_COL32(5, 220, 180, 255);
+
+            drawList->AddConvexPolyFilled(btnPts, 4, btnBg);
+            drawList->AddPolyline(btnPts, 4, btnBrd, ImDrawFlags_Closed, 1.2f * scale);
+
+            // Vector Padlock Icon inside Lock Button
+            float lCenterX = (lockX0 + lockX1) * 0.5f; // 50.0f * scale
+            // Padlock Body
+            ImVec2 bodyTL = localToWorld(lCenterX - 5.0f * scale, -1.0f * scale);
+            ImVec2 bodyTR = localToWorld(lCenterX + 5.0f * scale, -1.0f * scale);
+            ImVec2 bodyBR = localToWorld(lCenterX + 5.0f * scale,  6.0f * scale);
+            ImVec2 bodyBL = localToWorld(lCenterX - 5.0f * scale,  6.0f * scale);
+            ImVec2 bodyPts[4] = { bodyTL, bodyTR, bodyBR, bodyBL };
+            drawList->AddConvexPolyFilled(bodyPts, 4, IM_COL32(255, 255, 255, 255));
+
+            // Keyhole Dot
+            ImVec2 keyHole = localToWorld(lCenterX, 2.5f * scale);
+            drawList->AddCircleFilled(keyHole, 1.3f * scale, isLocked ? IM_COL32(200, 50, 50, 255) : IM_COL32(18, 120, 95, 255));
+
+            // Shackle Arc
+            if (isLocked) {
+                // Closed Shackle
+                ImVec2 sL0 = localToWorld(lCenterX - 3.0f * scale, -1.0f * scale);
+                ImVec2 sL1 = localToWorld(lCenterX - 3.0f * scale, -5.5f * scale);
+                ImVec2 sR1 = localToWorld(lCenterX + 3.0f * scale, -5.5f * scale);
+                ImVec2 sR0 = localToWorld(lCenterX + 3.0f * scale, -1.0f * scale);
+                drawList->AddLine(sL0, sL1, IM_COL32(255, 255, 255, 255), 1.8f * scale);
+                drawList->AddLine(sL1, sR1, IM_COL32(255, 255, 255, 255), 1.8f * scale);
+                drawList->AddLine(sR1, sR0, IM_COL32(255, 255, 255, 255), 1.8f * scale);
+            } else {
+                // Open Shackle
+                ImVec2 sL0 = localToWorld(lCenterX - 3.0f * scale, -1.0f * scale);
+                ImVec2 sL1 = localToWorld(lCenterX - 3.0f * scale, -6.5f * scale);
+                ImVec2 sR1 = localToWorld(lCenterX + 3.0f * scale, -6.5f * scale);
+                ImVec2 sR0 = localToWorld(lCenterX + 3.0f * scale, -3.5f * scale);
+                drawList->AddLine(sL0, sL1, IM_COL32(255, 255, 255, 255), 1.8f * scale);
+                drawList->AddLine(sL1, sR1, IM_COL32(255, 255, 255, 255), 1.8f * scale);
+                drawList->AddLine(sR1, sR0, IM_COL32(255, 255, 255, 255), 1.8f * scale);
+            }
+        }
     }
 
     if (m_activeRefDragTarget != RefDragTarget::None) {
