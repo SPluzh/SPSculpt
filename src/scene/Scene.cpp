@@ -1502,17 +1502,52 @@ void Scene::applyBookmark(int idx, bool animate) {
             m_cameraRight->applyState(bm.camStateRight);
         }
     }
-    for (const auto& snap : bm.refImages) {
-        for (auto& img : m_refImages) {
-            if (img.path == snap.path) {
-                img.visible   = snap.visible;
-                img.visibleV1 = snap.visibleV1;
-                img.visibleV2 = snap.visibleV2;
-                img.offsetX   = snap.offsetX;
-                img.offsetY   = snap.offsetY;
-                img.scale     = snap.scale;
-                img.rotation  = snap.rotation;
-                img.opacity   = snap.opacity;
+    size_t numSnaps = bm.refImages.size();
+    size_t numImgs  = m_refImages.size();
+    std::vector<bool> matched(numImgs, false);
+    std::vector<bool> snapshotUsed(numSnaps, false);
+
+    auto applySnapToImg = [](ReferenceImage& img, const RefImageSnapshot& snap) {
+        img.visible   = snap.visible;
+        img.visibleV1 = snap.visibleV1;
+        img.visibleV2 = snap.visibleV2;
+        img.offsetX   = snap.offsetX;
+        img.offsetY   = snap.offsetY;
+        img.scale     = snap.scale;
+        img.rotation  = snap.rotation;
+        img.opacity   = snap.opacity;
+    };
+
+    // Pass 1: Direct 1-to-1 index match if paths match
+    size_t minSize = std::min(numSnaps, numImgs);
+    for (size_t i = 0; i < minSize; ++i) {
+        if (m_refImages[i].path == bm.refImages[i].path) {
+            applySnapToImg(m_refImages[i], bm.refImages[i]);
+            matched[i] = true;
+            snapshotUsed[i] = true;
+        }
+    }
+
+    // Pass 2: Unique path match for unmatched snapshots & images
+    for (size_t i = 0; i < numSnaps; ++i) {
+        if (snapshotUsed[i]) continue;
+        for (size_t j = 0; j < numImgs; ++j) {
+            if (!matched[j] && m_refImages[j].path == bm.refImages[i].path) {
+                applySnapToImg(m_refImages[j], bm.refImages[i]);
+                matched[j] = true;
+                snapshotUsed[i] = true;
+                break;
+            }
+        }
+    }
+
+    // Pass 3: Index match fallback if sizes match (handles path edits/reloads)
+    if (numSnaps == numImgs) {
+        for (size_t i = 0; i < numImgs; ++i) {
+            if (!matched[i] && !snapshotUsed[i]) {
+                applySnapToImg(m_refImages[i], bm.refImages[i]);
+                matched[i] = true;
+                snapshotUsed[i] = true;
             }
         }
     }

@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.10]
+- **Camera Bookmarks**: Fixed an issue where restoring camera bookmarks only restored one reference image when multiple reference images shared the same file path. Updated reference image restoration to use a 3-pass matching algorithm so all duplicate-path reference images maintain independent visibility, transform, and opacity states.
+
 ## [0.1.9]
 - **Camera Navigation**: Fixed Gizmo/Snap Cube click behavior so snapping to a view angle always re-triggers even after manual rotation on the same side, and preserves the active projection mode (perspective or orthographic).
 
