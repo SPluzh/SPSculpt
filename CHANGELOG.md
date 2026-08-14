@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.6]
+- **UI**: Added 2D Pan/Zoom mode button to the top-right HUD with a Reset 2D View option.
+
 ## [0.1.5]
 - **Reference Images**: Added native Drag & Drop support to directly load image files (.png, .jpg, .jpeg, .bmp, .tga, .webp, .gif, .psd, .hdr, etc.) dropped anywhere into the 3D Viewport window.
 - **Reference Images**: Automatically opens and selects the newly dropped reference image in the Reference Images panel for quick manipulation.

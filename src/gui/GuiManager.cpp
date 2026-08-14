@@ -6328,6 +6328,96 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
 
         ImGui::SameLine();
 
+        // 2D Pan Zoom Mode Button + Arrow Popup (Next to Perspective)
+        Camera& camera = scene.getCamera();
+        bool ref2D = camera.getRef2DMode();
+        if (ref2D) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+
+        GLuint panZoomTex = getIconTexture("2dpanzoom");
+        bool clicked2D = false;
+        if (panZoomTex != 0) {
+            clicked2D = ImGui::Button("##hud2DPanZoomBtn", squareBtn);
+            ImVec2 pMin2D = ImGui::GetItemRectMin();
+            ImVec2 pMax2D = ImGui::GetItemRectMax();
+            float pad2D = 1.0f * scale;
+            ImVec2 imgMin(pMin2D.x + pad2D, pMin2D.y + pad2D);
+            ImVec2 imgMax(pMax2D.x - pad2D, pMax2D.y - pad2D);
+            ImU32 tintCol = ref2D ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 240);
+            ImGui::GetWindowDrawList()->AddImage((ImTextureID)(uintptr_t)panZoomTex, imgMin, imgMax, ImVec2(0, 1), ImVec2(1, 0), tintCol);
+        } else {
+            clicked2D = ImGui::Button("2D##hud2DPanZoomBtn", squareBtn);
+        }
+
+        if (clicked2D) {
+            camera.setRef2DMode(!ref2D);
+            if (scene.getSplitMode() != Scene::SplitMode::OFF && scene.getCameraRight()) {
+                scene.getCameraRight()->setRef2DMode(!ref2D);
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("2D Pan & Zoom Mode (Toggle)");
+        }
+
+        ImVec2 pMin2DBtn = ImGui::GetItemRectMin();
+
+        // Narrow arrow button flush against 2D Pan Zoom button
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, ImGui::GetStyle().FramePadding.y));
+        ImGui::SetWindowFontScale(fontScale * 0.65f);
+        bool open2DPopup = ImGui::Button(ICON_LC_CHEVRON_DOWN "##hud2DPanZoomArrow", halfSquareBtn);
+        ImGui::SetWindowFontScale(fontScale);
+        ImGui::PopStyleVar();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("2D View Options & Reset");
+
+        ImVec2 pMax2DBtn = ImGui::GetItemRectMax();
+
+        if (ref2D) {
+            ImGui::PopStyleColor(3);
+        }
+
+        float center2DX = (pMin2DBtn.x + pMax2DBtn.x) * 0.5f;
+        float bottom2DY = pMax2DBtn.y + 4.0f * scale;
+
+        if (open2DPopup) {
+            ImGui::OpenPopup("##hud2DPanZoomPopup");
+        }
+
+        ImGui::SetNextWindowPos(ImVec2(center2DX, bottom2DY), ImGuiCond_Appearing, ImVec2(0.5f, 0.0f));
+        if (ImGui::BeginPopup("##hud2DPanZoomPopup")) {
+            ImGui::SetWindowFontScale(fontScale);
+            ImGui::TextUnformatted("2D Pan / Zoom View");
+            ImGui::Separator();
+
+            bool active2D = camera.getRef2DMode();
+            if (ImGui::Checkbox("2D Mode Enabled", &active2D)) {
+                camera.setRef2DMode(active2D);
+                if (scene.getSplitMode() != Scene::SplitMode::OFF && scene.getCameraRight()) {
+                    scene.getCameraRight()->setRef2DMode(active2D);
+                }
+            }
+
+            ImGui::Separator();
+
+            if (ImGui::Button("Reset 2D View", ImVec2(140.0f * scale, 24.0f * scale))) {
+                camera.resetView2D();
+                if (scene.getSplitMode() != Scene::SplitMode::OFF && scene.getCameraRight()) {
+                    scene.getCameraRight()->resetView2D();
+                }
+                ImGui::CloseCurrentPopup();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Reset 2D pan offset to center and zoom scale to 100%");
+            }
+
+            ImGui::EndPopup();
+        }
+
+        ImGui::SameLine();
+
         // Split View Button + Dropdown Arrow
         bool isSplit = (scene.getSplitMode() != Scene::SplitMode::OFF);
         if (isSplit) {
