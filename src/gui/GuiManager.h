@@ -212,6 +212,7 @@ public:
 
     // File operations
     void openScene(Scene& scene, SculptManager* sculpt = nullptr);
+    bool openSceneFromPath(const std::string& path, Scene& scene, SculptManager* sculpt = nullptr);
     void saveScene(Scene& scene, SculptManager* sculpt = nullptr);
     void saveSceneAs(Scene& scene, SculptManager* sculpt = nullptr);
     void importFile(Scene& scene, SculptManager* sculpt = nullptr);

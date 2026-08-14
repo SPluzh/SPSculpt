@@ -319,25 +319,31 @@ GLuint GuiManager::getXrayIconTexture() {
     return getIconTexture("xray-outline");
 }
 
+bool GuiManager::openSceneFromPath(const std::string& path, Scene& scene, SculptManager* sculpt) {
+    if (path.empty()) return false;
+    snprintf(m_importPath, sizeof(m_importPath), "%s", path.c_str());
+    scene.clear();
+    auto newMeshes = FileManager::importFiles(path, &scene, m_renderer, sculpt);
+    for (auto* mesh : newMeshes) {
+        scene.addMesh(mesh);
+    }
+    if (!newMeshes.empty()) {
+        scene.selectMesh(newMeshes.front());
+        scene.pushHistoryState();
+    }
+    if (FileManager::getExtension(path) == "sgl") {
+        m_currentScenePath = path;
+    } else {
+        m_currentScenePath.clear();
+    }
+    scene.setModified(false);
+    return !newMeshes.empty() || FileManager::getExtension(path) == "sgl";
+}
+
 void GuiManager::openScene(Scene& scene, SculptManager* sculpt) {
     std::string path = FileDialog::openFile(FileDialog::getImportFilters(), "Open File");
     if (!path.empty()) {
-        snprintf(m_importPath, sizeof(m_importPath), "%s", path.c_str());
-        scene.clear();
-        auto newMeshes = FileManager::importFiles(path, &scene, m_renderer, sculpt);
-        for (auto* mesh : newMeshes) {
-            scene.addMesh(mesh);
-        }
-        if (!newMeshes.empty()) {
-            scene.selectMesh(newMeshes.front());
-            scene.pushHistoryState();
-        }
-        if (FileManager::getExtension(path) == "sgl") {
-            m_currentScenePath = path;
-        } else {
-            m_currentScenePath.clear();
-        }
-        scene.setModified(false);
+        openSceneFromPath(path, scene, sculpt);
     }
 }
 

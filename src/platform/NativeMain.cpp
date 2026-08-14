@@ -78,9 +78,19 @@ static void setAppWindowIcon(SDL_Window* window, const char* iconPath) {
 
 #ifdef _WIN32
 #include <windows.h>
+#include <shellapi.h>
 #include <SDL2/SDL_syswm.h>
 #include "platform/TabletInput.h"
 #include "common/Logger.h"
+
+static std::string wideToUtf8(const std::wstring& wstr) {
+    if (wstr.empty()) return "";
+    int count = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), (int)wstr.length(), NULL, 0, NULL, NULL);
+    if (count <= 0) return "";
+    std::string str(count, 0);
+    WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), (int)wstr.length(), &str[0], count, NULL, NULL);
+    return str;
+}
 LONG WINAPI windowsExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo) {
     sculpt_log("\n=============================================\n");
     sculpt_log("[CRITICAL ERROR] Windows Unhandled Exception! Code: 0x%X\n", (unsigned int)ExceptionInfo->ExceptionRecord->ExceptionCode);
@@ -268,13 +278,32 @@ GLuint generateClayMatcapTexture() {
 
 int main(int argc, char* argv[]) {
     bool showConsole = false;
+    std::string fileToOpen = "";
+
+#ifdef _WIN32
+    int numArgs = 0;
+    LPWSTR* szArgList = CommandLineToArgvW(GetCommandLineW(), &numArgs);
+    if (szArgList) {
+        for (int i = 1; i < numArgs; ++i) {
+            std::string arg = wideToUtf8(szArgList[i]);
+            if (arg == "--console" || arg == "-console" || arg == "-c" || arg == "--show-console") {
+                showConsole = true;
+            } else if (fileToOpen.empty() && !arg.empty() && arg[0] != '-') {
+                fileToOpen = arg;
+            }
+        }
+        LocalFree(szArgList);
+    }
+#else
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--console" || arg == "-console" || arg == "-c" || arg == "--show-console") {
             showConsole = true;
-            break;
+        } else if (fileToOpen.empty() && !arg.empty() && arg[0] != '-') {
+            fileToOpen = arg;
         }
     }
+#endif
 
 #ifdef _WIN32
     if (showConsole) {
@@ -430,6 +459,15 @@ int main(int argc, char* argv[]) {
     gui.init(window, glContext);
     HotkeyDispatcher dispatcher;
 
+    if (!fileToOpen.empty()) {
+        std::cout << "Opening file from command line parameter: " << fileToOpen << std::endl;
+        gui.openSceneFromPath(fileToOpen, scene, &sculpt);
+        if (scene.getMeshes().empty()) {
+            std::cerr << "Failed to open scene or file was empty. Restoring default sphere." << std::endl;
+            scene.loadDefaultSphere();
+        }
+    }
+
 #ifdef _WIN32
     SDL_SysWMinfo wmInfo;
     SDL_VERSION(&wmInfo.version);
@@ -539,8 +577,19 @@ int main(int argc, char* argv[]) {
                             gui.setSelectedRefImageIndex(static_cast<int>(scene.getReferenceImages().size()) - 1);
                         }
                         std::cout << "[DragNDrop] Loaded reference image: " << droppedPath << std::endl;
+                    } else if (FileManager::getExtension(droppedPath) == "sgl") {
+                        gui.openSceneFromPath(droppedPath, scene, &sculpt);
+                        std::cout << "[DragNDrop] Opened SGL project: " << droppedPath << std::endl;
                     } else if (is3DModelFile(droppedPath)) {
-                        FileManager::importFiles(droppedPath, &scene, &renderer, &sculpt);
+                        auto newMeshes = FileManager::importFiles(droppedPath, &scene, &renderer, &sculpt);
+                        for (auto* mesh : newMeshes) {
+                            scene.addMesh(mesh);
+                        }
+                        if (!newMeshes.empty()) {
+                            scene.selectMesh(newMeshes.front());
+                            scene.pushHistoryState();
+                        }
+                        scene.setModified(true);
                         std::cout << "[DragNDrop] Imported 3D model file: " << droppedPath << std::endl;
                     }
                 }

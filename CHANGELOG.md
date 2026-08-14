@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.15]
+- **File Association & Drag & Drop**: Dragging an `.sgl` project file into the viewport or launching the application with an `.sgl` file path parameter (first command line argument `argv[1]` / dragging file onto executable) now opens the `.sgl` scene project directly.
+
 ## [0.1.14]
 - **Camera Bookmarks**: Reference images that were not stored in a loaded camera bookmark are now automatically hidden upon applying the bookmark.
 - **Unicode Support**: Implemented comprehensive UTF-8/Unicode file path support across Windows, enabling opening, importing, exporting, and saving models, project files (.sgl), reference images, timelapses, and presets with non-ASCII and Cyrillic/Russian characters.
