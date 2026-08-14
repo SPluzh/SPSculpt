@@ -2268,9 +2268,20 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     ImGui::PopStyleColor();
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", img.path.c_str());
 
-                    // Info Subtext
+                    // Info Subtext & Opacity Slider
                     std::string refInfo = (img.width > 0 && img.height > 0) ? (std::to_string(img.width) + "x" + std::to_string(img.height)) : "Ref Image";
                     ImGui::TextDisabled("%s", refInfo.c_str());
+
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 4.0f * scale);
+                    int opacityPct = static_cast<int>(std::round(img.opacity * 100.0f));
+                    ImGui::PushID(30);
+                    if (ImGui::SliderInt("##cardOpacity", &opacityPct, 0, 100, "%d%%")) {
+                        img.opacity = opacityPct / 100.0f;
+                        scene.setModified(true);
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reference Image Opacity (%d%%)", opacityPct);
+                    ImGui::PopID();
 
                     // Action Buttons Bar
                     float btnSz = 22.0f * scale;
@@ -2301,6 +2312,21 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     }
                     ImGui::PopStyleColor();
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Viewport 2 Visibility");
+                    ImGui::PopID();
+
+                    ImGui::SameLine();
+
+                    // Lock Toggle Button
+                    ImGui::PushID(25);
+                    bool isLocked = img.locked;
+                    if (isLocked) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.55f, 0.10f, 1.0f));
+                    else ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.45f, 0.45f, 1.0f));
+                    if (ImGui::Button(isLocked ? ICON_LC_LOCK "##lockRef" : ICON_LC_LOCK_OPEN "##lockRef", ImVec2(btnSz, btnSz))) {
+                        img.locked = !isLocked;
+                        scene.setModified(true);
+                    }
+                    ImGui::PopStyleColor();
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip(isLocked ? "Unlock Reference Image (Transforms Locked)" : "Lock Reference Image (Lock Transforms)");
                     ImGui::PopID();
 
                     ImGui::SameLine();
