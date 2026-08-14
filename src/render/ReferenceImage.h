@@ -11,6 +11,7 @@ struct ReferenceImage {
     float  scale   = 1.0f;
     float  offsetX = 0.0f;
     float  offsetY = 0.0f;
+    float  rotation = 0.0f; // degrees
     bool   visible = true;
     bool   pinned2D = true; // true=overlay, false=3D plane
 };

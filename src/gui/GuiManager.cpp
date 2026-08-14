@@ -2377,7 +2377,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         }
         ImGui::SameLine();
         bool refDrag = camera.getRefDragEnabled();
-        if (ImGui::Checkbox("Ref Drag", &refDrag)) {
+        if (ImGui::Checkbox("Edit Images Mode (Viewport)", &refDrag)) {
             camera.setRefDragEnabled(refDrag);
         }
 
@@ -2404,7 +2404,10 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     displayName += " (" + std::to_string(img.width) + "x" + std::to_string(img.height) + ")";
                 }
 
-                if (ImGui::TreeNode(displayName.c_str())) {
+                bool isSelected = (m_selectedRefImageIdx == (int)i);
+                std::string headerLabel = (isSelected ? "[Active] " : "") + displayName;
+                if (ImGui::TreeNode(headerLabel.c_str())) {
+                    m_selectedRefImageIdx = (int)i;
                     if (img.texId != 0) {
                         float thumbW = 48.0f * scale;
                         float thumbH = 48.0f * scale;
@@ -2448,6 +2451,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
                     ImGui::SliderFloat("Opacity", &img.opacity, 0.0f, 1.0f, "%.2f");
                     ImGui::SliderFloat("Scale", &img.scale, 0.1f, 10.0f, "%.2f");
+                    ImGui::SliderFloat("Rotation", &img.rotation, -180.0f, 180.0f, "%.1f deg");
                     
                     if (img.pinned2D) {
                         ImGui::SliderFloat("Offset X", &img.offsetX, -1.0f, 1.0f, "%.2f");
@@ -2457,7 +2461,23 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         ImGui::SliderFloat("Position Y", &img.offsetY, -200.0f, 200.0f, "%.1f");
                     }
 
-                    if (ImGui::Button("Reload", ImVec2(90.0f * scale, 0))) {
+                    if (ImGui::Button("Center", ImVec2(55.0f * scale, 0))) {
+                        img.offsetX = 0.0f;
+                        img.offsetY = 0.0f;
+                        scene.setModified(true);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Reset Scale", ImVec2(75.0f * scale, 0))) {
+                        img.scale = 1.0f;
+                        scene.setModified(true);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Reset Rot", ImVec2(65.0f * scale, 0))) {
+                        img.rotation = 0.0f;
+                        scene.setModified(true);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Reload", ImVec2(55.0f * scale, 0))) {
                         scene.reloadReferenceImage(i);
                     }
                     ImGui::SameLine();
@@ -4110,6 +4130,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     drawPreferencesPanel(sculpt, scene, renderer, window);
     drawBrushIconFrameOverlay();
     drawBrushIconCapturePanel(scene, renderer);
+    drawReferenceImageManipulator(sculpt, scene, renderer);
     drawHotkeyHUD();
     drawUnsavedChangesModal(scene, m_pendingQuit);
     updateWindowTitle(window, scene.isModified());
@@ -4712,6 +4733,321 @@ void GuiManager::drawBrushIconFrameOverlay() {
     char label[32];
     std::snprintf(label, sizeof(label), "%dx%d", m_brushIconSize, m_brushIconSize);
     dl->AddText(ImVec2(cx - 18.0f, br.y + 5.0f), IM_COL32(255, 255, 255, 180), label);
+}
+
+static float signPoint(const ImVec2& p1, const ImVec2& p2, const ImVec2& p3) {
+    return (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y);
+}
+
+static bool isPointInTriangle(const ImVec2& pt, const ImVec2& v1, const ImVec2& v2, const ImVec2& v3) {
+    float d1 = signPoint(pt, v1, v2);
+    float d2 = signPoint(pt, v2, v3);
+    float d3 = signPoint(pt, v3, v1);
+    bool has_neg = (d1 < 0.0f) || (d2 < 0.0f) || (d3 < 0.0f);
+    bool has_pos = (d1 > 0.0f) || (d2 > 0.0f) || (d3 > 0.0f);
+    return !(has_neg && has_pos);
+}
+
+static bool isPointInQuad(const ImVec2& pt, const ImVec2& a, const ImVec2& b, const ImVec2& c, const ImVec2& d) {
+    return isPointInTriangle(pt, a, b, c) || isPointInTriangle(pt, a, c, d);
+}
+
+static bool isPointInCircle(const ImVec2& pt, const ImVec2& center, float radius) {
+    float dx = pt.x - center.x;
+    float dy = pt.y - center.y;
+    return (dx * dx + dy * dy) <= (radius * radius);
+}
+
+void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer) {
+    auto& images = scene.getReferenceImages();
+    if (images.empty()) {
+        m_activeRefDragTarget = RefDragTarget::None;
+        m_draggingRefImageIdx = -1;
+        return;
+    }
+
+    Camera& camera = scene.getCamera();
+    bool refDragEnabled = camera.getRefDragEnabled();
+    // EDIT SWITCH: Gizmos and viewport direct editing ONLY happen when Ref Drag mode is ON
+    if (!refDragEnabled) {
+        m_activeRefDragTarget = RefDragTarget::None;
+        m_draggingRefImageIdx = -1;
+        return;
+    }
+
+    if (m_selectedRefImageIdx < 0) m_selectedRefImageIdx = 0;
+    if (m_selectedRefImageIdx >= (int)images.size()) m_selectedRefImageIdx = (int)images.size() - 1;
+
+    // Always hide sculpt brush cursor while reference image editing mode is enabled!
+    sculpt.getCursor().hide();
+
+    ImGuiIO& io = ImGui::GetIO();
+    ImVec2 mousePos = io.MousePos;
+    ImDrawList* drawList = ImGui::GetForegroundDrawList();
+    float scale = getUiScale();
+
+    int activeVp = scene.getSplitMode() != Scene::SplitMode::OFF ? scene.getActiveViewport() : 0;
+    Camera& currentCamera = (scene.getSplitMode() != Scene::SplitMode::OFF && activeVp == 1 && scene.getCameraRight())
+                            ? *scene.getCameraRight() : scene.getCamera();
+
+    float vpW = (float)currentCamera.getWidth();
+    float vpH = (float)currentCamera.getHeight();
+    if (vpW <= 0.0f || vpH <= 0.0f) {
+        vpW = (float)renderer.getWidth();
+        vpH = (float)renderer.getHeight();
+    }
+    float vpX = 0.0f;
+    float vpY = 0.0f;
+    if (scene.getSplitMode() != Scene::SplitMode::OFF && activeVp == 1) {
+        vpX = (float)(renderer.getWidth() / 2);
+    }
+
+    // 1. Handle Active Dragging State
+    if (m_activeRefDragTarget != RefDragTarget::None && m_draggingRefImageIdx >= 0 && m_draggingRefImageIdx < (int)images.size()) {
+        if (io.MouseDown[0]) {
+            auto& img = images[m_draggingRefImageIdx];
+            sculpt.getCursor().hide();
+            io.WantCaptureMouse = true;
+
+            // Screen space center C
+            float imgAspect = (img.width > 0 && img.height > 0) ? ((float)img.width / (float)img.height) : 1.0f;
+            ImVec2 center;
+            if (img.pinned2D) {
+                center = ImVec2(vpX + (img.offsetX * 0.5f + 0.5f) * vpW, vpY + (0.5f - img.offsetY * 0.5f) * vpH);
+            } else {
+                glm::vec3 pWorldC(img.offsetX, img.offsetY, 0.0f);
+                glm::vec3 pScrC = currentCamera.project(pWorldC);
+                center = ImVec2(pScrC.x + vpX, pScrC.y + vpY);
+            }
+
+            if (m_activeRefDragTarget == RefDragTarget::Rotate) {
+                float currMouseAngle = std::atan2(mousePos.y - center.y, mousePos.x - center.x);
+                float deltaRad = currMouseAngle - m_refDragStartAngleMouse;
+                float deltaDeg = glm::degrees(deltaRad);
+                float newRot = m_refDragStartRotation + deltaDeg;
+                while (newRot > 180.0f) newRot -= 360.0f;
+                while (newRot < -180.0f) newRot += 360.0f;
+                img.rotation = newRot;
+            } else if (img.pinned2D) {
+                if (m_activeRefDragTarget == RefDragTarget::Move) {
+                    float dx = mousePos.x - m_refDragStartMouse.x;
+                    float dy = mousePos.y - m_refDragStartMouse.y;
+                    img.offsetX = m_refDragStartOffsetX + (dx / vpW) * 2.0f;
+                    img.offsetY = m_refDragStartOffsetY - (dy / vpH) * 2.0f;
+                } else { // Corner scale
+                    float startDist = std::sqrt(
+                        (m_refDragStartMouse.x - center.x) * (m_refDragStartMouse.x - center.x) +
+                        (m_refDragStartMouse.y - center.y) * (m_refDragStartMouse.y - center.y)
+                    );
+                    float currDist = std::sqrt(
+                        (mousePos.x - center.x) * (mousePos.x - center.x) +
+                        (mousePos.y - center.y) * (mousePos.y - center.y)
+                    );
+                    float ratio = (startDist > 1e-3f) ? (currDist / startDist) : 1.0f;
+                    img.scale = std::max(0.05f, m_refDragStartScale * ratio);
+                }
+            } else { // 3D plane mode
+                Ray ray = currentCamera.getRay(mousePos.x - vpX, mousePos.y - vpY);
+                if (std::abs(ray.dir.z) > 1e-6f) {
+                    float t = -ray.origin.z / ray.dir.z;
+                    if (t > 0.0f) {
+                        glm::vec3 p3d = ray.origin + t * ray.dir;
+                        if (m_activeRefDragTarget == RefDragTarget::Move) {
+                            img.offsetX = m_refDragStartOffsetX + (p3d.x - m_refDragStartIntersect3D.x);
+                            img.offsetY = m_refDragStartOffsetY + (p3d.y - m_refDragStartIntersect3D.y);
+                        } else { // Corner scale
+                            glm::vec2 center3D(m_refDragStartOffsetX, m_refDragStartOffsetY);
+                            float startDist3D = glm::length(m_refDragStartIntersect3D - center3D);
+                            float currDist3D = glm::length(glm::vec2(p3d.x, p3d.y) - center3D);
+                            float ratio = (startDist3D > 1e-3f) ? (currDist3D / startDist3D) : 1.0f;
+                            img.scale = std::max(0.05f, m_refDragStartScale * ratio);
+                        }
+                    }
+                }
+            }
+
+            scene.setModified(true);
+
+            // Set cursor
+            if (m_activeRefDragTarget == RefDragTarget::Move) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+            } else if (m_activeRefDragTarget == RefDragTarget::Rotate) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            } else if (m_activeRefDragTarget == RefDragTarget::ScaleTL || m_activeRefDragTarget == RefDragTarget::ScaleBR) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE);
+            } else if (m_activeRefDragTarget == RefDragTarget::ScaleTR || m_activeRefDragTarget == RefDragTarget::ScaleBL) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNESW);
+            }
+
+            // Draw Tooltip Badge next to cursor
+            ImGui::SetNextWindowPos(ImVec2(mousePos.x + 18.0f * scale, mousePos.y + 18.0f * scale));
+            ImGui::BeginTooltip();
+            ImGui::Text("Ref Image #%d (%s)", m_draggingRefImageIdx + 1, img.pinned2D ? "2D Overlay" : "3D Plane");
+            ImGui::Separator();
+            ImGui::Text("Position: X: %.3f, Y: %.3f", img.offsetX, img.offsetY);
+            ImGui::Text("Scale:    %.2fx", img.scale);
+            ImGui::Text("Rotation: %.1f deg", img.rotation);
+            if (img.width > 0 && img.height > 0) {
+                ImGui::Text("Size:     %d x %d px", img.width, img.height);
+            }
+            ImGui::EndTooltip();
+        } else {
+            m_activeRefDragTarget = RefDragTarget::None;
+            m_draggingRefImageIdx = -1;
+        }
+    }
+
+    // 2. Render Handles & Detect Hover / Drag Start for all visible reference images
+    float handleRadius = 8.0f * scale;
+
+    ImU32 accentBright    = IM_COL32(5, 220, 180, 255);  // Vibrant Teal Accent (#05DCB4)
+    ImU32 accentColor     = IM_COL32(3, 175, 145, 255);  // Teal Accent (#03AF91)
+    ImU32 accentActive    = IM_COL32(255, 220, 50, 255); // Gold Highlight on drag
+    ImU32 borderInactive  = IM_COL32(3, 133, 115, 150);  // Subtle Teal for non-selected
+
+    for (int i = (int)images.size() - 1; i >= 0; --i) {
+        auto& img = images[i];
+        if (!img.visible) continue;
+
+        bool isSelected = (i == m_selectedRefImageIdx);
+
+        ImVec2 TL, TR, BR, BL, TC, RotHandle, C;
+        float imgAspect = (img.width > 0 && img.height > 0) ? ((float)img.width / (float)img.height) : 1.0f;
+
+        if (img.pinned2D) {
+            float halfH_px = img.scale * 0.5f * vpH;
+            float halfW_px = imgAspect * halfH_px;
+            float Cx = vpX + (img.offsetX * 0.5f + 0.5f) * vpW;
+            float Cy = vpY + (0.5f - img.offsetY * 0.5f) * vpH;
+            C = ImVec2(Cx, Cy);
+
+            float rad = glm::radians(img.rotation);
+            float cosR = std::cos(rad);
+            float sinR = std::sin(rad);
+
+            auto rotVec = [&](const ImVec2& v) {
+                return ImVec2(v.x * cosR - v.y * sinR, v.x * sinR + v.y * cosR);
+            };
+
+            TL = ImVec2(Cx + rotVec(ImVec2(-halfW_px, -halfH_px)).x, Cy + rotVec(ImVec2(-halfW_px, -halfH_px)).y);
+            TR = ImVec2(Cx + rotVec(ImVec2( halfW_px, -halfH_px)).x, Cy + rotVec(ImVec2( halfW_px, -halfH_px)).y);
+            BR = ImVec2(Cx + rotVec(ImVec2( halfW_px,  halfH_px)).x, Cy + rotVec(ImVec2( halfW_px,  halfH_px)).y);
+            BL = ImVec2(Cx + rotVec(ImVec2(-halfW_px,  halfH_px)).x, Cy + rotVec(ImVec2(-halfW_px,  halfH_px)).y);
+            TC = ImVec2(Cx + rotVec(ImVec2(0.0f, -halfH_px)).x, Cy + rotVec(ImVec2(0.0f, -halfH_px)).y);
+            RotHandle = ImVec2(Cx + rotVec(ImVec2(0.0f, -halfH_px - 28.0f * scale)).x, Cy + rotVec(ImVec2(0.0f, -halfH_px - 28.0f * scale)).y);
+        } else {
+            glm::mat4 model = glm::mat4(1.0f);
+            model = glm::translate(model, glm::vec3(img.offsetX, img.offsetY, 0.0f));
+            model = glm::rotate(model, glm::radians(img.rotation), glm::vec3(0.0f, 0.0f, 1.0f));
+            model = glm::scale(model, glm::vec3(img.scale * imgAspect, img.scale, 1.0f));
+
+            glm::vec3 pWorldBL = glm::vec3(model * glm::vec4(-1.0f, -1.0f, 0.0f, 1.0f));
+            glm::vec3 pWorldBR = glm::vec3(model * glm::vec4( 1.0f, -1.0f, 0.0f, 1.0f));
+            glm::vec3 pWorldTR = glm::vec3(model * glm::vec4( 1.0f,  1.0f, 0.0f, 1.0f));
+            glm::vec3 pWorldTL = glm::vec3(model * glm::vec4(-1.0f,  1.0f, 0.0f, 1.0f));
+            glm::vec3 pWorldC  = glm::vec3(img.offsetX, img.offsetY, 0.0f);
+            glm::vec3 pWorldTC = (pWorldTL + pWorldTR) * 0.5f;
+            glm::vec3 pWorldRotHandle = glm::vec3(model * glm::vec4(0.0f, 1.35f, 0.0f, 1.0f));
+
+            glm::vec3 pScrBL  = currentCamera.project(pWorldBL);
+            glm::vec3 pScrBR  = currentCamera.project(pWorldBR);
+            glm::vec3 pScrTR  = currentCamera.project(pWorldTR);
+            glm::vec3 pScrTL  = currentCamera.project(pWorldTL);
+            glm::vec3 pScrC   = currentCamera.project(pWorldC);
+            glm::vec3 pScrTC  = currentCamera.project(pWorldTC);
+            glm::vec3 pScrRot = currentCamera.project(pWorldRotHandle);
+
+            BL = ImVec2(pScrBL.x + vpX, pScrBL.y + vpY);
+            BR = ImVec2(pScrBR.x + vpX, pScrBR.y + vpY);
+            TR = ImVec2(pScrTR.x + vpX, pScrTR.y + vpY);
+            TL = ImVec2(pScrTL.x + vpX, pScrTL.y + vpY);
+            C  = ImVec2(pScrC.x + vpX, pScrC.y + vpY);
+            TC = ImVec2(pScrTC.x + vpX, pScrTC.y + vpY);
+            RotHandle = ImVec2(pScrRot.x + vpX, pScrRot.y + vpY);
+        }
+
+        // Draw Bounding Quad in Accent Color
+        ImU32 borderColor = isSelected ? accentBright : borderInactive;
+        float lineThick = isSelected ? (2.5f * scale) : (1.4f * scale);
+        ImVec2 pts[4] = { TL, TR, BR, BL };
+        drawList->AddPolyline(pts, 4, borderColor, ImDrawFlags_Closed, lineThick);
+
+        // Check hover & clicks if interactive mode is active and not already dragging
+        if (m_activeRefDragTarget == RefDragTarget::None) {
+            RefDragTarget hoverTarget = RefDragTarget::None;
+            if (isPointInCircle(mousePos, RotHandle, handleRadius * 1.6f)) hoverTarget = RefDragTarget::Rotate;
+            else if (isPointInCircle(mousePos, TL, handleRadius * 1.5f)) hoverTarget = RefDragTarget::ScaleTL;
+            else if (isPointInCircle(mousePos, TR, handleRadius * 1.5f)) hoverTarget = RefDragTarget::ScaleTR;
+            else if (isPointInCircle(mousePos, BR, handleRadius * 1.5f)) hoverTarget = RefDragTarget::ScaleBR;
+            else if (isPointInCircle(mousePos, BL, handleRadius * 1.5f)) hoverTarget = RefDragTarget::ScaleBL;
+            else if (isPointInQuad(mousePos, TL, TR, BR, BL)) hoverTarget = RefDragTarget::Move;
+
+            if (hoverTarget != RefDragTarget::None) {
+                // Intercept mouse so sculpting doesn't execute while editing ref image!
+                io.WantCaptureMouse = true;
+                sculpt.getCursor().hide();
+
+                if (hoverTarget == RefDragTarget::Move) {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+                } else if (hoverTarget == RefDragTarget::Rotate) {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                } else if (hoverTarget == RefDragTarget::ScaleTL || hoverTarget == RefDragTarget::ScaleBR) {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE);
+                } else if (hoverTarget == RefDragTarget::ScaleTR || hoverTarget == RefDragTarget::ScaleBL) {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNESW);
+                }
+
+                if (io.MouseClicked[0]) {
+                    m_selectedRefImageIdx = i;
+                    m_draggingRefImageIdx = i;
+                    m_activeRefDragTarget = hoverTarget;
+                    m_refDragStartMouse = mousePos;
+                    m_refDragStartOffsetX = img.offsetX;
+                    m_refDragStartOffsetY = img.offsetY;
+                    m_refDragStartScale = img.scale;
+                    m_refDragStartRotation = img.rotation;
+                    m_refDragStartAngleMouse = std::atan2(mousePos.y - C.y, mousePos.x - C.x);
+
+                    if (!img.pinned2D) {
+                        Ray ray = currentCamera.getRay(mousePos.x - vpX, mousePos.y - vpY);
+                        if (std::abs(ray.dir.z) > 1e-6f) {
+                            float t = -ray.origin.z / ray.dir.z;
+                            if (t > 0.0f) {
+                                glm::vec3 p3d = ray.origin + t * ray.dir;
+                                m_refDragStartIntersect3D = glm::vec2(p3d.x, p3d.y);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Draw Handles in Accent Color
+        ImU32 handleFill = isSelected ? IM_COL32(255, 255, 255, 255) : IM_COL32(230, 248, 244, 220);
+        ImU32 handleRing = isSelected ? accentBright : accentColor;
+
+        auto drawCornerHandle = [&](const ImVec2& pos, bool isHov) {
+            float r = isHov ? (handleRadius * 1.35f) : handleRadius;
+            drawList->AddCircleFilled(pos, r, isHov ? accentActive : handleFill);
+            drawList->AddCircle(pos, r, isHov ? IM_COL32(255, 255, 255, 255) : handleRing, 0, 2.0f * scale);
+        };
+
+        drawCornerHandle(TL, (m_draggingRefImageIdx == i) && (m_activeRefDragTarget == RefDragTarget::ScaleTL));
+        drawCornerHandle(TR, (m_draggingRefImageIdx == i) && (m_activeRefDragTarget == RefDragTarget::ScaleTR));
+        drawCornerHandle(BR, (m_draggingRefImageIdx == i) && (m_activeRefDragTarget == RefDragTarget::ScaleBR));
+        drawCornerHandle(BL, (m_draggingRefImageIdx == i) && (m_activeRefDragTarget == RefDragTarget::ScaleBL));
+
+        // Top Rotation Handle & Stem line in Teal Accent
+        bool isRotHover = (m_draggingRefImageIdx == i) && (m_activeRefDragTarget == RefDragTarget::Rotate);
+        drawList->AddLine(TC, RotHandle, accentBright, 2.0f * scale);
+        float rotR = isRotHover ? (handleRadius * 1.45f) : (handleRadius * 1.2f);
+        drawList->AddCircleFilled(RotHandle, rotR, isRotHover ? accentActive : accentBright);
+        drawList->AddCircle(RotHandle, rotR, IM_COL32(255, 255, 255, 255), 0, 2.0f * scale);
+    }
+
+    if (m_activeRefDragTarget != RefDragTarget::None) {
+        io.WantCaptureMouse = true;
+    }
 }
 
 void GuiManager::drawBrushIconCapturePanel(const Scene& scene, AngleRenderer& renderer) {

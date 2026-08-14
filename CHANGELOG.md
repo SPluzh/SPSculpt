@@ -3,8 +3,10 @@
 All notable changes to this project will be documented in this file.
 
 ## [0.1.3]
-- **Reference Images**: Added file browser dialog, path editing, and image reloading.
-- **Reference Images**: Fixed aspect ratio in 2D/3D modes and thumbnail preview orientation.
+- **Reference Images**: Directly move, scale, and rotate reference images in the viewport.
+- **Reference Images**: Added dedicated image edit mode to prevent accidental sculpting while adjusting images.
+- **Reference Images**: Hides the brush cursor and highlights interactive frames in the application accent color.
+- **Reference Images**: Added image rotation sliders, quick reset buttons, file browser, and fixed preview orientations.
 
 ## [0.1.2]
 - **Wireframe**: Added high-quality anti-aliased wireframe rendering on objects.

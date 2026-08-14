@@ -1,5 +1,6 @@
 #pragma once
 #include <SDL2/SDL.h>
+#include <imgui.h>
 #ifdef _WIN32
 #include "platform/TabletInput.h"
 #endif
@@ -161,6 +162,20 @@ private:
     void drawBrushIconCapturePanel(const Scene& scene, AngleRenderer& renderer);
     void drawBrushIconFrameOverlay();
     void captureBrushIcon(const Scene& scene, AngleRenderer& renderer);
+
+    enum class RefDragTarget { None, Move, ScaleTL, ScaleTR, ScaleBR, ScaleBL, Rotate };
+    int m_selectedRefImageIdx = 0;
+    RefDragTarget m_activeRefDragTarget = RefDragTarget::None;
+    int m_draggingRefImageIdx = -1;
+    ImVec2 m_refDragStartMouse{0.0f, 0.0f};
+    float m_refDragStartOffsetX = 0.0f;
+    float m_refDragStartOffsetY = 0.0f;
+    float m_refDragStartScale = 1.0f;
+    float m_refDragStartRotation = 0.0f;
+    float m_refDragStartAngleMouse = 0.0f;
+    glm::vec2 m_refDragStartIntersect3D{0.0f, 0.0f};
+
+    void drawReferenceImageManipulator(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer);
 
     int m_preferencesActiveTab = -1;
 
