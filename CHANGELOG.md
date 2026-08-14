@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.9]
+- **Camera Navigation**: Fixed Gizmo/Snap Cube click behavior so snapping to a view angle always re-triggers even after manual rotation on the same side, and preserves the active projection mode (perspective or orthographic).
+
 ## [0.1.8]
 - **Camera Bookmarks**: Added camera bookmark system with FOV, reference image states, thumbnail previews, `Ctrl+1..9` hotkeys, and persistent `.sgl` saving.
 

@@ -907,24 +907,12 @@ void Camera::toggleViewAngles(float rx, float ry) {
     targetState.offset = m_offset;
     targetState.trans = m_trans;
 
-    // If currently in perspective, convert trans.z so the object stays the same
-    // apparent size after switching to orthographic.
-    if (m_projectionType == CameraEnums::Projection::PERSPECTIVE) {
-        float fovRad = getFovDegrees() * (float)M_PI / 180.0f;
-        float tanHalfFov = std::tan(fovRad * 0.5f);
-        float h = m_height > 0 ? (float)m_height : 1.0f;
-        float eyeDist = getTransZ();
-        float halfH = eyeDist * tanHalfFov;
-        targetState.trans.z = std::max(0.001f, halfH / (h * 0.00055f));
-        targetState.offset.z = 0.0f;
-    }
-
     targetState.rotX = rx;
     targetState.rotY = normalizeAngle(ry, m_rotY);
     targetState.quatRot = glm::angleAxis(targetState.rotX, glm::vec3(1.0f, 0.0f, 0.0f)) *
                           glm::angleAxis(targetState.rotY, glm::vec3(0.0f, 1.0f, 0.0f));
     targetState.fov = m_fov;
-    targetState.projectionType = CameraEnums::Projection::ORTHOGRAPHIC;
+    targetState.projectionType = m_projectionType;
     targetState.mode = m_mode;
     targetState.usePivot = m_usePivot;
     targetState.view2DOffsetX = m_view2DOffsetX;

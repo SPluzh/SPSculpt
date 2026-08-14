@@ -2851,35 +2851,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_gizmoClickTime).count();
             if (elapsedMs > 250) {
                 m_gizmoClickPending = false;
-
-                const float PI = 3.14159265f;
-                float targetRotX = camera.getTargetRotX();
-                float targetRotY = camera.getTargetRotY();
-
-                float diffX = std::abs(targetRotX - m_gizmoClickPartRotX);
-                float diffY = targetRotY - m_gizmoClickPartRotY;
-                diffY = std::fmod(diffY, 2.0f * PI);
-                if (diffY < -PI) diffY += 2.0f * PI;
-                if (diffY > PI) diffY -= 2.0f * PI;
-                diffY = std::abs(diffY);
-
-                bool alreadyMatch = camera.isOrthographic() && (diffX < 1e-3f) && (diffY < 1e-3f);
-
-                std::ofstream logFile("c:\\Users\\user\\Desktop\\cpp\\sculptsp-native\\debug_log.txt", std::ios::app);
-                if (logFile.is_open()) {
-                    logFile << "Gizmo Click Triggered:" << std::endl;
-                    logFile << "  targetRotX: " << targetRotX << ", targetRotY: " << targetRotY << std::endl;
-                    logFile << "  clickedRotX: " << m_gizmoClickPartRotX << ", clickedRotY: " << m_gizmoClickPartRotY << std::endl;
-                    logFile << "  diffX: " << diffX << ", diffY: " << diffY << std::endl;
-                    logFile << "  isOrthographic: " << (camera.isOrthographic() ? "yes" : "no") << std::endl;
-                    logFile << "  alreadyMatch: " << (alreadyMatch ? "yes" : "no") << std::endl;
-                    logFile << "--------------------------------------" << std::endl;
-                    logFile.close();
-                }
-
-                if (!alreadyMatch) {
-                    camera.toggleViewAngles(m_gizmoClickPartRotX, m_gizmoClickPartRotY);
-                }
+                camera.toggleViewAngles(m_gizmoClickPartRotX, m_gizmoClickPartRotY);
             }
         }
 
