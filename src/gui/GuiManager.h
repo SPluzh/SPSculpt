@@ -328,7 +328,7 @@ public:
     int m_previousShaderType = 0;
 
     // Outliner Thumbnails
-    static constexpr int THUMB_SIZE = 48;
+    static constexpr int THUMB_SIZE = 160;
     struct MeshThumbnail {
         GLuint fbo     = 0;
         GLuint texture = 0;
@@ -347,7 +347,7 @@ private:
     void thumbCleanup(const Scene& scene);
 
     // Bookmark Previews
-    static constexpr int BOOKMARK_PREVIEW_SIZE = 128;
+    static constexpr int BOOKMARK_PREVIEW_SIZE = 160;
     struct BookmarkPreview {
         GLuint fbo     = 0;
         GLuint texture = 0;

@@ -410,6 +410,12 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
             seg.vertB = readAnchor();
             seg.isReference = false;
             seg.name = "Divider " + std::to_string(s + 1);
+            if (reader.hasData()) {
+                uint32_t dVal = reader.readU32();
+                seg.divisions = (dVal >= 2 && dVal <= 6) ? static_cast<int>(dVal) : (dividerDivisions > 0 ? static_cast<int>(dividerDivisions) : 3);
+            } else {
+                seg.divisions = (dividerDivisions > 0 ? static_cast<int>(dividerDivisions) : 3);
+            }
             dividerSegments.push_back(seg);
         }
 

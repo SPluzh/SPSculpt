@@ -286,6 +286,7 @@ std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& sc
     for (const auto& seg : dividerSegments) {
         writeAnchor(seg.vertA);
         writeAnchor(seg.vertB);
+        writer.writeU32(static_cast<uint32_t>(seg.divisions));
     }
 
     // Camera Bookmarks (Version >= 9)

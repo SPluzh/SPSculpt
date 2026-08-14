@@ -140,6 +140,7 @@ struct MeasurementSegment {
     MeasurementAnchor vertA;
     MeasurementAnchor vertB;
     bool isReference = false;   // Для Measure: является ли отрезок эталоном
+    int divisions = 3;          // Индивидуальное количество делений (для Divider)
     std::string name = "";
 };
 

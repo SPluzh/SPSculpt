@@ -2359,6 +2359,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                         newSeg.name = "Measure " + std::to_string(m_measureSegments.size() + 1);
                     } else {
                         newSeg.name = "Divider " + std::to_string(m_dividerSegments.size() + 1);
+                        newSeg.divisions = m_dividerDivisions;
                     }
 
                     segments.push_back(newSeg);

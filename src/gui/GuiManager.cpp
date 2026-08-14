@@ -645,7 +645,7 @@ void GuiManager::thumbRender(MeshThumbnail& t, Mesh* mesh, AngleRenderer& render
 
     glBindFramebuffer(GL_FRAMEBUFFER, t.fbo);
     glViewport(0, 0, THUMB_SIZE, THUMB_SIZE);
-    glClearColor(0.18f, 0.18f, 0.20f, 1.0f);
+    glClearColor(0.12f, 0.13f, 0.14f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
@@ -1933,134 +1933,248 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     // 4. Scene outliner
     if (m_showScenePanel) {
         ImGui::SetNextWindowPos({450.0f * scale, 40.0f * scale}, ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize({320.0f * scale, 450.0f * scale}, ImGuiCond_FirstUseEver);
-        ImGui::Begin("Scene Outliner", &m_showScenePanel);
+        ImGui::SetNextWindowSize({340.0f * scale, 520.0f * scale}, ImGuiCond_FirstUseEver);
+        ImGui::Begin(ICON_LC_BOX " Scene Outliner", &m_showScenePanel);
 
-        // Primitive Spawning Tools
-        ImGui::TextDisabled("PRIMITIVES");
-        static bool spawnAtMask = false;
-        static bool spawnMirror = false;
-        ImGui::Checkbox("At Masked BBox", &spawnAtMask);
-        ImGui::SameLine();
-        ImGui::Checkbox("Mirror Symmetry", &spawnMirror);
+            // --- Header: Primitive Spawning Tools ---
+            static bool spawnAtMask = false;
+            static bool spawnMirror = false;
+            ImGui::Checkbox("At Masked BBox", &spawnAtMask);
+            ImGui::SameLine();
+            ImGui::Checkbox("Mirror Symmetry", &spawnMirror);
 
-        if (ImGui::Button("Sphere##Add", ImVec2(65, 0))) {
-            if (spawnAtMask) {
-                scene.addPrimitiveAtMask("sphere", spawnMirror, sculpt.getSymX(), sculpt.getSymY(), sculpt.getSymZ());
-            } else {
-                scene.addSphere();
-            }
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Geosphere##Add", ImVec2(90, 0))) {
-            if (spawnAtMask) {
-                scene.addPrimitiveAtMask("geosphere", spawnMirror, sculpt.getSymX(), sculpt.getSymY(), sculpt.getSymZ());
-            } else {
-                scene.addGeosphere();
-            }
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Cube##Add", ImVec2(60, 0))) {
-            if (spawnAtMask) {
-                scene.addPrimitiveAtMask("cube", spawnMirror, sculpt.getSymX(), sculpt.getSymY(), sculpt.getSymZ());
-            } else {
-                scene.addCube();
-            }
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Cylinder##Add", ImVec2(75, 0))) {
-            if (spawnAtMask) {
-                scene.addPrimitiveAtMask("cylinder", spawnMirror, sculpt.getSymX(), sculpt.getSymY(), sculpt.getSymZ());
-            } else {
-                scene.addCylinder();
-            }
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Torus##Add", ImVec2(60, 0))) {
-            if (spawnAtMask) {
-                scene.addPrimitiveAtMask("torus", spawnMirror, sculpt.getSymX(), sculpt.getSymY(), sculpt.getSymZ());
-            } else {
-                scene.addTorus();
-            }
-        }
-
-        ImGui::Separator();
-
-        const auto& meshes = scene.getMeshes();
-        auto& refImages = scene.getReferenceImages();
-        int selected = scene.getSelectedIdx();
-
-        int totalOutlinerRows = (int)meshes.size() + (int)refImages.size();
-        ImGui::Text("Scene Items: %d (%d meshes, %d ref images)", totalOutlinerRows, (int)meshes.size(), (int)refImages.size());
-
-        static int renameTargetId = -1;
-        static char renameBuf[128] = "";
-
-        float rowH = (float)THUMB_SIZE + 6.0f;
-        float listH = std::max(180.0f, std::min((float)totalOutlinerRows * rowH + 40.0f, 340.0f));
-
-        ImGui::BeginChild("MeshList", ImVec2(0, listH), true);
-        if (ImGui::BeginTable("MeshListTable", 6, ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV)) {
-            ImGui::TableSetupColumn("##Thumb", ImGuiTableColumnFlags_WidthFixed, (float)THUMB_SIZE + 4.0f);
-            ImGui::TableSetupColumn("Act", ImGuiTableColumnFlags_WidthFixed, 30.0f);
-            ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Verts", ImGuiTableColumnFlags_WidthFixed, 60.0f);
-            ImGui::TableSetupColumn("V1", ImGuiTableColumnFlags_WidthFixed, 30.0f);
-            ImGui::TableSetupColumn("V2", ImGuiTableColumnFlags_WidthFixed, 30.0f);
-            ImGui::TableHeadersRow();
-
-            // 1. 3D Meshes
-            for (int i = 0; i < (int)meshes.size(); i++) {
-                Mesh* mesh = meshes[i];
-                ImGui::TableNextRow(0, (float)THUMB_SIZE + 6.0f);
-
-                // Column 0: Preview Thumbnail
-                ImGui::TableNextColumn();
-                auto it = m_thumbCache.find(mesh->getID());
-                if (it != m_thumbCache.end() && it->second.texture != 0) {
-                    ImGui::Image(
-                        (ImTextureID)(uintptr_t)it->second.texture,
-                        ImVec2((float)THUMB_SIZE, (float)THUMB_SIZE),
-                        ImVec2(0, 1), ImVec2(1, 0)
-                    );
+            float btnW = 56.0f * scale;
+            if (ImGui::Button("Sphere##Add", ImVec2(btnW, 24 * scale))) {
+                if (spawnAtMask) {
+                    scene.addPrimitiveAtMask("sphere", spawnMirror, sculpt.getSymX(), sculpt.getSymY(), sculpt.getSymZ());
                 } else {
-                    ImGui::Dummy(ImVec2((float)THUMB_SIZE, (float)THUMB_SIZE));
+                    scene.addSphere();
                 }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Geo##Add", ImVec2(46 * scale, 24 * scale))) {
+                if (spawnAtMask) {
+                    scene.addPrimitiveAtMask("geosphere", spawnMirror, sculpt.getSymX(), sculpt.getSymY(), sculpt.getSymZ());
+                } else {
+                    scene.addGeosphere();
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cube##Add", ImVec2(48 * scale, 24 * scale))) {
+                if (spawnAtMask) {
+                    scene.addPrimitiveAtMask("cube", spawnMirror, sculpt.getSymX(), sculpt.getSymY(), sculpt.getSymZ());
+                } else {
+                    scene.addCube();
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cyl##Add", ImVec2(46 * scale, 24 * scale))) {
+                if (spawnAtMask) {
+                    scene.addPrimitiveAtMask("cylinder", spawnMirror, sculpt.getSymX(), sculpt.getSymY(), sculpt.getSymZ());
+                } else {
+                    scene.addCylinder();
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Torus##Add", ImVec2(52 * scale, 24 * scale))) {
+                if (spawnAtMask) {
+                    scene.addPrimitiveAtMask("torus", spawnMirror, sculpt.getSymX(), sculpt.getSymY(), sculpt.getSymZ());
+                } else {
+                    scene.addTorus();
+                }
+            }
 
-                // Column 1: Act (Active checkbox)
-                ImGui::TableNextColumn();
-                ImGui::PushID(mesh->getID() * 10 + 3);
-                bool isActive = (scene.getSelected() == mesh);
-                if (ImGui::Checkbox("##Active", &isActive)) {
-                    if (isActive) {
-                        scene.setOrUnsetMesh(mesh, false);
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // --- Filter & Search Bar ---
+            static char searchFilter[64] = "";
+            static int filterTab = 0; // 0: All, 1: Meshes, 2: Ref Images, 3: Tools
+
+            sculpt.validateSegments(scene);
+            auto& measureSegs = sculpt.getMeasureSegments();
+            auto& dividerSegs = sculpt.getDividerSegments();
+            int totalToolsCount = (int)measureSegs.size() + (int)dividerSegs.size();
+
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 85.0f * scale);
+            ImGui::InputTextWithHint("##OutlinerSearch", ICON_LC_SEARCH " Search...", searchFilter, sizeof(searchFilter));
+            ImGui::SameLine();
+            const char* tabNames[] = { "All", "Meshes", "Refs", "Tools" };
+            if (ImGui::Button(tabNames[filterTab], ImVec2(78.0f * scale, 0))) {
+                filterTab = (filterTab + 1) % 4;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Filter: All / Meshes / Reference Images / Tools");
+
+            const auto& meshes = scene.getMeshes();
+            auto& refImages = scene.getReferenceImages();
+            int selected = scene.getSelectedIdx();
+
+            int totalOutlinerRows = (int)meshes.size() + (int)refImages.size() + totalToolsCount;
+            ImGui::TextDisabled("Items: %d (%d meshes, %d refs, %d tools)", totalOutlinerRows, (int)meshes.size(), (int)refImages.size(), totalToolsCount);
+
+            static int renameTargetId = -1;
+            static char renameBuf[128] = "";
+
+            // --- Scrollable Cards Container ---
+            const float cardW = ImGui::GetContentRegionAvail().x;
+            const float previewSz = 72.0f * scale;
+            const float cardH = previewSz + 12.0f * scale;
+            const float thumbSz = previewSz;
+
+            float remainingAvailY = ImGui::GetContentRegionAvail().y - 45.0f * scale;
+            float listH = std::max(180.0f * scale, remainingAvailY);
+
+            ImGui::BeginChild("MeshListCards", ImVec2(0, listH), true);
+
+            std::string filterStr = searchFilter;
+            for (auto& c : filterStr) c = (char)tolower(c);
+
+            // 1. 3D Meshes Cards
+            if (filterTab == 0 || filterTab == 1) {
+                for (int i = 0; i < (int)meshes.size(); i++) {
+                    Mesh* mesh = meshes[i];
+                    std::string displayName = mesh->outlinerName.empty() ? ("Mesh " + std::to_string(i + 1)) : mesh->outlinerName;
+
+                    if (!filterStr.empty()) {
+                        std::string lowerName = displayName;
+                        for (auto& c : lowerName) c = (char)tolower(c);
+                        if (lowerName.find(filterStr) == std::string::npos) continue;
+                    }
+
+                    bool isSelected = scene.isMeshSelected(mesh);
+                    bool isActive = (scene.getSelected() == mesh);
+
+                    ImGui::PushID(mesh->getID());
+
+                    if (isSelected || isActive) {
+                        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.01f, 0.52f, 0.45f, 0.35f));
+                        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.01f, 0.75f, 0.65f, 0.85f));
                     } else {
-                        scene.setOrUnsetMesh(nullptr, false);
+                        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.11f, 0.13f, 0.40f));
+                        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.25f, 0.28f, 0.32f, 0.45f));
                     }
-                }
-                ImGui::PopID();
 
-                // Column 2: Name (Selectable / Renaming input)
-                ImGui::TableNextColumn();
-                ImGui::PushID(mesh->getID());
+                    ImGui::BeginChild(("##card_mesh_" + std::to_string(mesh->getID())).c_str(), ImVec2(cardW, cardH), true, ImGuiWindowFlags_NoScrollbar);
+                    ImGui::PopStyleColor(2);
 
-                bool isSelected = scene.isMeshSelected(mesh);
-                if (renameTargetId == (int)mesh->getID()) {
-                    ImGui::SetNextItemWidth(-FLT_MIN);
-                    if (ImGui::InputText("##RenameInput", renameBuf, sizeof(renameBuf), ImGuiInputTextFlags_EnterReturnsTrue)) {
-                        mesh->outlinerName = renameBuf;
-                        renameTargetId = -1;
+                    // Left Thumbnail (Dark Framed Background matching Camera Bookmarks)
+                    ImDrawList* meshDrawList = ImGui::GetWindowDrawList();
+                    ImVec2 mMin = ImGui::GetCursorScreenPos();
+                    ImVec2 mMax = ImVec2(mMin.x + thumbSz, mMin.y + thumbSz);
+                    meshDrawList->AddRectFilled(mMin, mMax, IM_COL32(30, 33, 36, 255), 4.0f * scale);
+                    meshDrawList->AddRect(mMin, mMax, IM_COL32(50, 55, 60, 200), 4.0f * scale);
+
+                    auto it = m_thumbCache.find(mesh->getID());
+                    if (it != m_thumbCache.end() && it->second.texture != 0) {
+                        ImGui::Image(
+                            (ImTextureID)(uintptr_t)it->second.texture,
+                            ImVec2(thumbSz, thumbSz),
+                            ImVec2(0, 1), ImVec2(1, 0)
+                        );
+                    } else {
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.13f, 0.14f, 1.0f));
+                        ImGui::Button(ICON_LC_BOX, ImVec2(thumbSz, thumbSz));
+                        ImGui::PopStyleColor();
                     }
-                    if (ImGui::IsItemDeactivated() && !ImGui::IsItemDeactivatedAfterEdit()) {
-                        mesh->outlinerName = renameBuf;
-                        renameTargetId = -1;
+
+                    ImGui::SameLine();
+
+                    // Center & Right Layout
+                    float rightAvailW = ImGui::GetContentRegionAvail().x;
+                    ImGui::BeginGroup();
+
+                    // Row 1: Name / Rename Input
+                    if (renameTargetId == (int)mesh->getID()) {
+                        ImGui::SetNextItemWidth(rightAvailW - 10.0f * scale);
+                        if (ImGui::InputText("##RenameInput", renameBuf, sizeof(renameBuf), ImGuiInputTextFlags_EnterReturnsTrue)) {
+                            mesh->outlinerName = renameBuf;
+                            renameTargetId = -1;
+                        }
+                        if (ImGui::IsItemDeactivated() && !ImGui::IsItemDeactivatedAfterEdit()) {
+                            mesh->outlinerName = renameBuf;
+                            renameTargetId = -1;
+                        }
+                    } else {
+                        ImGui::PushStyleColor(ImGuiCol_Text, isActive ? ImVec4(0.2f, 0.95f, 0.85f, 1.0f) : ImVec4(0.9f, 0.9f, 0.92f, 1.0f));
+                        ImGui::TextUnformatted(displayName.c_str());
+                        ImGui::PopStyleColor();
+
+                        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+                            renameTargetId = (int)mesh->getID();
+                            strncpy(renameBuf, mesh->outlinerName.c_str(), sizeof(renameBuf));
+                        }
                     }
-                } else {
-                    std::string displayName = mesh->outlinerName;
-                    if (displayName.empty()) {
-                        displayName = "Mesh " + std::to_string(i + 1);
+
+                    // Row 2: Badges & Info Subtext
+                    std::string infoStr = formatCount(mesh->nbVerts) + " verts";
+                    if (isActive) infoStr += "  " ICON_LC_CHECK " Active";
+                    ImGui::TextDisabled("%s", infoStr.c_str());
+
+                    // Row 3: Action Buttons Bar
+                    float btnSz = 22.0f * scale;
+
+                    // V1 Toggle Button
+                    ImGui::PushID(1);
+                    bool v1 = mesh->visibleV1;
+                    if (v1) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.9f, 0.8f, 1.0f));
+                    else ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
+                    if (ImGui::Button(v1 ? ICON_LC_EYE " V1" : ICON_LC_EYE_OFF " V1", ImVec2(btnSz * 1.8f, btnSz))) {
+                        mesh->visibleV1 = !v1;
                     }
-                    if (ImGui::Selectable(displayName.c_str(), isSelected)) {
+                    ImGui::PopStyleColor();
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Viewport 1 Visibility");
+                    ImGui::PopID();
+
+                    ImGui::SameLine();
+
+                    // V2 Toggle Button
+                    ImGui::PushID(2);
+                    bool v2 = mesh->visibleV2;
+                    if (v2) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.9f, 0.8f, 1.0f));
+                    else ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
+                    if (ImGui::Button(v2 ? ICON_LC_EYE " V2" : ICON_LC_EYE_OFF " V2", ImVec2(btnSz * 1.8f, btnSz))) {
+                        mesh->visibleV2 = !v2;
+                    }
+                    ImGui::PopStyleColor();
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Viewport 2 Visibility");
+                    ImGui::PopID();
+
+                    ImGui::SameLine();
+
+                    // Frame Camera Button
+                    if (ImGui::Button(ICON_LC_CROSSHAIR "##frame", ImVec2(btnSz, btnSz))) {
+                        scene.getCamera().resetViewToMeshes({mesh}, true);
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Focus camera on object (Hotkey F)");
+
+                    ImGui::SameLine();
+
+                    // Duplicate Mesh Button
+                    if (ImGui::Button(ICON_LC_COPY "##dup", ImVec2(btnSz, btnSz))) {
+                        scene.setOrUnsetMesh(mesh, false);
+                        scene.duplicateSelection();
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Duplicate mesh (Ctrl+D)");
+
+                    ImGui::SameLine();
+
+                    // Delete Mesh Button
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.12f, 0.12f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.18f, 0.18f, 1.0f));
+                    if (ImGui::Button(ICON_LC_TRASH_2 "##del", ImVec2(btnSz, btnSz))) {
+                        scene.removeMesh(mesh);
+                        ImGui::PopStyleColor(2);
+                        ImGui::EndGroup();
+                        ImGui::EndChild();
+                        ImGui::PopID();
+                        break;
+                    }
+                    ImGui::PopStyleColor(2);
+
+                    ImGui::EndGroup();
+                    ImGui::EndChild();
+
+                    if (ImGui::IsItemClicked(0) && !ImGui::IsItemEdited()) {
                         bool ctrl = ImGui::GetIO().KeyCtrl;
                         bool shift = ImGui::GetIO().KeyShift;
                         if (ctrl) {
@@ -2077,197 +2191,614 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             scene.setOrUnsetMesh(mesh, false);
                         }
                     }
-                    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
-                        renameTargetId = (int)mesh->getID();
-                        strncpy(renameBuf, mesh->outlinerName.c_str(), sizeof(renameBuf));
-                    }
-                }
-                ImGui::PopID();
 
-                // Column 3: Verts Count
-                ImGui::TableNextColumn();
-                ImGui::Text("%s", formatCount(mesh->nbVerts).c_str());
-
-                // Column 4: V1 Toggle
-                ImGui::TableNextColumn();
-                ImGui::PushID(mesh->getID() * 10 + 1);
-                bool v1 = mesh->visibleV1;
-                if (ImGui::Checkbox("##V1", &v1)) {
-                    mesh->visibleV1 = v1;
+                    ImGui::PopID();
+                    ImGui::Spacing();
                 }
-                ImGui::PopID();
-
-                // Column 5: V2 Toggle
-                ImGui::TableNextColumn();
-                ImGui::PushID(mesh->getID() * 10 + 2);
-                bool v2 = mesh->visibleV2;
-                if (ImGui::Checkbox("##V2", &v2)) {
-                    mesh->visibleV2 = v2;
-                }
-                ImGui::PopID();
             }
 
-            // 2. Reference Images
-            if (!refImages.empty()) {
+            // 2. Reference Images Cards
+            if ((filterTab == 0 || filterTab == 2) && !refImages.empty()) {
                 if (m_selectedRefImageIdx < 0 || m_selectedRefImageIdx >= static_cast<int>(refImages.size())) {
                     m_selectedRefImageIdx = 0;
                 }
+
                 for (size_t i = 0; i < refImages.size(); ++i) {
                     auto& img = refImages[i];
-                    ImGui::TableNextRow(0, (float)THUMB_SIZE + 6.0f);
-                    ImGui::PushID(static_cast<int>(i) + 90000);
-
-                    // Col 0: Thumbnail
-                    ImGui::TableNextColumn();
-                    if (img.texId != 0) {
-                        float tW = (float)THUMB_SIZE;
-                        float tH = (float)THUMB_SIZE;
-                        if (img.width > 0 && img.height > 0) {
-                            float aspect = (float)img.width / (float)img.height;
-                            if (aspect >= 1.0f) tH = tW / aspect;
-                            else tW = tH * aspect;
-                        }
-                        ImGui::Image((ImTextureID)(uintptr_t)img.texId, ImVec2(tW, tH), ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
-                    } else {
-                        ImGui::Dummy(ImVec2((float)THUMB_SIZE, (float)THUMB_SIZE));
-                    }
-
-                    // Col 1: Active Radio Button
-                    ImGui::TableNextColumn();
-                    bool isRefSel = (m_selectedRefImageIdx == static_cast<int>(i));
-                    if (ImGui::RadioButton("##SelectRef", isRefSel)) {
-                        m_selectedRefImageIdx = static_cast<int>(i);
-                    }
-
-                    // Col 2: Name
-                    ImGui::TableNextColumn();
                     std::string fileName = img.path;
                     size_t lastSlash = fileName.find_last_of("\\/");
                     if (lastSlash != std::string::npos) {
                         fileName = fileName.substr(lastSlash + 1);
                     }
-                    if (ImGui::Selectable(fileName.c_str(), isRefSel)) {
-                        m_selectedRefImageIdx = static_cast<int>(i);
-                    }
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("%s", img.path.c_str());
+
+                    if (!filterStr.empty()) {
+                        std::string lowerName = fileName;
+                        for (auto& c : lowerName) c = (char)tolower(c);
+                        if (lowerName.find(filterStr) == std::string::npos) continue;
                     }
 
-                    // Col 3: Resolution / Type Info
-                    ImGui::TableNextColumn();
-                    if (img.width > 0 && img.height > 0) {
-                        ImGui::TextDisabled("%dx%d", img.width, img.height);
+                    bool isRefSel = (m_selectedRefImageIdx == static_cast<int>(i));
+
+                    ImGui::PushID(static_cast<int>(i) + 90000);
+
+                    if (isRefSel) {
+                        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.45f, 0.30f, 0.05f, 0.35f));
+                        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.85f, 0.55f, 0.10f, 0.85f));
                     } else {
-                        ImGui::TextDisabled("Ref Img");
+                        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.11f, 0.10f, 0.40f));
+                        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.28f, 0.24f, 0.20f, 0.45f));
                     }
 
-                    // Col 4: V1 Toggle
-                    ImGui::TableNextColumn();
+                    ImGui::BeginChild(("##card_ref_" + std::to_string(i)).c_str(), ImVec2(cardW, cardH), true, ImGuiWindowFlags_NoScrollbar);
+                    ImGui::PopStyleColor(2);
+
+                    // Left Thumbnail (Dark Framed Background matching Camera Bookmarks)
+                    ImDrawList* refDrawList = ImGui::GetWindowDrawList();
+                    ImVec2 rMin = ImGui::GetCursorScreenPos();
+                    ImVec2 rMax = ImVec2(rMin.x + thumbSz, rMin.y + thumbSz);
+                    refDrawList->AddRectFilled(rMin, rMax, IM_COL32(30, 33, 36, 255), 4.0f * scale);
+                    refDrawList->AddRect(rMin, rMax, IM_COL32(50, 55, 60, 200), 4.0f * scale);
+
+                    if (img.texId != 0) {
+                        float tW = thumbSz, tH = thumbSz;
+                        if (img.width > 0 && img.height > 0) {
+                            float aspect = (float)img.width / (float)img.height;
+                            if (aspect >= 1.0f) tH = tW / aspect;
+                            else tW = tH * aspect;
+                        }
+                        float padX = (thumbSz - tW) * 0.5f;
+                        float padY = (thumbSz - tH) * 0.5f;
+                        ImVec2 startCursor = ImGui::GetCursorPos();
+                        ImGui::SetCursorPos(ImVec2(startCursor.x + padX, startCursor.y + padY));
+                        ImGui::Image((ImTextureID)(uintptr_t)img.texId, ImVec2(tW, tH), ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
+                        ImGui::SetCursorPos(ImVec2(startCursor.x + thumbSz, startCursor.y));
+                    } else {
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.13f, 0.14f, 1.0f));
+                        ImGui::Button(ICON_LC_IMAGE, ImVec2(thumbSz, thumbSz));
+                        ImGui::PopStyleColor();
+                    }
+
+                    ImGui::SameLine();
+
+                    ImGui::BeginGroup();
+
+                    // Title
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.4f, 1.0f));
+                    ImGui::TextUnformatted(fileName.c_str());
+                    ImGui::PopStyleColor();
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", img.path.c_str());
+
+                    // Info Subtext
+                    std::string refInfo = (img.width > 0 && img.height > 0) ? (std::to_string(img.width) + "x" + std::to_string(img.height)) : "Ref Image";
+                    ImGui::TextDisabled("%s", refInfo.c_str());
+
+                    // Action Buttons Bar
+                    float btnSz = 22.0f * scale;
+
+                    // V1 Toggle
                     ImGui::PushID(10);
                     bool v1 = img.visibleV1;
-                    if (ImGui::Checkbox("##RefV1", &v1)) {
-                        img.visibleV1 = v1;
+                    if (v1) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.75f, 0.2f, 1.0f));
+                    else ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
+                    if (ImGui::Button(v1 ? ICON_LC_EYE " V1" : ICON_LC_EYE_OFF " V1", ImVec2(btnSz * 1.8f, btnSz))) {
+                        img.visibleV1 = !v1;
                         scene.setModified(true);
                     }
+                    ImGui::PopStyleColor();
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Viewport 1 Visibility");
                     ImGui::PopID();
 
-                    // Col 5: V2 Toggle
-                    ImGui::TableNextColumn();
+                    ImGui::SameLine();
+
+                    // V2 Toggle
                     ImGui::PushID(20);
                     bool v2 = img.visibleV2;
-                    if (ImGui::Checkbox("##RefV2", &v2)) {
-                        img.visibleV2 = v2;
+                    if (v2) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.75f, 0.2f, 1.0f));
+                    else ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
+                    if (ImGui::Button(v2 ? ICON_LC_EYE " V2" : ICON_LC_EYE_OFF " V2", ImVec2(btnSz * 1.8f, btnSz))) {
+                        img.visibleV2 = !v2;
                         scene.setModified(true);
                     }
+                    ImGui::PopStyleColor();
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Viewport 2 Visibility");
                     ImGui::PopID();
 
+                    ImGui::SameLine();
+
+                    // Remove Ref Image
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.12f, 0.12f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.18f, 0.18f, 1.0f));
+                    if (ImGui::Button(ICON_LC_TRASH_2 "##delRef", ImVec2(btnSz, btnSz))) {
+                        scene.removeReferenceImage(i);
+                        if (m_selectedRefImageIdx >= (int)scene.getReferenceImages().size()) {
+                            m_selectedRefImageIdx = (int)scene.getReferenceImages().size() - 1;
+                        }
+                        ImGui::PopStyleColor(2);
+                        ImGui::EndGroup();
+                        ImGui::EndChild();
+                        ImGui::PopID();
+                        break;
+                    }
+                    ImGui::PopStyleColor(2);
+
+                    ImGui::EndGroup();
+                    ImGui::EndChild();
+
+                    if (ImGui::IsItemClicked(0)) {
+                        m_selectedRefImageIdx = static_cast<int>(i);
+                    }
+
                     ImGui::PopID();
+                    ImGui::Spacing();
                 }
             }
 
-            // Measure Tool Row in Outliner
-            bool showMeasureRow = !sculpt.getMeasureSegments().empty() || (sculpt.getBrush() == BRUSH_MEASURE);
-            if (showMeasureRow) {
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::Dummy(ImVec2((float)THUMB_SIZE, 0));
+            // 3. Measure Tools Group Card
+            if ((filterTab == 0 || filterTab == 3) && !measureSegs.empty()) {
+                static bool msrGroupExpanded = true;
 
-                ImGui::TableNextColumn();
-                ImGui::PushID(88801);
-                bool isMeasureToolActive = (sculpt.getBrush() == BRUSH_MEASURE);
-                if (ImGui::Checkbox("##ActMeasureTool", &isMeasureToolActive)) {
-                    if (isMeasureToolActive) sculpt.setTool(BRUSH_MEASURE);
+                float referenceLength = 0.0f;
+                for (const auto& seg : measureSegs) {
+                    if (seg.isReference) {
+                        glm::vec3 worldA = SculptManager::getAnchorWorldPos(seg.vertA);
+                        glm::vec3 worldB = SculptManager::getAnchorWorldPos(seg.vertB);
+                        referenceLength = glm::distance(worldA, worldB);
+                        break;
+                    }
                 }
+
+                // --- Measure Group Header Card ---
+                ImGui::PushID(299991);
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.25f, 0.12f, 0.35f, 0.45f));
+                ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.65f, 0.30f, 0.85f, 0.70f));
+
+                ImGui::BeginChild("##group_card_msr", ImVec2(cardW, cardH), true, ImGuiWindowFlags_NoScrollbar);
+                ImGui::PopStyleColor(2);
+
+                // Left Icon Frame
+                ImDrawList* grpDrawList = ImGui::GetWindowDrawList();
+                ImVec2 gMin = ImGui::GetCursorScreenPos();
+                ImVec2 gMax = ImVec2(gMin.x + thumbSz, gMin.y + thumbSz);
+                grpDrawList->AddRectFilled(gMin, gMax, IM_COL32(40, 25, 55, 255), 4.0f * scale);
+                grpDrawList->AddRect(gMin, gMax, IM_COL32(90, 45, 120, 200), 4.0f * scale);
+
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.12f, 0.25f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.90f, 0.55f, 1.0f, 1.0f));
+                ImGui::Button(ICON_LC_RULER, ImVec2(thumbSz, thumbSz));
+                ImGui::PopStyleColor(2);
+
+                ImGui::SameLine();
+                ImGui::BeginGroup();
+
+                // Row 1: Title
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.80f, 1.0f, 1.0f));
+                ImGui::TextUnformatted("Measure Tools");
+                ImGui::PopStyleColor();
+
+                // Row 2: Subtext
+                char grpSub[64];
+                snprintf(grpSub, sizeof(grpSub), "%d measure segments", (int)measureSegs.size());
+                ImGui::TextDisabled("%s", grpSub);
+
+                // Row 3: Buttons
+                float btnSz = 22.0f * scale;
+
+                if (ImGui::Button(msrGroupExpanded ? ICON_LC_CHEVRON_DOWN " Collapse" : ICON_LC_CHEVRON_RIGHT " Expand", ImVec2(btnSz * 3.6f, btnSz))) {
+                    msrGroupExpanded = !msrGroupExpanded;
+                }
+
+                ImGui::SameLine();
+
+                // V1 Toggle
+                ImGui::PushID(101);
+                bool msrV1 = sculpt.getMeasureVisibleV1();
+                if (msrV1) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.90f, 0.60f, 1.0f, 1.0f));
+                else ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.40f, 0.40f, 0.40f, 1.0f));
+                if (ImGui::Button(msrV1 ? ICON_LC_EYE " V1" : ICON_LC_EYE_OFF " V1", ImVec2(btnSz * 1.8f, btnSz))) {
+                    sculpt.setMeasureVisibleV1(!msrV1);
+                    scene.setModified(true);
+                }
+                ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Viewport 1 Visibility");
                 ImGui::PopID();
 
-                ImGui::TableNextColumn();
-                if (ImGui::Selectable("Measure Tool", isMeasureToolActive)) {
-                    sculpt.setTool(BRUSH_MEASURE);
-                }
+                ImGui::SameLine();
 
-                ImGui::TableNextColumn();
-                ImGui::Text("%d segs", (int)sculpt.getMeasureSegments().size());
-
-                ImGui::TableNextColumn();
-                ImGui::PushID(88802);
-                bool mV1 = sculpt.getMeasureVisibleV1();
-                if (ImGui::Checkbox("##MeasureV1", &mV1)) {
-                    sculpt.setMeasureVisibleV1(mV1);
+                // V2 Toggle
+                ImGui::PushID(102);
+                bool msrV2 = sculpt.getMeasureVisibleV2();
+                if (msrV2) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.90f, 0.60f, 1.0f, 1.0f));
+                else ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.40f, 0.40f, 0.40f, 1.0f));
+                if (ImGui::Button(msrV2 ? ICON_LC_EYE " V2" : ICON_LC_EYE_OFF " V2", ImVec2(btnSz * 1.8f, btnSz))) {
+                    sculpt.setMeasureVisibleV2(!msrV2);
+                    scene.setModified(true);
                 }
+                ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Viewport 2 Visibility");
                 ImGui::PopID();
 
-                ImGui::TableNextColumn();
-                ImGui::PushID(88803);
-                bool mV2 = sculpt.getMeasureVisibleV2();
-                if (ImGui::Checkbox("##MeasureV2", &mV2)) {
-                    sculpt.setMeasureVisibleV2(mV2);
+                ImGui::SameLine();
+
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.15f, 0.15f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.65f, 0.20f, 0.20f, 1.0f));
+                if (ImGui::Button(ICON_LC_TRASH_2 " Clear", ImVec2(btnSz * 2.8f, btnSz))) {
+                    measureSegs.clear();
                 }
+                ImGui::PopStyleColor(2);
+
+                ImGui::EndGroup();
+                ImGui::EndChild();
+
+                if (ImGui::IsItemClicked(0) && !ImGui::IsItemEdited()) {
+                    msrGroupExpanded = !msrGroupExpanded;
+                }
+
                 ImGui::PopID();
+                ImGui::Spacing();
+
+                // --- Nested Measure Items ---
+                if (msrGroupExpanded) {
+                    static int renameSegIdx = -1;
+                    static char renameSegBuf[128] = "";
+                    int deleteMeasureIdx = -1;
+
+                    ImGui::Indent(10.0f * scale);
+                    float subCardW = cardW - 10.0f * scale;
+
+
+
+                    for (int i = 0; i < (int)measureSegs.size(); ++i) {
+                        auto& seg = measureSegs[i];
+                        std::string displayName = seg.name.empty() ? ("Measure " + std::to_string(i + 1)) : seg.name;
+
+                        if (!filterStr.empty()) {
+                            std::string lowerName = displayName;
+                            for (auto& c : lowerName) c = (char)tolower(c);
+                            if (lowerName.find(filterStr) == std::string::npos) continue;
+                        }
+
+                        glm::vec3 worldA = SculptManager::getAnchorWorldPos(seg.vertA);
+                        glm::vec3 worldB = SculptManager::getAnchorWorldPos(seg.vertB);
+                        float worldDist = glm::distance(worldA, worldB);
+
+                        bool isToolActive = (sculpt.getBrush() == BRUSH_MEASURE);
+
+                        ImGui::PushID(200000 + i);
+
+                        if (seg.isReference || isToolActive) {
+                            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.30f, 0.15f, 0.45f, 0.35f));
+                            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.70f, 0.35f, 0.90f, 0.85f));
+                        } else {
+                            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.13f, 0.11f, 0.15f, 0.40f));
+                            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.28f, 0.22f, 0.32f, 0.45f));
+                        }
+
+                        ImGui::BeginChild(("##card_msr_" + std::to_string(i)).c_str(), ImVec2(subCardW, cardH), true, ImGuiWindowFlags_NoScrollbar);
+                        ImGui::PopStyleColor(2);
+
+                        // Left Icon Frame
+                        ImDrawList* msrDrawList = ImGui::GetWindowDrawList();
+                        ImVec2 sMin = ImGui::GetCursorScreenPos();
+                        ImVec2 sMax = ImVec2(sMin.x + thumbSz, sMin.y + thumbSz);
+                        msrDrawList->AddRectFilled(sMin, sMax, IM_COL32(30, 33, 36, 255), 4.0f * scale);
+                        msrDrawList->AddRect(sMin, sMax, IM_COL32(50, 55, 60, 200), 4.0f * scale);
+
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.13f, 0.14f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.50f, 0.95f, 1.0f));
+                        ImGui::Button(ICON_LC_RULER, ImVec2(thumbSz, thumbSz));
+                        ImGui::PopStyleColor(2);
+
+                        ImGui::SameLine();
+
+                        float rightAvailW = ImGui::GetContentRegionAvail().x;
+                        ImGui::BeginGroup();
+
+                        // Row 1: Name
+                        if (renameSegIdx == i) {
+                            ImGui::SetNextItemWidth(rightAvailW - 10.0f * scale);
+                            if (ImGui::InputText("##RenameMsr", renameSegBuf, sizeof(renameSegBuf), ImGuiInputTextFlags_EnterReturnsTrue)) {
+                                seg.name = renameSegBuf;
+                                renameSegIdx = -1;
+                            }
+                            if (ImGui::IsItemDeactivated() && !ImGui::IsItemDeactivatedAfterEdit()) {
+                                seg.name = renameSegBuf;
+                                renameSegIdx = -1;
+                            }
+                        } else {
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.7f, 1.0f, 1.0f));
+                            ImGui::TextUnformatted(displayName.c_str());
+                            ImGui::PopStyleColor();
+
+                            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+                                renameSegIdx = i;
+                                strncpy(renameSegBuf, displayName.c_str(), sizeof(renameSegBuf));
+                            }
+                        }
+
+                        // Row 2: Subtext / Value
+                        std::string valStr;
+                        if (seg.isReference) {
+                            valStr = "1.00x Ref Scale Unit";
+                        } else if (referenceLength > 0.0f) {
+                            char buf[64];
+                            snprintf(buf, sizeof(buf), "%.2fx (%.2f units)", worldDist / referenceLength, worldDist);
+                            valStr = buf;
+                        } else {
+                            char buf[64];
+                            snprintf(buf, sizeof(buf), "Dist: %.2f units", worldDist);
+                            valStr = buf;
+                        }
+                        ImGui::TextDisabled("%s", valStr.c_str());
+
+                        // Row 3: Action Buttons
+                        bool isRef = seg.isReference;
+                        if (isRef) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 0.95f, 0.4f, 1.0f));
+                        else ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+                        if (ImGui::Button(isRef ? ICON_LC_CHECK_SQUARE " Ref" : ICON_LC_SQUARE " Ref", ImVec2(btnSz * 2.2f, btnSz))) {
+                            for (auto& s : measureSegs) s.isReference = false;
+                            seg.isReference = !isRef;
+                        }
+                        ImGui::PopStyleColor();
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Set as reference scale unit");
+
+                        ImGui::SameLine();
+
+                        if (ImGui::Button(ICON_LC_RULER " Tool", ImVec2(btnSz * 2.2f, btnSz))) {
+                            sculpt.setTool(BRUSH_MEASURE);
+                        }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Activate Measure Tool");
+
+                        ImGui::SameLine();
+
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.12f, 0.12f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.18f, 0.18f, 1.0f));
+                        if (ImGui::Button(ICON_LC_TRASH_2 "##delMsr", ImVec2(btnSz, btnSz))) {
+                            deleteMeasureIdx = i;
+                        }
+                        ImGui::PopStyleColor(2);
+
+                        ImGui::EndGroup();
+                        ImGui::EndChild();
+
+                        if (ImGui::IsItemClicked(0) && !ImGui::IsItemEdited()) {
+                            sculpt.setTool(BRUSH_MEASURE);
+                        }
+
+                        ImGui::PopID();
+                        ImGui::Spacing();
+                    }
+
+                    if (deleteMeasureIdx >= 0 && deleteMeasureIdx < (int)measureSegs.size()) {
+                        bool wasRef = measureSegs[deleteMeasureIdx].isReference;
+                        measureSegs.erase(measureSegs.begin() + deleteMeasureIdx);
+                        if (wasRef && !measureSegs.empty()) {
+                            measureSegs[0].isReference = true;
+                        }
+                    }
+
+                    ImGui::Unindent(10.0f * scale);
+                }
             }
 
-            // Divider Tool Row in Outliner
-            bool showDividerRow = !sculpt.getDividerSegments().empty() || (sculpt.getBrush() == BRUSH_DIVIDER);
-            if (showDividerRow) {
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::Dummy(ImVec2((float)THUMB_SIZE, 0));
+            // 4. Divider Tools Group Card
+            if ((filterTab == 0 || filterTab == 3) && !dividerSegs.empty()) {
+                static bool dvdGroupExpanded = true;
 
-                ImGui::TableNextColumn();
-                ImGui::PushID(88804);
-                bool isDividerToolActive = (sculpt.getBrush() == BRUSH_DIVIDER);
-                if (ImGui::Checkbox("##ActDividerTool", &isDividerToolActive)) {
-                    if (isDividerToolActive) sculpt.setTool(BRUSH_DIVIDER);
+                // --- Divider Group Header Card ---
+                ImGui::PushID(299992);
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.25f, 0.35f, 0.45f));
+                ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.25f, 0.65f, 0.85f, 0.70f));
+
+                ImGui::BeginChild("##group_card_dvd", ImVec2(cardW, cardH), true, ImGuiWindowFlags_NoScrollbar);
+                ImGui::PopStyleColor(2);
+
+                // Left Icon Frame
+                ImDrawList* grpDrawList = ImGui::GetWindowDrawList();
+                ImVec2 gMin = ImGui::GetCursorScreenPos();
+                ImVec2 gMax = ImVec2(gMin.x + thumbSz, gMin.y + thumbSz);
+                grpDrawList->AddRectFilled(gMin, gMax, IM_COL32(25, 45, 55, 255), 4.0f * scale);
+                grpDrawList->AddRect(gMin, gMax, IM_COL32(45, 90, 110, 200), 4.0f * scale);
+
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.20f, 0.25f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.40f, 0.85f, 1.0f, 1.0f));
+                ImGui::Button(ICON_LC_SCISSORS, ImVec2(thumbSz, thumbSz));
+                ImGui::PopStyleColor(2);
+
+                ImGui::SameLine();
+                ImGui::BeginGroup();
+
+                // Row 1: Title
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.80f, 0.95f, 1.0f, 1.0f));
+                ImGui::TextUnformatted("Divider Tools");
+                ImGui::PopStyleColor();
+
+                // Row 2: Subtext
+                char grpSub[64];
+                snprintf(grpSub, sizeof(grpSub), "%d divider segments (%d div)", (int)dividerSegs.size(), sculpt.getDividerDivisions());
+                ImGui::TextDisabled("%s", grpSub);
+
+                // Row 3: Buttons
+                float btnSz = 22.0f * scale;
+
+                if (ImGui::Button(dvdGroupExpanded ? ICON_LC_CHEVRON_DOWN " Collapse" : ICON_LC_CHEVRON_RIGHT " Expand", ImVec2(btnSz * 3.6f, btnSz))) {
+                    dvdGroupExpanded = !dvdGroupExpanded;
                 }
+
+                ImGui::SameLine();
+
+                // V1 Toggle
+                ImGui::PushID(201);
+                bool dvdV1 = sculpt.getDividerVisibleV1();
+                if (dvdV1) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.40f, 0.85f, 1.0f, 1.0f));
+                else ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.40f, 0.40f, 0.40f, 1.0f));
+                if (ImGui::Button(dvdV1 ? ICON_LC_EYE " V1" : ICON_LC_EYE_OFF " V1", ImVec2(btnSz * 1.8f, btnSz))) {
+                    sculpt.setDividerVisibleV1(!dvdV1);
+                    scene.setModified(true);
+                }
+                ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Viewport 1 Visibility");
                 ImGui::PopID();
 
-                ImGui::TableNextColumn();
-                if (ImGui::Selectable("Divider Tool", isDividerToolActive)) {
-                    sculpt.setTool(BRUSH_DIVIDER);
-                }
+                ImGui::SameLine();
 
-                ImGui::TableNextColumn();
-                ImGui::Text("%d segs", (int)sculpt.getDividerSegments().size());
-
-                ImGui::TableNextColumn();
-                ImGui::PushID(88805);
-                bool dV1 = sculpt.getDividerVisibleV1();
-                if (ImGui::Checkbox("##DividerV1", &dV1)) {
-                    sculpt.setDividerVisibleV1(dV1);
+                // V2 Toggle
+                ImGui::PushID(202);
+                bool dvdV2 = sculpt.getDividerVisibleV2();
+                if (dvdV2) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.40f, 0.85f, 1.0f, 1.0f));
+                else ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.40f, 0.40f, 0.40f, 1.0f));
+                if (ImGui::Button(dvdV2 ? ICON_LC_EYE " V2" : ICON_LC_EYE_OFF " V2", ImVec2(btnSz * 1.8f, btnSz))) {
+                    sculpt.setDividerVisibleV2(!dvdV2);
+                    scene.setModified(true);
                 }
+                ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Viewport 2 Visibility");
                 ImGui::PopID();
 
-                ImGui::TableNextColumn();
-                ImGui::PushID(88806);
-                bool dV2 = sculpt.getDividerVisibleV2();
-                if (ImGui::Checkbox("##DividerV2", &dV2)) {
-                    sculpt.setDividerVisibleV2(dV2);
+                ImGui::SameLine();
+
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.15f, 0.15f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.65f, 0.20f, 0.20f, 1.0f));
+                if (ImGui::Button(ICON_LC_TRASH_2 " Clear", ImVec2(btnSz * 2.8f, btnSz))) {
+                    dividerSegs.clear();
                 }
+                ImGui::PopStyleColor(2);
+
+                ImGui::EndGroup();
+                ImGui::EndChild();
+
+                if (ImGui::IsItemClicked(0) && !ImGui::IsItemEdited()) {
+                    dvdGroupExpanded = !dvdGroupExpanded;
+                }
+
                 ImGui::PopID();
+                ImGui::Spacing();
+
+                // --- Nested Divider Items ---
+                if (dvdGroupExpanded) {
+                    static int renameSegIdx = -1;
+                    static char renameSegBuf[128] = "";
+                    int deleteDividerIdx = -1;
+
+                    ImGui::Indent(10.0f * scale);
+                    float subCardW = cardW - 10.0f * scale;
+
+
+
+                    for (int j = 0; j < (int)dividerSegs.size(); ++j) {
+                        auto& seg = dividerSegs[j];
+                        std::string displayName = seg.name.empty() ? ("Divider " + std::to_string(j + 1)) : seg.name;
+
+                        if (!filterStr.empty()) {
+                            std::string lowerName = displayName;
+                            for (auto& c : lowerName) c = (char)tolower(c);
+                            if (lowerName.find(filterStr) == std::string::npos) continue;
+                        }
+
+                        glm::vec3 worldA = SculptManager::getAnchorWorldPos(seg.vertA);
+                        glm::vec3 worldB = SculptManager::getAnchorWorldPos(seg.vertB);
+                        float worldDist = glm::distance(worldA, worldB);
+
+                        bool isToolActive = (sculpt.getBrush() == BRUSH_DIVIDER);
+
+                        ImGui::PushID(300000 + j);
+
+                        if (isToolActive) {
+                            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.35f, 0.45f, 0.35f));
+                            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.30f, 0.75f, 0.90f, 0.85f));
+                        } else {
+                            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.11f, 0.13f, 0.15f, 0.40f));
+                            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.22f, 0.28f, 0.32f, 0.45f));
+                        }
+
+                        ImGui::BeginChild(("##card_dvd_" + std::to_string(j)).c_str(), ImVec2(subCardW, cardH), true, ImGuiWindowFlags_NoScrollbar);
+                        ImGui::PopStyleColor(2);
+
+                        // Left Icon Frame
+                        ImDrawList* dvdDrawList = ImGui::GetWindowDrawList();
+                        ImVec2 dMin = ImGui::GetCursorScreenPos();
+                        ImVec2 dMax = ImVec2(dMin.x + thumbSz, dMin.y + thumbSz);
+                        dvdDrawList->AddRectFilled(dMin, dMax, IM_COL32(30, 33, 36, 255), 4.0f * scale);
+                        dvdDrawList->AddRect(dMin, dMax, IM_COL32(50, 55, 60, 200), 4.0f * scale);
+
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.13f, 0.14f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.40f, 0.85f, 1.0f, 1.0f));
+                        ImGui::Button(ICON_LC_SCISSORS, ImVec2(thumbSz, thumbSz));
+                        ImGui::PopStyleColor(2);
+
+                        ImGui::SameLine();
+
+                        float rightAvailW = ImGui::GetContentRegionAvail().x;
+                        ImGui::BeginGroup();
+
+                        // Row 1: Name
+                        if (renameSegIdx == j) {
+                            ImGui::SetNextItemWidth(rightAvailW - 10.0f * scale);
+                            if (ImGui::InputText("##RenameDvd", renameSegBuf, sizeof(renameSegBuf), ImGuiInputTextFlags_EnterReturnsTrue)) {
+                                seg.name = renameSegBuf;
+                                renameSegIdx = -1;
+                            }
+                            if (ImGui::IsItemDeactivated() && !ImGui::IsItemDeactivatedAfterEdit()) {
+                                seg.name = renameSegBuf;
+                                renameSegIdx = -1;
+                            }
+                        } else {
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.70f, 0.90f, 1.0f, 1.0f));
+                            ImGui::TextUnformatted(displayName.c_str());
+                            ImGui::PopStyleColor();
+
+                            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+                                renameSegIdx = j;
+                                strncpy(renameSegBuf, displayName.c_str(), sizeof(renameSegBuf));
+                            }
+                        }
+
+                        // Row 2: Subtext / Value
+                        char dvdBuf[64];
+                        snprintf(dvdBuf, sizeof(dvdBuf), "Dist: %.2f (%d div)", worldDist, seg.divisions);
+                        ImGui::TextDisabled("%s", dvdBuf);
+
+                        // Row 3: Action Buttons
+                        ImGui::SetNextItemWidth(btnSz * 3.6f);
+                        if (ImGui::SliderInt("##card_divs", &seg.divisions, 2, 6)) {
+                        }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Divisions for this divider");
+
+                        ImGui::SameLine();
+
+                        if (ImGui::Button(ICON_LC_SCISSORS " Tool", ImVec2(btnSz * 2.2f, btnSz))) {
+                            sculpt.setTool(BRUSH_DIVIDER);
+                        }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Activate Divider Tool");
+
+                        ImGui::SameLine();
+
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.12f, 0.12f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.18f, 0.18f, 1.0f));
+                        if (ImGui::Button(ICON_LC_TRASH_2 "##delDvd", ImVec2(btnSz, btnSz))) {
+                            deleteDividerIdx = j;
+                        }
+                        ImGui::PopStyleColor(2);
+
+                        ImGui::EndGroup();
+                        ImGui::EndChild();
+
+                        if (ImGui::IsItemClicked(0) && !ImGui::IsItemEdited()) {
+                            sculpt.setTool(BRUSH_DIVIDER);
+                        }
+
+                        ImGui::PopID();
+                        ImGui::Spacing();
+                    }
+
+                    if (deleteDividerIdx >= 0 && deleteDividerIdx < (int)dividerSegs.size()) {
+                        dividerSegs.erase(dividerSegs.begin() + deleteDividerIdx);
+                    }
+
+                    ImGui::Unindent(10.0f * scale);
+                }
             }
 
-            ImGui::EndTable();
-        }
-        ImGui::EndChild();
+            ImGui::EndChild(); // MeshListCards;
 
         // Selection Actions
         bool canMerge = scene.getSelectedMeshes().size() >= 2;
@@ -2297,225 +2828,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             sculpt.clearMeasurements();
         }
 
-        // Measurement & Divider Tools Section
-        ImGui::Separator();
-        ImGui::TextDisabled("MEASURE & DIVIDER TOOLS");
-        
-        bool isMeasureActive = (sculpt.getBrush() == BRUSH_MEASURE);
-        bool isDividerActive = (sculpt.getBrush() == BRUSH_DIVIDER);
 
-        ImVec4 tealActive = ImVec4(0.01f, 0.52f, 0.45f, 1.00f);
-
-        if (isMeasureActive) ImGui::PushStyleColor(ImGuiCol_Button, tealActive);
-        if (ImGui::Button("Measure Tool", ImVec2(100, 0))) {
-            sculpt.setTool(BRUSH_MEASURE);
-        }
-        if (isMeasureActive) ImGui::PopStyleColor();
-
-        ImGui::SameLine();
-
-        if (isDividerActive) ImGui::PushStyleColor(ImGuiCol_Button, tealActive);
-        if (ImGui::Button("Divider Tool", ImVec2(100, 0))) {
-            sculpt.setTool(BRUSH_DIVIDER);
-        }
-        if (isDividerActive) ImGui::PopStyleColor();
-
-        ImGui::SameLine();
-        if (ImGui::Button("Clear Tools", ImVec2(-1, 0))) {
-            sculpt.clearMeasurements();
-        }
-
-        bool isArmatureActive = (sculpt.getBrush() == BRUSH_ARMATURE_SPHERES);
-        if (isArmatureActive) ImGui::PushStyleColor(ImGuiCol_Button, tealActive);
-        if (ImGui::Button("Armature Spheres", ImVec2(-1, 0))) {
-            sculpt.setTool(BRUSH_ARMATURE_SPHERES);
-        }
-        if (isArmatureActive) ImGui::PopStyleColor();
-
-        if (isMeasureActive) {
-            bool useDist = sculpt.getMeasureUseDistanceThickness();
-            if (ImGui::Checkbox("Use Distance Thickness", &useDist)) {
-                sculpt.setMeasureUseDistanceThickness(useDist);
-            }
-        } else if (isDividerActive) {
-            int divs = sculpt.getDividerDivisions();
-            if (ImGui::SliderInt("Divisions", &divs, 2, 6)) {
-                sculpt.setDividerDivisions(divs);
-            }
-        }
-
-        // Created Measure & Divider Items Outliner
-        sculpt.validateSegments(scene);
-        auto& measureSegs = sculpt.getMeasureSegments();
-        auto& dividerSegs = sculpt.getDividerSegments();
-        int totalToolItems = (int)measureSegs.size() + (int)dividerSegs.size();
-
-        if (totalToolItems > 0) {
-            ImGui::Separator();
-            ImGui::Text("Created Tool Items (%d):", totalToolItems);
-
-            float referenceLength = 0.0f;
-            for (const auto& seg : measureSegs) {
-                if (seg.isReference) {
-                    glm::vec3 worldA = SculptManager::getAnchorWorldPos(seg.vertA);
-                    glm::vec3 worldB = SculptManager::getAnchorWorldPos(seg.vertB);
-                    referenceLength = glm::distance(worldA, worldB);
-                    break;
-                }
-            }
-
-            static int renameSegType = 0; // 1 = Measure, 2 = Divider
-            static int renameSegIdx = -1;
-            static char renameSegBuf[128] = "";
-
-            float availY = ImGui::GetContentRegionAvail().y;
-            float desiredHeight = (float)(totalToolItems * 28 + 35);
-            float listHeight = std::max(60.0f, std::min(desiredHeight, std::max(160.0f, availY - 10.0f)));
-
-            ImGui::BeginChild("ToolOutlinerList", ImVec2(0, listHeight), true);
-            if (ImGui::BeginTable("ToolOutlinerTable", 4, ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV)) {
-                ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed, 80.0f);
-                ImGui::TableSetupColumn("Ref", ImGuiTableColumnFlags_WidthFixed, 40.0f);
-                ImGui::TableSetupColumn("##DelCol", ImGuiTableColumnFlags_WidthFixed, 25.0f);
-                ImGui::TableHeadersRow();
-
-                int deleteMeasureIdx = -1;
-                int deleteDividerIdx = -1;
-
-                // Measure Segments
-                for (int i = 0; i < (int)measureSegs.size(); ++i) {
-                    auto& seg = measureSegs[i];
-                    ImGui::TableNextRow();
-                    ImGui::PushID(1000 + i);
-
-                    glm::vec3 worldA = SculptManager::getAnchorWorldPos(seg.vertA);
-                    glm::vec3 worldB = SculptManager::getAnchorWorldPos(seg.vertB);
-                    float worldDist = glm::distance(worldA, worldB);
-
-                    // Column 1: Name
-                    ImGui::TableNextColumn();
-                    std::string displayName = seg.name.empty() ? ("Measure " + std::to_string(i + 1)) : seg.name;
-                    if (renameSegType == 1 && renameSegIdx == i) {
-                        ImGui::SetNextItemWidth(-FLT_MIN);
-                        if (ImGui::InputText("##RenameMeasure", renameSegBuf, sizeof(renameSegBuf), ImGuiInputTextFlags_EnterReturnsTrue)) {
-                            seg.name = renameSegBuf;
-                            renameSegIdx = -1;
-                        }
-                        if (ImGui::IsItemDeactivated() && !ImGui::IsItemDeactivatedAfterEdit()) {
-                            seg.name = renameSegBuf;
-                            renameSegIdx = -1;
-                        }
-                    } else {
-                        if (ImGui::Selectable(displayName.c_str(), false)) {
-                            sculpt.setTool(BRUSH_MEASURE);
-                        }
-                        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
-                            renameSegType = 1;
-                            renameSegIdx = i;
-                            strncpy(renameSegBuf, displayName.c_str(), sizeof(renameSegBuf));
-                        }
-                    }
-
-                    // Column 2: Value / Ratio
-                    ImGui::TableNextColumn();
-                    if (seg.isReference) {
-                        ImGui::TextColored(ImVec4(0.2f, 0.9f, 0.4f, 1.0f), "1.00x");
-                    } else if (referenceLength > 0.0f) {
-                        ImGui::Text("%.2fx", worldDist / referenceLength);
-                    } else {
-                        ImGui::Text("%.2f", worldDist);
-                    }
-
-                    // Column 3: Ref Checkbox
-                    ImGui::TableNextColumn();
-                    bool isRef = seg.isReference;
-                    if (ImGui::Checkbox("##RefCheck", &isRef)) {
-                        if (isRef) {
-                            for (auto& s : measureSegs) s.isReference = false;
-                            seg.isReference = true;
-                        }
-                    }
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("Set as reference scale unit");
-                    }
-
-                    // Column 4: Delete Button
-                    ImGui::TableNextColumn();
-                    if (ImGui::Button("X##DelM", ImVec2(20, 0))) {
-                        deleteMeasureIdx = i;
-                    }
-
-                    ImGui::PopID();
-                }
-
-                // Divider Segments
-                for (int j = 0; j < (int)dividerSegs.size(); ++j) {
-                    auto& seg = dividerSegs[j];
-                    ImGui::TableNextRow();
-                    ImGui::PushID(2000 + j);
-
-                    glm::vec3 worldA = SculptManager::getAnchorWorldPos(seg.vertA);
-                    glm::vec3 worldB = SculptManager::getAnchorWorldPos(seg.vertB);
-                    float worldDist = glm::distance(worldA, worldB);
-
-                    // Column 1: Name
-                    ImGui::TableNextColumn();
-                    std::string displayName = seg.name.empty() ? ("Divider " + std::to_string(j + 1)) : seg.name;
-                    if (renameSegType == 2 && renameSegIdx == j) {
-                        ImGui::SetNextItemWidth(-FLT_MIN);
-                        if (ImGui::InputText("##RenameDivider", renameSegBuf, sizeof(renameSegBuf), ImGuiInputTextFlags_EnterReturnsTrue)) {
-                            seg.name = renameSegBuf;
-                            renameSegIdx = -1;
-                        }
-                        if (ImGui::IsItemDeactivated() && !ImGui::IsItemDeactivatedAfterEdit()) {
-                            seg.name = renameSegBuf;
-                            renameSegIdx = -1;
-                        }
-                    } else {
-                        if (ImGui::Selectable(displayName.c_str(), false)) {
-                            sculpt.setTool(BRUSH_DIVIDER);
-                        }
-                        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
-                            renameSegType = 2;
-                            renameSegIdx = j;
-                            strncpy(renameSegBuf, displayName.c_str(), sizeof(renameSegBuf));
-                        }
-                    }
-
-                    // Column 2: Value / Divisions
-                    ImGui::TableNextColumn();
-                    ImGui::Text("%.2f (%dd)", worldDist, sculpt.getDividerDivisions());
-
-                    // Column 3: Ref Checkbox (N/A)
-                    ImGui::TableNextColumn();
-                    ImGui::TextDisabled("-");
-
-                    // Column 4: Delete Button
-                    ImGui::TableNextColumn();
-                    if (ImGui::Button("X##DelD", ImVec2(20, 0))) {
-                        deleteDividerIdx = j;
-                    }
-
-                    ImGui::PopID();
-                }
-
-                ImGui::EndTable();
-
-                if (deleteMeasureIdx >= 0 && deleteMeasureIdx < (int)measureSegs.size()) {
-                    bool wasRef = measureSegs[deleteMeasureIdx].isReference;
-                    measureSegs.erase(measureSegs.begin() + deleteMeasureIdx);
-                    if (wasRef && !measureSegs.empty()) {
-                        measureSegs[0].isReference = true;
-                    }
-                }
-
-                if (deleteDividerIdx >= 0 && deleteDividerIdx < (int)dividerSegs.size()) {
-                    dividerSegs.erase(dividerSegs.begin() + deleteDividerIdx);
-                }
-            }
-            ImGui::EndChild();
-        }
 
         // Reference Images Section in Scene Outliner
         ImGui::Separator();
@@ -3535,9 +3848,10 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
                 // 2. Division marks or ticks
                 if (isDivider) {
-                    if (divisions >= 2 && divisions <= 6) {
-                        for (int k = 1; k < divisions; ++k) {
-                            float t = (float)k / (float)divisions;
+                    int divs = (seg.divisions >= 2) ? seg.divisions : divisions;
+                    if (divs >= 2 && divs <= 6) {
+                        for (int k = 1; k < divs; ++k) {
+                            float t = (float)k / (float)divs;
                             glm::vec3 divWorld = glm::mix(worldA, worldB, t);
                             glm::vec3 divScreen = camera.project(divWorld);
                             ImVec2 divPos(divScreen.x + xOffset, divScreen.y);
@@ -8344,17 +8658,25 @@ void GuiManager::drawCameraBookmarksPanel(Scene& scene, AngleRenderer& renderer)
         ImGui::PushID(i);
 
         if (isActive) {
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.01f, 0.52f, 0.45f, 0.25f));
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.01f, 0.52f, 0.45f, 0.35f));
+            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.01f, 0.75f, 0.65f, 0.85f));
         } else {
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.13f, 0.14f, 0.95f));
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.11f, 0.13f, 0.40f));
+            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.25f, 0.28f, 0.32f, 0.45f));
         }
 
         ImGui::BeginChild(("##bm_" + std::to_string(i)).c_str(),
                           ImVec2(cardW, previewSz + 12 * scale), true,
                           ImGuiWindowFlags_NoScrollbar);
-        ImGui::PopStyleColor();
+        ImGui::PopStyleColor(2);
 
-        // Left preview image
+        // Left preview image (Dark Framed Background matching Outliner)
+        ImDrawList* bmDrawList = ImGui::GetWindowDrawList();
+        ImVec2 bMin = ImGui::GetCursorScreenPos();
+        ImVec2 bMax = ImVec2(bMin.x + previewSz, bMin.y + previewSz);
+        bmDrawList->AddRectFilled(bMin, bMax, IM_COL32(30, 33, 36, 255), 4.0f * scale);
+        bmDrawList->AddRect(bMin, bMax, IM_COL32(50, 55, 60, 200), 4.0f * scale);
+
         GLuint previewTex = (i < (int)m_bookmarkPreviews.size())
                             ? m_bookmarkPreviews[i].texture : 0;
         if (previewTex != 0) {
@@ -8362,7 +8684,9 @@ void GuiManager::drawCameraBookmarksPanel(Scene& scene, AngleRenderer& renderer)
                          ImVec2(previewSz, previewSz),
                          ImVec2(0, 1), ImVec2(1, 0));
         } else {
-            ImGui::Dummy(ImVec2(previewSz, previewSz));
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.13f, 0.14f, 1.0f));
+            ImGui::Button(ICON_LC_CAMERA, ImVec2(previewSz, previewSz));
+            ImGui::PopStyleColor();
         }
 
         ImGui::SameLine();
