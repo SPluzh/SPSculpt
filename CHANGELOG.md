@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.3]
+- **Reference Images**: Added file browser dialog, path editing, and image reloading.
+- **Reference Images**: Fixed aspect ratio in 2D/3D modes and thumbnail preview orientation.
+
 ## [0.1.2]
 - **Wireframe**: Added high-quality anti-aliased wireframe rendering on objects.
 - **Floor Grid**: Added anti-aliased procedural floor grid with clear X/Z color axes.

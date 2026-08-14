@@ -2790,9 +2790,16 @@ void AngleRenderer::drawReferenceImages(const Scene& scene, const Camera& camera
     GLint locScale = glGetUniformLocation(m_refImageProgram, "uScale");
     GLint locOpacity = glGetUniformLocation(m_refImageProgram, "uOpacity");
     GLint locTexture = glGetUniformLocation(m_refImageProgram, "uTexture");
+    GLint locAspectScale = glGetUniformLocation(m_refImageProgram, "uAspectScale");
 
     glActiveTexture(GL_TEXTURE0);
     glUniform1i(locTexture, 0);
+
+    GLint vp[4];
+    glGetIntegerv(GL_VIEWPORT, vp);
+    float vpWidth = (float)vp[2];
+    float vpHeight = (float)vp[3];
+    float screenAspect = (vpHeight > 0.0f) ? (vpWidth / vpHeight) : 1.0f;
 
     for (const auto& img : images) {
         if (!img.visible || img.texId == 0) continue;
@@ -2800,21 +2807,33 @@ void AngleRenderer::drawReferenceImages(const Scene& scene, const Camera& camera
         glBindTexture(GL_TEXTURE_2D, img.texId);
         glUniform1f(locOpacity, img.opacity);
 
+        float imgAspect = (img.width > 0 && img.height > 0) ? ((float)img.width / (float)img.height) : 1.0f;
+
         if (img.pinned2D) {
             glDisable(GL_DEPTH_TEST);
             glUniform1i(locPinned2D, 1);
             glUniform2f(locOffset, img.offsetX, img.offsetY);
             glUniform1f(locScale, img.scale);
+
+            float aspectScaleX = imgAspect / screenAspect;
+            float aspectScaleY = 1.0f;
+            if (locAspectScale != -1) {
+                glUniform2f(locAspectScale, aspectScaleX, aspectScaleY);
+            }
         } else {
             glEnable(GL_DEPTH_TEST);
             glUniform1i(locPinned2D, 0);
             
             glm::mat4 model = glm::mat4(1.0f);
             model = glm::translate(model, glm::vec3(img.offsetX, img.offsetY, 0.0f));
-            model = glm::scale(model, glm::vec3(img.scale, img.scale, 1.0f));
+            model = glm::scale(model, glm::vec3(img.scale * imgAspect, img.scale, 1.0f));
             
             glm::mat4 mvp = camera.getProjMatrix() * camera.getViewMatrix() * model;
             glUniformMatrix4fv(locMVP, 1, GL_FALSE, glm::value_ptr(mvp));
+
+            if (locAspectScale != -1) {
+                glUniform2f(locAspectScale, 1.0f, 1.0f);
+            }
         }
 
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);

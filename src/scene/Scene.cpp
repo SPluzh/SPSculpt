@@ -66,11 +66,14 @@ void Scene::clear() {
 }
 
 void Scene::addReferenceImage(const std::string& path) {
-    GLuint texId = loadTextureFromFile(path);
+    int w = 0, h = 0;
+    GLuint texId = loadTextureFromFile(path, &w, &h);
     if (texId != 0) {
         ReferenceImage img;
         img.path = path;
         img.texId = texId;
+        img.width = w;
+        img.height = h;
         img.opacity = 0.5f;
         img.scale = 1.0f;
         img.offsetX = 0.0f;
@@ -79,6 +82,28 @@ void Scene::addReferenceImage(const std::string& path) {
         img.pinned2D = true;
         m_refImages.push_back(img);
     }
+}
+
+bool Scene::updateReferenceImagePath(size_t index, const std::string& newPath) {
+    if (index >= m_refImages.size()) return false;
+    int w = 0, h = 0;
+    GLuint newTexId = loadTextureFromFile(newPath, &w, &h);
+    if (newTexId != 0) {
+        if (m_refImages[index].texId != 0) {
+            glDeleteTextures(1, &m_refImages[index].texId);
+        }
+        m_refImages[index].texId = newTexId;
+        m_refImages[index].path = newPath;
+        m_refImages[index].width = w;
+        m_refImages[index].height = h;
+        return true;
+    }
+    return false;
+}
+
+bool Scene::reloadReferenceImage(size_t index) {
+    if (index >= m_refImages.size()) return false;
+    return updateReferenceImagePath(index, m_refImages[index].path);
 }
 
 void Scene::removeReferenceImage(size_t index) {

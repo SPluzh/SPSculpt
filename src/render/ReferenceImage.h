@@ -5,6 +5,8 @@
 struct ReferenceImage {
     std::string path;
     GLuint texId = 0;
+    int    width = 0;
+    int    height = 0;
     float  opacity = 0.5f;
     float  scale   = 1.0f;
     float  offsetX = 0.0f;
@@ -13,4 +15,4 @@ struct ReferenceImage {
     bool   pinned2D = true; // true=overlay, false=3D plane
 };
 
-GLuint loadTextureFromFile(const std::string& path);
+GLuint loadTextureFromFile(const std::string& path, int* outWidth = nullptr, int* outHeight = nullptr);

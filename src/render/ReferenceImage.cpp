@@ -3,15 +3,20 @@
 #include "render/ReferenceImage.h"
 #include <iostream>
 
-GLuint loadTextureFromFile(const std::string& path) {
+GLuint loadTextureFromFile(const std::string& path, int* outWidth, int* outHeight) {
     int width = 0, height = 0, channels = 0;
     stbi_set_flip_vertically_on_load(true);
     unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, 4);
     if (!data) {
         std::cerr << "Failed to load reference image: " << path 
                   << " | Reason: " << stbi_failure_reason() << std::endl;
+        if (outWidth) *outWidth = 0;
+        if (outHeight) *outHeight = 0;
         return 0;
     }
+
+    if (outWidth) *outWidth = width;
+    if (outHeight) *outHeight = height;
 
     GLuint textureId = 0;
     glGenTextures(1, &textureId);

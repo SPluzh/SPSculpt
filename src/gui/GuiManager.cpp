@@ -2335,12 +2335,37 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     // 7. Reference Images Panel
     if (m_showReferenceImagesPanel) {
         ImGui::SetNextWindowPos({500.0f * scale, 40.0f * scale}, ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize({300.0f * scale, 250.0f * scale}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize({340.0f * scale, 320.0f * scale}, ImGuiCond_FirstUseEver);
         ImGui::Begin("Reference Images", &m_showReferenceImagesPanel);
 
-        ImGui::InputText("Image Path", m_refImagePath, sizeof(m_refImagePath));
+        static const std::vector<FileDialog::FilterSpec> imageFilters = {
+            { "Image Files (*.png, *.jpg, *.jpeg, *.bmp, *.tga)", "*.png;*.jpg;*.jpeg;*.bmp;*.tga" },
+            { "PNG (*.png)", "*.png" },
+            { "JPEG (*.jpg, *.jpeg)", "*.jpg;*.jpeg" },
+            { "BMP (*.bmp)", "*.bmp" },
+            { "TGA (*.tga)", "*.tga" },
+            { "All Files (*.*)", "*.*" }
+        };
+
+        ImGui::Text("Add Image Path:");
+        
+        float btnWidth = 75.0f * scale;
+        ImGui::SetNextItemWidth(std::max(100.0f * scale, ImGui::GetContentRegionAvail().x - btnWidth - 8.0f * scale));
+        ImGui::InputText("##NewRefImagePath", m_refImagePath, sizeof(m_refImagePath));
+        ImGui::SameLine();
+        if (ImGui::Button("Browse...##NewRef", ImVec2(btnWidth, 0))) {
+            std::string picked = FileDialog::openFile(imageFilters, "Select Reference Image");
+            if (!picked.empty()) {
+                strncpy(m_refImagePath, picked.c_str(), sizeof(m_refImagePath) - 1);
+                m_refImagePath[sizeof(m_refImagePath) - 1] = '\0';
+                scene.addReferenceImage(m_refImagePath);
+            }
+        }
+
         if (ImGui::Button("Load Reference Image", ImVec2(-1, 0))) {
-            scene.addReferenceImage(m_refImagePath);
+            if (m_refImagePath[0] != '\0') {
+                scene.addReferenceImage(m_refImagePath);
+            }
         }
 
         ImGui::Separator();
@@ -2364,7 +2389,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
         auto& images = scene.getReferenceImages();
         if (images.empty()) {
-            ImGui::Text("No reference images loaded.");
+            ImGui::TextDisabled("No reference images loaded.");
         } else {
             for (size_t i = 0; i < images.size(); ++i) {
                 auto& img = images[i];
@@ -2375,10 +2400,52 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 if (lastSlash != std::string::npos) {
                     displayName = displayName.substr(lastSlash + 1);
                 }
+                if (img.width > 0 && img.height > 0) {
+                    displayName += " (" + std::to_string(img.width) + "x" + std::to_string(img.height) + ")";
+                }
 
                 if (ImGui::TreeNode(displayName.c_str())) {
+                    if (img.texId != 0) {
+                        float thumbW = 48.0f * scale;
+                        float thumbH = 48.0f * scale;
+                        if (img.width > 0 && img.height > 0) {
+                            float aspect = (float)img.width / (float)img.height;
+                            if (aspect >= 1.0f) {
+                                thumbH = thumbW / aspect;
+                            } else {
+                                thumbW = thumbH * aspect;
+                            }
+                        }
+                        ImGui::Image((ImTextureID)(uintptr_t)img.texId, ImVec2(thumbW, thumbH), ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
+                        ImGui::SameLine();
+                    }
+
+                    ImGui::BeginGroup();
                     ImGui::Checkbox("Visible", &img.visible);
                     ImGui::Checkbox("Pinned 2D Overlay", &img.pinned2D);
+                    ImGui::EndGroup();
+
+                    ImGui::Text("Path:");
+                    char itemBuf[512];
+                    strncpy(itemBuf, img.path.c_str(), sizeof(itemBuf) - 1);
+                    itemBuf[sizeof(itemBuf) - 1] = '\0';
+
+                    ImGui::SetNextItemWidth(std::max(100.0f * scale, ImGui::GetContentRegionAvail().x - btnWidth - 8.0f * scale));
+                    if (ImGui::InputText("##EditPath", itemBuf, sizeof(itemBuf), ImGuiInputTextFlags_EnterReturnsTrue)) {
+                        scene.updateReferenceImagePath(i, itemBuf);
+                    }
+                    if (ImGui::IsItemDeactivatedAfterEdit()) {
+                        scene.updateReferenceImagePath(i, itemBuf);
+                    }
+
+                    ImGui::SameLine();
+                    if (ImGui::Button("Browse...##Edit", ImVec2(btnWidth, 0))) {
+                        std::string picked = FileDialog::openFile(imageFilters, "Change Reference Image");
+                        if (!picked.empty()) {
+                            scene.updateReferenceImagePath(i, picked);
+                        }
+                    }
+
                     ImGui::SliderFloat("Opacity", &img.opacity, 0.0f, 1.0f, "%.2f");
                     ImGui::SliderFloat("Scale", &img.scale, 0.1f, 10.0f, "%.2f");
                     
@@ -2390,6 +2457,10 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         ImGui::SliderFloat("Position Y", &img.offsetY, -200.0f, 200.0f, "%.1f");
                     }
 
+                    if (ImGui::Button("Reload", ImVec2(90.0f * scale, 0))) {
+                        scene.reloadReferenceImage(i);
+                    }
+                    ImGui::SameLine();
                     if (ImGui::Button("Remove", ImVec2(-1, 0))) {
                         scene.removeReferenceImage(i);
                         ImGui::TreePop();

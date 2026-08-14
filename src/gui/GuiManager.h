@@ -111,7 +111,7 @@ private:
     std::string m_currentScenePath = "";
     char m_importPath[256] = "model.obj";
     char m_exportPath[256] = "output.obj";
-    char m_refImagePath[256] = "";
+    char m_refImagePath[512] = "";
 
     RemeshProgress m_remeshAsync;
     HistoryState m_remeshBeforeState;

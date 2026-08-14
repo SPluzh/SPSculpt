@@ -119,6 +119,8 @@ public:
     std::vector<ReferenceImage>& getReferenceImages() { return m_refImages; }
     const std::vector<ReferenceImage>& getReferenceImages() const { return m_refImages; }
     void addReferenceImage(const std::string& path);
+    bool updateReferenceImagePath(size_t index, const std::string& newPath);
+    bool reloadReferenceImage(size_t index);
     void removeReferenceImage(size_t index);
 
     // Light Sources
