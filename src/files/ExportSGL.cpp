@@ -89,8 +89,8 @@ public:
 std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& scene, const AngleRenderer& renderer, const SculptManager& sculpt) {
     BinaryWriter writer;
     
-    // Version 12
-    writer.writeU32(12);
+    // Version 13
+    writer.writeU32(13);
 
     // Misc settings
     writer.writeU32(renderer.getShowGrid() ? 1 : 0);
@@ -220,6 +220,37 @@ std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& sc
             if (nbDelta > 0) {
                 writer.writeF32Array(layer.deltaVerts.data(), nbDelta);
             }
+        }
+
+        // Topology (Version >= 13)
+        uint32_t nVrfStartCount = static_cast<uint32_t>(mesh->vrfStartCount.size());
+        writer.writeU32(nVrfStartCount);
+        if (nVrfStartCount > 0) {
+            writer.writeU32Array(mesh->vrfStartCount.data(), nVrfStartCount);
+        }
+
+        uint32_t nVertRingFace = static_cast<uint32_t>(mesh->vertRingFace.size());
+        writer.writeU32(nVertRingFace);
+        if (nVertRingFace > 0) {
+            writer.writeU32Array(mesh->vertRingFace.data(), nVertRingFace);
+        }
+
+        uint32_t nVrvStartCount = static_cast<uint32_t>(mesh->vrvStartCount.size());
+        writer.writeU32(nVrvStartCount);
+        if (nVrvStartCount > 0) {
+            writer.writeU32Array(mesh->vrvStartCount.data(), nVrvStartCount);
+        }
+
+        uint32_t nVertRingVert = static_cast<uint32_t>(mesh->vertRingVert.size());
+        writer.writeU32(nVertRingVert);
+        if (nVertRingVert > 0) {
+            writer.writeU32Array(mesh->vertRingVert.data(), nVertRingVert);
+        }
+
+        uint32_t nVertOnEdge = static_cast<uint32_t>(mesh->vertOnEdge.size());
+        writer.writeU32(nVertOnEdge);
+        if (nVertOnEdge > 0) {
+            writer.writeBytes(mesh->vertOnEdge.data(), nVertOnEdge);
         }
     }
 

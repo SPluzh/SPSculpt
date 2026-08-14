@@ -133,6 +133,7 @@ GLuint AngleRenderer::compileShader(GLenum type, const std::string& source) {
 
 GLuint AngleRenderer::linkProgram(GLuint vs, GLuint fs) {
     GLuint program = glCreateProgram();
+    glProgramParameteri(program, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE);
     glAttachShader(program, vs);
     glAttachShader(program, fs);
     glLinkProgram(program);
@@ -191,6 +192,14 @@ std::string AngleRenderer::loadShaderSource(const std::string& filename) {
     return source;
 }
 
+static std::string getShaderCachePath(const std::string& vertFile, const std::string& fragFile, const std::string& vertSrc, const std::string& fragSrc) {
+    std::size_t h1 = std::hash<std::string>{}(vertSrc);
+    std::size_t h2 = std::hash<std::string>{}(fragSrc);
+    std::size_t combined = h1 ^ (h2 + 0x9e3779b9 + (h1 << 6) + (h1 >> 2));
+    char hashBuf[32];
+    std::snprintf(hashBuf, sizeof(hashBuf), "%zx", combined);
+    return "resources/shader_cache/" + vertFile + "_" + fragFile + "_" + std::string(hashBuf) + ".bin";
+}
 
 GLuint AngleRenderer::loadAndCompileProgram(const std::string& vertFile, const std::string& fragFile) {
     std::string vertSrc = loadShaderSource(vertFile);
@@ -199,6 +208,31 @@ GLuint AngleRenderer::loadAndCompileProgram(const std::string& vertFile, const s
         std::cerr << "Failed to read shader source: " << vertFile << " or " << fragFile << std::endl;
         return 0;
     }
+
+    std::string cachePath = getShaderCachePath(vertFile, fragFile, vertSrc, fragSrc);
+    if (std::filesystem::exists(cachePath)) {
+        std::ifstream inFile(cachePath, std::ios::binary);
+        if (inFile.is_open()) {
+            GLenum binaryFormat = 0;
+            GLsizei binaryLength = 0;
+            inFile.read(reinterpret_cast<char*>(&binaryFormat), sizeof(binaryFormat));
+            inFile.read(reinterpret_cast<char*>(&binaryLength), sizeof(binaryLength));
+            if (binaryLength > 0 && binaryLength < 10 * 1024 * 1024) {
+                std::vector<uint8_t> binaryData(binaryLength);
+                inFile.read(reinterpret_cast<char*>(binaryData.data()), binaryLength);
+                
+                GLuint prog = glCreateProgram();
+                glProgramBinary(prog, binaryFormat, binaryData.data(), binaryLength);
+                GLint linked = GL_FALSE;
+                glGetProgramiv(prog, GL_LINK_STATUS, &linked);
+                if (linked == GL_TRUE) {
+                    return prog;
+                }
+                glDeleteProgram(prog);
+            }
+        }
+    }
+
     GLuint vs = compileShader(GL_VERTEX_SHADER, vertSrc);
     GLuint fs = compileShader(GL_FRAGMENT_SHADER, fragSrc);
     if (!vs || !fs) {
@@ -209,6 +243,31 @@ GLuint AngleRenderer::loadAndCompileProgram(const std::string& vertFile, const s
     GLuint prog = linkProgram(vs, fs);
     glDeleteShader(vs);
     glDeleteShader(fs);
+
+    if (prog) {
+        GLint numFormats = 0;
+        glGetIntegerv(GL_NUM_PROGRAM_BINARY_FORMATS, &numFormats);
+        if (numFormats > 0) {
+            GLint binaryLength = 0;
+            glGetProgramiv(prog, GL_PROGRAM_BINARY_LENGTH, &binaryLength);
+            if (binaryLength > 0) {
+                std::vector<uint8_t> binaryData(binaryLength);
+                GLenum binaryFormat = 0;
+                GLsizei lengthRead = 0;
+                glGetProgramBinary(prog, binaryLength, &lengthRead, &binaryFormat, binaryData.data());
+                if (lengthRead > 0) {
+                    std::filesystem::create_directories("resources/shader_cache");
+                    std::ofstream outFile(cachePath, std::ios::binary);
+                    if (outFile.is_open()) {
+                        outFile.write(reinterpret_cast<const char*>(&binaryFormat), sizeof(binaryFormat));
+                        outFile.write(reinterpret_cast<const char*>(&lengthRead), sizeof(lengthRead));
+                        outFile.write(reinterpret_cast<const char*>(binaryData.data()), lengthRead);
+                    }
+                }
+            }
+        }
+    }
+
     return prog;
 }
 
@@ -1229,9 +1288,10 @@ bool AngleRenderer::isMeshXRay(const Scene& scene, Mesh* mesh) const {
 }
 
 GLuint AngleRenderer::getXrayMatcapTexture() const {
-    for (const auto& m : m_matcaps) {
-        if (m.texPath == "silvermindyaar_black_stone.png" && m.textureId != 0) {
-            return m.textureId;
+    for (size_t i = 0; i < m_matcaps.size(); ++i) {
+        if (m_matcaps[i].texPath == "silvermindyaar_black_stone.png") {
+            const_cast<AngleRenderer*>(this)->ensureMatcapLoaded(static_cast<int>(i));
+            return m_matcaps[i].textureId;
         }
     }
     return 0;
@@ -1502,7 +1562,8 @@ void AngleRenderer::drawMeshForThumbnail(Mesh* mesh, const Camera& cam) {
     glUniform1i(glGetUniformLocation(m_matcapProgram, "uIsThumbnail"), 1);
 
     GLuint matcapTex = 0;
-    if (m_matcapIdx >= 0 && m_matcapIdx < static_cast<int>(m_matcaps.size()) && m_matcaps[m_matcapIdx].textureId != 0) {
+    if (m_matcapIdx >= 0 && m_matcapIdx < static_cast<int>(m_matcaps.size())) {
+        ensureMatcapLoaded(m_matcapIdx);
         matcapTex = m_matcaps[m_matcapIdx].textureId;
     }
     glActiveTexture(GL_TEXTURE0);
@@ -2929,9 +2990,11 @@ void AngleRenderer::drawArmature(const ArmatureGraph& graph, const Camera& camer
     if (!normalsPass) {
         glActiveTexture(GL_TEXTURE0);
         int matcapTexId = 0;
-        if (m_matcapIdx >= 0 && m_matcapIdx < static_cast<int>(m_matcaps.size()) && m_matcaps[m_matcapIdx].textureId != 0) {
+        if (m_matcapIdx >= 0 && m_matcapIdx < static_cast<int>(m_matcaps.size())) {
+            ensureMatcapLoaded(m_matcapIdx);
             matcapTexId = m_matcaps[m_matcapIdx].textureId;
-        } else if (!m_matcaps.empty() && m_matcaps[0].textureId != 0) {
+        } else if (!m_matcaps.empty()) {
+            ensureMatcapLoaded(0);
             matcapTexId = m_matcaps[0].textureId;
         }
         glBindTexture(GL_TEXTURE_2D, matcapTexId);
@@ -3604,46 +3667,54 @@ void AngleRenderer::initMatcaps() {
         preset.name = t.name;
         preset.texPath = t.texPath;
         preset.textureId = 0;
-        
-        std::vector<std::string> searchPaths = {
-            "resources/matcaps/" + t.texPath,
-            "dist/resources/matcaps/" + t.texPath,
-            "../dist/resources/matcaps/" + t.texPath
-        };
-
-        int width = 0, height = 0, channels = 0;
-        unsigned char* data = nullptr;
-        std::string loadedPath;
-
-        stbi_set_flip_vertically_on_load(true);
-        for (const auto& path : searchPaths) {
-            data = stbi_load(path.c_str(), &width, &height, &channels, 4);
-            if (data) {
-                loadedPath = path;
-                break;
-            }
-        }
-
-        if (data) {
-            glGenTextures(1, &preset.textureId);
-            glBindTexture(GL_TEXTURE_2D, preset.textureId);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
-            
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            
-            glBindTexture(GL_TEXTURE_2D, 0);
-            stbi_image_free(data);
-
-            std::cout << "Successfully loaded matcap map: " << loadedPath 
-                      << " (" << width << "x" << height << ")" << std::endl;
-        } else {
-            std::cerr << "Failed to load matcap map: " << t.texPath << std::endl;
-        }
-
         m_matcaps.push_back(preset);
+    }
+}
+
+bool AngleRenderer::ensureMatcapLoaded(int idx) {
+    if (idx < 0 || idx >= static_cast<int>(m_matcaps.size())) return false;
+    auto& preset = m_matcaps[idx];
+    if (preset.textureId != 0) return true;
+
+    std::vector<std::string> searchPaths = {
+        "resources/matcaps/" + preset.texPath,
+        "dist/resources/matcaps/" + preset.texPath,
+        "../dist/resources/matcaps/" + preset.texPath,
+        preset.texPath
+    };
+
+    int width = 0, height = 0, channels = 0;
+    unsigned char* data = nullptr;
+    std::string loadedPath;
+
+    stbi_set_flip_vertically_on_load(true);
+    for (const auto& path : searchPaths) {
+        data = stbi_load(path.c_str(), &width, &height, &channels, 4);
+        if (data) {
+            loadedPath = path;
+            break;
+        }
+    }
+
+    if (data) {
+        glGenTextures(1, &preset.textureId);
+        glBindTexture(GL_TEXTURE_2D, preset.textureId);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+        
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        
+        glBindTexture(GL_TEXTURE_2D, 0);
+        stbi_image_free(data);
+
+        std::cout << "Lazy loaded matcap: " << loadedPath 
+                  << " (" << width << "x" << height << ")" << std::endl;
+        return true;
+    } else {
+        std::cerr << "Failed to lazy load matcap map: " << preset.texPath << std::endl;
+        return false;
     }
 }
 
@@ -3772,6 +3843,7 @@ void AngleRenderer::setMatcap(int idx) {
         int defaultIdx = findMatcapIndexByName("Matcap FV");
         m_matcapIdx = (defaultIdx >= 0) ? defaultIdx : 0;
     }
+    ensureMatcapLoaded(m_matcapIdx);
 }
 
 void AngleRenderer::initSsaoKernel() {

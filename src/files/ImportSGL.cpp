@@ -5,6 +5,7 @@
 #include <cmath>
 #include <iostream>
 #include <algorithm>
+#include <future>
 
 namespace ImportSGL {
 
@@ -67,7 +68,7 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
 
     BinaryReader reader(buffer.data(), buffer.size());
     uint32_t version = reader.readU32();
-    if (version > 12) {
+    if (version > 13) {
         std::cerr << "Unsupported SGL version: " << version << std::endl;
         return {};
     }
@@ -297,26 +298,54 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
             mesh->layerStack.setActiveIdx(activeIdx);
         }
 
-        // Compute topology
-        std::vector<uint32_t> vrvStartCount;
-        std::vector<uint32_t> vertRingVert;
-        std::vector<uint32_t> vrfStartCount;
-        std::vector<uint32_t> vertRingFace;
-        std::vector<uint8_t> vertOnEdge;
-        
-        computeTopology(
-            mesh->nbVerts, mesh->faces.data(), mesh->nbFaces,
-            vrfStartCount, vertRingFace, vrvStartCount, vertRingVert, vertOnEdge
-        );
+        if (version >= 13) {
+            uint32_t nVrfStartCount = reader.readU32();
+            if (nVrfStartCount > 0) {
+                mesh->vrfStartCount.resize(nVrfStartCount);
+                reader.readU32Array(mesh->vrfStartCount.data(), nVrfStartCount);
+            }
+            uint32_t nVertRingFace = reader.readU32();
+            if (nVertRingFace > 0) {
+                mesh->vertRingFace.resize(nVertRingFace);
+                reader.readU32Array(mesh->vertRingFace.data(), nVertRingFace);
+            }
+            uint32_t nVrvStartCount = reader.readU32();
+            if (nVrvStartCount > 0) {
+                mesh->vrvStartCount.resize(nVrvStartCount);
+                reader.readU32Array(mesh->vrvStartCount.data(), nVrvStartCount);
+            }
+            uint32_t nVertRingVert = reader.readU32();
+            if (nVertRingVert > 0) {
+                mesh->vertRingVert.resize(nVertRingVert);
+                reader.readU32Array(mesh->vertRingVert.data(), nVertRingVert);
+            }
+            uint32_t nVertOnEdge = reader.readU32();
+            if (nVertOnEdge > 0) {
+                mesh->vertOnEdge.resize(nVertOnEdge);
+                reader.readBytes(mesh->vertOnEdge.data(), nVertOnEdge);
+            }
+        }
 
-        mesh->vrfStartCount = vrfStartCount;
-        mesh->vertRingFace = vertRingFace;
-        mesh->vrvStartCount = vrvStartCount;
-        mesh->vertRingVert = vertRingVert;
-        mesh->vertOnEdge = vertOnEdge;
-
-        mesh->postInit();
         meshes.push_back(mesh);
+    }
+
+    if (version < 13) {
+        std::vector<std::future<void>> futures;
+        for (auto* m : meshes) {
+            futures.push_back(std::async(std::launch::async, [m]() {
+                computeTopology(
+                    m->nbVerts, m->faces.data(), m->nbFaces,
+                    m->vrfStartCount, m->vertRingFace, m->vrvStartCount, m->vertRingVert, m->vertOnEdge
+                );
+            }));
+        }
+        for (auto& f : futures) {
+            f.get();
+        }
+    }
+
+    for (auto* m : meshes) {
+        m->postInit();
     }
 
     if (version >= 6) {

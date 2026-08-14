@@ -312,6 +312,7 @@ public:
     const std::vector<MatcapPreset>& getMatcaps() const { return m_matcaps; }
     void importMatcap(const std::string& name, const std::string& path);
     int findMatcapIndexByName(const std::string& name) const;
+    bool ensureMatcapLoaded(int idx);
 
     std::vector<uint8_t> renderToBuffer(const Scene& scene, int w, int h);
     void drawMeshForThumbnail(Mesh* mesh, const Camera& cam);

@@ -421,6 +421,11 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
+    // Early draw: clear background immediately to eliminate black screen during initialization
+    glClearColor(0.12f, 0.12f, 0.14f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    SDL_GL_SwapWindow(window);
+
     // Use adaptive vsync (0) so our SDL_Delay-based frame cap can actually control timing.
     // SwapInterval(1) would block inside the driver at monitor rate, making SDL_Delay useless.
     SDL_GL_SetSwapInterval(0);
