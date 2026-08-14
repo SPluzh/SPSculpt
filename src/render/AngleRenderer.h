@@ -686,6 +686,9 @@ private:
     int m_bgHeight = 1;
     std::string m_bgTexturePath;
 
+    GLuint m_refImageVao = 0;
+    GLuint m_refImageVbo = 0;
+
     GLuint m_selectionVao = 0;
     GLuint m_circleVbo = 0;
     GLuint m_dotVbo = 0;

@@ -1463,6 +1463,25 @@ bool Scene::isRefImageRenderVisible(const ReferenceImage& img, int viewport) con
     return img.visibleV1;
 }
 
+void Scene::setAllReferenceImagesVisible(bool vis) {
+    for (auto& img : m_refImages) {
+        img.visible = vis;
+    }
+    m_isModified = true;
+}
+
+bool Scene::areAnyReferenceImagesVisible() const {
+    for (const auto& img : m_refImages) {
+        if (img.visible) return true;
+    }
+    return false;
+}
+
+void Scene::toggleAllReferenceImagesVisible() {
+    bool nextState = !areAnyReferenceImagesVisible();
+    setAllReferenceImagesVisible(nextState);
+}
+
 CameraBookmark Scene::captureCurrentAsBookmark(const std::string& name) const {
     CameraBookmark bm;
     bm.name = name.empty() ? ("Bookmark " + std::to_string(m_cameraBookmarks.size() + 1)) : name;

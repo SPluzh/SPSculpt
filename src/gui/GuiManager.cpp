@@ -2494,10 +2494,12 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 ImGui::Spacing();
                 ImGui::TextDisabled("SELECTED IMAGE PROPERTIES");
 
-                bool masterVis = curImg.visible;
-                if (ImGui::Checkbox("Master Visible", &masterVis)) {
-                    curImg.visible = masterVis;
-                    scene.setModified(true);
+                bool masterVis = scene.areAnyReferenceImagesVisible();
+                if (ImGui::Checkbox("Master Visible (Shift+Z)", &masterVis)) {
+                    scene.setAllReferenceImagesVisible(masterVis);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Toggle visibility of all reference images (Shift+Z)");
                 }
                 ImGui::SameLine();
                 ImGui::Checkbox("Pinned 2D Overlay", &curImg.pinned2D);
@@ -2509,8 +2511,12 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 }
                 ImGui::SameLine();
                 bool refDrag = camera.getRefDragEnabled();
-                if (ImGui::Checkbox("Edit Mode (Gizmo)", &refDrag)) {
+                if (ImGui::Checkbox("Edit Mode (Z)", &refDrag)) {
                     camera.setRefDragEnabled(refDrag);
+                    if (scene.getCameraRight()) scene.getCameraRight()->setRefDragEnabled(refDrag);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Toggle reference image manipulation gizmo mode (Z)");
                 }
 
                 ImGui::SliderFloat("Opacity", &curImg.opacity, 0.0f, 1.0f, "%.2f");

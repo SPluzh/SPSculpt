@@ -123,6 +123,9 @@ public:
     bool updateReferenceImagePath(size_t index, const std::string& newPath);
     bool reloadReferenceImage(size_t index);
     void removeReferenceImage(size_t index);
+    void setAllReferenceImagesVisible(bool vis);
+    bool areAnyReferenceImagesVisible() const;
+    void toggleAllReferenceImagesVisible();
 
     // Light Sources
     std::vector<LightSource>& getLights() { return m_lights; }

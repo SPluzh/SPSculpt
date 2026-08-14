@@ -13,10 +13,10 @@ void main() {
         float cosR = cos(uRotation);
         float sinR = sin(uRotation);
         mat2 rotMat = mat2(cosR, sinR, -sinR, cosR);
-        vec2 pos = rotMat * aVertex;
-        pos = pos * uAspectScale * uScale;
-        pos += uOffset;
-        gl_Position = vec4(pos, 0.0, 1.0);
+        vec2 localPos = vec2(aVertex.x * uAspectScale.x, aVertex.y) * uScale;
+        vec2 rotatedPos = rotMat * localPos;
+        vec2 ndcPos = vec2(rotatedPos.x / uAspectScale.y, rotatedPos.y) + uOffset;
+        gl_Position = vec4(ndcPos, 0.0, 1.0);
     } else {
         gl_Position = uMVP * vec4(aVertex, 0.0, 1.0);
     }

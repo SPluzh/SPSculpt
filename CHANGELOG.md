@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.11]
+- **Reference Images**: Fixed edge pixel stretching on rectangular reference images.
+- **Reference Images**: Fixed aspect ratio distortion and shearing when rotating 2D reference images.
+- **Reference Images**: Made "Master Visible" toggle affect all reference images simultaneously, with global shortcut `Shift + Z`.
+- **Reference Images**: Added hotkey `Z` to toggle Edit Mode (interactive manipulation gizmo) for reference images.
+
 ## [0.1.10]
 - **Camera Bookmarks**: Fixed an issue where restoring camera bookmarks only restored one reference image when multiple reference images shared the same file path. Updated reference image restoration to use a 3-pass matching algorithm so all duplicate-path reference images maintain independent visibility, transform, and opacity states.
 

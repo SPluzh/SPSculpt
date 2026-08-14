@@ -74,6 +74,8 @@ enum class HKAction {
     // Misc
     OpenContextPopup,      // F1
     SoloSelected,          // C
+    ToggleRefImagesVisible,// Shift+Z
+    ToggleRefEditMode,     // Z
     None
 };
 

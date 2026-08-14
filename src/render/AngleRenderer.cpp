@@ -58,6 +58,8 @@ AngleRenderer::~AngleRenderer() {
 
     if (m_bgVao) glDeleteVertexArrays(1, &m_bgVao);
     if (m_bgVbo) glDeleteBuffers(1, &m_bgVbo);
+    if (m_refImageVao) glDeleteVertexArrays(1, &m_refImageVao);
+    if (m_refImageVbo) glDeleteBuffers(1, &m_refImageVbo);
     if (m_bgTexCoordVbo) glDeleteBuffers(1, &m_bgTexCoordVbo);
     if (m_bgTexture) glDeleteTextures(1, &m_bgTexture);
     if (m_bgMonoTexture) glDeleteTextures(1, &m_bgMonoTexture);
@@ -278,6 +280,22 @@ bool AngleRenderer::init(int width, int height) {
     glGenBuffers(1, &m_bgTexCoordVbo);
     glBindBuffer(GL_ARRAY_BUFFER, m_bgTexCoordVbo);
     glBufferData(GL_ARRAY_BUFFER, sizeof(bgTexCoords), bgTexCoords, GL_STATIC_DRAW);
+    glBindVertexArray(0);
+
+    // Reference Image Quad (Dedicated static unit quad [-1, -1] .. [1, 1])
+    float refQuad[] = {
+        -1.0f, -1.0f,
+         1.0f, -1.0f,
+        -1.0f,  1.0f,
+         1.0f,  1.0f
+    };
+    glGenVertexArrays(1, &m_refImageVao);
+    glGenBuffers(1, &m_refImageVbo);
+    glBindVertexArray(m_refImageVao);
+    glBindBuffer(GL_ARRAY_BUFFER, m_refImageVbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(refQuad), refQuad, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
     glBindVertexArray(0);
 
     // Initialize 1x1 grey background mono texture
@@ -2777,12 +2795,7 @@ void AngleRenderer::drawReferenceImages(const Scene& scene, const Camera& camera
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     
     glUseProgram(m_refImageProgram);
-    glBindVertexArray(m_bgVao);
-    
-    GLint locPos = glGetAttribLocation(m_refImageProgram, "aVertex");
-    glBindBuffer(GL_ARRAY_BUFFER, m_bgVbo);
-    glVertexAttribPointer(locPos, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(locPos);
+    glBindVertexArray(m_refImageVao);
 
     GLint locMVP = glGetUniformLocation(m_refImageProgram, "uMVP");
     GLint locPinned2D = glGetUniformLocation(m_refImageProgram, "uPinned2D");
@@ -2819,10 +2832,8 @@ void AngleRenderer::drawReferenceImages(const Scene& scene, const Camera& camera
                 glUniform1f(locRotation, -glm::radians(img.rotation));
             }
 
-            float aspectScaleX = imgAspect / screenAspect;
-            float aspectScaleY = 1.0f;
             if (locAspectScale != -1) {
-                glUniform2f(locAspectScale, aspectScaleX, aspectScaleY);
+                glUniform2f(locAspectScale, imgAspect, screenAspect);
             }
         } else {
             glEnable(GL_DEPTH_TEST);

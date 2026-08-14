@@ -265,7 +265,10 @@ HKAction HotkeyDispatcher::mapKeyToAction(const SDL_Keysym& keysym, bool ctrlPre
         case SDLK_n: return HKAction::BrushNegative;
         case SDLK_i: return HKAction::BrushPicker;
         case SDLK_x: return HKAction::RemeshResolution;
-        case SDLK_z: return HKAction::TopologyDetail;
+        case SDLK_z:
+            if (shiftPressed && !ctrlPressed && !altPressed) return HKAction::ToggleRefImagesVisible;
+            if (!ctrlPressed && !altPressed && !shiftPressed) return HKAction::ToggleRefEditMode;
+            return HKAction::None;
         
         case SDLK_DELETE: return HKAction::DeleteSelected;
         
@@ -439,6 +442,16 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
             case HKAction::OpenContextPopup: gui.m_openContextPopup = true; break;
             case HKAction::RunRemesh: gui.performRemesh(scene); break;
             case HKAction::SoloSelected: scene.toggleSolo(scene.getSelected()); break;
+            case HKAction::ToggleRefImagesVisible: scene.toggleAllReferenceImagesVisible(); break;
+            case HKAction::ToggleRefEditMode: {
+                Camera& camera = scene.getCamera();
+                bool newMode = !camera.getRefDragEnabled();
+                camera.setRefDragEnabled(newMode);
+                if (scene.getCameraRight()) {
+                    scene.getCameraRight()->setRefDragEnabled(newMode);
+                }
+                break;
+            }
             
             default: break;
         }
