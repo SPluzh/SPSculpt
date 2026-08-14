@@ -25,6 +25,16 @@ public:
     int getStartX() const { return m_startX; }
     int getStartY() const { return m_startY; }
 
+    void triggerPivotIndicator(float durationSeconds = 0.5f) {
+        m_pivotIndicatorTimer = durationSeconds;
+        m_pivotIndicatorDuration = durationSeconds;
+    }
+    bool isPivotIndicatorActive() const { return m_pivotIndicatorTimer > 0.0f; }
+    float getPivotIndicatorAlpha() const {
+        if (m_pivotIndicatorDuration <= 0.0f) return 0.0f;
+        return std::clamp(m_pivotIndicatorTimer / m_pivotIndicatorDuration, 0.0f, 1.0f);
+    }
+
     void triggerZoom2DIndicator(float x, float y, float durationSeconds = 0.5f) {
         m_zoom2DIndicatorPos = glm::vec2(x, y);
         m_zoom2DIndicatorTimer = durationSeconds;
@@ -41,6 +51,10 @@ public:
             m_zoom2DIndicatorTimer -= deltaTime;
             if (m_zoom2DIndicatorTimer < 0.0f) m_zoom2DIndicatorTimer = 0.0f;
         }
+        if (m_pivotIndicatorTimer > 0.0f) {
+            m_pivotIndicatorTimer -= deltaTime;
+            if (m_pivotIndicatorTimer < 0.0f) m_pivotIndicatorTimer = 0.0f;
+        }
     }
 
 private:
@@ -48,6 +62,9 @@ private:
     int m_prevX = 0, m_prevY = 0;
     int m_startX = 0, m_startY = 0;
     bool m_snapTriggered = false;
+
+    float m_pivotIndicatorTimer = 0.0f;
+    float m_pivotIndicatorDuration = 0.5f;
 
     glm::vec2 m_zoom2DIndicatorPos{0.0f};
     float m_zoom2DIndicatorTimer = 0.0f;

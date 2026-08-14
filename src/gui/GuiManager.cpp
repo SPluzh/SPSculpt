@@ -4090,13 +4090,15 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     bool isOrbitingOrZooming = (sculpt.getCameraController().getDragMode() == CameraController::DragMode::Orbit || 
                                 sculpt.getCameraController().getDragMode() == CameraController::DragMode::Roll ||
                                 sculpt.getCameraController().getDragMode() == CameraController::DragMode::Zoom);
-    if (!camera.getRef2DMode() && camera.getUsePivot() && isOrbitingOrZooming) {
+    bool isPivotActive = isOrbitingOrZooming || sculpt.getCameraController().isPivotIndicatorActive();
+    if (!camera.getRef2DMode() && camera.getUsePivot() && isPivotActive) {
+        float alpha = isOrbitingOrZooming ? 1.0f : sculpt.getCameraController().getPivotIndicatorAlpha();
         glm::vec3 pivotWorld = camera.getPivot();
 
         if (!renderer.getSplitMode()) {
             glm::vec3 screenPos = camera.project(pivotWorld);
             if (screenPos.z >= 0.0f && screenPos.z <= 1.0f) {
-                drawPivotMarker(ImVec2(screenPos.x, screenPos.y));
+                drawPivotMarker(ImVec2(screenPos.x, screenPos.y), alpha);
             }
         } else {
             int activeVp = scene.getActiveViewport();
@@ -4105,12 +4107,12 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             if (activeVp == 0) {
                 glm::vec3 screenPosLeft = camera.project(pivotWorld);
                 if (screenPosLeft.z >= 0.0f && screenPosLeft.z <= 1.0f) {
-                    drawPivotMarker(ImVec2(screenPosLeft.x, screenPosLeft.y));
+                    drawPivotMarker(ImVec2(screenPosLeft.x, screenPosLeft.y), alpha);
                 }
             } else if (activeVp == 1) {
                 glm::vec3 screenPosRight = camera.project(pivotWorld);
                 if (screenPosRight.z >= 0.0f && screenPosRight.z <= 1.0f) {
-                    drawPivotMarker(ImVec2(screenPosRight.x + w2, screenPosRight.y));
+                    drawPivotMarker(ImVec2(screenPosRight.x + w2, screenPosRight.y), alpha);
                 }
             }
         }

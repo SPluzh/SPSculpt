@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.4]
+- **3D Camera**: Fixed 3D camera zoom alignment so zooming in/out accurately targets the 3D surface point under the crosshairs without drifting or flying off screen.
+- **3D Camera**: Enabled dynamic crosshair pivot marker rendering with smooth fade-out during mouse wheel and drag zooming in 3D mode.
+
 ## [0.1.3]
 - **Reference Images**: Directly move, scale, and rotate reference images in the viewport.
 - **Reference Images**: Added dedicated image edit mode to prevent accidental sculpting while adjusting images.

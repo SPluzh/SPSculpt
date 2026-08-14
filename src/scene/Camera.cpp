@@ -282,13 +282,36 @@ void Camera::translate(float dx, float dy) {
     updateView();
 }
 
-void Camera::zoom(float df) {
+void Camera::zoom(float df, float mouseX, float mouseY) {
     cancelTransition();
-    float scaleFactor = std::pow(2.0f, -df * m_speedZoom);
-    m_trans.z *= scaleFactor;
-    m_trans.z = std::max(0.001f, std::min(m_trans.z, 100000.0f));
+    if (m_width <= 0 || m_height <= 0) return;
 
-    if (m_projectionType == CameraEnums::Projection::ORTHOGRAPHIC) {
+    float oldTransZ = m_trans.z;
+    float scaleFactor = std::pow(2.0f, -df * m_speedZoom);
+    float newTransZ = std::max(0.001f, std::min(oldTransZ * scaleFactor, 100000.0f));
+
+    if (m_projectionType == CameraEnums::Projection::PERSPECTIVE) {
+        float oldD = oldTransZ - m_offset.z;
+        float newD = newTransZ - m_offset.z;
+        if (std::abs(oldD) > 1e-6f) {
+            float ratio = newD / oldD;
+            m_trans.x = m_offset.x + (m_trans.x - m_offset.x) * ratio;
+            m_trans.y = m_offset.y + (m_trans.y - m_offset.y) * ratio;
+        }
+        m_trans.z = newTransZ;
+    } else {
+        float oldOrtho = getOrthoZoom();
+        m_trans.z = newTransZ;
+        float newOrtho = getOrthoZoom();
+        float deltaZoom = newOrtho - oldOrtho;
+
+        if (mouseX >= 0.0f && mouseY >= 0.0f) {
+            float ndcX = (2.0f * mouseX / static_cast<float>(m_width)) - 1.0f;
+            float ndcY = 1.0f - (2.0f * mouseY / static_cast<float>(m_height));
+            m_trans.x += ndcX * static_cast<float>(m_width) * deltaZoom;
+            m_trans.y += ndcY * static_cast<float>(m_height) * deltaZoom;
+        }
+
         updateOrtho();
     }
     updateView();

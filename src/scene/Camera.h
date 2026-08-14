@@ -63,7 +63,7 @@ public:
     void start(float mouseX, float mouseY, bool cancelAnim = true);
     void rotate(float mouseX, float mouseY, float speedRotate = 1.0f);
     void translate(float dx, float dy);
-    void zoom(float df);
+    void zoom(float df, float mouseX = -1.0f, float mouseY = -1.0f);
 
     void setPivot(const glm::vec3& pivot);
     void setPivot(float x, float y, float z) { setPivot(glm::vec3(x, y, z)); }
