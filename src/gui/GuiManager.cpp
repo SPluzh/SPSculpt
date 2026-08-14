@@ -5,6 +5,8 @@
 #include "common/Constants.h"
 #include "common/Version.h"
 #include "common/Logger.h"
+#include "common/FormatConstants.h"
+#include "common/StringUtils.h"
 #include "render/AngleRenderer.h"
 #include "render/RenderSettings.h"
 #include "editing/BrushCursor.h"
@@ -46,14 +48,6 @@
 
 #ifdef _WIN32
 #include <windows.h>
-static std::wstring utf8ToWide(const std::string& str) {
-    if (str.empty()) return L"";
-    int count = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.length(), NULL, 0);
-    if (count <= 0) return L"";
-    std::wstring wstr(count, 0);
-    MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.length(), &wstr[0], count);
-    return wstr;
-}
 #endif
 
 static FILE* openFileUtf8(const std::string& path, const char* mode) {
@@ -332,13 +326,13 @@ bool GuiManager::openSceneFromPath(const std::string& path, Scene& scene, Sculpt
         scene.selectMesh(newMeshes.front());
         scene.pushHistoryState();
     }
-    if (FileManager::getExtension(path) == "sgl") {
+    if (FileManager::getExtension(path) == Format::PROJECT_EXT || FileManager::getExtension(path) == Format::LEGACY_EXT) {
         m_currentScenePath = path;
     } else {
         m_currentScenePath.clear();
     }
     scene.setModified(false);
-    return !newMeshes.empty() || FileManager::getExtension(path) == "sgl";
+    return !newMeshes.empty() || FileManager::getExtension(path) == Format::PROJECT_EXT || FileManager::getExtension(path) == Format::LEGACY_EXT;
 }
 
 void GuiManager::openScene(Scene& scene, SculptManager* sculpt) {
@@ -359,11 +353,12 @@ void GuiManager::saveScene(Scene& scene, SculptManager* sculpt) {
 }
 
 void GuiManager::saveSceneAs(Scene& scene, SculptManager* sculpt) {
-    static const std::vector<FileDialog::FilterSpec> sglFilters = {
-        { "SculptGL Scene (*.sgl)", "*.sgl" },
+    static const std::vector<FileDialog::FilterSpec> spFilters = {
+        { "SPSculpt Project (*.spsculpt)", "*.spsculpt" },
+        { "Legacy SculptGL Scene (*.sgl)", "*.sgl" },
         { "All Files (*.*)", "*.*" }
     };
-    std::string path = FileDialog::saveFile(sglFilters, "sgl", "Save Scene As");
+    std::string path = FileDialog::saveFile(spFilters, Format::PROJECT_EXT, "Save Scene As");
     if (!path.empty()) {
         m_currentScenePath = path;
         snprintf(m_exportPath, sizeof(m_exportPath), "%s", path.c_str());
@@ -446,7 +441,7 @@ void GuiManager::importFile(Scene& scene, SculptManager* sculpt) {
 }
 
 void GuiManager::exportFile(Scene& scene, SculptManager* sculpt) {
-    std::string path = FileDialog::saveFile(FileDialog::getExportFilters(), "sgl", "Export File");
+    std::string path = FileDialog::saveFile(FileDialog::getExportFilters(), Format::PROJECT_EXT, "Export File");
     if (!path.empty()) {
         snprintf(m_exportPath, sizeof(m_exportPath), "%s", path.c_str());
         FileManager::exportMeshes(path, scene.getMeshes(), &scene, m_renderer, sculpt);

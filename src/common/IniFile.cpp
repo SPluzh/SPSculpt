@@ -1,20 +1,9 @@
 #include "common/IniFile.h"
+#include "common/StringUtils.h"
 #include <fstream>
 #include <sstream>
 #include <iostream>
 #include <algorithm>
-
-#ifdef _WIN32
-#include <windows.h>
-static std::wstring utf8ToWide(const std::string& str) {
-    if (str.empty()) return L"";
-    int count = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.length(), NULL, 0);
-    if (count <= 0) return L"";
-    std::wstring wstr(count, 0);
-    MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.length(), &wstr[0], count);
-    return wstr;
-}
-#endif
 
 static std::string trimStr(const std::string& str) {
     size_t first = str.find_first_not_of(" \t\r\n");

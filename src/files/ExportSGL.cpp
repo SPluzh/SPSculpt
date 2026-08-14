@@ -1,22 +1,12 @@
 #include "files/ExportSGL.h"
 #include "common/Constants.h"
+#include "common/FormatConstants.h"
+#include "common/StringUtils.h"
 #include <cstring>
 #include <cmath>
 #include <algorithm>
 #include <fstream>
 #include <glm/gtc/type_ptr.hpp>
-
-#ifdef _WIN32
-#include <windows.h>
-static std::wstring utf8ToWide(const std::string& str) {
-    if (str.empty()) return L"";
-    int count = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.length(), NULL, 0);
-    if (count <= 0) return L"";
-    std::wstring wstr(count, 0);
-    MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.length(), &wstr[0], count);
-    return wstr;
-}
-#endif
 
 namespace ExportSGL {
 
@@ -89,8 +79,9 @@ public:
 std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& scene, const AngleRenderer& renderer, const SculptManager& sculpt) {
     BinaryWriter writer;
     
-    // Version 13
-    writer.writeU32(13);
+    // Magic "SPSC" + Version 14
+    writer.writeBytes(reinterpret_cast<const uint8_t*>("SPSC"), 4);
+    writer.writeU32(Format::CURRENT_VERSION);
 
     // Misc settings
     writer.writeU32(renderer.getShowGrid() ? 1 : 0);

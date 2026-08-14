@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.17]
+- **Project Files**: Updated default project file format to `.spsculpt`.
+- **Backward Compatibility**: Fully retained support to open, import, and drag-and-drop existing `.sgl` project files.
+
 ## [0.1.16]
 - **Startup Performance**: Eliminated initial black screen by rendering an immediate early frame upon window creation.
 - **Shader Caching**: Added binary shader caching in `resources/shader_cache` to accelerate subsequent application launches.
@@ -9,7 +13,7 @@ All notable changes to this project will be documented in this file.
 - **Mesh Topology**: Accelerated topology calculation algorithm by 3–5x and added precalculated topology storage in `.sgl` project files (SGL v13).
 
 ## [0.1.15]
-- **Ассоциация файлов и Drag & Drop**: Добавлена возможность открывать файлы проектов `.sgl` перетаскиванием в окно программы или через аргументы запуска.
+- **File Association & Drag & Drop**: Dragging an `.sgl` project file into the viewport or launching the application with an `.sgl` file path parameter (first command line argument `argv[1]` / dragging file onto executable) now opens the `.sgl` scene project directly.
 
 ## [0.1.14]
 - **Camera Bookmarks**: Reference images that were not stored in a loaded camera bookmark are now automatically hidden upon applying the bookmark.

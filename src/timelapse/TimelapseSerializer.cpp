@@ -1,20 +1,9 @@
 #include "timelapse/TimelapseSerializer.h"
 #include "common/Logger.h"
+#include "common/StringUtils.h"
 #include <fstream>
 #include <cstdint>
 #include <cstring>
-
-#ifdef _WIN32
-#include <windows.h>
-static std::wstring utf8ToWide(const std::string& str) {
-    if (str.empty()) return L"";
-    int count = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.length(), NULL, 0);
-    if (count <= 0) return L"";
-    std::wstring wstr(count, 0);
-    MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.length(), &wstr[0], count);
-    return wstr;
-}
-#endif
 
 #pragma pack(push, 1)
 struct StlapseHeader {

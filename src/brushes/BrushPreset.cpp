@@ -1,19 +1,8 @@
 #include "brushes/BrushPreset.h"
+#include "common/StringUtils.h"
 #include <fstream>
 #include <iostream>
 #include <unordered_map>
-
-#ifdef _WIN32
-#include <windows.h>
-static std::wstring utf8ToWide(const std::string& str) {
-    if (str.empty()) return L"";
-    int count = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.length(), NULL, 0);
-    if (count <= 0) return L"";
-    std::wstring wstr(count, 0);
-    MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.length(), &wstr[0], count);
-    return wstr;
-}
-#endif
 
 BrushPreset normalizeBrushJSON(const nlohmann::json& raw, const std::string& name) {
     BrushPreset p;

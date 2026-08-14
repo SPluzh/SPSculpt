@@ -5,8 +5,8 @@
 namespace FileDialog {
 
 struct FilterSpec {
-    std::string name;    // e.g. "SculptGL Scene (*.sgl)"
-    std::string pattern; // e.g. "*.sgl" or "*.sgl;*.obj"
+    std::string name;    // e.g. "SPSculpt Project (*.spsculpt)"
+    std::string pattern; // e.g. "*.spsculpt" or "*.spsculpt;*.obj"
 };
 
 // Open file dialog: returns selected path, or empty string if canceled

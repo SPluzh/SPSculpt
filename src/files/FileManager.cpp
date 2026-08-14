@@ -9,23 +9,13 @@
 #include "files/ExportPLY.h"
 #include "files/ImportGLTF.h"
 #include "files/ExportGLTF.h"
+#include "common/FormatConstants.h"
+#include "common/StringUtils.h"
 
 #include <fstream>
 #include <sstream>
 #include <iostream>
 #include <algorithm>
-
-#ifdef _WIN32
-#include <windows.h>
-static std::wstring utf8ToWide(const std::string& str) {
-    if (str.empty()) return L"";
-    int count = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.length(), NULL, 0);
-    if (count <= 0) return L"";
-    std::wstring wstr(count, 0);
-    MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.length(), &wstr[0], count);
-    return wstr;
-}
-#endif
 
 static std::vector<uint8_t> readBinaryFile(const std::string& path) {
 #ifdef _WIN32
@@ -103,9 +93,9 @@ std::vector<Mesh*> FileManager::importFiles(const std::string& path,
                                            SculptManager* sculpt) {
     std::string ext = getExtension(path);
     
-    if (ext == "sgl") {
+    if (ext == Format::PROJECT_EXT || ext == Format::LEGACY_EXT) {
         if (!scene || !renderer) {
-            std::cerr << "Importing SGL requires Scene and Renderer pointers" << std::endl;
+            std::cerr << "Importing project requires Scene and Renderer pointers" << std::endl;
             return {};
         }
         std::vector<uint8_t> buffer = readBinaryFile(path);
@@ -154,9 +144,9 @@ bool FileManager::exportMeshes(const std::string& path,
                                const SculptManager* sculpt) {
     std::string ext = getExtension(path);
     
-    if (ext == "sgl") {
+    if (ext == Format::PROJECT_EXT || ext == Format::LEGACY_EXT) {
         if (!scene || !renderer || !sculpt) {
-            std::cerr << "Exporting SGL requires Scene, Renderer, and Sculpt pointers" << std::endl;
+            std::cerr << "Exporting project requires Scene, Renderer, and Sculpt pointers" << std::endl;
             return false;
         }
         std::vector<uint8_t> buffer = ExportSGL::exportSGL(meshes, *scene, *renderer, *sculpt);

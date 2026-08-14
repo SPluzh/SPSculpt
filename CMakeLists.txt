@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
-project(SPSculpt VERSION 0.1.16 LANGUAGES CXX)
+project(SPSculpt VERSION 0.1.17 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
+
 
 add_subdirectory(third_party/glm)
 
@@ -62,6 +63,7 @@ include_directories(
 add_executable(SPSculpt
     # common
     src/common/IniFile.cpp
+    src/common/StringUtils.cpp
     # scene
     src/scene/Camera.cpp
     src/scene/Scene.cpp

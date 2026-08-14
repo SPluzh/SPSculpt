@@ -35,6 +35,8 @@
 #include "render/RenderSettings.h"
 #include "common/IniFile.h"
 #include "common/Version.h"
+#include "common/FormatConstants.h"
+#include "common/StringUtils.h"
 #include "brushes/BrushPresetManager.h"
 #include "files/FileManager.h"
 #include "stb_image.h"
@@ -56,7 +58,7 @@ static bool is3DModelFile(const std::string& path) {
     std::string ext = path.substr(dotPos);
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
     return (ext == ".obj" || ext == ".stl" || ext == ".ply" || 
-            ext == ".glb" || ext == ".gltf" || ext == ".sgl");
+            ext == ".glb" || ext == ".gltf" || ext == Format::PROJECT_DOT_EXT || ext == Format::LEGACY_DOT_EXT);
 }
 
 static void setAppWindowIcon(SDL_Window* window, const char* iconPath) {
@@ -83,14 +85,6 @@ static void setAppWindowIcon(SDL_Window* window, const char* iconPath) {
 #include "platform/TabletInput.h"
 #include "common/Logger.h"
 
-static std::string wideToUtf8(const std::wstring& wstr) {
-    if (wstr.empty()) return "";
-    int count = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), (int)wstr.length(), NULL, 0, NULL, NULL);
-    if (count <= 0) return "";
-    std::string str(count, 0);
-    WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), (int)wstr.length(), &str[0], count, NULL, NULL);
-    return str;
-}
 LONG WINAPI windowsExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo) {
     sculpt_log("\n=============================================\n");
     sculpt_log("[CRITICAL ERROR] Windows Unhandled Exception! Code: 0x%X\n", (unsigned int)ExceptionInfo->ExceptionRecord->ExceptionCode);
@@ -594,9 +588,9 @@ int main(int argc, char* argv[]) {
                             gui.setSelectedRefImageIndex(static_cast<int>(scene.getReferenceImages().size()) - 1);
                         }
                         std::cout << "[DragNDrop] Loaded reference image: " << droppedPath << std::endl;
-                    } else if (FileManager::getExtension(droppedPath) == "sgl") {
+                    } else if (FileManager::getExtension(droppedPath) == Format::PROJECT_EXT || FileManager::getExtension(droppedPath) == Format::LEGACY_EXT) {
                         gui.openSceneFromPath(droppedPath, scene, &sculpt, &renderer);
-                        std::cout << "[DragNDrop] Opened SGL project: " << droppedPath << std::endl;
+                        std::cout << "[DragNDrop] Opened project file: " << droppedPath << std::endl;
                     } else if (is3DModelFile(droppedPath)) {
                         auto newMeshes = FileManager::importFiles(droppedPath, &scene, &renderer, &sculpt);
                         for (auto* mesh : newMeshes) {

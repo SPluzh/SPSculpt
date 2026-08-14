@@ -1,5 +1,6 @@
 #include "files/ImportSGL.h"
 #include "common/Constants.h"
+#include "common/FormatConstants.h"
 #include "mesh/Topology.h"
 #include <cstring>
 #include <cmath>
@@ -67,9 +68,17 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
     if (buffer.size() < 4) return {};
 
     BinaryReader reader(buffer.data(), buffer.size());
-    uint32_t version = reader.readU32();
-    if (version > 13) {
-        std::cerr << "Unsupported SGL version: " << version << std::endl;
+    uint32_t firstWord = reader.readU32();
+    uint32_t version = 0;
+
+    if (buffer.size() >= 8 && std::memcmp(buffer.data(), "SPSC", 4) == 0) {
+        version = reader.readU32();
+    } else {
+        version = firstWord;
+    }
+
+    if (version > static_cast<uint32_t>(Format::CURRENT_VERSION)) {
+        std::cerr << "Unsupported project version: " << version << std::endl;
         return {};
     }
 

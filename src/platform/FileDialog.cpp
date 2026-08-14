@@ -1,34 +1,19 @@
 #include "platform/FileDialog.h"
+#include "common/StringUtils.h"
+#include "common/FormatConstants.h"
 
 #ifdef _WIN32
 #include <windows.h>
 #include <commdlg.h>
-
-static std::wstring utf8ToWide(const std::string& str) {
-    if (str.empty()) return L"";
-    int count = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.length(), NULL, 0);
-    if (count <= 0) return L"";
-    std::wstring wstr(count, 0);
-    MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.length(), &wstr[0], count);
-    return wstr;
-}
-
-static std::string wideToUtf8(const std::wstring& wstr) {
-    if (wstr.empty()) return "";
-    int count = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), (int)wstr.length(), NULL, 0, NULL, NULL);
-    if (count <= 0) return "";
-    std::string str(count, 0);
-    WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), (int)wstr.length(), &str[0], count, NULL, NULL);
-    return str;
-}
 #endif
 
 namespace FileDialog {
 
 std::vector<FilterSpec> getImportFilters() {
     return {
-        { "All Supported Files (*.sgl, *.obj, *.stl, *.ply, *.glb, *.gltf)", "*.sgl;*.obj;*.stl;*.ply;*.glb;*.gltf" },
-        { "SculptGL Scene (*.sgl)", "*.sgl" },
+        { "All Supported Files (*.spsculpt, *.sgl, *.obj, *.stl, *.ply, *.glb, *.gltf)", "*.spsculpt;*.sgl;*.obj;*.stl;*.ply;*.glb;*.gltf" },
+        { "SPSculpt Project (*.spsculpt)", "*.spsculpt" },
+        { "Legacy SculptGL Scene (*.sgl)", "*.sgl" },
         { "Wavefront OBJ (*.obj)", "*.obj" },
         { "STL (*.stl)", "*.stl" },
         { "PLY (*.ply)", "*.ply" },
@@ -39,7 +24,8 @@ std::vector<FilterSpec> getImportFilters() {
 
 std::vector<FilterSpec> getExportFilters() {
     return {
-        { "SculptGL Scene (*.sgl)", "*.sgl" },
+        { "SPSculpt Project (*.spsculpt)", "*.spsculpt" },
+        { "Legacy SculptGL Scene (*.sgl)", "*.sgl" },
         { "Wavefront OBJ (*.obj)", "*.obj" },
         { "STL (*.stl)", "*.stl" },
         { "PLY (*.ply)", "*.ply" },

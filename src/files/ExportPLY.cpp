@@ -18,7 +18,7 @@ std::string exportAsciiPLY(const std::vector<Mesh*>& meshes) {
     MergedMesh res = MeshUtils::mergeMeshes(meshes);
     
     std::stringstream ss;
-    ss << "ply\nformat ascii 1.0\ncomment created by SculptGL\n";
+    ss << "ply\nformat ascii 1.0\ncomment created by SPSculpt\n";
     ss << "element vertex " << res.nbVerts << "\n";
     ss << "property float x\nproperty float y\nproperty float z\n";
     ss << "property uchar red\nproperty uchar green\nproperty uchar blue\n";
@@ -56,7 +56,7 @@ std::vector<uint8_t> exportBinaryPLY(const std::vector<Mesh*>& meshes) {
     
     std::string endian = isLittleEndian() ? "little" : "big";
     std::stringstream headerSs;
-    headerSs << "ply\nformat binary_" << endian << "_endian 1.0\ncomment created by SculptGL\n";
+    headerSs << "ply\nformat binary_" << endian << "_endian 1.0\ncomment created by SPSculpt\n";
     headerSs << "element vertex " << res.nbVerts << "\n";
     headerSs << "property float x\nproperty float y\nproperty float z\n";
     headerSs << "property uchar red\nproperty uchar green\nproperty uchar blue\n";
