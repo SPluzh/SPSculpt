@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.7]
+- **Reference Images**: Integrated into Scene Outliner list with thumbnails, shared property inspector, drag-and-drop, and per-viewport (V1/V2) visibility toggles. Removed standalone window.
+
 ## [0.1.6]
 - **UI**: Added 2D Pan/Zoom mode button to the top-right HUD with a Reset 2D View option.
 

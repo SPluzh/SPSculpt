@@ -251,8 +251,11 @@ public:
     void setShowTimelapsePanel(bool show) { m_showTimelapsePanel = show; }
     TimelapsePlayer& getTimelapsePlayer() { return m_timelapsePlayer; }
 
-    bool getShowReferenceImagesPanel() const { return m_showReferenceImagesPanel; }
-    void setShowReferenceImagesPanel(bool show) { m_showReferenceImagesPanel = show; }
+    bool getShowScenePanel() const { return m_showScenePanel; }
+    void setShowScenePanel(bool show) { m_showScenePanel = show; }
+
+    bool getShowReferenceImagesPanel() const { return m_showScenePanel; }
+    void setShowReferenceImagesPanel(bool show) { m_showScenePanel = show; }
     void setSelectedRefImageIndex(int idx) { m_selectedRefImageIdx = idx; }
     int getSelectedRefImageIndex() const { return m_selectedRefImageIdx; }
 

@@ -534,7 +534,7 @@ int main(int argc, char* argv[]) {
 
                     if (isImageFile(droppedPath)) {
                         scene.addReferenceImage(droppedPath);
-                        gui.setShowReferenceImagesPanel(true);
+                        gui.setShowScenePanel(true);
                         if (!scene.getReferenceImages().empty()) {
                             gui.setSelectedRefImageIndex(static_cast<int>(scene.getReferenceImages().size()) - 1);
                         }

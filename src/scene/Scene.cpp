@@ -1456,3 +1456,9 @@ bool Scene::isMeshRenderVisible(const Mesh* mesh, int viewport) const {
     }
     return mesh->isVisible(viewport);
 }
+
+bool Scene::isRefImageRenderVisible(const ReferenceImage& img, int viewport) const {
+    if (!img.visible) return false;
+    if (viewport == 1) return img.visibleV2;
+    return img.visibleV1;
+}

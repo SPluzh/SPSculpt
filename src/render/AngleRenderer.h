@@ -417,7 +417,7 @@ private:
     void drawMeshFlatColor(Mesh* mesh, const Scene& scene, const Camera& camera, const glm::vec4& color);
     void drawVoxelPreview(const Scene& scene, const Camera& camera, int viewportIdx);
     void drawWireframe(Mesh* mesh, const Scene& scene, const Camera& camera);
-    void drawReferenceImages(const Scene& scene, const Camera& camera);
+    void drawReferenceImages(const Scene& scene, const Camera& camera, int viewportIdx = 0);
     void drawSelectionCursor(const Scene& scene, bool isRight = false);
     void drawLasso();
     void drawClipCurve();

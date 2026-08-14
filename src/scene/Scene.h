@@ -140,6 +140,7 @@ public:
     uint32_t getSoloMeshId() const { return m_soloMeshId; }
     void toggleSolo(Mesh* mesh);
     bool isMeshRenderVisible(const Mesh* mesh, int viewport = 0) const;
+    bool isRefImageRenderVisible(const ReferenceImage& img, int viewport = 0) const;
 
     // Modification tracking
     bool isModified() const { return m_isModified; }

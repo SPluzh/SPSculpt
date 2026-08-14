@@ -1083,7 +1083,7 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
         glViewport(0, 0, m_width, m_height);
         glScissor(0, 0, m_width, m_height);
         glEnable(GL_SCISSOR_TEST);
-        drawReferenceImages(scene, scene.getCamera());
+        drawReferenceImages(scene, scene.getCamera(), 0);
         glDisable(GL_SCISSOR_TEST);
     } else {
         int w2 = m_width / 2;
@@ -1092,14 +1092,14 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
             glViewport(0, 0, w2, m_height);
             glScissor(0, 0, w2, m_height);
             glEnable(GL_SCISSOR_TEST);
-            drawReferenceImages(scene, *camLeft);
+            drawReferenceImages(scene, *camLeft, 0);
         }
         const Camera* camRight = scene.getCameraByIndex(1);
         if (camRight) {
             glViewport(w2, 0, m_width - w2, m_height);
             glScissor(w2, 0, m_width - w2, m_height);
             glEnable(GL_SCISSOR_TEST);
-            drawReferenceImages(scene, *camRight);
+            drawReferenceImages(scene, *camRight, 1);
         }
         glDisable(GL_SCISSOR_TEST);
     }
@@ -2769,7 +2769,7 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
     return uploaded;
 }
 
-void AngleRenderer::drawReferenceImages(const Scene& scene, const Camera& camera) {
+void AngleRenderer::drawReferenceImages(const Scene& scene, const Camera& camera, int viewportIdx) {
     const auto& images = scene.getReferenceImages();
     if (images.empty() || m_refImageProgram == 0) return;
 
@@ -2803,7 +2803,7 @@ void AngleRenderer::drawReferenceImages(const Scene& scene, const Camera& camera
     float screenAspect = (vpHeight > 0.0f) ? (vpWidth / vpHeight) : 1.0f;
 
     for (const auto& img : images) {
-        if (!img.visible || img.texId == 0) continue;
+        if (!scene.isRefImageRenderVisible(img, viewportIdx) || img.texId == 0) continue;
 
         glBindTexture(GL_TEXTURE_2D, img.texId);
         glUniform1f(locOpacity, img.opacity);

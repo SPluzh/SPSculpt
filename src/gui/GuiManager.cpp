@@ -1845,15 +1845,17 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         ImGui::Separator();
 
         const auto& meshes = scene.getMeshes();
+        auto& refImages = scene.getReferenceImages();
         int selected = scene.getSelectedIdx();
 
-        ImGui::Text("Meshes in scene: %d", (int)meshes.size());
+        int totalOutlinerRows = (int)meshes.size() + (int)refImages.size();
+        ImGui::Text("Scene Items: %d (%d meshes, %d ref images)", totalOutlinerRows, (int)meshes.size(), (int)refImages.size());
 
         static int renameTargetId = -1;
         static char renameBuf[128] = "";
 
         float rowH = (float)THUMB_SIZE + 6.0f;
-        float listH = std::max(180.0f, std::min((float)meshes.size() * rowH + 40.0f, 340.0f));
+        float listH = std::max(180.0f, std::min((float)totalOutlinerRows * rowH + 40.0f, 340.0f));
 
         ImGui::BeginChild("MeshList", ImVec2(0, listH), true);
         if (ImGui::BeginTable("MeshListTable", 6, ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV)) {
@@ -1865,6 +1867,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGui::TableSetupColumn("V2", ImGuiTableColumnFlags_WidthFixed, 30.0f);
             ImGui::TableHeadersRow();
 
+            // 1. 3D Meshes
             for (int i = 0; i < (int)meshes.size(); i++) {
                 Mesh* mesh = meshes[i];
                 ImGui::TableNextRow(0, (float)THUMB_SIZE + 6.0f);
@@ -1960,6 +1963,84 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     mesh->visibleV2 = v2;
                 }
                 ImGui::PopID();
+            }
+
+            // 2. Reference Images
+            if (!refImages.empty()) {
+                if (m_selectedRefImageIdx < 0 || m_selectedRefImageIdx >= static_cast<int>(refImages.size())) {
+                    m_selectedRefImageIdx = 0;
+                }
+                for (size_t i = 0; i < refImages.size(); ++i) {
+                    auto& img = refImages[i];
+                    ImGui::TableNextRow(0, (float)THUMB_SIZE + 6.0f);
+                    ImGui::PushID(static_cast<int>(i) + 90000);
+
+                    // Col 0: Thumbnail
+                    ImGui::TableNextColumn();
+                    if (img.texId != 0) {
+                        float tW = (float)THUMB_SIZE;
+                        float tH = (float)THUMB_SIZE;
+                        if (img.width > 0 && img.height > 0) {
+                            float aspect = (float)img.width / (float)img.height;
+                            if (aspect >= 1.0f) tH = tW / aspect;
+                            else tW = tH * aspect;
+                        }
+                        ImGui::Image((ImTextureID)(uintptr_t)img.texId, ImVec2(tW, tH), ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
+                    } else {
+                        ImGui::Dummy(ImVec2((float)THUMB_SIZE, (float)THUMB_SIZE));
+                    }
+
+                    // Col 1: Active Radio Button
+                    ImGui::TableNextColumn();
+                    bool isRefSel = (m_selectedRefImageIdx == static_cast<int>(i));
+                    if (ImGui::RadioButton("##SelectRef", isRefSel)) {
+                        m_selectedRefImageIdx = static_cast<int>(i);
+                    }
+
+                    // Col 2: Name
+                    ImGui::TableNextColumn();
+                    std::string fileName = img.path;
+                    size_t lastSlash = fileName.find_last_of("\\/");
+                    if (lastSlash != std::string::npos) {
+                        fileName = fileName.substr(lastSlash + 1);
+                    }
+                    if (ImGui::Selectable(fileName.c_str(), isRefSel)) {
+                        m_selectedRefImageIdx = static_cast<int>(i);
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", img.path.c_str());
+                    }
+
+                    // Col 3: Resolution / Type Info
+                    ImGui::TableNextColumn();
+                    if (img.width > 0 && img.height > 0) {
+                        ImGui::TextDisabled("%dx%d", img.width, img.height);
+                    } else {
+                        ImGui::TextDisabled("Ref Img");
+                    }
+
+                    // Col 4: V1 Toggle
+                    ImGui::TableNextColumn();
+                    ImGui::PushID(10);
+                    bool v1 = img.visibleV1;
+                    if (ImGui::Checkbox("##RefV1", &v1)) {
+                        img.visibleV1 = v1;
+                        scene.setModified(true);
+                    }
+                    ImGui::PopID();
+
+                    // Col 5: V2 Toggle
+                    ImGui::TableNextColumn();
+                    ImGui::PushID(20);
+                    bool v2 = img.visibleV2;
+                    if (ImGui::Checkbox("##RefV2", &v2)) {
+                        img.visibleV2 = v2;
+                        scene.setModified(true);
+                    }
+                    ImGui::PopID();
+
+                    ImGui::PopID();
+                }
             }
 
             // Measure Tool Row in Outliner
@@ -2294,6 +2375,101 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGui::EndChild();
         }
 
+        // Reference Images Section in Scene Outliner
+        ImGui::Separator();
+        ImGui::TextDisabled("REFERENCE IMAGES");
+
+        static const std::vector<FileDialog::FilterSpec> refImageFilters = {
+            { "Image Files (*.png, *.jpg, *.jpeg, *.bmp, *.tga)", "*.png;*.jpg;*.jpeg;*.bmp;*.tga" },
+            { "PNG (*.png)", "*.png" },
+            { "JPEG (*.jpg, *.jpeg)", "*.jpg;*.jpeg" },
+            { "BMP (*.bmp)", "*.bmp" },
+            { "TGA (*.tga)", "*.tga" },
+            { "All Files (*.*)", "*.*" }
+        };
+
+        if (ImGui::Button("+ Add Reference Image##Outliner", ImVec2(-1, 0))) {
+            std::string picked = FileDialog::openFile(refImageFilters, "Select Reference Image");
+            if (!picked.empty()) {
+                scene.addReferenceImage(picked);
+                m_selectedRefImageIdx = static_cast<int>(scene.getReferenceImages().size()) - 1;
+            }
+        }
+
+        if (refImages.empty()) {
+            ImGui::TextDisabled("No reference images loaded.");
+        } else {
+            if (m_selectedRefImageIdx < 0 || m_selectedRefImageIdx >= static_cast<int>(refImages.size())) {
+                m_selectedRefImageIdx = 0;
+            }
+
+            // Single Shared Controls Block for active selected reference image
+            if (m_selectedRefImageIdx >= 0 && m_selectedRefImageIdx < static_cast<int>(refImages.size())) {
+                auto& curImg = refImages[m_selectedRefImageIdx];
+                ImGui::Spacing();
+                ImGui::TextDisabled("SELECTED IMAGE PROPERTIES");
+
+                bool masterVis = curImg.visible;
+                if (ImGui::Checkbox("Master Visible", &masterVis)) {
+                    curImg.visible = masterVis;
+                    scene.setModified(true);
+                }
+                ImGui::SameLine();
+                ImGui::Checkbox("Pinned 2D Overlay", &curImg.pinned2D);
+
+                Camera& camera = scene.getCamera();
+                bool ref2D = camera.getRef2DMode();
+                if (ImGui::Checkbox("2D Pan/Zoom Mode", &ref2D)) {
+                    camera.setRef2DMode(ref2D);
+                }
+                ImGui::SameLine();
+                bool refDrag = camera.getRefDragEnabled();
+                if (ImGui::Checkbox("Edit Mode (Gizmo)", &refDrag)) {
+                    camera.setRefDragEnabled(refDrag);
+                }
+
+                ImGui::SliderFloat("Opacity", &curImg.opacity, 0.0f, 1.0f, "%.2f");
+                ImGui::SliderFloat("Scale", &curImg.scale, 0.1f, 10.0f, "%.2f");
+                ImGui::SliderFloat("Rotation", &curImg.rotation, -180.0f, 180.0f, "%.1f deg");
+
+                if (curImg.pinned2D) {
+                    ImGui::SliderFloat("Offset X", &curImg.offsetX, -1.0f, 1.0f, "%.2f");
+                    ImGui::SliderFloat("Offset Y", &curImg.offsetY, -1.0f, 1.0f, "%.2f");
+                } else {
+                    ImGui::SliderFloat("Position X", &curImg.offsetX, -200.0f, 200.0f, "%.1f");
+                    ImGui::SliderFloat("Position Y", &curImg.offsetY, -200.0f, 200.0f, "%.1f");
+                }
+
+                float btnW = 55.0f * scale;
+                if (ImGui::Button("Center", ImVec2(btnW, 0))) {
+                    curImg.offsetX = 0.0f;
+                    curImg.offsetY = 0.0f;
+                    scene.setModified(true);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Reset Scale", ImVec2(btnW + 15.0f, 0))) {
+                    curImg.scale = 1.0f;
+                    scene.setModified(true);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Reset Rot", ImVec2(btnW + 10.0f, 0))) {
+                    curImg.rotation = 0.0f;
+                    scene.setModified(true);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Reload", ImVec2(btnW + 5.0f, 0))) {
+                    scene.reloadReferenceImage(m_selectedRefImageIdx);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Remove", ImVec2(-1, 0))) {
+                    scene.removeReferenceImage(m_selectedRefImageIdx);
+                    if (m_selectedRefImageIdx >= static_cast<int>(scene.getReferenceImages().size())) {
+                        m_selectedRefImageIdx = static_cast<int>(scene.getReferenceImages().size()) - 1;
+                    }
+                }
+            }
+        }
+
         ImGui::End();
     }
 
@@ -2327,173 +2503,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             }
         } else {
             ImGui::Text("No active mesh selected");
-        }
-
-        ImGui::End();
-    }
-
-    // 7. Reference Images Panel
-    if (m_showReferenceImagesPanel) {
-        ImGui::SetNextWindowPos({500.0f * scale, 40.0f * scale}, ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize({340.0f * scale, 320.0f * scale}, ImGuiCond_FirstUseEver);
-        ImGui::Begin("Reference Images", &m_showReferenceImagesPanel);
-
-        static const std::vector<FileDialog::FilterSpec> imageFilters = {
-            { "Image Files (*.png, *.jpg, *.jpeg, *.bmp, *.tga)", "*.png;*.jpg;*.jpeg;*.bmp;*.tga" },
-            { "PNG (*.png)", "*.png" },
-            { "JPEG (*.jpg, *.jpeg)", "*.jpg;*.jpeg" },
-            { "BMP (*.bmp)", "*.bmp" },
-            { "TGA (*.tga)", "*.tga" },
-            { "All Files (*.*)", "*.*" }
-        };
-
-        ImGui::Text("Add Image Path:");
-        
-        float btnWidth = 75.0f * scale;
-        ImGui::SetNextItemWidth(std::max(100.0f * scale, ImGui::GetContentRegionAvail().x - btnWidth - 8.0f * scale));
-        ImGui::InputText("##NewRefImagePath", m_refImagePath, sizeof(m_refImagePath));
-        ImGui::SameLine();
-        if (ImGui::Button("Browse...##NewRef", ImVec2(btnWidth, 0))) {
-            std::string picked = FileDialog::openFile(imageFilters, "Select Reference Image");
-            if (!picked.empty()) {
-                strncpy(m_refImagePath, picked.c_str(), sizeof(m_refImagePath) - 1);
-                m_refImagePath[sizeof(m_refImagePath) - 1] = '\0';
-                scene.addReferenceImage(m_refImagePath);
-            }
-        }
-
-        if (ImGui::Button("Load Reference Image", ImVec2(-1, 0))) {
-            if (m_refImagePath[0] != '\0') {
-                scene.addReferenceImage(m_refImagePath);
-            }
-        }
-        ImGui::TextDisabled("Tip: Drag & drop images directly into viewport!");
-
-        ImGui::Separator();
-
-        Camera& camera = scene.getCamera();
-        bool ref2D = camera.getRef2DMode();
-        if (ImGui::Checkbox("2D Pan/Zoom Mode", &ref2D)) {
-            camera.setRef2DMode(ref2D);
-        }
-        ImGui::SameLine();
-        bool refDrag = camera.getRefDragEnabled();
-        if (ImGui::Checkbox("Edit Images Mode (Viewport)", &refDrag)) {
-            camera.setRefDragEnabled(refDrag);
-        }
-
-        if (ImGui::Button("Reset 2D View", ImVec2(-1, 0))) {
-            camera.resetView2D();
-        }
-
-        ImGui::Separator();
-
-        auto& images = scene.getReferenceImages();
-        if (images.empty()) {
-            ImGui::TextDisabled("No reference images loaded.");
-        } else {
-            for (size_t i = 0; i < images.size(); ++i) {
-                auto& img = images[i];
-                ImGui::PushID(static_cast<int>(i));
-
-                std::string displayName = img.path;
-                size_t lastSlash = displayName.find_last_of("\\/");
-                if (lastSlash != std::string::npos) {
-                    displayName = displayName.substr(lastSlash + 1);
-                }
-                if (img.width > 0 && img.height > 0) {
-                    displayName += " (" + std::to_string(img.width) + "x" + std::to_string(img.height) + ")";
-                }
-
-                bool isSelected = (m_selectedRefImageIdx == (int)i);
-                std::string headerLabel = (isSelected ? "[Active] " : "") + displayName;
-                if (ImGui::TreeNode(headerLabel.c_str())) {
-                    m_selectedRefImageIdx = (int)i;
-                    if (img.texId != 0) {
-                        float thumbW = 48.0f * scale;
-                        float thumbH = 48.0f * scale;
-                        if (img.width > 0 && img.height > 0) {
-                            float aspect = (float)img.width / (float)img.height;
-                            if (aspect >= 1.0f) {
-                                thumbH = thumbW / aspect;
-                            } else {
-                                thumbW = thumbH * aspect;
-                            }
-                        }
-                        ImGui::Image((ImTextureID)(uintptr_t)img.texId, ImVec2(thumbW, thumbH), ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
-                        ImGui::SameLine();
-                    }
-
-                    ImGui::BeginGroup();
-                    ImGui::Checkbox("Visible", &img.visible);
-                    ImGui::Checkbox("Pinned 2D Overlay", &img.pinned2D);
-                    ImGui::EndGroup();
-
-                    ImGui::Text("Path:");
-                    char itemBuf[512];
-                    strncpy(itemBuf, img.path.c_str(), sizeof(itemBuf) - 1);
-                    itemBuf[sizeof(itemBuf) - 1] = '\0';
-
-                    ImGui::SetNextItemWidth(std::max(100.0f * scale, ImGui::GetContentRegionAvail().x - btnWidth - 8.0f * scale));
-                    if (ImGui::InputText("##EditPath", itemBuf, sizeof(itemBuf), ImGuiInputTextFlags_EnterReturnsTrue)) {
-                        scene.updateReferenceImagePath(i, itemBuf);
-                    }
-                    if (ImGui::IsItemDeactivatedAfterEdit()) {
-                        scene.updateReferenceImagePath(i, itemBuf);
-                    }
-
-                    ImGui::SameLine();
-                    if (ImGui::Button("Browse...##Edit", ImVec2(btnWidth, 0))) {
-                        std::string picked = FileDialog::openFile(imageFilters, "Change Reference Image");
-                        if (!picked.empty()) {
-                            scene.updateReferenceImagePath(i, picked);
-                        }
-                    }
-
-                    ImGui::SliderFloat("Opacity", &img.opacity, 0.0f, 1.0f, "%.2f");
-                    ImGui::SliderFloat("Scale", &img.scale, 0.1f, 10.0f, "%.2f");
-                    ImGui::SliderFloat("Rotation", &img.rotation, -180.0f, 180.0f, "%.1f deg");
-                    
-                    if (img.pinned2D) {
-                        ImGui::SliderFloat("Offset X", &img.offsetX, -1.0f, 1.0f, "%.2f");
-                        ImGui::SliderFloat("Offset Y", &img.offsetY, -1.0f, 1.0f, "%.2f");
-                    } else {
-                        ImGui::SliderFloat("Position X", &img.offsetX, -200.0f, 200.0f, "%.1f");
-                        ImGui::SliderFloat("Position Y", &img.offsetY, -200.0f, 200.0f, "%.1f");
-                    }
-
-                    if (ImGui::Button("Center", ImVec2(55.0f * scale, 0))) {
-                        img.offsetX = 0.0f;
-                        img.offsetY = 0.0f;
-                        scene.setModified(true);
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Reset Scale", ImVec2(75.0f * scale, 0))) {
-                        img.scale = 1.0f;
-                        scene.setModified(true);
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Reset Rot", ImVec2(65.0f * scale, 0))) {
-                        img.rotation = 0.0f;
-                        scene.setModified(true);
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Reload", ImVec2(55.0f * scale, 0))) {
-                        scene.reloadReferenceImage(i);
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Remove", ImVec2(-1, 0))) {
-                        scene.removeReferenceImage(i);
-                        ImGui::TreePop();
-                        ImGui::PopID();
-                        break;
-                    }
-
-                    ImGui::TreePop();
-                }
-
-                ImGui::PopID();
-            }
         }
 
         ImGui::End();
@@ -5228,7 +5237,9 @@ void GuiManager::drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRend
         ImGui::MenuItem("Topology & Remesh", nullptr, &m_showTopologyPanel);
         ImGui::MenuItem("Sculpt Layers", nullptr, &m_showLayersPanel);
         ImGui::MenuItem("Multiresolution", nullptr, &m_showMultiresPanel);
-        ImGui::MenuItem("Reference Images", nullptr, &m_showReferenceImagesPanel);
+        if (ImGui::MenuItem("Reference Images (Outliner)")) {
+            m_showScenePanel = true;
+        }
         ImGui::MenuItem("Undo History", nullptr, &m_showUndoDiagPanel);
         ImGui::MenuItem("Sculpt Timelapse", nullptr, &m_showTimelapsePanel);
         ImGui::MenuItem("Hotkey HUD", nullptr, &m_showHotkeyHUD);
