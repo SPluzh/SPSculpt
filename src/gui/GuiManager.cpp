@@ -4119,21 +4119,14 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     // Draw 2D Zoom Crosshair Marker in 2D Reference Mode
     if (camera.getRef2DMode()) {
         bool isZooming2D = (sculpt.getCameraController().getDragMode() == CameraController::DragMode::Zoom2D);
-        bool isIndicatorActive = sculpt.getCameraController().isZoom2DIndicatorActive();
-
-        if (isZooming2D || isIndicatorActive) {
-            float alpha = isZooming2D ? 1.0f : sculpt.getCameraController().getZoom2DIndicatorAlpha();
-            glm::vec2 posLocal = isZooming2D ? 
-                glm::vec2(sculpt.getCameraController().getStartX(), sculpt.getCameraController().getStartY()) : 
-                sculpt.getCameraController().getZoom2DIndicatorPos();
-
+        if (isZooming2D) {
             float splitOffset = 0.0f;
             if (renderer.getSplitMode() && scene.getActiveViewport() == 1) {
                 splitOffset = ImGui::GetIO().DisplaySize.x * 0.5f;
             }
 
-            ImVec2 p(posLocal.x + splitOffset, posLocal.y);
-            drawPivotMarker(p, alpha);
+            ImVec2 p(static_cast<float>(sculpt.getCameraController().getStartX()) + splitOffset, static_cast<float>(sculpt.getCameraController().getStartY()));
+            drawPivotMarker(p);
         }
     }
 

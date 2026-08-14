@@ -29,11 +29,72 @@ static bool rayTriangleIntersect(
     return t > EPSILON;
 }
 
+static bool pickPivot(Camera& camera, float mouseX, float mouseY, const std::vector<Mesh*>& meshes) {
+    if (!camera.getUsePivot()) return false;
+
+    Ray ray = camera.getRay(mouseX, mouseY);
+    float minT = std::numeric_limits<float>::infinity();
+    Mesh* hitMesh = nullptr;
+    glm::vec3 localHitPoint(0.0f);
+
+    for (Mesh* mesh : meshes) {
+        if (!mesh) continue;
+        glm::mat4 invMatrix = glm::inverse(mesh->matrix);
+        glm::vec3 localRayOrigin = glm::vec3(invMatrix * glm::vec4(ray.origin, 1.0f));
+        glm::vec3 localRayDir = glm::normalize(glm::vec3(invMatrix * glm::vec4(ray.dir, 0.0f)));
+
+        std::vector<uint32_t> candidateFaces = mesh->octree.collectIntersectRay(
+            localRayOrigin.x, localRayOrigin.y, localRayOrigin.z,
+            localRayDir.x, localRayDir.y, localRayDir.z
+        );
+
+        for (uint32_t faceId : candidateFaces) {
+            if (faceId >= (uint32_t)mesh->nbFaces) continue;
+            uint32_t v0Id = mesh->faces[faceId * 4];
+            uint32_t v1Id = mesh->faces[faceId * 4 + 1];
+            uint32_t v2Id = mesh->faces[faceId * 4 + 2];
+            uint32_t v3Id = mesh->faces[faceId * 4 + 3];
+
+            if (!mesh->vertVisible[v0Id] || !mesh->vertVisible[v1Id] || !mesh->vertVisible[v2Id] || (v3Id != 0xffffffff && !mesh->vertVisible[v3Id])) {
+                continue;
+            }
+
+            glm::vec3 v0(mesh->verts[v0Id * 3], mesh->verts[v0Id * 3 + 1], mesh->verts[v0Id * 3 + 2]);
+            glm::vec3 v1(mesh->verts[v1Id * 3], mesh->verts[v1Id * 3 + 1], mesh->verts[v1Id * 3 + 2]);
+            glm::vec3 v2(mesh->verts[v2Id * 3], mesh->verts[v2Id * 3 + 1], mesh->verts[v2Id * 3 + 2]);
+
+            float t;
+            if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v1, v2, t)) {
+                if (t < minT) {
+                    minT = t;
+                    hitMesh = mesh;
+                    localHitPoint = localRayOrigin + t * localRayDir;
+                }
+            }
+
+            if (v3Id != 0xffffffff) {
+                glm::vec3 v3(mesh->verts[v3Id * 3], mesh->verts[v3Id * 3 + 1], mesh->verts[v3Id * 3 + 2]);
+                if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v2, v3, t)) {
+                    if (t < minT) {
+                        minT = t;
+                        hitMesh = mesh;
+                        localHitPoint = localRayOrigin + t * localRayDir;
+                    }
+                }
+            }
+        }
+    }
+
+    if (hitMesh) {
+        glm::vec3 worldHitPoint = glm::vec3(hitMesh->matrix * glm::vec4(localHitPoint, 1.0f));
+        camera.setPivot(worldHitPoint);
+        return true;
+    }
+    return false;
+}
+
 void CameraController::stopDrag(Camera* camera) {
     if (m_drag != DragMode::None) {
-        if (m_drag == DragMode::Zoom2D) {
-            triggerZoom2DIndicator(static_cast<float>(m_startX), static_cast<float>(m_startY), 0.3f);
-        }
         if (camera) {
             camera->pushState();
         }
@@ -54,64 +115,8 @@ void CameraController::startDrag(DragMode mode, int mouseX, int mouseY, Camera& 
     m_snapTriggered = false;
     camera.start(static_cast<float>(mouseX), static_cast<float>(mouseY));
 
-    if ((mode == DragMode::Orbit || mode == DragMode::Roll || mode == DragMode::Zoom) && camera.getUsePivot()) {
-        Ray ray = camera.getRay(static_cast<float>(mouseX), static_cast<float>(mouseY));
-        float minT = std::numeric_limits<float>::infinity();
-        Mesh* hitMesh = nullptr;
-        glm::vec3 localHitPoint(0.0f);
-
-        for (Mesh* mesh : meshes) {
-            if (!mesh) continue;
-            glm::mat4 invMatrix = glm::inverse(mesh->matrix);
-            glm::vec3 localRayOrigin = glm::vec3(invMatrix * glm::vec4(ray.origin, 1.0f));
-            glm::vec3 localRayDir = glm::normalize(glm::vec3(invMatrix * glm::vec4(ray.dir, 0.0f)));
-
-            std::vector<uint32_t> candidateFaces = mesh->octree.collectIntersectRay(
-                localRayOrigin.x, localRayOrigin.y, localRayOrigin.z,
-                localRayDir.x, localRayDir.y, localRayDir.z
-            );
-
-            for (uint32_t faceId : candidateFaces) {
-                if (faceId >= (uint32_t)mesh->nbFaces) continue;
-                uint32_t v0Id = mesh->faces[faceId * 4];
-                uint32_t v1Id = mesh->faces[faceId * 4 + 1];
-                uint32_t v2Id = mesh->faces[faceId * 4 + 2];
-                uint32_t v3Id = mesh->faces[faceId * 4 + 3];
-
-                if (!mesh->vertVisible[v0Id] || !mesh->vertVisible[v1Id] || !mesh->vertVisible[v2Id] || (v3Id != 0xffffffff && !mesh->vertVisible[v3Id])) {
-                    continue;
-                }
-
-                glm::vec3 v0(mesh->verts[v0Id * 3], mesh->verts[v0Id * 3 + 1], mesh->verts[v0Id * 3 + 2]);
-                glm::vec3 v1(mesh->verts[v1Id * 3], mesh->verts[v1Id * 3 + 1], mesh->verts[v1Id * 3 + 2]);
-                glm::vec3 v2(mesh->verts[v2Id * 3], mesh->verts[v2Id * 3 + 1], mesh->verts[v2Id * 3 + 2]);
-
-                float t;
-                if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v1, v2, t)) {
-                    if (t < minT) {
-                        minT = t;
-                        hitMesh = mesh;
-                        localHitPoint = localRayOrigin + t * localRayDir;
-                    }
-                }
-
-                if (v3Id != 0xffffffff) {
-                    glm::vec3 v3(mesh->verts[v3Id * 3], mesh->verts[v3Id * 3 + 1], mesh->verts[v3Id * 3 + 2]);
-                    if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v2, v3, t)) {
-                        if (t < minT) {
-                            minT = t;
-                            hitMesh = mesh;
-                            localHitPoint = localRayOrigin + t * localRayDir;
-                        }
-                    }
-                }
-            }
-        }
-
-        if (hitMesh) {
-            glm::vec3 worldHitPoint = glm::vec3(hitMesh->matrix * glm::vec4(localHitPoint, 1.0f));
-            camera.setPivot(worldHitPoint);
-        }
+    if (mode == DragMode::Orbit || mode == DragMode::Roll || mode == DragMode::Zoom) {
+        pickPivot(camera, static_cast<float>(mouseX), static_cast<float>(mouseY), meshes);
     }
 }
 
@@ -172,12 +177,22 @@ void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std
             float factor = (e.wheel.y > 0) ? 1.15f : (e.wheel.y < 0 ? (1.0f / 1.15f) : 1.0f);
             camera.pushState();
             camera.zoom2D(factor, mouseX, mouseY);
-            triggerZoom2DIndicator(mouseX, mouseY, 0.5f);
             camera.pushState();
             return;
         }
+
+        int rawX = 0, rawY = 0;
+        SDL_GetMouseState(&rawX, &rawY);
+        float mouseX = static_cast<float>(rawX);
+        float mouseY = static_cast<float>(rawY);
+        if (camera.isSplitViewport() && rawX >= camera.getWidth()) {
+            mouseX -= static_cast<float>(camera.getWidth());
+        }
+
+        pickPivot(camera, mouseX, mouseY, meshes);
+
         camera.pushState();
-        camera.zoom(-static_cast<float>(e.wheel.y) * 0.05f);
+        camera.zoom(-static_cast<float>(e.wheel.y) * 0.05f, mouseX, mouseY);
         camera.pushState();
     } else if (e.type == SDL_MOUSEMOTION) {
         if (m_drag != DragMode::None) {
@@ -201,7 +216,7 @@ void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std
             } else if (m_drag == DragMode::Pan) {
                 camera.translate(static_cast<float>(dx), static_cast<float>(dy));
             } else if (m_drag == DragMode::Zoom) {
-                camera.zoom(static_cast<float>(dx) * 0.01f);
+                camera.zoom(static_cast<float>(dx) * 0.01f, static_cast<float>(m_startX), static_cast<float>(m_startY));
             } else if (m_drag == DragMode::Pan2D) {
                 float w = camera.getWidth() > 0 ? static_cast<float>(camera.getWidth()) : 1.0f;
                 float h = camera.getHeight() > 0 ? static_cast<float>(camera.getHeight()) : 1.0f;

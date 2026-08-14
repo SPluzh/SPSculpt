@@ -25,32 +25,12 @@ public:
     int getStartX() const { return m_startX; }
     int getStartY() const { return m_startY; }
 
-    void triggerZoom2DIndicator(float x, float y, float durationSeconds = 0.5f) {
-        m_zoom2DIndicatorPos = glm::vec2(x, y);
-        m_zoom2DIndicatorTimer = durationSeconds;
-        m_zoom2DIndicatorDuration = durationSeconds;
-    }
-    bool isZoom2DIndicatorActive() const { return m_zoom2DIndicatorTimer > 0.0f; }
-    glm::vec2 getZoom2DIndicatorPos() const { return m_zoom2DIndicatorPos; }
-    float getZoom2DIndicatorAlpha() const {
-        if (m_zoom2DIndicatorDuration <= 0.0f) return 0.0f;
-        return std::clamp(m_zoom2DIndicatorTimer / m_zoom2DIndicatorDuration, 0.0f, 1.0f);
-    }
-    void update(float deltaTime) {
-        if (m_zoom2DIndicatorTimer > 0.0f) {
-            m_zoom2DIndicatorTimer -= deltaTime;
-            if (m_zoom2DIndicatorTimer < 0.0f) m_zoom2DIndicatorTimer = 0.0f;
-        }
-    }
+    void update(float deltaTime) {}
 
 private:
     DragMode m_drag = DragMode::None;
     int m_prevX = 0, m_prevY = 0;
     int m_startX = 0, m_startY = 0;
     bool m_snapTriggered = false;
-
-    glm::vec2 m_zoom2DIndicatorPos{0.0f};
-    float m_zoom2DIndicatorTimer = 0.0f;
-    float m_zoom2DIndicatorDuration = 0.5f;
 };
 
