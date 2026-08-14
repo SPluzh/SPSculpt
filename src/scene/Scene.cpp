@@ -1573,6 +1573,16 @@ void Scene::applyBookmark(int idx, bool animate) {
             }
         }
     }
+
+    // Hide any reference image not saved/matched in this bookmark
+    for (size_t j = 0; j < numImgs; ++j) {
+        if (!matched[j]) {
+            m_refImages[j].visible   = false;
+            m_refImages[j].visibleV1 = false;
+            m_refImages[j].visibleV2 = false;
+        }
+    }
+
     m_activeCameraBookmarkIdx = idx;
 }
 

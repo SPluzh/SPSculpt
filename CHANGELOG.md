@@ -3,6 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [0.1.14]
+- **Camera Bookmarks**: Reference images that were not stored in a loaded camera bookmark are now automatically hidden upon applying the bookmark.
 - **Unicode Support**: Implemented comprehensive UTF-8/Unicode file path support across Windows, enabling opening, importing, exporting, and saving models, project files (.sgl), reference images, timelapses, and presets with non-ASCII and Cyrillic/Russian characters.
 - **Font & Rendering**: Enabled Cyrillic character set support in system fonts so Russian file paths, mesh outliner names, bookmarks, and UI text render clearly in ImGui.
 - **Camera**: Saved active camera state (position, rotation, target, FOV, and projection) in `.sgl` project files (SGL v12) and restored it upon opening.
