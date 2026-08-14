@@ -4067,29 +4067,31 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     }
 
     // Draw Camera Pivot Point if enabled and actively orbiting or zooming
+    ImDrawList* drawList = ImGui::GetForegroundDrawList();
+
+    auto drawPivotMarker = [&](ImVec2 p, float alpha = 1.0f) {
+        if (isPointOverImGuiWindow(p)) return;
+
+        ImU32 pivotColor = IM_COL32(230, 50, 50, static_cast<int>(240.0f * alpha));
+
+        // Draw center dot
+        drawList->AddCircleFilled(p, 2.0f * scale, pivotColor);
+        // Draw outer ring
+        drawList->AddCircle(p, 6.0f * scale, pivotColor, 0, 1.0f * scale);
+        // Draw crosshair ticks
+        drawList->AddLine(ImVec2(p.x - 10.0f * scale, p.y), ImVec2(p.x - 6.0f * scale, p.y), pivotColor, 1.0f * scale);
+        drawList->AddLine(ImVec2(p.x + 6.0f * scale, p.y), ImVec2(p.x + 10.0f * scale, p.y), pivotColor, 1.0f * scale);
+        drawList->AddLine(ImVec2(p.x, p.y - 10.0f * scale), ImVec2(p.x, p.y - 6.0f * scale), pivotColor, 1.0f * scale);
+        drawList->AddLine(ImVec2(p.x, p.y + 6.0f * scale), ImVec2(p.x, p.y + 10.0f * scale), pivotColor, 1.0f * scale);
+    };
+
+    // Draw Camera Pivot Point if enabled and actively orbiting or zooming
     const Camera& camera = scene.getCamera();
     bool isOrbitingOrZooming = (sculpt.getCameraController().getDragMode() == CameraController::DragMode::Orbit || 
                                 sculpt.getCameraController().getDragMode() == CameraController::DragMode::Roll ||
                                 sculpt.getCameraController().getDragMode() == CameraController::DragMode::Zoom);
-    if (camera.getUsePivot() && isOrbitingOrZooming) {
-        ImDrawList* drawList = ImGui::GetForegroundDrawList();
+    if (!camera.getRef2DMode() && camera.getUsePivot() && isOrbitingOrZooming) {
         glm::vec3 pivotWorld = camera.getPivot();
-        
-        ImU32 pivotColor = IM_COL32(230, 50, 50, 240);
-        
-        auto drawPivotMarker = [&](ImVec2 p) {
-            if (isPointOverImGuiWindow(p)) return;
-
-            // Draw center dot
-            drawList->AddCircleFilled(p, 2.0f * scale, pivotColor);
-            // Draw outer ring
-            drawList->AddCircle(p, 6.0f * scale, pivotColor, 0, 1.0f * scale);
-            // Draw crosshair ticks
-            drawList->AddLine(ImVec2(p.x - 10.0f * scale, p.y), ImVec2(p.x - 6.0f * scale, p.y), pivotColor, 1.0f * scale);
-            drawList->AddLine(ImVec2(p.x + 6.0f * scale, p.y), ImVec2(p.x + 10.0f * scale, p.y), pivotColor, 1.0f * scale);
-            drawList->AddLine(ImVec2(p.x, p.y - 10.0f * scale), ImVec2(p.x, p.y - 6.0f * scale), pivotColor, 1.0f * scale);
-            drawList->AddLine(ImVec2(p.x, p.y + 6.0f * scale), ImVec2(p.x, p.y + 10.0f * scale), pivotColor, 1.0f * scale);
-        };
 
         if (!renderer.getSplitMode()) {
             glm::vec3 screenPos = camera.project(pivotWorld);
@@ -4111,6 +4113,27 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     drawPivotMarker(ImVec2(screenPosRight.x + w2, screenPosRight.y));
                 }
             }
+        }
+    }
+
+    // Draw 2D Zoom Crosshair Marker in 2D Reference Mode
+    if (camera.getRef2DMode()) {
+        bool isZooming2D = (sculpt.getCameraController().getDragMode() == CameraController::DragMode::Zoom2D);
+        bool isIndicatorActive = sculpt.getCameraController().isZoom2DIndicatorActive();
+
+        if (isZooming2D || isIndicatorActive) {
+            float alpha = isZooming2D ? 1.0f : sculpt.getCameraController().getZoom2DIndicatorAlpha();
+            glm::vec2 posLocal = isZooming2D ? 
+                glm::vec2(sculpt.getCameraController().getStartX(), sculpt.getCameraController().getStartY()) : 
+                sculpt.getCameraController().getZoom2DIndicatorPos();
+
+            float splitOffset = 0.0f;
+            if (renderer.getSplitMode() && scene.getActiveViewport() == 1) {
+                splitOffset = ImGui::GetIO().DisplaySize.x * 0.5f;
+            }
+
+            ImVec2 p(posLocal.x + splitOffset, posLocal.y);
+            drawPivotMarker(p, alpha);
         }
     }
 

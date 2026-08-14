@@ -433,8 +433,9 @@ int main(int argc, char* argv[]) {
         float deltaTime = std::chrono::duration<float>(currentFrameTime - lastFrameTime).count();
         lastFrameTime = currentFrameTime;
 
-        // Update cameras
+        // Update cameras and controllers
         scene.getCamera().update(deltaTime);
+        sculpt.getCameraController().update(deltaTime);
         if (scene.getSplitMode() != Scene::SplitMode::OFF) {
             auto camRight = scene.getCameraRight();
             if (camRight) {

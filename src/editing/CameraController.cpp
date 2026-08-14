@@ -31,6 +31,9 @@ static bool rayTriangleIntersect(
 
 void CameraController::stopDrag(Camera* camera) {
     if (m_drag != DragMode::None) {
+        if (m_drag == DragMode::Zoom2D) {
+            triggerZoom2DIndicator(static_cast<float>(m_startX), static_cast<float>(m_startY), 0.3f);
+        }
         if (camera) {
             camera->pushState();
         }
@@ -46,6 +49,8 @@ void CameraController::startDrag(DragMode mode, int mouseX, int mouseY, Camera& 
     m_drag = mode;
     m_prevX = mouseX;
     m_prevY = mouseY;
+    m_startX = mouseX;
+    m_startY = mouseY;
     m_snapTriggered = false;
     camera.start(static_cast<float>(mouseX), static_cast<float>(mouseY));
 
@@ -157,7 +162,19 @@ void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std
         }
     } else if (e.type == SDL_MOUSEWHEEL) {
         if (camera.getRef2DMode()) {
-            return; // Block 3D scroll-zoom in 2D mode
+            int rawX = 0, rawY = 0;
+            SDL_GetMouseState(&rawX, &rawY);
+            float mouseX = static_cast<float>(rawX);
+            float mouseY = static_cast<float>(rawY);
+            if (camera.isSplitViewport() && rawX >= camera.getWidth()) {
+                mouseX -= static_cast<float>(camera.getWidth());
+            }
+            float factor = (e.wheel.y > 0) ? 1.15f : (e.wheel.y < 0 ? (1.0f / 1.15f) : 1.0f);
+            camera.pushState();
+            camera.zoom2D(factor, mouseX, mouseY);
+            triggerZoom2DIndicator(mouseX, mouseY, 0.5f);
+            camera.pushState();
+            return;
         }
         camera.pushState();
         camera.zoom(-static_cast<float>(e.wheel.y) * 0.05f);
@@ -193,7 +210,7 @@ void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std
                 camera.setView2DOffset(camera.getView2DOffsetX() + dxNorm, camera.getView2DOffsetY() + dyNorm);
             } else if (m_drag == DragMode::Zoom2D) {
                 float factor = 1.0f + static_cast<float>(dx) * 0.005f;
-                camera.setView2DZoom(camera.getView2DZoom() * factor);
+                camera.zoom2D(factor, static_cast<float>(m_startX), static_cast<float>(m_startY));
             } else if (m_drag == DragMode::Roll) {
                 float w = camera.getWidth() > 0 ? static_cast<float>(camera.getWidth()) : 1000.0f;
                 float piVal = 3.14159265358979323846f;

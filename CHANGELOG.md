@@ -7,6 +7,8 @@ All notable changes to this project will be documented in this file.
 - **Reference Images**: Added dedicated image edit mode to prevent accidental sculpting while adjusting images.
 - **Reference Images**: Hides the brush cursor and highlights interactive frames in the application accent color.
 - **Reference Images**: Added image rotation sliders, quick reset buttons, file browser, and fixed preview orientations.
+- **Reference Images**: Added cursor-centric 2D zooming so the view scales directly relative to the mouse position.
+- **Reference Images**: Added a 3D-style crosshair pivot marker during 2D zooming to highlight the active zoom center.
 
 ## [0.1.2]
 - **Wireframe**: Added high-quality anti-aliased wireframe rendering on objects.

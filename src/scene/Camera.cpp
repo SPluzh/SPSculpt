@@ -294,6 +294,24 @@ void Camera::zoom(float df) {
     updateView();
 }
 
+void Camera::zoom2D(float factor, float mouseX, float mouseY) {
+    cancelTransition();
+    if (m_width <= 0 || m_height <= 0) return;
+
+    float oldZoom = m_view2DZoom;
+    float newZoom = oldZoom * factor;
+    newZoom = std::max(0.01f, std::min(100.0f, newZoom));
+
+    float ndcX = (2.0f * mouseX / static_cast<float>(m_width)) - 1.0f;
+    float ndcY = 1.0f - (2.0f * mouseY / static_cast<float>(m_height));
+
+    float scale = newZoom / oldZoom;
+
+    m_view2DOffsetX = ndcX - scale * (ndcX - m_view2DOffsetX);
+    m_view2DOffsetY = ndcY - scale * (ndcY - m_view2DOffsetY);
+    m_view2DZoom = newZoom;
+}
+
 glm::vec3 Camera::computePosition() const {
     return glm::vec3(glm::inverse(m_viewMatrix)[3]);
 }

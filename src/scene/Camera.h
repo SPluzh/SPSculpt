@@ -138,6 +138,7 @@ public:
     void setView2DOffset(float x, float y) { m_view2DOffsetX = x; m_view2DOffsetY = y; }
     float getView2DZoom() const { return m_view2DZoom; }
     void setView2DZoom(float z) { m_view2DZoom = z > 0.01f ? z : 0.01f; }
+    void zoom2D(float factor, float mouseX, float mouseY);
     void resetView2D() { m_view2DOffsetX = 0.0f; m_view2DOffsetY = 0.0f; m_view2DZoom = 1.0f; }
 
     bool getRef2DMode() const { return m_ref2DMode; }
