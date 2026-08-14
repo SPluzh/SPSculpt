@@ -277,6 +277,17 @@ GLuint generateClayMatcapTexture() {
 }
 
 int main(int argc, char* argv[]) {
+#ifdef _WIN32
+    wchar_t exePathBuf[MAX_PATH];
+    if (GetModuleFileNameW(NULL, exePathBuf, MAX_PATH) > 0) {
+        std::wstring pathStr(exePathBuf);
+        size_t lastSlash = pathStr.find_last_of(L"\\/");
+        if (lastSlash != std::wstring::npos) {
+            SetCurrentDirectoryW(pathStr.substr(0, lastSlash).c_str());
+        }
+    }
+#endif
+
     bool showConsole = false;
     std::string fileToOpen = "";
 
@@ -457,11 +468,12 @@ int main(int argc, char* argv[]) {
     SculptManager sculpt;
     sculpt.loadSettings(appSettings);
     gui.init(window, glContext);
+    gui.setRenderer(&renderer);
     HotkeyDispatcher dispatcher;
 
     if (!fileToOpen.empty()) {
         std::cout << "Opening file from command line parameter: " << fileToOpen << std::endl;
-        gui.openSceneFromPath(fileToOpen, scene, &sculpt);
+        gui.openSceneFromPath(fileToOpen, scene, &sculpt, &renderer);
         if (scene.getMeshes().empty()) {
             std::cerr << "Failed to open scene or file was empty. Restoring default sphere." << std::endl;
             scene.loadDefaultSphere();
@@ -578,7 +590,7 @@ int main(int argc, char* argv[]) {
                         }
                         std::cout << "[DragNDrop] Loaded reference image: " << droppedPath << std::endl;
                     } else if (FileManager::getExtension(droppedPath) == "sgl") {
-                        gui.openSceneFromPath(droppedPath, scene, &sculpt);
+                        gui.openSceneFromPath(droppedPath, scene, &sculpt, &renderer);
                         std::cout << "[DragNDrop] Opened SGL project: " << droppedPath << std::endl;
                     } else if (is3DModelFile(droppedPath)) {
                         auto newMeshes = FileManager::importFiles(droppedPath, &scene, &renderer, &sculpt);

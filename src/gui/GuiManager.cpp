@@ -319,11 +319,12 @@ GLuint GuiManager::getXrayIconTexture() {
     return getIconTexture("xray-outline");
 }
 
-bool GuiManager::openSceneFromPath(const std::string& path, Scene& scene, SculptManager* sculpt) {
+bool GuiManager::openSceneFromPath(const std::string& path, Scene& scene, SculptManager* sculpt, AngleRenderer* renderer) {
     if (path.empty()) return false;
+    AngleRenderer* r = renderer ? renderer : m_renderer;
     snprintf(m_importPath, sizeof(m_importPath), "%s", path.c_str());
     scene.clear();
-    auto newMeshes = FileManager::importFiles(path, &scene, m_renderer, sculpt);
+    auto newMeshes = FileManager::importFiles(path, &scene, r, sculpt);
     for (auto* mesh : newMeshes) {
         scene.addMesh(mesh);
     }
