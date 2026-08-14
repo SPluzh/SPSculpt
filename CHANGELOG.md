@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.5]
+- **Reference Images**: Added native Drag & Drop support to directly load image files (.png, .jpg, .jpeg, .bmp, .tga, .webp, .gif, .psd, .hdr, etc.) dropped anywhere into the 3D Viewport window.
+- **Reference Images**: Automatically opens and selects the newly dropped reference image in the Reference Images panel for quick manipulation.
+
 ## [0.1.4]
 - **3D Camera**: Fixed 3D camera zoom alignment so zooming in/out accurately targets the 3D surface point under the crosshairs without drifting or flying off screen.
 - **3D Camera**: Rendered crosshair pivot marker during active 3D viewport navigation (orbiting and drag zooming).

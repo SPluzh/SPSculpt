@@ -2367,6 +2367,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 scene.addReferenceImage(m_refImagePath);
             }
         }
+        ImGui::TextDisabled("Tip: Drag & drop images directly into viewport!");
 
         ImGui::Separator();
 

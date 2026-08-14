@@ -36,7 +36,28 @@
 #include "common/IniFile.h"
 #include "common/Version.h"
 #include "brushes/BrushPresetManager.h"
+#include "files/FileManager.h"
 #include "stb_image.h"
+#include <cctype>
+
+static bool isImageFile(const std::string& path) {
+    size_t dotPos = path.find_last_of('.');
+    if (dotPos == std::string::npos) return false;
+    std::string ext = path.substr(dotPos);
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+    return (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || 
+            ext == ".tga" || ext == ".webp" || ext == ".gif" || ext == ".psd" || 
+            ext == ".hdr" || ext == ".pic" || ext == ".pnm");
+}
+
+static bool is3DModelFile(const std::string& path) {
+    size_t dotPos = path.find_last_of('.');
+    if (dotPos == std::string::npos) return false;
+    std::string ext = path.substr(dotPos);
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+    return (ext == ".obj" || ext == ".stl" || ext == ".ply" || 
+            ext == ".glb" || ext == ".gltf" || ext == ".sgl");
+}
 
 static void setAppWindowIcon(SDL_Window* window, const char* iconPath) {
     int w = 0, h = 0, channels = 0;
@@ -294,6 +315,7 @@ int main(int argc, char* argv[]) {
         std::cerr << "SDL initialization failed: " << SDL_GetError() << std::endl;
         return -1;
     }
+    SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
 
     // Request OpenGL ES 3.0 Context
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
@@ -500,6 +522,27 @@ int main(int argc, char* argv[]) {
                      SDL_GetWindowPosition(window, &wx, &wy);
                      SDL_GetWindowSize(window, &ww, &wh);
                      gui.updateWindowBounds(wx, wy, ww, wh, false);
+                }
+            } else if (event.type == SDL_DROPFILE) {
+                char* droppedFile = event.drop.file;
+                if (droppedFile) {
+                    std::string droppedPath(droppedFile);
+                    SDL_free(droppedFile);
+
+                    hadActivity = true;
+                    lastActivityTime = std::chrono::high_resolution_clock::now();
+
+                    if (isImageFile(droppedPath)) {
+                        scene.addReferenceImage(droppedPath);
+                        gui.setShowReferenceImagesPanel(true);
+                        if (!scene.getReferenceImages().empty()) {
+                            gui.setSelectedRefImageIndex(static_cast<int>(scene.getReferenceImages().size()) - 1);
+                        }
+                        std::cout << "[DragNDrop] Loaded reference image: " << droppedPath << std::endl;
+                    } else if (is3DModelFile(droppedPath)) {
+                        FileManager::importFiles(droppedPath, &scene, &renderer, &sculpt);
+                        std::cout << "[DragNDrop] Imported 3D model file: " << droppedPath << std::endl;
+                    }
                 }
             } else {
                 // If split viewport is active, determine active viewport based on the event mouse coordinates
