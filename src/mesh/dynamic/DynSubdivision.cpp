@@ -96,16 +96,12 @@ static uint32_t findOppositeTriangle(Mesh& mesh, uint32_t iTri, uint32_t va, uin
     const auto& ringA = mesh.dynVRF[va];
     const auto& ringB = mesh.dynVRF[vb];
 
-    std::unordered_set<uint32_t> setB;
-    for (uint32_t fB : ringB) {
-        if (fB < static_cast<uint32_t>(mesh.nbFaces) && mesh.faces[fB * 4] != UINT32_MAX) {
-            setB.insert(fB);
-        }
-    }
     for (uint32_t fA : ringA) {
         if (fA == iTri || fA >= static_cast<uint32_t>(mesh.nbFaces) || mesh.faces[fA * 4] == UINT32_MAX) continue;
-        if (setB.count(fA)) {
-            return ensureTriangle(mesh, fA, va, vb);
+        for (uint32_t fB : ringB) {
+            if (fA == fB) {
+                return ensureTriangle(mesh, fA, va, vb);
+            }
         }
     }
     return UINT32_MAX;

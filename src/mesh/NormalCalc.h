@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <vector>
 
 void updateFaceNormalsAndBoxes(
     const float* verts, int nbVerts,
@@ -18,3 +19,12 @@ void updateVertexNormals(
     float* outNormals,
     int totalNbFaces = -1
 );
+
+void updateVertexNormals(
+    const uint32_t* iVerts, int nbIVerts, int totalNbVerts,
+    const std::vector<std::vector<uint32_t>>& dynVRF,
+    const float* faceNormals,
+    float* outNormals,
+    int totalNbFaces = -1
+);
+

@@ -87,74 +87,35 @@ static void deleteTriangle(
     mesh.faces[fIdx * 4 + 3] = UINT32_MAX;
 }
 
-static uint32_t deleteVertex(Mesh& mesh, uint32_t vIdx, uint32_t va) {
-    uint32_t lastVert = static_cast<uint32_t>(mesh.nbVerts - 1);
-    uint32_t finalVa = va;
+static inline void mergeVertexRings(Mesh& mesh, uint32_t va, uint32_t vb, const std::vector<uint8_t>& isVertDead) {
+    if (vb >= mesh.dynVRV.size()) return;
+    auto& ringVb = mesh.dynVRV[vb];
+    auto& ringVa = mesh.dynVRV[va];
 
-    if (vIdx != lastVert) {
-        mesh.verts[vIdx * 3]     = mesh.verts[lastVert * 3];
-        mesh.verts[vIdx * 3 + 1] = mesh.verts[lastVert * 3 + 1];
-        mesh.verts[vIdx * 3 + 2] = mesh.verts[lastVert * 3 + 2];
-
-        if (!mesh.normals.empty()) {
-            mesh.normals[vIdx * 3]     = mesh.normals[lastVert * 3];
-            mesh.normals[vIdx * 3 + 1] = mesh.normals[lastVert * 3 + 1];
-            mesh.normals[vIdx * 3 + 2] = mesh.normals[lastVert * 3 + 2];
-        }
-        if (!mesh.colors.empty()) {
-            mesh.colors[vIdx * 3]     = mesh.colors[lastVert * 3];
-            mesh.colors[vIdx * 3 + 1] = mesh.colors[lastVert * 3 + 1];
-            mesh.colors[vIdx * 3 + 2] = mesh.colors[lastVert * 3 + 2];
-        }
-        if (!mesh.materials.empty()) {
-            mesh.materials[vIdx * 3]     = mesh.materials[lastVert * 3];
-            mesh.materials[vIdx * 3 + 1] = mesh.materials[lastVert * 3 + 1];
-            mesh.materials[vIdx * 3 + 2] = mesh.materials[lastVert * 3 + 2];
-        }
-        if (!mesh.vertProxy.empty()) {
-            mesh.vertProxy[vIdx * 3]     = mesh.vertProxy[lastVert * 3];
-            mesh.vertProxy[vIdx * 3 + 1] = mesh.vertProxy[lastVert * 3 + 1];
-            mesh.vertProxy[vIdx * 3 + 2] = mesh.vertProxy[lastVert * 3 + 2];
-        }
-        if (!mesh.vertVisible.empty()) mesh.vertVisible[vIdx] = mesh.vertVisible[lastVert];
-        if (!mesh.vertTagFlags.empty()) mesh.vertTagFlags[vIdx] = mesh.vertTagFlags[lastVert];
-        if (!mesh.vertSculptFlags.empty()) mesh.vertSculptFlags[vIdx] = mesh.vertSculptFlags[lastVert];
-        if (!mesh.vertStateFlags.empty()) mesh.vertStateFlags[vIdx] = mesh.vertStateFlags[lastVert];
-
-        mesh.dynVRV[vIdx] = std::move(mesh.dynVRV[lastVert]);
-        mesh.dynVRF[vIdx] = std::move(mesh.dynVRF[lastVert]);
-
-        for (uint32_t fIdx : mesh.dynVRF[vIdx]) {
-            if (fIdx < static_cast<uint32_t>(mesh.nbFaces) && mesh.faces[fIdx * 4] != UINT32_MAX) {
-                for (int k = 0; k < 4; ++k) {
-                    if (mesh.faces[fIdx * 4 + k] == lastVert) {
-                        mesh.faces[fIdx * 4 + k] = vIdx;
-                    }
+    for (uint32_t nbr : ringVb) {
+        if (nbr == va || nbr >= mesh.dynVRV.size() || (nbr < isVertDead.size() && isVertDead[nbr])) continue;
+        auto& ringNbr = mesh.dynVRV[nbr];
+        bool hasVa = (std::find(ringNbr.begin(), ringNbr.end(), va) != ringNbr.end());
+        for (size_t i = 0; i < ringNbr.size(); ) {
+            if (ringNbr[i] == vb) {
+                if (hasVa) {
+                    ringNbr[i] = ringNbr.back();
+                    ringNbr.pop_back();
+                } else {
+                    ringNbr[i] = va;
+                    hasVa = true;
+                    ++i;
                 }
+            } else {
+                ++i;
             }
         }
-
-        for (uint32_t nIdx : mesh.dynVRV[vIdx]) {
-            if (nIdx < mesh.dynVRV.size()) {
-                auto& ring = mesh.dynVRV[nIdx];
-                std::replace(ring.begin(), ring.end(), lastVert, vIdx);
-            }
-        }
-
-        if (va == lastVert) {
-            finalVa = vIdx;
+        if (std::find(ringVa.begin(), ringVa.end(), nbr) == ringVa.end()) {
+            ringVa.push_back(nbr);
         }
     }
-
-    mesh.nbVerts--;
-
-    if (vIdx != lastVert) {
-        if (static_cast<size_t>(mesh.nbVerts) < mesh.dynVRV.size()) {
-            mesh.dynVRV[mesh.nbVerts].clear();
-            mesh.dynVRF[mesh.nbVerts].clear();
-        }
-    }
-    return finalVa;
+    ringRemove(ringVa, vb);
+    ringVb.clear();
 }
 
 enum class CollapseRejectReason {
@@ -205,11 +166,13 @@ static void ensureRingsTriangulated(Mesh& mesh, uint32_t va, uint32_t vb) {
     }
 }
 
-static CollapseRejectReason checkCanCollapse(const Mesh& mesh, uint32_t va, uint32_t vb) {
+static CollapseRejectReason checkCanCollapse(const Mesh& mesh, uint32_t va, uint32_t vb, const std::vector<uint8_t>& isVertDead) {
     if (va >= static_cast<uint32_t>(mesh.nbVerts) || vb >= static_cast<uint32_t>(mesh.nbVerts)) {
         return CollapseRejectReason::InvalidIndex;
     }
-    if (va == vb) return CollapseRejectReason::SameVertex;
+    if (va == vb || (va < isVertDead.size() && isVertDead[va]) || (vb < isVertDead.size() && isVertDead[vb])) {
+        return CollapseRejectReason::SameVertex;
+    }
     if (va >= mesh.dynVRF.size() || vb >= mesh.dynVRF.size() ||
         va >= mesh.dynVRV.size() || vb >= mesh.dynVRV.size()) {
         return CollapseRejectReason::InvalidIndex;
@@ -239,7 +202,7 @@ static CollapseRejectReason checkCanCollapse(const Mesh& mesh, uint32_t va, uint
     uint32_t sharedVerts[8];
     int numSharedVerts = 0;
     for (uint32_t v_a : ringVa) {
-        if (v_a == vb || v_a >= static_cast<uint32_t>(mesh.nbVerts)) continue;
+        if (v_a == vb || v_a >= static_cast<uint32_t>(mesh.nbVerts) || (v_a < isVertDead.size() && isVertDead[v_a])) continue;
         for (uint32_t v_b : ringVb) {
             if (v_a == v_b) {
                 if (numSharedVerts < 8) sharedVerts[numSharedVerts++] = v_a;
@@ -260,7 +223,7 @@ static CollapseRejectReason checkCanCollapse(const Mesh& mesh, uint32_t va, uint
         uint32_t id = f * 4;
         for (int k = 0; k < 3; ++k) {
             uint32_t v = mesh.faces[id + k];
-            if (v >= static_cast<uint32_t>(mesh.nbVerts) || v == va || v == vb) continue;
+            if (v >= static_cast<uint32_t>(mesh.nbVerts) || v == va || v == vb || (v < isVertDead.size() && isVertDead[v])) continue;
             size_t countInShared = 0;
             for (int sfIdx2 = 0; sfIdx2 < numSharedFaces; ++sfIdx2) {
                 uint32_t sf = sharedFaces[sfIdx2];
@@ -371,9 +334,9 @@ static CollapseRejectReason checkCanCollapse(const Mesh& mesh, uint32_t va, uint
     return CollapseRejectReason::None;
 }
 
-static bool executeCollapse(Mesh& mesh, uint32_t va, uint32_t vb, std::vector<uint32_t>& activeTris, CollapseRejectReason& outReason) {
+static bool executeCollapse(Mesh& mesh, uint32_t va, uint32_t vb, std::vector<uint8_t>& isVertDead, std::vector<uint32_t>& activeTris, CollapseRejectReason& outReason) {
     ensureRingsTriangulated(mesh, va, vb);
-    outReason = checkCanCollapse(mesh, va, vb);
+    outReason = checkCanCollapse(mesh, va, vb, isVertDead);
     if (outReason != CollapseRejectReason::None) return false;
     glm::vec3 pa(mesh.verts[va * 3], mesh.verts[va * 3 + 1], mesh.verts[va * 3 + 2]);
     glm::vec3 pb(mesh.verts[vb * 3], mesh.verts[vb * 3 + 1], mesh.verts[vb * 3 + 2]);
@@ -426,14 +389,6 @@ static bool executeCollapse(Mesh& mesh, uint32_t va, uint32_t vb, std::vector<ui
         return false;
     };
 
-    // Save old neighbors of vb BEFORE faces and rings are modified
-    uint32_t oldNbrsVbBuf[64];
-    int nOldNbrsVb = 0;
-    if (vb < mesh.dynVRV.size()) {
-        nOldNbrsVb = std::min((int)mesh.dynVRV[vb].size(), 64);
-        std::copy_n(mesh.dynVRV[vb].begin(), nOldNbrsVb, oldNbrsVbBuf);
-    }
-
     // 1. Transfer non-shared faces from vb to va
     for (int iB = 0; iB < nFb; ++iB) {
         uint32_t fIdx = ringFbBuf[iB];
@@ -473,35 +428,11 @@ static bool executeCollapse(Mesh& mesh, uint32_t va, uint32_t vb, std::vector<ui
         return f >= static_cast<uint32_t>(mesh.nbFaces) || mesh.faces[f * 4] == UINT32_MAX;
     }), rFa.end());
 
-    uint32_t lastVertBeforeDelete = static_cast<uint32_t>(mesh.nbVerts - 1);
-    uint32_t finalVa = deleteVertex(mesh, vb, va);
-
-    uint32_t nbrsToUpdate[64];
-    int numNbrsToUpdate = 0;
-    auto addNbr = [&](uint32_t v) {
-        if (v >= static_cast<uint32_t>(mesh.nbVerts)) return;
-        for (int i = 0; i < numNbrsToUpdate; ++i) {
-            if (nbrsToUpdate[i] == v) return;
-        }
-        if (numNbrsToUpdate < 64) {
-            nbrsToUpdate[numNbrsToUpdate++] = v;
-        }
-    };
-
-    addNbr(finalVa);
-    if (finalVa < mesh.dynVRV.size()) {
-        for (uint32_t n : mesh.dynVRV[finalVa]) addNbr(n);
-    }
-    for (int i = 0; i < nOldNbrsVb; ++i) addNbr(oldNbrsVbBuf[i]);
-    if (vb != lastVertBeforeDelete && vb < static_cast<uint32_t>(mesh.nbVerts)) {
-        addNbr(vb);
-        if (vb < mesh.dynVRV.size()) {
-            for (uint32_t n : mesh.dynVRV[vb]) addNbr(n);
-        }
-    }
-
-    for (int i = 0; i < numNbrsToUpdate; ++i) {
-        mesh.computeRingVertices(nbrsToUpdate[i]);
+    // 4. Update adjacency rings and mark vb as dead (DEFERRED DELETION)
+    mergeVertexRings(mesh, va, vb, isVertDead);
+    mesh.dynVRF[vb].clear();
+    if (vb < isVertDead.size()) {
+        isVertDead[vb] = 1;
     }
 
     return true;
@@ -674,6 +605,8 @@ std::vector<uint32_t> decimation(
     uint32_t rejectedNormalFlip = 0;
     uint32_t rejectedSharedFaces = 0;
 
+    std::vector<uint8_t> isVertDead(mesh.nbVerts, 0);
+
     while (idx < activeTris.size() && count++ < maxIter) {
         uint32_t fIdx = activeTris[idx++];
         if (fIdx >= static_cast<uint32_t>(mesh.nbFaces) || mesh.faces[fIdx * 4] == UINT32_MAX) continue;
@@ -690,6 +623,8 @@ std::vector<uint32_t> decimation(
             v3 >= static_cast<uint32_t>(mesh.nbVerts)) {
             continue;
         }
+
+        if (isVertDead[v1] || isVertDead[v2] || isVertDead[v3]) continue;
 
         glm::vec3 p1(mesh.verts[v1 * 3], mesh.verts[v1 * 3 + 1], mesh.verts[v1 * 3 + 2]);
         glm::vec3 p2(mesh.verts[v2 * 3], mesh.verts[v2 * 3 + 1], mesh.verts[v2 * 3 + 2]);
@@ -718,11 +653,9 @@ std::vector<uint32_t> decimation(
             attemptedCollapses++;
             CollapseRejectReason reason = CollapseRejectReason::None;
             bool ok = false;
-            uint32_t ca = (bestEdge == 0) ? v1 : ((bestEdge == 1) ? v2 : v3);
-            uint32_t cb = (bestEdge == 0) ? v2 : ((bestEdge == 1) ? v3 : v1);
-            if (bestEdge == 0) ok = executeCollapse(mesh, v1, v2, activeTris, reason);
-            else if (bestEdge == 1) ok = executeCollapse(mesh, v2, v3, activeTris, reason);
-            else if (bestEdge == 2) ok = executeCollapse(mesh, v3, v1, activeTris, reason);
+            if (bestEdge == 0) ok = executeCollapse(mesh, v1, v2, isVertDead, activeTris, reason);
+            else if (bestEdge == 1) ok = executeCollapse(mesh, v2, v3, isVertDead, activeTris, reason);
+            else if (bestEdge == 2) ok = executeCollapse(mesh, v3, v1, isVertDead, activeTris, reason);
 
             if (ok) {
                 successfulCollapses++;
@@ -754,7 +687,52 @@ std::vector<uint32_t> decimation(
         return result;
     }
 
-    // Apply vertex array resizing ONCE after all collapses
+    // --- 1. Compact Vertices (Deferred Batch Deletion) ---
+    uint32_t nbVertsBefore = static_cast<uint32_t>(mesh.nbVerts);
+    std::vector<uint32_t> remapVert(nbVertsBefore, UINT32_MAX);
+    uint32_t newNbVerts = 0;
+
+    for (uint32_t v = 0; v < nbVertsBefore; ++v) {
+        if (!isVertDead[v]) {
+            remapVert[v] = newNbVerts;
+            if (v != newNbVerts) {
+                mesh.verts[newNbVerts * 3]     = mesh.verts[v * 3];
+                mesh.verts[newNbVerts * 3 + 1] = mesh.verts[v * 3 + 1];
+                mesh.verts[newNbVerts * 3 + 2] = mesh.verts[v * 3 + 2];
+
+                if (!mesh.normals.empty()) {
+                    mesh.normals[newNbVerts * 3]     = mesh.normals[v * 3];
+                    mesh.normals[newNbVerts * 3 + 1] = mesh.normals[v * 3 + 1];
+                    mesh.normals[newNbVerts * 3 + 2] = mesh.normals[v * 3 + 2];
+                }
+                if (!mesh.colors.empty()) {
+                    mesh.colors[newNbVerts * 3]     = mesh.colors[v * 3];
+                    mesh.colors[newNbVerts * 3 + 1] = mesh.colors[v * 3 + 1];
+                    mesh.colors[newNbVerts * 3 + 2] = mesh.colors[v * 3 + 2];
+                }
+                if (!mesh.materials.empty()) {
+                    mesh.materials[newNbVerts * 3]     = mesh.materials[v * 3];
+                    mesh.materials[newNbVerts * 3 + 1] = mesh.materials[v * 3 + 1];
+                    mesh.materials[newNbVerts * 3 + 2] = mesh.materials[v * 3 + 2];
+                }
+                if (!mesh.vertProxy.empty()) {
+                    mesh.vertProxy[newNbVerts * 3]     = mesh.vertProxy[v * 3];
+                    mesh.vertProxy[newNbVerts * 3 + 1] = mesh.vertProxy[v * 3 + 1];
+                    mesh.vertProxy[newNbVerts * 3 + 2] = mesh.vertProxy[v * 3 + 2];
+                }
+                if (!mesh.vertVisible.empty()) mesh.vertVisible[newNbVerts] = mesh.vertVisible[v];
+                if (!mesh.vertTagFlags.empty()) mesh.vertTagFlags[newNbVerts] = mesh.vertTagFlags[v];
+                if (!mesh.vertSculptFlags.empty()) mesh.vertSculptFlags[newNbVerts] = mesh.vertSculptFlags[v];
+                if (!mesh.vertStateFlags.empty()) mesh.vertStateFlags[newNbVerts] = mesh.vertStateFlags[v];
+
+                mesh.dynVRV[newNbVerts] = std::move(mesh.dynVRV[v]);
+                mesh.dynVRF[newNbVerts] = std::move(mesh.dynVRF[v]);
+            }
+            newNbVerts++;
+        }
+    }
+
+    mesh.nbVerts = newNbVerts;
     mesh.verts.resize(mesh.nbVerts * 3);
     if (!mesh.normals.empty()) mesh.normals.resize(mesh.nbVerts * 3);
     if (!mesh.colors.empty()) mesh.colors.resize(mesh.nbVerts * 3);
@@ -767,7 +745,30 @@ std::vector<uint32_t> decimation(
     mesh.dynVRV.resize(mesh.nbVerts);
     mesh.dynVRF.resize(mesh.nbVerts);
 
-    // --- Tombstone Compaction Pass ---
+    // Remap dynVRV neighbor references
+    for (uint32_t v = 0; v < static_cast<uint32_t>(mesh.nbVerts); ++v) {
+        auto& ringV = mesh.dynVRV[v];
+        for (size_t i = 0; i < ringV.size(); ++i) {
+            uint32_t oldNbr = ringV[i];
+            if (oldNbr < nbVertsBefore && remapVert[oldNbr] != UINT32_MAX) {
+                ringV[i] = remapVert[oldNbr];
+            }
+        }
+    }
+
+    // Remap face vertex references in all faces
+    for (int f = 0; f < mesh.nbFaces; ++f) {
+        if (mesh.faces[f * 4] != UINT32_MAX) {
+            for (int k = 0; k < 4; ++k) {
+                uint32_t oldV = mesh.faces[f * 4 + k];
+                if (oldV != TRI_INDEX && oldV < nbVertsBefore) {
+                    mesh.faces[f * 4 + k] = remapVert[oldV];
+                }
+            }
+        }
+    }
+
+    // --- 2. Compact Faces (Tombstone Compaction Pass) ---
     uint32_t facesBeforeCompaction = static_cast<uint32_t>(mesh.nbFaces);
     std::vector<uint32_t> remapFace(facesBeforeCompaction, UINT32_MAX);
     uint32_t newF = 0;
@@ -826,9 +827,9 @@ std::vector<uint32_t> decimation(
         }
     }
 
-    sculpt_log("[DynTopo VERIFY] Decimation compaction: %u faces before -> %d after (%u tombstones cleared). activeTris remapped once.\n",
-               facesBeforeCompaction, mesh.nbFaces,
-               facesBeforeCompaction - mesh.nbFaces);
+    sculpt_log("[DynTopo VERIFY] Decimation compaction: %u verts before -> %d after (%u deleted) | %u faces before -> %d after (%u tombstones cleared).\n",
+               nbVertsBefore, mesh.nbVerts, nbVertsBefore - mesh.nbVerts,
+               facesBeforeCompaction, mesh.nbFaces, facesBeforeCompaction - mesh.nbFaces);
 
 #ifdef DYNTOPO_HEALTH_CHECK
     validateMeshTopology(mesh, "Post-Decimation");

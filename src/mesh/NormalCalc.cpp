@@ -150,3 +150,46 @@ void updateVertexNormals(
         outNormals[ind3 + 2] = nz * len;
     }
 }
+
+void updateVertexNormals(
+    const uint32_t* iVerts, int nbIVerts, int totalNbVerts,
+    const std::vector<std::vector<uint32_t>>& dynVRF,
+    const float* faceNormals,
+    float* outNormals,
+    int totalNbFaces
+) {
+    if (!faceNormals || !outNormals || totalNbVerts <= 0) return;
+
+    bool full = (nbIVerts < 0 || (iVerts == nullptr && nbIVerts != 0));
+    int loopCount = full ? totalNbVerts : nbIVerts;
+
+    #pragma omp parallel for schedule(static) if(loopCount > 500)
+    for (int i = 0; i < loopCount; ++i) {
+        uint32_t ind = full ? i : iVerts[i];
+        if (ind >= (uint32_t)totalNbVerts || ind >= (uint32_t)dynVRF.size()) continue;
+
+        const auto& ring = dynVRF[ind];
+        float nx = 0.0f;
+        float ny = 0.0f;
+        float nz = 0.0f;
+        uint32_t validCount = 0;
+
+        for (uint32_t fIdx : ring) {
+            if (fIdx == UINT32_MAX || (totalNbFaces > 0 && fIdx >= (uint32_t)totalNbFaces)) continue;
+            uint32_t id = fIdx * 3;
+            nx += faceNormals[id];
+            ny += faceNormals[id + 1];
+            nz += faceNormals[id + 2];
+            validCount++;
+        }
+
+        float len = (float)validCount;
+        if (len != 0.0f) len = 1.0f / len;
+
+        uint32_t ind3 = ind * 3;
+        outNormals[ind3] = nx * len;
+        outNormals[ind3 + 1] = ny * len;
+        outNormals[ind3 + 2] = nz * len;
+    }
+}
+

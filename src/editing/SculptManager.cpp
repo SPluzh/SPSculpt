@@ -1657,10 +1657,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 std::sort(allModifiedSubTris.begin(), allModifiedSubTris.end());
                 allModifiedSubTris.erase(std::unique(allModifiedSubTris.begin(), allModifiedSubTris.end()), allModifiedSubTris.end());
 
-                // 1. Rebuild CSR ONCE after all regions finish
-                mesh->updateDynamicCSR();
-
-                // 2. Update face normals and bounding boxes for all modified triangles
+                // 1. Update face normals and bounding boxes for all modified triangles
                 updateFaceNormalsAndBoxes(
                     mesh->verts.data(), mesh->nbVerts,
                     mesh->faces.data(), mesh->nbFaces,
@@ -1670,7 +1667,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                     mesh->faceCenters.data()
                 );
 
-                // 3. Build affectedVertsList using std::vector + sort/unique
+                // 2. Build affectedVertsList using std::vector + sort/unique
                 std::vector<uint32_t> affectedVertsList;
                 affectedVertsList.reserve(allModifiedSubTris.size() * 3);
                 for (uint32_t fIdx : allModifiedSubTris) {
@@ -1687,22 +1684,14 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 std::sort(affectedVertsList.begin(), affectedVertsList.end());
                 affectedVertsList.erase(std::unique(affectedVertsList.begin(), affectedVertsList.end()), affectedVertsList.end());
 
-                // 4. Update vertex normals with safety guard
-                if (!mesh->vrfStartCount.empty() && mesh->vrfStartCount.size() >= static_cast<size_t>(mesh->nbVerts * 2)) {
-                    sculpt_log("[DynTopo DEBUG] vrfStartCount.size=%zu, nbVerts=%d\n",
-                              mesh->vrfStartCount.size(), mesh->nbVerts);
-                    updateVertexNormals(
-                        affectedVertsList.data(), (int)affectedVertsList.size(), mesh->nbVerts,
-                        mesh->vrfStartCount.data(),
-                        mesh->vertRingFace.data(),
-                        mesh->faceNormals.data(),
-                        mesh->normals.data(),
-                        mesh->nbFaces
-                    );
-                } else {
-                    sculpt_log("[DynTopo WARNING] Skipping updateVertexNormals: vrfStartCount.size=%zu, nbVerts=%d\n",
-                              mesh->vrfStartCount.size(), mesh->nbVerts);
-                }
+                // 3. Update vertex normals directly using live dynVRF (skipping full-mesh CSR update)
+                updateVertexNormals(
+                    affectedVertsList.data(), (int)affectedVertsList.size(), mesh->nbVerts,
+                    mesh->dynVRF,
+                    mesh->faceNormals.data(),
+                    mesh->normals.data(),
+                    mesh->nbFaces
+                );
 
                 // 5. Update Octree for all modified triangles
                 mesh->octree.update(

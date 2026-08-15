@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.5]
+- **Dynamic Topology Latency Elimination & Deferred Batch Compaction**:
+  - Implemented Phase 1 deferred batch deletion in `DynDecimation::executeCollapse`, removing inline $O(n)$ `deleteVertex` array swapping and replacing per-collapse `computeRingVertices` calls with deferred `mergeVertexRings` adjacency tracking.
+  - Replaced inline vertex array resizing with a single joint vertex and tombstone-face batch compaction pass at the end of the decimation cycle.
+  - Overloaded `updateVertexNormals` in `NormalCalc` to accept `mesh.dynVRF` directly, eliminating per-stroke-frame full-mesh `updateDynamicCSR` rebuilds (~10-14ms saved per stroke frame).
+  - Optimized ring intersection in `DynSubdivision::findOppositeTriangle` by replacing `std::unordered_set` allocations with direct linear ring scans.
+
 ## [0.3.4]
 - **Dynamic Topology Performance & Pre-filtering**:
   - Eliminated ping-pong oscillation between subdivision and decimation passes by adding hysteresis threshold calculation (`decimDetail2 = subDetail2 * 0.2f * (decimVal * decimVal)`).
