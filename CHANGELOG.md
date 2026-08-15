@@ -3,6 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [0.2.0]
+- **Single-Row Outliner Header**: Streamlined primitive creation (Sphere, Geosphere, Cube, Cylinder, Torus) and reference image addition buttons into a unified icon-only header row with hover tooltips.
 - **Glassmorphism Outliner UI**: Modern card-based Scene Outliner redesign with translucent glass visual style.
 - **Card Layout**: Fixed right-side clipping so action buttons and card content are always fully visible.
 - **Mouse Wheel Scroll**: Fixed inner card jitter when scrolling over cards so the outliner list scrolls smoothly.

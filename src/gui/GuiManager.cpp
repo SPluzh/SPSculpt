@@ -1943,48 +1943,62 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGui::SameLine();
             ImGui::Checkbox("Mirror Symmetry", &spawnMirror);
 
-            float btnW = 56.0f * scale;
-            if (ImGui::Button("Sphere##Add", ImVec2(btnW, 24 * scale))) {
+            float availW = ImGui::GetContentRegionAvail().x;
+            float spacing = ImGui::GetStyle().ItemSpacing.x;
+            float btnW = (availW - spacing * 5.0f) / 6.0f;
+            float btnH = 24.0f * scale;
+
+            if (ImGui::Button(ICON_LC_CIRCLE "##AddSphere", ImVec2(btnW, btnH))) {
                 if (spawnAtMask) {
                     scene.addPrimitiveAtMask("sphere", spawnMirror, sculpt.getSymX(), sculpt.getSymY(), sculpt.getSymZ());
                 } else {
                     scene.addSphere();
                 }
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sphere");
+
             ImGui::SameLine();
-            if (ImGui::Button("Geo##Add", ImVec2(46 * scale, 24 * scale))) {
+            if (ImGui::Button(ICON_LC_GLOBE_2 "##AddGeo", ImVec2(btnW, btnH))) {
                 if (spawnAtMask) {
                     scene.addPrimitiveAtMask("geosphere", spawnMirror, sculpt.getSymX(), sculpt.getSymY(), sculpt.getSymZ());
                 } else {
                     scene.addGeosphere();
                 }
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Geosphere");
+
             ImGui::SameLine();
-            if (ImGui::Button("Cube##Add", ImVec2(48 * scale, 24 * scale))) {
+            if (ImGui::Button(ICON_LC_BOX "##AddCube", ImVec2(btnW, btnH))) {
                 if (spawnAtMask) {
                     scene.addPrimitiveAtMask("cube", spawnMirror, sculpt.getSymX(), sculpt.getSymY(), sculpt.getSymZ());
                 } else {
                     scene.addCube();
                 }
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cube");
+
             ImGui::SameLine();
-            if (ImGui::Button("Cyl##Add", ImVec2(46 * scale, 24 * scale))) {
+            if (ImGui::Button(ICON_LC_CYLINDER "##AddCyl", ImVec2(btnW, btnH))) {
                 if (spawnAtMask) {
                     scene.addPrimitiveAtMask("cylinder", spawnMirror, sculpt.getSymX(), sculpt.getSymY(), sculpt.getSymZ());
                 } else {
                     scene.addCylinder();
                 }
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cylinder");
+
             ImGui::SameLine();
-            if (ImGui::Button("Torus##Add", ImVec2(52 * scale, 24 * scale))) {
+            if (ImGui::Button(ICON_LC_DONUT "##AddTorus", ImVec2(btnW, btnH))) {
                 if (spawnAtMask) {
                     scene.addPrimitiveAtMask("torus", spawnMirror, sculpt.getSymX(), sculpt.getSymY(), sculpt.getSymZ());
                 } else {
                     scene.addTorus();
                 }
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Torus");
 
-            // --- Add Reference Image Button ---
+            ImGui::SameLine();
+
             static const std::vector<FileDialog::FilterSpec> refImageFilters = {
                 { "Image Files (*.png, *.jpg, *.jpeg, *.bmp, *.tga)", "*.png;*.jpg;*.jpeg;*.bmp;*.tga" },
                 { "PNG (*.png)", "*.png" },
@@ -1994,13 +2008,14 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 { "All Files (*.*)", "*.*" }
             };
 
-            if (ImGui::Button(ICON_LC_IMAGE " + Add Reference Image##OutlinerTop", ImVec2(-1, 24 * scale))) {
+            if (ImGui::Button(ICON_LC_IMAGE_PLUS "##OutlinerTopRef", ImVec2(btnW, btnH))) {
                 std::string picked = FileDialog::openFile(refImageFilters, "Select Reference Image");
                 if (!picked.empty()) {
                     scene.addReferenceImage(picked);
                     m_selectedRefImageIdx = static_cast<int>(scene.getReferenceImages().size()) - 1;
                 }
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add Reference Image");
 
             ImGui::Separator();
             ImGui::Spacing();
