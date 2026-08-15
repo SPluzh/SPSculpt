@@ -674,3 +674,53 @@ std::vector<uint32_t> Octree::collectIntersectRay(float vx, float vy, float vz, 
     }
     return collectFaces;
 }
+
+void Octree::addFaceToLeaf(uint32_t faceId, OctreeCell* leaf) {
+    if (!leaf) return;
+    if (faceId >= faceLeaf.size()) {
+        faceLeaf.resize(faceId + 1, nullptr);
+        facePosInLeaf.resize(faceId + 1, -1);
+    }
+    faceLeaf[faceId] = leaf;
+    facePosInLeaf[faceId] = static_cast<int>(leaf->iFaces.size());
+    leaf->iFaces.push_back(faceId);
+}
+
+void Octree::removeFaceFromLeaf(uint32_t faceId) {
+    if (faceId >= faceLeaf.size()) return;
+    OctreeCell* leaf = faceLeaf[faceId];
+    if (!leaf) return;
+
+    int pos = facePosInLeaf[faceId];
+    if (pos >= 0 && pos < static_cast<int>(leaf->iFaces.size())) {
+        uint32_t lastFace = leaf->iFaces.back();
+        leaf->iFaces[pos] = lastFace;
+        if (lastFace < facePosInLeaf.size()) {
+            facePosInLeaf[lastFace] = pos;
+        }
+        leaf->iFaces.pop_back();
+    }
+    faceLeaf[faceId] = nullptr;
+    facePosInLeaf[faceId] = -1;
+}
+
+void Octree::replaceFace(uint32_t oldFace, uint32_t newFace) {
+    if (oldFace >= faceLeaf.size()) return;
+    OctreeCell* leaf = faceLeaf[oldFace];
+    if (!leaf) return;
+
+    int pos = facePosInLeaf[oldFace];
+    if (pos >= 0 && pos < static_cast<int>(leaf->iFaces.size())) {
+        leaf->iFaces[pos] = newFace;
+    }
+    if (newFace >= faceLeaf.size()) {
+        faceLeaf.resize(newFace + 1, nullptr);
+        facePosInLeaf.resize(newFace + 1, -1);
+    }
+    faceLeaf[newFace] = leaf;
+    facePosInLeaf[newFace] = pos;
+
+    faceLeaf[oldFace] = nullptr;
+    facePosInLeaf[oldFace] = -1;
+}
+

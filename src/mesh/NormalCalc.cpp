@@ -1,8 +1,9 @@
 #include "mesh/NormalCalc.h"
+#include "common/Constants.h"
 #include <algorithm>
+
 #include <cmath>
 
-const uint32_t TRI_INDEX = 0xffffffff;
 
 void updateFaceNormalsAndBoxes(
     const float* verts, int nbVerts,

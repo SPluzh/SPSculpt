@@ -999,4 +999,328 @@ void Mesh::bakeScale() {
     }
 }
 
+void Mesh::initDynamicMode() {
+    if (isDynamic) return;
+
+    dynVRF.assign(nbVerts, std::vector<uint32_t>());
+    dynVRV.assign(nbVerts, std::vector<uint32_t>());
+    facesStateFlags.assign(nbFaces, 0);
+    vertSculptFlags.assign(nbVerts, 0);
+    vertStateFlags.assign(nbVerts, 0);
+
+    for (int i = 0; i < nbFaces; ++i) {
+        uint32_t id = i * 4;
+        uint32_t iv1 = faces[id];
+        uint32_t iv2 = faces[id + 1];
+        uint32_t iv3 = faces[id + 2];
+        uint32_t iv4 = faces[id + 3];
+
+        if (iv1 < (uint32_t)nbVerts) dynVRF[iv1].push_back(i);
+        if (iv2 < (uint32_t)nbVerts) dynVRF[iv2].push_back(i);
+        if (iv3 < (uint32_t)nbVerts) dynVRF[iv3].push_back(i);
+        if (iv4 != TRI_INDEX && iv4 < (uint32_t)nbVerts) {
+            dynVRF[iv4].push_back(i);
+        }
+    }
+
+    for (int i = 0; i < nbVerts; ++i) {
+        computeRingVertices(i);
+    }
+
+    isDynamic = true;
+    updateDynamicCSR();
+}
+
+void Mesh::updateDynamicCSR() {
+    if (!isDynamic) return;
+
+    vrfStartCount.resize(nbVerts * 2);
+    vertRingFace.clear();
+    size_t totalF = 0;
+    for (int i = 0; i < nbVerts; ++i) {
+        if (i < (int)dynVRF.size()) {
+            totalF += dynVRF[i].size();
+        }
+    }
+    vertRingFace.reserve(totalF);
+
+    uint32_t currStartF = 0;
+    for (int i = 0; i < nbVerts; ++i) {
+        uint32_t count = (i < (int)dynVRF.size()) ? static_cast<uint32_t>(dynVRF[i].size()) : 0;
+        vrfStartCount[i * 2] = currStartF;
+        vrfStartCount[i * 2 + 1] = count;
+        if (count > 0 && i < (int)dynVRF.size()) {
+            vertRingFace.insert(vertRingFace.end(), dynVRF[i].begin(), dynVRF[i].end());
+        }
+        currStartF += count;
+    }
+
+    vrvStartCount.resize(nbVerts * 2);
+    vertRingVert.clear();
+    size_t totalV = 0;
+    for (int i = 0; i < nbVerts; ++i) {
+        if (i < (int)dynVRV.size()) {
+            totalV += dynVRV[i].size();
+        }
+    }
+    vertRingVert.reserve(totalV);
+
+    uint32_t currStartV = 0;
+    for (int i = 0; i < nbVerts; ++i) {
+        uint32_t count = (i < (int)dynVRV.size()) ? static_cast<uint32_t>(dynVRV[i].size()) : 0;
+        vrvStartCount[i * 2] = currStartV;
+        vrvStartCount[i * 2 + 1] = count;
+        if (count > 0 && i < (int)dynVRV.size()) {
+            vertRingVert.insert(vertRingVert.end(), dynVRV[i].begin(), dynVRV[i].end());
+        }
+        currStartV += count;
+    }
+
+    vertOnEdge.assign(nbVerts, 0);
+}
+
+void Mesh::computeRingVertices(uint32_t iVert) {
+    if (iVert >= (uint32_t)nbVerts) return;
+    auto& ringV = dynVRV[iVert];
+    ringV.clear();
+    const auto& ringF = dynVRF[iVert];
+
+    for (uint32_t fIdx : ringF) {
+        if (fIdx >= (uint32_t)nbFaces) continue;
+        uint32_t id = fIdx * 4;
+        uint32_t v1 = faces[id];
+        uint32_t v2 = faces[id + 1];
+        uint32_t v3 = faces[id + 2];
+        uint32_t v4 = faces[id + 3];
+
+        if (v1 != iVert && std::find(ringV.begin(), ringV.end(), v1) == ringV.end()) ringV.push_back(v1);
+        if (v2 != iVert && std::find(ringV.begin(), ringV.end(), v2) == ringV.end()) ringV.push_back(v2);
+        if (v3 != iVert && std::find(ringV.begin(), ringV.end(), v3) == ringV.end()) ringV.push_back(v3);
+        if (v4 != TRI_INDEX && v4 != iVert && std::find(ringV.begin(), ringV.end(), v4) == ringV.end()) ringV.push_back(v4);
+    }
+}
+
+void Mesh::convertToStatic() {
+    if (!isDynamic) return;
+
+    initTopology();
+
+    isDynamic = false;
+}
+
+void Mesh::reAllocateArrays(int nbAdd) {
+    int targetVerts = nbVerts + nbAdd;
+    int targetFaces = nbFaces + nbAdd;
+
+    if (verts.capacity() < (size_t)(targetVerts * 3)) {
+        size_t newCapV = std::max((size_t)(targetVerts * 2), (size_t)(targetVerts + 1000));
+        verts.reserve(newCapV * 3);
+        normals.reserve(newCapV * 3);
+        colors.reserve(newCapV * 3);
+        materials.reserve(newCapV * 3);
+        vertProxy.reserve(newCapV * 3);
+        vertVisible.reserve(newCapV);
+        vertTagFlags.reserve(newCapV);
+        vertSculptFlags.reserve(newCapV);
+        vertStateFlags.reserve(newCapV);
+        dynVRV.reserve(newCapV);
+        dynVRF.reserve(newCapV);
+    }
+
+    if (faces.capacity() < (size_t)(targetFaces * 4)) {
+        size_t newCapF = std::max((size_t)(targetFaces * 2), (size_t)(targetFaces + 1000));
+        faces.reserve(newCapF * 4);
+        faceGroups.reserve(newCapF);
+        faceNormals.reserve(newCapF * 3);
+        faceBoxes.reserve(newCapF * 6);
+        faceCenters.reserve(newCapF * 3);
+        faceVisible.reserve(newCapF);
+        facesStateFlags.reserve(newCapF);
+    }
+}
+
+uint32_t Mesh::addNbVert(int count) {
+    uint32_t startIdx = static_cast<uint32_t>(nbVerts);
+    reAllocateArrays(count);
+    nbVerts += count;
+
+    verts.resize(nbVerts * 3, 0.0f);
+    normals.resize(nbVerts * 3, 0.0f);
+    colors.resize(nbVerts * 3, 1.0f);
+    materials.resize(nbVerts * 3, 0.5f);
+    vertProxy.resize(nbVerts * 3, 0.0f);
+    vertVisible.resize(nbVerts, 1);
+    vertTagFlags.resize(nbVerts, 0);
+    vertSculptFlags.resize(nbVerts, 0);
+    vertStateFlags.resize(nbVerts, 0);
+
+    if (isDynamic) {
+        dynVRV.resize(nbVerts);
+        dynVRF.resize(nbVerts);
+    }
+    return startIdx;
+}
+
+uint32_t Mesh::addNbFace(int count) {
+    uint32_t startIdx = static_cast<uint32_t>(nbFaces);
+    reAllocateArrays(count);
+    nbFaces += count;
+
+    faces.resize(nbFaces * 4, TRI_INDEX);
+    faceGroups.resize(nbFaces, 0);
+    faceNormals.resize(nbFaces * 3, 0.0f);
+    faceBoxes.resize(nbFaces * 6, 0.0f);
+    faceCenters.resize(nbFaces * 3, 0.0f);
+    faceVisible.resize(nbFaces, 1);
+    facesStateFlags.resize(nbFaces, 0);
+
+    return startIdx;
+}
+
+std::vector<uint32_t> Mesh::triangulateQuadsInRegion(const std::vector<uint32_t>& iFaces) {
+    if (!isDynamic) initDynamicMode();
+
+    std::vector<uint32_t> resultTris;
+    resultTris.reserve(iFaces.size() * 2);
+
+    for (uint32_t fIdx : iFaces) {
+        if (fIdx >= (uint32_t)nbFaces) continue;
+        uint32_t id = fIdx * 4;
+        uint32_t v1 = faces[id];
+        uint32_t v2 = faces[id + 1];
+        uint32_t v3 = faces[id + 2];
+        uint32_t v4 = faces[id + 3];
+
+        if (v4 != TRI_INDEX) {
+            // Split Quad into 2 Triangles:
+            // tri1 (fIdx): v1, v2, v3, TRI_INDEX
+            // tri2 (newFaceId): v1, v3, v4, TRI_INDEX
+
+            faces[id + 3] = TRI_INDEX;
+
+            uint32_t newFaceId = addNbFace(1);
+            uint32_t newId = newFaceId * 4;
+            faces[newId]     = v1;
+            faces[newId + 1] = v3;
+            faces[newId + 2] = v4;
+            faces[newId + 3] = TRI_INDEX;
+
+            if (fIdx < faceGroups.size()) {
+                faceGroups[newFaceId] = faceGroups[fIdx];
+            }
+
+            // Update dynVRF
+            if (v4 < dynVRF.size()) {
+                auto& rF = dynVRF[v4];
+                rF.erase(std::remove(rF.begin(), rF.end(), fIdx), rF.end());
+            }
+
+            if (v1 < dynVRF.size()) dynVRF[v1].push_back(newFaceId);
+            if (v3 < dynVRF.size()) dynVRF[v3].push_back(newFaceId);
+            if (v4 < dynVRF.size()) dynVRF[v4].push_back(newFaceId);
+
+            computeRingVertices(v1);
+            computeRingVertices(v2);
+            computeRingVertices(v3);
+            computeRingVertices(v4);
+
+            updateFaceNormalsAndBoxes(
+                verts.data(), nbVerts,
+                faces.data(), nbFaces,
+                nullptr, -1,
+                faceNormals.data(),
+                faceBoxes.data(),
+                faceCenters.data()
+            );
+
+            if (fIdx < octree.faceLeaf.size() && octree.faceLeaf[fIdx] != nullptr) {
+                octree.addFaceToLeaf(newFaceId, octree.faceLeaf[fIdx]);
+            }
+
+            resultTris.push_back(fIdx);
+            resultTris.push_back(newFaceId);
+        } else {
+            resultTris.push_back(fIdx);
+        }
+    }
+
+    return resultTris;
+}
+
+std::vector<uint32_t> Mesh::getVerticesFromFaces(const std::vector<uint32_t>& iFaces) const {
+    std::vector<uint32_t> iVerts;
+    static std::vector<uint32_t> tagV;
+    static uint32_t epoch = 0;
+    epoch++;
+    if (tagV.size() < (size_t)nbVerts) tagV.resize(nbVerts * 2, 0);
+
+    for (uint32_t fIdx : iFaces) {
+        if (fIdx >= (uint32_t)nbFaces) continue;
+        uint32_t id = fIdx * 4;
+        for (int k = 0; k < 4; ++k) {
+            uint32_t v = faces[id + k];
+            if (v != TRI_INDEX && v < (uint32_t)nbVerts) {
+                if (tagV[v] != epoch) {
+                    tagV[v] = epoch;
+                    iVerts.push_back(v);
+                }
+            }
+        }
+    }
+    return iVerts;
+}
+
+std::vector<uint32_t> Mesh::getFacesFromVertices(const std::vector<uint32_t>& iVerts) const {
+    std::vector<uint32_t> iFaces;
+    static std::vector<uint32_t> tagF;
+    static uint32_t epoch = 0;
+    epoch++;
+    if (tagF.size() < (size_t)nbFaces) tagF.resize(nbFaces * 2, 0);
+
+    if (isDynamic) {
+        for (uint32_t vIdx : iVerts) {
+            if (vIdx >= (uint32_t)nbVerts) continue;
+            for (uint32_t fIdx : dynVRF[vIdx]) {
+                if (fIdx < (uint32_t)nbFaces && tagF[fIdx] != epoch) {
+                    tagF[fIdx] = epoch;
+                    iFaces.push_back(fIdx);
+                }
+            }
+        }
+    } else {
+        for (uint32_t vIdx : iVerts) {
+            if (vIdx >= (uint32_t)nbVerts) continue;
+            uint32_t start = vrfStartCount[vIdx * 2];
+            uint32_t count = vrfStartCount[vIdx * 2 + 1];
+            for (uint32_t j = 0; j < count; ++j) {
+                uint32_t fIdx = vertRingFace[start + j];
+                if (fIdx < (uint32_t)nbFaces && tagF[fIdx] != epoch) {
+                    tagF[fIdx] = epoch;
+                    iFaces.push_back(fIdx);
+                }
+            }
+        }
+    }
+    return iFaces;
+}
+
+std::vector<uint32_t> Mesh::expandsFaces(const std::vector<uint32_t>& iFaces, int ringDepth) const {
+    std::vector<uint32_t> resFaces = iFaces;
+    for (int r = 0; r < ringDepth; ++r) {
+        std::vector<uint32_t> vertsInFaces = getVerticesFromFaces(resFaces);
+        resFaces = getFacesFromVertices(vertsInFaces);
+    }
+    return resFaces;
+}
+
+std::vector<uint32_t> Mesh::expandsVertices(const std::vector<uint32_t>& iVerts, int ringDepth) const {
+    std::vector<uint32_t> resVerts = iVerts;
+    for (int r = 0; r < ringDepth; ++r) {
+        std::vector<uint32_t> facesInVerts = getFacesFromVertices(resVerts);
+        resVerts = getVerticesFromFaces(facesInVerts);
+    }
+    return resVerts;
+}
+
+
 

@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0]
+- **Dynamic Topology**: Integrated native local subdivision and decimation engine with local quad-to-triangle region processing.
+- **Topology Brush**: Added dedicated `BRUSH_TOPOLOGY` tool for real-time local mesh resolution adjustment.
+- **Resolution Control**: Decoupled polygon density from brush radius, linking detail level to the global `remeshResolution` parameter (`X` key modal).
+- **Decimation System**: Hardened edge collapse stability with real-time normal flip validation and multi-pass face decimation.
+
+
 ## [0.2.5]
 - **Scene Outliner**: Added Import and Export buttons to top header toolbar.
 - **Symmetry Visualization**: Restricted symmetry plane lines to display strictly on the currently active object, preventing global overlay on inactive background meshes.

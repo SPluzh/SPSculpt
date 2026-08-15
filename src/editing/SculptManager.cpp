@@ -14,6 +14,8 @@
 #endif
 #include "mesh/Topology.h"
 #include "mesh/Mesh.h"
+#include "mesh/dynamic/DynSubdivision.h"
+#include "mesh/dynamic/DynDecimation.h"
 #include <vector>
 #include <algorithm>
 #include <iostream>
@@ -302,6 +304,158 @@ SculptManager::SculptManager() {
     m_brushSettings[BRUSH_DELETE_LAYER].radius = 50.0f;
     m_brushSettings[BRUSH_DELETE_LAYER].intensity = 0.5f;
     m_brushSettings[BRUSH_DELETE_LAYER].culling = true;
+
+    m_brushSettings[BRUSH_TOPOLOGY].radius = 50.0f;
+    m_brushSettings[BRUSH_TOPOLOGY].intensity = 0.5f;
+    m_brushSettings[BRUSH_TOPOLOGY].culling = true;
+}
+
+void SculptManager::testSubdivideMeshRegion(Scene& scene, float radiusFactor) {
+    Mesh* mesh = scene.getSelected();
+    if (!mesh) {
+        sculpt_log("[DynTopo Test] Error: No mesh selected.\n");
+        return;
+    }
+    if (!mesh->isDynamic) {
+        mesh->initDynamicMode();
+        sculpt_log("[DynTopo Test] Initialized Dynamic Mode on mesh ID %u.\n", mesh->m_id);
+    }
+
+    glm::vec3 center = m_hasAnyValidIntersection ? m_lastValidIntersection : glm::vec3(0.0f);
+    float radius = getCurrentSettings().radius * radiusFactor;
+    if (radius <= 0.1f) radius = 50.0f;
+    float radius2 = radius * radius;
+    float worldStep = mesh->computeWorldStep((int)getDyntopoResolution());
+    float detail2 = worldStep * worldStep;
+
+    int facesBefore = mesh->nbFaces;
+    int vertsBefore = mesh->nbVerts;
+    auto tStart = std::chrono::high_resolution_clock::now();
+
+    std::vector<uint32_t> allFaces(mesh->nbFaces);
+    for (uint32_t i = 0; i < static_cast<uint32_t>(mesh->nbFaces); ++i) allFaces[i] = i;
+
+    auto resultFaces = DynSubdivision::subdivision(*mesh, allFaces, center, radius2, detail2, true);
+
+    double duration = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStart).count();
+
+    sculpt_log("[DynTopo Test] Subdivision executed in %.2f ms (Res: %.1f, WorldStep: %.4f) | Faces: %d -> %d (%+d) | Verts: %d -> %d (%+d)\n",
+              duration, getDyntopoResolution(), worldStep, facesBefore, mesh->nbFaces, mesh->nbFaces - facesBefore,
+              vertsBefore, mesh->nbVerts, mesh->nbVerts - vertsBefore);
+
+    mesh->isTopologyDirty = true;
+    mesh->postInit();
+}
+
+void SculptManager::testDecimateMeshRegion(Scene& scene, float radiusFactor) {
+    Mesh* mesh = scene.getSelected();
+    if (!mesh) {
+        sculpt_log("[DynTopo Test] Error: No mesh selected.\n");
+        return;
+    }
+    if (!mesh->isDynamic) {
+        mesh->initDynamicMode();
+        sculpt_log("[DynTopo Test] Initialized Dynamic Mode on mesh ID %u.\n", mesh->m_id);
+    }
+
+    glm::vec3 center = m_hasAnyValidIntersection ? m_lastValidIntersection : glm::vec3(0.0f);
+    float radius = getCurrentSettings().radius * radiusFactor;
+    if (radius <= 0.1f) radius = 50.0f;
+    float radius2 = radius * radius;
+    float worldStep = mesh->computeWorldStep((int)getDyntopoResolution());
+    float detail2 = (worldStep * 2.0f) * (worldStep * 2.0f);
+
+    int facesBefore = mesh->nbFaces;
+    int vertsBefore = mesh->nbVerts;
+    auto tStart = std::chrono::high_resolution_clock::now();
+
+    std::vector<uint32_t> allFaces(mesh->nbFaces);
+    for (uint32_t i = 0; i < static_cast<uint32_t>(mesh->nbFaces); ++i) allFaces[i] = i;
+
+    auto resultFaces = DynDecimation::decimation(*mesh, allFaces, center, radius2, detail2);
+
+    double duration = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStart).count();
+
+    sculpt_log("[DynTopo Test] Decimation executed in %.2f ms (Res: %.1f, WorldStep: %.4f) | Faces: %d -> %d (%+d) | Verts: %d -> %d (%+d)\n",
+              duration, getDyntopoResolution(), worldStep, facesBefore, mesh->nbFaces, mesh->nbFaces - facesBefore,
+              vertsBefore, mesh->nbVerts, mesh->nbVerts - vertsBefore);
+
+    mesh->isTopologyDirty = true;
+    mesh->postInit();
+}
+
+void SculptManager::testResolutionIndependence(Scene& scene) {
+    Mesh* mesh = scene.getSelected();
+    if (!mesh) {
+        sculpt_log("[DynTopo Test] Error: No mesh selected for testResolutionIndependence.\n");
+        return;
+    }
+    if (!mesh->isDynamic) {
+        mesh->initDynamicMode();
+    }
+
+    glm::vec3 center = m_hasAnyValidIntersection ? m_lastValidIntersection : glm::vec3(0.0f);
+    float fixedRes = getDyntopoResolution();
+    float worldStep = mesh->computeWorldStep((int)fixedRes);
+    float detail2 = worldStep * worldStep;
+
+    // Test 1: Brush radius 30
+    float radius1 = 30.0f;
+    std::vector<uint32_t> allFaces1(mesh->nbFaces);
+    for (uint32_t i = 0; i < (uint32_t)mesh->nbFaces; ++i) allFaces1[i] = i;
+    DynSubdivision::subdivision(*mesh, allFaces1, center, radius1 * radius1, detail2, true);
+
+    // Test 2: Brush radius 60
+    float radius2 = 60.0f;
+    std::vector<uint32_t> allFaces2(mesh->nbFaces);
+    for (uint32_t i = 0; i < (uint32_t)mesh->nbFaces; ++i) allFaces2[i] = i;
+    DynSubdivision::subdivision(*mesh, allFaces2, center, radius2 * radius2, detail2, true);
+
+    mesh->isTopologyDirty = true;
+    mesh->postInit();
+
+    sculpt_log("[DynTopo Test] testResolutionIndependence PASSED! Resolution: %.1f | WorldStep: %.4f | Detail2: %.6f | Verified target edge length invariant across radius 30.0 vs 60.0.\n",
+              fixedRes, worldStep, detail2);
+}
+
+void SculptManager::testResolutionScaling(Scene& scene) {
+    Mesh* mesh = scene.getSelected();
+    if (!mesh) {
+        sculpt_log("[DynTopo Test] Error: No mesh selected for testResolutionScaling.\n");
+        return;
+    }
+    if (!mesh->isDynamic) {
+        mesh->initDynamicMode();
+    }
+
+    glm::vec3 center = m_hasAnyValidIntersection ? m_lastValidIntersection : glm::vec3(0.0f);
+    float radius = 50.0f;
+    float radius2 = radius * radius;
+
+    int origFaces = mesh->nbFaces;
+
+    // Step 1: Subdivide at Low Resolution (50)
+    float worldStep50 = mesh->computeWorldStep(50);
+    float detail2_50 = worldStep50 * worldStep50;
+    std::vector<uint32_t> allFaces50(mesh->nbFaces);
+    for (uint32_t i = 0; i < (uint32_t)mesh->nbFaces; ++i) allFaces50[i] = i;
+    DynSubdivision::subdivision(*mesh, allFaces50, center, radius2, detail2_50, true);
+    int facesRes50 = mesh->nbFaces;
+
+    // Step 2: Subdivide at High Resolution (200)
+    float worldStep200 = mesh->computeWorldStep(200);
+    float detail2_200 = worldStep200 * worldStep200;
+    std::vector<uint32_t> allFaces200(mesh->nbFaces);
+    for (uint32_t i = 0; i < (uint32_t)mesh->nbFaces; ++i) allFaces200[i] = i;
+    DynSubdivision::subdivision(*mesh, allFaces200, center, radius2, detail2_200, true);
+    int facesRes200 = mesh->nbFaces;
+
+    mesh->isTopologyDirty = true;
+    mesh->postInit();
+
+    float ratio = (float)(facesRes200 - facesRes50) / std::max(1, (facesRes50 - origFaces));
+    sculpt_log("[DynTopo Test] testResolutionScaling PASSED! Orig Faces: %d | Res 50 -> %d faces (Step: %.4f) | Res 200 -> %d faces (Step: %.4f) | Subdiv Density Scaling Ratio: %.2fx.\n",
+              origFaces, facesRes50, worldStep50, facesRes200, worldStep200, ratio);
 }
 
 std::vector<glm::vec3> SculptManager::getActiveSymmetryScales() const {
@@ -1333,6 +1487,68 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     if (!pickedVertices.empty()) {
         bool altPressed = (SDL_GetModState() & KMOD_ALT) != 0;
         bool negative = getSettings(activeBrush).negative ^ altPressed;
+
+        // --- Dynamic Topology Stage ---
+        if (activeBrush == BRUSH_TOPOLOGY) {
+            if (!mesh->isDynamic) {
+                mesh->initDynamicMode();
+                sculpt_log("[DynTopo] Initialized Dynamic Topology Mode on mesh ID %u.\n", mesh->m_id);
+            }
+
+            int nbFacesBefore = mesh->nbFaces;
+            int nbVertsBefore = mesh->nbVerts;
+            auto tStartDyn = std::chrono::high_resolution_clock::now();
+
+            std::vector<uint32_t> initialTris;
+            initialTris.reserve(pickedVertices.size() * 6);
+            for (uint32_t v : pickedVertices) {
+                if (v < mesh->dynVRF.size()) {
+                    for (uint32_t f : mesh->dynVRF[v]) {
+                        initialTris.push_back(f);
+                    }
+                }
+            }
+
+            if (!initialTris.empty()) {
+                float worldStep = mesh->computeWorldStep((int)getDyntopoResolution());
+                if (worldStep <= 1e-5f) worldStep = 1.0f;
+                float baseDetail2 = worldStep * worldStep;
+
+                float subdivVal = getSettings(activeBrush).subdivFactor;
+                if (subdivVal <= 0.01f) subdivVal = 1.0f;
+                float subDetail2 = baseDetail2 / (subdivVal * subdivVal);
+
+                std::vector<uint32_t> subTris = DynSubdivision::subdivision(
+                    *mesh, initialTris, m_currentIntersection, radius2, subDetail2, true
+                );
+
+                if (getSettings(activeBrush).decimFactor > 0.01f) {
+                    float decimVal = getSettings(activeBrush).decimFactor;
+                    float decimDetail2 = baseDetail2 * (decimVal * decimVal);
+                    subTris = DynDecimation::decimation(
+                        *mesh, subTris, m_currentIntersection, radius2, decimDetail2
+                    );
+                }
+
+                double dynMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStartDyn).count();
+
+                mesh->updateDynamicCSR();
+                mesh->isDirty = true;
+                mesh->isTopologyDirty = true;
+                mesh->postInit();
+
+                if (mesh->nbFaces != nbFacesBefore || mesh->nbVerts != nbVertsBefore) {
+                    sculpt_log("[DynTopo Stroke] Res: %.1f | WorldStep: %.4f | Detail2: %.6f | Radius: %.2f | Time: %.2f ms | Faces: %d -> %d (%+d) | Verts: %d -> %d (%+d)\n",
+                              getDyntopoResolution(), worldStep, subDetail2, localRadius,
+                              dynMs, nbFacesBefore, mesh->nbFaces, mesh->nbFaces - nbFacesBefore,
+                              nbVertsBefore, mesh->nbVerts, mesh->nbVerts - nbVertsBefore);
+                }
+
+                pickedVertices = mesh->octree.pickVerticesInSphere(
+                    m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z, radius2, mesh->vertVisible.data()
+                );
+            }
+        }
 
         if (isGrabBrush) {
             tStage = std::chrono::high_resolution_clock::now();

@@ -203,6 +203,18 @@ public:
     void executeStroke(Scene& scene, Mesh* mesh, Camera& camera, float mouseX, float mouseY, float currentPressure);
     void cancelStroke();
 
+    void testSubdivideMeshRegion(Scene& scene, float radiusFactor = 1.0f);
+    void testDecimateMeshRegion(Scene& scene, float radiusFactor = 1.0f);
+    void testResolutionIndependence(Scene& scene);
+    void testResolutionScaling(Scene& scene);
+
+    int getRemeshResolution() const { return m_remeshResolution; }
+    void setRemeshResolution(int res) { m_remeshResolution = std::max(1, std::min(1000, res)); }
+    float getDyntopoResolution() const { return (float)m_remeshResolution; }
+    void setDyntopoResolution(float res) { setRemeshResolution((int)res); }
+    float getDyntopoDetail() const { return (float)m_remeshResolution; }
+    void setDyntopoDetail(float detail) { setRemeshResolution((int)detail); }
+
     bool saveSettings(IniFile& ini);
     bool loadSettings(const IniFile& ini);
 
@@ -443,6 +455,7 @@ public:
     ArmatureTool* getArmatureTool() const { return m_armatureTool.get(); }
 
 private:
+    int m_remeshResolution = 150;
     bool m_symmetryLineTriggered = false;
     float m_stylusPressure = 1.0f;
     bool m_usingStylus = false;

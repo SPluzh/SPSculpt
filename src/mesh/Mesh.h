@@ -11,6 +11,7 @@
 #include "sculpt/ArmatureGraph.h"
 
 #include "common/Enums.h"
+#include "common/Constants.h"
 
 class Camera;
 
@@ -44,6 +45,16 @@ public:
     std::vector<uint32_t> faceEdges;       // nbFaces * 4 (edge index per face edge)
     std::vector<uint32_t> vertTagFlags;    // nbVerts (tag flags for algorithms)
 
+    // Dynamic Topology
+    bool isDynamic = false;
+    float subdivisionFactor = 1.0f;
+    float decimationFactor = 1.0f;
+    std::vector<std::vector<uint32_t>> dynVRV; // vertex ring vert
+    std::vector<std::vector<uint32_t>> dynVRF; // vertex ring face
+    std::vector<int32_t>  facesStateFlags;
+    std::vector<uint32_t> vertSculptFlags;
+    std::vector<int32_t>  vertStateFlags;
+
     // Octree
     Octree octree;
 
@@ -69,6 +80,19 @@ public:
     void setFaceGroup(uint32_t faceIdx, uint32_t gid);
     void initEdges();
     void initTopology();
+    void initDynamicMode();
+    void updateDynamicCSR();
+    void convertToStatic();
+    std::vector<uint32_t> triangulateQuadsInRegion(const std::vector<uint32_t>& iFaces);
+    void reAllocateArrays(int nbAdd);
+    void computeRingVertices(uint32_t iVert);
+    uint32_t addNbVert(int count = 1);
+    uint32_t addNbFace(int count = 1);
+    std::vector<uint32_t> getVerticesFromFaces(const std::vector<uint32_t>& iFaces) const;
+    std::vector<uint32_t> getFacesFromVertices(const std::vector<uint32_t>& iVerts) const;
+    std::vector<uint32_t> expandsFaces(const std::vector<uint32_t>& iFaces, int ringDepth = 1) const;
+    std::vector<uint32_t> expandsVertices(const std::vector<uint32_t>& iVerts, int ringDepth = 1) const;
+
     uint32_t getTagFlag() const {
         static uint32_t g_tagFlag = 0;
         return ++g_tagFlag;

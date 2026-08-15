@@ -153,6 +153,11 @@ public:
 
     void rebuildInternal();
 
+    void addFaceToLeaf(uint32_t faceId, OctreeCell* leaf);
+    void removeFaceFromLeaf(uint32_t faceId);
+    void replaceFace(uint32_t oldFace, uint32_t newFace);
+
+
 private:
     std::vector<uint32_t> m_visitedFlags;
     uint32_t m_visitedEpoch = 0;

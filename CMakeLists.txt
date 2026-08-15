@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(SPSculpt VERSION 0.2.5 LANGUAGES CXX)
+project(SPSculpt VERSION 0.3.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 
 
@@ -75,6 +75,8 @@ add_executable(SPSculpt
     src/mesh/NormalCalc.cpp
     src/mesh/Topology.cpp
     src/mesh/Layer.cpp
+    src/mesh/dynamic/DynSubdivision.cpp
+    src/mesh/dynamic/DynDecimation.cpp
     # sculpt algorithms
     src/sculpt/SculptEngine.cpp
     src/sculpt/Remesh.cpp

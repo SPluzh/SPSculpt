@@ -168,37 +168,7 @@ static bool isPointInPolygon(ImVec2 p, const ImVec2* poly, int count) {
 
 // Helper to get brush name
 static const char* getBrushNameLocal(BrushType brush) {
-    switch (brush) {
-        case BRUSH_FLATTEN: return "Flatten";
-        case BRUSH_SMOOTH:   return "Smooth";
-        case BRUSH_INFLATE:  return "Inflate";
-        case BRUSH_PINCH:    return "Pinch";
-        case BRUSH_CREASE:   return "Crease";
-        case BRUSH_VTOOL:    return "V-Tool";
-        case BRUSH_MOVE:     return "Move";
-        case BRUSH_DRAG:     return "Drag";
-        case BRUSH_ELASTIC:  return "Elastic";
-        case BRUSH_MASK:     return "Mask";
-        case BRUSH_PAINT:    return "Paint";
-        case BRUSH_TWIST:    return "Twist";
-        case BRUSH_LOCALSCALE: return "Local Scale";
-        case BRUSH_CLAY:     return "Clay";
-        case BRUSH_CLAYBUILDUP: return "Clay Buildup";
-        case BRUSH_DAMSTANDARD: return "Dam Standard";
-        case BRUSH_SQUAREBRUSH: return "Square Brush";
-        case BRUSH_VISIBILITY: return "Visibility";
-        case BRUSH_MASK_GRADIENT_BLUR: return "Mask Gradient Blur";
-        case BRUSH_MEASURE:  return "Measure";
-        case BRUSH_DIVIDER:  return "Divider";
-        case BRUSH_TRANSFORM: return "Transform";
-        case BRUSH_ARMATURE_SPHERES: return "Armature Spheres";
-        case BRUSH_BRUSH:     return "Brush";
-        case BRUSH_POLYGROUP: return "PolyGroup";
-        case BRUSH_CLIP_CURVE: return "Clip Curve";
-        case BRUSH_TRIM:       return "Trim";
-        case BRUSH_DELETE_LAYER: return "Delete Layer";
-    }
-    return "Unknown";
+    return getBrushNameStr(brush);
 }
 
 static const char* getBrushHotkey(BrushType brush) {
@@ -834,6 +804,7 @@ bool GuiManager::isPointOverWindow(const ImVec2& pt) const {
 void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer, SDL_Window* window) {
     m_renderer = &renderer;
     if (!m_imguiInitialized) return;
+    sculpt.setRemeshResolution(m_remeshResolution);
 
     static bool s_wasSculpting = false;
     bool nowSculpting = sculpt.isSculpting();
@@ -921,15 +892,11 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         ImGui::SetNextWindowSizeConstraints(ImVec2(160.0f * scale, -1.0f), ImVec2(160.0f * scale, -1.0f));
         ImGui::Begin("Toolbar", &m_showToolbar, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize);
         
-        const char* tools[] = { 
-            "Flatten", "Smooth", "Inflate", "Pinch", "Crease", "V-Tool", "Move", "Drag", "Elastic", 
-            "Mask", "Paint", "Twist", "Local Scale", "Clay", "Clay Buildup", "Dam Standard", "Square Brush", "Visibility", "Mask Gradient Blur",
-            "Measure", "Divider", "Transform", "Armature Spheres", "Brush", "PolyGroup", "Clip Curve", "Trim", "Delete Layer"
-        };
         BrushType current = sculpt.getBrush();
         float btnH = 26.0f * scale;
         for (int i = 0; i < BRUSH_COUNT; i++) {
             BrushType bType = static_cast<BrushType>(i);
+            const char* toolName = getBrushNameLocal(bType);
             bool selected = (current == bType);
             if (selected) {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_HeaderActive]);
@@ -948,10 +915,10 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 ImU32 tint = selected ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 240);
                 ImGui::GetWindowDrawList()->AddImage((ImTextureID)(uintptr_t)iconTex, imgMin, imgMax, ImVec2(0, 1), ImVec2(1, 0), tint);
                 ImGui::GetWindowDrawList()->AddText(ImVec2(imgMax.x + 6.0f * scale, pMin.y + (btnH - ImGui::GetFontSize()) * 0.5f),
-                    selected ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 255), tools[i]);
+                    selected ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 255), toolName);
             } else {
                 ImGui::GetWindowDrawList()->AddText(ImVec2(pMin.x + 8.0f * scale, pMin.y + (btnH - ImGui::GetFontSize()) * 0.5f),
-                    selected ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 255), tools[i]);
+                    selected ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 255), toolName);
             }
 
             if (clicked) {
@@ -1133,6 +1100,65 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             bool useSym = sculpt.getUseSym();
             if (ImGui::Checkbox("Enable Symmetry", &useSym)) {
                 sculpt.setUseSym(useSym);
+            }
+        }
+
+        // Dynamic Topology (DynTopo) Section
+        if (ImGui::CollapsingHeader("Dynamic Topology (DynTopo)", ImGuiTreeNodeFlags_DefaultOpen)) {
+            Mesh* selectedMesh = scene.getSelected();
+            if (selectedMesh) {
+                bool isDyn = selectedMesh->isDynamic;
+                if (ImGui::Checkbox("Enable Dynamic Topology Mode", &isDyn)) {
+                    if (isDyn) {
+                        selectedMesh->initDynamicMode();
+                        sculpt_log("[DynTopo UI] Dynamic topology enabled on mesh ID %u.\n", selectedMesh->m_id);
+                    } else {
+                        selectedMesh->convertToStatic();
+                        sculpt_log("[DynTopo UI] Dynamic topology converted to static on mesh ID %u.\n", selectedMesh->m_id);
+                    }
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Enables dynamic resolution adjustment during brush stroke");
+
+                ImGui::Checkbox("Use DynTopo for Active Brush", &settings.useDynamicTopology);
+                ImGui::SliderFloat("Subdivision Factor", &settings.subdivFactor, 0.0f, 2.0f, "%.2f");
+                ImGui::SliderFloat("Decimation Factor", &settings.decimFactor, 0.0f, 2.0f, "%.2f");
+
+                int remeshRes = getRemeshResolution();
+                if (ImGui::SliderInt("Remesh Resolution (Hotkey X)", &remeshRes, 10, 1000)) {
+                    setRemeshResolution(remeshRes);
+                    sculpt.setRemeshResolution(remeshRes);
+                }
+                float step = selectedMesh->computeWorldStep(sculpt.getRemeshResolution());
+                ImGui::TextDisabled("World Step: %.4f | Detail2: %.6f", step, step * step);
+
+                ImGui::Separator();
+                ImGui::Text("Manual Diagnostic Testing:");
+
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.55f, 0.35f, 1.00f));
+                if (ImGui::Button("Test Subdivide Region", ImVec2(140, 26))) {
+                    sculpt.testSubdivideMeshRegion(scene, 1.0f);
+                }
+                ImGui::PopStyleColor();
+
+                ImGui::SameLine();
+
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.25f, 0.20f, 1.00f));
+                if (ImGui::Button("Test Decimate Region", ImVec2(140, 26))) {
+                    sculpt.testDecimateMeshRegion(scene, 1.0f);
+                }
+                ImGui::PopStyleColor();
+
+                if (ImGui::Button("Test Resolution Independence", ImVec2(180, 26))) {
+                    sculpt.testResolutionIndependence(scene);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Test Resolution Scaling", ImVec2(160, 26))) {
+                    sculpt.testResolutionScaling(scene);
+                }
+
+                ImGui::TextDisabled("Mesh Stats: %d faces, %d verts", selectedMesh->nbFaces, selectedMesh->nbVerts);
+            } else {
+                ImGui::TextDisabled("Select a mesh to enable Dynamic Topology.");
             }
         }
 

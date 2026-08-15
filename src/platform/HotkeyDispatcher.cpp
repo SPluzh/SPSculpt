@@ -78,7 +78,9 @@ bool HotkeyDispatcher::processEvent(const SDL_Event& event, SculptManager& sculp
                     }
                     case ModalMode::REMESH_RESOLUTION: {
                         int r = gui.getRemeshResolution() + deltaX;
-                        gui.setRemeshResolution(std::max(10, std::min(1000, r)));
+                        r = std::max(10, std::min(1000, r));
+                        gui.setRemeshResolution(r);
+                        sculpt.setRemeshResolution(r);
                         Mesh* selected = scene.getSelected();
                         if (selected) {
                             float step = selected->computeWorldStep(gui.getRemeshResolution());
