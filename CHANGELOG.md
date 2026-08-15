@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [0.2.5]
 - **Scene Outliner**: Added Import and Export buttons to top header toolbar.
+- **Symmetry Visualization**: Restricted symmetry plane lines to display strictly on the currently active object, preventing global overlay on inactive background meshes.
 
 ## [0.2.4]
 - **Sculpting & Symmetry**: Fixed symmetry brush cursor placement and eliminated ghost cursor artifacts on non-proportionally scaled objects.

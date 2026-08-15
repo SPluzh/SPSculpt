@@ -27,6 +27,7 @@ walkthrough.md
 debug_log.txt
 sculpt_log.txt
 compile_err.txt
+err.txt
 dist/
 ZBrushes/
 docs/
