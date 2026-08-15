@@ -199,6 +199,8 @@ public:
     // Fallback for empty calls
     void render() {}
 
+    bool isPointOverWindow(const ImVec2& pt) const;
+
     // Window title & Exit handling
     void requestExit(bool forceModalCheck = true) {
         m_pendingQuit = true;

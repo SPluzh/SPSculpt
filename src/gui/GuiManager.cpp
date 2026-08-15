@@ -826,6 +826,11 @@ static bool isPointOverImGuiWindow(const ImVec2& pt) {
     return false;
 }
 
+bool GuiManager::isPointOverWindow(const ImVec2& pt) const {
+    return isPointOverImGuiWindow(pt);
+}
+
+
 void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer, SDL_Window* window) {
     m_renderer = &renderer;
     if (!m_imguiInitialized) return;
@@ -5196,7 +5201,7 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
 
     ImGuiIO& io = ImGui::GetIO();
     ImVec2 mousePos = io.MousePos;
-    ImDrawList* drawList = ImGui::GetForegroundDrawList();
+    ImDrawList* drawList = ImGui::GetBackgroundDrawList();
     float scale = getUiScale();
 
     int activeVp = scene.getSplitMode() != Scene::SplitMode::OFF ? scene.getActiveViewport() : 0;
@@ -5389,7 +5394,7 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
         drawList->AddPolyline(pts, 4, borderColor, ImDrawFlags_Closed, lineThick);
 
         // Check hover & clicks if interactive mode is active and not already dragging
-        if (m_activeRefDragTarget == RefDragTarget::None) {
+        if (m_activeRefDragTarget == RefDragTarget::None && !isPointOverWindow(mousePos)) {
             RefDragTarget hoverTarget = RefDragTarget::None;
             if (isPointInCircle(mousePos, RotHandle, handleRadius * 1.6f)) hoverTarget = RefDragTarget::Rotate;
             else if (isPointInCircle(mousePos, TL, handleRadius * 1.5f)) hoverTarget = RefDragTarget::ScaleTL;
@@ -5521,7 +5526,7 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
             float lockX0   =  38.0f * scale;
             float lockX1   =  62.0f * scale;
 
-            if (isMouseOverBar && m_activeRefDragTarget == RefDragTarget::None) {
+            if (isMouseOverBar && m_activeRefDragTarget == RefDragTarget::None && !isPointOverWindow(mousePos)) {
                 io.WantCaptureMouse = true;
                 sculpt.getCursor().hide();
 

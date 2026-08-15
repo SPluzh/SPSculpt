@@ -672,12 +672,14 @@ int main(int argc, char* argv[]) {
                                 isCameraEvent = true;
                             }
                             
-                            bool isGizmoHovered = (sculpt.getBrush() == BRUSH_TRANSFORM && (ImGuizmo::IsOver() || ImGuizmo::IsUsing()));
-                            if (!(isCameraEvent && isGizmoHovered)) {
-                                bool isAltClickSettingPivot = (sculpt.getBrush() == BRUSH_TRANSFORM && eventCopy.type == SDL_MOUSEBUTTONDOWN && eventCopy.button.button == SDL_BUTTON_LEFT && ((SDL_GetModState() & KMOD_ALT) != 0) && !ImGuizmo::IsUsing());
-                                if (!isAltClickSettingPivot) {
+                            bool isAltClickSettingPivot = (sculpt.getBrush() == BRUSH_TRANSFORM && eventCopy.type == SDL_MOUSEBUTTONDOWN && eventCopy.button.button == SDL_BUTTON_LEFT && ((SDL_GetModState() & KMOD_ALT) != 0) && !ImGuizmo::IsUsing());
+                            if (isCameraEvent) {
+                                ImVec2 mpos(io.MousePos.x, io.MousePos.y);
+                                if (eventCopy.type == SDL_MOUSEWHEEL && gui.isPointOverWindow(mpos)) {
                                     skipSculpt = true;
                                 }
+                            } else if (!isAltClickSettingPivot) {
+                                skipSculpt = true;
                             }
                         }
                     }

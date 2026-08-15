@@ -1842,7 +1842,11 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
         // Left button:
         if (event.button.button == SDL_BUTTON_LEFT) {
+            if (camera.getRefDragEnabled()) {
+                return;
+            }
             SDL_Keymod mod = SDL_GetModState();
+
 
             if ((mod & KMOD_ALT) && !(mod & KMOD_CTRL)) {
                 float minT = std::numeric_limits<float>::infinity();
@@ -3239,7 +3243,8 @@ void SculptManager::processFrame(Scene& scene) {
         m_trimLassoAlt = (SDL_GetModState() & KMOD_ALT) != 0;
     }
 
-    if (m_cameraController.isDragging() || m_currentBrush == BRUSH_MEASURE || m_currentBrush == BRUSH_DIVIDER || m_currentBrush == BRUSH_TRANSFORM) {
+    bool isRefDragMode = scene.getCamera().getRefDragEnabled() || (scene.getCameraRight() && scene.getCameraRight()->getRefDragEnabled());
+    if (isRefDragMode || m_cameraController.isDragging() || m_currentBrush == BRUSH_MEASURE || m_currentBrush == BRUSH_DIVIDER || m_currentBrush == BRUSH_TRANSFORM) {
         m_cursor.hide();
     } else {
         // Resolve dynamic brush modifier swap (Shift->Smooth, Ctrl->Mask, Ctrl+Shift->Visibility)

@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.2]
+- **Reference Images**: Allowed camera navigation (orbit, pan, zoom, roll) while in Reference Image Edit Mode (`Z`) and when interacting with reference images.
+- **Reference Images**: Automatically hid the sculpt brush cursor circle while Reference Image Edit Mode is active.
+- **Reference Images**: Updated reference image manipulation frame, handles, and overlay toolbar to render on the ImGui background draw list so they do not overlap active ImGui windows (Outliner, Panels, Preference windows, etc.).
+
+
 ## [0.2.1]
 - **Undo System Diagnostics**: Added stage-by-stage timing instrumentation and real-time diagnostic logging to track performance bottlenecks during undo/redo operations.
 - **Sculpting Stability**: Added automatic stroke cancellation when triggering undo during an active brush stroke to prevent history state corruption.
