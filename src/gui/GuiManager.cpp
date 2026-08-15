@@ -6088,9 +6088,6 @@ void GuiManager::drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRend
         ImGui::MenuItem("Topology & Remesh", nullptr, &m_showTopologyPanel);
         ImGui::MenuItem("Sculpt Layers", nullptr, &m_showLayersPanel);
         ImGui::MenuItem("Multiresolution", nullptr, &m_showMultiresPanel);
-        if (ImGui::MenuItem("Reference Images (Outliner)")) {
-            m_showScenePanel = true;
-        }
         ImGui::MenuItem("Camera Bookmarks", nullptr, &m_showCameraBookmarksPanel);
         ImGui::MenuItem("Sculpt Timelapse", nullptr, &m_showTimelapsePanel);
         ImGui::MenuItem("Hotkey HUD", nullptr, &m_showHotkeyHUD);
