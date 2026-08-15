@@ -5295,8 +5295,10 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
                         return ImVec2(v.x * cosR - v.y * sinR, v.x * sinR + v.y * cosR);
                     };
 
-                    float halfH0_px = S0 * 0.5f * vpH;
-                    float halfW0_px = imgAspect * halfH0_px;
+                    float refH0 = (img.height > 0) ? (float)img.height : vpH;
+                    float refW0 = (img.width > 0) ? (float)img.width : (refH0 * imgAspect);
+                    float halfH0_px = S0 * 0.5f * refH0;
+                    float halfW0_px = S0 * 0.5f * refW0;
                     ImVec2 anchorUnrot0(anchorNorm.x * halfW0_px, anchorNorm.y * halfH0_px);
                     ImVec2 A_fixed = ImVec2(C0_screen.x + rotVec(anchorUnrot0).x, C0_screen.y + rotVec(anchorUnrot0).y);
 
@@ -5312,8 +5314,8 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
                     float S_new = std::max(0.05f, S0 * ratio);
                     img.scale = S_new;
 
-                    float halfHnew_px = S_new * 0.5f * vpH;
-                    float halfWnew_px = imgAspect * halfHnew_px;
+                    float halfHnew_px = S_new * 0.5f * refH0;
+                    float halfWnew_px = S_new * 0.5f * refW0;
                     ImVec2 anchorUnrotNew(anchorNorm.x * halfWnew_px, anchorNorm.y * halfHnew_px);
                     ImVec2 C_new_screen = ImVec2(A_fixed.x - rotVec(anchorUnrotNew).x, A_fixed.y - rotVec(anchorUnrotNew).y);
 
@@ -5419,8 +5421,10 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
         float imgAspect = (img.width > 0 && img.height > 0) ? ((float)img.width / (float)img.height) : 1.0f;
 
         if (img.pinned2D) {
-            float halfH_px = img.scale * 0.5f * vpH;
-            float halfW_px = imgAspect * halfH_px;
+            float refH = (img.height > 0) ? (float)img.height : vpH;
+            float refW = (img.width > 0) ? (float)img.width : (refH * imgAspect);
+            float halfH_px = img.scale * 0.5f * refH;
+            float halfW_px = img.scale * 0.5f * refW;
             float Cx = vpX + (img.offsetX * 0.5f + 0.5f) * vpW;
             float Cy = vpY + (0.5f - img.offsetY * 0.5f) * vpH;
             C = ImVec2(Cx, Cy);
@@ -5629,8 +5633,10 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
                 Cy = pScrC.y + vpY;
             }
 
-            float halfH_px = selImg.scale * 0.5f * vpH;
-            float halfW_px = halfH_px * imgAspect;
+            float refH = (selImg.height > 0) ? (float)selImg.height : vpH;
+            float refW = (selImg.width > 0) ? (float)selImg.width : (refH * imgAspect);
+            float halfH_px = selImg.scale * 0.5f * refH;
+            float halfW_px = selImg.scale * 0.5f * refW;
             float rad = glm::radians(selImg.rotation);
             float cosR = std::cos(rad);
             float sinR = std::sin(rad);

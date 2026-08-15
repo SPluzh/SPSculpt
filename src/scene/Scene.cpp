@@ -77,7 +77,16 @@ void Scene::addReferenceImage(const std::string& path) {
         img.width = w;
         img.height = h;
         img.opacity = 1.0f;
-        img.scale = 1.0f;
+
+        float initialScale = 1.0f;
+        int vpH = m_camera.getHeight() > 0 ? m_camera.getHeight() : 1080;
+        int vpW = m_camera.getWidth() > 0 ? m_camera.getWidth() : 1920;
+        if (h > 0 && vpH > 0) {
+            float fitH = static_cast<float>(vpH) / static_cast<float>(h);
+            float fitW = (w > 0 && vpW > 0) ? (static_cast<float>(vpW) / static_cast<float>(w)) : fitH;
+            initialScale = std::min(1.0f, std::min(fitH, fitW));
+        }
+        img.scale = initialScale;
         img.offsetX = 0.0f;
         img.offsetY = 0.0f;
         img.visible = true;

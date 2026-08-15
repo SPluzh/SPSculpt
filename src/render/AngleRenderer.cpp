@@ -2888,7 +2888,8 @@ void AngleRenderer::drawReferenceImages(const Scene& scene, const Camera& camera
             glDisable(GL_DEPTH_TEST);
             glUniform1i(locPinned2D, 1);
             glUniform2f(locOffset, img.offsetX, img.offsetY);
-            glUniform1f(locScale, img.scale);
+            float pixelScaleY = (img.height > 0 && vpHeight > 0.0f) ? ((float)img.height / vpHeight) : 1.0f;
+            glUniform1f(locScale, img.scale * pixelScaleY);
             if (locRotation != -1) {
                 glUniform1f(locRotation, -glm::radians(img.rotation));
             }

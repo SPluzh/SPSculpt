@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 - **Reference Images**: Rendered transform handles on background layer to prevent UI window overlap.
 - **Reference Images**: Drag-and-dropping an image into the viewport automatically activates reference edit mode for immediate manipulation without opening the Scene Outliner panel if it was closed.
 - **Reference Images**: Rotation handle and overlay toolbar (opacity slider & lock toggle) automatically relocate across 4 candidate positions (Top → Bottom → Right → Left) to ensure they always remain visible on screen, switching to a vertical slider with a perfectly square lock button shifted off-center when positioned on side edges.
+- **Reference Images**: Set `scale = 1.0` to 100% native resolution (1:1 pixel size) when loading images smaller than the viewport.
 
 
 ## [0.2.1]
