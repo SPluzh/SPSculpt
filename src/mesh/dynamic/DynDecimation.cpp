@@ -178,14 +178,25 @@ static CollapseRejectReason checkCanCollapse(const Mesh& mesh, uint32_t va, uint
         return CollapseRejectReason::InvalidIndex;
     }
 
-    const auto& ringFa = mesh.dynVRF[va];
-    const auto& ringFb = mesh.dynVRF[vb];
+    uint32_t ringFaBuf[64];
+    uint32_t ringFbBuf[64];
+    int nFa = 0, nFb = 0;
+    if (va < mesh.dynVRF.size()) {
+        nFa = std::min((int)mesh.dynVRF[va].size(), 64);
+        std::copy_n(mesh.dynVRF[va].begin(), nFa, ringFaBuf);
+    }
+    if (vb < mesh.dynVRF.size()) {
+        nFb = std::min((int)mesh.dynVRF[vb].size(), 64);
+        std::copy_n(mesh.dynVRF[vb].begin(), nFb, ringFbBuf);
+    }
 
     uint32_t sharedFaces[4];
     int numSharedFaces = 0;
-    for (uint32_t fa : ringFa) {
+    for (int iA = 0; iA < nFa; ++iA) {
+        uint32_t fa = ringFaBuf[iA];
         if (fa >= static_cast<uint32_t>(mesh.nbFaces) || mesh.faces[fa * 4] == UINT32_MAX) continue;
-        for (uint32_t fb : ringFb) {
+        for (int iB = 0; iB < nFb; ++iB) {
+            uint32_t fb = ringFbBuf[iB];
             if (fa == fb) {
                 if (numSharedFaces < 4) sharedFaces[numSharedFaces++] = fa;
                 break;
@@ -196,14 +207,25 @@ static CollapseRejectReason checkCanCollapse(const Mesh& mesh, uint32_t va, uint
         return CollapseRejectReason::TopologySharedFaces;
     }
 
-    const auto& ringVa = mesh.dynVRV[va];
-    const auto& ringVb = mesh.dynVRV[vb];
+    uint32_t ringVaBuf[64];
+    uint32_t ringVbBuf[64];
+    int nVa = 0, nVb = 0;
+    if (va < mesh.dynVRV.size()) {
+        nVa = std::min((int)mesh.dynVRV[va].size(), 64);
+        std::copy_n(mesh.dynVRV[va].begin(), nVa, ringVaBuf);
+    }
+    if (vb < mesh.dynVRV.size()) {
+        nVb = std::min((int)mesh.dynVRV[vb].size(), 64);
+        std::copy_n(mesh.dynVRV[vb].begin(), nVb, ringVbBuf);
+    }
 
     uint32_t sharedVerts[8];
     int numSharedVerts = 0;
-    for (uint32_t v_a : ringVa) {
+    for (int iA = 0; iA < nVa; ++iA) {
+        uint32_t v_a = ringVaBuf[iA];
         if (v_a == vb || v_a >= static_cast<uint32_t>(mesh.nbVerts) || (v_a < isVertDead.size() && isVertDead[v_a])) continue;
-        for (uint32_t v_b : ringVb) {
+        for (int iB = 0; iB < nVb; ++iB) {
+            uint32_t v_b = ringVbBuf[iB];
             if (v_a == v_b) {
                 if (numSharedVerts < 8) sharedVerts[numSharedVerts++] = v_a;
                 break;
@@ -258,7 +280,8 @@ static CollapseRejectReason checkCanCollapse(const Mesh& mesh, uint32_t va, uint
         return false;
     };
 
-    for (uint32_t fIdx : ringFb) {
+    for (int iB = 0; iB < nFb; ++iB) {
+        uint32_t fIdx = ringFbBuf[iB];
         if (fIdx >= static_cast<uint32_t>(mesh.nbFaces) || mesh.faces[fIdx * 4] == UINT32_MAX || isSharedFace(fIdx)) continue;
         uint32_t id = fIdx * 4;
         uint32_t ov1 = mesh.faces[id];
@@ -298,7 +321,8 @@ static CollapseRejectReason checkCanCollapse(const Mesh& mesh, uint32_t va, uint
         }
     }
 
-    for (uint32_t fIdx : ringFa) {
+    for (int iA = 0; iA < nFa; ++iA) {
+        uint32_t fIdx = ringFaBuf[iA];
         if (fIdx >= static_cast<uint32_t>(mesh.nbFaces) || mesh.faces[fIdx * 4] == UINT32_MAX || isSharedFace(fIdx)) continue;
         uint32_t id = fIdx * 4;
         uint32_t ov1 = mesh.faces[id];
@@ -587,9 +611,28 @@ std::vector<uint32_t> decimation(
     float radius2,
     float detail2)
 {
+    std::vector<uint8_t> localIsVertDead(mesh.nbVerts, 0);
+    auto res = decimation(mesh, iTris, center, radius2, detail2, localIsVertDead);
+    compactMesh(mesh, localIsVertDead, &res);
+    return res;
+}
+
+std::vector<uint32_t> decimation(
+    Mesh& mesh,
+    const std::vector<uint32_t>& iTris,
+    const glm::vec3& center,
+    float radius2,
+    float detail2,
+    std::vector<uint8_t>& isVertDead)
+{
     if (!mesh.isDynamic) {
         mesh.initDynamicMode();
     }
+    if (isVertDead.size() < static_cast<size_t>(mesh.nbVerts)) {
+        isVertDead.resize(mesh.nbVerts, 0);
+    }
+
+    auto tCollapseStart = std::chrono::high_resolution_clock::now();
 
     sculpt_log("[DynTopo Decimation Start] iTris count: %zu, nbVerts: %d, nbFaces: %d\n",
                iTris.size(), mesh.nbVerts, mesh.nbFaces);
@@ -604,8 +647,6 @@ std::vector<uint32_t> decimation(
     uint32_t rejectedLinkCondition = 0;
     uint32_t rejectedNormalFlip = 0;
     uint32_t rejectedSharedFaces = 0;
-
-    std::vector<uint8_t> isVertDead(mesh.nbVerts, 0);
 
     while (idx < activeTris.size() && count++ < maxIter) {
         uint32_t fIdx = activeTris[idx++];
@@ -633,6 +674,8 @@ std::vector<uint32_t> decimation(
         float l12 = dist2(p1, p2);
         float l23 = dist2(p2, p3);
         float l31 = dist2(p3, p1);
+
+        if (l12 >= detail2 && l23 >= detail2 && l31 >= detail2) continue;
 
         glm::vec3 m12 = (p1 + p2) * 0.5f;
         glm::vec3 m23 = (p2 + p3) * 0.5f;
@@ -667,33 +710,59 @@ std::vector<uint32_t> decimation(
         }
     }
 
-    sculpt_log("[DynTopo Decimation Stats] Collapses: %u ok / %u attempted (Link Rejects: %u, NormalFlip Rejects: %u, Topology Rejects: %u)\n",
-              successfulCollapses, attemptedCollapses, rejectedLinkCondition, rejectedNormalFlip, rejectedSharedFaces);
+    double collapseMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tCollapseStart).count();
+    sculpt_log("[DynTopo TIMING] Decim Collapse Loop: %.2fms | Collapses: %u ok / %u attempted (Link Rejects: %u, NormalFlip Rejects: %u, Topology Rejects: %u)\n",
+              collapseMs, successfulCollapses, attemptedCollapses, rejectedLinkCondition, rejectedNormalFlip, rejectedSharedFaces);
 
-    if (successfulCollapses == 0) {
-        sculpt_log("[DynTopo Decimation] 0 collapses performed — skipping compaction pass.\n");
-        std::sort(activeTris.begin(), activeTris.end());
-        activeTris.erase(std::unique(activeTris.begin(), activeTris.end()), activeTris.end());
+    activeTris.erase(std::remove_if(activeTris.begin(), activeTris.end(),
+        [&mesh](uint32_t f) {
+            return f >= static_cast<uint32_t>(mesh.nbFaces) || mesh.faces[f * 4] == UINT32_MAX;
+        }), activeTris.end());
+    std::sort(activeTris.begin(), activeTris.end());
+    activeTris.erase(std::unique(activeTris.begin(), activeTris.end()), activeTris.end());
 
-        std::vector<uint32_t> result;
-        result.reserve(activeTris.size());
-        for (uint32_t f : activeTris) {
-            if (f < static_cast<uint32_t>(mesh.nbFaces) && mesh.faces[f * 4 + 3] == TRI_INDEX) {
-                result.push_back(f);
-            }
+    std::vector<uint32_t> result;
+    result.reserve(activeTris.size());
+    for (uint32_t f : activeTris) {
+        if (f < static_cast<uint32_t>(mesh.nbFaces) && mesh.faces[f * 4 + 3] == TRI_INDEX) {
+            result.push_back(f);
         }
-        mesh.isDirty = true;
-        mesh.isTopologyDirty = true;
-        return result;
     }
 
-    // --- 1. Compact Vertices (Deferred Batch Deletion) ---
+    mesh.isDirty = true;
+    mesh.isTopologyDirty = true;
+    return result;
+}
+
+void compactMesh(
+    Mesh& mesh,
+    const std::vector<uint8_t>& isVertDead,
+    std::vector<uint32_t>* ioModifiedTris)
+{
+    auto tCompactStart = std::chrono::high_resolution_clock::now();
+
+    bool hasDeadVerts = std::any_of(isVertDead.begin(), isVertDead.end(), [](uint8_t d) { return d != 0; });
+    bool hasDeadFaces = false;
+    for (int f = 0; f < mesh.nbFaces; ++f) {
+        if (mesh.faces[f * 4] == UINT32_MAX) {
+            hasDeadFaces = true;
+            break;
+        }
+    }
+
+    if (!hasDeadVerts && !hasDeadFaces) {
+        sculpt_log("[DynTopo Compaction] No dead vertices or faces — skipping compaction.\n");
+        return;
+    }
+
+    // --- 1. Compact Vertices ---
     uint32_t nbVertsBefore = static_cast<uint32_t>(mesh.nbVerts);
     std::vector<uint32_t> remapVert(nbVertsBefore, UINT32_MAX);
     uint32_t newNbVerts = 0;
 
     for (uint32_t v = 0; v < nbVertsBefore; ++v) {
-        if (!isVertDead[v]) {
+        bool isDead = (v < isVertDead.size() && isVertDead[v] != 0);
+        if (!isDead) {
             remapVert[v] = newNbVerts;
             if (v != newNbVerts) {
                 mesh.verts[newNbVerts * 3]     = mesh.verts[v * 3];
@@ -745,7 +814,6 @@ std::vector<uint32_t> decimation(
     mesh.dynVRV.resize(mesh.nbVerts);
     mesh.dynVRF.resize(mesh.nbVerts);
 
-    // Remap dynVRV neighbor references
     for (uint32_t v = 0; v < static_cast<uint32_t>(mesh.nbVerts); ++v) {
         auto& ringV = mesh.dynVRV[v];
         for (size_t i = 0; i < ringV.size(); ++i) {
@@ -756,7 +824,6 @@ std::vector<uint32_t> decimation(
         }
     }
 
-    // Remap face vertex references in all faces
     for (int f = 0; f < mesh.nbFaces; ++f) {
         if (mesh.faces[f * 4] != UINT32_MAX) {
             for (int k = 0; k < 4; ++k) {
@@ -768,7 +835,7 @@ std::vector<uint32_t> decimation(
         }
     }
 
-    // --- 2. Compact Faces (Tombstone Compaction Pass) ---
+    // --- 2. Compact Faces ---
     uint32_t facesBeforeCompaction = static_cast<uint32_t>(mesh.nbFaces);
     std::vector<uint32_t> remapFace(facesBeforeCompaction, UINT32_MAX);
     uint32_t newF = 0;
@@ -827,35 +894,30 @@ std::vector<uint32_t> decimation(
         }
     }
 
-    sculpt_log("[DynTopo VERIFY] Decimation compaction: %u verts before -> %d after (%u deleted) | %u faces before -> %d after (%u tombstones cleared).\n",
-               nbVertsBefore, mesh.nbVerts, nbVertsBefore - mesh.nbVerts,
+    if (ioModifiedTris) {
+        std::vector<uint32_t> remapped;
+        remapped.reserve(ioModifiedTris->size());
+        for (uint32_t f : *ioModifiedTris) {
+            if (f < facesBeforeCompaction && remapFace[f] != UINT32_MAX) {
+                remapped.push_back(remapFace[f]);
+            }
+        }
+        std::sort(remapped.begin(), remapped.end());
+        remapped.erase(std::unique(remapped.begin(), remapped.end()), remapped.end());
+        *ioModifiedTris = std::move(remapped);
+    }
+
+    double compactMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tCompactStart).count();
+    sculpt_log("[DynTopo TIMING] Deferred Compaction: %.2fms | Verts: %u -> %d (%u deleted) | Faces: %u -> %d (%u tombstones cleared)\n",
+               compactMs, nbVertsBefore, mesh.nbVerts, nbVertsBefore - mesh.nbVerts,
                facesBeforeCompaction, mesh.nbFaces, facesBeforeCompaction - mesh.nbFaces);
 
 #ifdef DYNTOPO_HEALTH_CHECK
-    validateMeshTopology(mesh, "Post-Decimation");
+    validateMeshTopology(mesh, "Post-Stroke-Compaction");
 #endif
-
-    std::vector<uint32_t> remappedActive;
-    remappedActive.reserve(activeTris.size());
-    for (uint32_t f : activeTris) {
-        if (f < facesBeforeCompaction && remapFace[f] != UINT32_MAX) {
-            remappedActive.push_back(remapFace[f]);
-        }
-    }
-    std::sort(remappedActive.begin(), remappedActive.end());
-    remappedActive.erase(std::unique(remappedActive.begin(), remappedActive.end()), remappedActive.end());
-
-    std::vector<uint32_t> result;
-    result.reserve(remappedActive.size());
-    for (uint32_t f : remappedActive) {
-        if (f < static_cast<uint32_t>(mesh.nbFaces) && mesh.faces[f * 4 + 3] == TRI_INDEX) {
-            result.push_back(f);
-        }
-    }
 
     mesh.isDirty = true;
     mesh.isTopologyDirty = true;
-    return result;
 }
 
 } // namespace DynDecimation

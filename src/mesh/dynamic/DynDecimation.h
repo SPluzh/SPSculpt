@@ -30,4 +30,28 @@ std::vector<uint32_t> decimation(
     float detail2
 );
 
+std::vector<uint32_t> decimation(
+    Mesh& mesh,
+    const std::vector<uint32_t>& iTris,
+    const glm::vec3& center,
+    float radius2,
+    float detail2,
+    std::vector<uint8_t>& isVertDead
+);
+
+/**
+ * @brief Performs standalone compaction of vertices and faces, clearing tombstones.
+ *
+ * Remaps dynVRV, dynVRF, faces, face data, and octree leaf references in-place.
+ *
+ * @param mesh Reference to the dynamic Mesh.
+ * @param isVertDead Vector marking dead (tombstoned) vertices.
+ * @param ioModifiedTris Optional pointer to vector of modified triangle indices to remap.
+ */
+void compactMesh(
+    Mesh& mesh,
+    const std::vector<uint8_t>& isVertDead,
+    std::vector<uint32_t>* ioModifiedTris = nullptr
+);
+
 } // namespace DynDecimation

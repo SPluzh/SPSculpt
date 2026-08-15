@@ -1546,6 +1546,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             float subDetail2 = baseDetail2 / (subdivVal * subdivVal);
 
             std::vector<uint32_t> allModifiedSubTris;
+            std::vector<uint8_t> isVertDead(mesh->nbVerts, 0);
 
             for (const auto& region : dynRegions) {
                 size_t rawTrisCount = 0;
@@ -1638,10 +1639,10 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                         if (needsDecim) {
                             auto tDec0 = std::chrono::high_resolution_clock::now();
                             subTris = DynDecimation::decimation(
-                                *mesh, subTris, region.center, radius2, decimDetail2
+                                *mesh, subTris, region.center, radius2, decimDetail2, isVertDead
                             );
                             double decMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tDec0).count();
-                            sculpt_log("[DynTopo TIMING] Decim:  %.2fms -> %zu tris\n", decMs, subTris.size());
+                            sculpt_log("[DynTopo TIMING] Decim Collapses: %.2fms -> %zu tris\n", decMs, subTris.size());
                         } else {
                             sculpt_log("[DynTopo] Decimation SKIPPED — all edges within threshold\n");
                         }
@@ -1653,11 +1654,15 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 }
             }
 
+            // Perform single deferred compaction pass at the end of all regions in this stroke tick
+            DynDecimation::compactMesh(*mesh, isVertDead, &allModifiedSubTris);
+
             if (!allModifiedSubTris.empty()) {
                 std::sort(allModifiedSubTris.begin(), allModifiedSubTris.end());
                 allModifiedSubTris.erase(std::unique(allModifiedSubTris.begin(), allModifiedSubTris.end()), allModifiedSubTris.end());
 
                 // 1. Update face normals and bounding boxes for all modified triangles
+                auto tFN0 = std::chrono::high_resolution_clock::now();
                 updateFaceNormalsAndBoxes(
                     mesh->verts.data(), mesh->nbVerts,
                     mesh->faces.data(), mesh->nbFaces,
@@ -1666,6 +1671,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                     mesh->faceBoxes.data(),
                     mesh->faceCenters.data()
                 );
+                double fnMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tFN0).count();
 
                 // 2. Build affectedVertsList using std::vector + sort/unique
                 std::vector<uint32_t> affectedVertsList;
@@ -1685,6 +1691,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 affectedVertsList.erase(std::unique(affectedVertsList.begin(), affectedVertsList.end()), affectedVertsList.end());
 
                 // 3. Update vertex normals directly using live dynVRF (skipping full-mesh CSR update)
+                auto tVN0 = std::chrono::high_resolution_clock::now();
                 updateVertexNormals(
                     affectedVertsList.data(), (int)affectedVertsList.size(), mesh->nbVerts,
                     mesh->dynVRF,
@@ -1692,18 +1699,22 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                     mesh->normals.data(),
                     mesh->nbFaces
                 );
+                double vnMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tVN0).count();
 
                 // 5. Update Octree for all modified triangles
+                auto tOct0 = std::chrono::high_resolution_clock::now();
                 mesh->octree.update(
                     mesh->verts.data(), mesh->nbVerts,
                     mesh->faces.data(), mesh->nbFaces,
                     mesh->faceBoxes.data(), mesh->faceCenters.data(),
                     allModifiedSubTris.data(), (int)allModifiedSubTris.size()
                 );
+                double octMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tOct0).count();
 
                 allAffectedVerts.insert(allAffectedVerts.end(), affectedVertsList.begin(), affectedVertsList.end());
 
                 // Targeted vertProxy copy
+                auto tPx0 = std::chrono::high_resolution_clock::now();
                 if (mesh->vertProxy.size() != mesh->verts.size()) {
                     mesh->vertProxy.resize(mesh->verts.size());
                 }
@@ -1714,6 +1725,10 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                         std::memcpy(&mesh->vertProxy[minAff * 3], &mesh->verts[minAff * 3], (maxAff - minAff + 1) * 3 * sizeof(float));
                     }
                 }
+                double pxMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tPx0).count();
+
+                sculpt_log("[DynTopo TIMING] Post-DynTopo Breakdown: FaceNormals=%.2fms, VertNormals=%.2fms, Octree=%.2fms, VertProxy=%.2fms\n",
+                          fnMs, vnMs, octMs, pxMs);
 
                 mesh->isDirty = true;
                 mesh->isTopologyDirty = true;
