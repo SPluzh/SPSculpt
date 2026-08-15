@@ -175,7 +175,8 @@ void UndoManager::endSculptStroke(Scene& scene) {
         if (delta.prevVerts != delta.nextVerts ||
             (delta.hasLayerDeltas && delta.prevLayerDeltas != delta.nextLayerDeltas) ||
             (delta.hasColors && delta.prevColors != delta.nextColors) ||
-            (delta.hasMaterials && delta.prevMaterials != delta.nextMaterials)) {
+            (delta.hasMaterials && delta.prevMaterials != delta.nextMaterials) ||
+            (mesh->isTopologyDirty && !delta.indices.empty())) {
             hasAnyChange = true;
         }
     }

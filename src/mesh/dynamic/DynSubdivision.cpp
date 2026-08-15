@@ -86,9 +86,15 @@ static uint32_t findOppositeTriangle(Mesh& mesh, uint32_t iTri, uint32_t va, uin
     const auto& ringA = mesh.dynVRF[va];
     const auto& ringB = mesh.dynVRF[vb];
 
+    std::unordered_set<uint32_t> setB;
+    for (uint32_t fB : ringB) {
+        if (fB < static_cast<uint32_t>(mesh.nbFaces) && mesh.faces[fB * 4] != UINT32_MAX) {
+            setB.insert(fB);
+        }
+    }
     for (uint32_t fA : ringA) {
-        if (fA == iTri || fA >= static_cast<uint32_t>(mesh.nbFaces)) continue;
-        if (std::find(ringB.begin(), ringB.end(), fA) != ringB.end()) {
+        if (fA == iTri || fA >= static_cast<uint32_t>(mesh.nbFaces) || mesh.faces[fA * 4] == UINT32_MAX) continue;
+        if (setB.count(fA)) {
             return ensureTriangle(mesh, fA, va, vb);
         }
     }
@@ -268,6 +274,7 @@ static bool validateMeshTopology(Mesh& mesh, const char* label) {
 
     for (int i = 0; i < mesh.nbFaces; ++i) {
         uint32_t v1 = mesh.faces[i * 4];
+        if (v1 == UINT32_MAX) continue;
         uint32_t v2 = mesh.faces[i * 4 + 1];
         uint32_t v3 = mesh.faces[i * 4 + 2];
         uint32_t v4 = mesh.faces[i * 4 + 3];
@@ -466,7 +473,9 @@ std::vector<uint32_t> subdivision(
     }
 
     sculpt_log("[DynTopo Subdivision Stats] Edge splits performed: %u (New Verts: %zu)\n", splitsPerformed, edgeMap.size());
+#ifdef DYNTOPO_HEALTH_CHECK
     validateMeshTopology(mesh, "Post-Subdivision");
+#endif
 
     std::unordered_set<uint32_t> uniqueSet(activeTris.begin(), activeTris.end());
     std::vector<uint32_t> result;
@@ -477,9 +486,6 @@ std::vector<uint32_t> subdivision(
         }
     }
 
-    if (splitsPerformed > 0) {
-        mesh.updateDynamicCSR();
-    }
     mesh.isDirty = true;
     mesh.isTopologyDirty = true;
     return result;

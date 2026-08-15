@@ -1490,6 +1490,12 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 
         // --- Dynamic Topology Stage ---
         if (activeBrush == BRUSH_TOPOLOGY) {
+#ifdef DYNTOPO_HEALTH_CHECK
+            sculpt_log("[DynTopo VERIFY] Health check ENABLED (debug build).\n");
+#else
+            sculpt_log("[DynTopo VERIFY] Health check DISABLED (release build) — OK.\n");
+#endif
+
             bool needsInit = (!mesh->isDynamic || mesh->dynVRF.size() != static_cast<size_t>(mesh->nbVerts));
             if (needsInit) {
                 sculpt_log("[DynTopo Stroke] Mesh ID %u dynamic topology check: triggering initDynamicMode(true) (isDynamic=%d, dynVRFSize=%zu, nbVerts=%d)\n",
@@ -1501,57 +1507,154 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             int nbVertsBefore = mesh->nbVerts;
             auto tStartDyn = std::chrono::high_resolution_clock::now();
 
-            std::vector<uint32_t> initialTris;
-            initialTris.reserve(pickedVertices.size() * 6);
-            for (uint32_t v : pickedVertices) {
-                if (v < mesh->dynVRF.size()) {
-                    for (uint32_t f : mesh->dynVRF[v]) {
-                        initialTris.push_back(f);
+            struct DynRegion {
+                glm::vec3 center;
+                std::vector<uint32_t> verts;
+            };
+            std::vector<DynRegion> dynRegions;
+            dynRegions.push_back({ m_currentIntersection, pickedVertices });
+
+            if (m_useSym) {
+                std::vector<glm::vec3> symScales = getActiveSymmetryScales();
+                for (size_t sIdx = 0; sIdx < symScales.size(); ++sIdx) {
+                    glm::vec3 sScale = symScales[sIdx];
+                    glm::vec3 symCenter = reflectPointSymmetry(m_currentIntersection, sScale, mesh, m_symmetryMode);
+                    std::vector<uint32_t> symVerts = mesh->octree.pickVerticesInSphere(
+                        symCenter.x, symCenter.y, symCenter.z, radius2, mesh->vertVisible.data()
+                    );
+                    if (getSettings(activeBrush).culling && !symVerts.empty()) {
+                        glm::vec3 symRayDir = reflectVectorSymmetry(localRayDir, sScale, mesh, m_symmetryMode);
+                        filterCullingVertices(symVerts, mesh, symRayDir);
+                    }
+                    if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty() && !symVerts.empty()) {
+                        filterPolyGroupVertices(symVerts, mesh, m_strokeTargetPolyGroup);
+                    }
+                    if (!symVerts.empty()) {
+                        dynRegions.push_back({ symCenter, symVerts });
                     }
                 }
             }
 
-            sculpt_log("[DynTopo Stroke] Picked %zu verts -> %zu candidate faces (dynVRF size=%zu)\n",
-                      pickedVertices.size(), initialTris.size(), mesh->dynVRF.size());
+            float worldStep = mesh->computeWorldStep((int)getDyntopoResolution());
+            if (worldStep <= 1e-5f) worldStep = 1.0f;
+            float baseDetail2 = worldStep * worldStep;
 
-            if (!initialTris.empty()) {
-                float worldStep = mesh->computeWorldStep((int)getDyntopoResolution());
-                if (worldStep <= 1e-5f) worldStep = 1.0f;
-                float baseDetail2 = worldStep * worldStep;
+            float subdivVal = getSettings(activeBrush).subdivFactor;
+            if (subdivVal <= 0.01f) subdivVal = 1.0f;
+            float subDetail2 = baseDetail2 / (subdivVal * subdivVal);
 
-                float subdivVal = getSettings(activeBrush).subdivFactor;
-                if (subdivVal <= 0.01f) subdivVal = 1.0f;
-                float subDetail2 = baseDetail2 / (subdivVal * subdivVal);
+            std::vector<uint32_t> allModifiedSubTris;
 
-                std::vector<uint32_t> subTris = DynSubdivision::subdivision(
-                    *mesh, initialTris, m_currentIntersection, radius2, subDetail2, true
+            for (const auto& region : dynRegions) {
+                size_t rawTrisCount = 0;
+                std::unordered_set<uint32_t> uniqueInitialTrisSet;
+                for (uint32_t v : region.verts) {
+                    if (v < mesh->dynVRF.size()) {
+                        rawTrisCount += mesh->dynVRF[v].size();
+                        for (uint32_t f : mesh->dynVRF[v]) {
+                            if (f < static_cast<uint32_t>(mesh->nbFaces)) {
+                                uniqueInitialTrisSet.insert(f);
+                            }
+                        }
+                    }
+                }
+                std::vector<uint32_t> initialTris(uniqueInitialTrisSet.begin(), uniqueInitialTrisSet.end());
+
+                if (!initialTris.empty()) {
+                    std::vector<uint32_t> subTris = DynSubdivision::subdivision(
+                        *mesh, initialTris, region.center, radius2, subDetail2, true
+                    );
+
+                    if (getSettings(activeBrush).decimFactor > 0.01f) {
+                        float decimVal = getSettings(activeBrush).decimFactor;
+                        float decimDetail2 = baseDetail2 * (decimVal * decimVal);
+                        subTris = DynDecimation::decimation(
+                            *mesh, subTris, region.center, radius2, decimDetail2
+                        );
+                    }
+
+                    allModifiedSubTris.insert(allModifiedSubTris.end(), subTris.begin(), subTris.end());
+                }
+            }
+
+            if (!allModifiedSubTris.empty()) {
+                std::sort(allModifiedSubTris.begin(), allModifiedSubTris.end());
+                allModifiedSubTris.erase(std::unique(allModifiedSubTris.begin(), allModifiedSubTris.end()), allModifiedSubTris.end());
+
+                sculpt_log("[DynTopo VERIFY] Decimation completed. Calling updateDynamicCSR...\n");
+                mesh->updateDynamicCSR();
+                sculpt_log("[DynTopo VERIFY] updateDynamicCSR completed.\n");
+
+                auto tPost = std::chrono::high_resolution_clock::now();
+                updateFaceNormalsAndBoxes(
+                    mesh->verts.data(), mesh->nbVerts,
+                    mesh->faces.data(), mesh->nbFaces,
+                    allModifiedSubTris.data(), (int)allModifiedSubTris.size(),
+                    mesh->faceNormals.data(),
+                    mesh->faceBoxes.data(),
+                    mesh->faceCenters.data()
                 );
 
-                if (getSettings(activeBrush).decimFactor > 0.01f) {
-                    float decimVal = getSettings(activeBrush).decimFactor;
-                    float decimDetail2 = baseDetail2 * (decimVal * decimVal);
-                    subTris = DynDecimation::decimation(
-                        *mesh, subTris, m_currentIntersection, radius2, decimDetail2
-                    );
+                std::unordered_set<uint32_t> affectedVertsSet;
+                for (uint32_t fIdx : allModifiedSubTris) {
+                    if (fIdx < (uint32_t)mesh->nbFaces) {
+                        uint32_t id = fIdx * 4;
+                        for (int k = 0; k < 4; ++k) {
+                            uint32_t v = mesh->faces[id + k];
+                            if (v != TRI_INDEX && v < (uint32_t)mesh->nbVerts) {
+                                affectedVertsSet.insert(v);
+                            }
+                        }
+                    }
                 }
+                std::vector<uint32_t> affectedVertsList(affectedVertsSet.begin(), affectedVertsSet.end());
+
+                updateVertexNormals(
+                    affectedVertsList.data(), (int)affectedVertsList.size(), mesh->nbVerts,
+                    mesh->vrfStartCount.data(),
+                    mesh->vertRingFace.data(),
+                    mesh->faceNormals.data(),
+                    mesh->normals.data()
+                );
+
+                mesh->octree.update(
+                    mesh->verts.data(), mesh->nbVerts,
+                    mesh->faces.data(), mesh->nbFaces,
+                    mesh->faceBoxes.data(),
+                    allModifiedSubTris.data(), (int)allModifiedSubTris.size()
+                );
+
+                if (mesh->vertProxy.size() != mesh->verts.size()) {
+                    mesh->vertProxy.resize(mesh->verts.size());
+                }
+                for (size_t i = 0; i < mesh->verts.size(); ++i) {
+                    mesh->vertProxy[i] = mesh->verts[i];
+                }
+
+                mesh->isDirty = true;
+                mesh->isTopologyDirty = true;
+
+                allAffectedVerts.insert(allAffectedVerts.end(), affectedVertsList.begin(), affectedVertsList.end());
+
+                double postMs = std::chrono::duration<double, std::milli>(
+                    std::chrono::high_resolution_clock::now() - tPost).count();
+                sculpt_log("[DynTopo VERIFY] Local normal recompute: %.2f ms (faces in region: %zu). Full postInit SKIPPED.\n", postMs, allModifiedSubTris.size());
 
                 double dynMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStartDyn).count();
 
-                mesh->updateDynamicCSR();
-                mesh->isDirty = true;
-                mesh->isTopologyDirty = true;
-                mesh->postInit();
-
-                if (mesh->nbFaces != nbFacesBefore || mesh->nbVerts != nbVertsBefore) {
-                    sculpt_log("[DynTopo Stroke] Res: %.1f | WorldStep: %.4f | Detail2: %.6f | Radius: %.2f | Time: %.2f ms | Faces: %d -> %d (%+d) | Verts: %d -> %d (%+d)\n",
-                              getDyntopoResolution(), worldStep, subDetail2, localRadius,
-                              dynMs, nbFacesBefore, mesh->nbFaces, mesh->nbFaces - nbFacesBefore,
-                              nbVertsBefore, mesh->nbVerts, mesh->nbVerts - nbVertsBefore);
-                }
+                sculpt_log("[DynTopo Stroke SUMMARY] Total DynTopo Stroke Time: %.2f ms | Faces: %d -> %d (%+d) | Verts: %d -> %d (%+d)\n",
+                          dynMs, nbFacesBefore, mesh->nbFaces, mesh->nbFaces - nbFacesBefore,
+                          nbVertsBefore, mesh->nbVerts, mesh->nbVerts - nbVertsBefore);
 
                 pickedVertices = mesh->octree.pickVerticesInSphere(
                     m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z, radius2, mesh->vertVisible.data()
                 );
+                if (getSettings(activeBrush).culling) {
+                    filterCullingVertices(pickedVertices, mesh, localRayDir);
+                }
+                if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty()) {
+                    filterPolyGroupVertices(pickedVertices, mesh, m_strokeTargetPolyGroup);
+                }
             }
         }
 
@@ -1617,6 +1720,9 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         // --- Stage 4: Undo Record ---
         tStage = std::chrono::high_resolution_clock::now();
         g_undoManager.recordAffectedVertices(scene, mesh->m_id, pickedVertices, strokeAffectsColors, strokeAffectsMaterials);
+        if (!allAffectedVerts.empty()) {
+            g_undoManager.recordAffectedVertices(scene, mesh->m_id, allAffectedVerts, strokeAffectsColors, strokeAffectsMaterials);
+        }
         m_lastFrameProfile.undoRecordMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
 
         // --- Stage 5: Primary Deform Pass ---
@@ -1746,6 +1852,9 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         // Sort and deduplicate affected vertices to ensure optimal L1/L2 cache locality during Face Lookup & Normals update
         std::sort(allAffectedVerts.begin(), allAffectedVerts.end());
         allAffectedVerts.erase(std::unique(allAffectedVerts.begin(), allAffectedVerts.end()), allAffectedVerts.end());
+        allAffectedVerts.erase(std::remove_if(allAffectedVerts.begin(), allAffectedVerts.end(), [mesh](uint32_t v) {
+            return v >= static_cast<uint32_t>(mesh->nbVerts);
+        }), allAffectedVerts.end());
         m_lastFrameProfile.sortDedupMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
         if (isGrabBrush) {
             m_grabbedAffectedVerts = allAffectedVerts;

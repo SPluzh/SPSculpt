@@ -283,6 +283,7 @@ int main(int argc, char* argv[]) {
 #endif
 
     bool showConsole = false;
+    bool forceDyntopo = false;
     std::string fileToOpen = "";
 
 #ifdef _WIN32
@@ -293,6 +294,8 @@ int main(int argc, char* argv[]) {
             std::string arg = wideToUtf8(szArgList[i]);
             if (arg == "--console" || arg == "-console" || arg == "-c" || arg == "--show-console") {
                 showConsole = true;
+            } else if (arg == "--dyntopo") {
+                forceDyntopo = true;
             } else if (fileToOpen.empty() && !arg.empty() && arg[0] != '-') {
                 fileToOpen = arg;
             }
@@ -304,6 +307,8 @@ int main(int argc, char* argv[]) {
         std::string arg = argv[i];
         if (arg == "--console" || arg == "-console" || arg == "-c" || arg == "--show-console") {
             showConsole = true;
+        } else if (arg == "--dyntopo") {
+            forceDyntopo = true;
         } else if (fileToOpen.empty() && !arg.empty() && arg[0] != '-') {
             fileToOpen = arg;
         }
@@ -466,6 +471,9 @@ int main(int argc, char* argv[]) {
     BrushPresetManager::instance().loadDefaults();
     SculptManager sculpt;
     sculpt.loadSettings(appSettings);
+    if (forceDyntopo) {
+        sculpt.setBrush(BRUSH_TOPOLOGY);
+    }
     gui.init(window, glContext);
     gui.setRenderer(&renderer);
     HotkeyDispatcher dispatcher;

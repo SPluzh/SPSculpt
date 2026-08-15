@@ -1050,6 +1050,19 @@ void Mesh::initDynamicMode(bool force) {
 void Mesh::updateDynamicCSR() {
     if (!isDynamic) return;
 
+    static thread_local uint32_t csrCallCount = 0;
+    sculpt_log("[DynTopo VERIFY] updateDynamicCSR call #%u for mesh %u (nbVerts=%d, nbFaces=%d).\n",
+               ++csrCallCount, m_id, nbVerts, nbFaces);
+
+    for (int i = 0; i < nbVerts; ++i) {
+        if (i < (int)dynVRF.size()) {
+            auto& ring = dynVRF[i];
+            ring.erase(std::remove_if(ring.begin(), ring.end(), [this](uint32_t f) {
+                return f >= static_cast<uint32_t>(nbFaces) || faces[f * 4] == UINT32_MAX;
+            }), ring.end());
+        }
+    }
+
     vrfStartCount.resize(nbVerts * 2);
     vertRingFace.clear();
     size_t totalF = 0;
@@ -1096,23 +1109,23 @@ void Mesh::updateDynamicCSR() {
 }
 
 void Mesh::computeRingVertices(uint32_t iVert) {
-    if (iVert >= (uint32_t)nbVerts) return;
+    if (iVert >= dynVRV.size() || iVert >= dynVRF.size()) return;
     auto& ringV = dynVRV[iVert];
     ringV.clear();
     const auto& ringF = dynVRF[iVert];
 
-    for (uint32_t fIdx : ringF) {
-        if (fIdx >= (uint32_t)nbFaces) continue;
-        uint32_t id = fIdx * 4;
-        uint32_t v1 = faces[id];
-        uint32_t v2 = faces[id + 1];
-        uint32_t v3 = faces[id + 2];
-        uint32_t v4 = faces[id + 3];
+    std::unordered_set<uint32_t> seen;
+    seen.reserve(ringF.size() * 3);
 
-        if (v1 != iVert && std::find(ringV.begin(), ringV.end(), v1) == ringV.end()) ringV.push_back(v1);
-        if (v2 != iVert && std::find(ringV.begin(), ringV.end(), v2) == ringV.end()) ringV.push_back(v2);
-        if (v3 != iVert && std::find(ringV.begin(), ringV.end(), v3) == ringV.end()) ringV.push_back(v3);
-        if (v4 != TRI_INDEX && v4 != iVert && std::find(ringV.begin(), ringV.end(), v4) == ringV.end()) ringV.push_back(v4);
+    for (uint32_t fIdx : ringF) {
+        if (fIdx >= (uint32_t)nbFaces || faces[fIdx * 4] == UINT32_MAX) continue;
+        uint32_t id = fIdx * 4;
+        for (int k = 0; k < 4; ++k) {
+            uint32_t v = faces[id + k];
+            if (v != TRI_INDEX && v != UINT32_MAX && v != iVert && seen.insert(v).second) {
+                ringV.push_back(v);
+            }
+        }
     }
 }
 
@@ -1240,10 +1253,11 @@ std::vector<uint32_t> Mesh::triangulateQuadsInRegion(const std::vector<uint32_t>
             computeRingVertices(v3);
             computeRingVertices(v4);
 
+            uint32_t modFaces[2] = {fIdx, newFaceId};
             updateFaceNormalsAndBoxes(
                 verts.data(), nbVerts,
                 faces.data(), nbFaces,
-                nullptr, -1,
+                modFaces, 2,
                 faceNormals.data(),
                 faceBoxes.data(),
                 faceCenters.data()

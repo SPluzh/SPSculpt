@@ -402,7 +402,7 @@ uint32_t getFacesFromVerticesFast(
     uint32_t nbFaces
 ) {
 
-    if (!tagEpoch || !tagFlags || !iVerts || !vrfStartCount || !vertRingFace || !outIFaces) {
+    if (!tagEpoch || !tagFlags || !iVerts || !vrfStartCount || !vertRingFace || !outIFaces || nbFaces == 0) {
         return 0;
     }
 
@@ -427,10 +427,13 @@ uint32_t getFacesFromVerticesFast(
 
         for (uint32_t j = start; j < start + count; ++j) {
             if (j + 4 < start + count) {
-                __builtin_prefetch(&tagFlags[vertRingFace[j + 4]], 1, 2);
+                uint32_t prefF = vertRingFace[j + 4];
+                if (prefF < nbFaces) {
+                    __builtin_prefetch(&tagFlags[prefF], 1, 2);
+                }
             }
             uint32_t iFace = vertRingFace[j];
-            if (tagFlags[iFace] != epoch) {
+            if (iFace < nbFaces && tagFlags[iFace] != epoch) {
                 tagFlags[iFace] = epoch;
                 outIFaces[acc++] = iFace;
             }
