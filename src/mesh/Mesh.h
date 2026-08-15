@@ -80,7 +80,7 @@ public:
     void setFaceGroup(uint32_t faceIdx, uint32_t gid);
     void initEdges();
     void initTopology();
-    void initDynamicMode();
+    void initDynamicMode(bool force = false);
     void updateDynamicCSR();
     void convertToStatic();
     std::vector<uint32_t> triangulateQuadsInRegion(const std::vector<uint32_t>& iFaces);

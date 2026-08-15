@@ -5,6 +5,7 @@
 #include "mesh/NormalCalc.h"
 #include "mesh/Topology.h"
 #include "common/Constants.h"
+#include "common/Logger.h"
 
 void Mesh::initFaceGroups() {
     faceGroups.assign(nbFaces, 0);
@@ -274,6 +275,10 @@ void Mesh::postInit() {
         verts.data(),
         faces.data()
     );
+
+    if (isDynamic) {
+        initDynamicMode(true);
+    }
 }
 
 void Mesh::updateAfterLayerBake() {
@@ -999,8 +1004,16 @@ void Mesh::bakeScale() {
     }
 }
 
-void Mesh::initDynamicMode() {
-    if (isDynamic) return;
+void Mesh::initDynamicMode(bool force) {
+    bool sizeMismatch = (dynVRF.size() != static_cast<size_t>(nbVerts) ||
+                         dynVRV.size() != static_cast<size_t>(nbVerts) ||
+                         facesStateFlags.size() != static_cast<size_t>(nbFaces));
+    if (isDynamic && !force && !sizeMismatch) {
+        return;
+    }
+
+    sculpt_log("[DynTopo Init] (Re)Initializing dynamic mode on Mesh ID %u ('%s') | force=%d, sizeMismatch=%d | nbVerts=%d, nbFaces=%d, prevDynVRFSize=%zu\n",
+              m_id, outlinerName.c_str(), force ? 1 : 0, sizeMismatch ? 1 : 0, nbVerts, nbFaces, dynVRF.size());
 
     dynVRF.assign(nbVerts, std::vector<uint32_t>());
     dynVRV.assign(nbVerts, std::vector<uint32_t>());
@@ -1029,6 +1042,9 @@ void Mesh::initDynamicMode() {
 
     isDynamic = true;
     updateDynamicCSR();
+
+    sculpt_log("[DynTopo Init] Dynamic topology structure build complete for Mesh ID %u. dynVRF: %zu, dynVRV: %zu\n",
+              m_id, dynVRF.size(), dynVRV.size());
 }
 
 void Mesh::updateDynamicCSR() {

@@ -7,6 +7,8 @@ All notable changes to this project will be documented in this file.
 - **Topology Brush**: Added dedicated `BRUSH_TOPOLOGY` tool for real-time local mesh resolution adjustment.
 - **Resolution Control**: Decoupled polygon density from brush radius, linking detail level to the global `remeshResolution` parameter (`X` key modal).
 - **Decimation System**: Hardened edge collapse stability with real-time normal flip validation and multi-pass face decimation.
+- **Voxel Remesh Synchronization**: Resolved application hang when using Dynamic Topology immediately post-remesh by enforcing dynamic structure re-initialization and size validation.
+- **Diagnostic Logging**: Added detailed logs tracking dynamic mode initialization triggers, structural size validation, and stroke candidate face counts.
 
 
 ## [0.2.5]

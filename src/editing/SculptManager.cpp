@@ -1490,9 +1490,11 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 
         // --- Dynamic Topology Stage ---
         if (activeBrush == BRUSH_TOPOLOGY) {
-            if (!mesh->isDynamic) {
-                mesh->initDynamicMode();
-                sculpt_log("[DynTopo] Initialized Dynamic Topology Mode on mesh ID %u.\n", mesh->m_id);
+            bool needsInit = (!mesh->isDynamic || mesh->dynVRF.size() != static_cast<size_t>(mesh->nbVerts));
+            if (needsInit) {
+                sculpt_log("[DynTopo Stroke] Mesh ID %u dynamic topology check: triggering initDynamicMode(true) (isDynamic=%d, dynVRFSize=%zu, nbVerts=%d)\n",
+                          mesh->m_id, mesh->isDynamic ? 1 : 0, mesh->dynVRF.size(), mesh->nbVerts);
+                mesh->initDynamicMode(true);
             }
 
             int nbFacesBefore = mesh->nbFaces;
@@ -1508,6 +1510,9 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                     }
                 }
             }
+
+            sculpt_log("[DynTopo Stroke] Picked %zu verts -> %zu candidate faces (dynVRF size=%zu)\n",
+                      pickedVertices.size(), initialTris.size(), mesh->dynVRF.size());
 
             if (!initialTris.empty()) {
                 float worldStep = mesh->computeWorldStep((int)getDyntopoResolution());

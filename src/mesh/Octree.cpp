@@ -684,6 +684,9 @@ void Octree::addFaceToLeaf(uint32_t faceId, OctreeCell* leaf) {
     faceLeaf[faceId] = leaf;
     facePosInLeaf[faceId] = static_cast<int>(leaf->iFaces.size());
     leaf->iFaces.push_back(faceId);
+    if (static_cast<int>(faceId) >= nbFaces) {
+        nbFaces = static_cast<int>(faceId) + 1;
+    }
 }
 
 void Octree::removeFaceFromLeaf(uint32_t faceId) {
@@ -722,5 +725,8 @@ void Octree::replaceFace(uint32_t oldFace, uint32_t newFace) {
 
     faceLeaf[oldFace] = nullptr;
     facePosInLeaf[oldFace] = -1;
+    if (static_cast<int>(newFace) >= nbFaces) {
+        nbFaces = static_cast<int>(newFace) + 1;
+    }
 }
 

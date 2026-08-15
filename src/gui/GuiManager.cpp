@@ -4455,6 +4455,11 @@ void GuiManager::applyRemeshResult(Scene& scene, const RemeshResult& r) {
     selectedMesh->vertRingVert = vertRingVert;
     selectedMesh->vertOnEdge = vertOnEdge;
 
+    if (selectedMesh->isDynamic) {
+        sculpt_log("[DEBUG applyRemeshResult] Re-initializing dynamic mode topology structures post-remesh...\n");
+        selectedMesh->initDynamicMode(true);
+    }
+
     sculpt_log("[DEBUG applyRemeshResult] Finalizing mesh initialization (postInit)...\n");
     selectedMesh->postInit();
     selectedMesh->layerStack.onRemesh(selectedMesh->verts);
