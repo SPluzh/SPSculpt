@@ -327,11 +327,16 @@ void UndoManager::clear() {
 void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
     if (!entry) return;
 
+    auto tStart = std::chrono::high_resolution_clock::now();
+
     if (entry->getType() == UndoEntryType::Sculpt) {
         auto* e = static_cast<SculptUndoEntry*>(entry);
         for (const auto& delta : e->deltas) {
             Mesh* mesh = scene.getMeshById(delta.meshId);
-            if (!mesh) continue;
+            if (!mesh) {
+                sculpt_log_lvl(LogLevel::Warning, "[Undo] Target mesh ID %u not found for sculpt delta\n", delta.meshId);
+                continue;
+            }
 
             const auto& srcVerts = isUndo ? delta.prevVerts : delta.nextVerts;
             const auto& srcColors = isUndo ? delta.prevColors : delta.nextColors;
@@ -344,10 +349,12 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
                 targetLayer = mesh->layerStack.getActive();
             }
 
+            auto tCopyStart = std::chrono::high_resolution_clock::now();
             size_t count = delta.indices.size();
             for (size_t i = 0; i < count; ++i) {
                 uint32_t vi = delta.indices[i];
                 if (vi >= (uint32_t)mesh->nbVerts) continue;
+                if (i * 3 + 2 >= srcVerts.size()) continue;
 
                 mesh->verts[vi * 3 + 0] = srcVerts[i * 3 + 0];
                 mesh->verts[vi * 3 + 1] = srcVerts[i * 3 + 1];
@@ -370,6 +377,7 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
                     mesh->materials[vi * 3 + 2] = srcMats[i * 3 + 2];
                 }
             }
+            auto tCopyEnd = std::chrono::high_resolution_clock::now();
 
             if (targetLayer) {
                 sculpt_log_lvl(LogLevel::Debug, "[Undo] Restored layer '%s' deltas for %zu vertices (%s)\n",
@@ -385,6 +393,7 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
                 if (delta.hasMaterials) mesh->isMaterialDirty = true;
                 mesh->isDirty = true;
 
+                auto tFNormsStart = std::chrono::high_resolution_clock::now();
                 updateFaceNormalsAndBoxes(
                     mesh->verts.data(), mesh->nbVerts,
                     mesh->faces.data(), mesh->nbFaces,
@@ -393,6 +402,8 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
                     mesh->faceBoxes.data(),
                     mesh->faceCenters.data()
                 );
+                auto tVNormsStart = std::chrono::high_resolution_clock::now();
+
                 updateVertexNormals(
                     nullptr, -1, mesh->nbVerts,
                     mesh->vrfStartCount.data(),
@@ -400,6 +411,8 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
                     mesh->faceNormals.data(),
                     mesh->normals.data()
                 );
+                auto tOctreeStart = std::chrono::high_resolution_clock::now();
+
                 mesh->octree.build(
                     mesh->nbVerts, mesh->nbFaces,
                     mesh->faceCenters.data(),
@@ -407,46 +420,93 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
                     mesh->verts.data(),
                     mesh->faces.data()
                 );
+                auto tDone = std::chrono::high_resolution_clock::now();
+
+                double msCopy = std::chrono::duration<double, std::milli>(tCopyEnd - tCopyStart).count();
+                double msFNorms = std::chrono::duration<double, std::milli>(tVNormsStart - tFNormsStart).count();
+                double msVNorms = std::chrono::duration<double, std::milli>(tOctreeStart - tVNormsStart).count();
+                double msOctree = std::chrono::duration<double, std::milli>(tDone - tOctreeStart).count();
+                double msTotal = std::chrono::duration<double, std::milli>(tDone - tStart).count();
+
+                sculpt_log_lvl(LogLevel::Info,
+                    "[Undo Diagnostics] Sculpt apply (%s): %zu verts restored in %.2f ms (Copy: %.2fms, FaceNorms: %.2fms, VertNorms: %.2fms, OctreeBuild: %.2fms)\n",
+                    isUndo ? "UNDO" : "REDO", count, msTotal, msCopy, msFNorms, msVNorms, msOctree);
             }
         }
     } else if (entry->getType() == UndoEntryType::Topology) {
         auto* e = static_cast<TopologyUndoEntry*>(entry);
+        sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] Applying Topology %s: '%s'\n",
+                       isUndo ? "UNDO" : "REDO", e->getDescription().c_str());
         scene.restoreState(isUndo ? e->before : e->after);
+        auto tDone = std::chrono::high_resolution_clock::now();
+        double msTotal = std::chrono::duration<double, std::milli>(tDone - tStart).count();
+        sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] Topology apply (%s) completed in %.2f ms\n",
+                       isUndo ? "UNDO" : "REDO", msTotal);
     } else if (entry->getType() == UndoEntryType::SceneMeta) {
         auto* e = static_cast<SceneMetaUndoEntry*>(entry);
+        sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] Applying SceneMeta %s: '%s'\n",
+                       isUndo ? "UNDO" : "REDO", e->getDescription().c_str());
         scene.restoreState(isUndo ? e->before : e->after);
+        auto tDone = std::chrono::high_resolution_clock::now();
+        double msTotal = std::chrono::duration<double, std::milli>(tDone - tStart).count();
+        sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] SceneMeta apply (%s) completed in %.2f ms\n",
+                       isUndo ? "UNDO" : "REDO", msTotal);
     }
 }
 
 void UndoManager::undo(Scene& scene) {
+    if (m_activeSculptEntry) {
+        sculpt_log_lvl(LogLevel::Warning, "[Undo] Undo requested while active sculpt stroke in progress. Canceling active stroke.\n");
+        cancelSculptStroke();
+    }
+
     if (m_undoStack.empty()) {
         sculpt_log_lvl(LogLevel::Warning, "[Undo] Nothing to undo!\n");
         return;
     }
 
+    auto tStart = std::chrono::high_resolution_clock::now();
+
     auto entry = std::move(m_undoStack.back());
     m_undoStack.pop_back();
 
-    sculpt_log_lvl(LogLevel::Info, "[Undo] Executing UNDO: '%s'\n", entry->getDescription().c_str());
+    sculpt_log_lvl(LogLevel::Info, "[Undo] START UNDO: '%s' (UndoStack size left: %zu)\n",
+                   entry->getDescription().c_str(), m_undoStack.size());
     applyEntry(entry.get(), scene, true);
 
     m_redoStack.push_back(std::move(entry));
     scene.setModified(true);
+
+    auto tEnd = std::chrono::high_resolution_clock::now();
+    double msTotal = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
+    sculpt_log_lvl(LogLevel::Info, "[Undo] FINISHED UNDO in %.2f ms\n", msTotal);
 }
 
 void UndoManager::redo(Scene& scene) {
+    if (m_activeSculptEntry) {
+        sculpt_log_lvl(LogLevel::Warning, "[Undo] Redo requested while active sculpt stroke in progress. Canceling active stroke.\n");
+        cancelSculptStroke();
+    }
+
     if (m_redoStack.empty()) {
         sculpt_log_lvl(LogLevel::Warning, "[Undo] Nothing to redo!\n");
         return;
     }
 
+    auto tStart = std::chrono::high_resolution_clock::now();
+
     auto entry = std::move(m_redoStack.back());
     m_redoStack.pop_back();
 
-    sculpt_log_lvl(LogLevel::Info, "[Undo] Executing REDO: '%s'\n", entry->getDescription().c_str());
+    sculpt_log_lvl(LogLevel::Info, "[Undo] START REDO: '%s' (RedoStack size left: %zu)\n",
+                   entry->getDescription().c_str(), m_redoStack.size());
     applyEntry(entry.get(), scene, false);
 
     m_undoStack.push_back(std::move(entry));
     scene.setModified(true);
+
+    auto tEnd = std::chrono::high_resolution_clock::now();
+    double msTotal = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
+    sculpt_log_lvl(LogLevel::Info, "[Undo] FINISHED REDO in %.2f ms\n", msTotal);
 }
 

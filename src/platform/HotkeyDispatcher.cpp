@@ -2,6 +2,7 @@
 #include "platform/FileDialog.h"
 #include "files/FileManager.h"
 #include "render/AngleRenderer.h"
+#include "common/Logger.h"
 #include <imgui.h>
 #include <algorithm>
 #include <cmath>
@@ -431,8 +432,14 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
             case HKAction::StrifeDown: scene.getCamera().translate(0.0f, -10.0f); break;
             
             case HKAction::ClearScene: scene.clear(); break;
-            case HKAction::Undo: scene.undo(); break;
-            case HKAction::Redo: scene.redo(); break;
+            case HKAction::Undo:
+                sculpt_log_lvl(LogLevel::Info, "[Hotkey] Undo action triggered by key shortcut\n");
+                scene.undo();
+                break;
+            case HKAction::Redo:
+                sculpt_log_lvl(LogLevel::Info, "[Hotkey] Redo action triggered by key shortcut\n");
+                scene.redo();
+                break;
             
             case HKAction::OpenFile: gui.openScene(scene, &sculpt); break;
             case HKAction::SaveFile: gui.saveScene(scene, &sculpt); break;

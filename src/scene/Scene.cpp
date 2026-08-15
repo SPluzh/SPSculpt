@@ -1,11 +1,13 @@
 #include "scene/Scene.h"
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <map>
 #include <utility>
 #include <glm/gtc/matrix_transform.hpp>
 #include "files/MeshUtils.h"
 #include "common/Constants.h"
+#include "common/Logger.h"
 
 Scene::Scene() {
     LightSource mainLight;
@@ -117,6 +119,7 @@ void Scene::removeReferenceImage(size_t index) {
 }
 
 HistoryState Scene::saveCurrentState() const {
+    auto tStart = std::chrono::high_resolution_clock::now();
     HistoryState hs;
     hs.selectedMeshIdx = m_selectedIdx;
     for (auto* selMesh : m_selectedMeshes) {
@@ -152,17 +155,30 @@ HistoryState Scene::saveCurrentState() const {
         
         hs.meshes.push_back(ms);
     }
+    auto tEnd = std::chrono::high_resolution_clock::now();
+    double msSave = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
+    sculpt_log_lvl(LogLevel::Info, "[Scene Diagnostics] saveCurrentState: Saved state for %zu meshes in %.2f ms\n",
+                   hs.meshes.size(), msSave);
     return hs;
 }
 
 void Scene::restoreState(const HistoryState& hs) {
+    auto tStart = std::chrono::high_resolution_clock::now();
+    sculpt_log_lvl(LogLevel::Info, "[Scene Diagnostics] restoreState: Restoring state (%zu existing meshes, %zu incoming meshes)...\n",
+                   m_meshes.size(), hs.meshes.size());
+
     for (auto* m : m_meshes) {
         delete m;
     }
     m_meshes.clear();
     m_selectedMeshes.clear();
 
-    for (const auto& ms : hs.meshes) {
+    auto tDelDone = std::chrono::high_resolution_clock::now();
+
+    for (size_t i = 0; i < hs.meshes.size(); ++i) {
+        const auto& ms = hs.meshes[i];
+        auto tMeshStart = std::chrono::high_resolution_clock::now();
+
         Mesh* m = new Mesh();
         m->verts = ms.verts;
         m->colors = ms.colors;
@@ -188,9 +204,18 @@ void Scene::restoreState(const HistoryState& hs) {
         m->visibleV1 = ms.visibleV1;
         m->visibleV2 = ms.visibleV2;
 
+        auto tPostInitStart = std::chrono::high_resolution_clock::now();
         m->postInit();
+        auto tPostInitEnd = std::chrono::high_resolution_clock::now();
+
         m->isDirty = true;
         m_meshes.push_back(m);
+
+        double msCopy = std::chrono::duration<double, std::milli>(tPostInitStart - tMeshStart).count();
+        double msPostInit = std::chrono::duration<double, std::milli>(tPostInitEnd - tPostInitStart).count();
+        sculpt_log_lvl(LogLevel::Info,
+                       "[Scene Diagnostics] restoreState: Mesh %zu/'%s' (ID: %u, Verts: %d, Faces: %d) restored in %.2f ms (Copy: %.2fms, postInit: %.2fms)\n",
+                       i, m->outlinerName.c_str(), m->m_id, m->nbVerts, m->nbFaces, msCopy + msPostInit, msCopy, msPostInit);
     }
     m_selectedIdx = hs.selectedMeshIdx;
     for (int idx : hs.selectedMeshIndices) {
@@ -201,6 +226,12 @@ void Scene::restoreState(const HistoryState& hs) {
     if (m_selectedMeshes.empty() && m_selectedIdx >= 0 && m_selectedIdx < (int)m_meshes.size()) {
         m_selectedMeshes.push_back(m_meshes[m_selectedIdx]);
     }
+
+    auto tEnd = std::chrono::high_resolution_clock::now();
+    double msDelete = std::chrono::duration<double, std::milli>(tDelDone - tStart).count();
+    double msTotal = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
+    sculpt_log_lvl(LogLevel::Info, "[Scene Diagnostics] restoreState: COMPLETED in %.2f ms (Mesh Deletions: %.2fms)\n",
+                   msTotal, msDelete);
 }
 
 #include "editing/undo/UndoManager.h"

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.1]
+- **Undo System Diagnostics**: Added stage-by-stage timing instrumentation and real-time diagnostic logging to track performance bottlenecks during undo/redo operations.
+- **Sculpting Stability**: Added automatic stroke cancellation when triggering undo during an active brush stroke to prevent history state corruption.
+- **Memory & Safety**: Implemented bounds safety checks on vertex delta vectors during state restoration.
+
 ## [0.2.0]
 - **Single-Row Outliner Header**: Streamlined primitive creation (Sphere, Geosphere, Cube, Cylinder, Torus) and reference image addition buttons into a unified icon-only header row with hover tooltips.
 - **Glassmorphism Outliner UI**: Modern card-based Scene Outliner redesign with translucent glass visual style.
