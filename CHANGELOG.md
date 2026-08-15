@@ -3,7 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [0.2.3]
-- **Undo History & UI Cleanup**: Moved history list from a standalone panel into the Preferences window ("Undo & System" tab) and removed "Undo History" and "Reference Images" entries from the Panels menu.
+- **UI Consolidation**: Moved Undo History and Tablet Diagnostics into dedicated Preferences tabs ("Undo & System", "Tablet & Stylus") and removed redundant items from the Panels menu.
 
 ## [0.2.2]
 - **Reference Images**: Added 4 mid-edge handles for direct side scaling.

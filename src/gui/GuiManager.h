@@ -238,6 +238,7 @@ public:
     void toggleMeshInfo() { m_showMeshInfo = !m_showMeshInfo; }
     void toggleUndoDiagPanel() { m_showPreferencesPanel = true; m_preferencesActiveTab = 4; }
     void toggleDebugLogPanel() { m_showPreferencesPanel = true; m_preferencesActiveTab = 5; }
+    void toggleTabletDiagPanel() { m_showPreferencesPanel = true; m_preferencesActiveTab = 6; }
     void toggleFloatingIsland() { m_showFloatingIsland = !m_showFloatingIsland; }
     void toggleTimelapsePanel() { m_showTimelapsePanel = !m_showTimelapsePanel; }
     void togglePreferencesPanel() { m_showPreferencesPanel = !m_showPreferencesPanel; }
