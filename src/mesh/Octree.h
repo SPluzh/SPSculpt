@@ -149,7 +149,8 @@ public:
 
     void update(const float* vertsPtrVal, int nbVertsVal,
                 const uint32_t* facesPtrVal, int nbFacesVal,
-                const float* boxesPtrVal, const uint32_t* iFacesPtr, int nbIFacesVal);
+                const float* boxesPtrVal, const float* centersPtrVal,
+                const uint32_t* iFacesPtr, int nbIFacesVal);
 
     void rebuildInternal();
 

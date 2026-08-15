@@ -323,11 +323,12 @@ std::vector<uint32_t> Octree::pickVerticesInSphere(
 
 void Octree::update(const float* vertsPtrVal, int nbVertsVal,
                     const uint32_t* facesPtrVal, int nbFacesVal,
-                    const float* boxesPtrVal, const uint32_t* iFacesPtr, int nbIFacesVal) {
+                    const float* boxesPtrVal, const float* centersPtrVal,
+                    const uint32_t* iFacesPtr, int nbIFacesVal) {
     auto tStart = std::chrono::high_resolution_clock::now();
 
     if (!root) {
-        build(nbVertsVal, nbFacesVal, faceCentersData, boxesPtrVal, vertsPtrVal, facesPtrVal);
+        build(nbVertsVal, nbFacesVal, centersPtrVal ? centersPtrVal : faceCentersData, boxesPtrVal, vertsPtrVal, facesPtrVal);
         return;
     }
 
@@ -337,6 +338,7 @@ void Octree::update(const float* vertsPtrVal, int nbVertsVal,
     vertsData = vertsPtrVal;
     facesData = facesPtrVal;
     faceBoxesData = boxesPtrVal;
+    if (centersPtrVal) faceCentersData = centersPtrVal;
 
     if (faceLeaf.size() != (size_t)nbFaces) {
         faceLeaf.resize(nbFaces, nullptr);

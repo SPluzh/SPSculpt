@@ -509,7 +509,7 @@ bool ClipCurveTool::execute(
         mesh->octree.update(
             mesh->verts.data(), mesh->nbVerts,
             mesh->faces.data(), mesh->nbFaces,
-            mesh->faceBoxes.data(),
+            mesh->faceBoxes.data(), mesh->faceCenters.data(),
             iFaces.data(), numIFaces
         );
     }

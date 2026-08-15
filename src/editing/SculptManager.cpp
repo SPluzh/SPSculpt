@@ -1581,7 +1581,9 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                         sculpt_log("[DynTopo TIMING] Decim:  %.2fms -> %zu tris\n", decMs, subTris.size());
                     }
 
-                    allModifiedSubTris.insert(allModifiedSubTris.end(), subTris.begin(), subTris.end());
+                    if (!subTris.empty()) {
+                        allModifiedSubTris.insert(allModifiedSubTris.end(), subTris.begin(), subTris.end());
+                    }
                 }
             }
 
@@ -1589,11 +1591,10 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 std::sort(allModifiedSubTris.begin(), allModifiedSubTris.end());
                 allModifiedSubTris.erase(std::unique(allModifiedSubTris.begin(), allModifiedSubTris.end()), allModifiedSubTris.end());
 
-                sculpt_log("[DynTopo VERIFY] Decimation completed. Calling updateDynamicCSR...\n");
+                // 1. Rebuild CSR ONCE after all regions finish
                 mesh->updateDynamicCSR();
-                sculpt_log("[DynTopo VERIFY] updateDynamicCSR completed.\n");
 
-                auto tPost = std::chrono::high_resolution_clock::now();
+                // 2. Update face normals and bounding boxes for all modified triangles
                 updateFaceNormalsAndBoxes(
                     mesh->verts.data(), mesh->nbVerts,
                     mesh->faces.data(), mesh->nbFaces,
@@ -1603,50 +1604,64 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                     mesh->faceCenters.data()
                 );
 
-                std::unordered_set<uint32_t> affectedVertsSet;
+                // 3. Build affectedVertsList using std::vector + sort/unique
+                std::vector<uint32_t> affectedVertsList;
+                affectedVertsList.reserve(allModifiedSubTris.size() * 3);
                 for (uint32_t fIdx : allModifiedSubTris) {
                     if (fIdx < (uint32_t)mesh->nbFaces) {
                         uint32_t id = fIdx * 4;
                         for (int k = 0; k < 4; ++k) {
                             uint32_t v = mesh->faces[id + k];
                             if (v != TRI_INDEX && v < (uint32_t)mesh->nbVerts) {
-                                affectedVertsSet.insert(v);
+                                affectedVertsList.push_back(v);
                             }
                         }
                     }
                 }
-                std::vector<uint32_t> affectedVertsList(affectedVertsSet.begin(), affectedVertsSet.end());
+                std::sort(affectedVertsList.begin(), affectedVertsList.end());
+                affectedVertsList.erase(std::unique(affectedVertsList.begin(), affectedVertsList.end()), affectedVertsList.end());
 
-                updateVertexNormals(
-                    affectedVertsList.data(), (int)affectedVertsList.size(), mesh->nbVerts,
-                    mesh->vrfStartCount.data(),
-                    mesh->vertRingFace.data(),
-                    mesh->faceNormals.data(),
-                    mesh->normals.data()
-                );
+                // 4. Update vertex normals with safety guard
+                if (!mesh->vrfStartCount.empty() && mesh->vrfStartCount.size() >= static_cast<size_t>(mesh->nbVerts * 2)) {
+                    sculpt_log("[DynTopo DEBUG] vrfStartCount.size=%zu, nbVerts=%d\n",
+                              mesh->vrfStartCount.size(), mesh->nbVerts);
+                    updateVertexNormals(
+                        affectedVertsList.data(), (int)affectedVertsList.size(), mesh->nbVerts,
+                        mesh->vrfStartCount.data(),
+                        mesh->vertRingFace.data(),
+                        mesh->faceNormals.data(),
+                        mesh->normals.data(),
+                        mesh->nbFaces
+                    );
+                } else {
+                    sculpt_log("[DynTopo WARNING] Skipping updateVertexNormals: vrfStartCount.size=%zu, nbVerts=%d\n",
+                              mesh->vrfStartCount.size(), mesh->nbVerts);
+                }
 
+                // 5. Update Octree for all modified triangles
                 mesh->octree.update(
                     mesh->verts.data(), mesh->nbVerts,
                     mesh->faces.data(), mesh->nbFaces,
-                    mesh->faceBoxes.data(),
+                    mesh->faceBoxes.data(), mesh->faceCenters.data(),
                     allModifiedSubTris.data(), (int)allModifiedSubTris.size()
                 );
 
+                allAffectedVerts.insert(allAffectedVerts.end(), affectedVertsList.begin(), affectedVertsList.end());
+
+                // Targeted vertProxy copy
                 if (mesh->vertProxy.size() != mesh->verts.size()) {
                     mesh->vertProxy.resize(mesh->verts.size());
                 }
-                for (size_t i = 0; i < mesh->verts.size(); ++i) {
-                    mesh->vertProxy[i] = mesh->verts[i];
+                if (!allAffectedVerts.empty()) {
+                    uint32_t minAff = *std::min_element(allAffectedVerts.begin(), allAffectedVerts.end());
+                    uint32_t maxAff = *std::max_element(allAffectedVerts.begin(), allAffectedVerts.end());
+                    if (maxAff < static_cast<uint32_t>(mesh->nbVerts)) {
+                        std::memcpy(&mesh->vertProxy[minAff * 3], &mesh->verts[minAff * 3], (maxAff - minAff + 1) * 3 * sizeof(float));
+                    }
                 }
 
                 mesh->isDirty = true;
                 mesh->isTopologyDirty = true;
-
-                allAffectedVerts.insert(allAffectedVerts.end(), affectedVertsList.begin(), affectedVertsList.end());
-
-                double postMs = std::chrono::duration<double, std::milli>(
-                    std::chrono::high_resolution_clock::now() - tPost).count();
-                sculpt_log("[DynTopo VERIFY] Local normal recompute: %.2f ms (faces in region: %zu). Full postInit SKIPPED.\n", postMs, allModifiedSubTris.size());
 
                 double dynMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStartDyn).count();
 
@@ -1888,16 +1903,18 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 m_lastFrameProfile.faceLookupMs = 0.0;
             } else {
                 tStage = std::chrono::high_resolution_clock::now();
-                numIFaces = getFacesFromVerticesFast(
-                    allAffectedVerts.data(),
-                    allAffectedVerts.size(),
-                    mesh->vrfStartCount.data(),
-                    mesh->vertRingFace.data(),
-                    m_iFacesCache.data(),
-                    m_tagFlags.data(),
-                    &m_tagEpoch,
-                    mesh->nbFaces
-                );
+                if (!mesh->vrfStartCount.empty() && mesh->vrfStartCount.size() >= static_cast<size_t>(mesh->nbVerts * 2)) {
+                    numIFaces = getFacesFromVerticesFast(
+                        allAffectedVerts.data(),
+                        allAffectedVerts.size(),
+                        mesh->vrfStartCount.data(),
+                        mesh->vertRingFace.data(),
+                        m_iFacesCache.data(),
+                        m_tagFlags.data(),
+                        &m_tagEpoch,
+                        mesh->nbFaces
+                    );
+                }
                 m_lastFrameProfile.faceLookupMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
                 if (isGrabBrush) {
                     m_grabbedNumIFaces = numIFaces;
@@ -1919,40 +1936,45 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 
             // --- Stage 9: Vertex Normals ---
             tStage = std::chrono::high_resolution_clock::now();
-            updateVertexNormals(
-                allAffectedVerts.data(), allAffectedVerts.size(), mesh->nbVerts,
-                mesh->vrfStartCount.data(),
-                mesh->vertRingFace.data(),
-                mesh->faceNormals.data(),
-                mesh->normals.data()
-            );
+            if (!mesh->vrfStartCount.empty() && mesh->vrfStartCount.size() >= static_cast<size_t>(mesh->nbVerts * 2)) {
+                updateVertexNormals(
+                    allAffectedVerts.data(), allAffectedVerts.size(), mesh->nbVerts,
+                    mesh->vrfStartCount.data(),
+                    mesh->vertRingFace.data(),
+                    mesh->faceNormals.data(),
+                    mesh->normals.data(),
+                    mesh->nbFaces
+                );
+            }
             m_lastFrameProfile.vertNormalsMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
 
             // --- Stage 10: Octree Update ---
             if (isGrabBrush && !m_firstStrokeFrame) {
                 m_pendingOctreeUpdate = true;
                 m_lastFrameProfile.octreeUpdateMs = 0.0;
-            } else {
+            } else if (!mesh->isDynamic) {
                 tStage = std::chrono::high_resolution_clock::now();
                 mesh->octree.update(
                     mesh->verts.data(), mesh->nbVerts,
                     mesh->faces.data(), mesh->nbFaces,
-                    mesh->faceBoxes.data(),
+                    mesh->faceBoxes.data(), mesh->faceCenters.data(),
                     m_iFacesCache.data(), numIFaces
                 );
                 m_lastFrameProfile.octreeUpdateMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
             }
         }
 
-        uint32_t minV = allAffectedVerts.front();
-        uint32_t maxV = allAffectedVerts.back();
+        if (!allAffectedVerts.empty()) {
+            uint32_t minV = *std::min_element(allAffectedVerts.begin(), allAffectedVerts.end());
+            uint32_t maxV = *std::max_element(allAffectedVerts.begin(), allAffectedVerts.end());
 
-        if (mesh->isVertexDirty || mesh->isColorDirty || mesh->isMaterialDirty) {
-            mesh->dirtyVertMin = std::min(mesh->dirtyVertMin, minV);
-            mesh->dirtyVertMax = std::max(mesh->dirtyVertMax, maxV);
-        } else {
-            mesh->dirtyVertMin = minV;
-            mesh->dirtyVertMax = maxV;
+            if (mesh->isVertexDirty || mesh->isColorDirty || mesh->isMaterialDirty) {
+                mesh->dirtyVertMin = std::min(mesh->dirtyVertMin, minV);
+                mesh->dirtyVertMax = std::max(mesh->dirtyVertMax, maxV);
+            } else {
+                mesh->dirtyVertMin = minV;
+                mesh->dirtyVertMax = maxV;
+            }
         }
 
         const auto& settings = getCurrentSettings();
@@ -3313,7 +3335,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     mesh->octree.update(
                         mesh->verts.data(), mesh->nbVerts,
                         mesh->faces.data(), mesh->nbFaces,
-                        mesh->faceBoxes.data(),
+                        mesh->faceBoxes.data(), mesh->faceCenters.data(),
                         nullptr, -1
                     );
                     m_pendingOctreeUpdate = false;

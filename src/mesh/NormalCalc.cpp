@@ -109,7 +109,8 @@ void updateVertexNormals(
     const uint32_t* vrfStartCount,
     const uint32_t* vertRingFace,
     const float* faceNormals,
-    float* outNormals
+    float* outNormals,
+    int totalNbFaces
 ) {
     if (!vrfStartCount || !vertRingFace || !faceNormals || !outNormals || totalNbVerts <= 0) return;
 
@@ -132,7 +133,7 @@ void updateVertexNormals(
 
         for (uint32_t j = start; j < end; ++j) {
             uint32_t fIdx = vertRingFace[j];
-            if (fIdx == UINT32_MAX) continue;
+            if (fIdx == UINT32_MAX || (totalNbFaces > 0 && fIdx >= (uint32_t)totalNbFaces)) continue;
             uint32_t id = fIdx * 3;
             nx += faceNormals[id];
             ny += faceNormals[id + 1];

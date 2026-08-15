@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.3]
+- **Dynamic Topology SIGSEGV Crash Fix & Octree Memory Synchronization**:
+  - Resolved SIGSEGV access violation during dynamic topology sculpting strokes caused by dangling `faceCentersData` pointer in `Octree`.
+  - Added explicit `centersPtrVal` synchronization parameter to `Octree::update()` to keep internal face center pointers aligned with `mesh.faceCenters` buffer reallocations.
+  - Eliminated unsafe vector index lookups on `allAffectedVerts` by adding `!allAffectedVerts.empty()` checks before min/max element extraction.
+  - Protected stroke stage pipeline by skipping redundant `octree.update()` calls on stale face caches during active dynamic topology brush operations.
+
+## [0.3.2]
+- **Dynamic Topology Stabilization & Optimization**:
+  - Eliminated SIGSEGV crashes during multi-region dynamic topology sculpting by moving CSR updates outside the region stroke loop.
+  - Hardened vertex and face normal calculations with strict array size bounds checking on CSR indices.
+  - Fixed dangling vertex ring references in decimation by clearing adjacency entries during vertex deletion swaps.
+  - Capped active triangle array growth in decimation to prevent performance degradation on high-density meshes.
+  - Accelerated stroke latency by replacing global vertex proxy memory copies with targeted range updates and deduplicating affected vertices via vector sorting.
+
 ## [0.3.1]
 - **Dynamic Topology Performance**:
   - Significantly accelerated Dynamic Topology brush responsiveness during sculpting strokes.

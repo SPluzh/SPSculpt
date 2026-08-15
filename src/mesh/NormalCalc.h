@@ -15,5 +15,6 @@ void updateVertexNormals(
     const uint32_t* vrfStartCount,
     const uint32_t* vertRingFace,
     const float* faceNormals,
-    float* outNormals
+    float* outNormals,
+    int totalNbFaces = -1
 );

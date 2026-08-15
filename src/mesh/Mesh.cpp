@@ -310,7 +310,7 @@ void Mesh::updateAfterLayerBake() {
             octree.update(
                 verts.data(), nbVerts,
                 faces.data(), nbFaces,
-                faceBoxes.data(),
+                faceBoxes.data(), faceCenters.data(),
                 nullptr, -1
             );
         }
@@ -1056,31 +1056,37 @@ void Mesh::updateDynamicCSR() {
     sculpt_log("[DynTopo VERIFY] updateDynamicCSR call #%u for mesh %u (nbVerts=%d, nbFaces=%d).\n",
                ++csrCallCount, m_id, nbVerts, nbFaces);
 
+    if (dynVRF.size() != static_cast<size_t>(nbVerts)) dynVRF.resize(nbVerts);
+    if (dynVRV.size() != static_cast<size_t>(nbVerts)) dynVRV.resize(nbVerts);
+
+    size_t faceLimit = std::min(static_cast<size_t>(nbFaces), faces.size() / 4);
+
     for (int i = 0; i < nbVerts; ++i) {
-        if (i < (int)dynVRF.size()) {
-            auto& ring = dynVRF[i];
-            ring.erase(std::remove_if(ring.begin(), ring.end(), [this](uint32_t f) {
-                return f >= static_cast<uint32_t>(nbFaces) || faces[f * 4] == UINT32_MAX;
-            }), ring.end());
-        }
+        auto& ring = dynVRF[i];
+        ring.erase(std::remove_if(ring.begin(), ring.end(), [this, faceLimit](uint32_t f) {
+            return f >= faceLimit || faces[f * 4] == UINT32_MAX;
+        }), ring.end());
+
+        auto& ringV = dynVRV[i];
+        ringV.erase(std::remove_if(ringV.begin(), ringV.end(), [this](uint32_t v) {
+            return v >= static_cast<uint32_t>(nbVerts);
+        }), ringV.end());
     }
 
     vrfStartCount.resize(nbVerts * 2);
     vertRingFace.clear();
     size_t totalF = 0;
     for (int i = 0; i < nbVerts; ++i) {
-        if (i < (int)dynVRF.size()) {
-            totalF += dynVRF[i].size();
-        }
+        totalF += dynVRF[i].size();
     }
     vertRingFace.reserve(totalF);
 
     uint32_t currStartF = 0;
     for (int i = 0; i < nbVerts; ++i) {
-        uint32_t count = (i < (int)dynVRF.size()) ? static_cast<uint32_t>(dynVRF[i].size()) : 0;
+        uint32_t count = static_cast<uint32_t>(dynVRF[i].size());
         vrfStartCount[i * 2] = currStartF;
         vrfStartCount[i * 2 + 1] = count;
-        if (count > 0 && i < (int)dynVRF.size()) {
+        if (count > 0) {
             vertRingFace.insert(vertRingFace.end(), dynVRF[i].begin(), dynVRF[i].end());
         }
         currStartF += count;
@@ -1090,18 +1096,16 @@ void Mesh::updateDynamicCSR() {
     vertRingVert.clear();
     size_t totalV = 0;
     for (int i = 0; i < nbVerts; ++i) {
-        if (i < (int)dynVRV.size()) {
-            totalV += dynVRV[i].size();
-        }
+        totalV += dynVRV[i].size();
     }
     vertRingVert.reserve(totalV);
 
     uint32_t currStartV = 0;
     for (int i = 0; i < nbVerts; ++i) {
-        uint32_t count = (i < (int)dynVRV.size()) ? static_cast<uint32_t>(dynVRV[i].size()) : 0;
+        uint32_t count = static_cast<uint32_t>(dynVRV[i].size());
         vrvStartCount[i * 2] = currStartV;
         vrvStartCount[i * 2 + 1] = count;
-        if (count > 0 && i < (int)dynVRV.size()) {
+        if (count > 0) {
             vertRingVert.insert(vertRingVert.end(), dynVRV[i].begin(), dynVRV[i].end());
         }
         currStartV += count;
@@ -1124,7 +1128,7 @@ void Mesh::computeRingVertices(uint32_t iVert) {
         uint32_t id = fIdx * 4;
         for (int k = 0; k < 4; ++k) {
             uint32_t v = faces[id + k];
-            if (v == TRI_INDEX || v == UINT32_MAX || v == iVert) continue;
+            if (v == TRI_INDEX || v == UINT32_MAX || v == iVert || v >= static_cast<uint32_t>(nbVerts)) continue;
             bool found = false;
             for (int j = 0; j < scratchN; ++j) {
                 if (scratch[j] == v) { found = true; break; }

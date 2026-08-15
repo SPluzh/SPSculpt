@@ -138,6 +138,13 @@ static uint32_t deleteVertex(Mesh& mesh, uint32_t vIdx, uint32_t va) {
     }
 
     mesh.nbVerts--;
+
+    if (vIdx != lastVert) {
+        if (static_cast<size_t>(mesh.nbVerts) < mesh.dynVRV.size()) {
+            mesh.dynVRV[mesh.nbVerts].clear();
+            mesh.dynVRF[mesh.nbVerts].clear();
+        }
+    }
     return finalVa;
 }
 
@@ -378,8 +385,8 @@ static bool executeCollapse(Mesh& mesh, uint32_t va, uint32_t vb, std::vector<ui
         mesh.materials[va * 3 + 2] = (mesh.materials[va * 3 + 2] + mesh.materials[vb * 3 + 2]) * 0.5f;
     }
 
-    const auto& ringFa = mesh.dynVRF[va];
-    const auto& ringFb = mesh.dynVRF[vb];
+    std::vector<uint32_t> ringFa = (va < mesh.dynVRF.size()) ? mesh.dynVRF[va] : std::vector<uint32_t>{};
+    std::vector<uint32_t> ringFb = (vb < mesh.dynVRF.size()) ? mesh.dynVRF[vb] : std::vector<uint32_t>{};
 
     uint32_t sharedFaces[4];
     int numSharedFaces = 0;
@@ -468,12 +475,6 @@ static bool executeCollapse(Mesh& mesh, uint32_t va, uint32_t vb, std::vector<ui
 
     for (int i = 0; i < numNbrsToUpdate; ++i) {
         mesh.computeRingVertices(nbrsToUpdate[i]);
-    }
-
-    for (uint32_t fIdx : mesh.dynVRF[finalVa]) {
-        if (fIdx < static_cast<uint32_t>(mesh.nbFaces) && mesh.faces[fIdx * 4] != UINT32_MAX) {
-            activeTris.push_back(fIdx);
-        }
     }
 
     return true;
