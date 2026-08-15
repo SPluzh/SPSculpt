@@ -3,9 +3,12 @@
 All notable changes to this project will be documented in this file.
 
 ## [0.2.2]
-- **Reference Images**: Allowed camera navigation (orbit, pan, zoom, roll) while in Reference Image Edit Mode (`Z`) and when interacting with reference images.
-- **Reference Images**: Automatically hid the sculpt brush cursor circle while Reference Image Edit Mode is active.
-- **Reference Images**: Updated reference image manipulation frame, handles, and overlay toolbar to render on the ImGui background draw list so they do not overlap active ImGui windows (Outliner, Panels, Preference windows, etc.).
+- **Reference Images**: Added 4 mid-edge handles for direct side scaling.
+- **Reference Images**: Resizing now anchors to the opposite edge/corner to keep it fixed in place.
+- **Reference Images**: Added rotation-aware mouse cursors for all transform handles.
+- **Reference Images**: Enabled 3D camera navigation during reference image edit mode (`Z`).
+- **Reference Images**: Automatically hide sculpt brush cursor while editing reference images.
+- **Reference Images**: Rendered transform handles on background layer to prevent UI window overlap.
 
 
 ## [0.2.1]

@@ -164,7 +164,7 @@ private:
     void drawBrushIconFrameOverlay();
     void captureBrushIcon(const Scene& scene, AngleRenderer& renderer);
 
-    enum class RefDragTarget { None, Move, ScaleTL, ScaleTR, ScaleBR, ScaleBL, Rotate };
+    enum class RefDragTarget { None, Move, ScaleTL, ScaleTR, ScaleBR, ScaleBL, ScaleT, ScaleR, ScaleB, ScaleL, Rotate };
     int m_selectedRefImageIdx = 0;
     RefDragTarget m_activeRefDragTarget = RefDragTarget::None;
     int m_draggingRefImageIdx = -1;

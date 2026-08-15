@@ -5204,6 +5204,23 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
     ImDrawList* drawList = ImGui::GetBackgroundDrawList();
     float scale = getUiScale();
 
+    auto getResizeCursor = [](const ImVec2& handlePos, const ImVec2& centerPos) {
+        float dx = handlePos.x - centerPos.x;
+        float dy = handlePos.y - centerPos.y;
+        float angle = std::atan2(dy, dx);
+        if (angle < 0.0f) angle += IM_PI;
+        float deg = glm::degrees(angle);
+        if (deg < 22.5f || deg >= 157.5f) {
+            return ImGuiMouseCursor_ResizeEW;
+        } else if (deg >= 22.5f && deg < 67.5f) {
+            return ImGuiMouseCursor_ResizeNWSE;
+        } else if (deg >= 67.5f && deg < 112.5f) {
+            return ImGuiMouseCursor_ResizeNS;
+        } else {
+            return ImGuiMouseCursor_ResizeNESW;
+        }
+    };
+
     int activeVp = scene.getSplitMode() != Scene::SplitMode::OFF ? scene.getActiveViewport() : 0;
     Camera& currentCamera = (scene.getSplitMode() != Scene::SplitMode::OFF && activeVp == 1 && scene.getCameraRight())
                             ? *scene.getCameraRight() : scene.getCamera();
@@ -5255,17 +5272,53 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
                     float dy = mousePos.y - m_refDragStartMouse.y;
                     img.offsetX = m_refDragStartOffsetX + (dx / vpW) * 2.0f;
                     img.offsetY = m_refDragStartOffsetY - (dy / vpH) * 2.0f;
-                } else { // Corner scale
-                    float startDist = std::sqrt(
-                        (m_refDragStartMouse.x - center.x) * (m_refDragStartMouse.x - center.x) +
-                        (m_refDragStartMouse.y - center.y) * (m_refDragStartMouse.y - center.y)
-                    );
-                    float currDist = std::sqrt(
-                        (mousePos.x - center.x) * (mousePos.x - center.x) +
-                        (mousePos.y - center.y) * (mousePos.y - center.y)
-                    );
-                    float ratio = (startDist > 1e-3f) ? (currDist / startDist) : 1.0f;
-                    img.scale = std::max(0.05f, m_refDragStartScale * ratio);
+                } else { // Scale relative to fixed opposite anchor
+                    ImVec2 anchorNorm(0.0f, 0.0f);
+                    if (m_activeRefDragTarget == RefDragTarget::ScaleTL)      anchorNorm = ImVec2( 1.0f,  1.0f); // Anchor BR
+                    else if (m_activeRefDragTarget == RefDragTarget::ScaleTR) anchorNorm = ImVec2(-1.0f,  1.0f); // Anchor BL
+                    else if (m_activeRefDragTarget == RefDragTarget::ScaleBR) anchorNorm = ImVec2(-1.0f, -1.0f); // Anchor TL
+                    else if (m_activeRefDragTarget == RefDragTarget::ScaleBL) anchorNorm = ImVec2( 1.0f, -1.0f); // Anchor TR
+                    else if (m_activeRefDragTarget == RefDragTarget::ScaleT)  anchorNorm = ImVec2( 0.0f,  1.0f); // Anchor MB
+                    else if (m_activeRefDragTarget == RefDragTarget::ScaleR)  anchorNorm = ImVec2(-1.0f,  0.0f); // Anchor ML
+                    else if (m_activeRefDragTarget == RefDragTarget::ScaleB)  anchorNorm = ImVec2( 0.0f, -1.0f); // Anchor MT
+                    else if (m_activeRefDragTarget == RefDragTarget::ScaleL)  anchorNorm = ImVec2( 1.0f,  0.0f); // Anchor MR
+
+                    float S0 = m_refDragStartScale;
+                    float C0x = vpX + (m_refDragStartOffsetX * 0.5f + 0.5f) * vpW;
+                    float C0y = vpY + (0.5f - m_refDragStartOffsetY * 0.5f) * vpH;
+                    ImVec2 C0_screen(C0x, C0y);
+
+                    float rad = glm::radians(m_refDragStartRotation);
+                    float cosR = std::cos(rad);
+                    float sinR = std::sin(rad);
+                    auto rotVec = [&](const ImVec2& v) {
+                        return ImVec2(v.x * cosR - v.y * sinR, v.x * sinR + v.y * cosR);
+                    };
+
+                    float halfH0_px = S0 * 0.5f * vpH;
+                    float halfW0_px = imgAspect * halfH0_px;
+                    ImVec2 anchorUnrot0(anchorNorm.x * halfW0_px, anchorNorm.y * halfH0_px);
+                    ImVec2 A_fixed = ImVec2(C0_screen.x + rotVec(anchorUnrot0).x, C0_screen.y + rotVec(anchorUnrot0).y);
+
+                    ImVec2 vStart(m_refDragStartMouse.x - A_fixed.x, m_refDragStartMouse.y - A_fixed.y);
+                    ImVec2 vCurr(mousePos.x - A_fixed.x, mousePos.y - A_fixed.y);
+                    float lenStart = std::sqrt(vStart.x * vStart.x + vStart.y * vStart.y);
+                    float ratio = 1.0f;
+                    if (lenStart > 1e-3f) {
+                        float proj = (vCurr.x * vStart.x + vCurr.y * vStart.y) / lenStart;
+                        ratio = proj / lenStart;
+                    }
+
+                    float S_new = std::max(0.05f, S0 * ratio);
+                    img.scale = S_new;
+
+                    float halfHnew_px = S_new * 0.5f * vpH;
+                    float halfWnew_px = imgAspect * halfHnew_px;
+                    ImVec2 anchorUnrotNew(anchorNorm.x * halfWnew_px, anchorNorm.y * halfHnew_px);
+                    ImVec2 C_new_screen = ImVec2(A_fixed.x - rotVec(anchorUnrotNew).x, A_fixed.y - rotVec(anchorUnrotNew).y);
+
+                    img.offsetX = ((C_new_screen.x - vpX) / vpW - 0.5f) * 2.0f;
+                    img.offsetY = (0.5f - (C_new_screen.y - vpY) / vpH) * 2.0f;
                 }
             } else { // 3D plane mode
                 Ray ray = currentCamera.getRay(mousePos.x - vpX, mousePos.y - vpY);
@@ -5276,12 +5329,44 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
                         if (m_activeRefDragTarget == RefDragTarget::Move) {
                             img.offsetX = m_refDragStartOffsetX + (p3d.x - m_refDragStartIntersect3D.x);
                             img.offsetY = m_refDragStartOffsetY + (p3d.y - m_refDragStartIntersect3D.y);
-                        } else { // Corner scale
-                            glm::vec2 center3D(m_refDragStartOffsetX, m_refDragStartOffsetY);
-                            float startDist3D = glm::length(m_refDragStartIntersect3D - center3D);
-                            float currDist3D = glm::length(glm::vec2(p3d.x, p3d.y) - center3D);
-                            float ratio = (startDist3D > 1e-3f) ? (currDist3D / startDist3D) : 1.0f;
-                            img.scale = std::max(0.05f, m_refDragStartScale * ratio);
+                        } else { // Scale relative to fixed opposite anchor
+                            glm::vec2 anchorModel(0.0f, 0.0f);
+                            if (m_activeRefDragTarget == RefDragTarget::ScaleTL)      anchorModel = glm::vec2( 1.0f, -1.0f); // Anchor BR
+                            else if (m_activeRefDragTarget == RefDragTarget::ScaleTR) anchorModel = glm::vec2(-1.0f, -1.0f); // Anchor BL
+                            else if (m_activeRefDragTarget == RefDragTarget::ScaleBR) anchorModel = glm::vec2(-1.0f,  1.0f); // Anchor TL
+                            else if (m_activeRefDragTarget == RefDragTarget::ScaleBL) anchorModel = glm::vec2( 1.0f,  1.0f); // Anchor TR
+                            else if (m_activeRefDragTarget == RefDragTarget::ScaleT)  anchorModel = glm::vec2( 0.0f, -1.0f); // Anchor MB
+                            else if (m_activeRefDragTarget == RefDragTarget::ScaleR)  anchorModel = glm::vec2(-1.0f,  0.0f); // Anchor ML
+                            else if (m_activeRefDragTarget == RefDragTarget::ScaleB)  anchorModel = glm::vec2( 0.0f,  1.0f); // Anchor MT
+                            else if (m_activeRefDragTarget == RefDragTarget::ScaleL)  anchorModel = glm::vec2( 1.0f,  0.0f); // Anchor MR
+
+                            glm::vec2 C0_3d(m_refDragStartOffsetX, m_refDragStartOffsetY);
+                            float S0 = m_refDragStartScale;
+
+                            auto getAnchorWorldOffset = [&](float scaleVal) {
+                                glm::mat4 model = glm::mat4(1.0f);
+                                model = glm::rotate(model, glm::radians(m_refDragStartRotation), glm::vec3(0.0f, 0.0f, 1.0f));
+                                model = glm::scale(model, glm::vec3(scaleVal * imgAspect, scaleVal, 1.0f));
+                                return glm::vec2(model * glm::vec4(anchorModel.x, anchorModel.y, 0.0f, 1.0f));
+                            };
+
+                            glm::vec2 A_fixed_3d = C0_3d + getAnchorWorldOffset(S0);
+
+                            glm::vec2 vStart3D = m_refDragStartIntersect3D - A_fixed_3d;
+                            glm::vec2 vCurr3D = glm::vec2(p3d.x, p3d.y) - A_fixed_3d;
+                            float lenStart3D = glm::length(vStart3D);
+                            float ratio = 1.0f;
+                            if (lenStart3D > 1e-3f) {
+                                float proj3D = glm::dot(vCurr3D, vStart3D) / lenStart3D;
+                                ratio = proj3D / lenStart3D;
+                            }
+
+                            float S_new = std::max(0.05f, S0 * ratio);
+                            img.scale = S_new;
+
+                            glm::vec2 C_new_3d = A_fixed_3d - getAnchorWorldOffset(S_new);
+                            img.offsetX = C_new_3d.x;
+                            img.offsetY = C_new_3d.y;
                         }
                     }
                 }
@@ -5294,10 +5379,8 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
                 ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
             } else if (m_activeRefDragTarget == RefDragTarget::Rotate) {
                 ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-            } else if (m_activeRefDragTarget == RefDragTarget::ScaleTL || m_activeRefDragTarget == RefDragTarget::ScaleBR) {
-                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE);
-            } else if (m_activeRefDragTarget == RefDragTarget::ScaleTR || m_activeRefDragTarget == RefDragTarget::ScaleBL) {
-                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNESW);
+            } else {
+                ImGui::SetMouseCursor(getResizeCursor(m_refDragStartMouse, center));
             }
 
             // Draw Tooltip Badge next to cursor
@@ -5332,7 +5415,7 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
 
         bool isSelected = (i == m_selectedRefImageIdx);
 
-        ImVec2 TL, TR, BR, BL, TC, RotHandle, C;
+        ImVec2 TL, TR, BR, BL, MT, MR, MB, ML, RotHandle, C;
         float imgAspect = (img.width > 0 && img.height > 0) ? ((float)img.width / (float)img.height) : 1.0f;
 
         if (img.pinned2D) {
@@ -5354,7 +5437,12 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
             TR = ImVec2(Cx + rotVec(ImVec2( halfW_px, -halfH_px)).x, Cy + rotVec(ImVec2( halfW_px, -halfH_px)).y);
             BR = ImVec2(Cx + rotVec(ImVec2( halfW_px,  halfH_px)).x, Cy + rotVec(ImVec2( halfW_px,  halfH_px)).y);
             BL = ImVec2(Cx + rotVec(ImVec2(-halfW_px,  halfH_px)).x, Cy + rotVec(ImVec2(-halfW_px,  halfH_px)).y);
-            TC = ImVec2(Cx + rotVec(ImVec2(0.0f, -halfH_px)).x, Cy + rotVec(ImVec2(0.0f, -halfH_px)).y);
+
+            MT = ImVec2(Cx + rotVec(ImVec2(0.0f, -halfH_px)).x, Cy + rotVec(ImVec2(0.0f, -halfH_px)).y);
+            MR = ImVec2(Cx + rotVec(ImVec2(halfW_px, 0.0f)).x,  Cy + rotVec(ImVec2(halfW_px, 0.0f)).y);
+            MB = ImVec2(Cx + rotVec(ImVec2(0.0f, halfH_px)).x,  Cy + rotVec(ImVec2(0.0f, halfH_px)).y);
+            ML = ImVec2(Cx + rotVec(ImVec2(-halfW_px, 0.0f)).x, Cy + rotVec(ImVec2(-halfW_px, 0.0f)).y);
+
             RotHandle = ImVec2(Cx + rotVec(ImVec2(0.0f, -halfH_px - 28.0f * scale)).x, Cy + rotVec(ImVec2(0.0f, -halfH_px - 28.0f * scale)).y);
         } else {
             glm::mat4 model = glm::mat4(1.0f);
@@ -5367,7 +5455,12 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
             glm::vec3 pWorldTR = glm::vec3(model * glm::vec4( 1.0f,  1.0f, 0.0f, 1.0f));
             glm::vec3 pWorldTL = glm::vec3(model * glm::vec4(-1.0f,  1.0f, 0.0f, 1.0f));
             glm::vec3 pWorldC  = glm::vec3(img.offsetX, img.offsetY, 0.0f);
-            glm::vec3 pWorldTC = (pWorldTL + pWorldTR) * 0.5f;
+
+            glm::vec3 pWorldMT = (pWorldTL + pWorldTR) * 0.5f;
+            glm::vec3 pWorldMR = (pWorldTR + pWorldBR) * 0.5f;
+            glm::vec3 pWorldMB = (pWorldBR + pWorldBL) * 0.5f;
+            glm::vec3 pWorldML = (pWorldBL + pWorldTL) * 0.5f;
+
             glm::vec3 pWorldRotHandle = glm::vec3(model * glm::vec4(0.0f, 1.35f, 0.0f, 1.0f));
 
             glm::vec3 pScrBL  = currentCamera.project(pWorldBL);
@@ -5375,7 +5468,12 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
             glm::vec3 pScrTR  = currentCamera.project(pWorldTR);
             glm::vec3 pScrTL  = currentCamera.project(pWorldTL);
             glm::vec3 pScrC   = currentCamera.project(pWorldC);
-            glm::vec3 pScrTC  = currentCamera.project(pWorldTC);
+
+            glm::vec3 pScrMT  = currentCamera.project(pWorldMT);
+            glm::vec3 pScrMR  = currentCamera.project(pWorldMR);
+            glm::vec3 pScrMB  = currentCamera.project(pWorldMB);
+            glm::vec3 pScrML  = currentCamera.project(pWorldML);
+
             glm::vec3 pScrRot = currentCamera.project(pWorldRotHandle);
 
             BL = ImVec2(pScrBL.x + vpX, pScrBL.y + vpY);
@@ -5383,7 +5481,12 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
             TR = ImVec2(pScrTR.x + vpX, pScrTR.y + vpY);
             TL = ImVec2(pScrTL.x + vpX, pScrTL.y + vpY);
             C  = ImVec2(pScrC.x + vpX, pScrC.y + vpY);
-            TC = ImVec2(pScrTC.x + vpX, pScrTC.y + vpY);
+
+            MT = ImVec2(pScrMT.x + vpX, pScrMT.y + vpY);
+            MR = ImVec2(pScrMR.x + vpX, pScrMR.y + vpY);
+            MB = ImVec2(pScrMB.x + vpX, pScrMB.y + vpY);
+            ML = ImVec2(pScrML.x + vpX, pScrML.y + vpY);
+
             RotHandle = ImVec2(pScrRot.x + vpX, pScrRot.y + vpY);
         }
 
@@ -5401,6 +5504,10 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
             else if (isPointInCircle(mousePos, TR, handleRadius * 1.5f)) hoverTarget = RefDragTarget::ScaleTR;
             else if (isPointInCircle(mousePos, BR, handleRadius * 1.5f)) hoverTarget = RefDragTarget::ScaleBR;
             else if (isPointInCircle(mousePos, BL, handleRadius * 1.5f)) hoverTarget = RefDragTarget::ScaleBL;
+            else if (isPointInCircle(mousePos, MT, handleRadius * 1.5f)) hoverTarget = RefDragTarget::ScaleT;
+            else if (isPointInCircle(mousePos, MR, handleRadius * 1.5f)) hoverTarget = RefDragTarget::ScaleR;
+            else if (isPointInCircle(mousePos, MB, handleRadius * 1.5f)) hoverTarget = RefDragTarget::ScaleB;
+            else if (isPointInCircle(mousePos, ML, handleRadius * 1.5f)) hoverTarget = RefDragTarget::ScaleL;
             else if (isPointInQuad(mousePos, TL, TR, BR, BL)) hoverTarget = RefDragTarget::Move;
 
             if (hoverTarget != RefDragTarget::None) {
@@ -5418,10 +5525,17 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
                         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
                     } else if (hoverTarget == RefDragTarget::Rotate) {
                         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                    } else if (hoverTarget == RefDragTarget::ScaleTL || hoverTarget == RefDragTarget::ScaleBR) {
-                        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE);
-                    } else if (hoverTarget == RefDragTarget::ScaleTR || hoverTarget == RefDragTarget::ScaleBL) {
-                        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNESW);
+                    } else {
+                        ImVec2 hPos = C;
+                        if (hoverTarget == RefDragTarget::ScaleTL) hPos = TL;
+                        else if (hoverTarget == RefDragTarget::ScaleTR) hPos = TR;
+                        else if (hoverTarget == RefDragTarget::ScaleBR) hPos = BR;
+                        else if (hoverTarget == RefDragTarget::ScaleBL) hPos = BL;
+                        else if (hoverTarget == RefDragTarget::ScaleT) hPos = MT;
+                        else if (hoverTarget == RefDragTarget::ScaleR) hPos = MR;
+                        else if (hoverTarget == RefDragTarget::ScaleB) hPos = MB;
+                        else if (hoverTarget == RefDragTarget::ScaleL) hPos = ML;
+                        ImGui::SetMouseCursor(getResizeCursor(hPos, C));
                     }
 
                     if (io.MouseClicked[0]) {
@@ -5465,10 +5579,15 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
         drawCornerHandle(BR, (m_draggingRefImageIdx == i) && (m_activeRefDragTarget == RefDragTarget::ScaleBR));
         drawCornerHandle(BL, (m_draggingRefImageIdx == i) && (m_activeRefDragTarget == RefDragTarget::ScaleBL));
 
+        drawCornerHandle(MT, (m_draggingRefImageIdx == i) && (m_activeRefDragTarget == RefDragTarget::ScaleT));
+        drawCornerHandle(MR, (m_draggingRefImageIdx == i) && (m_activeRefDragTarget == RefDragTarget::ScaleR));
+        drawCornerHandle(MB, (m_draggingRefImageIdx == i) && (m_activeRefDragTarget == RefDragTarget::ScaleB));
+        drawCornerHandle(ML, (m_draggingRefImageIdx == i) && (m_activeRefDragTarget == RefDragTarget::ScaleL));
+
         // Top Rotation Handle & Stem line in Teal Accent (or Amber if locked)
         ImU32 rotColor = img.locked ? IM_COL32(235, 140, 40, 230) : accentBright;
         bool isRotHover = (m_draggingRefImageIdx == i) && (m_activeRefDragTarget == RefDragTarget::Rotate);
-        drawList->AddLine(TC, RotHandle, rotColor, 2.0f * scale);
+        drawList->AddLine(MT, RotHandle, rotColor, 2.0f * scale);
         float rotR = isRotHover ? (handleRadius * 1.45f) : (handleRadius * 1.2f);
         drawList->AddCircleFilled(RotHandle, rotR, isRotHover ? accentActive : rotColor);
         drawList->AddCircle(RotHandle, rotR, IM_COL32(255, 255, 255, 255), 0, 2.0f * scale);
