@@ -2,59 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.3.6]
-- **Dynamic Topology Undo Stabilization & Mesh Integrity**:
-  - Fixed mesh hole creation during Undo (`Ctrl+Z`) of Dynamic Topology strokes by automatically tracking initial mesh topology state and recording `TopologyUndoEntry` when vertex or face counts change.
-  - Synchronized CSR adjacency structures (`vrvStartCount`, `vrfStartCount`) immediately post-compaction in DynTopo execution loop.
-  - Added pre-stroke CSR safety validation check in `SculptManager::executeStroke` to prevent out-of-bounds access in smooth and deform brush passes.
-  - Updated `UndoManager::applyEntry` to validate and refresh CSR topology buffers before computing vertex normals upon state restoration.
-  - Added null and boundary safety guards in `SculptEngine` laplacian smoothing algorithms.
-
-## [0.3.5]
-- **Dynamic Topology Latency Elimination & Deferred Batch Compaction**:
-  - Implemented Phase 1 deferred batch deletion in `DynDecimation::executeCollapse`, removing inline $O(n)$ `deleteVertex` array swapping and replacing per-collapse `computeRingVertices` calls with deferred `mergeVertexRings` adjacency tracking.
-  - Replaced inline vertex array resizing with a single joint vertex and tombstone-face batch compaction pass at the end of the decimation cycle.
-  - Overloaded `updateVertexNormals` in `NormalCalc` to accept `mesh.dynVRF` directly, eliminating per-stroke-frame full-mesh `updateDynamicCSR` rebuilds (~10-14ms saved per stroke frame).
-  - Optimized ring intersection in `DynSubdivision::findOppositeTriangle` by replacing `std::unordered_set` allocations with direct linear ring scans.
-
-## [0.3.4]
-- **Dynamic Topology Performance & Pre-filtering**:
-  - Eliminated ping-pong oscillation between subdivision and decimation passes by adding hysteresis threshold calculation (`decimDetail2 = subDetail2 * 0.2f * (decimVal * decimVal)`).
-  - Implemented early-out pre-filtering in `SculptManager::executeStroke` to skip subdivision and decimation passes when edges in the brush region already satisfy detail requirements.
-  - Eliminated dynamic `std::vector` heap allocations in decimation hot paths (`executeCollapse`) by utilizing stack-allocated fixed-size buffers.
-  - Accelerated container operations by replacing `std::unordered_set` deduplication with cache-friendly `std::sort` + `std::unique` on flat vectors in subdivision and decimation loops.
-  - Implemented O(1) swap-and-pop ring removal (`ringRemove`) for topological face rings.
-  - Added zero-collapse early exit in decimation pass to bypass full-mesh tombstone compaction when no edge collapses occur.
-
-## [0.3.3]
-- **Dynamic Topology SIGSEGV Crash Fix & Octree Memory Synchronization**:
-  - Resolved SIGSEGV access violation during dynamic topology sculpting strokes caused by dangling `faceCentersData` pointer in `Octree`.
-  - Added explicit `centersPtrVal` synchronization parameter to `Octree::update()` to keep internal face center pointers aligned with `mesh.faceCenters` buffer reallocations.
-  - Eliminated unsafe vector index lookups on `allAffectedVerts` by adding `!allAffectedVerts.empty()` checks before min/max element extraction.
-  - Protected stroke stage pipeline by skipping redundant `octree.update()` calls on stale face caches during active dynamic topology brush operations.
-
-## [0.3.2]
-- **Dynamic Topology Stabilization & Optimization**:
-  - Eliminated SIGSEGV crashes during multi-region dynamic topology sculpting by moving CSR updates outside the region stroke loop.
-  - Hardened vertex and face normal calculations with strict array size bounds checking on CSR indices.
-  - Fixed dangling vertex ring references in decimation by clearing adjacency entries during vertex deletion swaps.
-  - Capped active triangle array growth in decimation to prevent performance degradation on high-density meshes.
-  - Accelerated stroke latency by replacing global vertex proxy memory copies with targeted range updates and deduplicating affected vertices via vector sorting.
-
-## [0.3.1]
-- **Dynamic Topology Performance**:
-  - Significantly accelerated Dynamic Topology brush responsiveness during sculpting strokes.
-  - Eliminated memory allocation overhead and lag spikes during local decimation and mesh refinement.
-  - Fixed application crash (SIGSEGV) during high-density decimation strokes.
-  - Added real-time diagnostic timing logs for subdivision and decimation passes.
-
 ## [0.3.0]
-- **Dynamic Topology**: Integrated native local subdivision and decimation engine with local quad-to-triangle region processing.
-- **Topology Brush**: Added dedicated `BRUSH_TOPOLOGY` tool for real-time local mesh resolution adjustment.
-- **Resolution Control**: Decoupled polygon density from brush radius, linking detail level to the global `remeshResolution` parameter (`X` key modal).
-- **Decimation System**: Hardened edge collapse stability with real-time normal flip validation and multi-pass face decimation.
-- **Voxel Remesh Synchronization**: Resolved application hang when using Dynamic Topology immediately post-remesh by enforcing dynamic structure re-initialization and size validation.
-- **Diagnostic Logging**: Added detailed logs tracking dynamic mode initialization triggers, structural size validation, and stroke candidate face counts.
+- **Dynamic Topology & Topology Brush**: Integrated native local subdivision and decimation engine, dedicated `BRUSH_TOPOLOGY` tool, and resolution control (`X` key).
+- **Performance & Latency**: Deferred batch compaction, pre-filtering, zero-allocation buffers, and optimized ring operations for responsive sculpting strokes.
+- **Stability & Mesh Integrity**: Hardened edge collapse stability, resolved mesh state crashes, and fully stabilized Undo/Redo topology restoration.
 
 
 ## [0.2.5]
