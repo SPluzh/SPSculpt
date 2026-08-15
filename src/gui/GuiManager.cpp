@@ -5443,51 +5443,64 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
             MB = ImVec2(Cx + rotVec(ImVec2(0.0f, halfH_px)).x,  Cy + rotVec(ImVec2(0.0f, halfH_px)).y);
             ML = ImVec2(Cx + rotVec(ImVec2(-halfW_px, 0.0f)).x, Cy + rotVec(ImVec2(-halfW_px, 0.0f)).y);
 
-            RotHandle = ImVec2(Cx + rotVec(ImVec2(0.0f, -halfH_px - 28.0f * scale)).x, Cy + rotVec(ImVec2(0.0f, -halfH_px - 28.0f * scale)).y);
-        } else {
-            glm::mat4 model = glm::mat4(1.0f);
-            model = glm::translate(model, glm::vec3(img.offsetX, img.offsetY, 0.0f));
-            model = glm::rotate(model, glm::radians(img.rotation), glm::vec3(0.0f, 0.0f, 1.0f));
-            model = glm::scale(model, glm::vec3(img.scale * imgAspect, img.scale, 1.0f));
+            // 4 Candidate positions for rotation handle (Top, Bottom, Right, Left)
+            ImVec2 rotCands[4];
+            if (img.pinned2D) {
+                rotCands[0] = ImVec2(Cx + rotVec(ImVec2(0.0f, -halfH_px - 28.0f * scale)).x, Cy + rotVec(ImVec2(0.0f, -halfH_px - 28.0f * scale)).y); // Top
+                rotCands[1] = ImVec2(Cx + rotVec(ImVec2(0.0f,  halfH_px + 28.0f * scale)).x, Cy + rotVec(ImVec2(0.0f,  halfH_px + 28.0f * scale)).y); // Bottom
+                rotCands[2] = ImVec2(Cx + rotVec(ImVec2( halfW_px + 28.0f * scale, 0.0f)).x, Cy + rotVec(ImVec2( halfW_px + 28.0f * scale, 0.0f)).y); // Right
+                rotCands[3] = ImVec2(Cx + rotVec(ImVec2(-halfW_px - 28.0f * scale, 0.0f)).x, Cy + rotVec(ImVec2(-halfW_px - 28.0f * scale, 0.0f)).y); // Left
+            } else {
+                glm::mat4 model = glm::mat4(1.0f);
+                model = glm::translate(model, glm::vec3(img.offsetX, img.offsetY, 0.0f));
+                model = glm::rotate(model, glm::radians(img.rotation), glm::vec3(0.0f, 0.0f, 1.0f));
+                model = glm::scale(model, glm::vec3(img.scale * imgAspect, img.scale, 1.0f));
 
-            glm::vec3 pWorldBL = glm::vec3(model * glm::vec4(-1.0f, -1.0f, 0.0f, 1.0f));
-            glm::vec3 pWorldBR = glm::vec3(model * glm::vec4( 1.0f, -1.0f, 0.0f, 1.0f));
-            glm::vec3 pWorldTR = glm::vec3(model * glm::vec4( 1.0f,  1.0f, 0.0f, 1.0f));
-            glm::vec3 pWorldTL = glm::vec3(model * glm::vec4(-1.0f,  1.0f, 0.0f, 1.0f));
-            glm::vec3 pWorldC  = glm::vec3(img.offsetX, img.offsetY, 0.0f);
+                glm::vec3 p3dRotT = glm::vec3(model * glm::vec4(0.0f, 1.35f, 0.0f, 1.0f));
+                glm::vec3 p3dRotB = glm::vec3(model * glm::vec4(0.0f, -1.35f, 0.0f, 1.0f));
+                glm::vec3 p3dRotR = glm::vec3(model * glm::vec4( 1.35f, 0.0f, 0.0f, 1.0f));
+                glm::vec3 p3dRotL = glm::vec3(model * glm::vec4(-1.35f, 0.0f, 0.0f, 1.0f));
 
-            glm::vec3 pWorldMT = (pWorldTL + pWorldTR) * 0.5f;
-            glm::vec3 pWorldMR = (pWorldTR + pWorldBR) * 0.5f;
-            glm::vec3 pWorldMB = (pWorldBR + pWorldBL) * 0.5f;
-            glm::vec3 pWorldML = (pWorldBL + pWorldTL) * 0.5f;
+                glm::vec3 pScrT = currentCamera.project(p3dRotT);
+                glm::vec3 pScrB = currentCamera.project(p3dRotB);
+                glm::vec3 pScrR = currentCamera.project(p3dRotR);
+                glm::vec3 pScrL = currentCamera.project(p3dRotL);
 
-            glm::vec3 pWorldRotHandle = glm::vec3(model * glm::vec4(0.0f, 1.35f, 0.0f, 1.0f));
+                rotCands[0] = ImVec2(pScrT.x + vpX, pScrT.y + vpY);
+                rotCands[1] = ImVec2(pScrB.x + vpX, pScrB.y + vpY);
+                rotCands[2] = ImVec2(pScrR.x + vpX, pScrR.y + vpY);
+                rotCands[3] = ImVec2(pScrL.x + vpX, pScrL.y + vpY);
+            }
 
-            glm::vec3 pScrBL  = currentCamera.project(pWorldBL);
-            glm::vec3 pScrBR  = currentCamera.project(pWorldBR);
-            glm::vec3 pScrTR  = currentCamera.project(pWorldTR);
-            glm::vec3 pScrTL  = currentCamera.project(pWorldTL);
-            glm::vec3 pScrC   = currentCamera.project(pWorldC);
+            float minX_r = vpX + 15.0f * scale;
+            float maxX_r = vpX + vpW - 15.0f * scale;
+            float minY_r = vpY + 15.0f * scale;
+            float maxY_r = vpY + vpH - 15.0f * scale;
 
-            glm::vec3 pScrMT  = currentCamera.project(pWorldMT);
-            glm::vec3 pScrMR  = currentCamera.project(pWorldMR);
-            glm::vec3 pScrMB  = currentCamera.project(pWorldMB);
-            glm::vec3 pScrML  = currentCamera.project(pWorldML);
+            auto getRotPen = [&](const ImVec2& p) {
+                float pen = 0.0f;
+                if (p.x < minX_r) pen += (minX_r - p.x);
+                if (p.x > maxX_r) pen += (p.x - maxX_r);
+                if (p.y < minY_r) pen += (minY_r - p.y);
+                if (p.y > maxY_r) pen += (p.y - maxY_r);
+                return pen;
+            };
 
-            glm::vec3 pScrRot = currentCamera.project(pWorldRotHandle);
-
-            BL = ImVec2(pScrBL.x + vpX, pScrBL.y + vpY);
-            BR = ImVec2(pScrBR.x + vpX, pScrBR.y + vpY);
-            TR = ImVec2(pScrTR.x + vpX, pScrTR.y + vpY);
-            TL = ImVec2(pScrTL.x + vpX, pScrTL.y + vpY);
-            C  = ImVec2(pScrC.x + vpX, pScrC.y + vpY);
-
-            MT = ImVec2(pScrMT.x + vpX, pScrMT.y + vpY);
-            MR = ImVec2(pScrMR.x + vpX, pScrMR.y + vpY);
-            MB = ImVec2(pScrMB.x + vpX, pScrMB.y + vpY);
-            ML = ImVec2(pScrML.x + vpX, pScrML.y + vpY);
-
-            RotHandle = ImVec2(pScrRot.x + vpX, pScrRot.y + vpY);
+            int bestRotCand = 0;
+            float bestRotPen = 1e12f;
+            for (int k = 0; k < 4; ++k) {
+                float pen = getRotPen(rotCands[k]);
+                if (pen == 0.0f) {
+                    bestRotCand = k;
+                    bestRotPen = 0.0f;
+                    break;
+                }
+                if (pen < bestRotPen) {
+                    bestRotPen = pen;
+                    bestRotCand = k;
+                }
+            }
+            RotHandle = rotCands[bestRotCand];
         }
 
         // Draw Bounding Quad in Accent Color (or Amber if Locked)
@@ -5584,10 +5597,20 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
         drawCornerHandle(MB, (m_draggingRefImageIdx == i) && (m_activeRefDragTarget == RefDragTarget::ScaleB));
         drawCornerHandle(ML, (m_draggingRefImageIdx == i) && (m_activeRefDragTarget == RefDragTarget::ScaleL));
 
-        // Top Rotation Handle & Stem line in Teal Accent (or Amber if locked)
+        // Rotation Handle & Stem line in Teal Accent (or Amber if locked)
         ImU32 rotColor = img.locked ? IM_COL32(235, 140, 40, 230) : accentBright;
         bool isRotHover = (m_draggingRefImageIdx == i) && (m_activeRefDragTarget == RefDragTarget::Rotate);
-        drawList->AddLine(MT, RotHandle, rotColor, 2.0f * scale);
+        ImVec2 rotAnchors[4] = { MT, MB, MR, ML };
+        float minDist2 = 1e12f;
+        ImVec2 bestRotAnchor = MT;
+        for (int a = 0; a < 4; ++a) {
+            float d2 = (RotHandle.x - rotAnchors[a].x)*(RotHandle.x - rotAnchors[a].x) + (RotHandle.y - rotAnchors[a].y)*(RotHandle.y - rotAnchors[a].y);
+            if (d2 < minDist2) {
+                minDist2 = d2;
+                bestRotAnchor = rotAnchors[a];
+            }
+        }
+        drawList->AddLine(bestRotAnchor, RotHandle, rotColor, 2.0f * scale);
         float rotR = isRotHover ? (handleRadius * 1.45f) : (handleRadius * 1.2f);
         drawList->AddCircleFilled(RotHandle, rotR, isRotHover ? accentActive : rotColor);
         drawList->AddCircle(RotHandle, rotR, IM_COL32(255, 255, 255, 255), 0, 2.0f * scale);
@@ -5616,14 +5639,75 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
                 return ImVec2(v.x * cosR - v.y * sinR, v.x * sinR + v.y * cosR);
             };
 
-            float halfBarW = 70.0f * scale;
-            float halfBarH = 15.0f * scale;
             float attachGap = 8.0f * scale;
 
-            float barLocalX = halfW_px - halfBarW;
-            float barLocalY = -halfH_px - halfBarH - attachGap;
+            struct ToolbarCand {
+                bool isVert;
+                float lx, ly;
+                ImVec2 frameAttachLoc;
+                ImVec2 barAttachLoc;
+            };
 
-            // Toolbar center: positioned on top of the frame, aligned to the right side
+            float sideOffCenterY = -halfH_px * 0.35f;
+
+            ToolbarCand tbCands[4] = {
+                { false,  halfW_px - 70.0f * scale, -halfH_px - 15.0f * scale - attachGap, ImVec2(halfW_px - 70.0f * scale, -halfH_px), ImVec2(0.0f,  15.0f * scale) }, // 0: Top (Horizontal)
+                { false,  halfW_px - 70.0f * scale,  halfH_px + 15.0f * scale + attachGap, ImVec2(halfW_px - 70.0f * scale,  halfH_px), ImVec2(0.0f, -15.0f * scale) }, // 1: Bottom (Horizontal)
+                { true,   halfW_px + 15.0f * scale + attachGap, sideOffCenterY,            ImVec2(halfW_px, sideOffCenterY),            ImVec2(-15.0f * scale, 0.0f) }, // 2: Right (Vertical)
+                { true,  -halfW_px - 15.0f * scale - attachGap, sideOffCenterY,            ImVec2(-halfW_px, sideOffCenterY),           ImVec2( 15.0f * scale, 0.0f) }  // 3: Left (Vertical)
+            };
+
+            float minX_tb = vpX + 15.0f * scale;
+            float maxX_tb = vpX + vpW - 15.0f * scale;
+            float minY_tb = vpY + 15.0f * scale;
+            float maxY_tb = vpY + vpH - 15.0f * scale;
+
+            auto getTbPen = [&](const ImVec2& p) {
+                float pen = 0.0f;
+                if (p.x < minX_tb) pen += (minX_tb - p.x);
+                if (p.x > maxX_tb) pen += (p.x - maxX_tb);
+                if (p.y < minY_tb) pen += (minY_tb - p.y);
+                if (p.y > maxY_tb) pen += (p.y - maxY_tb);
+                return pen;
+            };
+
+            int bestTbCand = 0;
+            float bestTbPen = 1e12f;
+
+            for (int k = 0; k < 4; ++k) {
+                float w = tbCands[k].isVert ? (15.0f * scale) : (70.0f * scale);
+                float h = tbCands[k].isVert ? (70.0f * scale) : (15.0f * scale);
+
+                ImVec2 bCenter = ImVec2(Cx + rotVec(ImVec2(tbCands[k].lx, tbCands[k].ly)).x,
+                                        Cy + rotVec(ImVec2(tbCands[k].lx, tbCands[k].ly)).y);
+
+                float pen = getTbPen(bCenter);
+                ImVec2 cTL(bCenter.x + (-w) * cosR - (-h) * sinR, bCenter.y + (-w) * sinR + (-h) * cosR);
+                ImVec2 cTR(bCenter.x + ( w) * cosR - (-h) * sinR, bCenter.y + ( w) * sinR + (-h) * cosR);
+                ImVec2 cBR(bCenter.x + ( w) * cosR - ( h) * sinR, bCenter.y + ( w) * sinR + ( h) * cosR);
+                ImVec2 cBL(bCenter.x + (-w) * cosR - ( h) * sinR, bCenter.y + (-w) * sinR + ( h) * cosR);
+
+                pen += getTbPen(cTL) + getTbPen(cTR) + getTbPen(cBR) + getTbPen(cBL);
+
+                if (pen == 0.0f) {
+                    bestTbCand = k;
+                    bestTbPen = 0.0f;
+                    break;
+                }
+                if (pen < bestTbPen) {
+                    bestTbPen = pen;
+                    bestTbCand = k;
+                }
+            }
+
+            bool isVerticalBar = tbCands[bestTbCand].isVert;
+            float halfBarW = isVerticalBar ? (15.0f * scale) : (70.0f * scale);
+            float halfBarH = isVerticalBar ? (70.0f * scale) : (15.0f * scale);
+
+            float barLocalX = tbCands[bestTbCand].lx;
+            float barLocalY = tbCands[bestTbCand].ly;
+
+            // Toolbar center: positioned dynamically (Top -> Bottom -> Right -> Left)
             ImVec2 barCenter = ImVec2(Cx + rotVec(ImVec2(barLocalX, barLocalY)).x,
                                       Cy + rotVec(ImVec2(barLocalX, barLocalY)).y);
 
@@ -5640,40 +5724,66 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
 
             bool isMouseOverBar = (mLoc.x >= -halfBarW && mLoc.x <= halfBarW && mLoc.y >= -halfBarH && mLoc.y <= halfBarH);
 
-            float sliderX0 = -58.0f * scale;
-            float sliderX1 =  28.0f * scale;
-            float lockX0   =  38.0f * scale;
-            float lockX1   =  62.0f * scale;
-
             if (isMouseOverBar && m_activeRefDragTarget == RefDragTarget::None && !isPointOverWindow(mousePos)) {
                 io.WantCaptureMouse = true;
                 sculpt.getCursor().hide();
 
-                // Slider interaction check
-                if (mLoc.x >= sliderX0 - 8.0f * scale && mLoc.x <= sliderX1 + 8.0f * scale && mLoc.y >= -13.0f * scale && mLoc.y <= 13.0f * scale) {
-                    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-                    if (io.MouseDown[0]) {
-                        float t = (mLoc.x - sliderX0) / (sliderX1 - sliderX0);
-                        selImg.opacity = std::clamp(t, 0.0f, 1.0f);
-                        scene.setModified(true);
-                    }
-                }
+                if (!isVerticalBar) { // Horizontal Slider & Lock
+                    float sliderX0 = -58.0f * scale;
+                    float sliderX1 =  28.0f * scale;
+                    float lockX0   =  38.0f * scale;
+                    float lockX1   =  62.0f * scale;
 
-                // Lock button interaction check
-                if (mLoc.x >= lockX0 && mLoc.x <= lockX1 && mLoc.y >= -12.0f * scale && mLoc.y <= 12.0f * scale) {
-                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                    if (io.MouseClicked[0]) {
-                        selImg.locked = !selImg.locked;
-                        scene.setModified(true);
+                    // Slider interaction check
+                    if (mLoc.x >= sliderX0 - 8.0f * scale && mLoc.x <= sliderX1 + 8.0f * scale && mLoc.y >= -13.0f * scale && mLoc.y <= 13.0f * scale) {
+                        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+                        if (io.MouseDown[0]) {
+                            float t = (mLoc.x - sliderX0) / (sliderX1 - sliderX0);
+                            selImg.opacity = std::clamp(t, 0.0f, 1.0f);
+                            scene.setModified(true);
+                        }
+                    }
+
+                    // Lock button interaction check
+                    if (mLoc.x >= lockX0 && mLoc.x <= lockX1 && mLoc.y >= -12.0f * scale && mLoc.y <= 12.0f * scale) {
+                        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                        if (io.MouseClicked[0]) {
+                            selImg.locked = !selImg.locked;
+                            scene.setModified(true);
+                        }
+                    }
+                } else { // Vertical Slider & Lock
+                    float sliderY0 =  36.0f * scale; // Bottom (opacity 0)
+                    float sliderY1 = -48.0f * scale; // Top (opacity 1)
+                    float lockY0   =  43.0f * scale;
+                    float lockY1   =  65.0f * scale;
+
+                    // Vertical Slider interaction check
+                    if (mLoc.x >= -13.0f * scale && mLoc.x <= 13.0f * scale && mLoc.y <= sliderY0 + 8.0f * scale && mLoc.y >= sliderY1 - 8.0f * scale) {
+                        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+                        if (io.MouseDown[0]) {
+                            float t = (mLoc.y - sliderY0) / (sliderY1 - sliderY0);
+                            selImg.opacity = std::clamp(t, 0.0f, 1.0f);
+                            scene.setModified(true);
+                        }
+                    }
+
+                    // Lock button interaction check (Square 22x22)
+                    if (mLoc.x >= -11.0f * scale && mLoc.x <= 11.0f * scale && mLoc.y >= lockY0 && mLoc.y <= lockY1) {
+                        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                        if (io.MouseClicked[0]) {
+                            selImg.locked = !selImg.locked;
+                            scene.setModified(true);
+                        }
                     }
                 }
             }
 
-            // Connecting stem from top-right frame border to bottom of toolbar
-            ImVec2 frameTopPt = ImVec2(Cx + rotVec(ImVec2(barLocalX, -halfH_px)).x,
-                                       Cy + rotVec(ImVec2(barLocalX, -halfH_px)).y);
-            ImVec2 barBottomPt = localToWorld(0.0f, halfBarH);
-            drawList->AddLine(frameTopPt, barBottomPt, selImg.locked ? IM_COL32(235, 140, 40, 200) : accentBright, 2.0f * scale);
+            // Connecting stem from frame border to toolbar
+            ImVec2 frameAttachPt = ImVec2(Cx + rotVec(tbCands[bestTbCand].frameAttachLoc).x,
+                                       Cy + rotVec(tbCands[bestTbCand].frameAttachLoc).y);
+            ImVec2 barAttachPt = localToWorld(tbCands[bestTbCand].barAttachLoc.x, tbCands[bestTbCand].barAttachLoc.y);
+            drawList->AddLine(frameAttachPt, barAttachPt, selImg.locked ? IM_COL32(235, 140, 40, 200) : accentBright, 2.0f * scale);
 
             // Background Quad
             ImVec2 bTL = localToWorld(-halfBarW, -halfBarH);
@@ -5685,64 +5795,126 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
             drawList->AddConvexPolyFilled(bgPts, 4, IM_COL32(20, 24, 30, 235));
             drawList->AddPolyline(bgPts, 4, selImg.locked ? IM_COL32(235, 140, 40, 220) : accentBright, ImDrawFlags_Closed, 1.6f * scale);
 
-            // Slider Track
-            ImVec2 ts = localToWorld(sliderX0, 0.0f);
-            ImVec2 te = localToWorld(sliderX1, 0.0f);
-            drawList->AddLine(ts, te, IM_COL32(60, 75, 90, 255), 4.0f * scale);
+            if (!isVerticalBar) { // Render Horizontal Bar Contents
+                float sliderX0 = -58.0f * scale;
+                float sliderX1 =  28.0f * scale;
+                float lockX0   =  38.0f * scale;
+                float lockX1   =  62.0f * scale;
 
-            float handleX = sliderX0 + selImg.opacity * (sliderX1 - sliderX0);
-            ImVec2 tf = localToWorld(handleX, 0.0f);
-            drawList->AddLine(ts, tf, selImg.locked ? IM_COL32(235, 140, 40, 255) : accentBright, 4.0f * scale);
-            drawList->AddCircleFilled(tf, 5.5f * scale, IM_COL32(255, 255, 255, 255));
-            drawList->AddCircle(tf, 5.5f * scale, selImg.locked ? IM_COL32(235, 140, 40, 255) : accentBright, 0, 1.5f * scale);
+                // Slider Track
+                ImVec2 ts = localToWorld(sliderX0, 0.0f);
+                ImVec2 te = localToWorld(sliderX1, 0.0f);
+                drawList->AddLine(ts, te, IM_COL32(60, 75, 90, 255), 4.0f * scale);
 
-            // Lock Button Quad
-            ImVec2 btnTL = localToWorld(lockX0, -10.0f * scale);
-            ImVec2 btnTR = localToWorld(lockX1, -10.0f * scale);
-            ImVec2 btnBR = localToWorld(lockX1,  10.0f * scale);
-            ImVec2 btnBL = localToWorld(lockX0,  10.0f * scale);
+                float handleX = sliderX0 + selImg.opacity * (sliderX1 - sliderX0);
+                ImVec2 tf = localToWorld(handleX, 0.0f);
+                drawList->AddLine(ts, tf, selImg.locked ? IM_COL32(235, 140, 40, 255) : accentBright, 4.0f * scale);
+                drawList->AddCircleFilled(tf, 5.5f * scale, IM_COL32(255, 255, 255, 255));
+                drawList->AddCircle(tf, 5.5f * scale, selImg.locked ? IM_COL32(235, 140, 40, 255) : accentBright, 0, 1.5f * scale);
 
-            ImVec2 btnPts[4] = { btnTL, btnTR, btnBR, btnBL };
-            bool isLocked = selImg.locked;
-            ImU32 btnBg = isLocked ? IM_COL32(200, 50, 50, 230) : IM_COL32(18, 120, 95, 230);
-            ImU32 btnBrd = isLocked ? IM_COL32(255, 100, 100, 255) : IM_COL32(5, 220, 180, 255);
+                // Lock Button Quad (Square 24x24)
+                ImVec2 btnTL = localToWorld(lockX0, -12.0f * scale);
+                ImVec2 btnTR = localToWorld(lockX1, -12.0f * scale);
+                ImVec2 btnBR = localToWorld(lockX1,  12.0f * scale);
+                ImVec2 btnBL = localToWorld(lockX0,  12.0f * scale);
 
-            drawList->AddConvexPolyFilled(btnPts, 4, btnBg);
-            drawList->AddPolyline(btnPts, 4, btnBrd, ImDrawFlags_Closed, 1.2f * scale);
+                ImVec2 btnPts[4] = { btnTL, btnTR, btnBR, btnBL };
+                bool isLocked = selImg.locked;
+                ImU32 btnBg = isLocked ? IM_COL32(200, 50, 50, 230) : IM_COL32(18, 120, 95, 230);
+                ImU32 btnBrd = isLocked ? IM_COL32(255, 100, 100, 255) : IM_COL32(5, 220, 180, 255);
 
-            // Vector Padlock Icon inside Lock Button
-            float lCenterX = (lockX0 + lockX1) * 0.5f; // 50.0f * scale
-            // Padlock Body
-            ImVec2 bodyTL = localToWorld(lCenterX - 5.0f * scale, -1.0f * scale);
-            ImVec2 bodyTR = localToWorld(lCenterX + 5.0f * scale, -1.0f * scale);
-            ImVec2 bodyBR = localToWorld(lCenterX + 5.0f * scale,  6.0f * scale);
-            ImVec2 bodyBL = localToWorld(lCenterX - 5.0f * scale,  6.0f * scale);
-            ImVec2 bodyPts[4] = { bodyTL, bodyTR, bodyBR, bodyBL };
-            drawList->AddConvexPolyFilled(bodyPts, 4, IM_COL32(255, 255, 255, 255));
+                drawList->AddConvexPolyFilled(btnPts, 4, btnBg);
+                drawList->AddPolyline(btnPts, 4, btnBrd, ImDrawFlags_Closed, 1.2f * scale);
 
-            // Keyhole Dot
-            ImVec2 keyHole = localToWorld(lCenterX, 2.5f * scale);
-            drawList->AddCircleFilled(keyHole, 1.3f * scale, isLocked ? IM_COL32(200, 50, 50, 255) : IM_COL32(18, 120, 95, 255));
+                // Vector Padlock Icon inside Lock Button
+                float lCenterX = (lockX0 + lockX1) * 0.5f;
+                ImVec2 bodyTL = localToWorld(lCenterX - 5.0f * scale, -1.0f * scale);
+                ImVec2 bodyTR = localToWorld(lCenterX + 5.0f * scale, -1.0f * scale);
+                ImVec2 bodyBR = localToWorld(lCenterX + 5.0f * scale,  6.0f * scale);
+                ImVec2 bodyBL = localToWorld(lCenterX - 5.0f * scale,  6.0f * scale);
+                ImVec2 bodyPts[4] = { bodyTL, bodyTR, bodyBR, bodyBL };
+                drawList->AddConvexPolyFilled(bodyPts, 4, IM_COL32(255, 255, 255, 255));
 
-            // Shackle Arc
-            if (isLocked) {
-                // Closed Shackle
-                ImVec2 sL0 = localToWorld(lCenterX - 3.0f * scale, -1.0f * scale);
-                ImVec2 sL1 = localToWorld(lCenterX - 3.0f * scale, -5.5f * scale);
-                ImVec2 sR1 = localToWorld(lCenterX + 3.0f * scale, -5.5f * scale);
-                ImVec2 sR0 = localToWorld(lCenterX + 3.0f * scale, -1.0f * scale);
-                drawList->AddLine(sL0, sL1, IM_COL32(255, 255, 255, 255), 1.8f * scale);
-                drawList->AddLine(sL1, sR1, IM_COL32(255, 255, 255, 255), 1.8f * scale);
-                drawList->AddLine(sR1, sR0, IM_COL32(255, 255, 255, 255), 1.8f * scale);
-            } else {
-                // Open Shackle
-                ImVec2 sL0 = localToWorld(lCenterX - 3.0f * scale, -1.0f * scale);
-                ImVec2 sL1 = localToWorld(lCenterX - 3.0f * scale, -6.5f * scale);
-                ImVec2 sR1 = localToWorld(lCenterX + 3.0f * scale, -6.5f * scale);
-                ImVec2 sR0 = localToWorld(lCenterX + 3.0f * scale, -3.5f * scale);
-                drawList->AddLine(sL0, sL1, IM_COL32(255, 255, 255, 255), 1.8f * scale);
-                drawList->AddLine(sL1, sR1, IM_COL32(255, 255, 255, 255), 1.8f * scale);
-                drawList->AddLine(sR1, sR0, IM_COL32(255, 255, 255, 255), 1.8f * scale);
+                ImVec2 keyHole = localToWorld(lCenterX, 2.5f * scale);
+                drawList->AddCircleFilled(keyHole, 1.3f * scale, isLocked ? IM_COL32(200, 50, 50, 255) : IM_COL32(18, 120, 95, 255));
+
+                if (isLocked) {
+                    ImVec2 sL0 = localToWorld(lCenterX - 3.0f * scale, -1.0f * scale);
+                    ImVec2 sL1 = localToWorld(lCenterX - 3.0f * scale, -5.5f * scale);
+                    ImVec2 sR1 = localToWorld(lCenterX + 3.0f * scale, -5.5f * scale);
+                    ImVec2 sR0 = localToWorld(lCenterX + 3.0f * scale, -1.0f * scale);
+                    drawList->AddLine(sL0, sL1, IM_COL32(255, 255, 255, 255), 1.8f * scale);
+                    drawList->AddLine(sL1, sR1, IM_COL32(255, 255, 255, 255), 1.8f * scale);
+                    drawList->AddLine(sR1, sR0, IM_COL32(255, 255, 255, 255), 1.8f * scale);
+                } else {
+                    ImVec2 sL0 = localToWorld(lCenterX - 3.0f * scale, -1.0f * scale);
+                    ImVec2 sL1 = localToWorld(lCenterX - 3.0f * scale, -6.5f * scale);
+                    ImVec2 sR1 = localToWorld(lCenterX + 3.0f * scale, -6.5f * scale);
+                    ImVec2 sR0 = localToWorld(lCenterX + 3.0f * scale, -3.5f * scale);
+                    drawList->AddLine(sL0, sL1, IM_COL32(255, 255, 255, 255), 1.8f * scale);
+                    drawList->AddLine(sL1, sR1, IM_COL32(255, 255, 255, 255), 1.8f * scale);
+                    drawList->AddLine(sR1, sR0, IM_COL32(255, 255, 255, 255), 1.8f * scale);
+                }
+            } else { // Render Vertical Bar Contents
+                float sliderY0 =  36.0f * scale; // Bottom (opacity 0)
+                float sliderY1 = -48.0f * scale; // Top (opacity 1)
+                float lockY0   =  43.0f * scale;
+                float lockY1   =  65.0f * scale;
+
+                // Vertical Slider Track
+                ImVec2 ts = localToWorld(0.0f, sliderY0);
+                ImVec2 te = localToWorld(0.0f, sliderY1);
+                drawList->AddLine(ts, te, IM_COL32(60, 75, 90, 255), 4.0f * scale);
+
+                float handleY = sliderY0 + selImg.opacity * (sliderY1 - sliderY0);
+                ImVec2 tf = localToWorld(0.0f, handleY);
+                drawList->AddLine(ts, tf, selImg.locked ? IM_COL32(235, 140, 40, 255) : accentBright, 4.0f * scale);
+                drawList->AddCircleFilled(tf, 5.5f * scale, IM_COL32(255, 255, 255, 255));
+                drawList->AddCircle(tf, 5.5f * scale, selImg.locked ? IM_COL32(235, 140, 40, 255) : accentBright, 0, 1.5f * scale);
+
+                // Lock Button Quad at bottom of vertical bar (Square 22x22)
+                ImVec2 btnTL = localToWorld(-11.0f * scale, lockY0);
+                ImVec2 btnTR = localToWorld( 11.0f * scale, lockY0);
+                ImVec2 btnBR = localToWorld( 11.0f * scale, lockY1);
+                ImVec2 btnBL = localToWorld(-11.0f * scale, lockY1);
+
+                ImVec2 btnPts[4] = { btnTL, btnTR, btnBR, btnBL };
+                bool isLocked = selImg.locked;
+                ImU32 btnBg = isLocked ? IM_COL32(200, 50, 50, 230) : IM_COL32(18, 120, 95, 230);
+                ImU32 btnBrd = isLocked ? IM_COL32(255, 100, 100, 255) : IM_COL32(5, 220, 180, 255);
+
+                drawList->AddConvexPolyFilled(btnPts, 4, btnBg);
+                drawList->AddPolyline(btnPts, 4, btnBrd, ImDrawFlags_Closed, 1.2f * scale);
+
+                // Vector Padlock Icon inside Vertical Lock Button
+                float lCenterY = (lockY0 + lockY1) * 0.5f; // 54.0f * scale
+                ImVec2 bodyTL = localToWorld(-5.0f * scale, lCenterY - 2.0f * scale);
+                ImVec2 bodyTR = localToWorld( 5.0f * scale, lCenterY - 2.0f * scale);
+                ImVec2 bodyBR = localToWorld( 5.0f * scale, lCenterY + 5.0f * scale);
+                ImVec2 bodyBL = localToWorld(-5.0f * scale, lCenterY + 5.0f * scale);
+                ImVec2 bodyPts[4] = { bodyTL, bodyTR, bodyBR, bodyBL };
+                drawList->AddConvexPolyFilled(bodyPts, 4, IM_COL32(255, 255, 255, 255));
+
+                ImVec2 keyHole = localToWorld(0.0f, lCenterY + 1.5f * scale);
+                drawList->AddCircleFilled(keyHole, 1.3f * scale, isLocked ? IM_COL32(200, 50, 50, 255) : IM_COL32(18, 120, 95, 255));
+
+                if (isLocked) {
+                    ImVec2 sL0 = localToWorld(-3.0f * scale, lCenterY - 2.0f * scale);
+                    ImVec2 sL1 = localToWorld(-3.0f * scale, lCenterY - 6.5f * scale);
+                    ImVec2 sR1 = localToWorld( 3.0f * scale, lCenterY - 6.5f * scale);
+                    ImVec2 sR0 = localToWorld( 3.0f * scale, lCenterY - 2.0f * scale);
+                    drawList->AddLine(sL0, sL1, IM_COL32(255, 255, 255, 255), 1.8f * scale);
+                    drawList->AddLine(sL1, sR1, IM_COL32(255, 255, 255, 255), 1.8f * scale);
+                    drawList->AddLine(sR1, sR0, IM_COL32(255, 255, 255, 255), 1.8f * scale);
+                } else {
+                    ImVec2 sL0 = localToWorld(-3.0f * scale, lCenterY - 2.0f * scale);
+                    ImVec2 sL1 = localToWorld(-3.0f * scale, lCenterY - 7.5f * scale);
+                    ImVec2 sR1 = localToWorld( 3.0f * scale, lCenterY - 7.5f * scale);
+                    ImVec2 sR0 = localToWorld( 3.0f * scale, lCenterY - 4.5f * scale);
+                    drawList->AddLine(sL0, sL1, IM_COL32(255, 255, 255, 255), 1.8f * scale);
+                    drawList->AddLine(sL1, sR1, IM_COL32(255, 255, 255, 255), 1.8f * scale);
+                    drawList->AddLine(sR1, sR0, IM_COL32(255, 255, 255, 255), 1.8f * scale);
+                }
             }
         }
     }
