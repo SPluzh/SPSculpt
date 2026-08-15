@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 - **Reference Images**: Enabled 3D camera navigation during reference image edit mode (`Z`).
 - **Reference Images**: Automatically hide sculpt brush cursor while editing reference images.
 - **Reference Images**: Rendered transform handles on background layer to prevent UI window overlap.
+- **Reference Images**: Drag-and-dropping an image into the viewport automatically activates reference edit mode for immediate manipulation without opening the Scene Outliner panel if it was closed.
 
 
 ## [0.2.1]

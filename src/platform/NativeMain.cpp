@@ -583,7 +583,10 @@ int main(int argc, char* argv[]) {
 
                     if (isImageFile(droppedPath)) {
                         scene.addReferenceImage(droppedPath);
-                        gui.setShowScenePanel(true);
+                        scene.getCamera().setRefDragEnabled(true);
+                        if (scene.getCameraRight()) {
+                            scene.getCameraRight()->setRefDragEnabled(true);
+                        }
                         if (!scene.getReferenceImages().empty()) {
                             gui.setSelectedRefImageIndex(static_cast<int>(scene.getReferenceImages().size()) - 1);
                         }
