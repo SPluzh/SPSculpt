@@ -125,7 +125,6 @@ static uint32_t deleteVertex(Mesh& mesh, uint32_t vIdx, uint32_t va) {
             }
         }
 
-
         for (uint32_t nIdx : mesh.dynVRV[vIdx]) {
             if (nIdx < mesh.dynVRV.size()) {
                 auto& ring = mesh.dynVRV[nIdx];
@@ -139,18 +138,6 @@ static uint32_t deleteVertex(Mesh& mesh, uint32_t vIdx, uint32_t va) {
     }
 
     mesh.nbVerts--;
-    mesh.verts.resize(mesh.nbVerts * 3);
-    if (!mesh.normals.empty()) mesh.normals.resize(mesh.nbVerts * 3);
-    if (!mesh.colors.empty()) mesh.colors.resize(mesh.nbVerts * 3);
-    if (!mesh.materials.empty()) mesh.materials.resize(mesh.nbVerts * 3);
-    if (!mesh.vertProxy.empty()) mesh.vertProxy.resize(mesh.nbVerts * 3);
-    if (!mesh.vertVisible.empty()) mesh.vertVisible.resize(mesh.nbVerts);
-    if (!mesh.vertTagFlags.empty()) mesh.vertTagFlags.resize(mesh.nbVerts);
-    if (!mesh.vertSculptFlags.empty()) mesh.vertSculptFlags.resize(mesh.nbVerts);
-    if (!mesh.vertStateFlags.empty()) mesh.vertStateFlags.resize(mesh.nbVerts);
-    mesh.dynVRV.resize(mesh.nbVerts);
-    mesh.dynVRF.resize(mesh.nbVerts);
-
     return finalVa;
 }
 
@@ -174,6 +161,7 @@ static uint32_t ensureTriangle(Mesh& mesh, uint32_t fIdx) {
 }
 
 static void ensureRingsTriangulated(Mesh& mesh, uint32_t va, uint32_t vb) {
+    if (!mesh.hasQuads) return;
     bool hadQuads = true;
     while (hadQuads) {
         hadQuads = false;
@@ -214,49 +202,52 @@ static CollapseRejectReason checkCanCollapse(const Mesh& mesh, uint32_t va, uint
     const auto& ringFa = mesh.dynVRF[va];
     const auto& ringFb = mesh.dynVRF[vb];
 
-    std::unordered_set<uint32_t> setFb;
-    for (uint32_t f : ringFb) {
-        if (f < static_cast<uint32_t>(mesh.nbFaces) && mesh.faces[f * 4] != UINT32_MAX) {
-            setFb.insert(f);
-        }
-    }
-    std::vector<uint32_t> sharedFaces;
-    for (uint32_t f : ringFa) {
-        if (f < static_cast<uint32_t>(mesh.nbFaces) && mesh.faces[f * 4] != UINT32_MAX) {
-            if (setFb.count(f)) {
-                sharedFaces.push_back(f);
+    uint32_t sharedFaces[4];
+    int numSharedFaces = 0;
+    for (uint32_t fa : ringFa) {
+        if (fa >= static_cast<uint32_t>(mesh.nbFaces) || mesh.faces[fa * 4] == UINT32_MAX) continue;
+        for (uint32_t fb : ringFb) {
+            if (fa == fb) {
+                if (numSharedFaces < 4) sharedFaces[numSharedFaces++] = fa;
+                break;
             }
         }
     }
-    if (sharedFaces.empty() || sharedFaces.size() > 2) {
+    if (numSharedFaces == 0 || numSharedFaces > 2) {
         return CollapseRejectReason::TopologySharedFaces;
     }
 
     const auto& ringVa = mesh.dynVRV[va];
     const auto& ringVb = mesh.dynVRV[vb];
 
-    std::unordered_set<uint32_t> setVb(ringVb.begin(), ringVb.end());
-    std::vector<uint32_t> sharedVerts;
-    for (uint32_t v : ringVa) {
-        if (v != vb && v < static_cast<uint32_t>(mesh.nbVerts) && setVb.count(v)) {
-            sharedVerts.push_back(v);
+    uint32_t sharedVerts[8];
+    int numSharedVerts = 0;
+    for (uint32_t v_a : ringVa) {
+        if (v_a == vb || v_a >= static_cast<uint32_t>(mesh.nbVerts)) continue;
+        for (uint32_t v_b : ringVb) {
+            if (v_a == v_b) {
+                if (numSharedVerts < 8) sharedVerts[numSharedVerts++] = v_a;
+                break;
+            }
         }
     }
 
     // STRICT LINK CONDITION: sharedVerts count MUST equal sharedFaces count
-    if (sharedVerts.size() != sharedFaces.size()) {
+    if (numSharedVerts != numSharedFaces) {
         return CollapseRejectReason::LinkCondition;
     }
 
     // Ensure collapsing sharedFaces won't leave any opposite vertex isolated (with 0 valid faces)
-    for (uint32_t f : sharedFaces) {
+    for (int sfIdx = 0; sfIdx < numSharedFaces; ++sfIdx) {
+        uint32_t f = sharedFaces[sfIdx];
         if (f >= static_cast<uint32_t>(mesh.nbFaces) || mesh.faces[f * 4] == UINT32_MAX) continue;
         uint32_t id = f * 4;
         for (int k = 0; k < 3; ++k) {
             uint32_t v = mesh.faces[id + k];
             if (v >= static_cast<uint32_t>(mesh.nbVerts) || v == va || v == vb) continue;
             size_t countInShared = 0;
-            for (uint32_t sf : sharedFaces) {
+            for (int sfIdx2 = 0; sfIdx2 < numSharedFaces; ++sfIdx2) {
+                uint32_t sf = sharedFaces[sfIdx2];
                 if (sf >= static_cast<uint32_t>(mesh.nbFaces) || mesh.faces[sf * 4] == UINT32_MAX) continue;
                 uint32_t sfId = sf * 4;
                 if (mesh.faces[sfId] == v || mesh.faces[sfId + 1] == v || mesh.faces[sfId + 2] == v) {
@@ -281,10 +272,15 @@ static CollapseRejectReason checkCanCollapse(const Mesh& mesh, uint32_t va, uint
     glm::vec3 pb(mesh.verts[vb * 3], mesh.verts[vb * 3 + 1], mesh.verts[vb * 3 + 2]);
     glm::vec3 pMid = (pa + pb) * 0.5f;
 
-    std::unordered_set<uint32_t> setShared(sharedFaces.begin(), sharedFaces.end());
+    auto isSharedFace = [&](uint32_t f) {
+        for (int i = 0; i < numSharedFaces; ++i) {
+            if (sharedFaces[i] == f) return true;
+        }
+        return false;
+    };
 
     for (uint32_t fIdx : ringFb) {
-        if (fIdx >= static_cast<uint32_t>(mesh.nbFaces) || mesh.faces[fIdx * 4] == UINT32_MAX || setShared.count(fIdx)) continue;
+        if (fIdx >= static_cast<uint32_t>(mesh.nbFaces) || mesh.faces[fIdx * 4] == UINT32_MAX || isSharedFace(fIdx)) continue;
         uint32_t id = fIdx * 4;
         uint32_t ov1 = mesh.faces[id];
         uint32_t ov2 = mesh.faces[id + 1];
@@ -324,7 +320,7 @@ static CollapseRejectReason checkCanCollapse(const Mesh& mesh, uint32_t va, uint
     }
 
     for (uint32_t fIdx : ringFa) {
-        if (fIdx >= static_cast<uint32_t>(mesh.nbFaces) || mesh.faces[fIdx * 4] == UINT32_MAX || setShared.count(fIdx)) continue;
+        if (fIdx >= static_cast<uint32_t>(mesh.nbFaces) || mesh.faces[fIdx * 4] == UINT32_MAX || isSharedFace(fIdx)) continue;
         uint32_t id = fIdx * 4;
         uint32_t ov1 = mesh.faces[id];
         uint32_t ov2 = mesh.faces[id + 1];
@@ -384,42 +380,39 @@ static bool executeCollapse(Mesh& mesh, uint32_t va, uint32_t vb, std::vector<ui
 
     const auto& ringFa = mesh.dynVRF[va];
     const auto& ringFb = mesh.dynVRF[vb];
-    std::unordered_set<uint32_t> setFb;
-    for (uint32_t f : ringFb) {
-        if (f < static_cast<uint32_t>(mesh.nbFaces) && mesh.faces[f * 4] != UINT32_MAX) {
-            setFb.insert(f);
-        }
-    }
-    std::vector<uint32_t> sharedFaces;
-    for (uint32_t f : ringFa) {
-        if (f < static_cast<uint32_t>(mesh.nbFaces) && mesh.faces[f * 4] != UINT32_MAX) {
-            if (setFb.count(f)) {
-                sharedFaces.push_back(f);
+
+    uint32_t sharedFaces[4];
+    int numSharedFaces = 0;
+    for (uint32_t fa : ringFa) {
+        if (fa >= static_cast<uint32_t>(mesh.nbFaces) || mesh.faces[fa * 4] == UINT32_MAX) continue;
+        for (uint32_t fb : ringFb) {
+            if (fa == fb) {
+                if (numSharedFaces < 4) sharedFaces[numSharedFaces++] = fa;
+                break;
             }
         }
     }
-    std::unordered_set<uint32_t> setShared(sharedFaces.begin(), sharedFaces.end());
+    auto isSharedFace = [&](uint32_t f) {
+        for (int i = 0; i < numSharedFaces; ++i) {
+            if (sharedFaces[i] == f) return true;
+        }
+        return false;
+    };
 
     // Save old neighbors of vb BEFORE faces and rings are modified
     std::vector<uint32_t> oldNeighborsVb = (vb < mesh.dynVRV.size()) ? mesh.dynVRV[vb] : std::vector<uint32_t>();
 
     // 1. Transfer non-shared faces from vb to va
-    std::unordered_set<uint32_t> setFa;
-    for (uint32_t f : mesh.dynVRF[va]) {
-        if (f < static_cast<uint32_t>(mesh.nbFaces) && mesh.faces[f * 4] != UINT32_MAX) {
-            setFa.insert(f);
-        }
-    }
     for (uint32_t fIdx : ringFb) {
         if (fIdx >= static_cast<uint32_t>(mesh.nbFaces) || mesh.faces[fIdx * 4] == UINT32_MAX) continue;
-        if (!setShared.count(fIdx)) {
+        if (!isSharedFace(fIdx)) {
             uint32_t id = fIdx * 4;
             for (int k = 0; k < 4; ++k) {
                 if (mesh.faces[id + k] == vb) {
                     mesh.faces[id + k] = va;
                 }
             }
-            if (setFa.insert(fIdx).second) {
+            if (std::find(mesh.dynVRF[va].begin(), mesh.dynVRF[va].end(), fIdx) == mesh.dynVRF[va].end()) {
                 mesh.dynVRF[va].push_back(fIdx);
             }
             updateFaceData(mesh, fIdx);
@@ -429,13 +422,13 @@ static bool executeCollapse(Mesh& mesh, uint32_t va, uint32_t vb, std::vector<ui
     // 2. Update face data for ringFa non-shared faces since vertex va moved to pMid
     for (uint32_t fIdx : ringFa) {
         if (fIdx >= static_cast<uint32_t>(mesh.nbFaces) || mesh.faces[fIdx * 4] == UINT32_MAX) continue;
-        if (!setShared.count(fIdx)) {
+        if (!isSharedFace(fIdx)) {
             updateFaceData(mesh, fIdx);
         }
     }
 
     // 3. Delete shared faces
-    for (size_t i = 0; i < sharedFaces.size(); ++i) {
+    for (int i = 0; i < numSharedFaces; ++i) {
         uint32_t fIdx = sharedFaces[i];
         deleteTriangle(mesh, fIdx);
     }
@@ -449,20 +442,32 @@ static bool executeCollapse(Mesh& mesh, uint32_t va, uint32_t vb, std::vector<ui
     uint32_t lastVertBeforeDelete = static_cast<uint32_t>(mesh.nbVerts - 1);
     uint32_t finalVa = deleteVertex(mesh, vb, va);
 
-    mesh.computeRingVertices(finalVa);
-    for (uint32_t n : mesh.dynVRV[finalVa]) {
-        mesh.computeRingVertices(n);
-    }
-    for (uint32_t n : oldNeighborsVb) {
-        if (n < static_cast<uint32_t>(mesh.nbVerts)) {
-            mesh.computeRingVertices(n);
+    uint32_t nbrsToUpdate[64];
+    int numNbrsToUpdate = 0;
+    auto addNbr = [&](uint32_t v) {
+        if (v >= static_cast<uint32_t>(mesh.nbVerts)) return;
+        for (int i = 0; i < numNbrsToUpdate; ++i) {
+            if (nbrsToUpdate[i] == v) return;
         }
+        if (numNbrsToUpdate < 64) {
+            nbrsToUpdate[numNbrsToUpdate++] = v;
+        }
+    };
+
+    addNbr(finalVa);
+    if (finalVa < mesh.dynVRV.size()) {
+        for (uint32_t n : mesh.dynVRV[finalVa]) addNbr(n);
     }
+    for (uint32_t n : oldNeighborsVb) addNbr(n);
     if (vb != lastVertBeforeDelete && vb < static_cast<uint32_t>(mesh.nbVerts)) {
-        mesh.computeRingVertices(vb);
-        for (uint32_t n : mesh.dynVRV[vb]) {
-            mesh.computeRingVertices(n);
+        addNbr(vb);
+        if (vb < mesh.dynVRV.size()) {
+            for (uint32_t n : mesh.dynVRV[vb]) addNbr(n);
         }
+    }
+
+    for (int i = 0; i < numNbrsToUpdate; ++i) {
+        mesh.computeRingVertices(nbrsToUpdate[i]);
     }
 
     for (uint32_t fIdx : mesh.dynVRF[finalVa]) {
@@ -703,6 +708,19 @@ std::vector<uint32_t> decimation(
 
     sculpt_log("[DynTopo Decimation Stats] Collapses: %u ok / %u attempted (Link Rejects: %u, NormalFlip Rejects: %u, Topology Rejects: %u)\n",
               successfulCollapses, attemptedCollapses, rejectedLinkCondition, rejectedNormalFlip, rejectedSharedFaces);
+
+    // Apply vertex array resizing ONCE after all collapses
+    mesh.verts.resize(mesh.nbVerts * 3);
+    if (!mesh.normals.empty()) mesh.normals.resize(mesh.nbVerts * 3);
+    if (!mesh.colors.empty()) mesh.colors.resize(mesh.nbVerts * 3);
+    if (!mesh.materials.empty()) mesh.materials.resize(mesh.nbVerts * 3);
+    if (!mesh.vertProxy.empty()) mesh.vertProxy.resize(mesh.nbVerts * 3);
+    if (!mesh.vertVisible.empty()) mesh.vertVisible.resize(mesh.nbVerts);
+    if (!mesh.vertTagFlags.empty()) mesh.vertTagFlags.resize(mesh.nbVerts);
+    if (!mesh.vertSculptFlags.empty()) mesh.vertSculptFlags.resize(mesh.nbVerts);
+    if (!mesh.vertStateFlags.empty()) mesh.vertStateFlags.resize(mesh.nbVerts);
+    mesh.dynVRV.resize(mesh.nbVerts);
+    mesh.dynVRF.resize(mesh.nbVerts);
 
     // --- Tombstone Compaction Pass ---
     uint32_t facesBeforeCompaction = static_cast<uint32_t>(mesh.nbFaces);

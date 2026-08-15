@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.1]
+- **Dynamic Topology Performance**:
+  - Significantly accelerated Dynamic Topology brush responsiveness during sculpting strokes.
+  - Eliminated memory allocation overhead and lag spikes during local decimation and mesh refinement.
+  - Fixed application crash (SIGSEGV) during high-density decimation strokes.
+  - Added real-time diagnostic timing logs for subdivision and decimation passes.
+
 ## [0.3.0]
 - **Dynamic Topology**: Integrated native local subdivision and decimation engine with local quad-to-triangle region processing.
 - **Topology Brush**: Added dedicated `BRUSH_TOPOLOGY` tool for real-time local mesh resolution adjustment.

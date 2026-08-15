@@ -1535,6 +1535,8 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 }
             }
 
+            sculpt_log("[DynTopo] Regions: %zu (sym=%d)\n", dynRegions.size(), (int)m_useSym);
+
             float worldStep = mesh->computeWorldStep((int)getDyntopoResolution());
             if (worldStep <= 1e-5f) worldStep = 1.0f;
             float baseDetail2 = worldStep * worldStep;
@@ -1561,16 +1563,22 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 std::vector<uint32_t> initialTris(uniqueInitialTrisSet.begin(), uniqueInitialTrisSet.end());
 
                 if (!initialTris.empty()) {
+                    auto tSub0 = std::chrono::high_resolution_clock::now();
                     std::vector<uint32_t> subTris = DynSubdivision::subdivision(
                         *mesh, initialTris, region.center, radius2, subDetail2, true
                     );
+                    double subMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tSub0).count();
+                    sculpt_log("[DynTopo TIMING] Subdiv: %.2fms -> %zu tris\n", subMs, subTris.size());
 
                     if (getSettings(activeBrush).decimFactor > 0.01f) {
                         float decimVal = getSettings(activeBrush).decimFactor;
                         float decimDetail2 = baseDetail2 * (decimVal * decimVal);
+                        auto tDec0 = std::chrono::high_resolution_clock::now();
                         subTris = DynDecimation::decimation(
                             *mesh, subTris, region.center, radius2, decimDetail2
                         );
+                        double decMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tDec0).count();
+                        sculpt_log("[DynTopo TIMING] Decim:  %.2fms -> %zu tris\n", decMs, subTris.size());
                     }
 
                     allModifiedSubTris.insert(allModifiedSubTris.end(), subTris.begin(), subTris.end());

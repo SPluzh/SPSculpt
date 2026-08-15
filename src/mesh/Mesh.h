@@ -47,6 +47,7 @@ public:
 
     // Dynamic Topology
     bool isDynamic = false;
+    bool hasQuads = false;
     float subdivisionFactor = 1.0f;
     float decimationFactor = 1.0f;
     std::vector<std::vector<uint32_t>> dynVRV; // vertex ring vert

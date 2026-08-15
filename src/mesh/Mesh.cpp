@@ -276,6 +276,7 @@ void Mesh::postInit() {
         faces.data()
     );
 
+    hasQuads = !hasOnlyTriangles();
     if (isDynamic) {
         initDynamicMode(true);
     }
@@ -1040,6 +1041,7 @@ void Mesh::initDynamicMode(bool force) {
         computeRingVertices(i);
     }
 
+    hasQuads = !hasOnlyTriangles();
     isDynamic = true;
     updateDynamicCSR();
 
@@ -1114,16 +1116,28 @@ void Mesh::computeRingVertices(uint32_t iVert) {
     ringV.clear();
     const auto& ringF = dynVRF[iVert];
 
-    std::unordered_set<uint32_t> seen;
-    seen.reserve(ringF.size() * 3);
+    uint32_t scratch[64];
+    int scratchN = 0;
 
     for (uint32_t fIdx : ringF) {
         if (fIdx >= (uint32_t)nbFaces || faces[fIdx * 4] == UINT32_MAX) continue;
         uint32_t id = fIdx * 4;
         for (int k = 0; k < 4; ++k) {
             uint32_t v = faces[id + k];
-            if (v != TRI_INDEX && v != UINT32_MAX && v != iVert && seen.insert(v).second) {
-                ringV.push_back(v);
+            if (v == TRI_INDEX || v == UINT32_MAX || v == iVert) continue;
+            bool found = false;
+            for (int j = 0; j < scratchN; ++j) {
+                if (scratch[j] == v) { found = true; break; }
+            }
+            if (!found) {
+                if (scratchN < 64) {
+                    scratch[scratchN++] = v;
+                    ringV.push_back(v);
+                } else {
+                    if (std::find(ringV.begin(), ringV.end(), v) == ringV.end()) {
+                        ringV.push_back(v);
+                    }
+                }
             }
         }
     }
