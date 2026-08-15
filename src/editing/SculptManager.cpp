@@ -1549,36 +1549,102 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 
             for (const auto& region : dynRegions) {
                 size_t rawTrisCount = 0;
-                std::unordered_set<uint32_t> uniqueInitialTrisSet;
+                std::vector<uint32_t> initialTris;
                 for (uint32_t v : region.verts) {
                     if (v < mesh->dynVRF.size()) {
                         rawTrisCount += mesh->dynVRF[v].size();
                         for (uint32_t f : mesh->dynVRF[v]) {
                             if (f < static_cast<uint32_t>(mesh->nbFaces)) {
-                                uniqueInitialTrisSet.insert(f);
+                                initialTris.push_back(f);
                             }
                         }
                     }
                 }
-                std::vector<uint32_t> initialTris(uniqueInitialTrisSet.begin(), uniqueInitialTrisSet.end());
+                std::sort(initialTris.begin(), initialTris.end());
+                initialTris.erase(std::unique(initialTris.begin(), initialTris.end()), initialTris.end());
 
                 if (!initialTris.empty()) {
-                    auto tSub0 = std::chrono::high_resolution_clock::now();
-                    std::vector<uint32_t> subTris = DynSubdivision::subdivision(
-                        *mesh, initialTris, region.center, radius2, subDetail2, true
-                    );
-                    double subMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tSub0).count();
-                    sculpt_log("[DynTopo TIMING] Subdiv: %.2fms -> %zu tris\n", subMs, subTris.size());
+                    auto dist2_calc = [](const glm::vec3& a, const glm::vec3& b) {
+                        glm::vec3 diff = a - b;
+                        return glm::dot(diff, diff);
+                    };
+
+                    // === PRE-CHECK 1.1: check if any edges exceed target subdivision detail ===
+                    bool needsSubdiv = false;
+                    for (uint32_t fIdx : initialTris) {
+                        if (fIdx >= static_cast<uint32_t>(mesh->nbFaces) || mesh->faces[fIdx * 4] == UINT32_MAX) continue;
+                        uint32_t id = fIdx * 4;
+                        uint32_t v1 = mesh->faces[id], v2 = mesh->faces[id + 1], v3 = mesh->faces[id + 2];
+                        if (v1 >= (uint32_t)mesh->nbVerts || v2 >= (uint32_t)mesh->nbVerts || v3 >= (uint32_t)mesh->nbVerts) continue;
+
+                        glm::vec3 p1(mesh->verts[v1 * 3], mesh->verts[v1 * 3 + 1], mesh->verts[v1 * 3 + 2]);
+                        glm::vec3 p2(mesh->verts[v2 * 3], mesh->verts[v2 * 3 + 1], mesh->verts[v2 * 3 + 2]);
+                        glm::vec3 p3(mesh->verts[v3 * 3], mesh->verts[v3 * 3 + 1], mesh->verts[v3 * 3 + 2]);
+
+                        glm::vec3 m12 = (p1 + p2) * 0.5f;
+                        glm::vec3 m23 = (p2 + p3) * 0.5f;
+                        glm::vec3 m31 = (p3 + p1) * 0.5f;
+
+                        if ((dist2_calc(m12, region.center) <= radius2 && dist2_calc(p1, p2) > subDetail2) ||
+                            (dist2_calc(m23, region.center) <= radius2 && dist2_calc(p2, p3) > subDetail2) ||
+                            (dist2_calc(m31, region.center) <= radius2 && dist2_calc(p3, p1) > subDetail2)) {
+                            needsSubdiv = true;
+                            break;
+                        }
+                    }
+
+                    std::vector<uint32_t> subTris;
+                    if (needsSubdiv) {
+                        auto tSub0 = std::chrono::high_resolution_clock::now();
+                        subTris = DynSubdivision::subdivision(
+                            *mesh, initialTris, region.center, radius2, subDetail2, true
+                        );
+                        double subMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tSub0).count();
+                        sculpt_log("[DynTopo TIMING] Subdiv: %.2fms -> %zu tris\n", subMs, subTris.size());
+                    } else {
+                        sculpt_log("[DynTopo] Subdivision SKIPPED — all edges within threshold\n");
+                        subTris = initialTris;
+                    }
 
                     if (getSettings(activeBrush).decimFactor > 0.01f) {
                         float decimVal = getSettings(activeBrush).decimFactor;
-                        float decimDetail2 = baseDetail2 * (decimVal * decimVal);
-                        auto tDec0 = std::chrono::high_resolution_clock::now();
-                        subTris = DynDecimation::decimation(
-                            *mesh, subTris, region.center, radius2, decimDetail2
-                        );
-                        double decMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tDec0).count();
-                        sculpt_log("[DynTopo TIMING] Decim:  %.2fms -> %zu tris\n", decMs, subTris.size());
+                        float decimDetail2 = subDetail2 * 0.2f * (decimVal * decimVal);
+
+                        // === PRE-CHECK 1.1: check if any edges are shorter than decimation detail ===
+                        bool needsDecim = false;
+                        for (uint32_t fIdx : subTris) {
+                            if (fIdx >= static_cast<uint32_t>(mesh->nbFaces) || mesh->faces[fIdx * 4] == UINT32_MAX) continue;
+                            uint32_t id = fIdx * 4;
+                            uint32_t v1 = mesh->faces[id], v2 = mesh->faces[id + 1], v3 = mesh->faces[id + 2], v4 = mesh->faces[id + 3];
+                            if (v4 != TRI_INDEX) continue;
+                            if (v1 >= (uint32_t)mesh->nbVerts || v2 >= (uint32_t)mesh->nbVerts || v3 >= (uint32_t)mesh->nbVerts) continue;
+
+                            glm::vec3 p1(mesh->verts[v1 * 3], mesh->verts[v1 * 3 + 1], mesh->verts[v1 * 3 + 2]);
+                            glm::vec3 p2(mesh->verts[v2 * 3], mesh->verts[v2 * 3 + 1], mesh->verts[v2 * 3 + 2]);
+                            glm::vec3 p3(mesh->verts[v3 * 3], mesh->verts[v3 * 3 + 1], mesh->verts[v3 * 3 + 2]);
+
+                            glm::vec3 m12 = (p1 + p2) * 0.5f;
+                            glm::vec3 m23 = (p2 + p3) * 0.5f;
+                            glm::vec3 m31 = (p3 + p1) * 0.5f;
+
+                            if ((dist2_calc(m12, region.center) <= radius2 && dist2_calc(p1, p2) < decimDetail2) ||
+                                (dist2_calc(m23, region.center) <= radius2 && dist2_calc(p2, p3) < decimDetail2) ||
+                                (dist2_calc(m31, region.center) <= radius2 && dist2_calc(p3, p1) < decimDetail2)) {
+                                needsDecim = true;
+                                break;
+                            }
+                        }
+
+                        if (needsDecim) {
+                            auto tDec0 = std::chrono::high_resolution_clock::now();
+                            subTris = DynDecimation::decimation(
+                                *mesh, subTris, region.center, radius2, decimDetail2
+                            );
+                            double decMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tDec0).count();
+                            sculpt_log("[DynTopo TIMING] Decim:  %.2fms -> %zu tris\n", decMs, subTris.size());
+                        } else {
+                            sculpt_log("[DynTopo] Decimation SKIPPED — all edges within threshold\n");
+                        }
                     }
 
                     if (!subTris.empty()) {

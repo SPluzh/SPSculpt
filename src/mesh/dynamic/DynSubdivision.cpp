@@ -15,6 +15,16 @@ static float dist2(const glm::vec3& a, const glm::vec3& b) {
     return glm::dot(diff, diff);
 }
 
+static inline void ringRemove(std::vector<uint32_t>& ring, uint32_t val) {
+    for (size_t i = 0; i < ring.size(); ++i) {
+        if (ring[i] == val) {
+            ring[i] = ring.back();
+            ring.pop_back();
+            return;
+        }
+    }
+}
+
 static uint64_t makeEdgeKey(uint32_t u, uint32_t v) {
     uint32_t minV = std::min(u, v);
     uint32_t maxV = std::max(u, v);
@@ -172,8 +182,7 @@ static void splitEdge(
     mesh.faceGroups[tri2] = mesh.faceGroups[tri1];
 
     if (vb < mesh.dynVRF.size()) {
-        auto& rFb = mesh.dynVRF[vb];
-        rFb.erase(std::remove(rFb.begin(), rFb.end(), tri1), rFb.end());
+        ringRemove(mesh.dynVRF[vb], tri1);
     }
 
     if (vMid < mesh.dynVRF.size()) {
@@ -219,8 +228,7 @@ static void splitEdge(
         mesh.faceGroups[tri4] = mesh.faceGroups[tri3];
 
         if (va < mesh.dynVRF.size()) {
-            auto& rFa = mesh.dynVRF[va];
-            rFa.erase(std::remove(rFa.begin(), rFa.end(), tri3), rFa.end());
+            ringRemove(mesh.dynVRF[va], tri3);
         }
 
         if (vMid < mesh.dynVRF.size()) {
@@ -405,7 +413,9 @@ std::vector<uint32_t> subdivision(
     }
 
     std::vector<uint32_t> activeTris = iTris;
+    activeTris.reserve(iTris.size() * 4);
     std::unordered_map<uint64_t, uint32_t> edgeMap;
+    edgeMap.reserve(iTris.size() * 2);
 
     size_t idx = 0;
     size_t maxIter = 100000;
@@ -477,10 +487,12 @@ std::vector<uint32_t> subdivision(
     validateMeshTopology(mesh, "Post-Subdivision");
 #endif
 
-    std::unordered_set<uint32_t> uniqueSet(activeTris.begin(), activeTris.end());
+    std::sort(activeTris.begin(), activeTris.end());
+    activeTris.erase(std::unique(activeTris.begin(), activeTris.end()), activeTris.end());
+
     std::vector<uint32_t> result;
-    result.reserve(uniqueSet.size());
-    for (uint32_t f : uniqueSet) {
+    result.reserve(activeTris.size());
+    for (uint32_t f : activeTris) {
         if (f < static_cast<uint32_t>(mesh.nbFaces) && mesh.faces[f * 4 + 3] == TRI_INDEX) {
             result.push_back(f);
         }

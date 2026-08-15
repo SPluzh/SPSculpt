@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.4]
+- **Dynamic Topology Performance & Pre-filtering**:
+  - Eliminated ping-pong oscillation between subdivision and decimation passes by adding hysteresis threshold calculation (`decimDetail2 = subDetail2 * 0.2f * (decimVal * decimVal)`).
+  - Implemented early-out pre-filtering in `SculptManager::executeStroke` to skip subdivision and decimation passes when edges in the brush region already satisfy detail requirements.
+  - Eliminated dynamic `std::vector` heap allocations in decimation hot paths (`executeCollapse`) by utilizing stack-allocated fixed-size buffers.
+  - Accelerated container operations by replacing `std::unordered_set` deduplication with cache-friendly `std::sort` + `std::unique` on flat vectors in subdivision and decimation loops.
+  - Implemented O(1) swap-and-pop ring removal (`ringRemove`) for topological face rings.
+  - Added zero-collapse early exit in decimation pass to bypass full-mesh tombstone compaction when no edge collapses occur.
+
 ## [0.3.3]
 - **Dynamic Topology SIGSEGV Crash Fix & Octree Memory Synchronization**:
   - Resolved SIGSEGV access violation during dynamic topology sculpting strokes caused by dangling `faceCentersData` pointer in `Octree`.

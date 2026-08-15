@@ -55,6 +55,7 @@ public:
     std::vector<int32_t>  facesStateFlags;
     std::vector<uint32_t> vertSculptFlags;
     std::vector<int32_t>  vertStateFlags;
+    uint32_t dynTopoStamp = 0;
 
     // Octree
     Octree octree;
