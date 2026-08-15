@@ -1608,7 +1608,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 
                     if (getSettings(activeBrush).decimFactor > 0.01f) {
                         float decimVal = getSettings(activeBrush).decimFactor;
-                        float decimDetail2 = subDetail2 * 0.2f * (decimVal * decimVal);
+                        float decimDetail2 = subDetail2 * 0.10f * (decimVal * decimVal);
 
                         // === PRE-CHECK 1.1: check if any edges are shorter than decimation detail ===
                         bool needsDecim = false;
