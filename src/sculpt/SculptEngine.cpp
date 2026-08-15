@@ -170,6 +170,8 @@ static void laplacianSmooth(
     const uint32_t* __restrict iVerts, int nbIVerts,
     float* __restrict outSmoothVerts
 ) {
+    if (!verts || !vrvStartCount || !vertRingVert || !vertOnEdge || !iVerts || !outSmoothVerts || nbIVerts <= 0) return;
+
     for (int i = 0; i < nbIVerts; ++i) {
         uint32_t id = iVerts[i];
         int i3 = i * 3;

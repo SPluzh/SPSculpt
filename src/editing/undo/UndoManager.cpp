@@ -26,6 +26,13 @@ void UndoManager::beginSculptStroke(Scene& scene,
         m_activeSculptEntry = std::make_unique<SculptUndoEntry>();
         m_activeSculptEntry->description = description;
         m_activeMeshDeltaMap.clear();
+        m_initialMeshCounts.clear();
+        m_initialStrokeState = scene.saveCurrentState();
+        for (auto* m : scene.getMeshes()) {
+            if (m) {
+                m_initialMeshCounts[m->m_id] = { m->nbVerts, m->nbFaces };
+            }
+        }
         ++s_recordedCurrentStamp;
         if (s_recordedCurrentStamp == 0) {
             s_recordedStamps.clear();
@@ -116,6 +123,38 @@ void UndoManager::recordAffectedVertices(Scene& scene,
 void UndoManager::endSculptStroke(Scene& scene) {
     if (!m_activeSculptEntry) return;
 
+    bool topologyChanged = false;
+    for (auto* mesh : scene.getMeshes()) {
+        if (!mesh) continue;
+        auto it = m_initialMeshCounts.find(mesh->m_id);
+        if (it != m_initialMeshCounts.end()) {
+            if (mesh->nbVerts != it->second.first || mesh->nbFaces != it->second.second || mesh->isTopologyDirty) {
+                topologyChanged = true;
+                break;
+            }
+        } else {
+            topologyChanged = true;
+            break;
+        }
+    }
+
+    if (topologyChanged) {
+        sculpt_log_lvl(LogLevel::Info, "[Undo] Topology change detected during sculpt stroke; recording TopologyUndoEntry.\n");
+        auto topoEntry = std::make_unique<TopologyUndoEntry>();
+        topoEntry->description = m_activeSculptEntry->description;
+        topoEntry->before = std::move(m_initialStrokeState);
+        topoEntry->after = scene.saveCurrentState();
+        pushEntry(std::move(topoEntry));
+        scene.setModified(true);
+
+        m_activeSculptEntry.reset();
+        m_activeMeshDeltaMap.clear();
+        m_initialMeshCounts.clear();
+        m_initialStrokeState = HistoryState();
+        s_recordedStamps.clear();
+        return;
+    }
+
     bool hasAnyChange = false;
     size_t totalRecordedVerts = 0;
     for (auto& delta : m_activeSculptEntry->deltas) {
@@ -175,8 +214,7 @@ void UndoManager::endSculptStroke(Scene& scene) {
         if (delta.prevVerts != delta.nextVerts ||
             (delta.hasLayerDeltas && delta.prevLayerDeltas != delta.nextLayerDeltas) ||
             (delta.hasColors && delta.prevColors != delta.nextColors) ||
-            (delta.hasMaterials && delta.prevMaterials != delta.nextMaterials) ||
-            (mesh->isTopologyDirty && !delta.indices.empty())) {
+            (delta.hasMaterials && delta.prevMaterials != delta.nextMaterials)) {
             hasAnyChange = true;
         }
     }
@@ -192,6 +230,8 @@ void UndoManager::endSculptStroke(Scene& scene) {
     }
 
     m_activeMeshDeltaMap.clear();
+    m_initialMeshCounts.clear();
+    m_initialStrokeState = HistoryState();
     s_recordedStamps.clear();
 }
 
@@ -199,6 +239,8 @@ void UndoManager::cancelSculptStroke() {
     sculpt_log_lvl(LogLevel::Debug, "[Undo] Sculpt stroke canceled\n");
     m_activeSculptEntry.reset();
     m_activeMeshDeltaMap.clear();
+    m_initialMeshCounts.clear();
+    m_initialStrokeState = HistoryState();
     s_recordedStamps.clear();
 }
 
@@ -322,6 +364,8 @@ void UndoManager::clear() {
     m_redoStack.clear();
     m_activeSculptEntry.reset();
     m_activeMeshDeltaMap.clear();
+    m_initialMeshCounts.clear();
+    m_initialStrokeState = HistoryState();
     s_recordedStamps.clear();
 }
 
@@ -405,13 +449,31 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
                 );
                 auto tVNormsStart = std::chrono::high_resolution_clock::now();
 
-                updateVertexNormals(
-                    nullptr, -1, mesh->nbVerts,
-                    mesh->vrfStartCount.data(),
-                    mesh->vertRingFace.data(),
-                    mesh->faceNormals.data(),
-                    mesh->normals.data()
-                );
+                if (mesh->isDynamic) {
+                    if (mesh->isTopologyDirty || mesh->vrfStartCount.size() < static_cast<size_t>(mesh->nbVerts * 2)) {
+                        mesh->updateDynamicCSR();
+                        mesh->isTopologyDirty = false;
+                    }
+                    updateVertexNormals(
+                        nullptr, -1, mesh->nbVerts,
+                        mesh->dynVRF,
+                        mesh->faceNormals.data(),
+                        mesh->normals.data(),
+                        mesh->nbFaces
+                    );
+                } else {
+                    if (mesh->isTopologyDirty || mesh->vrfStartCount.size() < static_cast<size_t>(mesh->nbVerts * 2)) {
+                        mesh->initTopology();
+                        mesh->isTopologyDirty = false;
+                    }
+                    updateVertexNormals(
+                        nullptr, -1, mesh->nbVerts,
+                        mesh->vrfStartCount.data(),
+                        mesh->vertRingFace.data(),
+                        mesh->faceNormals.data(),
+                        mesh->normals.data()
+                    );
+                }
                 auto tOctreeStart = std::chrono::high_resolution_clock::now();
 
                 mesh->octree.build(

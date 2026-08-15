@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.6]
+- **Dynamic Topology Undo Stabilization & Mesh Integrity**:
+  - Fixed mesh hole creation during Undo (`Ctrl+Z`) of Dynamic Topology strokes by automatically tracking initial mesh topology state and recording `TopologyUndoEntry` when vertex or face counts change.
+  - Synchronized CSR adjacency structures (`vrvStartCount`, `vrfStartCount`) immediately post-compaction in DynTopo execution loop.
+  - Added pre-stroke CSR safety validation check in `SculptManager::executeStroke` to prevent out-of-bounds access in smooth and deform brush passes.
+  - Updated `UndoManager::applyEntry` to validate and refresh CSR topology buffers before computing vertex normals upon state restoration.
+  - Added null and boundary safety guards in `SculptEngine` laplacian smoothing algorithms.
+
 ## [0.3.5]
 - **Dynamic Topology Latency Elimination & Deferred Batch Compaction**:
   - Implemented Phase 1 deferred batch deletion in `DynDecimation::executeCollapse`, removing inline $O(n)$ `deleteVertex` array swapping and replacing per-collapse `computeRingVertices` calls with deferred `mergeVertexRings` adjacency tracking.

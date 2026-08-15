@@ -1281,6 +1281,22 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     
     auto tFrameStart = std::chrono::high_resolution_clock::now();
 
+    if (mesh) {
+        if (mesh->isDynamic) {
+            if (mesh->isTopologyDirty ||
+                mesh->vrvStartCount.size() < static_cast<size_t>(mesh->nbVerts * 2) ||
+                mesh->vrfStartCount.size() < static_cast<size_t>(mesh->nbVerts * 2)) {
+                mesh->updateDynamicCSR();
+                mesh->isTopologyDirty = false;
+            }
+        } else if (mesh->isTopologyDirty ||
+                   mesh->vrvStartCount.size() < static_cast<size_t>(mesh->nbVerts * 2) ||
+                   mesh->vrfStartCount.size() < static_cast<size_t>(mesh->nbVerts * 2)) {
+            mesh->initTopology();
+            mesh->isTopologyDirty = false;
+        }
+    }
+
     if (m_firstStrokeFrame) {
         m_cachedInvMatrix = glm::inverse(mesh->matrix);
         m_cachedCamWorldMatrix = glm::inverse(camera.getViewMatrix());
@@ -1732,6 +1748,11 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 
                 mesh->isDirty = true;
                 mesh->isTopologyDirty = true;
+
+                if (mesh->isDynamic) {
+                    mesh->updateDynamicCSR();
+                    mesh->isTopologyDirty = false;
+                }
 
                 double dynMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStartDyn).count();
 

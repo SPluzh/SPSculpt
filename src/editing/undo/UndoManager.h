@@ -113,6 +113,8 @@ private:
     // Active sculpt stroke entry being constructed during brush strokes
     std::unique_ptr<SculptUndoEntry> m_activeSculptEntry;
     std::unordered_map<uint32_t, size_t> m_activeMeshDeltaMap;
+    HistoryState m_initialStrokeState;
+    std::unordered_map<uint32_t, std::pair<int, int>> m_initialMeshCounts;
 
     void pushEntry(std::unique_ptr<UndoEntry> entry);
     void trimToMemoryLimit();
