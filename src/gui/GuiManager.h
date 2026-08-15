@@ -152,7 +152,6 @@ private:
     void drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer);
     void drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer);
     void drawModelSnapshotWindow(const Scene& scene, AngleRenderer& renderer);
-    void drawUndoDiagPanel(Scene& scene);
     void drawDebugLogPanel();
     void drawSafeFramesOverlay(const AngleRenderer& renderer, const Scene& scene);
     void updateWindowTitle(SDL_Window* window, bool isModified);
@@ -237,7 +236,7 @@ public:
     void toggleReferenceImagesPanel() { m_showReferenceImagesPanel = !m_showReferenceImagesPanel; }
     void toggleGizmoCube() { m_showGizmoCube = !m_showGizmoCube; }
     void toggleMeshInfo() { m_showMeshInfo = !m_showMeshInfo; }
-    void toggleUndoDiagPanel() { m_showUndoDiagPanel = !m_showUndoDiagPanel; }
+    void toggleUndoDiagPanel() { m_showPreferencesPanel = true; m_preferencesActiveTab = 4; }
     void toggleDebugLogPanel() { m_showPreferencesPanel = true; m_preferencesActiveTab = 5; }
     void toggleFloatingIsland() { m_showFloatingIsland = !m_showFloatingIsland; }
     void toggleTimelapsePanel() { m_showTimelapsePanel = !m_showTimelapsePanel; }

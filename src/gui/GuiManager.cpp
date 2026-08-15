@@ -4539,7 +4539,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
     drawFloatingIslandHUD(sculpt, scene, renderer);
     drawModelSnapshotWindow(scene, renderer);
-    drawUndoDiagPanel(scene);
     drawDebugLogPanel();
     drawTimelapsePanel(scene, renderer);
     drawPreferencesPanel(sculpt, scene, renderer, window);
@@ -4909,7 +4908,6 @@ bool GuiManager::saveSettings(IniFile& ini) {
     ini.setBool(panelSec, "showGizmoCube", m_showGizmoCube);
     ini.setBool(panelSec, "showMeshInfo", m_showMeshInfo);
     ini.setBool(panelSec, "showTabletDiagPanel", m_showTabletDiagPanel);
-    ini.setBool(panelSec, "showUndoDiagPanel", m_showUndoDiagPanel);
     ini.setBool(panelSec, "showDebugLogPanel", m_showDebugLogPanel);
     ini.setBool(panelSec, "showFloatingIsland", m_showFloatingIsland);
     ini.setBool(panelSec, "showTimelapsePanel", m_showTimelapsePanel);
@@ -4961,7 +4959,6 @@ bool GuiManager::loadSettings(const IniFile& ini) {
         if (ini.hasKey(panelSec, "showGizmoCube")) m_showGizmoCube = ini.getBool(panelSec, "showGizmoCube");
         if (ini.hasKey(panelSec, "showMeshInfo")) m_showMeshInfo = ini.getBool(panelSec, "showMeshInfo");
         if (ini.hasKey(panelSec, "showTabletDiagPanel")) m_showTabletDiagPanel = ini.getBool(panelSec, "showTabletDiagPanel");
-        if (ini.hasKey(panelSec, "showUndoDiagPanel")) m_showUndoDiagPanel = ini.getBool(panelSec, "showUndoDiagPanel");
         if (ini.hasKey(panelSec, "showDebugLogPanel")) m_showDebugLogPanel = ini.getBool(panelSec, "showDebugLogPanel");
         if (ini.hasKey(panelSec, "showFloatingIsland")) m_showFloatingIsland = ini.getBool(panelSec, "showFloatingIsland");
         if (ini.hasKey(panelSec, "showTimelapsePanel")) m_showTimelapsePanel = ini.getBool(panelSec, "showTimelapsePanel");
@@ -6094,7 +6091,6 @@ void GuiManager::drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRend
         if (ImGui::MenuItem("Reference Images (Outliner)")) {
             m_showScenePanel = true;
         }
-        ImGui::MenuItem("Undo History", nullptr, &m_showUndoDiagPanel);
         ImGui::MenuItem("Camera Bookmarks", nullptr, &m_showCameraBookmarksPanel);
         ImGui::MenuItem("Sculpt Timelapse", nullptr, &m_showTimelapsePanel);
         ImGui::MenuItem("Hotkey HUD", nullptr, &m_showHotkeyHUD);
@@ -7484,142 +7480,7 @@ void GuiManager::drawModelSnapshotWindow(const Scene& scene, AngleRenderer& rend
     }
 }
 
-void GuiManager::drawUndoDiagPanel(Scene& scene) {
-    if (!m_showUndoDiagPanel) return;
 
-    float scale = getUiScale();
-    ImGui::SetNextWindowSize(ImVec2(360.0f * scale, 420.0f * scale), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Undo History", &m_showUndoDiagPanel)) {
-        ImGui::End();
-        return;
-    }
-
-    // Header action buttons
-    bool canUndo = g_undoManager.canUndo();
-    bool canRedo = g_undoManager.canRedo();
-
-    if (!canUndo) ImGui::BeginDisabled();
-    if (ImGui::Button(ICON_LC_UNDO " Undo")) {
-        g_undoManager.undo(scene);
-    }
-    if (!canUndo) ImGui::EndDisabled();
-
-    ImGui::SameLine();
-    if (!canRedo) ImGui::BeginDisabled();
-    if (ImGui::Button(ICON_LC_REDO " Redo")) {
-        g_undoManager.redo(scene);
-    }
-    if (!canRedo) ImGui::EndDisabled();
-
-    ImGui::SameLine();
-    if (ImGui::Button(ICON_LC_TRASH_2 " Clear")) {
-        g_undoManager.clear();
-    }
-
-    size_t memBytes = g_undoManager.getTotalMemoryUsage();
-    double memMB = (double)memBytes / (1024.0 * 1024.0);
-    double maxMemGB = g_undoManager.getMaxMemoryGB();
-
-    ImGui::Separator();
-    float progress = (float)(memBytes / (double)g_undoManager.getMaxMemory());
-    if (progress < 0.0f) progress = 0.0f;
-    if (progress > 1.0f) progress = 1.0f;
-
-    char memBuf[128];
-    if (maxMemGB >= 1.0) {
-        snprintf(memBuf, sizeof(memBuf), "%.2f MB / %.2f GB (%.1f%%)", memMB, maxMemGB, progress * 100.0f);
-    } else {
-        snprintf(memBuf, sizeof(memBuf), "%.2f MB / %.0f MB (%.1f%%)", memMB, maxMemGB * 1024.0, progress * 100.0f);
-    }
-
-    ImGui::Text("Memory Usage:");
-    ImGui::ProgressBar(progress, ImVec2(-1.0f, 24.0f * scale), memBuf);
-
-    float memLimitGB = (float)maxMemGB;
-    ImGui::PushItemWidth(120.0f * scale);
-    if (ImGui::SliderFloat("Memory Limit (GB)", &memLimitGB, 0.5f, 32.0f, "%.1f GB")) {
-        if (memLimitGB < 0.1f) memLimitGB = 0.1f;
-        g_undoManager.setMaxMemoryGB((double)memLimitGB);
-    }
-    int maxEntries = (int)g_undoManager.getMaxEntries();
-    if (ImGui::SliderInt("Max Entries", &maxEntries, 0, 500, maxEntries == 0 ? "Unlimited" : "%d")) {
-        if (maxEntries < 0) maxEntries = 0;
-        g_undoManager.setMaxEntries((size_t)maxEntries);
-    }
-    ImGui::PopItemWidth();
-
-    ImGui::Separator();
-
-    const auto& undoStack = g_undoManager.getUndoStack();
-    const auto& redoStack = g_undoManager.getRedoStack();
-
-    ImGui::Text("Undo Entries: %zu | Redo Entries: %zu", undoStack.size(), redoStack.size());
-
-    if (ImGui::BeginChild("UndoHistoryList", ImVec2(0, 0), true)) {
-        // Render Active Undo Stack items
-        for (int i = 0; i < (int)undoStack.size(); ++i) {
-            const auto& entry = undoStack[i];
-            bool isCurrentTop = (i == (int)undoStack.size() - 1);
-
-            std::string label = (isCurrentTop ? "-> [" : "   [") + std::to_string(i + 1) + "] " + entry->getDescription();
-            size_t entryMem = entry->getMemoryUsage();
-            std::string sizeStr = (entryMem >= 1024 * 1024) ? 
-                (std::to_string(entryMem / (1024 * 1024)) + " MB") : 
-                (std::to_string(entryMem / 1024) + " KB");
-
-            if (isCurrentTop) {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 0.95f, 0.4f, 1.0f));
-            }
-
-            ImGui::PushID(i);
-            if (ImGui::Selectable(label.c_str(), isCurrentTop)) {
-                int stepsToUndo = (int)undoStack.size() - 1 - i;
-                for (int s = 0; s < stepsToUndo; ++s) {
-                    g_undoManager.undo(scene);
-                }
-            }
-            if (ImGui::IsItemHovered()) {
-                const char* typeStr = (entry->getType() == UndoEntryType::Sculpt) ? "Delta Sculpt" :
-                                      (entry->getType() == UndoEntryType::Topology) ? "Topology Snapshot" : "Meta Snapshot";
-                ImGui::SetTooltip("Size: %s | Type: %s\nClick to jump to this undo state", sizeStr.c_str(), typeStr);
-            }
-            ImGui::PopID();
-
-            if (isCurrentTop) {
-                ImGui::PopStyleColor();
-            }
-        }
-
-        // Render Redo Stack items
-        if (!redoStack.empty()) {
-            ImGui::Separator();
-            ImGui::TextDisabled("--- REDO STACK ---");
-
-            for (int i = (int)redoStack.size() - 1; i >= 0; --i) {
-                const auto& entry = redoStack[i];
-                std::string label = "   (Redo) " + entry->getDescription();
-
-                ImGui::PushID(1000000 + i);
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
-                if (ImGui::Selectable(label.c_str(), false)) {
-                    int stepsToRedo = (int)redoStack.size() - i;
-                    for (int s = 0; s < stepsToRedo; ++s) {
-                        g_undoManager.redo(scene);
-                    }
-                }
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Click to redo to this step");
-                }
-                ImGui::PopStyleColor();
-                ImGui::PopID();
-            }
-        }
-
-        ImGui::EndChild();
-    }
-
-    ImGui::End();
-}
 
 void GuiManager::drawDebugLogPanel() {
     if (!m_showDebugLogPanel) return;
@@ -8682,31 +8543,146 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
             }
 
             // 5. Undo & System Tab
-            if (ImGui::BeginTabItem("Undo & System")) {
+            ImGuiTabItemFlags undoTabFlags = (m_preferencesActiveTab == 4) ? ImGuiTabItemFlags_SetSelected : 0;
+            if (ImGui::BeginTabItem("Undo & System", nullptr, undoTabFlags)) {
                 ImGui::Spacing();
-                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Undo History Allocation");
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Undo / Redo Action Controls");
                 ImGui::Separator();
                 ImGui::Spacing();
 
-                float maxMemGB = (float)g_undoManager.getMaxMemoryGB();
+                // Quick Action Buttons
+                bool canUndo = g_undoManager.canUndo();
+                bool canRedo = g_undoManager.canRedo();
+
+                if (!canUndo) ImGui::BeginDisabled();
+                if (ImGui::Button(ICON_LC_UNDO " Undo")) {
+                    g_undoManager.undo(scene);
+                }
+                if (!canUndo) ImGui::EndDisabled();
+
+                ImGui::SameLine();
+                if (!canRedo) ImGui::BeginDisabled();
+                if (ImGui::Button(ICON_LC_REDO " Redo")) {
+                    g_undoManager.redo(scene);
+                }
+                if (!canRedo) ImGui::EndDisabled();
+
+                ImGui::SameLine();
+                if (ImGui::Button(ICON_LC_TRASH_2 " Clear History")) {
+                    g_undoManager.clear();
+                }
+
+                ImGui::Spacing();
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Memory & Limit Configuration");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                size_t memBytes = g_undoManager.getTotalMemoryUsage();
+                double memMB = (double)memBytes / (1024.0 * 1024.0);
+                double maxMemGB = g_undoManager.getMaxMemoryGB();
+
+                float progress = (float)(memBytes / (double)g_undoManager.getMaxMemory());
+                if (progress < 0.0f) progress = 0.0f;
+                if (progress > 1.0f) progress = 1.0f;
+
+                char memBuf[128];
+                if (maxMemGB >= 1.0) {
+                    snprintf(memBuf, sizeof(memBuf), "%.2f MB / %.2f GB (%.1f%%)", memMB, maxMemGB, progress * 100.0f);
+                } else {
+                    snprintf(memBuf, sizeof(memBuf), "%.2f MB / %.0f MB (%.1f%%)", memMB, maxMemGB * 1024.0, progress * 100.0f);
+                }
+
+                ImGui::Text("RAM Memory Usage:");
+                ImGui::ProgressBar(progress, ImVec2(-1.0f, 22.0f * scale), memBuf);
+
+                float memLimitGB = (float)maxMemGB;
                 ImGui::SetNextItemWidth(180.0f * scale);
-                if (ImGui::SliderFloat("Max RAM Limit (GB)", &maxMemGB, 0.5f, 16.0f, "%.1f GB")) {
-                    g_undoManager.setMaxMemoryGB((double)maxMemGB);
+                if (ImGui::SliderFloat("Memory Limit (GB)", &memLimitGB, 0.5f, 32.0f, "%.1f GB")) {
+                    if (memLimitGB < 0.1f) memLimitGB = 0.1f;
+                    g_undoManager.setMaxMemoryGB((double)memLimitGB);
                 }
 
                 int maxEntries = (int)g_undoManager.getMaxEntries();
                 ImGui::SetNextItemWidth(180.0f * scale);
-                if (ImGui::SliderInt("Max Undo History Steps", &maxEntries, 5, 200, "%d steps")) {
+                if (ImGui::SliderInt("Max Undo History Steps", &maxEntries, 0, 500, maxEntries == 0 ? "Unlimited" : "%d steps")) {
+                    if (maxEntries < 0) maxEntries = 0;
                     g_undoManager.setMaxEntries((size_t)maxEntries);
                 }
 
                 ImGui::Spacing();
-                ImGui::Text("Current Memory Used: %.2f MB (%zu entries)",
-                    (double)g_undoManager.getTotalMemoryUsage() / (1024.0 * 1024.0), g_undoManager.getUndoCount());
-
                 ImGui::Spacing();
-                if (ImGui::Button("Clear Undo History")) {
-                    g_undoManager.clear();
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Interactive Undo / Redo History List");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                const auto& undoStack = g_undoManager.getUndoStack();
+                const auto& redoStack = g_undoManager.getRedoStack();
+
+                ImGui::Text("Undo Entries: %zu  |  Redo Entries: %zu", undoStack.size(), redoStack.size());
+                ImGui::Spacing();
+
+                if (ImGui::BeginChild("UndoHistoryListInPrefs", ImVec2(0, 220.0f * scale), true)) {
+                    // Render Active Undo Stack items
+                    for (int i = 0; i < (int)undoStack.size(); ++i) {
+                        const auto& entry = undoStack[i];
+                        bool isCurrentTop = (i == (int)undoStack.size() - 1);
+
+                        std::string label = (isCurrentTop ? "-> [" : "   [") + std::to_string(i + 1) + "] " + entry->getDescription();
+                        size_t entryMem = entry->getMemoryUsage();
+                        std::string sizeStr = (entryMem >= 1024 * 1024) ? 
+                            (std::to_string(entryMem / (1024 * 1024)) + " MB") : 
+                            (std::to_string(entryMem / 1024) + " KB");
+
+                        if (isCurrentTop) {
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 0.95f, 0.4f, 1.0f));
+                        }
+
+                        ImGui::PushID(i);
+                        if (ImGui::Selectable(label.c_str(), isCurrentTop)) {
+                            int stepsToUndo = (int)undoStack.size() - 1 - i;
+                            for (int s = 0; s < stepsToUndo; ++s) {
+                                g_undoManager.undo(scene);
+                            }
+                        }
+                        if (ImGui::IsItemHovered()) {
+                            const char* typeStr = (entry->getType() == UndoEntryType::Sculpt) ? "Delta Sculpt" :
+                                                  (entry->getType() == UndoEntryType::Topology) ? "Topology Snapshot" : "Meta Snapshot";
+                            ImGui::SetTooltip("Size: %s | Type: %s\nClick to jump to this undo state", sizeStr.c_str(), typeStr);
+                        }
+                        ImGui::PopID();
+
+                        if (isCurrentTop) {
+                            ImGui::PopStyleColor();
+                        }
+                    }
+
+                    // Render Redo Stack items
+                    if (!redoStack.empty()) {
+                        ImGui::Separator();
+                        ImGui::TextDisabled("--- REDO STACK ---");
+
+                        for (int i = (int)redoStack.size() - 1; i >= 0; --i) {
+                            const auto& entry = redoStack[i];
+                            std::string label = "   (Redo) " + entry->getDescription();
+
+                            ImGui::PushID(1000000 + i);
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+                            if (ImGui::Selectable(label.c_str(), false)) {
+                                int stepsToRedo = (int)redoStack.size() - i;
+                                for (int s = 0; s < stepsToRedo; ++s) {
+                                    g_undoManager.redo(scene);
+                                }
+                            }
+                            if (ImGui::IsItemHovered()) {
+                                ImGui::SetTooltip("Click to redo to this step");
+                            }
+                            ImGui::PopStyleColor();
+                            ImGui::PopID();
+                        }
+                    }
+
+                    ImGui::EndChild();
                 }
 
                 ImGui::EndTabItem();

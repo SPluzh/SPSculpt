@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.3]
+- **Undo History**: Moved history list from a standalone panel into the Preferences window ("Undo & System" tab) and removed it from the Panels menu.
+
 ## [0.2.2]
 - **Reference Images**: Added 4 mid-edge handles for direct side scaling.
 - **Reference Images**: Resizing now anchors to the opposite edge/corner to keep it fixed in place.
