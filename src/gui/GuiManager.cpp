@@ -1950,7 +1950,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
             float availW = ImGui::GetContentRegionAvail().x;
             float spacing = ImGui::GetStyle().ItemSpacing.x;
-            float btnW = (availW - spacing * 5.0f) / 6.0f;
+            float btnW = (availW - spacing * 7.0f) / 8.0f;
             float btnH = 24.0f * scale;
 
             if (ImGui::Button(ICON_LC_CIRCLE "##AddSphere", ImVec2(btnW, btnH))) {
@@ -2021,6 +2021,18 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 }
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add Reference Image");
+
+            ImGui::SameLine();
+            if (ImGui::Button(ICON_LC_IMPORT "##OutlinerTopImport", ImVec2(btnW, btnH))) {
+                importFile(scene, &sculpt);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Import Model / Asset (Ctrl+I)");
+
+            ImGui::SameLine();
+            if (ImGui::Button(ICON_LC_FILE_OUTPUT "##OutlinerTopExport", ImVec2(btnW, btnH))) {
+                exportFile(scene, &sculpt);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Export Model / Scene (Ctrl+E)");
 
             ImGui::Separator();
             ImGui::Spacing();
