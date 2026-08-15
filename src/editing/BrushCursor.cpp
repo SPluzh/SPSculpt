@@ -305,7 +305,7 @@ void BrushCursor::update(int mouseX, int mouseY,
         if (useSym && (symX || symY || symZ) && mesh) {
             glm::mat4 invMatrix = glm::inverse(mesh->matrix);
             glm::vec3 lPt = glm::vec3(invMatrix * glm::vec4(worldPt, 1.0f));
-            glm::vec3 lNormal = glm::normalize(glm::vec3(glm::transpose(mesh->matrix) * glm::vec4(worldNormal, 0.0f)));
+            glm::vec3 lNormal = glm::normalize(glm::mat3(invMatrix) * worldNormal);
             glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(mesh->matrix)));
 
             std::vector<float> xVals = { 1.0f };
@@ -369,7 +369,7 @@ void BrushCursor::update(int mouseX, int mouseY,
             if (useSym && (symX || symY || symZ) && mesh) {
                 glm::mat4 invMatrix = glm::inverse(mesh->matrix);
                 glm::vec3 lPt = glm::vec3(invMatrix * glm::vec4(worldPt, 1.0f));
-                glm::vec3 lNormal = glm::normalize(glm::vec3(glm::transpose(mesh->matrix) * glm::vec4(worldNormal, 0.0f)));
+                glm::vec3 lNormal = glm::normalize(glm::mat3(invMatrix) * worldNormal);
                 glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(mesh->matrix)));
 
                 std::vector<float> xVals = { 1.0f };
@@ -515,7 +515,14 @@ glm::mat4 BrushCursor::buildCircleMVP(const glm::vec3& center,
                                       const Camera& cam,
                                       float tiltX,
                                       float tiltY) const {
+    if (glm::length(normal) < 1e-6f || std::isnan(normal.x) || std::isnan(normal.y) || std::isnan(normal.z) ||
+        std::isnan(center.x) || std::isnan(center.y) || std::isnan(center.z)) {
+        return glm::mat4(0.0f);
+    }
     glm::vec3 n = glm::normalize(normal);
+    if (glm::any(glm::isnan(n))) {
+        return glm::mat4(0.0f);
+    }
     glm::vec3 base(0.0f, 0.0f, 1.0f);
     float dot = glm::dot(base, n);
     float rad = 0.0f;

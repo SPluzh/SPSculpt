@@ -3267,6 +3267,21 @@ void SculptManager::processFrame(Scene& scene) {
         }
 
         const auto& activeSettings = getSettings(activeBrush);
+        Mesh* activeMesh = scene.getSelected();
+        if (activeMesh && m_isSculpting) {
+            activeMesh->bakeScale();
+        }
+
+        glm::vec3 localPt = m_isSculpting ? m_lastValidIntersection : m_currentIntersection;
+        glm::vec3 localNorm = m_isSculpting ? m_lastValidIntersectionNormal : m_currentIntersectionNormal;
+        glm::vec3 worldPt = localPt;
+        glm::vec3 worldNorm = localNorm;
+        if (activeMesh) {
+            worldPt = glm::vec3(activeMesh->matrix * glm::vec4(localPt, 1.0f));
+            glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(activeMesh->matrix)));
+            worldNorm = glm::normalize(normalMatrix * localNorm);
+        }
+
         m_cursor.update(
             m_rawMouseX, m_rawMouseY,
             scene,
@@ -3278,8 +3293,8 @@ void SculptManager::processFrame(Scene& scene) {
             m_isSculpting,
             activeBrush,
             m_isSculpting ? m_hasAnyValidIntersection : m_currentIntersectionValid,
-            m_isSculpting ? m_lastValidIntersection : m_currentIntersection,
-            m_isSculpting ? m_lastValidIntersectionNormal : m_currentIntersectionNormal,
+            worldPt,
+            worldNorm,
             activeSettings.focalShift,
             activeSettings.hardness,
             activeSettings.paintColor,

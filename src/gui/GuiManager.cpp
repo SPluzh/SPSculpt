@@ -3859,6 +3859,9 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 transformStartVerts.shrink_to_fit();
                 transformStartNormals.clear();
                 transformStartNormals.shrink_to_fit();
+                if (selectedMesh) {
+                    selectedMesh->bakeScale();
+                }
             }
             wasUsingGizmo = isUsingGizmo;
 
@@ -4026,9 +4029,11 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             }
 
             auto projectPoint = [](const glm::mat4& mvp, const glm::vec3& localPos, float width, float height, float xOffset, const Camera& camera, bool apply2D) -> ImVec2 {
+                if (mvp == glm::mat4(0.0f)) return ImVec2(-9999.0f, -9999.0f);
                 glm::vec4 clipPos = mvp * glm::vec4(localPos, 1.0f);
-                if (clipPos.w == 0.0f) return ImVec2(0.0f, 0.0f);
+                if (std::abs(clipPos.w) < 1e-6f) return ImVec2(-9999.0f, -9999.0f);
                 glm::vec3 ndcPos = glm::vec3(clipPos) / clipPos.w;
+                if (std::isnan(ndcPos.x) || std::isnan(ndcPos.y)) return ImVec2(-9999.0f, -9999.0f);
                 if (apply2D && camera.getRef2DMode()) {
                     ndcPos.x = ndcPos.x * camera.getView2DZoom() + camera.getView2DOffsetX();
                     ndcPos.y = ndcPos.y * camera.getView2DZoom() + camera.getView2DOffsetY();
@@ -4091,11 +4096,12 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 // Draw symmetry dots
                 for (size_t idx = 0; idx < symMVPs.size(); ++idx) {
                     const auto& symMVP = symMVPs[idx];
+                    if (symMVP == glm::mat4(0.0f)) continue;
                     bool occluded = (idx < symOccluded.size()) ? symOccluded[idx] : false;
 
                     // Project center of symmetry dot to check if it's covered by an ImGui panel
                     ImVec2 symCenter = projectPoint(symMVP, glm::vec3(0.0f), width, viewportHeight, xOffset, camera, apply2D);
-                    if (isPointOverImGuiWindow(symCenter)) {
+                    if (symCenter.x < -5000.0f || isPointOverImGuiWindow(symCenter)) {
                         continue;
                     }
 
@@ -4237,6 +4243,8 @@ void GuiManager::performRemesh(Scene& scene) {
         return;
     }
 
+    selectedMesh->bakeScale();
+
     m_remeshBeforeState = scene.saveCurrentState();
 
     // Snapshot mesh data for worker thread
@@ -4267,8 +4275,9 @@ void GuiManager::performRemesh(Scene& scene) {
     float scaleX = glm::length(glm::vec3(selectedMesh->matrix[0]));
     float scaleY = glm::length(glm::vec3(selectedMesh->matrix[1]));
     float scaleZ = glm::length(glm::vec3(selectedMesh->matrix[2]));
-    float meshScale = std::max({scaleX, scaleY, scaleZ});
-    if (meshScale <= 1e-5f) meshScale = 1.0f;
+    if (scaleX <= 1e-5f) scaleX = 1.0f;
+    if (scaleY <= 1e-5f) scaleY = 1.0f;
+    if (scaleZ <= 1e-5f) scaleZ = 1.0f;
     
     float uniformColor[3] = { 0.72f, 0.52f, 0.45f };
     float uniformMaterial[3] = { 0.5f, 0.0f, 1.0f };
@@ -4295,7 +4304,9 @@ void GuiManager::performRemesh(Scene& scene) {
         nbVerts,
         bboxArr = std::array<float,6>{bbox[0],bbox[1],bbox[2],bbox[3],bbox[4],bbox[5]},
         resolution,
-        meshScale,
+        scaleX,
+        scaleY,
+        scaleZ,
         uniColorArr = std::array<float,3>{uniformColor[0], uniformColor[1], uniformColor[2]},
         uniMatArr = std::array<float,3>{uniformMaterial[0], uniformMaterial[1], uniformMaterial[2]}
     ]() mutable
@@ -4324,7 +4335,9 @@ void GuiManager::performRemesh(Scene& scene) {
                     m_remeshAsync.stage = stage;
                     m_remeshAsync.progress = pct;
                 },
-                meshScale
+                scaleX,
+                scaleY,
+                scaleZ
             );
             m_remeshAsync.result = std::move(result);
             m_remeshAsync.state = RemeshState::Done;

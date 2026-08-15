@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.4]
+- **Sculpting & Symmetry**: Fixed symmetry brush cursor placement and eliminated ghost cursor artifacts on non-proportionally scaled objects.
+- **Voxel Remesh**: Fixed polygon stretching during remeshing by automatically baking non-uniform scale, ensuring uniform square quads across all transformed objects.
+
 ## [0.2.3]
 - **UI Consolidation**: Moved Undo History and Tablet Diagnostics into dedicated Preferences tabs ("Undo & System", "Tablet & Stylus") and removed redundant items from the Panels menu.
 

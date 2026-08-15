@@ -961,3 +961,42 @@ void Mesh::mirror(int axisIndex, bool positiveToNegative, SymmetryMode mode) {
     isTopologyDirty = true;
 }
 
+void Mesh::bakeScale() {
+    float scaleX = glm::length(glm::vec3(matrix[0]));
+    float scaleY = glm::length(glm::vec3(matrix[1]));
+    float scaleZ = glm::length(glm::vec3(matrix[2]));
+
+    if (std::abs(scaleX - 1.0f) > 1e-4f || std::abs(scaleY - 1.0f) > 1e-4f || std::abs(scaleZ - 1.0f) > 1e-4f) {
+        if (scaleX < 1e-5f) scaleX = 1.0f;
+        if (scaleY < 1e-5f) scaleY = 1.0f;
+        if (scaleZ < 1e-5f) scaleZ = 1.0f;
+
+        glm::mat3 invScaleMatrix(1.0f / scaleX, 0.0f, 0.0f,
+                                 0.0f, 1.0f / scaleY, 0.0f,
+                                 0.0f, 0.0f, 1.0f / scaleZ);
+
+        int n = nbVerts;
+        for (int i = 0; i < n; ++i) {
+            verts[i * 3]     *= scaleX;
+            verts[i * 3 + 1] *= scaleY;
+            verts[i * 3 + 2] *= scaleZ;
+
+            if (!normals.empty()) {
+                glm::vec3 nVec(normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]);
+                nVec = glm::normalize(invScaleMatrix * nVec);
+                normals[i * 3]     = nVec.x;
+                normals[i * 3 + 1] = nVec.y;
+                normals[i * 3 + 2] = nVec.z;
+            }
+        }
+
+        matrix[0] = glm::vec4(glm::vec3(matrix[0]) / scaleX, matrix[0].w);
+        matrix[1] = glm::vec4(glm::vec3(matrix[1]) / scaleY, matrix[1].w);
+        matrix[2] = glm::vec4(glm::vec3(matrix[2]) / scaleZ, matrix[2].w);
+
+        postInit();
+        isDirty = true;
+    }
+}
+
+

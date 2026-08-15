@@ -1247,10 +1247,12 @@ RemeshResult doRemesh(
     bool hasFaceGroups,
     bool alignSymmetry,
     std::function<void(int stage, int progress)> onProgress,
-    float matrixScale
+    float matrixScaleX,
+    float matrixScaleY,
+    float matrixScaleZ
 ) {
-    sculpt_log("[C++ doRemesh] Start. nbVerts=%d, nbTris=%d, resolution=%.2f, block=%d, smooth=%d, manifold=%d, hasColors=%d, hasMaterials=%d, hasFaceGroups=%d, alignSymmetry=%d, scale=%.4f\n",
-               nbVerts, nbTris, resolution, block, smooth, manifold, hasColors, hasMaterials, hasFaceGroups, alignSymmetry, matrixScale);
+    sculpt_log("[C++ doRemesh] Start. nbVerts=%d, nbTris=%d, resolution=%.2f, block=%d, smooth=%d, manifold=%d, hasColors=%d, hasMaterials=%d, hasFaceGroups=%d, alignSymmetry=%d, scaleXYZ=(%.4f, %.4f, %.4f)\n",
+               nbVerts, nbTris, resolution, block, smooth, manifold, hasColors, hasMaterials, hasFaceGroups, alignSymmetry, matrixScaleX, matrixScaleY, matrixScaleZ);
     if (box) {
         sculpt_log("[C++ doRemesh] box: [%.4f, %.4f, %.4f, %.4f, %.4f, %.4f]\n", box[0], box[1], box[2], box[3], box[4], box[5]);
     } else {
@@ -1259,7 +1261,10 @@ RemeshResult doRemesh(
 
     // 1. Compute voxel grid step based on scene reference scale (100.0 world units)
     float refWorldScale = 100.0f;
-    float mScale = (matrixScale > 1e-5f) ? matrixScale : 1.0f;
+    float mScaleX = (matrixScaleX > 1e-5f) ? matrixScaleX : 1.0f;
+    float mScaleY = (matrixScaleY > 1e-5f) ? matrixScaleY : 1.0f;
+    float mScaleZ = (matrixScaleZ > 1e-5f) ? matrixScaleZ : 1.0f;
+    float mScale = std::cbrt(mScaleX * mScaleY * mScaleZ);
     float worldStep = refWorldScale / (resolution > 0.0f ? resolution : 1.0f);
     float step = worldStep / mScale;
 

@@ -229,5 +229,6 @@ public:
     void updateMatrices(const Camera& camera);
     void computeBbox(float* outBbox) const;
     float computeWorldStep(int resolution) const;
+    void bakeScale();
 };
 
