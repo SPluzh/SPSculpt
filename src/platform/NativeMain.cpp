@@ -476,6 +476,7 @@ int main(int argc, char* argv[]) {
     }
     gui.init(window, glContext);
     gui.setRenderer(&renderer);
+    sculpt.setRenderer(&renderer);
     HotkeyDispatcher dispatcher;
 
     if (!fileToOpen.empty()) {

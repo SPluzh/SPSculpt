@@ -10,6 +10,7 @@
 
 #include "brushes/BrushPreset.h"
 #include "editing/PolyGroupTool.h"
+#include "render/AngleRenderer.h"
 
 class ArmatureTool;
 class IniFile;
@@ -234,14 +235,35 @@ public:
     uint32_t getActiveGroupID() const { return m_activeGroupId; }
     void setActiveGroupID(uint32_t id) { m_activeGroupId = id; }
 
+    void setRenderer(AngleRenderer* renderer) { 
+        m_renderer = renderer; 
+        if (m_renderer && m_currentBrush == BRUSH_TOPOLOGY && !m_autoWireframeActive) {
+            m_prevWireframeState = m_renderer->getShowWireframe();
+            m_renderer->setShowWireframe(true);
+            m_autoWireframeActive = true;
+        }
+    }
+
     BrushType getBrush() const { return m_currentBrush; }
     void setBrush(BrushType brush) { 
-        m_currentBrush = brush; 
-        m_gradActivePoint = '\0';
-        m_gradIsDrawing = false;
-        m_hasPending = false;
-        m_hoveredSegment = nullptr;
-        m_draggedSegment = nullptr;
+        if (m_currentBrush != brush) {
+            if (m_renderer) {
+                if (brush == BRUSH_TOPOLOGY && m_currentBrush != BRUSH_TOPOLOGY) {
+                    m_prevWireframeState = m_renderer->getShowWireframe();
+                    m_renderer->setShowWireframe(true);
+                    m_autoWireframeActive = true;
+                } else if (m_currentBrush == BRUSH_TOPOLOGY && brush != BRUSH_TOPOLOGY && m_autoWireframeActive) {
+                    m_renderer->setShowWireframe(m_prevWireframeState);
+                    m_autoWireframeActive = false;
+                }
+            }
+            m_currentBrush = brush; 
+            m_gradActivePoint = '\0';
+            m_gradIsDrawing = false;
+            m_hasPending = false;
+            m_hoveredSegment = nullptr;
+            m_draggedSegment = nullptr;
+        }
     }
     void setTool(BrushType brush) { 
         setBrush(brush);
@@ -531,6 +553,10 @@ private:
     bool m_isDividerVisibleV2 = true;
 
     SculptFrameProfile m_lastFrameProfile;
+    AngleRenderer* m_renderer = nullptr;
+    bool m_prevWireframeState = false;
+    bool m_autoWireframeActive = false;
+
     uint32_t m_strokeTargetPolyGroup = 0;
     void filterPolyGroupVertices(std::vector<uint32_t>& pickedVertices, const Mesh* mesh, uint32_t targetGroupId);
 

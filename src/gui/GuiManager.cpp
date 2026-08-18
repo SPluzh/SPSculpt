@@ -4112,13 +4112,15 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     ImGui::GetForegroundDrawList()->AddPolyline(outerPoints.data(), numSegments, colorU32, ImDrawFlags_Closed, thickness);
 
                     // Draw inner circle
-                    std::vector<ImVec2> innerPoints(numSegments);
-                    for (int i = 0; i < numSegments; ++i) {
-                        float angle = i * 2.0f * 3.1415926535f / numSegments;
-                        glm::vec3 localPos(std::cos(angle), std::sin(angle), 0.0f);
-                        innerPoints[i] = projectPoint(innerCircleMVP, localPos, width, viewportHeight, xOffset, camera, apply2D);
+                    if (cursorState.showInnerCircle) {
+                        std::vector<ImVec2> innerPoints(numSegments);
+                        for (int i = 0; i < numSegments; ++i) {
+                            float angle = i * 2.0f * 3.1415926535f / numSegments;
+                            glm::vec3 localPos(std::cos(angle), std::sin(angle), 0.0f);
+                            innerPoints[i] = projectPoint(innerCircleMVP, localPos, width, viewportHeight, xOffset, camera, apply2D);
+                        }
+                        ImGui::GetForegroundDrawList()->AddPolyline(innerPoints.data(), numSegments, colorU32, ImDrawFlags_Closed, thickness);
                     }
-                    ImGui::GetForegroundDrawList()->AddPolyline(innerPoints.data(), numSegments, colorU32, ImDrawFlags_Closed, thickness);
                 }
 
                 // Draw main dot (filled circle)

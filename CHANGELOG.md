@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [0.3.0]
 - **Dynamic Topology & Topology Brush**: Integrated native local subdivision and decimation engine, dedicated `BRUSH_TOPOLOGY` tool, and resolution control (`X` key).
+- **Topology Brush Wireframe & Cursor**: Added automatic wireframe toggle on Topology brush selection ('T'), custom purple cursor ring, and hidden focal shift ring.
 - **Performance & Latency**: Deferred batch compaction, pre-filtering, zero-allocation buffers, and optimized ring operations for responsive sculpting strokes.
 - **Stability & Mesh Integrity**: Hardened edge collapse stability, resolved mesh state crashes, and fully stabilized Undo/Redo topology restoration.
 

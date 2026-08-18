@@ -2095,15 +2095,17 @@ void AngleRenderer::drawSelectionCursor(const Scene& scene, bool isRight) {
         }
         
         // Draw inner circle
-        for (int i = 0; i < passes; ++i) {
-            float offset = 0.0f;
-            if (passes > 1) {
-                offset = -0.5f * (passes - 1) + i;
-            }
-            if (locOffsetPixels != -1) glUniform1f(locOffsetPixels, offset);
+        if (innerCircleMVP != glm::mat4(0.0f)) {
+            for (int i = 0; i < passes; ++i) {
+                float offset = 0.0f;
+                if (passes > 1) {
+                    offset = -0.5f * (passes - 1) + i;
+                }
+                if (locOffsetPixels != -1) glUniform1f(locOffsetPixels, offset);
 
-            glUniformMatrix4fv(locMVP, 1, GL_FALSE, &innerCircleMVP[0][0]);
-            glDrawArrays(GL_LINE_LOOP, 0, 64);
+                glUniformMatrix4fv(locMVP, 1, GL_FALSE, &innerCircleMVP[0][0]);
+                glDrawArrays(GL_LINE_LOOP, 0, 64);
+            }
         }
 
         if (locOffsetPixels != -1) glUniform1f(locOffsetPixels, 0.0f);

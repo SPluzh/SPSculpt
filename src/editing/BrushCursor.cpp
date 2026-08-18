@@ -221,6 +221,7 @@ void BrushCursor::update(int mouseX, int mouseY,
 
     m_state.visible = true;
     m_state.showCircle = !isSculpting;
+    m_state.showInnerCircle = (brushType != BRUSH_TOPOLOGY) && (innerRatio > 0.001f);
 
     // Color Setup based on active brush & hover status
     bool drawCircle = !isSculpting;
@@ -229,6 +230,12 @@ void BrushCursor::update(int mouseX, int mouseY,
             m_state.color = glm::vec3(0.0f, 0.4f, 0.8f);
         } else {
             m_state.color = glm::vec3(0.0f, 0.6f, 1.0f);
+        }
+    } else if (brushType == BRUSH_TOPOLOGY) {
+        if (drawCircle && hitMesh) {
+            m_state.color = glm::vec3(0.65f, 0.15f, 0.95f);
+        } else {
+            m_state.color = glm::vec3(0.75f, 0.25f, 1.0f);
         }
     } else if (brushType == BRUSH_MASK) {
         if (drawCircle && hitMesh) {
@@ -468,7 +475,7 @@ void BrushCursor::update(int mouseX, int mouseY,
 void BrushCursor::applyToRenderer(AngleRenderer& renderer) const {
     if (m_state.visible) {
         uintptr_t circlePtr = reinterpret_cast<uintptr_t>(glm::value_ptr(m_state.circleMVP));
-        uintptr_t innerPtr = reinterpret_cast<uintptr_t>(glm::value_ptr(m_state.innerCircleMVP));
+        uintptr_t innerPtr = m_state.showInnerCircle ? reinterpret_cast<uintptr_t>(glm::value_ptr(m_state.innerCircleMVP)) : 0;
         uintptr_t dotPtr = reinterpret_cast<uintptr_t>(glm::value_ptr(m_state.dotMVP));
         uintptr_t symPtr = m_state.symMVPs.empty() ? 0 : reinterpret_cast<uintptr_t>(m_state.symMVPs.data());
         int symCount = static_cast<int>(m_state.symMVPs.size());
@@ -489,7 +496,7 @@ void BrushCursor::applyToRenderer(AngleRenderer& renderer) const {
         );
 
         uintptr_t circlePtrR = reinterpret_cast<uintptr_t>(glm::value_ptr(m_state.circleMVPRight));
-        uintptr_t innerPtrR = reinterpret_cast<uintptr_t>(glm::value_ptr(m_state.innerCircleMVPRight));
+        uintptr_t innerPtrR = m_state.showInnerCircle ? reinterpret_cast<uintptr_t>(glm::value_ptr(m_state.innerCircleMVPRight)) : 0;
         uintptr_t dotPtrR = reinterpret_cast<uintptr_t>(glm::value_ptr(m_state.dotMVPRight));
         uintptr_t symPtrR = m_state.symMVPsRight.empty() ? 0 : reinterpret_cast<uintptr_t>(m_state.symMVPsRight.data());
         int symCountR = static_cast<int>(m_state.symMVPsRight.size());
