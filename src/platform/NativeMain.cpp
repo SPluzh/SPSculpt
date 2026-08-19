@@ -743,12 +743,15 @@ int main(int argc, char* argv[]) {
         renderer.setTrimLassoOverlay(sculpt.isTrimLassoActive(), sculpt.getTrimLassoPoints(), sculpt.getTrimLassoAlt());
         renderer.setActiveBrush(sculpt.getBrush());
 
+        static std::vector<SymmetryPlaneData> s_lastSymmetryPlanes;
+
         if (sculpt.consumeSymmetryLineTrigger()) {
             renderer.triggerTempSymmetryLine(1.8f);
         }
 
         if (renderer.isSymmetryLineVisible()) {
             Mesh* activeMesh = scene.getSelected();
+            bool permanentShow = sculpt.getUseSym() && renderer.getShowSymmetryLine();
             if (activeMesh && sculpt.getUseSym()) {
                 std::vector<SymmetryPlaneData> planes;
                 SymmetryMode mode = sculpt.getSymmetryMode();
@@ -773,14 +776,52 @@ int main(int argc, char* argv[]) {
                         glm::vec3(0.25f, 0.6f, 1.0f)
                     });
                 }
-                renderer.setSymmetryPlanes(renderer.getShowSymmetryLine(), planes);
-            } else if (!sculpt.getUseSym() && renderer.isTempSymmetryLineActive() && !renderer.getSymmetryPlanes().empty()) {
-                renderer.setSymmetryPlanes(renderer.getShowSymmetryLine(), renderer.getSymmetryPlanes());
+                if (!planes.empty()) {
+                    s_lastSymmetryPlanes = planes;
+                }
+                renderer.setSymmetryPlanes(permanentShow, planes);
+            } else if (!sculpt.getUseSym() && renderer.isTempSymmetryLineActive()) {
+                const auto& currentPlanes = renderer.getSymmetryPlanes();
+                if (!currentPlanes.empty()) {
+                    s_lastSymmetryPlanes = currentPlanes;
+                    renderer.setSymmetryPlanes(false, currentPlanes);
+                } else if (!s_lastSymmetryPlanes.empty()) {
+                    renderer.setSymmetryPlanes(false, s_lastSymmetryPlanes);
+                } else if (activeMesh) {
+                    std::vector<SymmetryPlaneData> planes;
+                    SymmetryMode mode = sculpt.getSymmetryMode();
+                    if (sculpt.getSymX() || (!sculpt.getSymY() && !sculpt.getSymZ())) {
+                        planes.push_back({
+                            activeMesh->getSymmetryOriginForAxis(0, mode),
+                            activeMesh->getSymmetryNormalForAxis(0, mode),
+                            glm::vec3(1.0f, 0.25f, 0.25f)
+                        });
+                    }
+                    if (sculpt.getSymY()) {
+                        planes.push_back({
+                            activeMesh->getSymmetryOriginForAxis(1, mode),
+                            activeMesh->getSymmetryNormalForAxis(1, mode),
+                            glm::vec3(0.25f, 0.95f, 0.3f)
+                        });
+                    }
+                    if (sculpt.getSymZ()) {
+                        planes.push_back({
+                            activeMesh->getSymmetryOriginForAxis(2, mode),
+                            activeMesh->getSymmetryNormalForAxis(2, mode),
+                            glm::vec3(0.25f, 0.6f, 1.0f)
+                        });
+                    }
+                    s_lastSymmetryPlanes = planes;
+                    renderer.setSymmetryPlanes(false, planes);
+                } else {
+                    renderer.setSymmetryPlanes(false, {});
+                }
             } else {
-                renderer.setSymmetryPlanes(renderer.getShowSymmetryLine(), {});
+                renderer.setSymmetryPlanes(permanentShow, {});
             }
         } else {
-            renderer.setSymmetryPlanes(renderer.getShowSymmetryLine(), {});
+            bool permanentShow = sculpt.getUseSym() && renderer.getShowSymmetryLine();
+            renderer.setSymmetryPlanes(permanentShow, {});
         }
         bool isSculptingActive = sculpt.isSculpting();
         if (isSculptingActive && renderer.getTaaResetOnStroke()) {

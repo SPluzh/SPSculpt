@@ -283,7 +283,7 @@ public:
         if (val && !m_symX && !m_symY && !m_symZ) {
             m_symX = true;
         }
-        if (!prev && getUseSym()) {
+        if (prev != getUseSym()) {
             m_symmetryLineTriggered = true;
         }
     }
@@ -293,7 +293,7 @@ public:
         bool prev = m_symX;
         m_symX = val;
         if (m_symX || m_symY || m_symZ) m_useSym = true;
-        if (!prev && val) m_symmetryLineTriggered = true;
+        if (prev != val) m_symmetryLineTriggered = true;
     }
 
     bool getSymY() const { return m_symY; }
@@ -301,7 +301,7 @@ public:
         bool prev = m_symY;
         m_symY = val;
         if (m_symX || m_symY || m_symZ) m_useSym = true;
-        if (!prev && val) m_symmetryLineTriggered = true;
+        if (prev != val) m_symmetryLineTriggered = true;
     }
 
     bool getSymZ() const { return m_symZ; }
@@ -309,7 +309,7 @@ public:
         bool prev = m_symZ;
         m_symZ = val;
         if (m_symX || m_symY || m_symZ) m_useSym = true;
-        if (!prev && val) m_symmetryLineTriggered = true;
+        if (prev != val) m_symmetryLineTriggered = true;
     }
 
     int getSymAxis() const {
