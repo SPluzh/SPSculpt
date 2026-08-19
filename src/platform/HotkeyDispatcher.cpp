@@ -405,7 +405,7 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
                     }
                 }
                 if (!selectedMeshes.empty()) {
-                    scene.getCamera().resetViewToMeshes(selectedMeshes);
+                    scene.getCamera().resetViewToMeshes(selectedMeshes, gui.getAnimateBookmarks());
                 } else {
                     scene.getCamera().resetView();
                 }
@@ -416,15 +416,15 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
             case HKAction::CameraUndo: scene.getCamera().undo(); break;
             case HKAction::CameraRedo: scene.getCamera().redo(); break;
             
-            case HKAction::ApplyBookmark1: scene.applyBookmark(0, true); break;
-            case HKAction::ApplyBookmark2: scene.applyBookmark(1, true); break;
-            case HKAction::ApplyBookmark3: scene.applyBookmark(2, true); break;
-            case HKAction::ApplyBookmark4: scene.applyBookmark(3, true); break;
-            case HKAction::ApplyBookmark5: scene.applyBookmark(4, true); break;
-            case HKAction::ApplyBookmark6: scene.applyBookmark(5, true); break;
-            case HKAction::ApplyBookmark7: scene.applyBookmark(6, true); break;
-            case HKAction::ApplyBookmark8: scene.applyBookmark(7, true); break;
-            case HKAction::ApplyBookmark9: scene.applyBookmark(8, true); break;
+            case HKAction::ApplyBookmark1: scene.applyBookmark(0, gui.getAnimateBookmarks()); break;
+            case HKAction::ApplyBookmark2: scene.applyBookmark(1, gui.getAnimateBookmarks()); break;
+            case HKAction::ApplyBookmark3: scene.applyBookmark(2, gui.getAnimateBookmarks()); break;
+            case HKAction::ApplyBookmark4: scene.applyBookmark(3, gui.getAnimateBookmarks()); break;
+            case HKAction::ApplyBookmark5: scene.applyBookmark(4, gui.getAnimateBookmarks()); break;
+            case HKAction::ApplyBookmark6: scene.applyBookmark(5, gui.getAnimateBookmarks()); break;
+            case HKAction::ApplyBookmark7: scene.applyBookmark(6, gui.getAnimateBookmarks()); break;
+            case HKAction::ApplyBookmark8: scene.applyBookmark(7, gui.getAnimateBookmarks()); break;
+            case HKAction::ApplyBookmark9: scene.applyBookmark(8, gui.getAnimateBookmarks()); break;
             
             case HKAction::StrifeLeft: scene.getCamera().translate(-10.0f, 0.0f); break;
             case HKAction::StrifeRight: scene.getCamera().translate(10.0f, 0.0f); break;

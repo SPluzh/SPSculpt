@@ -93,7 +93,7 @@ public:
     void resetViewToMesh(const float* bbox, bool animate = true);
     void resetViewToWorldPoints(const std::vector<glm::vec3>& worldPoints, bool animate = true);
     float computeFrustumFit() const;
-    void snapClosestRotation();
+    void snapClosestRotation(bool animate = true);
     void toggleViewFront();
     void toggleViewTop();
     void toggleViewLeft();

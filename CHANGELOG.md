@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 - **Scene Outliner**: Added Import and Export buttons to top header toolbar.
 - **Symmetry Visualization**: Restricted symmetry plane lines to display strictly on the currently active object, preventing global overlay on inactive background meshes.
 - **Sculpting & Symmetry**: Added smooth fade-out transition animation when disabling symmetry to match the enable symmetry visual behavior.
+- **Camera Navigation**: Added "Animate Camera Transitions" setting in Preferences to toggle smooth animation when framing objects ('F'), switching camera bookmarks, or snapping views ('Shift').
 
 ## [0.2.4]
 - **Sculpting & Symmetry**: Fixed symmetry brush cursor placement and eliminated ghost cursor artifacts on non-proportionally scaled objects.

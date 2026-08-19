@@ -661,7 +661,7 @@ static const glm::quat QUAT_COMP[24] = {
     glm::quat(D, -D, D, D)
 };
 
-void Camera::snapClosestRotation() {
+void Camera::snapClosestRotation(bool animate) {
     float minVal = 1e9f;
     int bestId = 0;
     for (int i = 0; i < 24; ++i) {
@@ -707,7 +707,11 @@ void Camera::snapClosestRotation() {
     targetState.ref2DMode = m_ref2DMode;
     targetState.refDrag = m_refDrag;
 
-    startTransition(targetState, 0.2f);
+    if (animate) {
+        startTransition(targetState, 0.2f);
+    } else {
+        applyState(targetState);
+    }
     pushState();
 }
 

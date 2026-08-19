@@ -15,7 +15,7 @@ public:
     CameraController() = default;
     ~CameraController() = default;
 
-    void handleEvent(const SDL_Event& e, Camera& camera, const std::vector<Mesh*>& meshes);
+    void handleEvent(const SDL_Event& e, Camera& camera, const std::vector<Mesh*>& meshes, bool animate = true);
     
     void startDrag(DragMode mode, int mouseX, int mouseY, Camera& camera, const std::vector<Mesh*>& meshes);
     bool isDragging() const { return m_drag != DragMode::None; }

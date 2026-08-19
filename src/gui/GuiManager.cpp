@@ -2193,7 +2193,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
                     // Frame Camera Button
                     if (ImGui::Button(ICON_LC_CROSSHAIR "##frame", ImVec2(btnSz, btnSz))) {
-                        scene.getCamera().resetViewToMeshes({mesh}, true);
+                        scene.getCamera().resetViewToMeshes({mesh}, m_animateBookmarks);
                     }
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Focus camera on object (Hotkey F)");
 
@@ -4615,6 +4615,7 @@ bool GuiManager::saveSettings(IniFile& ini) {
     ini.setFloat(genSec, "gizmoSize", m_gizmoSize);
     ini.setBool(genSec, "fpsLimitEnabled", m_fpsLimitEnabled);
     ini.setInt(genSec, "fpsLimit", m_fpsLimit);
+    ini.setBool(genSec, "animateBookmarks", m_animateBookmarks);
 
     std::string remeshSec = "Remesh";
     ini.setInt(remeshSec, "resolution", m_remeshResolution);
@@ -4685,6 +4686,7 @@ bool GuiManager::loadSettings(const IniFile& ini) {
             if (m_fpsLimit < 15) m_fpsLimit = 15;
             if (m_fpsLimit > 240) m_fpsLimit = 240;
         }
+        if (ini.hasKey(genSec, "animateBookmarks")) m_animateBookmarks = ini.getBool(genSec, "animateBookmarks");
     }
 
     std::string remeshSec = "Remesh";
@@ -7533,6 +7535,14 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                 }
 
                 ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Camera Bookmarks");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                ImGui::Checkbox("Animate Camera Transitions", &m_animateBookmarks);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Enable smooth camera animation when framing (Hotkey F), switching bookmarks, or snapping views (Shift)");
+
+                ImGui::Spacing();
                 ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Safe Frames Overlay");
                 ImGui::Separator();
                 ImGui::Spacing();
@@ -7624,7 +7634,7 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                             if (m && m->isVisible(scene.getActiveViewport())) selected.push_back(m);
                         }
                     }
-                    if (!selected.empty()) camera.resetViewToMeshes(selected);
+                    if (!selected.empty()) camera.resetViewToMeshes(selected, m_animateBookmarks);
                     else camera.resetView();
                 }
                 ImGui::SameLine();
@@ -8945,7 +8955,7 @@ void GuiManager::drawCameraBookmarksPanel(Scene& scene, AngleRenderer& renderer)
 
         // Apply camera button
         if (ImGui::Button(ICON_LC_PLAY "##apply", ImVec2(btnSz, btnSz))) {
-            scene.applyBookmark(i, true);
+            scene.applyBookmark(i, m_animateBookmarks);
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Restore camera view");
 
@@ -8985,7 +8995,7 @@ void GuiManager::drawCameraBookmarksPanel(Scene& scene, AngleRenderer& renderer)
         ImGui::EndChild();
 
         if (ImGui::IsItemClicked(0) && !ImGui::IsItemEdited()) {
-            scene.applyBookmark(i, true);
+            scene.applyBookmark(i, m_animateBookmarks);
         }
 
         ImGui::PopID();

@@ -120,7 +120,7 @@ void CameraController::startDrag(DragMode mode, int mouseX, int mouseY, Camera& 
     }
 }
 
-void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std::vector<Mesh*>& meshes) {
+void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std::vector<Mesh*>& meshes, bool animate) {
     if (e.type == SDL_MOUSEBUTTONDOWN) {
         int mouseX = e.button.x;
         int mouseY = e.button.y;
@@ -206,7 +206,7 @@ void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std
                 if (shiftPressed) {
                     if (!m_snapTriggered) {
                         m_snapTriggered = true;
-                        camera.snapClosestRotation();
+                        camera.snapClosestRotation(animate);
                     }
                     camera.start(static_cast<float>(mouseX), static_cast<float>(mouseY), false);
                 } else {

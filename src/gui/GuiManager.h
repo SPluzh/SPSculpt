@@ -87,6 +87,7 @@ private:
     int m_remeshResolution = 150;
     bool m_remeshKeepPolyGroups = true;
     bool m_remeshAlignSymmetry = false;
+    bool m_animateBookmarks = true;
     bool m_imguiInitialized = false;
     bool m_editPivot = false;
     float m_gizmoSize = 0.10f;
@@ -293,6 +294,9 @@ public:
 
     bool getRemeshAlignSymmetry() const { return m_remeshAlignSymmetry; }
     void setRemeshAlignSymmetry(bool val) { m_remeshAlignSymmetry = val; }
+
+    bool getAnimateBookmarks() const { return m_animateBookmarks; }
+    void setAnimateBookmarks(bool val) { m_animateBookmarks = val; }
 
     float getGizmoSize() const { return m_gizmoSize; }
     void setGizmoSize(float val) { m_gizmoSize = val; }
