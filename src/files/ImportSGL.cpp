@@ -515,6 +515,28 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
                 }
             }
 
+            if (version >= 15) {
+                uint32_t nbHideSnaps = reader.readU32();
+                for (uint32_t h = 0; h < nbHideSnaps; ++h) {
+                    MeshFaceHideSnapshot snap;
+                    snap.meshId = reader.readU32();
+                    uint32_t mNameLen = reader.readU32();
+                    if (mNameLen > 0) {
+                        std::vector<uint8_t> nBytes(mNameLen);
+                        reader.readBytes(nBytes.data(), mNameLen);
+                        snap.meshName = std::string(nBytes.begin(), nBytes.end());
+                    }
+                    snap.visibleV1 = (reader.readU32() != 0);
+                    snap.visibleV2 = (reader.readU32() != 0);
+                    uint32_t fCount = reader.readU32();
+                    if (fCount > 0) {
+                        snap.faceVisible.resize(fCount);
+                        reader.readBytes(snap.faceVisible.data(), fCount);
+                    }
+                    bm.meshHideSnapshots.push_back(snap);
+                }
+            }
+
             scene.addBookmark(bm);
         }
     }

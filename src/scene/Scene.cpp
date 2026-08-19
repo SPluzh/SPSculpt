@@ -1545,6 +1545,16 @@ CameraBookmark Scene::captureCurrentAsBookmark(const std::string& name) const {
         snap.locked    = img.locked;
         bm.refImages.push_back(snap);
     }
+    for (const auto* mesh : m_meshes) {
+        if (!mesh) continue;
+        MeshFaceHideSnapshot snap;
+        snap.meshId = mesh->getID();
+        snap.meshName = mesh->outlinerName;
+        snap.visibleV1 = mesh->visibleV1;
+        snap.visibleV2 = mesh->visibleV2;
+        snap.faceVisible = mesh->faceVisible;
+        bm.meshHideSnapshots.push_back(snap);
+    }
     return bm;
 }
 
@@ -1620,6 +1630,78 @@ void Scene::applyBookmark(int idx, bool animate) {
             m_refImages[j].visible   = false;
             m_refImages[j].visibleV1 = false;
             m_refImages[j].visibleV2 = false;
+        }
+    }
+
+    // Restore mesh visibility (visibleV1, visibleV2) and polygon hiding (faceVisible & vertVisible)
+    if (!bm.meshHideSnapshots.empty()) {
+        for (size_t i = 0; i < m_meshes.size(); ++i) {
+            Mesh* mesh = m_meshes[i];
+            if (!mesh) continue;
+
+            const MeshFaceHideSnapshot* matchedSnap = nullptr;
+            // 1. Try matching by meshId
+            for (const auto& snap : bm.meshHideSnapshots) {
+                if (snap.meshId == mesh->getID()) {
+                    matchedSnap = &snap;
+                    break;
+                }
+            }
+            // 2. Try matching by index if meshName matches
+            if (!matchedSnap && i < bm.meshHideSnapshots.size()) {
+                if (bm.meshHideSnapshots[i].meshName == mesh->outlinerName) {
+                    matchedSnap = &bm.meshHideSnapshots[i];
+                }
+            }
+            // 3. Try matching by meshName
+            if (!matchedSnap) {
+                for (const auto& snap : bm.meshHideSnapshots) {
+                    if (snap.meshName == mesh->outlinerName) {
+                        matchedSnap = &snap;
+                        break;
+                    }
+                }
+            }
+            // 4. Fallback to index if total sizes match
+            if (!matchedSnap && bm.meshHideSnapshots.size() == m_meshes.size()) {
+                matchedSnap = &bm.meshHideSnapshots[i];
+            }
+
+            if (matchedSnap) {
+                mesh->visibleV1 = matchedSnap->visibleV1;
+                mesh->visibleV2 = matchedSnap->visibleV2;
+                if (matchedSnap->faceVisible.size() == static_cast<size_t>(mesh->nbFaces)) {
+                    mesh->faceVisible = matchedSnap->faceVisible;
+                } else {
+                    mesh->faceVisible.assign(mesh->nbFaces, 1);
+                }
+            } else {
+                mesh->faceVisible.assign(mesh->nbFaces, 1);
+            }
+
+            // Re-synchronize vertVisible from faceVisible
+            std::vector<uint8_t> newVertVisible(mesh->nbVerts, 0);
+            if (mesh->faceVisible.empty() || mesh->faceVisible.size() != static_cast<size_t>(mesh->nbFaces)) {
+                mesh->faceVisible.assign(mesh->nbFaces, 1);
+                std::fill(newVertVisible.begin(), newVertVisible.end(), 1);
+            } else {
+                for (int f = 0; f < mesh->nbFaces; ++f) {
+                    if (mesh->faceVisible[f]) {
+                        uint32_t v0 = mesh->faces[f * 4];
+                        uint32_t v1 = mesh->faces[f * 4 + 1];
+                        uint32_t v2 = mesh->faces[f * 4 + 2];
+                        uint32_t v3 = mesh->faces[f * 4 + 3];
+
+                        if (v0 < newVertVisible.size()) newVertVisible[v0] = 1;
+                        if (v1 < newVertVisible.size()) newVertVisible[v1] = 1;
+                        if (v2 < newVertVisible.size()) newVertVisible[v2] = 1;
+                        if (v3 != 0xffffffff && v3 < newVertVisible.size()) newVertVisible[v3] = 1;
+                    }
+                }
+            }
+            mesh->vertVisible = std::move(newVertVisible);
+            mesh->isDirty = true;
+            mesh->isFaceGroupDirty = true;
         }
     }
 

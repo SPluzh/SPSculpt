@@ -349,6 +349,25 @@ std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& sc
         if (previewSize > 0) {
             writer.writeBytes(bm.previewData.data(), previewSize);
         }
+
+        // Polygon Hiding Snapshots (Version >= 15)
+        uint32_t nbHideSnaps = static_cast<uint32_t>(bm.meshHideSnapshots.size());
+        writer.writeU32(nbHideSnaps);
+        for (const auto& snap : bm.meshHideSnapshots) {
+            writer.writeU32(snap.meshId);
+            uint32_t mNameLen = static_cast<uint32_t>(snap.meshName.size());
+            writer.writeU32(mNameLen);
+            if (mNameLen > 0) {
+                writer.writeBytes(reinterpret_cast<const uint8_t*>(snap.meshName.data()), mNameLen);
+            }
+            writer.writeU32(snap.visibleV1 ? 1 : 0);
+            writer.writeU32(snap.visibleV2 ? 1 : 0);
+            uint32_t fCount = static_cast<uint32_t>(snap.faceVisible.size());
+            writer.writeU32(fCount);
+            if (fCount > 0) {
+                writer.writeBytes(snap.faceVisible.data(), fCount);
+            }
+        }
     }
 
     // Scene Reference Images (Version >= 10)

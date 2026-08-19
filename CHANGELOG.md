@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 - **Symmetry Visualization**: Restricted symmetry plane lines to display strictly on the currently active object, preventing global overlay on inactive background meshes.
 - **Sculpting & Symmetry**: Added smooth fade-out transition animation when disabling symmetry to match the enable symmetry visual behavior.
 - **Camera Navigation**: Added "Animate Camera Transitions" setting in Preferences to toggle smooth animation when framing objects ('F'), switching camera bookmarks, or snapping views ('Shift').
+- **Camera Bookmarks**: Saved camera bookmarks now automatically capture and restore object visibility and polygon hiding states.
 
 ## [0.2.4]
 - **Sculpting & Symmetry**: Fixed symmetry brush cursor placement and eliminated ghost cursor artifacts on non-proportionally scaled objects.
