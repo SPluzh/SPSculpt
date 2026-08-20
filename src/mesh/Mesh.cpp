@@ -2,9 +2,11 @@
 #include <cstring>
 #include <algorithm>
 #include <map>
+#include <chrono>
 #include "mesh/NormalCalc.h"
 #include "mesh/Topology.h"
 #include "common/Constants.h"
+#include "common/Logger.h"
 
 void Mesh::initFaceGroups() {
     faceGroups.assign(nbFaces, 0);
@@ -203,6 +205,8 @@ void Mesh::allocate(int nbV, int nbF, int nbRF, int nbRV) {
 }
 
 void Mesh::postInit() {
+    auto tStart = std::chrono::high_resolution_clock::now();
+
     m_localRadiusDirty = true;
     vertProxy = verts;
     vertTagFlags.assign(nbVerts, 0);
@@ -216,7 +220,6 @@ void Mesh::postInit() {
     } else {
         isFaceGroupDirty = true;
     }
-
 
     if (normals.size() != nbVerts * 3) {
         normals.resize(nbVerts * 3, 0.0f);
@@ -244,11 +247,15 @@ void Mesh::postInit() {
     faceBoxes.resize(nbFaces * 6, 0.0f);
     faceCenters.resize(nbFaces * 3, 0.0f);
 
+    auto tTopStart = std::chrono::high_resolution_clock::now();
+    bool computedTopology = false;
     if (vrfStartCount.size() != (size_t)(nbVerts * 2) || vertRingFace.empty()) {
         initTopology();
+        computedTopology = true;
     } else {
         initEdges();
     }
+    auto tTopEnd = std::chrono::high_resolution_clock::now();
 
     updateFaceNormalsAndBoxes(
         verts.data(), nbVerts,
@@ -258,6 +265,7 @@ void Mesh::postInit() {
         faceBoxes.data(),
         faceCenters.data()
     );
+    auto tFNormEnd = std::chrono::high_resolution_clock::now();
 
     updateVertexNormals(
         nullptr, -1, nbVerts,
@@ -266,6 +274,7 @@ void Mesh::postInit() {
         faceNormals.data(),
         normals.data()
     );
+    auto tVNormEnd = std::chrono::high_resolution_clock::now();
 
     octree.build(
         nbVerts, nbFaces,
@@ -274,6 +283,18 @@ void Mesh::postInit() {
         verts.data(),
         faces.data()
     );
+    auto tEnd = std::chrono::high_resolution_clock::now();
+
+    double msTopology = std::chrono::duration<double, std::milli>(tTopEnd - tTopStart).count();
+    double msFNorm = std::chrono::duration<double, std::milli>(tFNormEnd - tTopEnd).count();
+    double msVNorm = std::chrono::duration<double, std::milli>(tVNormEnd - tFNormEnd).count();
+    double msOctree = std::chrono::duration<double, std::milli>(tEnd - tVNormEnd).count();
+    double msTotal = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
+
+    if (msTotal > 5.0) {
+        sculpt_log("[Mesh Diagnostics] postInit | Verts: %d, Faces: %d | Total: %.2fms (Topology [%s]: %.2fms, FaceNorms: %.2fms, VertNorms: %.2fms, OctreeBuild: %.2fms)\n",
+                  nbVerts, nbFaces, msTotal, computedTopology ? "Build" : "EdgesOnly", msTopology, msFNorm, msVNorm, msOctree);
+    }
 }
 
 void Mesh::updateAfterLayerBake() {
@@ -962,6 +983,8 @@ void Mesh::mirror(int axisIndex, bool positiveToNegative, SymmetryMode mode) {
 }
 
 void Mesh::bakeScale() {
+    auto tStart = std::chrono::high_resolution_clock::now();
+
     float scaleX = glm::length(glm::vec3(matrix[0]));
     float scaleY = glm::length(glm::vec3(matrix[1]));
     float scaleZ = glm::length(glm::vec3(matrix[2]));
@@ -976,12 +999,16 @@ void Mesh::bakeScale() {
                                  0.0f, 0.0f, 1.0f / scaleZ);
 
         int n = nbVerts;
+        bool hasNormals = !normals.empty();
+        bool isUniformScale = (std::abs(scaleX - scaleY) < 1e-4f && std::abs(scaleY - scaleZ) < 1e-4f);
+
+#pragma omp parallel for schedule(static) if(n > 2000)
         for (int i = 0; i < n; ++i) {
             verts[i * 3]     *= scaleX;
             verts[i * 3 + 1] *= scaleY;
             verts[i * 3 + 2] *= scaleZ;
 
-            if (!normals.empty()) {
+            if (hasNormals && !isUniformScale) {
                 glm::vec3 nVec(normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]);
                 nVec = glm::normalize(invScaleMatrix * nVec);
                 normals[i * 3]     = nVec.x;
@@ -989,14 +1016,71 @@ void Mesh::bakeScale() {
                 normals[i * 3 + 2] = nVec.z;
             }
         }
+        auto tLoopEnd = std::chrono::high_resolution_clock::now();
+        bumpVertsGeneration();
+
 
         matrix[0] = glm::vec4(glm::vec3(matrix[0]) / scaleX, matrix[0].w);
         matrix[1] = glm::vec4(glm::vec3(matrix[1]) / scaleY, matrix[1].w);
         matrix[2] = glm::vec4(glm::vec3(matrix[2]) / scaleZ, matrix[2].w);
 
-        postInit();
+        scaleFaceNormalsBoxesCentersAndOctree(scaleX, scaleY, scaleZ);
+
+        auto tDone = std::chrono::high_resolution_clock::now();
         isDirty = true;
+
+        double msLoop = std::chrono::duration<double, std::milli>(tLoopEnd - tStart).count();
+        double msTotal = std::chrono::duration<double, std::milli>(tDone - tStart).count();
+        sculpt_log("[BAKE SCALE PROFILE] Baked scale (sx:%.3f, sy:%.3f, sz:%.3f) for %d verts in %.2fms (VertLoop: %.2fms, FastUpdate: %.2fms)\n",
+                  scaleX, scaleY, scaleZ, nbVerts, msTotal, msLoop, msTotal - msLoop);
     }
 }
+
+void Mesh::scaleFaceNormalsBoxesCentersAndOctree(float scaleX, float scaleY, float scaleZ) {
+    if (scaleX < 1e-5f) scaleX = 1.0f;
+    if (scaleY < 1e-5f) scaleY = 1.0f;
+    if (scaleZ < 1e-5f) scaleZ = 1.0f;
+
+    m_localRadiusDirty = true;
+    vertProxy = verts;
+
+    if (!faceNormals.empty() && !faceBoxes.empty() && !faceCenters.empty()) {
+        int nf = nbFaces;
+        float fnScaleX = scaleY * scaleZ;
+        float fnScaleY = scaleZ * scaleX;
+        float fnScaleZ = scaleX * scaleY;
+
+#pragma omp parallel for schedule(static) if(nf > 2000)
+        for (int i = 0; i < nf; ++i) {
+            faceNormals[i * 3]     *= fnScaleX;
+            faceNormals[i * 3 + 1] *= fnScaleY;
+            faceNormals[i * 3 + 2] *= fnScaleZ;
+
+            float bx1 = faceBoxes[i * 6]     * scaleX;
+            float bx2 = faceBoxes[i * 6 + 3] * scaleX;
+            faceBoxes[i * 6]     = std::min(bx1, bx2);
+            faceBoxes[i * 6 + 3] = std::max(bx1, bx2);
+
+            float by1 = faceBoxes[i * 6 + 1] * scaleY;
+            float by2 = faceBoxes[i * 6 + 4] * scaleY;
+            faceBoxes[i * 6 + 1] = std::min(by1, by2);
+            faceBoxes[i * 6 + 4] = std::max(by1, by2);
+
+            float bz1 = faceBoxes[i * 6 + 2] * scaleZ;
+            float bz2 = faceBoxes[i * 6 + 5] * scaleZ;
+            faceBoxes[i * 6 + 2] = std::min(bz1, bz2);
+            faceBoxes[i * 6 + 5] = std::max(bz1, bz2);
+
+            faceCenters[i * 3]     *= scaleX;
+            faceCenters[i * 3 + 1] *= scaleY;
+            faceCenters[i * 3 + 2] *= scaleZ;
+        }
+
+        octree.scale(scaleX, scaleY, scaleZ);
+    } else {
+        postInit();
+    }
+}
+
 
 

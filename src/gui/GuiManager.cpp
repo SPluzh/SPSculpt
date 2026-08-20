@@ -1,7 +1,9 @@
 #include <GLES3/gl3.h>
+#include <future>
 #include "gui/GuiManager.h"
 #include "common/IniFile.h"
 #include "mesh/Multimesh.h"
+#include "mesh/NormalCalc.h"
 #include "common/Constants.h"
 #include "common/Version.h"
 #include "common/Logger.h"
@@ -1620,6 +1622,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
                         if (meshHasMask) {
                             if (ImGui::Button("Center Pivot on Unmasked", ImVec2(-1, 26))) {
+                                auto tBtnStart = std::chrono::high_resolution_clock::now();
                                 scene.pushHistoryState();
                                 glm::vec3 centerSum(0.0f);
                                 float weightSum = 0.0f;
@@ -1663,10 +1666,14 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                 selectedMesh->matrix = targetMatrix;
                                 selectedMesh->postInit();
                                 selectedMesh->isDirty = true;
+                                double totalBtnMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tBtnStart).count();
+                                sculpt_log("[TRANSFORM TOOL PROFILE] Center Pivot on Unmasked | Mesh: '%s' (Verts: %d) | Total: %.2fms\n",
+                                          selectedMesh->outlinerName.c_str(), selectedMesh->nbVerts, totalBtnMs);
                             }
                         }
 
                         if (ImGui::Button("Reset Matrix", ImVec2(-1, 26))) {
+                            auto tBtnStart = std::chrono::high_resolution_clock::now();
                             scene.pushHistoryState();
                             if (meshHasMask && !m_editPivot) {
                                 glm::mat4 pivotStartMatrix = selectedMesh->matrix;
@@ -1699,6 +1706,9 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                 selectedMesh->matrix = glm::mat4(1.0f);
                             }
                             selectedMesh->isDirty = true;
+                            double totalBtnMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tBtnStart).count();
+                            sculpt_log("[TRANSFORM TOOL PROFILE] Reset Matrix | Mesh: '%s' (Verts: %d) | Total: %.2fms\n",
+                                      selectedMesh->outlinerName.c_str(), selectedMesh->nbVerts, totalBtnMs);
                         }
                     }
                 }
@@ -3615,22 +3625,19 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             static std::vector<float> transformStartVerts;
             static std::vector<float> transformStartNormals;
             static bool transformHasMask = false;
+            static std::future<void> transformHistoryFuture;
 
             bool isUsingGizmo = ImGuizmo::IsUsing();
             bool isMovingPivot = m_editPivot || ImGui::GetIO().KeyAlt;
 
             if (isUsingGizmo && !wasUsingGizmo) {
-                scene.pushHistoryState();
+                auto tStart = std::chrono::high_resolution_clock::now();
+
                 pivotStartMatrix = selectedMesh->matrix;
                 draggedPivot = isMovingPivot;
 
-                transformStartVerts = selectedMesh->verts;
-                transformStartNormals = selectedMesh->normals;
                 transformHasMask = false;
-
-                glm::vec4 pivotWorld = matrix[3];
-                transformPivotStartLocal = glm::vec3(glm::inverse(pivotStartMatrix) * pivotWorld);
-
+                auto tMask0 = std::chrono::high_resolution_clock::now();
                 if (!draggedPivot && !selectedMesh->materials.empty()) {
                     for (int i = 0; i < selectedMesh->nbVerts; ++i) {
                         if (selectedMesh->materials[i * 3 + 2] < 0.999f) {
@@ -3639,6 +3646,27 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         }
                     }
                 }
+                double maskScanMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tMask0).count();
+
+                double vertCopyMs = 0.0;
+                if (draggedPivot || transformHasMask || sculpt.getUseSym()) {
+                    auto tCopy0 = std::chrono::high_resolution_clock::now();
+                    transformStartVerts = selectedMesh->verts;
+                    transformStartNormals = selectedMesh->normals;
+                    vertCopyMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tCopy0).count();
+                } else {
+                    transformStartVerts.clear();
+                    transformStartNormals.clear();
+                }
+
+                glm::vec4 pivotWorld = matrix[3];
+                transformPivotStartLocal = glm::vec3(glm::inverse(pivotStartMatrix) * pivotWorld);
+
+                double totalStartMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStart).count();
+
+                sculpt_log("[TRANSFORM TOOL PROFILE] Drag Start | Mesh: '%s' (ID: %u, Verts: %d) | Total: %.2fms | BufferCopy: %.2fms | MaskScan: %.2fms (HasMask: %d, Sym: %d, DraggedPivot: %d)\n",
+                          selectedMesh->outlinerName.c_str(), selectedMesh->m_id, selectedMesh->nbVerts,
+                          totalStartMs, vertCopyMs, maskScanMs, transformHasMask ? 1 : 0, sculpt.getUseSym() ? 1 : 0, isMovingPivot ? 1 : 0);
             }
 
             ImGuizmo::OPERATION op = ImGuizmo::UNIVERSAL;
@@ -3666,15 +3694,25 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 glm::value_ptr(view), glm::value_ptr(proj),
                 op, ImGuizmo::LOCAL, glm::value_ptr(matrix)
             )) {
+                auto tFrameStart = std::chrono::high_resolution_clock::now();
+
                 if (draggedPivot) {
                     glm::mat4 deltaLocalMatrix = glm::inverse(pivotStartMatrix) * matrix;
                     glm::mat4 deltaLocalMatrixInv = glm::inverse(deltaLocalMatrix);
                     selectedMesh->matrix = matrix;
                     selectedMesh->editMatrix = deltaLocalMatrixInv;
                     selectedMesh->enMatrix = glm::transpose(glm::inverse(glm::mat3(deltaLocalMatrixInv)));
+
+                    double frameMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tFrameStart).count();
+                    if (frameMs > 0.5) {
+                        sculpt_log("[TRANSFORM TOOL PROFILE] Pivot Drag Frame | Mesh: '%s' (Verts: %d) | Total: %.2fms\n",
+                                  selectedMesh->outlinerName.c_str(), selectedMesh->nbVerts, frameMs);
+                    }
                 } else {
                     bool useSymTransform = sculpt.getUseSym();
                     if ((transformHasMask || useSymTransform) && !transformStartVerts.empty() && transformStartVerts.size() == selectedMesh->verts.size()) {
+                        auto tSetupStart = std::chrono::high_resolution_clock::now();
+
                         selectedMesh->matrix = pivotStartMatrix;
                         glm::mat4 deltaLocal = glm::inverse(pivotStartMatrix) * matrix;
                         glm::mat3 normalMatrixPrimary = glm::transpose(glm::inverse(glm::mat3(deltaLocal)));
@@ -3737,7 +3775,15 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         }
                         glm::mat3 normalMatrixSym = glm::transpose(glm::inverse(glm::mat3(deltaSym)));
 
+                        double setupMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tSetupStart).count();
+
+                        if (transformHistoryFuture.valid()) {
+                            transformHistoryFuture.wait();
+                        }
+
+                        auto tLoopStart = std::chrono::high_resolution_clock::now();
                         int nbVerts = selectedMesh->nbVerts;
+#pragma omp parallel for schedule(static) if(nbVerts > 2000)
                         for (int i = 0; i < nbVerts; ++i) {
                             float m = (transformHasMask && selectedMesh->materials.size() == (size_t)nbVerts * 3)
                                       ? selectedMesh->materials[i * 3 + 2]
@@ -3828,20 +3874,43 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             selectedMesh->normals[i * 3 + 1] = nNew.y;
                             selectedMesh->normals[i * 3 + 2] = nNew.z;
                         }
+                        double loopMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tLoopStart).count();
 
                         selectedMesh->isVertexDirty = true;
                         selectedMesh->dirtyVertMin = 0;
                         selectedMesh->dirtyVertMax = nbVerts - 1;
+
+                        double totalFrameMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tFrameStart).count();
+                        if (totalFrameMs > 0.5) {
+                            sculpt_log("[TRANSFORM TOOL PROFILE] Vert Deform Drag Frame | Mesh: '%s' (Verts: %d) | Total: %.2fms | Setup: %.2fms | VertLoop: %.2fms (HasMask: %d, Sym: %d)\n",
+                                      selectedMesh->outlinerName.c_str(), nbVerts, totalFrameMs, setupMs, loopMs, transformHasMask ? 1 : 0, useSymTransform ? 1 : 0);
+                        }
                     } else {
                         selectedMesh->matrix = matrix;
+                        double totalFrameMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tFrameStart).count();
+                        if (totalFrameMs > 0.5) {
+                            sculpt_log("[TRANSFORM TOOL PROFILE] Fast Matrix Drag Frame | Mesh: '%s' (Verts: %d) | Total: %.2fms\n",
+                                      selectedMesh->outlinerName.c_str(), selectedMesh->nbVerts, totalFrameMs);
+                        }
                     }
                 }
-                selectedMesh->isDirty = true;
             }
 
             if (!isUsingGizmo && wasUsingGizmo) {
+                auto tEndStart = std::chrono::high_resolution_clock::now();
+                double applyVertsMs = 0.0;
+                double postInitMs = 0.0;
+                double bakeScaleMs = 0.0;
+
+                TransformUndoEntry undoEntry("Transform Tool");
+                TransformMeshState meshUndoState;
+                meshUndoState.meshId = selectedMesh->getID();
+                meshUndoState.beforeMatrix = pivotStartMatrix;
+
                 if (draggedPivot) {
                     if (selectedMesh->editMatrix != glm::mat4(1.0f)) {
+                        auto tV0 = std::chrono::high_resolution_clock::now();
+#pragma omp parallel for schedule(static) if(selectedMesh->nbVerts > 2000)
                         for (int i = 0; i < selectedMesh->nbVerts; ++i) {
                             glm::vec4 pos(selectedMesh->verts[i * 3], selectedMesh->verts[i * 3 + 1], selectedMesh->verts[i * 3 + 2], 1.0f);
                             glm::vec4 newPos = selectedMesh->editMatrix * pos;
@@ -3855,25 +3924,129 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             selectedMesh->normals[i * 3 + 1] = newNormal.y;
                             selectedMesh->normals[i * 3 + 2] = newNormal.z;
                         }
+                        applyVertsMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tV0).count();
+
                         selectedMesh->editMatrix = glm::mat4(1.0f);
                         selectedMesh->enMatrix = glm::mat3(1.0f);
-                        selectedMesh->postInit();
+
+                        auto tPI = std::chrono::high_resolution_clock::now();
+                        selectedMesh->vertProxy = selectedMesh->verts;
+                        selectedMesh->invalidateLocalRadius();
+                        selectedMesh->bumpVertsGeneration();
+                        if (!selectedMesh->faceNormals.empty() && !selectedMesh->faceBoxes.empty() && !selectedMesh->faceCenters.empty()) {
+                            updateFaceNormalsAndBoxes(
+                                selectedMesh->verts.data(), selectedMesh->nbVerts,
+                                selectedMesh->faces.data(), selectedMesh->nbFaces,
+                                nullptr, -1,
+                                selectedMesh->faceNormals.data(),
+                                selectedMesh->faceBoxes.data(),
+                                selectedMesh->faceCenters.data()
+                            );
+                            if (!selectedMesh->vrfStartCount.empty() && !selectedMesh->vertRingFace.empty()) {
+                                updateVertexNormals(
+                                    nullptr, -1, selectedMesh->nbVerts,
+                                    selectedMesh->vrfStartCount.data(),
+                                    selectedMesh->vertRingFace.data(),
+                                    selectedMesh->faceNormals.data(),
+                                    selectedMesh->normals.data()
+                                );
+                            }
+                            selectedMesh->octree.update(
+                                selectedMesh->verts.data(), selectedMesh->nbVerts,
+                                selectedMesh->faces.data(), selectedMesh->nbFaces,
+                                selectedMesh->faceBoxes.data(),
+                                nullptr, -1
+                            );
+                        } else {
+                            selectedMesh->postInit();
+                        }
+                        postInitMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tPI).count();
                         selectedMesh->isDirty = true;
                     }
+                    meshUndoState.hasVertexDeformation = true;
+                    meshUndoState.beforeVerts = std::move(transformStartVerts);
+                    meshUndoState.afterVerts = selectedMesh->verts;
+                    meshUndoState.beforeNormals = std::move(transformStartNormals);
+                    meshUndoState.afterNormals = selectedMesh->normals;
                 } else if (transformHasMask || sculpt.getUseSym()) {
                     selectedMesh->matrix = pivotStartMatrix;
-                    selectedMesh->postInit();
+
+                    auto tPI = std::chrono::high_resolution_clock::now();
+                    selectedMesh->vertProxy = selectedMesh->verts;
+                    selectedMesh->invalidateLocalRadius();
+                    selectedMesh->bumpVertsGeneration();
+                    if (!selectedMesh->faceNormals.empty() && !selectedMesh->faceBoxes.empty() && !selectedMesh->faceCenters.empty()) {
+                        updateFaceNormalsAndBoxes(
+                            selectedMesh->verts.data(), selectedMesh->nbVerts,
+                            selectedMesh->faces.data(), selectedMesh->nbFaces,
+                            nullptr, -1,
+                            selectedMesh->faceNormals.data(),
+                            selectedMesh->faceBoxes.data(),
+                            selectedMesh->faceCenters.data()
+                        );
+                        if (!selectedMesh->vrfStartCount.empty() && !selectedMesh->vertRingFace.empty()) {
+                            updateVertexNormals(
+                                nullptr, -1, selectedMesh->nbVerts,
+                                selectedMesh->vrfStartCount.data(),
+                                selectedMesh->vertRingFace.data(),
+                                selectedMesh->faceNormals.data(),
+                                selectedMesh->normals.data()
+                            );
+                        }
+                        selectedMesh->octree.update(
+                            selectedMesh->verts.data(), selectedMesh->nbVerts,
+                            selectedMesh->faces.data(), selectedMesh->nbFaces,
+                            selectedMesh->faceBoxes.data(),
+                            nullptr, -1
+                        );
+                    } else {
+                        selectedMesh->postInit();
+                    }
+                    postInitMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tPI).count();
                     selectedMesh->isDirty = true;
+
+                    meshUndoState.hasVertexDeformation = true;
+                    meshUndoState.beforeVerts = std::move(transformStartVerts);
+                    meshUndoState.afterVerts = selectedMesh->verts;
+                    meshUndoState.beforeNormals = std::move(transformStartNormals);
+                    meshUndoState.afterNormals = selectedMesh->normals;
+                } else {
+                    float sx = 1.0f, sy = 1.0f, sz = 1.0f;
+                    if (selectedMesh) {
+                        sx = glm::length(glm::vec3(selectedMesh->matrix[0]));
+                        sy = glm::length(glm::vec3(selectedMesh->matrix[1]));
+                        sz = glm::length(glm::vec3(selectedMesh->matrix[2]));
+
+                        auto tBS = std::chrono::high_resolution_clock::now();
+                        selectedMesh->bakeScale();
+                        bakeScaleMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tBS).count();
+                    }
+
+                    if (std::abs(sx - 1.0f) > 1e-4f || std::abs(sy - 1.0f) > 1e-4f || std::abs(sz - 1.0f) > 1e-4f) {
+                        meshUndoState.bakedScale = true;
+                        meshUndoState.scaleX = sx;
+                        meshUndoState.scaleY = sy;
+                        meshUndoState.scaleZ = sz;
+                    }
                 }
+
+                meshUndoState.afterMatrix = selectedMesh->matrix;
+                undoEntry.m_meshStates.push_back(std::move(meshUndoState));
+                g_undoManager.pushTransformChange(scene, std::move(undoEntry));
+
                 draggedPivot = false;
                 transformHasMask = false;
                 transformStartVerts.clear();
                 transformStartVerts.shrink_to_fit();
                 transformStartNormals.clear();
                 transformStartNormals.shrink_to_fit();
-                if (selectedMesh) {
-                    selectedMesh->bakeScale();
-                }
+
+                double totalReleaseMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tEndStart).count();
+                size_t undoMemBytes = undoEntry.getMemoryUsage();
+
+                sculpt_log("[TRANSFORM TOOL PROFILE] Drag End / Finalize | Mesh: '%s' (ID: %u, Verts: %d) | Total: %.2fms | ApplyVerts: %.2fms | postInit: %.2fms | BakeScale: %.2fms | UndoMem: %.2f KB\n",
+                          selectedMesh->outlinerName.c_str(), selectedMesh->m_id, selectedMesh->nbVerts,
+                          totalReleaseMs, applyVertsMs, postInitMs, bakeScaleMs, undoMemBytes / 1024.0f);
             }
             wasUsingGizmo = isUsingGizmo;
 
@@ -3912,8 +4085,14 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     }
 
                     auto applyTargetMatrix = [&](Mesh* mesh, const glm::mat4& targetMatrix, bool editPivot) {
-                        scene.pushHistoryState();
+                        auto tStart = std::chrono::high_resolution_clock::now();
+                        glm::mat4 beforeMatrix = mesh->matrix;
+                        std::vector<float> beforeVerts;
+                        std::vector<float> beforeNormals;
+
                         if (editPivot) {
+                            beforeVerts = mesh->verts;
+                            beforeNormals = mesh->normals;
                             glm::mat4 deltaLocalMatrix = glm::inverse(mesh->matrix) * targetMatrix;
                             glm::mat4 deltaLocalMatrixInv = glm::inverse(deltaLocalMatrix);
                             glm::mat3 enMatrix = glm::transpose(glm::inverse(glm::mat3(deltaLocalMatrixInv)));
@@ -3944,6 +4123,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                 }
                             }
                             if (hasMask) {
+                                beforeVerts = mesh->verts;
+                                beforeNormals = mesh->normals;
                                 glm::mat4 pivotStartMatrix = mesh->matrix;
                                 glm::mat4 invMnew = glm::inverse(targetMatrix);
                                 glm::mat4 startToNewLocal = invMnew * pivotStartMatrix;
@@ -3974,7 +4155,27 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             }
                             mesh->isDirty = true;
                         }
+
+                        TransformUndoEntry entry("Transform Target Matrix");
+                        TransformMeshState state;
+                        state.meshId = mesh->getID();
+                        state.beforeMatrix = beforeMatrix;
+                        state.afterMatrix = mesh->matrix;
+                        if (!beforeVerts.empty()) {
+                            state.hasVertexDeformation = true;
+                            state.beforeVerts = std::move(beforeVerts);
+                            state.afterVerts = mesh->verts;
+                            state.beforeNormals = std::move(beforeNormals);
+                            state.afterNormals = mesh->normals;
+                        }
+                        entry.m_meshStates.push_back(std::move(state));
+                        g_undoManager.pushTransformChange(scene, std::move(entry));
+
+                        double totalMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStart).count();
+                        sculpt_log("[TRANSFORM TOOL PROFILE] Apply Target Matrix | Mesh: '%s' (Verts: %d) | Total: %.2fms | EditPivot: %d\n",
+                                  mesh->outlinerName.c_str(), mesh->nbVerts, totalMs, editPivot ? 1 : 0);
                     };
+
 
                     ImGui::SameLine();
                     if (ImGui::Button(ICON_LC_TARGET "##gotoaxis")) {

@@ -226,13 +226,13 @@ void UndoManager::pushTopologyChange(Scene& scene,
                                       std::function<void()> operation) {
     auto entry = std::make_unique<TopologyUndoEntry>();
     entry->description = description;
-    entry->before = scene.saveCurrentState();
+    entry->before = scene.saveCurrentState(true);
     
     if (operation) {
         operation();
     }
 
-    entry->after = scene.saveCurrentState();
+    entry->after = scene.saveCurrentState(true);
     sculpt_log_lvl(LogLevel::Info, "[Undo] Topology change pushed: '%s' (size: %.2f MB)\n",
                    description.c_str(), entry->getMemoryUsage() / (1024.0f * 1024.0f));
     pushEntry(std::move(entry));
@@ -269,7 +269,14 @@ void UndoManager::pushMetaChange(Scene& scene,
 }
 
 void UndoManager::pushLegacyState(Scene& scene, const std::string& description) {
-    pushTopologyChange(scene, description, [](){});
+    auto entry = std::make_unique<TopologyUndoEntry>();
+    entry->description = description;
+    entry->before = scene.saveCurrentState(false);
+    entry->after = entry->before;
+    sculpt_log_lvl(LogLevel::Info, "[Undo] Legacy/Transform change pushed: '%s' (size: %.2f MB)\n",
+                   description.c_str(), entry->getMemoryUsage() / (1024.0f * 1024.0f));
+    pushEntry(std::move(entry));
+    scene.setModified(true);
 }
 
 void UndoManager::pushEntry(std::unique_ptr<UndoEntry> entry) {
@@ -443,16 +450,128 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
         sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] Topology apply (%s) completed in %.2f ms\n",
                        isUndo ? "UNDO" : "REDO", msTotal);
     } else if (entry->getType() == UndoEntryType::SceneMeta) {
-        auto* e = static_cast<SceneMetaUndoEntry*>(entry);
-        sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] Applying SceneMeta %s: '%s'\n",
-                       isUndo ? "UNDO" : "REDO", e->getDescription().c_str());
-        scene.restoreState(isUndo ? e->before : e->after);
-        auto tDone = std::chrono::high_resolution_clock::now();
-        double msTotal = std::chrono::duration<double, std::milli>(tDone - tStart).count();
-        sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] SceneMeta apply (%s) completed in %.2f ms\n",
-                       isUndo ? "UNDO" : "REDO", msTotal);
+        if (auto* transformEntry = dynamic_cast<TransformUndoEntry*>(entry)) {
+            sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] Applying Transform %s: '%s'\n",
+                           isUndo ? "UNDO" : "REDO", transformEntry->getDescription().c_str());
+
+            for (const auto& item : transformEntry->m_meshStates) {
+                Mesh* mesh = scene.getMeshById(item.meshId);
+                if (!mesh) {
+                    sculpt_log_lvl(LogLevel::Warning, "[Undo Diagnostics] Target mesh ID %u not found for transform entry\n", item.meshId);
+                    continue;
+                }
+
+                auto tStateStart = std::chrono::high_resolution_clock::now();
+                const char* modeStr = "PureMatrix";
+
+                if (item.hasVertexDeformation) {
+                    modeStr = "VertexDeform";
+                    mesh->verts = isUndo ? item.beforeVerts : item.afterVerts;
+                    if (!item.beforeNormals.empty() && !item.afterNormals.empty()) {
+                        mesh->normals = isUndo ? item.beforeNormals : item.afterNormals;
+                    }
+                    mesh->matrix = isUndo ? item.beforeMatrix : item.afterMatrix;
+                    mesh->vertProxy = mesh->verts;
+                    mesh->invalidateLocalRadius();
+                    mesh->bumpVertsGeneration();
+
+                    if (!mesh->faceNormals.empty() && !mesh->faceBoxes.empty() && !mesh->faceCenters.empty()) {
+                        updateFaceNormalsAndBoxes(
+                            mesh->verts.data(), mesh->nbVerts,
+                            mesh->faces.data(), mesh->nbFaces,
+                            nullptr, -1,
+                            mesh->faceNormals.data(),
+                            mesh->faceBoxes.data(),
+                            mesh->faceCenters.data()
+                        );
+                        if (!mesh->vrfStartCount.empty() && !mesh->vertRingFace.empty()) {
+                            updateVertexNormals(
+                                nullptr, -1, mesh->nbVerts,
+                                mesh->vrfStartCount.data(),
+                                mesh->vertRingFace.data(),
+                                mesh->faceNormals.data(),
+                                mesh->normals.data()
+                            );
+                        }
+                        mesh->octree.update(
+                            mesh->verts.data(), mesh->nbVerts,
+                            mesh->faces.data(), mesh->nbFaces,
+                            mesh->faceBoxes.data(),
+                            nullptr, -1
+                        );
+                    } else {
+                        mesh->postInit();
+                    }
+
+                    mesh->dirtyVertMin = 0;
+                    mesh->dirtyVertMax = std::max(0, mesh->nbVerts - 1);
+                    mesh->isVertexDirty = true;
+                } else if (item.bakedScale) {
+                    modeStr = "BakedScale";
+                    float sx = isUndo ? (1.0f / item.scaleX) : item.scaleX;
+                    float sy = isUndo ? (1.0f / item.scaleY) : item.scaleY;
+                    float sz = isUndo ? (1.0f / item.scaleZ) : item.scaleZ;
+
+                    int n = mesh->nbVerts;
+#pragma omp parallel for schedule(static) if(n > 2000)
+                    for (int i = 0; i < n; ++i) {
+                        mesh->verts[i * 3]     *= sx;
+                        mesh->verts[i * 3 + 1] *= sy;
+                        mesh->verts[i * 3 + 2] *= sz;
+                    }
+                    mesh->bumpVertsGeneration();
+                    mesh->scaleFaceNormalsBoxesCentersAndOctree(sx, sy, sz);
+                    mesh->matrix = isUndo ? item.beforeMatrix : item.afterMatrix;
+
+                    mesh->dirtyVertMin = 0;
+                    mesh->dirtyVertMax = std::max(0, mesh->nbVerts - 1);
+                    mesh->isVertexDirty = true;
+                } else {
+                    modeStr = "PureMatrix";
+                    mesh->matrix = isUndo ? item.beforeMatrix : item.afterMatrix;
+                    // Matrix changed - no vertex VBO upload needed!
+                }
+
+                auto tStateDone = std::chrono::high_resolution_clock::now();
+                double msState = std::chrono::duration<double, std::milli>(tStateDone - tStateStart).count();
+                sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] Applied Transform (%s) | Mesh ID: %u | Mode: %s | Verts: %d | Time: %.2fms\n",
+                               isUndo ? "UNDO" : "REDO", item.meshId, modeStr, mesh->nbVerts, msState);
+            }
+
+            auto tDone = std::chrono::high_resolution_clock::now();
+            double msTotal = std::chrono::duration<double, std::milli>(tDone - tStart).count();
+            sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] Transform apply (%s) completed in %.2f ms\n",
+                           isUndo ? "UNDO" : "REDO", msTotal);
+        } else if (auto* e = dynamic_cast<SceneMetaUndoEntry*>(entry)) {
+            sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] Applying SceneMeta %s: '%s'\n",
+                           isUndo ? "UNDO" : "REDO", e->getDescription().c_str());
+            scene.restoreState(isUndo ? e->before : e->after);
+            auto tDone = std::chrono::high_resolution_clock::now();
+            double msTotal = std::chrono::duration<double, std::milli>(tDone - tStart).count();
+            sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] SceneMeta apply (%s) completed in %.2f ms\n",
+                           isUndo ? "UNDO" : "REDO", msTotal);
+        }
     }
 }
+
+void UndoManager::pushTransformChange(Scene& scene, TransformUndoEntry entry) {
+    if (m_activeSculptEntry) {
+        endSculptStroke(scene);
+    }
+    size_t memBytes = entry.getMemoryUsage();
+    uint32_t targetMeshId = 0;
+    bool hasDeform = false, hasScale = false;
+    for (const auto& s : entry.m_meshStates) {
+        if (s.hasVertexDeformation) hasDeform = true;
+        if (s.bakedScale) hasScale = true;
+        targetMeshId = s.meshId;
+    }
+    sculpt_log_lvl(LogLevel::Info, "[Undo] Transform change pushed: '%s' (MeshID: %u, Deform: %d, Scale: %d, size: %.2f KB)\n",
+                   entry.getDescription().c_str(), targetMeshId, hasDeform ? 1 : 0, hasScale ? 1 : 0, memBytes / 1024.0f);
+    pushEntry(std::make_unique<TransformUndoEntry>(std::move(entry)));
+    scene.setModified(true);
+}
+
 
 void UndoManager::undo(Scene& scene) {
     if (m_activeSculptEntry) {
@@ -461,7 +580,7 @@ void UndoManager::undo(Scene& scene) {
     }
 
     if (m_undoStack.empty()) {
-        sculpt_log_lvl(LogLevel::Warning, "[Undo] Nothing to undo!\n");
+        sculpt_log_lvl(LogLevel::Warning, "[Undo] Nothing to undo! (Undo stack empty, Redo stack size: %zu)\n", m_redoStack.size());
         return;
     }
 
@@ -470,8 +589,11 @@ void UndoManager::undo(Scene& scene) {
     auto entry = std::move(m_undoStack.back());
     m_undoStack.pop_back();
 
-    sculpt_log_lvl(LogLevel::Info, "[Undo] START UNDO: '%s' (UndoStack size left: %zu)\n",
-                   entry->getDescription().c_str(), m_undoStack.size());
+    sculpt_log_lvl(LogLevel::Info, "[Undo] START UNDO: '%s' (Type: %s, UndoStack size left: %zu, Total Mem: %.2f MB)\n",
+                   entry->getDescription().c_str(),
+                   entry->getType() == UndoEntryType::Sculpt ? "Sculpt" :
+                   (entry->getType() == UndoEntryType::Topology ? "Topology" : "SceneMeta"),
+                   m_undoStack.size(), getTotalMemoryUsage() / (1024.0f * 1024.0f));
     applyEntry(entry.get(), scene, true);
 
     m_redoStack.push_back(std::move(entry));
@@ -489,7 +611,7 @@ void UndoManager::redo(Scene& scene) {
     }
 
     if (m_redoStack.empty()) {
-        sculpt_log_lvl(LogLevel::Warning, "[Undo] Nothing to redo!\n");
+        sculpt_log_lvl(LogLevel::Warning, "[Undo] Nothing to redo! (Redo stack empty, Undo stack size: %zu)\n", m_undoStack.size());
         return;
     }
 
@@ -498,8 +620,11 @@ void UndoManager::redo(Scene& scene) {
     auto entry = std::move(m_redoStack.back());
     m_redoStack.pop_back();
 
-    sculpt_log_lvl(LogLevel::Info, "[Undo] START REDO: '%s' (RedoStack size left: %zu)\n",
-                   entry->getDescription().c_str(), m_redoStack.size());
+    sculpt_log_lvl(LogLevel::Info, "[Undo] START REDO: '%s' (Type: %s, RedoStack size left: %zu, Total Mem: %.2f MB)\n",
+                   entry->getDescription().c_str(),
+                   entry->getType() == UndoEntryType::Sculpt ? "Sculpt" :
+                   (entry->getType() == UndoEntryType::Topology ? "Topology" : "SceneMeta"),
+                   m_redoStack.size(), getTotalMemoryUsage() / (1024.0f * 1024.0f));
     applyEntry(entry.get(), scene, false);
 
     m_undoStack.push_back(std::move(entry));

@@ -151,6 +151,8 @@ public:
                 const uint32_t* facesPtrVal, int nbFacesVal,
                 const float* boxesPtrVal, const uint32_t* iFacesPtr, int nbIFacesVal);
 
+    void scale(float sx, float sy, float sz);
+
     void rebuildInternal();
 
 private:

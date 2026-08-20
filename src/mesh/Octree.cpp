@@ -74,6 +74,7 @@ void Octree::rebuildInternal() {
     float ymax = -std::numeric_limits<float>::infinity();
     float zmax = -std::numeric_limits<float>::infinity();
 
+#pragma omp parallel for reduction(min:xmin,ymin,zmin) reduction(max:xmax,ymax,zmax) if(nbVerts > 5000)
     for (int i = 0; i < nbVerts; ++i) {
         float vx = vertsData[i * 3];
         float vy = vertsData[i * 3 + 1];
@@ -673,4 +674,21 @@ std::vector<uint32_t> Octree::collectIntersectRay(float vx, float vy, float vz, 
         }
     }
     return collectFaces;
+}
+
+void Octree::scale(float sx, float sy, float sz) {
+    if (!root) return;
+    float asx = std::abs(sx);
+    float asy = std::abs(sy);
+    float asz = std::abs(sz);
+    for (int i = 0; i < poolIndex; ++i) {
+        OctreeCell* cell = cellPool[i];
+        if (!cell) continue;
+        cell->aabbLoose[0] *= asx; cell->aabbLoose[3] *= asx;
+        cell->aabbLoose[1] *= asy; cell->aabbLoose[4] *= asy;
+        cell->aabbLoose[2] *= asz; cell->aabbLoose[5] *= asz;
+        cell->aabbSplit[0] *= asx; cell->aabbSplit[3] *= asx;
+        cell->aabbSplit[1] *= asy; cell->aabbSplit[4] *= asy;
+        cell->aabbSplit[2] *= asz; cell->aabbSplit[5] *= asz;
+    }
 }

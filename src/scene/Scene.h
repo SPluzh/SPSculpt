@@ -21,6 +21,7 @@ struct MeshState {
     std::vector<uint8_t> vertOnEdge;
     std::vector<uint8_t> vertVisible;
     std::vector<uint8_t> faceVisible;
+    uint64_t vertsGeneration = 0;
     int nbVerts = 0;
     int nbFaces = 0;
 
@@ -52,7 +53,7 @@ private:
     friend class GuiManager;
 
 public:
-    HistoryState saveCurrentState() const;
+    HistoryState saveCurrentState(bool includeTopology = false) const;
     void restoreState(const HistoryState& state);
     Mesh* getMeshById(uint32_t id) const;
     enum class SplitMode {

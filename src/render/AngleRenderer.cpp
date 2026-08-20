@@ -2839,9 +2839,9 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
 
     if (uploaded) {
         double uploadMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tUploadStart).count();
-        if (uploadMs > 1.0) {
-            sculpt_log("[GPU UPLOAD] %s Upload: %.2fms | Verts range: %u..%u (Total %d)\n",
-                       isFullUpload ? "FULL" : "Incremental", uploadMs,
+        if (uploadMs > 0.5) {
+            sculpt_log("[GPU UPLOAD] %s Upload: %.2fms | Mesh ID: %u | Verts range: %u..%u (Total %d)\n",
+                       isFullUpload ? "FULL" : "Incremental", uploadMs, mesh->getID(),
                        mesh->dirtyVertMin, mesh->dirtyVertMax, mesh->nbVerts);
         }
     }

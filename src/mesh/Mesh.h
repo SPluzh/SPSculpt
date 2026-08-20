@@ -225,10 +225,18 @@ public:
         }
     }
 
+    uint64_t getVertsGeneration() const { return m_vertsGeneration; }
+    void bumpVertsGeneration() { m_vertsGeneration++; }
+
     void initTexCoordsDataFromOBJData(const std::vector<float>& uvAr, const std::vector<uint32_t>& uvfArOrig);
     void updateMatrices(const Camera& camera);
     void computeBbox(float* outBbox) const;
     float computeWorldStep(int resolution) const;
     void bakeScale();
+    void scaleFaceNormalsBoxesCentersAndOctree(float scaleX, float scaleY, float scaleZ);
+
+private:
+    uint64_t m_vertsGeneration = 0;
 };
+
 

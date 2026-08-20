@@ -6,6 +6,7 @@
 #include <utility>
 #include <glm/gtc/matrix_transform.hpp>
 #include "files/MeshUtils.h"
+#include "mesh/NormalCalc.h"
 #include "common/Constants.h"
 #include "common/Logger.h"
 
@@ -127,7 +128,7 @@ void Scene::removeReferenceImage(size_t index) {
     }
 }
 
-HistoryState Scene::saveCurrentState() const {
+HistoryState Scene::saveCurrentState(bool includeTopology) const {
     auto tStart = std::chrono::high_resolution_clock::now();
     HistoryState hs;
     hs.selectedMeshIdx = m_selectedIdx;
@@ -144,13 +145,16 @@ HistoryState Scene::saveCurrentState() const {
         ms.materials = m->materials;
         ms.faces = m->faces;
         ms.faceGroups = m->faceGroups;
-        ms.vrfStartCount = m->vrfStartCount;
-        ms.vertRingFace = m->vertRingFace;
-        ms.vrvStartCount = m->vrvStartCount;
-        ms.vertRingVert = m->vertRingVert;
-        ms.vertOnEdge = m->vertOnEdge;
+        if (includeTopology) {
+            ms.vrfStartCount = m->vrfStartCount;
+            ms.vertRingFace = m->vertRingFace;
+            ms.vrvStartCount = m->vrvStartCount;
+            ms.vertRingVert = m->vertRingVert;
+            ms.vertOnEdge = m->vertOnEdge;
+        }
         ms.vertVisible = m->vertVisible;
         ms.faceVisible = m->faceVisible;
+        ms.vertsGeneration = m->getVertsGeneration();
         ms.nbVerts = m->nbVerts;
         ms.nbFaces = m->nbFaces;
         
@@ -166,8 +170,8 @@ HistoryState Scene::saveCurrentState() const {
     }
     auto tEnd = std::chrono::high_resolution_clock::now();
     double msSave = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
-    sculpt_log_lvl(LogLevel::Info, "[Scene Diagnostics] saveCurrentState: Saved state for %zu meshes in %.2f ms\n",
-                   hs.meshes.size(), msSave);
+    sculpt_log_lvl(LogLevel::Info, "[Scene Diagnostics] saveCurrentState: Saved state for %zu meshes in %.2f ms (Topology: %s)\n",
+                   hs.meshes.size(), msSave, includeTopology ? "Included" : "Skipped");
     return hs;
 }
 
@@ -176,30 +180,57 @@ void Scene::restoreState(const HistoryState& hs) {
     sculpt_log_lvl(LogLevel::Info, "[Scene Diagnostics] restoreState: Restoring state (%zu existing meshes, %zu incoming meshes)...\n",
                    m_meshes.size(), hs.meshes.size());
 
+    std::map<uint32_t, Mesh*> existingMap;
     for (auto* m : m_meshes) {
-        delete m;
+        if (m) existingMap[m->getID()] = m;
     }
-    m_meshes.clear();
-    m_selectedMeshes.clear();
 
-    auto tDelDone = std::chrono::high_resolution_clock::now();
+    std::vector<Mesh*> newMeshes;
+    newMeshes.reserve(hs.meshes.size());
 
     for (size_t i = 0; i < hs.meshes.size(); ++i) {
         const auto& ms = hs.meshes[i];
         auto tMeshStart = std::chrono::high_resolution_clock::now();
 
-        Mesh* m = new Mesh();
-        m->verts = ms.verts;
-        m->colors = ms.colors;
-        m->materials = ms.materials;
-        m->faces = ms.faces;
-        m->faceGroups = ms.faceGroups;
-        m->isFaceGroupDirty = true;
-        m->vrfStartCount = ms.vrfStartCount;
-        m->vertRingFace = ms.vertRingFace;
-        m->vrvStartCount = ms.vrvStartCount;
-        m->vertRingVert = ms.vertRingVert;
-        m->vertOnEdge = ms.vertOnEdge;
+        auto it = existingMap.find(ms.id);
+        Mesh* m = nullptr;
+        bool inPlace = false;
+
+        if (it != existingMap.end() && it->second != nullptr) {
+            Mesh* existing = it->second;
+            if (existing->nbVerts == ms.nbVerts && existing->nbFaces == ms.nbFaces && !existing->vrfStartCount.empty()) {
+                m = existing;
+                inPlace = true;
+                existingMap.erase(it);
+            }
+        }
+
+        if (!inPlace) {
+            m = new Mesh();
+            m->m_id = ms.id;
+        }
+
+        bool vertsChanged = (!inPlace || m->getVertsGeneration() != ms.vertsGeneration);
+        if (vertsChanged && inPlace) {
+            vertsChanged = (m->verts != ms.verts);
+        }
+
+        if (vertsChanged) m->verts = ms.verts;
+        if (!inPlace || m->colors != ms.colors) m->colors = ms.colors;
+        if (!inPlace || m->materials != ms.materials) m->materials = ms.materials;
+        if (!inPlace || m->faces != ms.faces) m->faces = ms.faces;
+        if (!inPlace || m->faceGroups != ms.faceGroups) {
+            m->faceGroups = ms.faceGroups;
+            m->isFaceGroupDirty = true;
+        }
+
+        if (!ms.vrfStartCount.empty()) {
+            m->vrfStartCount = ms.vrfStartCount;
+            m->vertRingFace = ms.vertRingFace;
+            m->vrvStartCount = ms.vrvStartCount;
+            m->vertRingVert = ms.vertRingVert;
+            m->vertOnEdge = ms.vertOnEdge;
+        }
         m->vertVisible = ms.vertVisible;
         m->faceVisible = ms.faceVisible;
         m->nbVerts = ms.nbVerts;
@@ -207,25 +238,107 @@ void Scene::restoreState(const HistoryState& hs) {
 
         m->matrix = ms.matrix;
         m->layerStack = ms.layerStack;
-
-        m->m_id = ms.id;
         m->outlinerName = ms.outlinerName;
         m->visibleV1 = ms.visibleV1;
         m->visibleV2 = ms.visibleV2;
 
         auto tPostInitStart = std::chrono::high_resolution_clock::now();
-        m->postInit();
+
+        if (inPlace) {
+            if (vertsChanged) {
+                bool isPureScale = false;
+                float scaleX = 1.0f, scaleY = 1.0f, scaleZ = 1.0f;
+                if (!m->verts.empty() && m->verts.size() == ms.verts.size() && m->nbVerts > 0) {
+                    int n = m->nbVerts;
+                    int samples[] = {0, n / 7, (2 * n) / 7, (3 * n) / 7, (4 * n) / 7, (5 * n) / 7, (6 * n) / 7, n - 1};
+                    float sx = 0.0f, sy = 0.0f, sz = 0.0f;
+                    bool foundSample = false;
+                    for (int idx : samples) {
+                        float vx = m->verts[idx * 3];
+                        float vy = m->verts[idx * 3 + 1];
+                        float vz = m->verts[idx * 3 + 2];
+                        if (std::abs(vx) > 1e-4f && std::abs(vy) > 1e-4f && std::abs(vz) > 1e-4f) {
+                            sx = ms.verts[idx * 3] / vx;
+                            sy = ms.verts[idx * 3 + 1] / vy;
+                            sz = ms.verts[idx * 3 + 2] / vz;
+                            foundSample = true;
+                            break;
+                        }
+                    }
+                    if (foundSample && sx > 1e-5f && sy > 1e-5f && sz > 1e-5f) {
+                        bool match = true;
+                        for (int idx : samples) {
+                            float vx = m->verts[idx * 3];
+                            float vy = m->verts[idx * 3 + 1];
+                            float vz = m->verts[idx * 3 + 2];
+                            if (std::abs(vx) > 1e-4f && std::abs(ms.verts[idx * 3] - vx * sx) > 1e-3f * std::abs(vx)) { match = false; break; }
+                            if (std::abs(vy) > 1e-4f && std::abs(ms.verts[idx * 3 + 1] - vy * sy) > 1e-3f * std::abs(vy)) { match = false; break; }
+                            if (std::abs(vz) > 1e-4f && std::abs(ms.verts[idx * 3 + 2] - vz * sz) > 1e-3f * std::abs(vz)) { match = false; break; }
+                        }
+                        if (match) {
+                            isPureScale = true;
+                            scaleX = sx; scaleY = sy; scaleZ = sz;
+                        }
+                    }
+                }
+
+                if (isPureScale) {
+                    m->scaleFaceNormalsBoxesCentersAndOctree(scaleX, scaleY, scaleZ);
+                } else {
+                    m->vertProxy = m->verts;
+                    m->invalidateLocalRadius();
+                    if (!m->faceNormals.empty() && !m->faceBoxes.empty() && !m->faceCenters.empty()) {
+                        updateFaceNormalsAndBoxes(
+                            m->verts.data(), m->nbVerts,
+                            m->faces.data(), m->nbFaces,
+                            nullptr, -1,
+                            m->faceNormals.data(),
+                            m->faceBoxes.data(),
+                            m->faceCenters.data()
+                        );
+                        if (!m->vrfStartCount.empty() && !m->vertRingFace.empty()) {
+                            updateVertexNormals(
+                                nullptr, -1, m->nbVerts,
+                                m->vrfStartCount.data(),
+                                m->vertRingFace.data(),
+                                m->faceNormals.data(),
+                                m->normals.data()
+                            );
+                        }
+                        m->octree.update(
+                            m->verts.data(), m->nbVerts,
+                            m->faces.data(), m->nbFaces,
+                            m->faceBoxes.data(),
+                            nullptr, -1
+                        );
+                    } else {
+                        m->postInit();
+                    }
+                }
+            }
+        } else {
+            m->postInit();
+        }
+
+
         auto tPostInitEnd = std::chrono::high_resolution_clock::now();
 
         m->isDirty = true;
-        m_meshes.push_back(m);
+        newMeshes.push_back(m);
 
         double msCopy = std::chrono::duration<double, std::milli>(tPostInitStart - tMeshStart).count();
         double msPostInit = std::chrono::duration<double, std::milli>(tPostInitEnd - tPostInitStart).count();
         sculpt_log_lvl(LogLevel::Info,
-                       "[Scene Diagnostics] restoreState: Mesh %zu/'%s' (ID: %u, Verts: %d, Faces: %d) restored in %.2f ms (Copy: %.2fms, postInit: %.2fms)\n",
-                       i, m->outlinerName.c_str(), m->m_id, m->nbVerts, m->nbFaces, msCopy + msPostInit, msCopy, msPostInit);
+                       "[Scene Diagnostics] restoreState: Mesh %zu/'%s' (ID: %u, Verts: %d, Faces: %d, InPlace: %s, VertsChanged: %s) restored in %.2f ms (Copy: %.2fms, postInit: %.2fms)\n",
+                       i, m->outlinerName.c_str(), m->m_id, m->nbVerts, m->nbFaces, inPlace ? "Yes" : "No", vertsChanged ? "Yes" : "No", msCopy + msPostInit, msCopy, msPostInit);
     }
+
+    for (auto& pair : existingMap) {
+        delete pair.second;
+    }
+
+    m_meshes = newMeshes;
+    m_selectedMeshes.clear();
     m_selectedIdx = hs.selectedMeshIdx;
     for (int idx : hs.selectedMeshIndices) {
         if (idx >= 0 && idx < (int)m_meshes.size()) {
@@ -237,10 +350,8 @@ void Scene::restoreState(const HistoryState& hs) {
     }
 
     auto tEnd = std::chrono::high_resolution_clock::now();
-    double msDelete = std::chrono::duration<double, std::milli>(tDelDone - tStart).count();
     double msTotal = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
-    sculpt_log_lvl(LogLevel::Info, "[Scene Diagnostics] restoreState: COMPLETED in %.2f ms (Mesh Deletions: %.2fms)\n",
-                   msTotal, msDelete);
+    sculpt_log_lvl(LogLevel::Info, "[Scene Diagnostics] restoreState: COMPLETED in %.2f ms\n", msTotal);
 }
 
 #include "editing/undo/UndoManager.h"

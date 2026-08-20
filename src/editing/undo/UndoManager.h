@@ -3,6 +3,8 @@
 #include "SculptUndoEntry.h"
 #include "TopologyUndoEntry.h"
 #include "SceneMetaUndoEntry.h"
+#include "TransformUndoEntry.h"
+
 #include <deque>
 #include <memory>
 #include <cstddef>
@@ -59,6 +61,9 @@ public:
     void pushMetaChange(Scene& scene,
                         const std::string& description,
                         std::function<void()> operation);
+
+    void pushTransformChange(Scene& scene, TransformUndoEntry entry);
+
 
     // Legacy fallback state push
     void pushLegacyState(Scene& scene, const std::string& description = "Operation");

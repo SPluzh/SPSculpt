@@ -1943,6 +1943,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     }
 
                     if (m_currentBrush == BRUSH_TRANSFORM) {
+                        auto tStart = std::chrono::high_resolution_clock::now();
                         glm::vec3 localPt = closestLocalRayOrigin + closestLocalMinT * closestLocalRayDir;
                         glm::vec3 localNormal(0.0f, 0.0f, 1.0f);
                         if (closestFaceId < (uint32_t)closestMesh->nbFaces && !closestMesh->faceNormals.empty()) {
@@ -1992,13 +1993,17 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                         targetMatrix[2] = glm::vec4(zAxis * sz, 0.0f);
                         targetMatrix[3] = glm::vec4(worldPt, 1.0f);
 
-                        scene.pushHistoryState();
+                        glm::mat4 beforeMatrix = closestMesh->matrix;
+                        std::vector<float> beforeVerts = closestMesh->verts;
+                        std::vector<float> beforeNormals = closestMesh->normals;
 
                         glm::mat4 deltaLocalMatrix = glm::inverse(closestMesh->matrix) * targetMatrix;
                         glm::mat4 deltaLocalMatrixInv = glm::inverse(deltaLocalMatrix);
                         glm::mat3 enMatrix = glm::transpose(glm::inverse(glm::mat3(deltaLocalMatrixInv)));
 
-                        for (int i = 0; i < closestMesh->nbVerts; ++i) {
+                        int nVerts = closestMesh->nbVerts;
+#pragma omp parallel for schedule(static) if(nVerts > 2000)
+                        for (int i = 0; i < nVerts; ++i) {
                             glm::vec4 pos(closestMesh->verts[i * 3], closestMesh->verts[i * 3 + 1], closestMesh->verts[i * 3 + 2], 1.0f);
                             glm::vec4 newPos = deltaLocalMatrixInv * pos;
                             closestMesh->verts[i * 3]     = newPos.x;
@@ -2015,7 +2020,25 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                         closestMesh->matrix = targetMatrix;
                         closestMesh->postInit();
                         closestMesh->isDirty = true;
+
+                        TransformUndoEntry undoEntry("Alt+Click Pivot Surface Align");
+                        TransformMeshState meshUndoState;
+                        meshUndoState.meshId = closestMesh->getID();
+                        meshUndoState.beforeMatrix = beforeMatrix;
+                        meshUndoState.afterMatrix = targetMatrix;
+                        meshUndoState.hasVertexDeformation = true;
+                        meshUndoState.beforeVerts = std::move(beforeVerts);
+                        meshUndoState.afterVerts = closestMesh->verts;
+                        meshUndoState.beforeNormals = std::move(beforeNormals);
+                        meshUndoState.afterNormals = closestMesh->normals;
+                        undoEntry.m_meshStates.push_back(std::move(meshUndoState));
+                        g_undoManager.pushTransformChange(scene, std::move(undoEntry));
+
+                        double totalMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStart).count();
+                        sculpt_log("[TRANSFORM TOOL PROFILE] Alt+Click Pivot Surface Align | Mesh: '%s' (Verts: %d) | Total: %.2fms\n",
+                                  closestMesh->outlinerName.c_str(), closestMesh->nbVerts, totalMs);
                         return;
+
                     }
                 } else {
                     if (m_currentBrush == BRUSH_TRANSFORM) {

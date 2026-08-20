@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.7]
+- **Transform Tool & Undo**: Fixed an issue where scaling an object with the gizmo could not be undone via Ctrl+Z.
+- **Undo/Redo Acceleration**: Reduced Undo/Redo latency for transform operations on heavy meshes (3.4M+ polygons) from ~500ms down to <10ms by eliminating redundant mesh rebuilds and GPU re-uploads.
+- **Transform Gizmo Performance**: Accelerated live gizmo dragging and scale baking (from ~124ms down to ~19ms) using multi-threaded parallel processing.
+- **Memory Diagnostics**: Fixed incorrect 0.00 MB memory display for transform actions in the undo stack history.
+
 ## [0.2.6]
 - **Sculpting Performance**: Significantly accelerated `ClayBuildup` and `Clay` brushes (up to 20x faster vertex deformation) during high-density mesh sculpting.
 - **Sculpting Performance**: Added smart surface normal caching during brush strokes to eliminate frame latency.
