@@ -145,8 +145,11 @@ struct MeasurementSegment {
     std::string name = "";
 };
 
+class AngleRenderer;
+
 class SculptManager {
 private:
+    AngleRenderer* m_renderer = nullptr;
     BrushType m_currentBrush = BRUSH_MOVE;
     BrushSettings m_brushSettings[32]; // Increased to 32 to support BRUSH_COUNT safely
 
@@ -206,6 +209,9 @@ public:
 
     bool saveSettings(IniFile& ini);
     bool loadSettings(const IniFile& ini);
+
+    void setRenderer(AngleRenderer* renderer) { m_renderer = renderer; }
+    AngleRenderer* getRenderer() const { return m_renderer; }
 
     bool isSculpting() const { return m_isSculpting; }
     void setRawMousePos(int x, int y) {

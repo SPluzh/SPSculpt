@@ -1,6 +1,8 @@
 #include "editing/CameraController.h"
 #include "mesh/Mesh.h"
 #include "mesh/Octree.h"
+#include "scene/Scene.h"
+#include "render/AngleRenderer.h"
 #include <algorithm>
 #include <limits>
 
@@ -120,7 +122,7 @@ void CameraController::startDrag(DragMode mode, int mouseX, int mouseY, Camera& 
     }
 }
 
-void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std::vector<Mesh*>& meshes, bool animate) {
+void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std::vector<Mesh*>& meshes, bool animate, Scene* scene, AngleRenderer* renderer) {
     if (e.type == SDL_MOUSEBUTTONDOWN) {
         int mouseX = e.button.x;
         int mouseY = e.button.y;
@@ -147,6 +149,8 @@ void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std
             if (e.button.clicks >= 2) {
                 camera.resetView();
                 stopDrag(&camera);
+            } else if (shiftPressed) {
+                startDrag(DragMode::RotateLight, mouseX, mouseY, camera, meshes);
             } else {
                 startDrag(DragMode::Pan, mouseX, mouseY, camera, meshes);
             }
@@ -217,6 +221,14 @@ void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std
                 camera.translate(static_cast<float>(dx), static_cast<float>(dy));
             } else if (m_drag == DragMode::Zoom) {
                 camera.zoom(static_cast<float>(dx) * 0.01f, static_cast<float>(m_startX), static_cast<float>(m_startY));
+            } else if (m_drag == DragMode::RotateLight) {
+                float deltaAngle = static_cast<float>(dx) * 0.008f;
+                if (scene) {
+                    scene->rotateAllLights(deltaAngle);
+                }
+                if (renderer) {
+                    renderer->rotateEnv(deltaAngle);
+                }
             } else if (m_drag == DragMode::Pan2D) {
                 float w = camera.getWidth() > 0 ? static_cast<float>(camera.getWidth()) : 1.0f;
                 float h = camera.getHeight() > 0 ? static_cast<float>(camera.getHeight()) : 1.0f;

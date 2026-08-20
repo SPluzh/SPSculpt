@@ -7,15 +7,17 @@
 #include <algorithm>
 
 class Mesh;
+class Scene;
+class AngleRenderer;
 
 class CameraController {
 public:
-    enum class DragMode { None, Orbit, Pan, Zoom, Roll, Pan2D, Zoom2D };
+    enum class DragMode { None, Orbit, Pan, Zoom, Roll, Pan2D, Zoom2D, RotateLight };
 
     CameraController() = default;
     ~CameraController() = default;
 
-    void handleEvent(const SDL_Event& e, Camera& camera, const std::vector<Mesh*>& meshes, bool animate = true);
+    void handleEvent(const SDL_Event& e, Camera& camera, const std::vector<Mesh*>& meshes, bool animate = true, Scene* scene = nullptr, AngleRenderer* renderer = nullptr);
     
     void startDrag(DragMode mode, int mouseX, int mouseY, Camera& camera, const std::vector<Mesh*>& meshes);
     bool isDragging() const { return m_drag != DragMode::None; }

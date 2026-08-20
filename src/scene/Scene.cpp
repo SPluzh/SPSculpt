@@ -45,6 +45,25 @@ void Scene::removeLight(size_t index) {
     }
 }
 
+void Scene::rotateAllLights(float deltaAngleRad) {
+    float cosA = std::cos(deltaAngleRad);
+    float sinA = std::sin(deltaAngleRad);
+    for (auto& light : m_lights) {
+        float dx = light.direction.x * cosA - light.direction.z * sinA;
+        float dz = light.direction.x * sinA + light.direction.z * cosA;
+        light.direction.x = dx;
+        light.direction.z = dz;
+        if (glm::length(light.direction) > 1e-5f) {
+            light.direction = glm::normalize(light.direction);
+        }
+
+        float px = light.position.x * cosA - light.position.z * sinA;
+        float pz = light.position.x * sinA + light.position.z * cosA;
+        light.position.x = px;
+        light.position.z = pz;
+    }
+}
+
 Scene::~Scene() {
     clear();
 }

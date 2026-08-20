@@ -468,6 +468,7 @@ int main(int argc, char* argv[]) {
     sculpt.loadSettings(appSettings);
     gui.init(window, glContext);
     gui.setRenderer(&renderer);
+    sculpt.setRenderer(&renderer);
     HotkeyDispatcher dispatcher;
 
     if (!fileToOpen.empty()) {
@@ -712,7 +713,7 @@ int main(int argc, char* argv[]) {
                                                    sculpt.getCameraController().isDragging();
 
                         if ((!io.WantCaptureMouse && (isCameraEvent || isWheelEvent)) || isMotionAndDragging) {
-                            sculpt.getCameraController().handleEvent(eventCopy, scene.getCamera(), scene.getMeshes());
+                            sculpt.getCameraController().handleEvent(eventCopy, scene.getCamera(), scene.getMeshes(), true, &scene, &renderer);
                         }
                     }
 

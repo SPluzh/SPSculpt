@@ -1495,7 +1495,7 @@ void AngleRenderer::drawBackground(const Scene& scene, const Camera& camera) {
     glUniform2f(glGetUniformLocation(m_bgProgram, "uEnvSize"), (float)m_envWidth, (float)m_envHeight);
     glUniform3fv(glGetUniformLocation(m_bgProgram, "uSPH"), 9, m_sph);
 
-    glm::mat3 uIblTransform = glm::transpose(glm::mat3(camera.getViewMatrix()));
+    glm::mat3 uIblTransform = glm::transpose(glm::mat3(camera.getViewMatrix())) * glm::mat3(glm::rotate(glm::mat4(1.0f), m_envRotation, glm::vec3(0.0f, 1.0f, 0.0f)));
     glUniformMatrix3fv(glGetUniformLocation(m_bgProgram, "uIblTransform"), 1, GL_FALSE, glm::value_ptr(uIblTransform));
 
     glActiveTexture(GL_TEXTURE0);
@@ -1738,7 +1738,7 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
         glUniform1f(glGetUniformLocation(program, "uExposure"), m_exposure);
         glUniform3fv(glGetUniformLocation(program, "uSPH"), 9, m_sph);
         
-        glm::mat3 uIblTransform = glm::transpose(glm::mat3(camera.getViewMatrix()));
+        glm::mat3 uIblTransform = glm::transpose(glm::mat3(camera.getViewMatrix())) * glm::mat3(glm::rotate(glm::mat4(1.0f), m_envRotation, glm::vec3(0.0f, 1.0f, 0.0f)));
         glUniformMatrix3fv(glGetUniformLocation(program, "uIblTransform"), 1, GL_FALSE, glm::value_ptr(uIblTransform));
         
         glUniform1i(glGetUniformLocation(program, "uTexture0"), 0);

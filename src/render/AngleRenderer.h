@@ -242,6 +242,9 @@ public:
 
     void setShaderType(int type) { m_shaderType = type; }
     int getShaderType() const { return m_shaderType; }
+    float getEnvRotation() const { return m_envRotation; }
+    void setEnvRotation(float r) { m_envRotation = r; }
+    void rotateEnv(float delta) { m_envRotation += delta; }
     void setMatcap(int idx);
     int getMatcap() const { return m_matcapIdx; }
     void setFlatShading(bool flat) { m_flatShading = flat; }
@@ -672,6 +675,7 @@ private:
     // Environment presets
     std::vector<EnvironmentPreset> m_environments;
     int m_currentEnvIdx = 0;
+    float m_envRotation = 0.0f;
     GLuint m_envTexture = 0;
     int m_envWidth = 1024;
     int m_envHeight = 512;

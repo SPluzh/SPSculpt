@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.9]
+- **Lighting Controls**: Added global light and HDRI rotation around the vertical Y-axis via `Shift + Middle Mouse Button` drag and a dedicated "Global Rotation" UI slider in Light Source Management.
+
+
 ## [0.2.8]
 - **Voxel Remesh Speed**: Quad Voxel Remesh is now over 5.4x faster (execution time reduced from ~21s down to ~3.8s for heavy 1.7M polygon meshes) thanks to multi-threaded surface reconstruction and optimized spatial indexing.
 

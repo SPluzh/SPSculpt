@@ -134,6 +134,7 @@ public:
     void addLight(LightType type = LightType::DIRECTIONAL);
     void addLight(const LightSource& light);
     void removeLight(size_t index);
+    void rotateAllLights(float deltaAngleRad);
 
     bool getVoxelPreview() const { return m_voxelPreview; }
     float getVoxelStep() const { return m_voxelStep; }

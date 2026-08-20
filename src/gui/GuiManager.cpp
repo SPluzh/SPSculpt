@@ -8258,6 +8258,16 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
 
                 ImGui::Spacing();
                 if (ImGui::TreeNode("Light Source Management")) {
+                    float envRotDeg = glm::degrees(renderer.getEnvRotation());
+                    while (envRotDeg < 0.0f) envRotDeg += 360.0f;
+                    while (envRotDeg >= 360.0f) envRotDeg -= 360.0f;
+                    if (ImGui::SliderFloat("Global Rotation (Shift+MMB)", &envRotDeg, 0.0f, 360.0f, "%.1f deg")) {
+                        float newRad = glm::radians(envRotDeg);
+                        float delta = newRad - renderer.getEnvRotation();
+                        renderer.setEnvRotation(newRad);
+                        const_cast<Scene&>(scene).rotateAllLights(delta);
+                    }
+
                     auto& lights = const_cast<Scene&>(scene).getLights();
                     if (ImGui::Button("Add Light", ImVec2(100, 24))) {
                         LightSource newLight;
