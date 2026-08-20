@@ -3029,6 +3029,9 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
         int mouseX = event.motion.x;
         int mouseY = event.motion.y;
 
+        m_rawMouseX = mouseX;
+        m_rawMouseY = mouseY;
+
         int dx = mouseX - m_prevMouseX;
         int dy = mouseY - m_prevMouseY;
 
@@ -3310,6 +3313,70 @@ void SculptManager::processFrame(Scene& scene) {
 
         glm::vec3 localPt = m_isSculpting ? m_lastValidIntersection : m_currentIntersection;
         glm::vec3 localNorm = m_isSculpting ? m_lastValidIntersectionNormal : m_currentIntersectionNormal;
+        bool hasIntersection = m_isSculpting ? m_hasAnyValidIntersection : m_currentIntersectionValid;
+
+        if (m_isSculpting && activeMesh) {
+            const Camera& camera = (scene.getSplitMode() != Scene::SplitMode::OFF && scene.getActiveViewport() == 1 && scene.getCameraRight()) 
+                                   ? *scene.getCameraRight() 
+                                   : scene.getCamera();
+            Ray ray = camera.getRay((float)m_rawMouseX, (float)m_rawMouseY);
+            glm::mat4 invMatrix = glm::inverse(activeMesh->matrix);
+            glm::vec3 localRayOrigin = glm::vec3(invMatrix * glm::vec4(ray.origin, 1.0f));
+            glm::vec3 localRayDir = glm::normalize(glm::vec3(invMatrix * glm::vec4(ray.dir, 0.0f)));
+
+            std::vector<uint32_t> candidateFaces = activeMesh->octree.collectIntersectRay(
+                localRayOrigin.x, localRayOrigin.y, localRayOrigin.z,
+                localRayDir.x, localRayDir.y, localRayDir.z
+            );
+
+            float minT = std::numeric_limits<float>::infinity();
+            uint32_t intersectFaceId = 0xffffffff;
+
+            for (uint32_t faceId : candidateFaces) {
+                if (faceId >= (uint32_t)activeMesh->nbFaces) continue;
+                uint32_t v0Id = activeMesh->faces[faceId * 4];
+                uint32_t v1Id = activeMesh->faces[faceId * 4 + 1];
+                uint32_t v2Id = activeMesh->faces[faceId * 4 + 2];
+                uint32_t v3Id = activeMesh->faces[faceId * 4 + 3];
+
+                if (!activeMesh->vertVisible[v0Id] || !activeMesh->vertVisible[v1Id] || !activeMesh->vertVisible[v2Id] || (v3Id != 0xffffffff && !activeMesh->vertVisible[v3Id])) {
+                    continue;
+                }
+
+                glm::vec3 v0(activeMesh->verts[v0Id * 3], activeMesh->verts[v0Id * 3 + 1], activeMesh->verts[v0Id * 3 + 2]);
+                glm::vec3 v1(activeMesh->verts[v1Id * 3], activeMesh->verts[v1Id * 3 + 1], activeMesh->verts[v1Id * 3 + 2]);
+                glm::vec3 v2(activeMesh->verts[v2Id * 3], activeMesh->verts[v2Id * 3 + 1], activeMesh->verts[v2Id * 3 + 2]);
+
+                float t;
+                if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v1, v2, t)) {
+                    if (t < minT) {
+                        minT = t;
+                        intersectFaceId = faceId;
+                    }
+                }
+
+                if (v3Id != 0xffffffff) {
+                    glm::vec3 v3(activeMesh->verts[v3Id * 3], activeMesh->verts[v3Id * 3 + 1], activeMesh->verts[v3Id * 3 + 2]);
+                    if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v2, v3, t)) {
+                        if (t < minT) {
+                            minT = t;
+                            intersectFaceId = faceId;
+                        }
+                    }
+                }
+            }
+
+            if (intersectFaceId != 0xffffffff) {
+                localPt = localRayOrigin + minT * localRayDir;
+                localNorm = glm::vec3(
+                    activeMesh->faceNormals[intersectFaceId * 3],
+                    activeMesh->faceNormals[intersectFaceId * 3 + 1],
+                    activeMesh->faceNormals[intersectFaceId * 3 + 2]
+                );
+                hasIntersection = true;
+            }
+        }
+
         glm::vec3 worldPt = localPt;
         glm::vec3 worldNorm = localNorm;
         if (activeMesh) {
@@ -3328,7 +3395,7 @@ void SculptManager::processFrame(Scene& scene) {
             m_symZ,
             m_isSculpting,
             activeBrush,
-            m_isSculpting ? m_hasAnyValidIntersection : m_currentIntersectionValid,
+            hasIntersection,
             worldPt,
             worldNorm,
             activeSettings.focalShift,
