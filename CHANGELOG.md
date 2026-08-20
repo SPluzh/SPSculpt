@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.6]
+- **Sculpting Performance**: Significantly accelerated `ClayBuildup` and `Clay` brushes (up to 20x faster vertex deformation) during high-density mesh sculpting.
+- **Sculpting Performance**: Added smart surface normal caching during brush strokes to eliminate frame latency.
+- **Diagnostics**: Added detailed stroke timing breakdown for brush deformation in performance logs.
+
 ## [0.2.5]
 - **Scene Outliner**: Added Import and Export buttons to top header toolbar.
 - **Symmetry Visualization**: Restricted symmetry plane lines to display strictly on the currently active object, preventing global overlay on inactive background meshes.

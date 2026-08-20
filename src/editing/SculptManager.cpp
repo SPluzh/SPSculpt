@@ -692,29 +692,32 @@ int SculptManager::doStrokePass(
             glm::vec3 areaCenter = cachedAreaCenter;
 
             if (!m_firstStrokeFrame && (!getCurrentSettings().flattenLockNormal || !getCurrentSettings().flattenLockOrigin)) {
-                float areaResults[7] = {0.0f};
-                if (computeAreaNormalAndCenter(
-                    mesh->verts.data(),
-                    mesh->normals.data(),
-                    mesh->materials.data(),
-                    pickedVertices.data(),
-                    pickedVertices.size(),
-                    areaResults
-                )) {
-                    if (!getCurrentSettings().flattenLockNormal) {
-                        areaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
+                bool moved = glm::distance(currentIntersection, m_prevClayIntersection) > localRadius * 0.15f;
+                bool intervalElapsed = (m_strokeFrameCounter - m_clayAreaNormalFrame) >= 3;
+                if (moved || intervalElapsed) {
+                    auto tAreaStart = std::chrono::high_resolution_clock::now();
+                    float areaResults[7] = {0.0f};
+                    if (computeAreaNormalAndCenter(
+                        mesh->verts.data(),
+                        mesh->normals.data(),
+                        mesh->materials.data(),
+                        pickedVertices.data(),
+                        pickedVertices.size(),
+                        areaResults
+                    )) {
+                        if (!getCurrentSettings().flattenLockNormal) {
+                            m_cachedAreaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
+                        }
+                        if (!getCurrentSettings().flattenLockOrigin) {
+                            m_cachedAreaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
+                        }
+                        m_clayAreaNormalFrame = m_strokeFrameCounter;
+                        m_prevClayIntersection = currentIntersection;
                     }
-                    if (!getCurrentSettings().flattenLockOrigin) {
-                        areaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
-                    }
-                } else {
-                    if (!getCurrentSettings().flattenLockNormal) {
-                        areaNormal = currentIntersectionNormal;
-                    }
-                    if (!getCurrentSettings().flattenLockOrigin) {
-                        areaCenter = currentIntersection;
-                    }
+                    m_lastFrameProfile.areaComputeMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tAreaStart).count();
                 }
+                areaNormal = m_cachedAreaNormal;
+                areaCenter = m_cachedAreaCenter;
             }
 
             float off = localRadius * 0.1f;
@@ -741,29 +744,32 @@ int SculptManager::doStrokePass(
             glm::vec3 areaCenter = cachedAreaCenter;
 
             if (!m_firstStrokeFrame && (!getCurrentSettings().flattenLockNormal || !getCurrentSettings().flattenLockOrigin)) {
-                float areaResults[7] = {0.0f};
-                if (computeAreaNormalAndCenter(
-                    mesh->verts.data(),
-                    mesh->normals.data(),
-                    mesh->materials.data(),
-                    pickedVertices.data(),
-                    pickedVertices.size(),
-                    areaResults
-                )) {
-                    if (!getCurrentSettings().flattenLockNormal) {
-                        areaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
+                bool moved = glm::distance(currentIntersection, m_prevClayIntersection) > localRadius * 0.15f;
+                bool intervalElapsed = (m_strokeFrameCounter - m_clayAreaNormalFrame) >= 3;
+                if (moved || intervalElapsed) {
+                    auto tAreaStart = std::chrono::high_resolution_clock::now();
+                    float areaResults[7] = {0.0f};
+                    if (computeAreaNormalAndCenter(
+                        mesh->verts.data(),
+                        mesh->normals.data(),
+                        mesh->materials.data(),
+                        pickedVertices.data(),
+                        pickedVertices.size(),
+                        areaResults
+                    )) {
+                        if (!getCurrentSettings().flattenLockNormal) {
+                            m_cachedAreaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
+                        }
+                        if (!getCurrentSettings().flattenLockOrigin) {
+                            m_cachedAreaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
+                        }
+                        m_clayAreaNormalFrame = m_strokeFrameCounter;
+                        m_prevClayIntersection = currentIntersection;
                     }
-                    if (!getCurrentSettings().flattenLockOrigin) {
-                        areaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
-                    }
-                } else {
-                    if (!getCurrentSettings().flattenLockNormal) {
-                        areaNormal = currentIntersectionNormal;
-                    }
-                    if (!getCurrentSettings().flattenLockOrigin) {
-                        areaCenter = currentIntersection;
-                    }
+                    m_lastFrameProfile.areaComputeMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tAreaStart).count();
                 }
+                areaNormal = m_cachedAreaNormal;
+                areaCenter = m_cachedAreaCenter;
             }
 
             float off = localRadius * 0.1f;
@@ -1372,6 +1378,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 
         // Cache area normal and center for Clay/Flatten/Brush tools on first frame
         if (m_firstStrokeFrame && (activeBrush == BRUSH_CLAY || activeBrush == BRUSH_CLAYBUILDUP || activeBrush == BRUSH_FLATTEN || activeBrush == BRUSH_SQUAREBRUSH || activeBrush == BRUSH_BRUSH)) {
+            auto tAreaStart = std::chrono::high_resolution_clock::now();
             float areaResults[7] = {0.0f};
             if (computeAreaNormalAndCenter(
                 mesh->verts.data(),
@@ -1387,6 +1394,12 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 m_cachedAreaNormal = m_currentIntersectionNormal;
                 m_cachedAreaCenter = m_currentIntersection;
             }
+            m_lastFrameProfile.areaComputeMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tAreaStart).count();
+            m_clayAreaNormalFrame = 0;
+            m_strokeFrameCounter = 0;
+            m_prevClayIntersection = m_currentIntersection;
+        } else {
+            m_strokeFrameCounter++;
         }
 
         bool strokeAffectsColors = (activeBrush == BRUSH_PAINT && getCurrentSettings().writeAlbedo);
@@ -1657,7 +1670,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                   "  |- Culling/Group:  %6.2f ms\n"
                   "  |- Proxy Reset:    %6.2f ms\n"
                   "  |- Undo Record:    %6.2f ms\n"
-                  "  |- Primary Deform: %6.2f ms\n"
+                  "  |- Primary Deform: %6.2f ms (AreaNormal: %6.2f ms)\n"
                   "  |- Symmetry Pass:  %6.2f ms\n"
                   "  |- Sort & Dedup:   %6.2f ms\n"
                   "  |- Face Lookup:    %6.2f ms (Verts input: %d)\n"
@@ -1668,7 +1681,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                   totalCpuMs, m_lastFrameProfile.affectedVertCount, m_lastFrameProfile.pickedVertCount, m_lastFrameProfile.affectedFaceCount,
                   m_lastFrameProfile.raycastMs, m_lastFrameProfile.pickVertsMs, m_lastFrameProfile.cullingMs,
                   m_lastFrameProfile.vertProxyResetMs,
-                  m_lastFrameProfile.undoRecordMs, m_lastFrameProfile.primaryDeformMs, m_lastFrameProfile.symmetryMs,
+                  m_lastFrameProfile.undoRecordMs, m_lastFrameProfile.primaryDeformMs, m_lastFrameProfile.areaComputeMs, m_lastFrameProfile.symmetryMs,
                   m_lastFrameProfile.sortDedupMs,
                   m_lastFrameProfile.faceLookupMs, m_lastFrameProfile.affectedVertCount,
                   m_lastFrameProfile.faceNormalsMs, m_lastFrameProfile.vertNormalsMs,

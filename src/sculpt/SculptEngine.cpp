@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <vector>
 #include <chrono>
+#include <atomic>
 
 static void radixSort(uint32_t* arr, uint32_t n) {
     if (n < 2) return;
@@ -465,8 +466,14 @@ bool computeAreaNormalAndCenter(
     float az = 0.0f;
     float acc = 0.0f;
 
-    #pragma omp parallel for reduction(+:anx,any,anz,ax,ay,az,acc) if(nbIVerts > 512)
+    #pragma omp parallel for reduction(+:anx,any,anz,ax,ay,az,acc) if(nbIVerts > 2000)
     for (int i = 0; i < nbIVerts; ++i) {
+        if (i + 8 < nbIVerts) {
+            uint32_t nextId = iVerts[i + 8];
+            __builtin_prefetch(&normals[nextId * 3], 0, 1);
+            __builtin_prefetch(&verts[nextId * 3], 0, 1);
+            __builtin_prefetch(&materials[nextId * 3], 0, 1);
+        }
         uint32_t id = iVerts[i];
         int ind = id * 3;
         float f = materials[ind + 2];
@@ -487,21 +494,22 @@ bool computeAreaNormalAndCenter(
         return false;
     }
 
-    len = 1.0f / len;
-    outResults[0] = anx * len;
-    outResults[1] = any * len;
-    outResults[2] = anz * len;
+    float invLen = 1.0f / len;
+    outResults[0] = anx * invLen;
+    outResults[1] = any * invLen;
+    outResults[2] = anz * invLen;
 
-    outResults[3] = ax / acc;
-    outResults[4] = ay / acc;
-    outResults[5] = az / acc;
+    float invAcc = 1.0f / acc;
+    outResults[3] = ax * invAcc;
+    outResults[4] = ay * invAcc;
+    outResults[5] = az * invAcc;
 
     outResults[6] = 1.0f; // valid
 
     auto t1 = std::chrono::high_resolution_clock::now();
     double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-    if (ms > 0.2) {
-        printf("[C++ computeAreaNormalAndCenter] %d verts took: %.2fms\n", nbIVerts, ms);
+    if (ms > 0.5) {
+        sculpt_log("[C++ computeAreaNormalAndCenter] %d verts took: %.2fms\n", nbIVerts, ms);
     }
     return true;
 }
@@ -1758,53 +1766,56 @@ int strokeSquareBrush(
     const float* alphaLookAt, bool alphaXSym
 ) {
     float comp = negative ? -1.0f : 1.0f;
-    int writeIdx = 0;
+    float fs = focalShiftFalloff ? focalShift : 0.0f;
+    float invAlphaSideX = 1.0f / (alphaXSym ? -alphaSide : alphaSide);
+    float invAlphaSideY = 1.0f / alphaSide;
 
-    #pragma omp parallel if(nbIVerts > 500)
-    {
-        std::vector<uint32_t> localVerts;
-        #pragma omp for schedule(static)
-        for (int i = 0; i < nbIVerts; ++i) {
-            uint32_t id = iVerts[i];
-            int ind = id * 3;
+    std::atomic<int> atomicWriteIdx{0};
 
-            float vx = verts[ind];
-            float vy = verts[ind + 1];
-            float vz = verts[ind + 2];
-
-            float distToPlane = (vx - ax) * anx + (vy - ay) * any + (vz - az) * anz;
-            if (distToPlane * comp > 0.0f) {
-                continue;
-            }
-
-            float xn = alphaRatioY * (alphaLookAt[0] * vx + alphaLookAt[4] * vy + alphaLookAt[8] * vz + alphaLookAt[12]) / (alphaXSym ? -alphaSide : alphaSide);
-            float yn = alphaRatioX * (alphaLookAt[1] * vx + alphaLookAt[5] * vy + alphaLookAt[9] * vz + alphaLookAt[13]) / alphaSide;
-
-            float dist = std::max(std::abs(xn), std::abs(yn));
-            if (dist >= 1.0f) {
-                continue;
-            }
-
-            float fallOff = getFallOff(dist, focalShiftFalloff ? focalShift : 0.0f, false, nullptr);
-            fallOff *= distToPlane * intensity * materials[ind + 2];
-
-            if (fallOff == 0.0f) continue;
-
-            verts[ind] -= anx * fallOff;
-            verts[ind + 1] -= any * fallOff;
-            verts[ind + 2] -= anz * fallOff;
-
-            localVerts.push_back(id);
+    #pragma omp parallel for schedule(static) if(nbIVerts > 500)
+    for (int i = 0; i < nbIVerts; ++i) {
+        if (i + 8 < nbIVerts) {
+            uint32_t nextId = iVerts[i + 8];
+            __builtin_prefetch(&verts[nextId * 3], 1, 1);
+            __builtin_prefetch(&materials[nextId * 3], 0, 1);
         }
 
-        #pragma omp critical
-        {
-            for (uint32_t id : localVerts) {
-                iVerts[writeIdx++] = id;
-            }
+        uint32_t id = iVerts[i];
+        int ind = id * 3;
+
+        float matVal = materials[ind + 2];
+        if (matVal <= 0.0f) continue;
+
+        float vx = verts[ind];
+        float vy = verts[ind + 1];
+        float vz = verts[ind + 2];
+
+        float distToPlane = (vx - ax) * anx + (vy - ay) * any + (vz - az) * anz;
+        if (distToPlane * comp > 0.0f) {
+            continue;
         }
+
+        float xn = alphaRatioY * (alphaLookAt[0] * vx + alphaLookAt[4] * vy + alphaLookAt[8] * vz + alphaLookAt[12]) * invAlphaSideX;
+        float yn = alphaRatioX * (alphaLookAt[1] * vx + alphaLookAt[5] * vy + alphaLookAt[9] * vz + alphaLookAt[13]) * invAlphaSideY;
+
+        float dist = std::max(std::abs(xn), std::abs(yn));
+        if (dist >= 1.0f) {
+            continue;
+        }
+
+        float fallOff = getFallOff(dist, fs, false, nullptr);
+        fallOff *= distToPlane * intensity * matVal;
+
+        if (fallOff == 0.0f) continue;
+
+        verts[ind] -= anx * fallOff;
+        verts[ind + 1] -= any * fallOff;
+        verts[ind + 2] -= anz * fallOff;
+
+        int slot = atomicWriteIdx.fetch_add(1, std::memory_order_relaxed);
+        iVerts[slot] = id;
     }
-    return writeIdx;
+    return atomicWriteIdx.load(std::memory_order_relaxed);
 }
 
 int strokeBrush(

@@ -25,6 +25,7 @@ struct SculptFrameProfile {
     double vertProxyResetMs = 0.0;
     double undoRecordMs = 0.0;
     double primaryDeformMs = 0.0;
+    double areaComputeMs = 0.0;
     double symmetryMs = 0.0;
     double sortDedupMs = 0.0;
     double faceLookupMs = 0.0;
@@ -40,7 +41,7 @@ struct SculptFrameProfile {
     
     void reset() {
         raycastMs = pickVertsMs = cullingMs = vertProxyResetMs = undoRecordMs = 0.0;
-        primaryDeformMs = symmetryMs = sortDedupMs = faceLookupMs = faceNormalsMs = 0.0;
+        primaryDeformMs = areaComputeMs = symmetryMs = sortDedupMs = faceLookupMs = faceNormalsMs = 0.0;
         vertNormalsMs = octreeUpdateMs = gpuUploadMs = renderMs = 0.0;
         pickedVertCount = affectedVertCount = affectedFaceCount = 0;
     }
@@ -476,6 +477,9 @@ private:
     glm::vec3 m_cachedAreaCenter{0.0f};
     glm::mat4 m_cachedInvMatrix{1.0f};
     glm::mat4 m_cachedCamWorldMatrix{1.0f};
+    int       m_clayAreaNormalFrame = -1;
+    int       m_strokeFrameCounter = 0;
+    glm::vec3 m_prevClayIntersection{0.0f};
 
     // Gradient mask state variables
     glm::vec2 m_gradPointA{0.0f};
