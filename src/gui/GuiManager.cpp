@@ -4597,6 +4597,7 @@ void GuiManager::performRemesh(Scene& scene) {
 }
 
 void GuiManager::applyRemeshResult(Scene& scene, const RemeshResult& r) {
+    auto tApplyStart = std::chrono::high_resolution_clock::now();
     sculpt_log("[DEBUG applyRemeshResult] Started applying remesh result.\n");
     sculpt_log("[DEBUG applyRemeshResult] RemeshResult: verts=%u, faces=%u, colors=%u, materials=%u, faceGroups=%u\n",
               (unsigned int)r.vertices.size(), (unsigned int)r.faces.size(),
@@ -4643,6 +4644,7 @@ void GuiManager::applyRemeshResult(Scene& scene, const RemeshResult& r) {
     }
 
     sculpt_log("[DEBUG applyRemeshResult] Computing topology...\n");
+    auto tTopoStart = std::chrono::high_resolution_clock::now();
     std::vector<uint32_t> vrvStartCount;
     std::vector<uint32_t> vertRingVert;
     std::vector<uint32_t> vrfStartCount;
@@ -4658,7 +4660,8 @@ void GuiManager::applyRemeshResult(Scene& scene, const RemeshResult& r) {
         vertRingVert,
         vertOnEdge
     );
-    sculpt_log("[DEBUG applyRemeshResult] Topology computed successfully.\n");
+    double msTopo = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tTopoStart).count();
+    sculpt_log("[DEBUG applyRemeshResult] Topology computed successfully in %.2f ms.\n", msTopo);
 
     selectedMesh->vrfStartCount = vrfStartCount;
     selectedMesh->vertRingFace = vertRingFace;
@@ -4667,9 +4670,11 @@ void GuiManager::applyRemeshResult(Scene& scene, const RemeshResult& r) {
     selectedMesh->vertOnEdge = vertOnEdge;
 
     sculpt_log("[DEBUG applyRemeshResult] Finalizing mesh initialization (postInit)...\n");
+    auto tPostInitStart = std::chrono::high_resolution_clock::now();
     selectedMesh->postInit();
     selectedMesh->layerStack.onRemesh(selectedMesh->verts);
-    sculpt_log("[DEBUG applyRemeshResult] postInit completed successfully.\n");
+    double msPostInit = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tPostInitStart).count();
+    sculpt_log("[DEBUG applyRemeshResult] postInit completed successfully in %.2f ms.\n", msPostInit);
 
     Multimesh* multimesh = dynamic_cast<Multimesh*>(selectedMesh);
     if (multimesh) {
@@ -4683,8 +4688,14 @@ void GuiManager::applyRemeshResult(Scene& scene, const RemeshResult& r) {
 
     selectedMesh->isDirty = true;
 
+    auto tUndoStart = std::chrono::high_resolution_clock::now();
     HistoryState afterState = scene.saveCurrentState();
     g_undoManager.pushTopologyChange(scene, "Voxel Remesh", std::move(m_remeshBeforeState), std::move(afterState));
+    double msUndo = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tUndoStart).count();
+
+    double msApplyTotal = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tApplyStart).count();
+    sculpt_log("[REMESH PROFILE] Stage 5 - GuiManager::applyRemeshResult Total: %.2f ms (Topology: %.2f ms | postInit: %.2f ms | Undo Push: %.2f ms)\n",
+              msApplyTotal, msTopo, msPostInit, msUndo);
 }
 
 void GuiManager::drawRemeshProgressModal() {

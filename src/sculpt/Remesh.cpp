@@ -6,6 +6,10 @@
 #include <string>
 #include <cstdio>
 #include <functional>
+#include <chrono>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 #include "common/Logger.h"
 
 // Bounding box mapping and structures
@@ -1251,6 +1255,7 @@ RemeshResult doRemesh(
     float matrixScaleY,
     float matrixScaleZ
 ) {
+    auto tRemeshStart = std::chrono::high_resolution_clock::now();
     sculpt_log("[C++ doRemesh] Start. nbVerts=%d, nbTris=%d, resolution=%.2f, block=%d, smooth=%d, manifold=%d, hasColors=%d, hasMaterials=%d, hasFaceGroups=%d, alignSymmetry=%d, scaleXYZ=(%.4f, %.4f, %.4f)\n",
                nbVerts, nbTris, resolution, block, smooth, manifold, hasColors, hasMaterials, hasFaceGroups, alignSymmetry, matrixScaleX, matrixScaleY, matrixScaleZ);
     if (box) {
@@ -1321,6 +1326,17 @@ RemeshResult doRemesh(
 
     sculpt_log("[C++ doRemesh] dims: [%d, %d, %d], step: %.6f, datalen: %d\n", rx, ry, rz, step, datalen);
 
+#ifdef _OPENMP
+    sculpt_log("[REMESH PROFILE] OpenMP active. Max threads: %d\n", omp_get_max_threads());
+#else
+    sculpt_log("[REMESH PROFILE] OpenMP: Disabled (compiled single-threaded)\n");
+#endif
+
+    double distMemMB = (double)datalen * sizeof(float) / (1024.0 * 1024.0);
+    double crossMemMB = (double)datalen * sizeof(uint8_t) / (1024.0 * 1024.0);
+    sculpt_log("[REMESH PROFILE] Grid Memory: Dims=[%d, %d, %d] (%d voxels) | distanceField=%.2f MB, crossedEdges=%.2f MB | Core Grid Total=%.2f MB\n",
+              rx, ry, rz, datalen, distMemMB, crossMemMB, distMemMB + crossMemMB);
+
     // 2. Allocate voxel fields
     voxels.crossedEdges.assign(datalen, 0);
     voxels.distanceField.assign(datalen, std::numeric_limits<float>::infinity());
@@ -1346,18 +1362,28 @@ RemeshResult doRemesh(
     voxels.hasGroupField = false; // PolyGroups are transferred via spatial projection post-reconstruction
 
     // 3. Voxelize
+    auto tVoxelizeStart = std::chrono::high_resolution_clock::now();
     voxelize(verts, nbVerts, tris, nbTris, colors, materials, faceGroups, voxels, onProgress);
+    double msVoxelize = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tVoxelizeStart).count();
+    sculpt_log("[REMESH PROFILE] Stage 1 - Voxelize: %.2f ms\n", msVoxelize);
 
     // 4. Flood fill inside/outside
+    auto tFloodStart = std::chrono::high_resolution_clock::now();
     floodFill(voxels, onProgress);
+    double msFlood = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tFloodStart).count();
+    sculpt_log("[REMESH PROFILE] Stage 2 - Flood Fill: %.2f ms\n", msFlood);
 
     // 5. Reconstruct Surface
+    auto tReconstructStart = std::chrono::high_resolution_clock::now();
     RemeshResult r;
     if (manifold) {
         r = marchingCubesReconstruct(voxels, onProgress);
     } else {
         r = surfaceNetsReconstruct(voxels, block, onProgress);
     }
+    double msReconstruct = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tReconstructStart).count();
+    sculpt_log("[REMESH PROFILE] Stage 3 - Surface Reconstruction (%s): %.2f ms (Output: %d verts, %d faces)\n",
+              manifold ? "Marching Cubes" : "Surface Nets", msReconstruct, (int)(r.vertices.size() / 3), (int)(r.faces.size() / 4));
 
     float snapTol = step * 0.45f;
     for (size_t i = 0; i < r.vertices.size(); i += 3) {
@@ -1377,13 +1403,18 @@ RemeshResult doRemesh(
     }
 
     // 6. PolyGroup Transfer via Direct Spatial Mesh-to-Mesh Projection
+    double msPolyGroupTotal = 0.0;
     if (hasFaceGroups && faceGroups && nbTris > 0 && !r.faces.empty()) {
+        auto tPolyGroupStart = std::chrono::high_resolution_clock::now();
         size_t numFaces = r.faces.size() / 4;
         r.faceGroups.resize(numFaces, 0);
 
+        auto tBuildStart = std::chrono::high_resolution_clock::now();
         TriangleSpatialIndex spatialIndex;
         spatialIndex.build(verts, nbVerts, tris, nbTris, faceGroups, step);
+        double msBuild = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tBuildStart).count();
 
+        auto tQueryStart = std::chrono::high_resolution_clock::now();
         #pragma omp parallel for schedule(static)
         for (int i = 0; i < (int)numFaces; ++i) {
             uint32_t idx0 = r.faces[i * 4 + 0];
@@ -1435,8 +1466,10 @@ RemeshResult doRemesh(
 
             r.faceGroups[i] = spatialIndex.findClosestPolyGroup(centroid, norm);
         }
+        double msQuery = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tQueryStart).count();
 
         // Post-processing cleanup: Filter isolated 1-face noise
+        auto tCleanupStart = std::chrono::high_resolution_clock::now();
         if (numFaces > 0) {
             std::vector<std::vector<uint32_t>> vertToFaces(r.vertices.size() / 3);
             for (size_t f = 0; f < numFaces; ++f) {
@@ -1485,10 +1518,18 @@ RemeshResult doRemesh(
             }
             r.faceGroups = std::move(cleanedGroups);
         }
+        double msCleanup = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tCleanupStart).count();
+        msPolyGroupTotal = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tPolyGroupStart).count();
+
+        sculpt_log("[REMESH PROFILE] Stage 4 - PolyGroup Transfer: Total=%.2f ms (Index Build: %.2f ms, Query Search: %.2f ms, Cleanup: %.2f ms)\n",
+                  msPolyGroupTotal, msBuild, msQuery, msCleanup);
     }
 
     if (onProgress) onProgress(2, 100);
 
+    double msTotalRemesh = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tRemeshStart).count();
+    sculpt_log("[REMESH PROFILE] SUMMARY - C++ doRemesh Total: %.2f ms (Voxelize: %.2f ms | FloodFill: %.2f ms | Reconstruct: %.2f ms | PolyGroup: %.2f ms)\n",
+              msTotalRemesh, msVoxelize, msFlood, msReconstruct, msPolyGroupTotal);
     sculpt_log("[C++ doRemesh] Reconstructed. output verts: %d, faces: %d\n", (int)(r.vertices.size() / 3), (int)(r.faces.size() / 4));
     return r;
 }
