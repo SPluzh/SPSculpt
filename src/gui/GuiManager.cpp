@@ -331,6 +331,13 @@ bool GuiManager::openSceneFromPath(const std::string& path, Scene& scene, Sculpt
     auto tHistStart = std::chrono::high_resolution_clock::now();
     if (!newMeshes.empty()) {
         scene.selectMesh(newMeshes.front());
+        bool isProject = (FileManager::getExtension(path) == Format::PROJECT_EXT || FileManager::getExtension(path) == Format::LEGACY_EXT);
+        if (!isProject) {
+            scene.getCamera().resetViewToMeshes(newMeshes, false);
+            if (scene.getCameraRight()) {
+                scene.getCameraRight()->resetViewToMeshes(newMeshes, false);
+            }
+        }
         scene.pushHistoryState();
     }
     auto tHistEnd = std::chrono::high_resolution_clock::now();
@@ -455,6 +462,10 @@ void GuiManager::importFile(Scene& scene, SculptManager* sculpt) {
         auto tHistStart = std::chrono::high_resolution_clock::now();
         if (!newMeshes.empty()) {
             scene.selectMesh(newMeshes.front());
+            scene.getCamera().resetViewToMeshes(newMeshes, false);
+            if (scene.getCameraRight()) {
+                scene.getCameraRight()->resetViewToMeshes(newMeshes, false);
+            }
             scene.pushHistoryState();
         }
         auto tHistEnd = std::chrono::high_resolution_clock::now();

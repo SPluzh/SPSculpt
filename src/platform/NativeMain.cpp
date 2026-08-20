@@ -604,6 +604,10 @@ int main(int argc, char* argv[]) {
                         auto tHistStart = std::chrono::high_resolution_clock::now();
                         if (!newMeshes.empty()) {
                             scene.selectMesh(newMeshes.front());
+                            scene.getCamera().resetViewToMeshes(newMeshes, false);
+                            if (scene.getCameraRight()) {
+                                scene.getCameraRight()->resetViewToMeshes(newMeshes, false);
+                            }
                             scene.pushHistoryState();
                         }
                         auto tHistEnd = std::chrono::high_resolution_clock::now();
