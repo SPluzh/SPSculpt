@@ -595,15 +595,25 @@ int main(int argc, char* argv[]) {
                         gui.openSceneFromPath(droppedPath, scene, &sculpt, &renderer);
                         std::cout << "[DragNDrop] Opened project file: " << droppedPath << std::endl;
                     } else if (is3DModelFile(droppedPath)) {
+                        auto tStart = std::chrono::high_resolution_clock::now();
                         auto newMeshes = FileManager::importFiles(droppedPath, &scene, &renderer, &sculpt);
+                        auto tImportEnd = std::chrono::high_resolution_clock::now();
                         for (auto* mesh : newMeshes) {
                             scene.addMesh(mesh);
                         }
+                        auto tHistStart = std::chrono::high_resolution_clock::now();
                         if (!newMeshes.empty()) {
                             scene.selectMesh(newMeshes.front());
                             scene.pushHistoryState();
                         }
+                        auto tHistEnd = std::chrono::high_resolution_clock::now();
                         scene.setModified(true);
+
+                        double msImport = std::chrono::duration<double, std::milli>(tImportEnd - tStart).count();
+                        double msHist = std::chrono::duration<double, std::milli>(tHistEnd - tHistStart).count();
+                        double msTotal = std::chrono::duration<double, std::milli>(tHistEnd - tStart).count();
+                        sculpt_log("[DragNDrop] 3D model import '%s' completed in %.2f ms (ImportFiles: %.2fms, HistoryPush: %.2fms)\n",
+                                  droppedPath.c_str(), msTotal, msImport, msHist);
                         std::cout << "[DragNDrop] Imported 3D model file: " << droppedPath << std::endl;
                     }
                 }

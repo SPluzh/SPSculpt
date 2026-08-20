@@ -11,11 +11,13 @@
 #include "files/ExportGLTF.h"
 #include "common/FormatConstants.h"
 #include "common/StringUtils.h"
+#include "common/Logger.h"
 
 #include <fstream>
 #include <sstream>
 #include <iostream>
 #include <algorithm>
+#include <chrono>
 
 static std::vector<uint8_t> readBinaryFile(const std::string& path) {
 #ifdef _WIN32
@@ -104,9 +106,31 @@ std::vector<Mesh*> FileManager::importFiles(const std::string& path,
     }
     
     if (ext == "obj") {
+        auto tStart = std::chrono::high_resolution_clock::now();
+        sculpt_log("[OBJ Import] Starting OBJ file import: '%s'\n", path.c_str());
+
+        auto tReadStart = std::chrono::high_resolution_clock::now();
         std::string data = readTextFile(path);
-        if (data.empty()) return {};
-        return ImportOBJ::importOBJ(data);
+        auto tReadEnd = std::chrono::high_resolution_clock::now();
+        double msRead = std::chrono::duration<double, std::milli>(tReadEnd - tReadStart).count();
+
+        if (data.empty()) {
+            sculpt_log("[OBJ Import] ERROR: Failed to read file or file is empty: '%s'\n", path.c_str());
+            return {};
+        }
+
+        double dataMb = static_cast<double>(data.size()) / (1024.0 * 1024.0);
+        sculpt_log("[OBJ Import] Disk read completed: %.2f ms (File Size: %.2f MB)\n", msRead, dataMb);
+
+        auto tParseStart = std::chrono::high_resolution_clock::now();
+        std::vector<Mesh*> meshes = ImportOBJ::importOBJ(data);
+        auto tEnd = std::chrono::high_resolution_clock::now();
+        double msParse = std::chrono::duration<double, std::milli>(tEnd - tParseStart).count();
+        double msTotal = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
+
+        sculpt_log("[OBJ Import] FileManager::importFiles completed in %.2f ms (Disk I/O: %.2f ms, Parse/Build: %.2f ms, Meshes: %zu)\n",
+                   msTotal, msRead, msParse, meshes.size());
+        return meshes;
     }
     
     if (ext == "stl") {

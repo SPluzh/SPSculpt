@@ -317,23 +317,37 @@ GLuint GuiManager::getXrayIconTexture() {
 
 bool GuiManager::openSceneFromPath(const std::string& path, Scene& scene, SculptManager* sculpt, AngleRenderer* renderer) {
     if (path.empty()) return false;
+    auto tStart = std::chrono::high_resolution_clock::now();
     AngleRenderer* r = renderer ? renderer : m_renderer;
     snprintf(m_importPath, sizeof(m_importPath), "%s", path.c_str());
     scene.clear();
     auto newMeshes = FileManager::importFiles(path, &scene, r, sculpt);
+    auto tImportEnd = std::chrono::high_resolution_clock::now();
+
     for (auto* mesh : newMeshes) {
         scene.addMesh(mesh);
     }
+
+    auto tHistStart = std::chrono::high_resolution_clock::now();
     if (!newMeshes.empty()) {
         scene.selectMesh(newMeshes.front());
         scene.pushHistoryState();
     }
+    auto tHistEnd = std::chrono::high_resolution_clock::now();
+
     if (FileManager::getExtension(path) == Format::PROJECT_EXT || FileManager::getExtension(path) == Format::LEGACY_EXT) {
         m_currentScenePath = path;
     } else {
         m_currentScenePath.clear();
     }
     scene.setModified(false);
+
+    double msImport = std::chrono::duration<double, std::milli>(tImportEnd - tStart).count();
+    double msHist = std::chrono::duration<double, std::milli>(tHistEnd - tHistStart).count();
+    double msTotal = std::chrono::duration<double, std::milli>(tHistEnd - tStart).count();
+    sculpt_log("[Scene Import] openSceneFromPath('%s') completed in %.2f ms (ImportFiles: %.2fms, HistoryPush: %.2fms)\n",
+              path.c_str(), msTotal, msImport, msHist);
+
     return !newMeshes.empty() || FileManager::getExtension(path) == Format::PROJECT_EXT || FileManager::getExtension(path) == Format::LEGACY_EXT;
 }
 
@@ -430,15 +444,26 @@ void GuiManager::drawUnsavedChangesModal(Scene& scene, bool& quitApp) {
 void GuiManager::importFile(Scene& scene, SculptManager* sculpt) {
     std::string path = FileDialog::openFile(FileDialog::getImportFilters(), "Import File");
     if (!path.empty()) {
+        auto tStart = std::chrono::high_resolution_clock::now();
         snprintf(m_importPath, sizeof(m_importPath), "%s", path.c_str());
         auto newMeshes = FileManager::importFiles(path, &scene, m_renderer, sculpt);
+        auto tImportEnd = std::chrono::high_resolution_clock::now();
+
         for (auto* mesh : newMeshes) {
             scene.addMesh(mesh);
         }
+        auto tHistStart = std::chrono::high_resolution_clock::now();
         if (!newMeshes.empty()) {
             scene.selectMesh(newMeshes.front());
             scene.pushHistoryState();
         }
+        auto tHistEnd = std::chrono::high_resolution_clock::now();
+
+        double msImport = std::chrono::duration<double, std::milli>(tImportEnd - tStart).count();
+        double msHist = std::chrono::duration<double, std::milli>(tHistEnd - tHistStart).count();
+        double msTotal = std::chrono::duration<double, std::milli>(tHistEnd - tStart).count();
+        sculpt_log("[Scene Import] importFile('%s') completed in %.2f ms (ImportFiles: %.2fms, HistoryPush: %.2fms)\n",
+                  path.c_str(), msTotal, msImport, msHist);
     }
 }
 

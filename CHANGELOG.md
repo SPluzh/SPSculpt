@@ -3,6 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [0.2.7]
+- **OBJ Import Speed**: Accelerated OBJ file loading speed by 10–15x (from ~13s down to ~0.8s for heavy 3.4M polygon models) through optimized text parsing.
 - **Transform Tool UI Layering**: Fixed an issue where the Transform Tool gizmo rendered in front of ImGui windows by directing ImGuizmo to the viewport background draw list.
 - **Transform Tool & Undo**: Fixed an issue where scaling an object with the gizmo could not be undone via Ctrl+Z.
 - **Undo/Redo Acceleration**: Reduced Undo/Redo latency for transform operations on heavy meshes (3.4M+ polygons) from ~500ms down to <10ms by eliminating redundant mesh rebuilds and GPU re-uploads.
