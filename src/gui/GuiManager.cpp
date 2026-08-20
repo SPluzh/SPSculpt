@@ -1161,6 +1161,12 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGui::Checkbox("Lock Single PolyGroup", &settings.singlePolyGroup);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Limit brush deformation/painting to the PolyGroup under the cursor at stroke start");
 
+            bool useCrosshair = renderer.getUseCrosshairCursor();
+            if (ImGui::Checkbox("Crosshair Cursor", &useCrosshair)) {
+                renderer.setUseCrosshairCursor(useCrosshair);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Use open-center crosshair cursor instead of dot during sculpting");
+
             // Alpha Texture
             const char* alphas[] = { "None (Sphere)", "Square (Clay)", "Alpha 1", "Alpha 2" };
             ImGui::Combo("Alpha Texture", &settings.idAlpha, alphas, IM_ARRAYSIZE(alphas));
@@ -4332,41 +4338,85 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     ImGui::GetForegroundDrawList()->AddPolyline(innerPoints.data(), numSegments, colorU32, ImDrawFlags_Closed, thickness);
                 }
 
-                // Draw main dot (filled circle)
+                auto drawCrosshairLines = [&](ImVec2 c, ImU32 color) {
+                    float g = 3.5f * scale;
+                    float l = 6.5f * scale;
+                    float lineThick = std::max(1.5f, thickness);
+
+                    ImVec2 lines[4][2] = {
+                        { ImVec2(c.x - g - l, c.y), ImVec2(c.x - g, c.y) },
+                        { ImVec2(c.x + g, c.y), ImVec2(c.x + g + l, c.y) },
+                        { ImVec2(c.x, c.y - g - l), ImVec2(c.x, c.y - g) },
+                        { ImVec2(c.x, c.y + g), ImVec2(c.x, c.y + g + l) }
+                    };
+
+                    ImDrawList* drawList = ImGui::GetForegroundDrawList();
+                    for (int k = 0; k < 4; ++k) {
+                        drawList->AddLine(lines[k][0], lines[k][1], color, lineThick);
+                    }
+                };
+
                 const int dotSegments = 32;
-                std::vector<ImVec2> dotPoints(dotSegments);
-                for (int i = 0; i < dotSegments; ++i) {
-                    float angle = i * 2.0f * 3.1415926535f / dotSegments;
-                    glm::vec3 localPos(std::cos(angle), std::sin(angle), 0.0f);
-                    dotPoints[i] = projectPoint(dotMVP, localPos, width, viewportHeight, xOffset, camera, apply2D);
-                }
-                ImGui::GetForegroundDrawList()->AddConvexPolyFilled(dotPoints.data(), dotSegments, colorU32);
-
-                // Draw symmetry dots
-                for (size_t idx = 0; idx < symMVPs.size(); ++idx) {
-                    const auto& symMVP = symMVPs[idx];
-                    if (symMVP == glm::mat4(0.0f)) continue;
-                    bool occluded = (idx < symOccluded.size()) ? symOccluded[idx] : false;
-
-                    // Project center of symmetry dot to check if it's covered by an ImGui panel
-                    ImVec2 symCenter = projectPoint(symMVP, glm::vec3(0.0f), width, viewportHeight, xOffset, camera, apply2D);
-                    if (symCenter.x < -5000.0f || isPointOverImGuiWindow(symCenter)) {
-                        continue;
+                if (renderer.getUseCrosshairCursor()) {
+                    ImVec2 mainCenter = projectPoint(dotMVP, glm::vec3(0.0f), width, viewportHeight, xOffset, camera, apply2D);
+                    if (mainCenter.x > -5000.0f) {
+                        drawCrosshairLines(mainCenter, colorU32);
                     }
 
-                    std::vector<ImVec2> symPoints(dotSegments);
+                    // Draw symmetry crosshairs
+                    for (size_t idx = 0; idx < symMVPs.size(); ++idx) {
+                        const auto& symMVP = symMVPs[idx];
+                        if (symMVP == glm::mat4(0.0f)) continue;
+                        bool occluded = (idx < symOccluded.size()) ? symOccluded[idx] : false;
+
+                        ImVec2 symCenter = projectPoint(symMVP, glm::vec3(0.0f), width, viewportHeight, xOffset, camera, apply2D);
+                        if (symCenter.x < -5000.0f || isPointOverImGuiWindow(symCenter)) {
+                            continue;
+                        }
+
+                        ImU32 dotColorU32 = colorU32;
+                        if (occluded) {
+                            glm::vec3 darkColor = cursorState.color * 0.3f;
+                            dotColorU32 = ImGui::ColorConvertFloat4ToU32(ImVec4(darkColor.r, darkColor.g, darkColor.b, 1.0f));
+                        }
+                        drawCrosshairLines(symCenter, dotColorU32);
+                    }
+                } else {
+                    // Draw main dot (filled circle)
+                    std::vector<ImVec2> dotPoints(dotSegments);
                     for (int i = 0; i < dotSegments; ++i) {
                         float angle = i * 2.0f * 3.1415926535f / dotSegments;
                         glm::vec3 localPos(std::cos(angle), std::sin(angle), 0.0f);
-                        symPoints[i] = projectPoint(symMVP, localPos, width, viewportHeight, xOffset, camera, apply2D);
+                        dotPoints[i] = projectPoint(dotMVP, localPos, width, viewportHeight, xOffset, camera, apply2D);
                     }
-                    
-                    ImU32 dotColorU32 = colorU32;
-                    if (occluded) {
-                        glm::vec3 darkColor = cursorState.color * 0.3f;
-                        dotColorU32 = ImGui::ColorConvertFloat4ToU32(ImVec4(darkColor.r, darkColor.g, darkColor.b, 1.0f));
+                    ImGui::GetForegroundDrawList()->AddConvexPolyFilled(dotPoints.data(), dotSegments, colorU32);
+
+                    // Draw symmetry dots
+                    for (size_t idx = 0; idx < symMVPs.size(); ++idx) {
+                        const auto& symMVP = symMVPs[idx];
+                        if (symMVP == glm::mat4(0.0f)) continue;
+                        bool occluded = (idx < symOccluded.size()) ? symOccluded[idx] : false;
+
+                        // Project center of symmetry dot to check if it's covered by an ImGui panel
+                        ImVec2 symCenter = projectPoint(symMVP, glm::vec3(0.0f), width, viewportHeight, xOffset, camera, apply2D);
+                        if (symCenter.x < -5000.0f || isPointOverImGuiWindow(symCenter)) {
+                            continue;
+                        }
+
+                        std::vector<ImVec2> symPoints(dotSegments);
+                        for (int i = 0; i < dotSegments; ++i) {
+                            float angle = i * 2.0f * 3.1415926535f / dotSegments;
+                            glm::vec3 localPos(std::cos(angle), std::sin(angle), 0.0f);
+                            symPoints[i] = projectPoint(symMVP, localPos, width, viewportHeight, xOffset, camera, apply2D);
+                        }
+                        
+                        ImU32 dotColorU32 = colorU32;
+                        if (occluded) {
+                            glm::vec3 darkColor = cursorState.color * 0.3f;
+                            dotColorU32 = ImGui::ColorConvertFloat4ToU32(ImVec4(darkColor.r, darkColor.g, darkColor.b, 1.0f));
+                        }
+                        ImGui::GetForegroundDrawList()->AddConvexPolyFilled(symPoints.data(), dotSegments, dotColorU32);
                     }
-                    ImGui::GetForegroundDrawList()->AddConvexPolyFilled(symPoints.data(), dotSegments, dotColorU32);
                 }
 
                 ImGui::GetForegroundDrawList()->PopClipRect();
@@ -8315,6 +8365,12 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                 if (ImGui::Checkbox("Smooth (Antialiased) Cursor", &smoothCursor)) {
                     renderer.setSmoothCursor(smoothCursor);
                 }
+                ImGui::SameLine();
+                bool useCrosshairPref = renderer.getUseCrosshairCursor();
+                if (ImGui::Checkbox("Crosshair Cursor", &useCrosshairPref)) {
+                    renderer.setUseCrosshairCursor(useCrosshairPref);
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle between centerless crosshair cursor and center dot");
 
                 ImGui::Spacing();
                 ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Material Settings");

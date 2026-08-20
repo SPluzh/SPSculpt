@@ -71,6 +71,7 @@ AngleRenderer::~AngleRenderer() {
     if (m_selectionVao) glDeleteVertexArrays(1, &m_selectionVao);
     if (m_circleVbo) glDeleteBuffers(1, &m_circleVbo);
     if (m_dotVbo) glDeleteBuffers(1, &m_dotVbo);
+    if (m_crosshairVbo) glDeleteBuffers(1, &m_crosshairVbo);
     if (m_lassoVao) glDeleteVertexArrays(1, &m_lassoVao);
     if (m_lassoVbo) glDeleteBuffers(1, &m_lassoVbo);
 
@@ -401,9 +402,20 @@ bool AngleRenderer::init(int width, int height) {
         dotVerts.push_back(0.0f);
     }
 
+    // Selection crosshair geometry (4 line segments = 8 vertices)
+    float crossGap = 0.5f;
+    float crossLen = 1.0f;
+    std::vector<float> crossVerts = {
+        -crossGap - crossLen, 0.0f, 0.0f,   -crossGap, 0.0f, 0.0f,
+         crossGap, 0.0f, 0.0f,               crossGap + crossLen, 0.0f, 0.0f,
+         0.0f,  crossGap + crossLen, 0.0f,   0.0f,  crossGap, 0.0f,
+         0.0f, -crossGap, 0.0f,              0.0f, -crossGap - crossLen, 0.0f
+    };
+
     glGenVertexArrays(1, &m_selectionVao);
     glGenBuffers(1, &m_circleVbo);
     glGenBuffers(1, &m_dotVbo);
+    glGenBuffers(1, &m_crosshairVbo);
 
     glBindVertexArray(m_selectionVao);
     glBindBuffer(GL_ARRAY_BUFFER, m_circleVbo);
@@ -411,6 +423,9 @@ bool AngleRenderer::init(int width, int height) {
     
     glBindBuffer(GL_ARRAY_BUFFER, m_dotVbo);
     glBufferData(GL_ARRAY_BUFFER, dotVerts.size() * sizeof(float), dotVerts.data(), GL_STATIC_DRAW);
+
+    glBindBuffer(GL_ARRAY_BUFFER, m_crosshairVbo);
+    glBufferData(GL_ARRAY_BUFFER, crossVerts.size() * sizeof(float), crossVerts.data(), GL_STATIC_DRAW);
     glBindVertexArray(0);
 
     // Lasso buffers initialization
@@ -2109,28 +2124,54 @@ void AngleRenderer::drawSelectionCursor(const Scene& scene, bool isRight) {
         if (locOffsetPixels != -1) glUniform1f(locOffsetPixels, 0.0f);
     }
     
-    // Draw main dot and symmetry dots
+    // Draw main dot/crosshair and symmetry dots/crosshairs
     glDisable(GL_DEPTH_TEST);
 
-    // Draw main dot
-    glUniform3fv(locColor, 1, &m_cursorColor[0]);
-    glUniformMatrix4fv(locMVP, 1, GL_FALSE, &dotMVP[0][0]);
-    glBindBuffer(GL_ARRAY_BUFFER, m_dotVbo);
-    glVertexAttribPointer(locPos, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(locPos);
-    glDrawArrays(GL_TRIANGLE_FAN, 0, 34);
+    if (m_useCrosshairCursor) {
+        glLineWidth(m_cursorThickness * m_dpiScale);
+        glBindBuffer(GL_ARRAY_BUFFER, m_crosshairVbo);
+        glVertexAttribPointer(locPos, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(locPos);
 
-    // Draw symmetry dots
-    for (size_t idx = 0; idx < symMVPs.size(); ++idx) {
-        bool occluded = (idx < symOccluded.size()) ? symOccluded[idx] : false;
-        if (occluded) {
-            glm::vec3 darkColor = m_cursorColor * 0.3f;
-            glUniform3fv(locColor, 1, &darkColor[0]);
-        } else {
-            glUniform3fv(locColor, 1, &m_cursorColor[0]);
+        // Draw main crosshair
+        glUniform3fv(locColor, 1, &m_cursorColor[0]);
+        glUniformMatrix4fv(locMVP, 1, GL_FALSE, &dotMVP[0][0]);
+        glDrawArrays(GL_LINES, 0, 8);
+
+        // Draw symmetry crosshairs
+        for (size_t idx = 0; idx < symMVPs.size(); ++idx) {
+            bool occluded = (idx < symOccluded.size()) ? symOccluded[idx] : false;
+            if (occluded) {
+                glm::vec3 darkColor = m_cursorColor * 0.3f;
+                glUniform3fv(locColor, 1, &darkColor[0]);
+            } else {
+                glUniform3fv(locColor, 1, &m_cursorColor[0]);
+            }
+            glUniformMatrix4fv(locMVP, 1, GL_FALSE, &symMVPs[idx][0][0]);
+            glDrawArrays(GL_LINES, 0, 8);
         }
-        glUniformMatrix4fv(locMVP, 1, GL_FALSE, &symMVPs[idx][0][0]);
+        glLineWidth(1.0f);
+    } else {
+        // Draw main dot
+        glUniform3fv(locColor, 1, &m_cursorColor[0]);
+        glUniformMatrix4fv(locMVP, 1, GL_FALSE, &dotMVP[0][0]);
+        glBindBuffer(GL_ARRAY_BUFFER, m_dotVbo);
+        glVertexAttribPointer(locPos, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(locPos);
         glDrawArrays(GL_TRIANGLE_FAN, 0, 34);
+
+        // Draw symmetry dots
+        for (size_t idx = 0; idx < symMVPs.size(); ++idx) {
+            bool occluded = (idx < symOccluded.size()) ? symOccluded[idx] : false;
+            if (occluded) {
+                glm::vec3 darkColor = m_cursorColor * 0.3f;
+                glUniform3fv(locColor, 1, &darkColor[0]);
+            } else {
+                glUniform3fv(locColor, 1, &m_cursorColor[0]);
+            }
+            glUniformMatrix4fv(locMVP, 1, GL_FALSE, &symMVPs[idx][0][0]);
+            glDrawArrays(GL_TRIANGLE_FAN, 0, 34);
+        }
     }
 
     // Restore state

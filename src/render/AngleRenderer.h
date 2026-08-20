@@ -184,6 +184,8 @@ public:
     float getCursorThickness() const { return m_cursorThickness; }
     void setSmoothCursor(bool smooth) { m_smoothCursor = smooth; }
     bool getSmoothCursor() const { return m_smoothCursor; }
+    void setUseCrosshairCursor(bool crosshair) { m_useCrosshairCursor = crosshair; }
+    bool getUseCrosshairCursor() const { return m_useCrosshairCursor; }
     void setShowGrid(bool show) { m_showGrid = show; }
     bool getShowGrid() const { return m_showGrid; }
     void setShowSafeFrames(bool show) { m_showSafeFrames = show; }
@@ -622,6 +624,7 @@ private:
     glm::vec4 m_contourColor{1.0f, 0.75f, 0.1f, 1.0f};
     float m_cursorThickness = 2.5f;
     bool m_smoothCursor = true;
+    bool m_useCrosshairCursor = true;
 
     int m_shaderType = 0;
     int m_matcapIdx = 0;
@@ -693,6 +696,7 @@ private:
     GLuint m_selectionVao = 0;
     GLuint m_circleVbo = 0;
     GLuint m_dotVbo = 0;
+    GLuint m_crosshairVbo = 0;
 
     // GPU buffers cache for meshes
     GLuint m_armatureSphereVao = 0;

@@ -30,6 +30,7 @@ bool RenderSettings::save(IniFile& ini, const AngleRenderer& renderer, const Sce
     ini.set(sec, "contourColor", std::to_string(cColor.r) + " " + std::to_string(cColor.g) + " " + std::to_string(cColor.b) + " " + std::to_string(cColor.a));
     ini.setFloat(sec, "cursorThickness", renderer.getCursorThickness());
     ini.setBool(sec, "smoothCursor", renderer.getSmoothCursor());
+    ini.setBool(sec, "useCrosshairCursor", renderer.getUseCrosshairCursor());
     ini.setInt(sec, "splitMode", static_cast<int>(scene.getSplitMode()));
     ini.setBool(sec, "splitShowInactiveCursor", scene.getSplitShowInactiveCursor());
     ini.setInt(sec, "currentEnvIdx", renderer.getCurrentEnvIdx());
@@ -135,6 +136,7 @@ bool RenderSettings::load(const IniFile& ini, AngleRenderer& renderer, Scene& sc
 
     if (ini.hasKey(sec, "cursorThickness")) renderer.setCursorThickness(ini.getFloat(sec, "cursorThickness", 2.5f));
     if (ini.hasKey(sec, "smoothCursor")) renderer.setSmoothCursor(ini.getBool(sec, "smoothCursor"));
+    if (ini.hasKey(sec, "useCrosshairCursor")) renderer.setUseCrosshairCursor(ini.getBool(sec, "useCrosshairCursor", true));
     if (ini.hasKey(sec, "splitMode")) scene.setSplitMode(static_cast<Scene::SplitMode>(ini.getInt(sec, "splitMode", 0)));
     if (ini.hasKey(sec, "splitShowInactiveCursor")) scene.setSplitShowInactiveCursor(ini.getBool(sec, "splitShowInactiveCursor"));
 
