@@ -3606,7 +3606,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         if (selectedMesh) {
             ImGuizmo::BeginFrame();
             ImGuizmo::SetOrthographic(camera.isOrthographic());
-            ImGuizmo::SetDrawlist(ImGui::GetForegroundDrawList());
+            ImGuizmo::SetDrawlist(ImGui::GetBackgroundDrawList());
             ImGuizmo::SetRect(0.0f, 0.0f, (float)camera.getWidth(), (float)camera.getHeight());
             ImGuizmo::AllowAxisFlip(false);
 
