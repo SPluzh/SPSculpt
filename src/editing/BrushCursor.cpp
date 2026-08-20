@@ -261,8 +261,14 @@ void BrushCursor::update(int mouseX, int mouseY,
         bool isModal = (modalMode != ModalMode::NONE);
         glm::vec3 circleNormalLeft = worldNormal;
         if (isModal) {
-            glm::mat4 invViewLeft = glm::inverse(cameraLeft.getViewMatrix());
-            circleNormalLeft = glm::normalize(glm::vec3(invViewLeft[2]));
+            glm::vec3 camPos = cameraLeft.computePosition();
+            glm::vec3 dir = camPos - worldPt;
+            if (glm::length(dir) > 1e-6f) {
+                circleNormalLeft = glm::normalize(dir);
+            } else {
+                glm::mat4 invViewLeft = glm::inverse(cameraLeft.getViewMatrix());
+                circleNormalLeft = glm::normalize(glm::vec3(invViewLeft[2]));
+            }
         }
 
         // --- Left Viewport MVP construction ---
@@ -281,7 +287,7 @@ void BrushCursor::update(int mouseX, int mouseY,
         float tiltX = 0.0f;
         float tiltY = 0.0f;
 #ifdef _WIN32
-        if (g_tablet.isAvailable() && g_tablet.isPenActive() && g_tablet.isTiltEnabled()) {
+        if (!isModal && g_tablet.isAvailable() && g_tablet.isPenActive() && g_tablet.isTiltEnabled()) {
             tiltX = g_tablet.getTiltX();
             tiltY = g_tablet.getTiltY();
         }
@@ -327,7 +333,17 @@ void BrushCursor::update(int mouseX, int mouseY,
                         glm::vec3 worldSymPt = glm::vec3(mesh->matrix * glm::vec4(localSymPt, 1.0f));
                         glm::vec3 worldSymNormal = glm::normalize(normalMatrix * localSymNormal);
 
-                        glm::vec3 circleSymNormalLeft = isModal ? circleNormalLeft : worldSymNormal;
+                        glm::vec3 circleSymNormalLeft = worldSymNormal;
+                        if (isModal) {
+                            glm::vec3 camPos = cameraLeft.computePosition();
+                            glm::vec3 dir = camPos - worldSymPt;
+                            if (glm::length(dir) > 1e-6f) {
+                                circleSymNormalLeft = glm::normalize(dir);
+                            } else {
+                                circleSymNormalLeft = circleNormalLeft;
+                            }
+                        }
+
                         glm::mat4 symMVP = buildCircleMVP(worldSymPt, circleSymNormalLeft, constRadiusLeft, cameraLeft, tiltX, tiltY);
                         m_state.symMVPs.push_back(symMVP);
 
@@ -344,8 +360,14 @@ void BrushCursor::update(int mouseX, int mouseY,
         if (cameraRight) {
             glm::vec3 circleNormalRight = worldNormal;
             if (isModal) {
-                glm::mat4 invViewRight = glm::inverse(cameraRight->getViewMatrix());
-                circleNormalRight = glm::normalize(glm::vec3(invViewRight[2]));
+                glm::vec3 camPosR = cameraRight->computePosition();
+                glm::vec3 dirR = camPosR - worldPt;
+                if (glm::length(dirR) > 1e-6f) {
+                    circleNormalRight = glm::normalize(dirR);
+                } else {
+                    glm::mat4 invViewRight = glm::inverse(cameraRight->getViewMatrix());
+                    circleNormalRight = glm::normalize(glm::vec3(invViewRight[2]));
+                }
             }
 
             float worldRadiusRight = 0.0f;
@@ -391,7 +413,17 @@ void BrushCursor::update(int mouseX, int mouseY,
                             glm::vec3 worldSymPt = glm::vec3(mesh->matrix * glm::vec4(localSymPt, 1.0f));
                             glm::vec3 worldSymNormal = glm::normalize(normalMatrix * localSymNormal);
 
-                            glm::vec3 circleSymNormalRight = isModal ? circleNormalRight : worldSymNormal;
+                            glm::vec3 circleSymNormalRight = worldSymNormal;
+                            if (isModal) {
+                                glm::vec3 camPosR = cameraRight->computePosition();
+                                glm::vec3 dirR = camPosR - worldSymPt;
+                                if (glm::length(dirR) > 1e-6f) {
+                                    circleSymNormalRight = glm::normalize(dirR);
+                                } else {
+                                    circleSymNormalRight = circleNormalRight;
+                                }
+                            }
+
                             glm::mat4 symMVP = buildCircleMVP(worldSymPt, circleSymNormalRight, constRadiusRight, *cameraRight, tiltX, tiltY);
                             m_state.symMVPsRight.push_back(symMVP);
 

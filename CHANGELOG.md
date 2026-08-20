@@ -3,6 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [0.2.7]
+- **Brush Cursor Deformation**: Fixed oval/elliptical distortion when editing brush parameters (Radius `S`, Intensity `A`, Focal Shift `D`) by orienting the modal preview circle normal directly toward the camera position and bypassing tablet tilt scaling during parameter adjustment.
 - **Brush Cursor**: Added open-center crosshair brush cursor for sculpting with a toggle checkbox in Brush Settings and Preferences.
 - **Camera Focus on Import**: Automatically focus and frame the camera on imported 3D mesh objects when opening files via command-line arguments, File → Open/Import, or Drag & Drop.
 - **OBJ Import Speed**: Accelerated OBJ file loading speed by 10–15x (from ~13s down to ~0.8s for heavy 3.4M polygon models) through optimized text parsing.
