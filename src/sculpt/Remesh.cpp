@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <functional>
 #include <chrono>
+#include <thread>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -402,7 +403,38 @@ public:
 
         double pointD[3] = { (double)point[0], (double)point[1], (double)point[2] };
 
-        for (int r = 0; r <= 3; ++r) {
+        // Fast-path: Check cell r = 0 first
+        if (cx >= 0 && cx < dims[0] && cy >= 0 && cy < dims[1] && cz >= 0 && cz < dims[2]) {
+            int cellIdx = cx + cy * dims[0] + cz * dims[0] * dims[1];
+            for (uint32_t triIdx : cells[cellIdx]) {
+                const IndexedTriangle& tri = m_triangles[triIdx];
+                double dummyClosest[4];
+                double distSq = distance2PointTriangleEdges(
+                    pointD, tri.edge1, tri.edge2, tri.v1, tri.a00, tri.a01, tri.a11, dummyClosest
+                );
+
+                float dotN = quadNormal[0] * tri.normal[0] +
+                             quadNormal[1] * tri.normal[1] +
+                             quadNormal[2] * tri.normal[2];
+
+                if (dotN > 0.0f) {
+                    if (!foundAligned || distSq < bestDistSq) {
+                        bestDistSq = distSq;
+                        bestGroup = tri.groupID;
+                        foundAligned = true;
+                    }
+                } else if (!foundAligned && distSq < bestDistSq) {
+                    bestDistSq = distSq;
+                    bestGroup = tri.groupID;
+                }
+            }
+            if (foundAligned && bestDistSq < (double)(0.5f * cellSize * 0.5f * cellSize)) {
+                return bestGroup;
+            }
+        }
+
+        int startR = foundAligned ? 1 : 0;
+        for (int r = startR; r <= 3; ++r) {
             int xMin = std::max(0, cx - r);
             int xMax = std::min(dims[0] - 1, cx + r);
             int yMin = std::max(0, cy - r);
@@ -413,6 +445,9 @@ public:
             for (int z = zMin; z <= zMax; ++z) {
                 for (int y = yMin; y <= yMax; ++y) {
                     for (int x = xMin; x <= xMax; ++x) {
+                        if (r > 0 && x > cx - r && x < cx + r && y > cy - r && y < cy + r && z > cz - r && z < cz + r) {
+                            continue;
+                        }
                         int cellIdx = x + y * dims[0] + z * dims[0] * dims[1];
                         for (uint32_t triIdx : cells[cellIdx]) {
                             const IndexedTriangle& tri = m_triangles[triIdx];
@@ -483,119 +518,133 @@ static void voxelize(
 
     double inv3 = 1.0 / 3.0;
 
-    for (int iTri = 0; iTri < nbTris; ++iTri) {
-        if (onProgress && (iTri % 1000 == 0)) {
-            int pct = (iTri * 100) / nbTris;
-            onProgress(0, pct);
-        }
-        int idTri = iTri * 3;
-        uint32_t iv1 = tris[idTri] * 3;
-        uint32_t iv2 = tris[idTri + 1] * 3;
-        uint32_t iv3 = tris[idTri + 2] * 3;
+    int numThreads = (int)std::thread::hardware_concurrency();
+    if (numThreads < 1) numThreads = 1;
+    std::vector<std::thread> threads(numThreads);
+    int slicesPerThread = (rz + numThreads - 1) / numThreads;
 
-        double v1[3] = { verts[iv1], verts[iv1 + 1], verts[iv1 + 2] };
-        double v2[3] = { verts[iv2], verts[iv2 + 1], verts[iv2 + 2] };
-        double v3[3] = { verts[iv3], verts[iv3 + 1], verts[iv3 + 2] };
+    for (int t = 0; t < numThreads; ++t) {
+        threads[t] = std::thread([&, t]() {
+            int kStart_t = t * slicesPerThread;
+            int kEnd_t = std::min(rz - 1, kStart_t + slicesPerThread - 1);
+            if (kStart_t > kEnd_t) return;
 
-        float c1[3] = {0.0f, 0.0f, 0.0f};
-        if (colors) {
-            c1[0] = (colors[iv1] + colors[iv2] + colors[iv3]) * inv3;
-            c1[1] = (colors[iv1 + 1] + colors[iv2 + 1] + colors[iv3 + 1]) * inv3;
-            c1[2] = (colors[iv1 + 2] + colors[iv2 + 2] + colors[iv3 + 2]) * inv3;
-        }
+            for (int iTri = 0; iTri < nbTris; ++iTri) {
+                int idTri = iTri * 3;
+                uint32_t iv1 = tris[idTri] * 3;
+                uint32_t iv2 = tris[idTri + 1] * 3;
+                uint32_t iv3 = tris[idTri + 2] * 3;
 
-        float m1[3] = {0.0f, 0.0f, 0.0f};
-        if (materials) {
-            m1[0] = (materials[iv1] + materials[iv2] + materials[iv3]) * inv3;
-            m1[1] = (materials[iv1 + 1] + materials[iv2 + 1] + materials[iv3 + 1]) * inv3;
-            m1[2] = (materials[iv1 + 2] + materials[iv2 + 2] + materials[iv3 + 2]) * inv3;
-        }
+                double v1[3] = { verts[iv1], verts[iv1 + 1], verts[iv1 + 2] };
+                double v2[3] = { verts[iv2], verts[iv2 + 1], verts[iv2 + 2] };
+                double v3[3] = { verts[iv3], verts[iv3 + 1], verts[iv3 + 2] };
 
-        // Bounding box
-        double xmin = std::min({v1[0], v2[0], v3[0]});
-        double xmax = std::max({v1[0], v2[0], v3[0]});
-        double ymin = std::min({v1[1], v2[1], v3[1]});
-        double ymax = std::max({v1[1], v2[1], v3[1]});
-        double zmin = std::min({v1[2], v2[2], v3[2]});
-        double zmax = std::max({v1[2], v2[2], v3[2]});
+                double zmin = std::min({v1[2], v2[2], v3[2]});
+                double zmax = std::max({v1[2], v2[2], v3[2]});
 
-        double triEdge1[3] = { v2[0] - v1[0], v2[1] - v1[1], v2[2] - v1[2] };
-        double triEdge2[3] = { v3[0] - v1[0], v3[1] - v1[1], v3[2] - v1[2] };
+                int snapMinz = (int)std::floor((zmin - vminz) * invStep);
+                int snapMaxz = (int)std::ceil((zmax - vminz) * invStep);
 
-        double a00 = triEdge1[0] * triEdge1[0] + triEdge1[1] * triEdge1[1] + triEdge1[2] * triEdge1[2];
-        double a01 = triEdge1[0] * triEdge2[0] + triEdge1[1] * triEdge2[1] + triEdge1[2] * triEdge2[2];
-        double a11 = triEdge2[0] * triEdge2[0] + triEdge2[1] * triEdge2[1] + triEdge2[2] * triEdge2[2];
+                int kMin = std::max(kStart_t, snapMinz);
+                int kMax = std::min(kEnd_t, snapMaxz);
+                if (kMin > kMax) continue;
 
-        int snapMinx = (int)std::floor((xmin - vminx) * invStep);
-        int snapMiny = (int)std::floor((ymin - vminy) * invStep);
-        int snapMinz = (int)std::floor((zmin - vminz) * invStep);
+                double xmin = std::min({v1[0], v2[0], v3[0]});
+                double xmax = std::max({v1[0], v2[0], v3[0]});
+                double ymin = std::min({v1[1], v2[1], v3[1]});
+                double ymax = std::max({v1[1], v2[1], v3[1]});
 
-        int snapMaxx = (int)std::ceil((xmax - vminx) * invStep);
-        int snapMaxy = (int)std::ceil((ymax - vminy) * invStep);
-        int snapMaxz = (int)std::ceil((zmax - vminz) * invStep);
+                float c1[3] = {0.0f, 0.0f, 0.0f};
+                if (colors) {
+                    c1[0] = (colors[iv1] + colors[iv2] + colors[iv3]) * inv3;
+                    c1[1] = (colors[iv1 + 1] + colors[iv2 + 1] + colors[iv3 + 1]) * inv3;
+                    c1[2] = (colors[iv1 + 2] + colors[iv2 + 2] + colors[iv3 + 2]) * inv3;
+                }
 
-        // Clamp bounds to avoid out of bounds grid access
-        snapMinx = std::max(0, snapMinx);
-        snapMiny = std::max(0, snapMiny);
-        snapMinz = std::max(0, snapMinz);
-        snapMaxx = std::min(rx - 1, snapMaxx);
-        snapMaxy = std::min(ry - 1, snapMaxy);
-        snapMaxz = std::min(rz - 1, snapMaxz);
+                float m1[3] = {0.0f, 0.0f, 0.0f};
+                if (materials) {
+                    m1[0] = (materials[iv1] + materials[iv2] + materials[iv3]) * inv3;
+                    m1[1] = (materials[iv1 + 1] + materials[iv2 + 1] + materials[iv3 + 1]) * inv3;
+                    m1[2] = (materials[iv1 + 2] + materials[iv2 + 2] + materials[iv3 + 2]) * inv3;
+                }
 
-        for (int k = snapMinz; k <= snapMaxz; ++k) {
-            for (int j = snapMiny; j <= snapMaxy; ++j) {
-                for (int i = snapMinx; i <= snapMaxx; ++i) {
-                    double x = vminx + i * step;
-                    double y = vminy + j * step;
+                double triEdge1[3] = { v2[0] - v1[0], v2[1] - v1[1], v2[2] - v1[2] };
+                double triEdge2[3] = { v3[0] - v1[0], v3[1] - v1[1], v3[2] - v1[2] };
+
+                double a00 = triEdge1[0] * triEdge1[0] + triEdge1[1] * triEdge1[1] + triEdge1[2] * triEdge1[2];
+                double a01 = triEdge1[0] * triEdge2[0] + triEdge1[1] * triEdge2[1] + triEdge1[2] * triEdge2[2];
+                double a11 = triEdge2[0] * triEdge2[0] + triEdge2[1] * triEdge2[1] + triEdge2[2] * triEdge2[2];
+
+                int snapMinx = (int)std::floor((xmin - vminx) * invStep);
+                int snapMiny = (int)std::floor((ymin - vminy) * invStep);
+                int snapMaxx = (int)std::ceil((xmax - vminx) * invStep);
+                int snapMaxy = (int)std::ceil((ymax - vminy) * invStep);
+
+                snapMinx = std::max(0, snapMinx);
+                snapMiny = std::max(0, snapMiny);
+                snapMaxx = std::min(rx - 1, snapMaxx);
+                snapMaxy = std::min(ry - 1, snapMaxy);
+
+                for (int k = kMin; k <= kMax; ++k) {
                     double z = vminz + k * step;
-                    int n = i + j * rx + k * rxy;
+                    int kOffset = k * rxy;
+                    for (int j = snapMiny; j <= snapMaxy; ++j) {
+                        double y = vminy + j * step;
+                        int n = snapMinx + j * rx + kOffset;
+                        for (int i = snapMinx; i <= snapMaxx; ++i, ++n) {
+                            double x = vminx + i * step;
 
-                    double point[3] = { x, y, z };
-                    double closest[4];
-                    double newDistSq = distance2PointTriangleEdges(point, triEdge1, triEdge2, v1, a00, a01, a11, closest);
-                    float curDist = voxels.distanceField[n];
-                    double curDistSq = (double)curDist * (double)curDist;
+                            double point[3] = { x, y, z };
+                            double closest[4];
+                            double newDistSq = distance2PointTriangleEdges(point, triEdge1, triEdge2, v1, a00, a01, a11, closest);
+                            float curDist = voxels.distanceField[n];
+                            double curDistSq = (double)curDist * (double)curDist;
 
-                    if (newDistSq < curDistSq) {
-                        voxels.distanceField[n] = (float)std::sqrt(newDistSq);
-                        if (voxels.hasColorField) {
-                            uint8_t r = (uint8_t)(c1[0] * 255.0f + 0.5f);
-                            uint8_t g = (uint8_t)(c1[1] * 255.0f + 0.5f);
-                            uint8_t b = (uint8_t)(c1[2] * 255.0f + 0.5f);
-                            voxels.colorField[n] = ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+                            if (newDistSq < curDistSq) {
+                                voxels.distanceField[n] = (float)std::sqrt(newDistSq);
+                                if (voxels.hasColorField) {
+                                    uint8_t r = (uint8_t)(c1[0] * 255.0f + 0.5f);
+                                    uint8_t g = (uint8_t)(c1[1] * 255.0f + 0.5f);
+                                    uint8_t b = (uint8_t)(c1[2] * 255.0f + 0.5f);
+                                    voxels.colorField[n] = ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+                                }
+                                if (voxels.hasMaterialField) {
+                                    uint8_t r = (uint8_t)(m1[0] * 255.0f + 0.5f);
+                                    uint8_t g = (uint8_t)(m1[1] * 255.0f + 0.5f);
+                                    uint8_t b = (uint8_t)(m1[2] * 255.0f + 0.5f);
+                                    voxels.materialField[n] = ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+                                }
+                                if (voxels.hasGroupField && faceGroups) {
+                                    voxels.groupField[n] = faceGroups[iTri];
+                                }
+                            }
+
+                            if (newDistSq > step * step)
+                                continue;
+
+                            for (int it = 0; it < 3; ++it) {
+                                double val = closest[it] - point[it];
+                                if (val < 0.0 || val > step)
+                                    continue;
+
+                                int bit = 1 << it;
+                                if ((voxels.crossedEdges[n] & bit) != 0)
+                                    continue;
+
+                                double dist = intersectionRayTriangleEdges(point, dirUnit[it], triEdge1, triEdge2, v1);
+                                if (dist < 0.0 || dist > step)
+                                    continue;
+
+                                voxels.crossedEdges[n] |= bit;
+                            }
                         }
-                        if (voxels.hasMaterialField) {
-                            uint8_t r = (uint8_t)(m1[0] * 255.0f + 0.5f);
-                            uint8_t g = (uint8_t)(m1[1] * 255.0f + 0.5f);
-                            uint8_t b = (uint8_t)(m1[2] * 255.0f + 0.5f);
-                            voxels.materialField[n] = ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
-                        }
-                        if (voxels.hasGroupField && faceGroups) {
-                            voxels.groupField[n] = faceGroups[iTri];
-                        }
-                    }
-
-                    if (newDistSq > step * step)
-                        continue;
-
-                    for (int it = 0; it < 3; ++it) {
-                        double val = closest[it] - point[it];
-                        if (val < 0.0 || val > step)
-                            continue;
-
-                        int bit = 1 << it;
-                        if ((voxels.crossedEdges[n] & bit) != 0)
-                            continue;
-
-                        double dist = intersectionRayTriangleEdges(point, dirUnit[it], triEdge1, triEdge2, v1);
-                        if (dist < 0.0 || dist > step)
-                            continue;
-
-                        voxels.crossedEdges[n] |= bit;
                     }
                 }
             }
-        }
+        });
+    }
+    for (auto& th : threads) {
+        if (th.joinable()) th.join();
     }
 
     int nonInfCount = 0;
@@ -612,66 +661,149 @@ static void voxelize(
 }
 
 static void floodFill(VoxelGrid& voxels, std::function<void(int stage, int progress)> onProgress = nullptr) {
-    float step = voxels.step;
     int rx = voxels.dims[0];
     int ry = voxels.dims[1];
     int rz = voxels.dims[2];
     int rxy = rx * ry;
-
     int datalen = rx * ry * rz;
-    std::vector<uint8_t> tagCell(datalen, 0);
-    std::vector<int32_t> stack;
-    stack.reserve(datalen / 64);
 
-    sculpt_log("[C++ floodFill] Starting flood fill: datalen=%d\n", datalen);
+    sculpt_log("[C++ floodFill] Starting fast 3D topological sweep flood fill: datalen=%d (dims: %dx%dx%d)\n", datalen, rx, ry, rz);
 
     if (onProgress) onProgress(1, 0);
 
-    stack.push_back(0);
-    tagCell[0] = 1;
+    std::vector<uint8_t> tagCell(datalen, 0);
 
+    // Initialize entire outer 3D boundary grid as exterior (tagCell = 1)
+    for (int z = 0; z < rz; ++z) {
+        for (int y = 0; y < ry; ++y) {
+            tagCell[0 + y * rx + z * rxy] = 1;
+            tagCell[(rx - 1) + y * rx + z * rxy] = 1;
+        }
+    }
+    for (int z = 0; z < rz; ++z) {
+        for (int x = 0; x < rx; ++x) {
+            tagCell[x + 0 * rx + z * rxy] = 1;
+            tagCell[x + (ry - 1) * rx + z * rxy] = 1;
+        }
+    }
+    for (int y = 0; y < ry; ++y) {
+        for (int x = 0; x < rx; ++x) {
+            tagCell[x + y * rx + 0 * rxy] = 1;
+            tagCell[x + y * rx + (rz - 1) * rxy] = 1;
+        }
+    }
+
+    // Pass 1: Forward Sweep (0 -> max)
+    int n = 0;
+    for (int z = 0; z < rz; ++z) {
+        for (int y = 0; y < ry; ++y) {
+            for (int x = 0; x < rx; ++x, ++n) {
+                if (tagCell[n]) continue;
+                if (x > 0 && tagCell[n - 1] && !(voxels.crossedEdges[n - 1] & 1)) {
+                    tagCell[n] = 1;
+                } else if (y > 0 && tagCell[n - rx] && !(voxels.crossedEdges[n - rx] & 2)) {
+                    tagCell[n] = 1;
+                } else if (z > 0 && tagCell[n - rxy] && !(voxels.crossedEdges[n - rxy] & 4)) {
+                    tagCell[n] = 1;
+                }
+            }
+        }
+    }
+
+    if (onProgress) onProgress(1, 30);
+
+    // Pass 2: Backward Sweep (max -> 0)
+    n = datalen - 1;
+    for (int z = rz - 1; z >= 0; --z) {
+        for (int y = ry - 1; y >= 0; --y) {
+            for (int x = rx - 1; x >= 0; --x, --n) {
+                if (tagCell[n]) continue;
+                if (x < rx - 1 && tagCell[n + 1] && !(voxels.crossedEdges[n] & 1)) {
+                    tagCell[n] = 1;
+                } else if (y < ry - 1 && tagCell[n + rx] && !(voxels.crossedEdges[n] & 2)) {
+                    tagCell[n] = 1;
+                } else if (z < rz - 1 && tagCell[n + rxy] && !(voxels.crossedEdges[n] & 4)) {
+                    tagCell[n] = 1;
+                }
+            }
+        }
+    }
+
+    if (onProgress) onProgress(1, 60);
+
+    // Pass 3: Forward Sweep (0 -> max) & collect frontier into queue
+    std::vector<int32_t> queue;
+    n = 0;
+    for (int z = 0; z < rz; ++z) {
+        for (int y = 0; y < ry; ++y) {
+            for (int x = 0; x < rx; ++x, ++n) {
+                if (tagCell[n]) continue;
+                bool newlyTagged = false;
+                if (x > 0 && tagCell[n - 1] && !(voxels.crossedEdges[n - 1] & 1)) {
+                    newlyTagged = true;
+                } else if (y > 0 && tagCell[n - rx] && !(voxels.crossedEdges[n - rx] & 2)) {
+                    newlyTagged = true;
+                } else if (z > 0 && tagCell[n - rxy] && !(voxels.crossedEdges[n - rxy] & 4)) {
+                    newlyTagged = true;
+                }
+
+                if (newlyTagged) {
+                    tagCell[n] = 1;
+                    queue.push_back(n);
+                }
+            }
+        }
+    }
+
+    // Final Queue Cleanup for any deep 3D labyrinths
     int dirs[6] = { -1, 1, -rx, rx, -rxy, rxy };
     int dirsEdge[6] = { 0, 0, 1, 1, 2, 2 };
 
-    while (!stack.empty()) {
-        int cell = stack.back();
-        stack.pop_back();
-        float cellDist = voxels.distanceField[cell];
-        if (cellDist < step) {
-            // border hit
-            for (int i = 0; i < 6; ++i) {
-                int off = dirs[i];
-                int idNext = cell + off;
-                if (idNext >= datalen || idNext < 0) continue;
-                if (tagCell[idNext]) continue;
-                if (voxels.distanceField[idNext] == std::numeric_limits<float>::infinity()) continue;
-                int idx = off >= 0 ? cell : idNext;
-                int bit = 1 << dirsEdge[i];
-                if ((voxels.crossedEdges[idx] & bit) == 0) {
-                    tagCell[idNext] = 1;
-                    stack.push_back(idNext);
-                }
-            }
-        } else {
-            // exterior
-            for (int i = 0; i < 6; ++i) {
-                int idNext = cell + dirs[i];
-                if (idNext >= datalen || idNext < 0) continue;
-                if (tagCell[idNext]) continue;
+    size_t head = 0;
+    while (head < queue.size()) {
+        int cell = queue[head++];
+        for (int i = 0; i < 6; ++i) {
+            int off = dirs[i];
+            int idNext = cell + off;
+            if (idNext < 0 || idNext >= datalen) continue;
+            if (tagCell[idNext]) continue;
+
+            int idx = (off >= 0) ? cell : idNext;
+            int bit = 1 << dirsEdge[i];
+            if ((voxels.crossedEdges[idx] & bit) == 0) {
                 tagCell[idNext] = 1;
-                stack.push_back(idNext);
+                queue.push_back(idNext);
             }
         }
     }
 
-    int taggedCount = 0;
-    for (int id = 0; id < datalen; ++id) {
-        if (!tagCell[id]) {
-            voxels.distanceField[id] = -voxels.distanceField[id];
-        } else {
-            taggedCount++;
-        }
+    int numThreads = (int)std::thread::hardware_concurrency();
+    if (numThreads < 1) numThreads = 1;
+    std::vector<std::thread> threads(numThreads);
+    int chunkSize = (datalen + numThreads - 1) / numThreads;
+
+    std::vector<int> threadTaggedCounts(numThreads, 0);
+    for (int t = 0; t < numThreads; ++t) {
+        threads[t] = std::thread([&, t]() {
+            int start = t * chunkSize;
+            int end = std::min(datalen, start + chunkSize);
+            int localTagged = 0;
+            for (int id = start; id < end; ++id) {
+                if (!tagCell[id]) {
+                    voxels.distanceField[id] = -voxels.distanceField[id];
+                } else {
+                    localTagged++;
+                }
+            }
+            threadTaggedCounts[t] = localTagged;
+        });
     }
+    for (auto& th : threads) {
+        if (th.joinable()) th.join();
+    }
+    int taggedCount = 0;
+    for (int count : threadTaggedCounts) taggedCount += count;
+
     sculpt_log("[C++ floodFill] Finished: tagged (exterior) cells=%d, untagged (interior) cells=%d\n", taggedCount, datalen - taggedCount);
     if (onProgress) onProgress(1, 100);
 }
@@ -1025,77 +1157,83 @@ static uint8_t readScalarValuesSurfaceNets(
     std::vector<float>& outCols, std::vector<float>& outMats,
     std::vector<uint32_t>& outGroups
 ) {
+    uint8_t mask = 0;
+    int rx = voxels.dims[0];
+    int rxy = rx * voxels.dims[1];
+
+    const int cornerOffsets[8] = {
+        0, 1, rx, rx + 1,
+        rxy, rxy + 1, rxy + rx, rxy + rx + 1
+    };
+
+    for (int g = 0; g < 8; ++g) {
+        int id = n + cornerOffsets[g];
+        float p = voxels.distanceField[id];
+        grid[g] = p;
+        if (p < 0.0f) {
+            mask |= (1 << g);
+        }
+    }
+
+    if (mask == 0 || mask == 0xff) {
+        return mask;
+    }
+
     float c1 = 0.0f, c2 = 0.0f, c3 = 0.0f;
     float m1 = 0.0f, m2 = 0.0f, m3 = 0.0f;
     float invSum = 0.0f;
     float minAbsDist = std::numeric_limits<float>::infinity();
     uint32_t closestGroup = 0;
 
-    uint8_t mask = 0;
-    int g = 0;
-    int rx = voxels.dims[0];
-    int rxy = rx * voxels.dims[1];
-
-    for (int k = 0; k < 2; ++k) {
-        for (int j = 0; j < 2; ++j) {
-            for (int i = 0; i < 2; ++i) {
-                int id = n + i + j * rx + k * rxy;
-                float p = voxels.distanceField[id];
-                grid[g] = p;
-                if (p < 0.0f) {
-                    mask |= (1 << g);
-                }
-                g++;
-                if (p != std::numeric_limits<float>::infinity()) {
-                    float absP = std::abs(p);
-                    p = std::min(1.0f / absP, 1e15f);
-                    invSum += p;
-                    if (voxels.hasColorField) {
-                        uint32_t val = voxels.colorField[id];
-                        c1 += (float)((val >> 16) & 0xff) * p;
-                        c2 += (float)((val >> 8) & 0xff) * p;
-                        c3 += (float)(val & 0xff) * p;
-                    }
-                    if (voxels.hasMaterialField) {
-                        uint32_t val = voxels.materialField[id];
-                        m1 += (float)((val >> 16) & 0xff) * p;
-                        m2 += (float)((val >> 8) & 0xff) * p;
-                        m3 += (float)(val & 0xff) * p;
-                    }
-                    if (voxels.hasGroupField && absP < minAbsDist) {
-                        minAbsDist = absP;
-                        closestGroup = voxels.groupField[id];
-                    }
-                }
+    for (int g = 0; g < 8; ++g) {
+        int id = n + cornerOffsets[g];
+        float p = grid[g];
+        if (p != std::numeric_limits<float>::infinity()) {
+            float absP = std::abs(p);
+            p = std::min(1.0f / absP, 1e15f);
+            invSum += p;
+            if (voxels.hasColorField) {
+                uint32_t val = voxels.colorField[id];
+                c1 += (float)((val >> 16) & 0xff) * p;
+                c2 += (float)((val >> 8) & 0xff) * p;
+                c3 += (float)(val & 0xff) * p;
+            }
+            if (voxels.hasMaterialField) {
+                uint32_t val = voxels.materialField[id];
+                m1 += (float)((val >> 16) & 0xff) * p;
+                m2 += (float)((val >> 8) & 0xff) * p;
+                m3 += (float)(val & 0xff) * p;
+            }
+            if (voxels.hasGroupField && absP < minAbsDist) {
+                minAbsDist = absP;
+                closestGroup = voxels.groupField[id];
             }
         }
     }
 
-    if (mask != 0 && mask != 0xff) {
-        if (invSum > 0.0f) invSum = 1.0f / invSum;
-        if (voxels.hasColorField) {
-            float inv255 = invSum / 255.0f;
-            outCols.push_back(c1 * inv255);
-            outCols.push_back(c2 * inv255);
-            outCols.push_back(c3 * inv255);
-        } else {
-            outCols.push_back(voxels.uniformColor[0]);
-            outCols.push_back(voxels.uniformColor[1]);
-            outCols.push_back(voxels.uniformColor[2]);
-        }
-        if (voxels.hasMaterialField) {
-            float inv255 = invSum / 255.0f;
-            outMats.push_back(m1 * inv255);
-            outMats.push_back(m2 * inv255);
-            outMats.push_back(m3 * inv255);
-        } else {
-            outMats.push_back(voxels.uniformMaterial[0]);
-            outMats.push_back(voxels.uniformMaterial[1]);
-            outMats.push_back(voxels.uniformMaterial[2]);
-        }
-        if (voxels.hasGroupField) {
-            outGroups.push_back(closestGroup);
-        }
+    if (invSum > 0.0f) invSum = 1.0f / invSum;
+    if (voxels.hasColorField) {
+        float inv255 = invSum / 255.0f;
+        outCols.push_back(c1 * inv255);
+        outCols.push_back(c2 * inv255);
+        outCols.push_back(c3 * inv255);
+    } else {
+        outCols.push_back(voxels.uniformColor[0]);
+        outCols.push_back(voxels.uniformColor[1]);
+        outCols.push_back(voxels.uniformColor[2]);
+    }
+    if (voxels.hasMaterialField) {
+        float inv255 = invSum / 255.0f;
+        outMats.push_back(m1 * inv255);
+        outMats.push_back(m2 * inv255);
+        outMats.push_back(m3 * inv255);
+    } else {
+        outMats.push_back(voxels.uniformMaterial[0]);
+        outMats.push_back(voxels.uniformMaterial[1]);
+        outMats.push_back(voxels.uniformMaterial[2]);
+    }
+    if (voxels.hasGroupField) {
+        outGroups.push_back(closestGroup);
     }
 
     return mask;
@@ -1197,35 +1335,196 @@ static RemeshResult surfaceNetsReconstruct(VoxelGrid& voxels, bool block, std::f
     int rx = voxels.dims[0];
     int ry = voxels.dims[1];
     int rz = voxels.dims[2];
+    int rxy = rx * ry;
+    int datalen = rx * ry * rz;
 
-    int n = 0;
-    int x[3];
-    int R[3] = { 1, rx + 1, (rx + 1) * (ry + 1) };
-    float grid[8];
-    int nbBuf = 1;
-    std::vector<int32_t> buffer((rx + 1) * (ry + 1) * 2, 0);
-    std::vector<uint32_t> vertGroups;
+    int numThreads = (int)std::thread::hardware_concurrency();
+    if (numThreads < 1) numThreads = 1;
 
-    for (x[2] = 0; x[2] < rz - 1; ++x[2], n += rx, nbBuf ^= 1, R[2] = -R[2]) {
-        if (onProgress && (x[2] % 10 == 0)) {
-            int pct = (x[2] * 100) / (rz - 1);
-            onProgress(2, pct);
-        }
-        int m = 1 + (rx + 1) * (1 + nbBuf * (ry + 1));
+    std::vector<int32_t> cellToVert(datalen, -1);
 
-        for (x[1] = 0; x[1] < ry - 1; ++x[1], ++n, m += 2) {
-            for (x[0] = 0; x[0] < rx - 1; ++x[0], ++n, ++m) {
-                uint8_t mask = readScalarValuesSurfaceNets(voxels, grid, n, res.colors, res.materials, vertGroups);
-                if (mask == 0 || mask == 0xff)
-                    continue;
+    struct ThreadVertData {
+        std::vector<float> vertices;
+        std::vector<float> colors;
+        std::vector<float> materials;
+        std::vector<uint32_t> vertGroups;
+        std::vector<int> vertCellIndices;
+    };
+    std::vector<ThreadVertData> threadVerts(numThreads);
 
-                uint32_t edgeMask = snEdgeTable[mask];
-                buffer[m] = res.vertices.size() / 3;
-                interpolateVerticesSurfaceNets(edgeMask, grid, x, res.vertices, block);
-                createFaceSurfaceNets(edgeMask, mask, buffer, R, m, x, res.faces, vertGroups, res.faceGroups, voxels.hasGroupField);
+    int slicesPerThread = ((rz - 1) + numThreads - 1) / numThreads;
+
+    // Pass A: Parallel Vertex Generation
+    std::vector<std::thread> threads(numThreads);
+    for (int t = 0; t < numThreads; ++t) {
+        threads[t] = std::thread([&, t]() {
+            int zStart = t * slicesPerThread;
+            int zEnd = std::min(rz - 1, zStart + slicesPerThread);
+
+            ThreadVertData& td = threadVerts[t];
+            td.vertices.reserve(100000 * 3);
+            td.colors.reserve(100000 * 3);
+            td.materials.reserve(100000 * 3);
+            if (voxels.hasGroupField) td.vertGroups.reserve(100000);
+            td.vertCellIndices.reserve(100000);
+
+            float grid[8];
+            int x[3];
+
+            for (x[2] = zStart; x[2] < zEnd; ++x[2]) {
+                for (x[1] = 0; x[1] < ry - 1; ++x[1]) {
+                    int n = x[1] * rx + x[2] * rxy;
+                    for (x[0] = 0; x[0] < rx - 1; ++x[0], ++n) {
+                        uint8_t mask = readScalarValuesSurfaceNets(voxels, grid, n, td.colors, td.materials, td.vertGroups);
+                        if (mask == 0 || mask == 0xff) continue;
+
+                        uint32_t edgeMask = snEdgeTable[mask];
+                        interpolateVerticesSurfaceNets(edgeMask, grid, x, td.vertices, block);
+                        td.vertCellIndices.push_back(n);
+                    }
+                }
             }
+        });
+    }
+    for (auto& th : threads) {
+        if (th.joinable()) th.join();
+    }
+
+    // Merge Thread Vertices and populate cellToVert map
+    size_t totalVerts = 0;
+    for (int t = 0; t < numThreads; ++t) {
+        totalVerts += threadVerts[t].vertCellIndices.size();
+    }
+
+    res.vertices.reserve(totalVerts * 3);
+    res.colors.reserve(totalVerts * 3);
+    res.materials.reserve(totalVerts * 3);
+    std::vector<uint32_t> vertGroups;
+    if (voxels.hasGroupField) vertGroups.reserve(totalVerts);
+
+    for (int t = 0; t < numThreads; ++t) {
+        ThreadVertData& td = threadVerts[t];
+        int baseVertIdx = (int)(res.vertices.size() / 3);
+
+        res.vertices.insert(res.vertices.end(), td.vertices.begin(), td.vertices.end());
+        res.colors.insert(res.colors.end(), td.colors.begin(), td.colors.end());
+        res.materials.insert(res.materials.end(), td.materials.begin(), td.materials.end());
+        if (voxels.hasGroupField) {
+            vertGroups.insert(vertGroups.end(), td.vertGroups.begin(), td.vertGroups.end());
+        }
+
+        for (size_t i = 0; i < td.vertCellIndices.size(); ++i) {
+            cellToVert[td.vertCellIndices[i]] = baseVertIdx + (int)i;
         }
     }
+
+    // Pass B: Parallel Face Generation
+    struct ThreadFaceData {
+        std::vector<uint32_t> faces;
+        std::vector<uint32_t> faceGroups;
+    };
+    std::vector<ThreadFaceData> threadFaces(numThreads);
+
+    const int dimOffsets[3] = { rx, rxy, 1 };
+    const int dimOffsetsV[3] = { rxy, 1, rx };
+
+    for (int t = 0; t < numThreads; ++t) {
+        threads[t] = std::thread([&, t]() {
+            int zStart = t * slicesPerThread;
+            int zEnd = std::min(rz - 1, zStart + slicesPerThread);
+
+            ThreadFaceData& tf = threadFaces[t];
+            tf.faces.reserve(100000 * 4);
+            if (voxels.hasGroupField) tf.faceGroups.reserve(100000);
+
+            int x[3];
+            for (x[2] = zStart; x[2] < zEnd; ++x[2]) {
+                for (x[1] = 0; x[1] < ry - 1; ++x[1]) {
+                    int n = x[1] * rx + x[2] * rxy;
+                    for (x[0] = 0; x[0] < rx - 1; ++x[0], ++n) {
+                        int32_t v0 = cellToVert[n];
+                        if (v0 < 0) continue;
+
+                        int rx_grid = voxels.dims[0];
+                        int rxy_grid = rx_grid * voxels.dims[1];
+                        const int cornerOffsets[8] = {
+                            0, 1, rx_grid, rx_grid + 1,
+                            rxy_grid, rxy_grid + 1, rxy_grid + rx_grid, rxy_grid + rx_grid + 1
+                        };
+                        uint8_t mask = 0;
+                        for (int g = 0; g < 8; ++g) {
+                            if (voxels.distanceField[n + cornerOffsets[g]] < 0.0f) {
+                                mask |= (1 << g);
+                            }
+                        }
+                        if (mask == 0 || mask == 0xff) continue;
+
+                        uint32_t edgeMask = snEdgeTable[mask];
+
+                        for (int i = 0; i < 3; ++i) {
+                            if (!(edgeMask & (1 << i))) continue;
+
+                            int iu = (i + 1) % 3;
+                            int iv = (i + 2) % 3;
+
+                            if (x[iu] == 0 || x[iv] == 0) continue;
+
+                            int du = dimOffsets[i];
+                            int dv = dimOffsetsV[i];
+
+                            int32_t v1, v2, v3;
+                            if (mask & 1) {
+                                v1 = cellToVert[n - du];
+                                v2 = cellToVert[n - du - dv];
+                                v3 = cellToVert[n - dv];
+                            } else {
+                                v1 = cellToVert[n - dv];
+                                v2 = cellToVert[n - du - dv];
+                                v3 = cellToVert[n - du];
+                            }
+
+                            if (v1 < 0 || v2 < 0 || v3 < 0) continue;
+
+                            tf.faces.push_back(v0);
+                            tf.faces.push_back(v1);
+                            tf.faces.push_back(v2);
+                            tf.faces.push_back(v3);
+
+                            if (voxels.hasGroupField && !vertGroups.empty()) {
+                                uint32_t g0 = (size_t)v0 < vertGroups.size() ? vertGroups[v0] : 0;
+                                uint32_t g1 = (size_t)v1 < vertGroups.size() ? vertGroups[v1] : 0;
+                                uint32_t g2 = (size_t)v2 < vertGroups.size() ? vertGroups[v2] : 0;
+                                uint32_t g3 = (size_t)v3 < vertGroups.size() ? vertGroups[v3] : 0;
+
+                                uint32_t fg = g0;
+                                if (g1 == g2 || g1 == g3) fg = g1;
+                                else if (g2 == g3) fg = g2;
+                                tf.faceGroups.push_back(fg);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+    for (auto& th : threads) {
+        if (th.joinable()) th.join();
+    }
+
+    size_t totalFaces = 0;
+    for (int t = 0; t < numThreads; ++t) {
+        totalFaces += threadFaces[t].faces.size();
+    }
+    res.faces.reserve(totalFaces);
+    if (voxels.hasGroupField) res.faceGroups.reserve(totalFaces / 4);
+
+    for (int t = 0; t < numThreads; ++t) {
+        res.faces.insert(res.faces.end(), threadFaces[t].faces.begin(), threadFaces[t].faces.end());
+        if (voxels.hasGroupField) {
+            res.faceGroups.insert(res.faceGroups.end(), threadFaces[t].faceGroups.begin(), threadFaces[t].faceGroups.end());
+        }
+    }
+
     return res;
 }
 
@@ -1415,68 +1714,98 @@ RemeshResult doRemesh(
         double msBuild = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tBuildStart).count();
 
         auto tQueryStart = std::chrono::high_resolution_clock::now();
-        #pragma omp parallel for schedule(static)
-        for (int i = 0; i < (int)numFaces; ++i) {
-            uint32_t idx0 = r.faces[i * 4 + 0];
-            uint32_t idx1 = r.faces[i * 4 + 1];
-            uint32_t idx2 = r.faces[i * 4 + 2];
-            uint32_t idx3 = r.faces[i * 4 + 3];
+        int numThreads = (int)std::thread::hardware_concurrency();
+        if (numThreads < 1) numThreads = 1;
+        std::vector<std::thread> threads(numThreads);
+        int chunkSize = (numFaces + numThreads - 1) / numThreads;
 
-            size_t nbV = r.vertices.size() / 3;
-            if (idx0 >= nbV || idx1 >= nbV || idx2 >= nbV) {
-                continue;
-            }
+        for (int t = 0; t < numThreads; ++t) {
+            threads[t] = std::thread([&, t]() {
+                int start = t * chunkSize;
+                int end = std::min((int)numFaces, start + chunkSize);
+                for (int i = start; i < end; ++i) {
+                    uint32_t idx0 = r.faces[i * 4 + 0];
+                    uint32_t idx1 = r.faces[i * 4 + 1];
+                    uint32_t idx2 = r.faces[i * 4 + 2];
+                    uint32_t idx3 = r.faces[i * 4 + 3];
 
-            bool isQuad = (idx3 != 0xffffffff && idx3 < nbV);
-            const float* p0 = &r.vertices[idx0 * 3];
-            const float* p1 = &r.vertices[idx1 * 3];
-            const float* p2 = &r.vertices[idx2 * 3];
+                    size_t nbV = r.vertices.size() / 3;
+                    if (idx0 >= nbV || idx1 >= nbV || idx2 >= nbV) {
+                        continue;
+                    }
 
-            float centroid[3];
-            float e1[3] = { p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2] };
-            float e2[3];
+                    bool isQuad = (idx3 != 0xffffffff && idx3 < nbV);
+                    const float* p0 = &r.vertices[idx0 * 3];
+                    const float* p1 = &r.vertices[idx1 * 3];
+                    const float* p2 = &r.vertices[idx2 * 3];
 
-            if (isQuad) {
-                const float* p3 = &r.vertices[idx3 * 3];
-                centroid[0] = (p0[0] + p1[0] + p2[0] + p3[0]) * 0.25f;
-                centroid[1] = (p0[1] + p1[1] + p2[1] + p3[1]) * 0.25f;
-                centroid[2] = (p0[2] + p1[2] + p2[2] + p3[2]) * 0.25f;
-                e2[0] = p3[0] - p0[0];
-                e2[1] = p3[1] - p0[1];
-                e2[2] = p3[2] - p0[2];
-            } else {
-                centroid[0] = (p0[0] + p1[0] + p2[0]) * (1.0f / 3.0f);
-                centroid[1] = (p0[1] + p1[1] + p2[1]) * (1.0f / 3.0f);
-                centroid[2] = (p0[2] + p1[2] + p2[2]) * (1.0f / 3.0f);
-                e2[0] = p2[0] - p0[0];
-                e2[1] = p2[1] - p0[1];
-                e2[2] = p2[2] - p0[2];
-            }
+                    float centroid[3];
+                    float e1[3] = { p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2] };
+                    float e2[3];
 
-            float nx = e1[1] * e2[2] - e1[2] * e2[1];
-            float ny = e1[2] * e2[0] - e1[0] * e2[2];
-            float nz = e1[0] * e2[1] - e1[1] * e2[0];
-            float nlen = std::sqrt(nx * nx + ny * ny + nz * nz);
-            float norm[3] = { 0.0f, 0.0f, 1.0f };
-            if (nlen > 1e-9f) {
-                norm[0] = nx / nlen;
-                norm[1] = ny / nlen;
-                norm[2] = nz / nlen;
-            }
+                    if (isQuad) {
+                        const float* p3 = &r.vertices[idx3 * 3];
+                        centroid[0] = (p0[0] + p1[0] + p2[0] + p3[0]) * 0.25f;
+                        centroid[1] = (p0[1] + p1[1] + p2[1] + p3[1]) * 0.25f;
+                        centroid[2] = (p0[2] + p1[2] + p2[2] + p3[2]) * 0.25f;
+                        e2[0] = p3[0] - p0[0];
+                        e2[1] = p3[1] - p0[1];
+                        e2[2] = p3[2] - p0[2];
+                    } else {
+                        centroid[0] = (p0[0] + p1[0] + p2[0]) * (1.0f / 3.0f);
+                        centroid[1] = (p0[1] + p1[1] + p2[1]) * (1.0f / 3.0f);
+                        centroid[2] = (p0[2] + p1[2] + p2[2]) * (1.0f / 3.0f);
+                        e2[0] = p2[0] - p0[0];
+                        e2[1] = p2[1] - p0[1];
+                        e2[2] = p2[2] - p0[2];
+                    }
 
-            r.faceGroups[i] = spatialIndex.findClosestPolyGroup(centroid, norm);
+                    float nx = e1[1] * e2[2] - e1[2] * e2[1];
+                    float ny = e1[2] * e2[0] - e1[0] * e2[2];
+                    float nz = e1[0] * e2[1] - e1[1] * e2[0];
+                    float nlen = std::sqrt(nx * nx + ny * ny + nz * nz);
+                    float norm[3] = { 0.0f, 0.0f, 1.0f };
+                    if (nlen > 1e-9f) {
+                        norm[0] = nx / nlen;
+                        norm[1] = ny / nlen;
+                        norm[2] = nz / nlen;
+                    }
+
+                    r.faceGroups[i] = spatialIndex.findClosestPolyGroup(centroid, norm);
+                }
+            });
+        }
+        for (auto& th : threads) {
+            if (th.joinable()) th.join();
         }
         double msQuery = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tQueryStart).count();
 
         // Post-processing cleanup: Filter isolated 1-face noise
         auto tCleanupStart = std::chrono::high_resolution_clock::now();
         if (numFaces > 0) {
-            std::vector<std::vector<uint32_t>> vertToFaces(r.vertices.size() / 3);
+            size_t numVerts = r.vertices.size() / 3;
+            std::vector<uint32_t> faceCounts(numVerts, 0);
             for (size_t f = 0; f < numFaces; ++f) {
                 for (int k = 0; k < 4; ++k) {
                     uint32_t v = r.faces[f * 4 + k];
-                    if (v != 0xffffffff && v < vertToFaces.size()) {
-                        vertToFaces[v].push_back((uint32_t)f);
+                    if (v != 0xffffffff && v < numVerts) {
+                        faceCounts[v]++;
+                    }
+                }
+            }
+
+            std::vector<uint32_t> faceOffsets(numVerts + 1, 0);
+            for (size_t v = 0; v < numVerts; ++v) {
+                faceOffsets[v + 1] = faceOffsets[v] + faceCounts[v];
+            }
+
+            std::vector<uint32_t> vertFaceIndices(faceOffsets[numVerts]);
+            std::vector<uint32_t> currentOffsets = faceOffsets;
+            for (size_t f = 0; f < numFaces; ++f) {
+                for (int k = 0; k < 4; ++k) {
+                    uint32_t v = r.faces[f * 4 + k];
+                    if (v != 0xffffffff && v < numVerts) {
+                        vertFaceIndices[currentOffsets[v]++] = (uint32_t)f;
                     }
                 }
             }
@@ -1484,30 +1813,52 @@ RemeshResult doRemesh(
             std::vector<uint32_t> cleanedGroups = r.faceGroups;
             for (size_t f = 0; f < numFaces; ++f) {
                 uint32_t myGroup = r.faceGroups[f];
-                std::unordered_map<uint32_t, int> neighborGroupCounts;
+                struct GroupEntry { uint32_t group; int count; };
+                GroupEntry neighbors[32];
+                int neighborEntryCount = 0;
                 int totalNeighborFaces = 0;
 
                 for (int k = 0; k < 4; ++k) {
                     uint32_t v = r.faces[f * 4 + k];
-                    if (v == 0xffffffff || v >= vertToFaces.size()) continue;
-                    for (uint32_t nFace : vertToFaces[v]) {
+                    if (v == 0xffffffff || v >= numVerts) continue;
+                    uint32_t startIdx = faceOffsets[v];
+                    uint32_t endIdx = faceOffsets[v + 1];
+                    for (uint32_t idx = startIdx; idx < endIdx; ++idx) {
+                        uint32_t nFace = vertFaceIndices[idx];
                         if (nFace != f) {
                             uint32_t nGroup = r.faceGroups[nFace];
-                            neighborGroupCounts[nGroup]++;
                             totalNeighborFaces++;
+                            bool found = false;
+                            for (int e = 0; e < neighborEntryCount; ++e) {
+                                if (neighbors[e].group == nGroup) {
+                                    neighbors[e].count++;
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if (!found && neighborEntryCount < 32) {
+                                neighbors[neighborEntryCount++] = { nGroup, 1 };
+                            }
                         }
                     }
                 }
 
                 if (totalNeighborFaces > 0) {
-                    int myGroupCount = neighborGroupCounts[myGroup];
+                    int myGroupCount = 0;
+                    for (int e = 0; e < neighborEntryCount; ++e) {
+                        if (neighbors[e].group == myGroup) {
+                            myGroupCount = neighbors[e].count;
+                            break;
+                        }
+                    }
+
                     if (myGroupCount == 0 || (float)myGroupCount / totalNeighborFaces < 0.15f) {
                         uint32_t bestNeighborGroup = myGroup;
                         int maxCount = 0;
-                        for (const auto& kv : neighborGroupCounts) {
-                            if (kv.second > maxCount) {
-                                maxCount = kv.second;
-                                bestNeighborGroup = kv.first;
+                        for (int e = 0; e < neighborEntryCount; ++e) {
+                            if (neighbors[e].count > maxCount) {
+                                maxCount = neighbors[e].count;
+                                bestNeighborGroup = neighbors[e].group;
                             }
                         }
                         if (maxCount > 0) {

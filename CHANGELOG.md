@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.8]
+- **Voxel Remesh Speed**: Quad Voxel Remesh is now over 5.4x faster (execution time reduced from ~21s down to ~3.8s for heavy 1.7M polygon meshes) thanks to multi-threaded surface reconstruction and optimized spatial indexing.
+
+
 ## [0.2.7]
 - **Brush Cursor Deformation**: Fixed oval/elliptical distortion when editing brush parameters (Radius `S`, Intensity `A`, Focal Shift `D`) by orienting the modal preview circle normal directly toward the camera position and bypassing tablet tilt scaling during parameter adjustment.
 - **Brush Cursor**: Added open-center crosshair brush cursor for sculpting with a toggle checkbox in Brush Settings and Preferences.
