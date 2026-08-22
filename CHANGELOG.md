@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [0.2.9]
 - **Lighting Controls**: Added global light and HDRI rotation around the vertical Y-axis via `Shift + Middle Mouse Button` drag and a dedicated "Global Rotation" UI slider in Light Source Management.
+- **License**: Added GNU General Public License v3.0 (GPLv3) to the repository.
+
 
 
 ## [0.2.8]

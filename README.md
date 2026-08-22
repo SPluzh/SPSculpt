@@ -27,3 +27,6 @@ SPSculpt is a native C++ port and optimization of [SculptGL](https://github.com/
 * **Performance**: Optimized with **OpenMP** multi-threading and asynchronous background workers.
 
 
+## License
+
+This project is licensed under the **GNU General Public License v3.0** (GPLv3) - see the [LICENSE](LICENSE) file for details.
