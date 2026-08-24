@@ -451,11 +451,18 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
             case HKAction::SoloSelected: scene.toggleSolo(scene.getSelected()); break;
             case HKAction::ToggleRefImagesVisible: scene.toggleAllReferenceImagesVisible(); break;
             case HKAction::ToggleRefEditMode: {
-                Camera& camera = scene.getCamera();
-                bool newMode = !camera.getRefDragEnabled();
-                camera.setRefDragEnabled(newMode);
-                if (scene.getCameraRight()) {
-                    scene.getCameraRight()->setRefDragEnabled(newMode);
+                if (!scene.getReferenceImages().empty()) {
+                    Camera& camera = scene.getCamera();
+                    bool newMode = !camera.getRefDragEnabled();
+                    camera.setRefDragEnabled(newMode);
+                    if (scene.getCameraRight()) {
+                        scene.getCameraRight()->setRefDragEnabled(newMode);
+                    }
+                } else {
+                    scene.getCamera().setRefDragEnabled(false);
+                    if (scene.getCameraRight()) {
+                        scene.getCameraRight()->setRefDragEnabled(false);
+                    }
                 }
                 break;
             }

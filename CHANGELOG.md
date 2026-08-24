@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.10]
+- **Reference Images**: Restricted reference edit mode (`Z`) to activate only when images exist, preventing accidental cursor hiding.
+- **Project Files**: Fixed project loading locking the brush cursor when saved in reference edit mode.
+
 ## [0.2.9]
 - **Lighting Controls**: Added global light and HDRI rotation around the vertical Y-axis via `Shift + Middle Mouse Button` drag and a dedicated "Global Rotation" UI slider in Light Source Management.
 - **License**: Added GNU General Public License v3.0 (GPLv3) to the repository.

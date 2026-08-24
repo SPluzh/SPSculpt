@@ -1,6 +1,7 @@
 #include "files/ImportSGL.h"
 #include "common/Constants.h"
 #include "common/FormatConstants.h"
+#include "common/Logger.h"
 #include "mesh/Topology.h"
 #include <cstring>
 #include <cmath>
@@ -82,6 +83,8 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
         return {};
     }
 
+    sculpt_log("[SGL Import] Opening .spsculpt project | Version: %u, Buffer size: %zu bytes\n", version, buffer.size());
+
     // camera and renderer settings
     if (version >= 2) {
         renderer.setShowGrid(reader.readU32() != 0);
@@ -130,11 +133,18 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
             cs.view2DOffsetY = reader.readF32();
             cs.view2DZoom = reader.readF32();
             cs.ref2DMode = (reader.readU32() != 0);
-            cs.refDrag = (reader.readU32() != 0);
+            bool wasRefDrag = (reader.readU32() != 0);
+
+            cs.refDrag = false;
+            if (wasRefDrag) {
+                sculpt_log("[SGL Import] WARNING: Camera state in project had refDrag=true. Overriding to false to prevent cursor hiding and stroke lockup.\n");
+            }
 
             cam.applyState(cs);
+            cam.setRefDragEnabled(false);
             if (scene.getCameraRight()) {
                 scene.getCameraRight()->applyState(cs);
+                scene.getCameraRight()->setRefDragEnabled(false);
             }
         } else {
             cam.setRefDragEnabled(false);
@@ -335,8 +345,13 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
             }
         }
 
+        sculpt_log("[SGL Import] Mesh %u loaded | Verts: %d, Faces: %d, VisibleV1: %d, VisibleV2: %d, Scale: %.4f, Center: (%.2f, %.2f, %.2f)\n",
+                   i, mesh->nbVerts, mesh->nbFaces, mesh->isVisible(0), mesh->isVisible(1), scale, cx, cy, cz);
+
         meshes.push_back(mesh);
     }
+
+    sculpt_log("[SGL Import] Total meshes imported: %zu\n", meshes.size());
 
     if (version < 13) {
         std::vector<std::future<void>> futures;

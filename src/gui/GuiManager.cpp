@@ -5172,6 +5172,10 @@ void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& sce
     if (images.empty()) {
         m_activeRefDragTarget = RefDragTarget::None;
         m_draggingRefImageIdx = -1;
+        if (scene.getCamera().getRefDragEnabled()) {
+            scene.getCamera().setRefDragEnabled(false);
+            if (scene.getCameraRight()) scene.getCameraRight()->setRefDragEnabled(false);
+        }
         return;
     }
 
