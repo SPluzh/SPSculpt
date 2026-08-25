@@ -176,10 +176,15 @@ float PCF(vec3 viewPos) {
 
 void main() {
     vec3 normal = getNormal();
+    vec3 viewDir = -normalize(vVertex);
     if (uHasNormalMap == 1) {
         vec3 mapN = texture(uNormalMap, vTexCoord).rgb * 2.0 - 1.0;
         mat3 TBN = mat3(normalize(vTangent), normalize(vBitangent), normal);
-        normal = normalize(TBN * mapN);
+        vec3 perturbedN = normalize(TBN * mapN);
+        if (dot(perturbedN, viewDir) < 0.0) {
+            perturbedN = reflect(perturbedN, normal);
+        }
+        normal = perturbedN;
     }
     
     // Geometric Specular & Normal Filtering (Screen-Space Derivative Roughness Modification)
@@ -207,7 +212,6 @@ void main() {
 
     vec3 albedo = linColor * (1.0 - metallic);
     vec3 specular = mix(dielectricSpecular, linColor, metallic);
-    vec3 viewDir = -normalize(vVertex);
     vec3 color = vec3(0.0);
 
     float NoV = max(dot(normal, viewDir), 0.0);

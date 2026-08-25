@@ -98,40 +98,52 @@ void computeTangents(Mesh& mesh) {
     std::vector<glm::vec3> tan1(mesh.nbVerts, glm::vec3(0.0f));
     std::vector<glm::vec3> tan2(mesh.nbVerts, glm::vec3(0.0f));
 
+    const auto& texFaceArray = (!mesh.facesTexCoord.empty() && mesh.facesTexCoord.size() == (size_t)mesh.nbFaces * 4)
+                               ? mesh.facesTexCoord
+                               : mesh.faces;
+
     for (int i = 0; i < mesh.nbFaces; ++i) {
-        uint32_t i1 = mesh.faces[i * 4];
-        uint32_t i2 = mesh.faces[i * 4 + 1];
-        uint32_t i3 = mesh.faces[i * 4 + 2];
+        uint32_t i1 = texFaceArray[i * 4];
+        uint32_t i2 = texFaceArray[i * 4 + 1];
+        uint32_t i3 = texFaceArray[i * 4 + 2];
+        uint32_t i4 = texFaceArray[i * 4 + 3];
         if (i1 >= (uint32_t)mesh.nbVerts || i2 >= (uint32_t)mesh.nbVerts || i3 >= (uint32_t)mesh.nbVerts) continue;
 
-        glm::vec3 v1(mesh.verts[i1 * 3], mesh.verts[i1 * 3 + 1], mesh.verts[i1 * 3 + 2]);
-        glm::vec3 v2(mesh.verts[i2 * 3], mesh.verts[i2 * 3 + 1], mesh.verts[i2 * 3 + 2]);
-        glm::vec3 v3(mesh.verts[i3 * 3], mesh.verts[i3 * 3 + 1], mesh.verts[i3 * 3 + 2]);
+        auto accumulateTri = [&](uint32_t idx1, uint32_t idx2, uint32_t idx3) {
+            glm::vec3 v1(mesh.verts[idx1 * 3], mesh.verts[idx1 * 3 + 1], mesh.verts[idx1 * 3 + 2]);
+            glm::vec3 v2(mesh.verts[idx2 * 3], mesh.verts[idx2 * 3 + 1], mesh.verts[idx2 * 3 + 2]);
+            glm::vec3 v3(mesh.verts[idx3 * 3], mesh.verts[idx3 * 3 + 1], mesh.verts[idx3 * 3 + 2]);
 
-        glm::vec2 w1(mesh.uvFlat[i1 * 2], mesh.uvFlat[i1 * 2 + 1]);
-        glm::vec2 w2(mesh.uvFlat[i2 * 2], mesh.uvFlat[i2 * 2 + 1]);
-        glm::vec2 w3(mesh.uvFlat[i3 * 2], mesh.uvFlat[i3 * 2 + 1]);
+            glm::vec2 w1(mesh.uvFlat[idx1 * 2], mesh.uvFlat[idx1 * 2 + 1]);
+            glm::vec2 w2(mesh.uvFlat[idx2 * 2], mesh.uvFlat[idx2 * 2 + 1]);
+            glm::vec2 w3(mesh.uvFlat[idx3 * 2], mesh.uvFlat[idx3 * 2 + 1]);
 
-        float x1 = v2.x - v1.x;
-        float x2 = v3.x - v1.x;
-        float y1 = v2.y - v1.y;
-        float y2 = v3.y - v1.y;
-        float z1 = v2.z - v1.z;
-        float z2 = v3.z - v1.z;
+            float x1 = v2.x - v1.x;
+            float x2 = v3.x - v1.x;
+            float y1 = v2.y - v1.y;
+            float y2 = v3.y - v1.y;
+            float z1 = v2.z - v1.z;
+            float z2 = v3.z - v1.z;
 
-        float s1 = w2.x - w1.x;
-        float s2 = w3.x - w1.x;
-        float t1 = w2.y - w1.y;
-        float t2 = w3.y - w1.y;
+            float s1 = w2.x - w1.x;
+            float s2 = w3.x - w1.x;
+            float t1 = w2.y - w1.y;
+            float t2 = w3.y - w1.y;
 
-        float denom = (s1 * t2 - s2 * t1);
-        float r = (std::abs(denom) > 1e-8f) ? (1.0f / denom) : 0.0f;
+            float denom = (s1 * t2 - s2 * t1);
+            float r = (std::abs(denom) > 1e-8f) ? (1.0f / denom) : 0.0f;
 
-        glm::vec3 sdir((t2 * x1 - t1 * x2) * r, (t2 * y1 - t1 * y2) * r, (t2 * z1 - t1 * z2) * r);
-        glm::vec3 tdir((s1 * x2 - s2 * x1) * r, (s1 * y2 - s2 * y1) * r, (s1 * z2 - s2 * z1) * r);
+            glm::vec3 sdir((t2 * x1 - t1 * x2) * r, (t2 * y1 - t1 * y2) * r, (t2 * z1 - t1 * z2) * r);
+            glm::vec3 tdir((s1 * x2 - s2 * x1) * r, (s1 * y2 - s2 * y1) * r, (s1 * z2 - s2 * z1) * r);
 
-        tan1[i1] += sdir; tan1[i2] += sdir; tan1[i3] += sdir;
-        tan2[i1] += tdir; tan2[i2] += tdir; tan2[i3] += tdir;
+            tan1[idx1] += sdir; tan1[idx2] += sdir; tan1[idx3] += sdir;
+            tan2[idx1] += tdir; tan2[idx2] += tdir; tan2[idx3] += tdir;
+        };
+
+        accumulateTri(i1, i2, i3);
+        if (i4 != TRI_INDEX && i4 < (uint32_t)mesh.nbVerts) {
+            accumulateTri(i1, i3, i4);
+        }
     }
 
     for (int a = 0; a < mesh.nbVerts; ++a) {

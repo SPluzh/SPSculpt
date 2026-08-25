@@ -3,11 +3,9 @@
 All notable changes to this project will be documented in this file.
 
 ## [0.2.13]
-- **glTF Import**: Added support for opening `.gltf` 3D scenes that rely on external `.bin` geometry data files.
-- **glTF Import**: Preserved original model and object names in the Scene Outliner upon importing glTF files.
-- **glTF Import**: Added automatic normal map texture and surface relief rendering for glTF 3D models.
-- **glTF Import**: Fixed mesh surface cuts and buffer corruption caused by invalid UV vertex splitting on glTF models.
-- **glTF Import**: Resolved an issue with non-ASCII and Unicode file paths when loading glTF textures on Windows.
+- **glTF Import**: Added vertex welding and dual-index rendering to fix seam cuts and UV stretching.
+- **glTF Import**: Enabled Matcap normal map relief shading and resolved grazing-angle blackening artifacts.
+- **glTF Import**: Added support for external `.bin` buffers, texture loading, UTF-8 paths, and preserved scene node names.
 
 ## [0.2.12]
 - **Scene Outliner**: Fixed right-side button alignment on non-square reference image cards.

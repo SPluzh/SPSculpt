@@ -1856,7 +1856,7 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
         glEnableVertexAttribArray(6);
     }
 
-    if (program == m_pbrProgram) {
+    if (program == m_pbrProgram || program == m_matcapProgram) {
         glActiveTexture(GL_TEXTURE2);
         glBindTexture(GL_TEXTURE_2D, mesh->normalMapTexId);
         glUniform1i(glGetUniformLocation(program, "uNormalMap"), 2);
@@ -2486,24 +2486,28 @@ void AngleRenderer::generateTriangleIndices(const Mesh* mesh, std::vector<uint32
     bool hasVisibility = !visible.empty();
     bool hasFaceVis = (fVisible.size() == (size_t)mesh->nbFaces);
 
+    const auto& faceArray = (!mesh->facesTexCoord.empty() && mesh->facesTexCoord.size() == (size_t)mesh->nbFaces * 4) 
+                           ? mesh->facesTexCoord 
+                           : mesh->faces;
+
     for (int i = 0; i < mesh->nbFaces; ++i) {
         if (hasFaceVis) {
             if (!fVisible[i]) continue;
         } else if (hasVisibility) {
-            uint32_t v0 = mesh->faces[i * 4];
-            uint32_t v1 = mesh->faces[i * 4 + 1];
-            uint32_t v2 = mesh->faces[i * 4 + 2];
-            uint32_t v3 = mesh->faces[i * 4 + 3];
+            uint32_t v0 = faceArray[i * 4];
+            uint32_t v1 = faceArray[i * 4 + 1];
+            uint32_t v2 = faceArray[i * 4 + 2];
+            uint32_t v3 = faceArray[i * 4 + 3];
             if (v0 >= visible.size() || !visible[v0]) continue;
             if (v1 >= visible.size() || !visible[v1]) continue;
             if (v2 >= visible.size() || !visible[v2]) continue;
             if (v3 != 0xffffffff && (v3 >= visible.size() || !visible[v3])) continue;
         }
 
-        uint32_t iv1 = mesh->faces[i * 4];
-        uint32_t iv2 = mesh->faces[i * 4 + 1];
-        uint32_t iv3 = mesh->faces[i * 4 + 2];
-        uint32_t iv4 = mesh->faces[i * 4 + 3];
+        uint32_t iv1 = faceArray[i * 4];
+        uint32_t iv2 = faceArray[i * 4 + 1];
+        uint32_t iv3 = faceArray[i * 4 + 2];
+        uint32_t iv4 = faceArray[i * 4 + 3];
         bool isQuad = (iv4 != 0xffffffff);
 
         outIndices.push_back(iv1);

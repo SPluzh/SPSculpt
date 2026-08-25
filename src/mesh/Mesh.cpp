@@ -511,6 +511,7 @@ void Mesh::initTexCoordsDataFromOBJData(const std::vector<float>& uvAr, const st
     
     texCoords = tAr;
     facesTexCoord = uvfAr;
+    uvFlat = tAr;
     hasUV = true;
     nbVerts = verts.size() / 3;
 }

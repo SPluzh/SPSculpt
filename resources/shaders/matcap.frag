@@ -2,6 +2,8 @@
 precision highp float;
 
 uniform sampler2D uTexture0;
+uniform sampler2D uNormalMap;
+uniform int uHasNormalMap;
 uniform vec3 uAlbedo;
 uniform float uAlpha;
 uniform int uUseTexture;
@@ -13,6 +15,9 @@ in vec3 vNormal;
 in vec3 vColor;
 in float vMasking;
 flat in uint vFaceGroup;
+in vec2 vTexCoord;
+in vec3 vTangent;
+in vec3 vBitangent;
 
 out vec4 fragColor;
 
@@ -29,6 +34,16 @@ vec3 groupColor(uint gid) {
 
 void main() {
     vec3 normal = (uIsXRay == 1) ? normalize(vNormal) : getNormal();
+    vec3 eye = normalize(-vVertex);
+    if (uHasNormalMap == 1) {
+        vec3 mapN = texture(uNormalMap, vTexCoord).rgb * 2.0 - 1.0;
+        mat3 TBN = mat3(normalize(vTangent), normalize(vBitangent), normal);
+        vec3 perturbedN = normalize(TBN * mapN);
+        if (dot(perturbedN, eye) < 0.0) {
+            perturbedN = reflect(perturbedN, normal);
+        }
+        normal = perturbedN;
+    }
     vec3 color;
     vec3 baseColor = (uAlbedo.r >= 0.0) ? uAlbedo : ((vColor.r > 0.0 || vColor.g > 0.0 || vColor.b > 0.0) ? vColor : vec3(0.72, 0.52, 0.45));
     if (uShowPolyGroups) {
@@ -38,10 +53,14 @@ void main() {
     float alphaToUse = uAlpha;
 
     if (uUseTexture == 1) {
-        vec3 eye = normalize(-vVertex);
-        vec3 r = reflect(-eye, normal);
+        vec3 matcapN = normal;
+        if (dot(matcapN, eye) < 0.0) {
+            matcapN = normalize(matcapN - 1.8 * dot(matcapN, eye) * eye);
+        }
+        vec3 r = reflect(-eye, matcapN);
         float m = 2.0 * sqrt(max(0.0, r.x*r.x + r.y*r.y + (r.z + 1.0)*(r.z + 1.0)));
         vec2 texCoord = (m > 0.0001) ? (r.xy / m + 0.5) : vec2(0.5);
+        texCoord = clamp(texCoord, vec2(0.015), vec2(0.985));
 
         vec3 matcapColor = texture(uTexture0, texCoord).rgb;
 

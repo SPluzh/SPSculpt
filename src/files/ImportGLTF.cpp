@@ -12,6 +12,7 @@
 #include <cmath>
 #include <algorithm>
 #include <chrono>
+#include <unordered_map>
 #include <GLES3/gl3.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -267,36 +268,30 @@ static Mesh* parsePrimitive(const json& j, const json& primitive, const std::vec
         return nullptr;
     }
     
-    Mesh* mesh = new Mesh();
-    mesh->verts = vAr;
-    mesh->nbVerts = (int)(vAr.size() / 3);
-    
-    sculpt_log("[GLTF Primitive] Parsing primitive: nbVerts=%d\n", mesh->nbVerts);
+    int origNbVerts = (int)(vAr.size() / 3);
+    sculpt_log("[GLTF Primitive] Parsing primitive: origNbVerts=%d\n", origNbVerts);
 
+    std::vector<float> origNormals;
     if (attrs.contains("NORMAL")) {
-        mesh->normals = getAccessorFloatArray(j, attrs["NORMAL"], binaryBuffers);
-        sculpt_log("[GLTF Primitive]   - NORMAL attribute loaded: %zu floats\n", mesh->normals.size());
+        origNormals = getAccessorFloatArray(j, attrs["NORMAL"], binaryBuffers);
+        sculpt_log("[GLTF Primitive]   - NORMAL attribute loaded: %zu floats\n", origNormals.size());
     } else {
         sculpt_log("[GLTF Primitive]   - No NORMAL attribute found\n");
     }
     
+    std::vector<float> origColors;
     if (attrs.contains("COLOR_0")) {
-        std::vector<float> cAr = getAccessorFloatArray(j, attrs["COLOR_0"], binaryBuffers);
-        if (!cAr.empty()) {
-            mesh->colors = cAr;
-            sculpt_log("[GLTF Primitive]   - COLOR_0 attribute loaded: %zu floats\n", mesh->colors.size());
+        origColors = getAccessorFloatArray(j, attrs["COLOR_0"], binaryBuffers);
+        if (!origColors.empty()) {
+            sculpt_log("[GLTF Primitive]   - COLOR_0 attribute loaded: %zu floats\n", origColors.size());
         }
     }
-    if (mesh->colors.size() != (size_t)mesh->nbVerts * 3) {
-        mesh->colors.assign(mesh->nbVerts * 3, 1.0f);
+    if (origColors.size() != (size_t)origNbVerts * 3) {
+        origColors.assign(origNbVerts * 3, 1.0f);
     }
     
-    mesh->materials.resize(mesh->nbVerts * 3);
-    for (int k = 0; k < mesh->nbVerts; ++k) {
-        mesh->materials[k * 3]     = 0.5f; // roughness
-        mesh->materials[k * 3 + 1] = 0.0f; // metalness
-        mesh->materials[k * 3 + 2] = 1.0f; // mask
-    }
+    float rough = 0.5f;
+    float metal = 0.0f;
 
     if (primitive.contains("material") && j.contains("materials")) {
         int matIdx = primitive["material"].get<int>();
@@ -308,96 +303,232 @@ static Mesh* parsePrimitive(const json& j, const json& primitive, const std::vec
                     auto bcf = pbr["baseColorFactor"];
                     if (bcf.size() >= 3) {
                         float r = bcf[0].get<float>(), g = bcf[1].get<float>(), b = bcf[2].get<float>();
-                        for (int k = 0; k < mesh->nbVerts; ++k) {
-                            mesh->colors[k * 3]     = r;
-                            mesh->colors[k * 3 + 1] = g;
-                            mesh->colors[k * 3 + 2] = b;
+                        for (int k = 0; k < origNbVerts; ++k) {
+                            origColors[k * 3]     = r;
+                            origColors[k * 3 + 1] = g;
+                            origColors[k * 3 + 2] = b;
                         }
                         sculpt_log("[GLTF Primitive]   - Applied baseColorFactor [%.2f, %.2f, %.2f]\n", r, g, b);
                     }
                 }
-                float rough = pbr.value("roughnessFactor", 0.5f);
-                float metal = pbr.value("metallicFactor", 0.0f);
-                for (int k = 0; k < mesh->nbVerts; ++k) {
-                    mesh->materials[k * 3]     = rough;
-                    mesh->materials[k * 3 + 1] = metal;
-                }
+                rough = pbr.value("roughnessFactor", 0.5f);
+                metal = pbr.value("metallicFactor", 0.0f);
                 sculpt_log("[GLTF Primitive]   - Applied PBR factors: roughness=%.3f, metallic=%.3f\n", rough, metal);
             }
         }
     }
     
-    std::vector<float> uvAr;
+    std::vector<float> origUV;
     if (attrs.contains("TEXCOORD_0")) {
-        uvAr = getAccessorFloatArray(j, attrs["TEXCOORD_0"], binaryBuffers);
-        if (uvAr.size() == (size_t)mesh->nbVerts * 2) {
-            mesh->uvFlat = uvAr;
-            mesh->hasUV = true;
-            sculpt_log("[GLTF Primitive]   - TEXCOORD_0 attribute loaded: %zu UV pairs\n", uvAr.size() / 2);
+        origUV = getAccessorFloatArray(j, attrs["TEXCOORD_0"], binaryBuffers);
+        if (origUV.size() == (size_t)origNbVerts * 2) {
+            sculpt_log("[GLTF Primitive]   - TEXCOORD_0 attribute loaded: %zu UV pairs\n", origUV.size() / 2);
+        } else {
+            origUV.clear();
         }
     }
 
+    std::vector<uint32_t> origIAr;
+    if (primitive.contains("indices")) {
+        origIAr = getAccessorUintArray(j, primitive["indices"], binaryBuffers);
+        sculpt_log("[GLTF Primitive]   - Loaded %zu face indices\n", origIAr.size());
+    } else {
+        origIAr.resize(origNbVerts);
+        for (int i = 0; i < origNbVerts; ++i) {
+            origIAr[i] = i;
+        }
+        sculpt_log("[GLTF Primitive]   - No indices specified; generated %d sequential indices\n", origNbVerts);
+    }
+    
+    // Spatial vertex welding using scale-invariant grid with 3x3x3 neighbor queries
+    float minX = 1e30f, minY = 1e30f, minZ = 1e30f;
+    float maxX = -1e30f, maxY = -1e30f, maxZ = -1e30f;
+    for (int i = 0; i < origNbVerts; ++i) {
+        minX = std::min(minX, vAr[i * 3 + 0]);
+        minY = std::min(minY, vAr[i * 3 + 1]);
+        minZ = std::min(minZ, vAr[i * 3 + 2]);
+        maxX = std::max(maxX, vAr[i * 3 + 0]);
+        maxY = std::max(maxY, vAr[i * 3 + 1]);
+        maxZ = std::max(maxZ, vAr[i * 3 + 2]);
+    }
+    float diag = std::sqrt((maxX - minX) * (maxX - minX) + (maxY - minY) * (maxY - minY) + (maxZ - minZ) * (maxZ - minZ));
+    float eps = std::max(1e-4f, diag * 1e-4f);
+    float epsSq = eps * eps;
+    float invCellSize = 1.0f / eps;
+
+    struct PosKey {
+        int64_t x, y, z;
+        bool operator==(const PosKey& o) const { return x == o.x && y == o.y && z == o.z; }
+    };
+    struct PosKeyHash {
+        size_t operator()(const PosKey& k) const {
+            return std::hash<int64_t>{}(k.x) ^ (std::hash<int64_t>{}(k.y) << 1) ^ (std::hash<int64_t>{}(k.z) << 2);
+        }
+    };
+
+    std::unordered_map<PosKey, std::vector<uint32_t>, PosKeyHash> gridMap;
+    std::vector<uint32_t> remap(origNbVerts);
+
+    std::vector<float> weldedVerts;
+    std::vector<float> weldedNormals;
+    std::vector<float> weldedColors;
+    std::vector<float> weldedMaterials;
+
+    weldedVerts.reserve(origNbVerts * 3);
+    weldedNormals.reserve(origNbVerts * 3);
+    weldedColors.reserve(origNbVerts * 3);
+    weldedMaterials.reserve(origNbVerts * 3);
+
+    bool hasNormals = (origNormals.size() == (size_t)origNbVerts * 3);
+
+    for (int i = 0; i < origNbVerts; ++i) {
+        float vx = vAr[i * 3 + 0];
+        float vy = vAr[i * 3 + 1];
+        float vz = vAr[i * 3 + 2];
+
+        int64_t cx = static_cast<int64_t>(std::floor(vx * invCellSize));
+        int64_t cy = static_cast<int64_t>(std::floor(vy * invCellSize));
+        int64_t cz = static_cast<int64_t>(std::floor(vz * invCellSize));
+
+        int32_t foundIdx = -1;
+
+        for (int dx = -1; dx <= 1 && foundIdx < 0; ++dx) {
+            for (int dy = -1; dy <= 1 && foundIdx < 0; ++dy) {
+                for (int dz = -1; dz <= 1 && foundIdx < 0; ++dz) {
+                    PosKey neighborKey{cx + dx, cy + dy, cz + dz};
+                    auto it = gridMap.find(neighborKey);
+                    if (it != gridMap.end()) {
+                        for (uint32_t wIdx : it->second) {
+                            float wx = weldedVerts[wIdx * 3 + 0];
+                            float wy = weldedVerts[wIdx * 3 + 1];
+                            float wz = weldedVerts[wIdx * 3 + 2];
+                            float distSq = (vx - wx)*(vx - wx) + (vy - wy)*(vy - wy) + (vz - wz)*(vz - wz);
+                            if (distSq <= epsSq) {
+                                foundIdx = static_cast<int32_t>(wIdx);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (foundIdx < 0) {
+            uint32_t newIdx = static_cast<uint32_t>(weldedVerts.size() / 3);
+            remap[i] = newIdx;
+
+            weldedVerts.push_back(vx);
+            weldedVerts.push_back(vy);
+            weldedVerts.push_back(vz);
+
+            if (hasNormals) {
+                weldedNormals.push_back(origNormals[i * 3 + 0]);
+                weldedNormals.push_back(origNormals[i * 3 + 1]);
+                weldedNormals.push_back(origNormals[i * 3 + 2]);
+            }
+
+            weldedColors.push_back(origColors[i * 3 + 0]);
+            weldedColors.push_back(origColors[i * 3 + 1]);
+            weldedColors.push_back(origColors[i * 3 + 2]);
+
+            weldedMaterials.push_back(rough);
+            weldedMaterials.push_back(metal);
+            weldedMaterials.push_back(1.0f); // mask
+
+            PosKey cellKey{cx, cy, cz};
+            gridMap[cellKey].push_back(newIdx);
+        } else {
+            uint32_t wIdx = static_cast<uint32_t>(foundIdx);
+            remap[i] = wIdx;
+
+            if (hasNormals) {
+                weldedNormals[wIdx * 3 + 0] += origNormals[i * 3 + 0];
+                weldedNormals[wIdx * 3 + 1] += origNormals[i * 3 + 1];
+                weldedNormals[wIdx * 3 + 2] += origNormals[i * 3 + 2];
+            }
+        }
+    }
+
+    if (hasNormals) {
+        size_t numWelded = weldedVerts.size() / 3;
+        for (size_t j = 0; j < numWelded; ++j) {
+            float nx = weldedNormals[j * 3 + 0];
+            float ny = weldedNormals[j * 3 + 1];
+            float nz = weldedNormals[j * 3 + 2];
+            float len = std::sqrt(nx * nx + ny * ny + nz * nz);
+            if (len > 1e-6f) {
+                weldedNormals[j * 3 + 0] = nx / len;
+                weldedNormals[j * 3 + 1] = ny / len;
+                weldedNormals[j * 3 + 2] = nz / len;
+            } else {
+                weldedNormals[j * 3 + 0] = 0.0f;
+                weldedNormals[j * 3 + 1] = 1.0f;
+                weldedNormals[j * 3 + 2] = 0.0f;
+            }
+        }
+    }
+
+    sculpt_log("[GLTF Primitive] Vertex welding complete: %d origVerts -> %zu weldedVerts\n",
+               origNbVerts, weldedVerts.size() / 3);
+
+    Mesh* mesh = new Mesh();
+    mesh->verts = weldedVerts;
+    mesh->normals = weldedNormals;
+    mesh->colors = weldedColors;
+    mesh->materials = weldedMaterials;
+    mesh->nbVerts = (int)(weldedVerts.size() / 3);
+
+    size_t numTris = origIAr.size() / 3;
+    mesh->faces.resize(numTris * 4);
+    std::vector<uint32_t> uvfAr;
+    if (!origUV.empty()) {
+        uvfAr.resize(numTris * 4);
+    }
+
+    for (size_t t = 0; t < numTris; ++t) {
+        uint32_t i0 = origIAr[t * 3 + 0];
+        uint32_t i1 = origIAr[t * 3 + 1];
+        uint32_t i2 = origIAr[t * 3 + 2];
+
+        mesh->faces[t * 4 + 0] = remap[i0];
+        mesh->faces[t * 4 + 1] = remap[i1];
+        mesh->faces[t * 4 + 2] = remap[i2];
+        mesh->faces[t * 4 + 3] = TRI_INDEX;
+
+        if (!origUV.empty()) {
+            uvfAr[t * 4 + 0] = i0;
+            uvfAr[t * 4 + 1] = i1;
+            uvfAr[t * 4 + 2] = i2;
+            uvfAr[t * 4 + 3] = TRI_INDEX;
+        }
+    }
+    mesh->nbFaces = (int)numTris;
+
+    // Apply UV data and duplicate seam vertices for GPU rendering
+    if (!origUV.empty()) {
+        mesh->initTexCoordsDataFromOBJData(origUV, uvfAr);
+        mesh->uvFlat = mesh->texCoords;
+        mesh->hasUV = true;
+        sculpt_log("[GLTF Primitive]   - Processed UVs and expanded seam verts for GPU: final nbVerts=%d\n", mesh->nbVerts);
+    }
+
+    // Tangents generation
     if (attrs.contains("TANGENT")) {
         std::vector<float> tangArr = getAccessorFloatArray(j, attrs["TANGENT"], binaryBuffers);
-        if (tangArr.size() == (size_t)mesh->nbVerts * 4) {
+        if (tangArr.size() == (size_t)origNbVerts * 4 && origUV.empty()) {
             mesh->tangents = tangArr;
-            sculpt_log("[GLTF Primitive]   - TANGENT attribute loaded: %zu tangent vectors\n", tangArr.size() / 4);
         }
     }
 
-    if (mesh->tangents.empty() && !mesh->uvFlat.empty()) {
-        sculpt_log("[GLTF Primitive]   - TANGENT attribute absent. Generating procedural tangents from UVs...\n");
+    if (mesh->hasUV) {
+        sculpt_log("[GLTF Primitive]   - Generating procedural tangents from UVs...\n");
         if (mesh->normals.size() != (size_t)mesh->nbVerts * 3) {
             mesh->postInit();
         }
         MeshUtils::computeTangents(*mesh);
         sculpt_log("[GLTF Primitive]   - Successfully generated %zu procedural tangent vectors\n", mesh->tangents.size() / 4);
     }
-    
-    std::vector<uint32_t> iAr;
-    if (primitive.contains("indices")) {
-        iAr = getAccessorUintArray(j, primitive["indices"], binaryBuffers);
-        sculpt_log("[GLTF Primitive]   - Loaded %zu face indices\n", iAr.size());
-    } else {
-        iAr.resize(mesh->nbVerts);
-        for (int i = 0; i < mesh->nbVerts; ++i) {
-            iAr[i] = i;
-        }
-        sculpt_log("[GLTF Primitive]   - No indices specified; generated %d sequential indices\n", mesh->nbVerts);
-    }
-    
-    size_t numTris = iAr.size() / 3;
-    mesh->faces.resize(numTris * 4);
-    for (size_t t = 0; t < numTris; ++t) {
-        size_t idt = t * 4;
-        size_t idi = t * 3;
-        mesh->faces[idt] = iAr[idi];
-        mesh->faces[idt + 1] = iAr[idi + 1];
-        mesh->faces[idt + 2] = iAr[idi + 2];
-        mesh->faces[idt + 3] = TRI_INDEX;
-    }
-    mesh->nbFaces = (int)numTris;
-    
-    // Bounds validation for vertex indices
-    uint32_t maxVertIndex = (uint32_t)mesh->nbVerts;
-    uint32_t outOfBoundsCount = 0;
-    for (size_t i = 0; i < mesh->faces.size(); ++i) {
-        uint32_t vid = mesh->faces[i];
-        if (vid != TRI_INDEX && vid >= maxVertIndex) {
-            outOfBoundsCount++;
-            mesh->faces[i] = 0;
-        }
-    }
-    if (outOfBoundsCount > 0) {
-        sculpt_log("[GLTF Primitive WARNING] Corrected %u out-of-bounds face indices!\n", outOfBoundsCount);
-    }
 
-    if (!mesh->uvFlat.empty()) {
-        mesh->texCoords = mesh->uvFlat;
-        mesh->facesTexCoord = mesh->faces;
-        mesh->hasUV = true;
-    }
-    
     // Compute topology
     sculpt_log("[GLTF Primitive]   - Computing topology (nbVerts=%d, nbFaces=%d)...\n", mesh->nbVerts, mesh->nbFaces);
     auto tTopoStart = std::chrono::high_resolution_clock::now();
