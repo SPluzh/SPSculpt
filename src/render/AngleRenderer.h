@@ -40,6 +40,8 @@ struct MeshRenderBuffers {
     GLuint vboColors = 0;
     GLuint vboMaterials = 0;
     GLuint vboFaceGroups = 0;
+    GLuint vboTexCoords = 0;
+    GLuint vboTangents = 0;
     GLuint eboTriangles = 0;
     GLuint eboWireframe = 0;
     
@@ -63,6 +65,8 @@ struct MeshRenderBuffers {
         if (vboColors) glDeleteBuffers(1, &vboColors);
         if (vboMaterials) glDeleteBuffers(1, &vboMaterials);
         if (vboFaceGroups) glDeleteBuffers(1, &vboFaceGroups);
+        if (vboTexCoords) glDeleteBuffers(1, &vboTexCoords);
+        if (vboTangents) glDeleteBuffers(1, &vboTangents);
         if (eboTriangles) glDeleteBuffers(1, &eboTriangles);
         if (eboWireframe) glDeleteBuffers(1, &eboWireframe);
 

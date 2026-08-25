@@ -267,13 +267,29 @@ void Mesh::postInit() {
     );
     auto tFNormEnd = std::chrono::high_resolution_clock::now();
 
-    updateVertexNormals(
-        nullptr, -1, nbVerts,
-        vrfStartCount.data(),
-        vertRingFace.data(),
-        faceNormals.data(),
-        normals.data()
-    );
+    bool hasImportedNormals = false;
+    if (normals.size() == (size_t)nbVerts * 3) {
+        for (size_t i = 0; i < normals.size(); ++i) {
+            if (normals[i] != 0.0f) {
+                hasImportedNormals = true;
+                break;
+            }
+        }
+    } else {
+        normals.resize(nbVerts * 3, 0.0f);
+    }
+
+    if (!hasImportedNormals) {
+        updateVertexNormals(
+            nullptr, -1, nbVerts,
+            vrfStartCount.data(),
+            vertRingFace.data(),
+            faceNormals.data(),
+            normals.data()
+        );
+    } else {
+        sculpt_log("[Mesh] Preserved %zu pre-calculated imported vertex normals in postInit\n", normals.size() / 3);
+    }
     auto tVNormEnd = std::chrono::high_resolution_clock::now();
 
     octree.build(

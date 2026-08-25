@@ -1845,6 +1845,24 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
         glEnableVertexAttribArray(5);
     }
 
+    if (bufs->vboTexCoords && mesh->normalMapTexId != 0) {
+        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboTexCoords);
+        glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(4);
+    }
+    if (bufs->vboTangents && mesh->normalMapTexId != 0) {
+        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboTangents);
+        glVertexAttribPointer(6, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(6);
+    }
+
+    if (program == m_pbrProgram) {
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, mesh->normalMapTexId);
+        glUniform1i(glGetUniformLocation(program, "uNormalMap"), 2);
+        glUniform1i(glGetUniformLocation(program, "uHasNormalMap"), (mesh->normalMapTexId != 0 && !mesh->uvFlat.empty()) ? 1 : 0);
+    }
+
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
     glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
 
@@ -2673,6 +2691,8 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
         glGenBuffers(1, &bufs->vboColors);
         glGenBuffers(1, &bufs->vboMaterials);
         glGenBuffers(1, &bufs->vboFaceGroups);
+        glGenBuffers(1, &bufs->vboTexCoords);
+        glGenBuffers(1, &bufs->vboTangents);
         glGenBuffers(1, &bufs->eboTriangles);
         glGenBuffers(1, &bufs->eboWireframe);
         mesh->isDirty = true;
@@ -2747,6 +2767,21 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
         }
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboFaceGroups);
         glBufferData(GL_ARRAY_BUFFER, vertGroups.size() * sizeof(uint32_t), vertGroups.data(), GL_DYNAMIC_DRAW);
+
+        if (!mesh->uvFlat.empty()) {
+            if (!bufs->vboTexCoords) glGenBuffers(1, &bufs->vboTexCoords);
+            glBindBuffer(GL_ARRAY_BUFFER, bufs->vboTexCoords);
+            glBufferData(GL_ARRAY_BUFFER, mesh->uvFlat.size() * sizeof(float), mesh->uvFlat.data(), GL_DYNAMIC_DRAW);
+            glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+            glEnableVertexAttribArray(4);
+        }
+        if (!mesh->tangents.empty()) {
+            if (!bufs->vboTangents) glGenBuffers(1, &bufs->vboTangents);
+            glBindBuffer(GL_ARRAY_BUFFER, bufs->vboTangents);
+            glBufferData(GL_ARRAY_BUFFER, mesh->tangents.size() * sizeof(float), mesh->tangents.data(), GL_DYNAMIC_DRAW);
+            glVertexAttribPointer(6, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+            glEnableVertexAttribArray(6);
+        }
         
         std::vector<uint32_t> triIndices;
         generateTriangleIndices(mesh, triIndices);

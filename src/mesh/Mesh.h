@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <memory>
+#include <GLES3/gl3.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include "mesh/Octree.h"
@@ -19,6 +21,9 @@ public:
     // Armature support
     bool isArmature = false;
     std::unique_ptr<ArmatureGraph> armatureGraph;
+
+    // Per-mesh normal map (loaded from glTF, never a ReferenceImage)
+    GLuint normalMapTexId = 0;
 
     // Geometry
     std::vector<float>    verts;        // nbVerts * 3
@@ -86,6 +91,8 @@ public:
     float symmetryOffset = 0.0f;
     std::vector<float>    texCoords;     // nbTexCoords * 2
     std::vector<uint32_t> facesTexCoord;  // nbFaces * 4
+    std::vector<float>    tangents;      // nbVerts * 4 (XYZW)
+    std::vector<float>    uvFlat;        // nbVerts * 2 (vertex-indexed for GPU)
     bool hasUV = false;
 
     float getSymmetryOffset() const { return symmetryOffset; }
@@ -118,6 +125,7 @@ public:
     Mesh(const Mesh& other) {
         isArmature = false;
         armatureGraph = nullptr;
+        normalMapTexId = other.normalMapTexId;
         verts = other.verts;
         normals = other.normals;
         colors = other.colors;
@@ -154,6 +162,8 @@ public:
         scale = other.scale;
         texCoords = other.texCoords;
         facesTexCoord = other.facesTexCoord;
+        tangents = other.tangents;
+        uvFlat = other.uvFlat;
         hasUV = other.hasUV;
         m_id = other.m_id;
         outlinerName = other.outlinerName;

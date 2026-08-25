@@ -25,6 +25,8 @@ uniform mat4 uLightMVP;
 uniform int  uShadowEnabled;
 
 uniform sampler2D uTexture0;
+uniform sampler2D uNormalMap;
+uniform int uHasNormalMap;
 uniform float uExposure;
 uniform mat3 uIblTransform;
 uniform vec3 uSPH[9];
@@ -51,6 +53,9 @@ in vec3 vColor;
 in vec3 vMaterial;
 in float vMasking;
 flat in uint vFaceGroup;
+in vec2 vTexCoord;
+in vec3 vTangent;
+in vec3 vBitangent;
 uniform bool uShowPolyGroups;
 
 out vec4 fragColor;
@@ -171,6 +176,11 @@ float PCF(vec3 viewPos) {
 
 void main() {
     vec3 normal = getNormal();
+    if (uHasNormalMap == 1) {
+        vec3 mapN = texture(uNormalMap, vTexCoord).rgb * 2.0 - 1.0;
+        mat3 TBN = mat3(normalize(vTangent), normalize(vBitangent), normal);
+        normal = normalize(TBN * mapN);
+    }
     
     // Geometric Specular & Normal Filtering (Screen-Space Derivative Roughness Modification)
     vec3 dNdx = dFdx(normal);

@@ -146,19 +146,52 @@ std::vector<Mesh*> FileManager::importFiles(const std::string& path,
     }
     
     if (ext == "glb") {
+        auto tStart = std::chrono::high_resolution_clock::now();
+        sculpt_log("[GLTF Import] Starting GLB file import: '%s'\n", path.c_str());
         std::vector<uint8_t> buffer = readBinaryFile(path);
-        if (buffer.empty()) return {};
-        return ImportGLTF::importGLB(buffer);
+        if (buffer.empty()) {
+            sculpt_log("[GLTF Import ERROR] Failed to read GLB binary file or file is empty: '%s'\n", path.c_str());
+            return {};
+        }
+        double dataMb = static_cast<double>(buffer.size()) / (1024.0 * 1024.0);
+        sculpt_log("[GLTF Import] Disk read completed: %.2f MB\n", dataMb);
+
+        auto tParseStart = std::chrono::high_resolution_clock::now();
+        std::vector<Mesh*> meshes = ImportGLTF::importGLB(buffer);
+        auto tEnd = std::chrono::high_resolution_clock::now();
+        double msParse = std::chrono::duration<double, std::milli>(tEnd - tParseStart).count();
+        double msTotal = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
+
+        sculpt_log("[GLTF Import] FileManager::importFiles completed GLB import in %.2f ms (Parse/Build: %.2f ms, Meshes: %zu)\n",
+                   msTotal, msParse, meshes.size());
+        return meshes;
     }
     
     if (ext == "gltf") {
+        auto tStart = std::chrono::high_resolution_clock::now();
+        sculpt_log("[GLTF Import] Starting GLTF file import: '%s'\n", path.c_str());
         std::string data = readTextFile(path);
-        if (data.empty()) return {};
+        if (data.empty()) {
+            sculpt_log("[GLTF Import ERROR] Failed to read GLTF text file or file is empty: '%s'\n", path.c_str());
+            return {};
+        }
+        double dataMb = static_cast<double>(data.size()) / (1024.0 * 1024.0);
+        sculpt_log("[GLTF Import] Disk read completed: %.2f MB\n", dataMb);
+
         std::string basePath;
         size_t slashIdx = path.find_last_of("/\\");
         if (slashIdx != std::string::npos)
             basePath = path.substr(0, slashIdx);
-        return ImportGLTF::importGLTF(data, basePath);
+
+        auto tParseStart = std::chrono::high_resolution_clock::now();
+        std::vector<Mesh*> meshes = ImportGLTF::importGLTF(data, basePath);
+        auto tEnd = std::chrono::high_resolution_clock::now();
+        double msParse = std::chrono::duration<double, std::milli>(tEnd - tParseStart).count();
+        double msTotal = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
+
+        sculpt_log("[GLTF Import] FileManager::importFiles completed GLTF import in %.2f ms (Parse/Build: %.2f ms, Meshes: %zu)\n",
+                   msTotal, msParse, meshes.size());
+        return meshes;
     }
     
     std::cerr << "Unsupported import file format: ." << ext << std::endl;

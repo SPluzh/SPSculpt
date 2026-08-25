@@ -18,4 +18,6 @@ std::vector<uint32_t> triangulate(const Mesh& mesh);
 
 MergedMesh mergeMeshes(const std::vector<Mesh*>& meshes);
 
+void computeTangents(Mesh& mesh);
+
 } // namespace MeshUtils
