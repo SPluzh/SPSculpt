@@ -2334,6 +2334,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     ImGui::BeginChild(("##card_ref_" + std::to_string(i)).c_str(), ImVec2(0, cardH), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
                     ImGui::PopStyleColor(2);
 
+                    ImVec2 startCursor = ImGui::GetCursorPos();
+
                     // Left Thumbnail (Dark Framed Background matching Camera Bookmarks)
                     ImDrawList* refDrawList = ImGui::GetWindowDrawList();
                     ImVec2 rMin = ImGui::GetCursorScreenPos();
@@ -2350,15 +2352,17 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         }
                         float padX = (thumbSz - tW) * 0.5f;
                         float padY = (thumbSz - tH) * 0.5f;
-                        ImVec2 startCursor = ImGui::GetCursorPos();
                         ImGui::SetCursorPos(ImVec2(startCursor.x + padX, startCursor.y + padY));
                         ImGui::Image((ImTextureID)(uintptr_t)img.texId, ImVec2(tW, tH), ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
-                        ImGui::SetCursorPos(ImVec2(startCursor.x + thumbSz, startCursor.y));
                     } else {
                         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.13f, 0.14f, 1.0f));
                         ImGui::Button(ICON_LC_IMAGE, ImVec2(thumbSz, thumbSz));
                         ImGui::PopStyleColor();
                     }
+
+                    // Reset cursor to startCursor and create a fixed thumbSz x thumbSz layout box
+                    ImGui::SetCursorPos(startCursor);
+                    ImGui::Dummy(ImVec2(thumbSz, thumbSz));
 
                     ImGui::SameLine();
 
@@ -5169,7 +5173,7 @@ static bool isPointInCircle(const ImVec2& pt, const ImVec2& center, float radius
 
 void GuiManager::drawReferenceImageManipulator(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer) {
     auto& images = scene.getReferenceImages();
-    if (images.empty()) {
+    if (images.empty() || !scene.areAnyReferenceImagesVisible()) {
         m_activeRefDragTarget = RefDragTarget::None;
         m_draggingRefImageIdx = -1;
         if (scene.getCamera().getRefDragEnabled()) {

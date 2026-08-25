@@ -3282,7 +3282,7 @@ void SculptManager::processFrame(Scene& scene) {
         m_trimLassoAlt = (SDL_GetModState() & KMOD_ALT) != 0;
     }
 
-    bool isRefDragMode = (scene.getCamera().getRefDragEnabled() || (scene.getCameraRight() && scene.getCameraRight()->getRefDragEnabled())) && !scene.getReferenceImages().empty();
+    bool isRefDragMode = (scene.getCamera().getRefDragEnabled() || (scene.getCameraRight() && scene.getCameraRight()->getRefDragEnabled())) && scene.areAnyReferenceImagesVisible();
     if (isRefDragMode || m_cameraController.isDragging() || m_currentBrush == BRUSH_MEASURE || m_currentBrush == BRUSH_DIVIDER || m_currentBrush == BRUSH_TRANSFORM) {
         m_cursor.hide();
     } else {

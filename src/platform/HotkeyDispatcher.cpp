@@ -452,9 +452,18 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
             case HKAction::OpenContextPopup: gui.m_openContextPopup = true; break;
             case HKAction::RunRemesh: gui.performRemesh(scene); break;
             case HKAction::SoloSelected: scene.toggleSolo(scene.getSelected()); break;
-            case HKAction::ToggleRefImagesVisible: scene.toggleAllReferenceImagesVisible(); break;
+            case HKAction::ToggleRefImagesVisible: {
+                scene.toggleAllReferenceImagesVisible();
+                if (!scene.areAnyReferenceImagesVisible()) {
+                    scene.getCamera().setRefDragEnabled(false);
+                    if (scene.getCameraRight()) {
+                        scene.getCameraRight()->setRefDragEnabled(false);
+                    }
+                }
+                break;
+            }
             case HKAction::ToggleRefEditMode: {
-                if (!scene.getReferenceImages().empty()) {
+                if (scene.areAnyReferenceImagesVisible()) {
                     Camera& camera = scene.getCamera();
                     bool newMode = !camera.getRefDragEnabled();
                     camera.setRefDragEnabled(newMode);

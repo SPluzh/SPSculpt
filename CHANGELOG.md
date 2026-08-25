@@ -2,11 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.12]
+- **Scene Outliner**: Fixed right-side button alignment on non-square reference image cards.
+- **Reference Images**: Restricted reference edit mode (`Z`) to toggle only when reference images are visible in the scene, preventing edit mode activation when images are hidden via `Shift+Z` or panel toggles.
+
 ## [0.2.11]
 - **Hotkeys**: Bound `F1` key to toggle Scene Outliner panel and `F2` key to toggle Camera Bookmarks panel. Added shortcut hints to UI menus and Hotkey HUD.
 
 ## [0.2.10]
-- **Reference Images**: Restricted reference edit mode (`Z`) to activate only when images exist, preventing accidental cursor hiding.
+- **Reference Images**: Restricted reference edit mode (`Z`) to activate only when visible images exist, preventing accidental cursor hiding.
 - **Project Files**: Fixed project loading locking the brush cursor when saved in reference edit mode.
 
 ## [0.2.9]
