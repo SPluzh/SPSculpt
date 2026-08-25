@@ -154,7 +154,11 @@ std::vector<Mesh*> FileManager::importFiles(const std::string& path,
     if (ext == "gltf") {
         std::string data = readTextFile(path);
         if (data.empty()) return {};
-        return ImportGLTF::importGLTF(data);
+        std::string basePath;
+        size_t slashIdx = path.find_last_of("/\\");
+        if (slashIdx != std::string::npos)
+            basePath = path.substr(0, slashIdx);
+        return ImportGLTF::importGLTF(data, basePath);
     }
     
     std::cerr << "Unsupported import file format: ." << ext << std::endl;

@@ -6,7 +6,7 @@
 
 namespace ImportGLTF {
 
-std::vector<Mesh*> importGLTF(const std::string& data);
+std::vector<Mesh*> importGLTF(const std::string& data, const std::string& basePath = "");
 std::vector<Mesh*> importGLB(const std::vector<uint8_t>& buffer);
 
 } // namespace ImportGLTF

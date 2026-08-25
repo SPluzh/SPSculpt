@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.13]
+- **glTF Import**: Added support for opening `.gltf` 3D scenes that rely on external `.bin` geometry data files.
+- **glTF Import**: Preserved original model and object names in the Scene Outliner upon importing glTF files.
+
 ## [0.2.12]
 - **Scene Outliner**: Fixed right-side button alignment on non-square reference image cards.
 - **Reference Images**: Restricted reference edit mode (`Z`) to toggle only when reference images are visible in the scene, preventing edit mode activation when images are hidden via `Shift+Z` or panel toggles.

@@ -2,6 +2,8 @@
 #include "files/Base64.h"
 #include "common/Constants.h"
 #include "mesh/Topology.h"
+#include "common/StringUtils.h"
+#include <fstream>
 #include <nlohmann/json.hpp>
 #include <iostream>
 #include <cstring>
@@ -14,6 +16,31 @@
 using json = nlohmann::json;
 
 namespace ImportGLTF {
+
+static std::vector<uint8_t> readExternalFile(const std::string& basePath,
+                                              const std::string& uri) {
+    std::string fullPath;
+    if (basePath.empty()) {
+        fullPath = uri;
+    } else if (basePath.back() == '/' || basePath.back() == '\\') {
+        fullPath = basePath + uri;
+    } else {
+        fullPath = basePath + "/" + uri;
+    }
+
+#ifdef _WIN32
+    std::ifstream file(utf8ToWide(fullPath).c_str(), std::ios::binary | std::ios::ate);
+#else
+    std::ifstream file(fullPath, std::ios::binary | std::ios::ate);
+#endif
+    if (!file.is_open()) return {};
+    std::streamsize size = file.tellg();
+    file.seekg(0, std::ios::beg);
+    std::vector<uint8_t> buffer(size);
+    if (file.read(reinterpret_cast<char*>(buffer.data()), size))
+        return buffer;
+    return {};
+}
 
 struct Property {
     std::string type;
@@ -276,6 +303,11 @@ static void traverseNode(const json& j, int nodeIdx, const glm::mat4& parentMatr
                     Mesh* meshObj = parsePrimitive(j, prim, binaryBuffers);
                     if (meshObj) {
                         meshObj->setMatrix(worldMatrix);
+                        if (gltfMesh.contains("name")) {
+                            meshObj->outlinerName = gltfMesh["name"].get<std::string>();
+                        } else if (node.contains("name")) {
+                            meshObj->outlinerName = node["name"].get<std::string>();
+                        }
                         meshes.push_back(meshObj);
                     }
                 }
@@ -290,7 +322,7 @@ static void traverseNode(const json& j, int nodeIdx, const glm::mat4& parentMatr
     }
 }
 
-std::vector<Mesh*> importGLTF(const std::string& data) {
+std::vector<Mesh*> importGLTF(const std::string& data, const std::string& basePath) {
     json j = json::parse(data, nullptr, false);
     if (j.is_discarded()) {
         std::cerr << "GLTF JSON parsing failed" << std::endl;
@@ -303,6 +335,8 @@ std::vector<Mesh*> importGLTF(const std::string& data) {
             std::string uri = buf.value("uri", "");
             if (uri.rfind("data:", 0) == 0) {
                 binaryBuffers.push_back(Base64::decodeUri(uri));
+            } else if (!uri.empty() && !basePath.empty()) {
+                binaryBuffers.push_back(readExternalFile(basePath, uri));
             } else {
                 binaryBuffers.push_back({});
             }
