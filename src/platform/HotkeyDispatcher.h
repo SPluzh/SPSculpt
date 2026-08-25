@@ -72,7 +72,9 @@ enum class HKAction {
     RunRemesh,             // Ctrl+X
     
     // Misc
-    OpenContextPopup,      // F1
+    ToggleOutliner,        // F1
+    ToggleCameraBookmarks, // F2
+    OpenContextPopup,
     SoloSelected,          // C
     ToggleRefImagesVisible,// Shift+Z
     ToggleRefEditMode,     // Z

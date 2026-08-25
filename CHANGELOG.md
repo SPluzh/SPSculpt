@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.11]
+- **Hotkeys**: Bound `F1` key to toggle Scene Outliner panel and `F2` key to toggle Camera Bookmarks panel. Added shortcut hints to UI menus and Hotkey HUD.
+
 ## [0.2.10]
 - **Reference Images**: Restricted reference edit mode (`Z`) to activate only when images exist, preventing accidental cursor hiding.
 - **Project Files**: Fixed project loading locking the brush cursor when saved in reference edit mode.

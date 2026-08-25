@@ -284,7 +284,8 @@ HKAction HotkeyDispatcher::mapKeyToAction(const SDL_Keysym& keysym, bool ctrlPre
         case SDLK_DOWN: return HKAction::StrifeDown;
         
         case SDLK_c: return HKAction::SoloSelected;
-        case SDLK_F1: return HKAction::OpenContextPopup;
+        case SDLK_F1: return HKAction::ToggleOutliner;
+        case SDLK_F2: return HKAction::ToggleCameraBookmarks;
         
         default: break;
     }
@@ -446,6 +447,8 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
             case HKAction::SaveFileAs: gui.saveSceneAs(scene, &sculpt); break;
             case HKAction::ExportOBJ: gui.exportFile(scene, &sculpt); break;
             case HKAction::ToggleDyntopo: gui.toggleTopologyPanel(); break;
+            case HKAction::ToggleOutliner: gui.toggleScenePanel(); break;
+            case HKAction::ToggleCameraBookmarks: gui.toggleCameraBookmarksPanel(); break;
             case HKAction::OpenContextPopup: gui.m_openContextPopup = true; break;
             case HKAction::RunRemesh: gui.performRemesh(scene); break;
             case HKAction::SoloSelected: scene.toggleSolo(scene.getSelected()); break;

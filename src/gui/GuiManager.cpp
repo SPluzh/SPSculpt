@@ -6082,11 +6082,11 @@ void GuiManager::drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRend
     if (ImGui::BeginMenu("Panels")) {
         ImGui::MenuItem("Toolbar", nullptr, &m_showToolbar);
         ImGui::MenuItem("Sculpting Settings", nullptr, &m_showSculptingPanel);
-        ImGui::MenuItem("Scene Outliner", nullptr, &m_showScenePanel);
+        ImGui::MenuItem("Scene Outliner", "F1", &m_showScenePanel);
         ImGui::MenuItem("Topology & Remesh", nullptr, &m_showTopologyPanel);
         ImGui::MenuItem("Sculpt Layers", nullptr, &m_showLayersPanel);
         ImGui::MenuItem("Multiresolution", nullptr, &m_showMultiresPanel);
-        ImGui::MenuItem("Camera Bookmarks", nullptr, &m_showCameraBookmarksPanel);
+        ImGui::MenuItem("Camera Bookmarks", "F2", &m_showCameraBookmarksPanel);
         ImGui::MenuItem("Sculpt Timelapse", nullptr, &m_showTimelapsePanel);
         ImGui::MenuItem("Hotkey HUD", nullptr, &m_showHotkeyHUD);
         if (ImGui::MenuItem("Brush Icon Capture...", nullptr, m_showBrushIconCapture)) {
@@ -9139,7 +9139,9 @@ void GuiManager::drawHotkeyHUD() {
             { "G",      "Camera FOV" },
             { "X",      "Remesh Res" },
             { "Ctrl+X", "Voxel Remesh" },
-            { "C",      "Solo Mode" }
+            { "C",      "Solo Mode" },
+            { "F1",     "Scene Outliner" },
+            { "F2",     "Camera Bookmarks" }
         };
 
         if (ImGui::BeginTable("##HotkeyHUDTable", 2, ImGuiTableFlags_SizingFixedFit)) {
