@@ -65,6 +65,7 @@ enum class HKAction {
     Undo,                  // Ctrl+Z
     Redo,                  // Ctrl+Y or Ctrl+Shift+Z
     OpenFile,              // Ctrl+O
+    OpenRecentFile,        // Ctrl+Shift+O
     SaveFile,              // Ctrl+S
     SaveFileAs,            // Ctrl+Shift+S
     ExportOBJ,             // Ctrl+E

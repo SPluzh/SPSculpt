@@ -20,7 +20,8 @@ public:
                              const std::vector<Mesh*>& meshes,
                              const Scene* scene = nullptr,
                              const AngleRenderer* renderer = nullptr,
-                             const SculptManager* sculpt = nullptr);
+                             const SculptManager* sculpt = nullptr,
+                             const std::vector<uint8_t>& thumbnail = {});
 
     static std::string getExtension(const std::string& path);
 };

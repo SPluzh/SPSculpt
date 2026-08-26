@@ -63,6 +63,7 @@ include_directories(
 add_executable(SPSculpt
     # common
     src/common/IniFile.cpp
+    src/common/RecentFiles.cpp
     src/common/StringUtils.cpp
     # scene
     src/scene/Camera.cpp

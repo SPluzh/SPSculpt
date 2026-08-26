@@ -34,6 +34,7 @@
 #include "platform/HotkeyDispatcher.h"
 #include "render/RenderSettings.h"
 #include "common/IniFile.h"
+#include "common/RecentFiles.h"
 #include "common/Version.h"
 #include "common/FormatConstants.h"
 #include "common/StringUtils.h"
@@ -363,6 +364,9 @@ int main(int argc, char* argv[]) {
 
     GuiManager gui;
     gui.loadSettings(appSettings);
+    RecentFiles recentFiles;
+    recentFiles.loadFromIni(appSettings);
+    gui.setRecentFiles(&recentFiles);
 
     int width = gui.getWindowWidth();
     int height = gui.getWindowHeight();
@@ -905,6 +909,7 @@ int main(int argc, char* argv[]) {
     RenderSettings::save(saveApp, renderer, scene);
     sculpt.saveSettings(saveApp);
     gui.saveSettings(saveApp);
+    recentFiles.saveToIni(saveApp);
     saveApp.save("app_settings.cfg");
 
 #ifdef _WIN32

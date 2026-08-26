@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.14]
+- **Recent Files**: Redesigned modal window with compact grid layout, preview thumbnails, and card styling matching Scene Outliner.
+- **Hotkeys**: Added `Ctrl + Shift + O` shortcut to open Recent Files.
+
 ## [0.2.13]
 - **glTF Import**: Added vertex welding and dual-index rendering to fix seam cuts and UV stretching.
 - **glTF Import**: Enabled Matcap normal map relief shading and resolved grazing-angle blackening artifacts.

@@ -217,7 +217,10 @@ HKAction HotkeyDispatcher::mapKeyToAction(const SDL_Keysym& keysym, bool ctrlPre
         }
         if (sym == SDLK_y) return HKAction::Redo;
         if (sym == SDLK_d) return HKAction::DuplicateSelection;
-        if (sym == SDLK_o) return HKAction::OpenFile;
+        if (sym == SDLK_o) {
+            if (shiftPressed) return HKAction::OpenRecentFile;
+            return HKAction::OpenFile;
+        }
         if (sym == SDLK_e) return HKAction::ExportOBJ;
         if (sym == SDLK_t) return HKAction::ToggleDyntopo;
         if (sym == SDLK_x) return HKAction::RunRemesh;
@@ -443,6 +446,7 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
                 break;
             
             case HKAction::OpenFile: gui.openScene(scene, &sculpt); break;
+            case HKAction::OpenRecentFile: gui.toggleRecentFilesWindow(); break;
             case HKAction::SaveFile: gui.saveScene(scene, &sculpt); break;
             case HKAction::SaveFileAs: gui.saveSceneAs(scene, &sculpt); break;
             case HKAction::ExportOBJ: gui.exportFile(scene, &sculpt); break;

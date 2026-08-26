@@ -13,6 +13,7 @@
 #include "render/RenderSettings.h"
 #include "editing/BrushCursor.h"
 #include "files/FileManager.h"
+#include "files/ImportSGL.h"
 #include "platform/FileDialog.h"
 #include "brushes/BrushPresetManager.h"
 #include "editing/ArmatureTool.h"
@@ -355,7 +356,11 @@ bool GuiManager::openSceneFromPath(const std::string& path, Scene& scene, Sculpt
     sculpt_log("[Scene Import] openSceneFromPath('%s') completed in %.2f ms (ImportFiles: %.2fms, HistoryPush: %.2fms)\n",
               path.c_str(), msTotal, msImport, msHist);
 
-    return !newMeshes.empty() || FileManager::getExtension(path) == Format::PROJECT_EXT || FileManager::getExtension(path) == Format::LEGACY_EXT;
+    bool loaded = !newMeshes.empty() || FileManager::getExtension(path) == Format::PROJECT_EXT || FileManager::getExtension(path) == Format::LEGACY_EXT;
+    if (loaded && m_recentFiles && (FileManager::getExtension(path) == Format::PROJECT_EXT || FileManager::getExtension(path) == Format::LEGACY_EXT)) {
+        m_recentFiles->addFile(path);
+    }
+    return loaded;
 }
 
 void GuiManager::openScene(Scene& scene, SculptManager* sculpt) {
@@ -369,8 +374,12 @@ void GuiManager::saveScene(Scene& scene, SculptManager* sculpt) {
     if (m_currentScenePath.empty()) {
         saveSceneAs(scene, sculpt);
     } else {
-        if (FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer, sculpt)) {
+        std::vector<uint8_t> thumb = renderSceneThumbnailPng(scene, *m_renderer, 256, 256);
+        if (FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer, sculpt, thumb)) {
             scene.setModified(false);
+            if (m_recentFiles) {
+                m_recentFiles->addFile(m_currentScenePath);
+            }
         }
     }
 }
@@ -385,8 +394,12 @@ void GuiManager::saveSceneAs(Scene& scene, SculptManager* sculpt) {
     if (!path.empty()) {
         m_currentScenePath = path;
         snprintf(m_exportPath, sizeof(m_exportPath), "%s", path.c_str());
-        if (FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer, sculpt)) {
+        std::vector<uint8_t> thumb = renderSceneThumbnailPng(scene, *m_renderer, 256, 256);
+        if (FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer, sculpt, thumb)) {
             scene.setModified(false);
+            if (m_recentFiles) {
+                m_recentFiles->addFile(m_currentScenePath);
+            }
         }
     }
 }
@@ -613,6 +626,8 @@ void GuiManager::init(SDL_Window* window, SDL_GLContext glContext) {
 }
 
 void GuiManager::shutdown() {
+    clearRecentThumbCache();
+
     for (auto& [name, texID] : m_iconCache) {
         if (texID != 0) {
             glDeleteTextures(1, &texID);
@@ -4525,6 +4540,9 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     drawReferenceImageManipulator(sculpt, scene, renderer);
     drawCameraBookmarksPanel(scene, renderer);
     drawHotkeyHUD();
+    if (m_showRecentFilesWindow && m_recentFiles) {
+        drawRecentFilesWindow(scene, &sculpt, *m_recentFiles);
+    }
     drawUnsavedChangesModal(scene, m_pendingQuit);
     updateWindowTitle(window, scene.isModified());
 
@@ -6042,6 +6060,9 @@ void GuiManager::drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRend
         }
         if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S")) {
             saveSceneAs(scene, &sculpt);
+        }
+        if (ImGui::MenuItem("Open Recent...", "Ctrl+Shift+O")) {
+            m_showRecentFilesWindow = true;
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Import File...", "Ctrl+I")) {
@@ -9333,6 +9354,255 @@ void GuiManager::drawCameraBookmarksPanel(Scene& scene, AngleRenderer& renderer)
     }
 
     ImGui::End();
+}
+
+std::vector<uint8_t> GuiManager::renderSceneThumbnailPng(const Scene& scene, AngleRenderer& renderer, int w, int h) {
+    std::vector<uint8_t> rawPixels = renderer.renderToBuffer(scene, w, h);
+    if (rawPixels.empty()) return {};
+
+    std::vector<uint8_t> pngData;
+    int stride = w * 4;
+    stbi_write_png_to_func([](void* ctx, void* data, int size) {
+        auto* vec = static_cast<std::vector<uint8_t>*>(ctx);
+        const auto* b = static_cast<const uint8_t*>(data);
+        vec->insert(vec->end(), b, b + size);
+    }, &pngData, w, h, 4, rawPixels.data(), stride);
+
+    return pngData;
+}
+
+static std::vector<uint8_t> readBinaryFileHelper(const std::string& path) {
+#ifdef _WIN32
+    std::ifstream file(utf8ToWide(path).c_str(), std::ios::binary | std::ios::ate);
+#else
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+#endif
+    if (!file.is_open()) return {};
+    std::streamsize size = file.tellg();
+    file.seekg(0, std::ios::beg);
+    std::vector<uint8_t> buffer(size);
+    if (file.read(reinterpret_cast<char*>(buffer.data()), size)) {
+        return buffer;
+    }
+    return {};
+}
+
+static std::string getRecentFileDate(const std::string& path) {
+    std::error_code ec;
+    auto ftime = std::filesystem::last_write_time(path, ec);
+    if (ec) return "";
+
+    auto s_time = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+        ftime - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now()
+    );
+    std::time_t tt = std::chrono::system_clock::to_time_t(s_time);
+    std::tm tm_buf{};
+#ifdef _WIN32
+    localtime_s(&tm_buf, &tt);
+#else
+    localtime_r(&tt, &tm_buf);
+#endif
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%d.%m.%Y %H:%M", &tm_buf);
+    return std::string(buf);
+}
+
+GLuint GuiManager::getRecentFileThumbnail(const std::string& path) {
+    auto it = m_recentThumbCache.find(path);
+    if (it != m_recentThumbCache.end()) return it->second;
+
+    std::vector<uint8_t> fileData = readBinaryFileHelper(path);
+    if (fileData.empty()) {
+        m_recentThumbCache[path] = 0;
+        return 0;
+    }
+
+    std::vector<uint8_t> pngData = ImportSGL::extractThumbnail(fileData);
+    if (pngData.empty()) {
+        m_recentThumbCache[path] = 0;
+        return 0;
+    }
+
+    int w = 0, h = 0, ch = 0;
+    stbi_set_flip_vertically_on_load(false);
+    uint8_t* pixels = stbi_load_from_memory(pngData.data(), static_cast<int>(pngData.size()), &w, &h, &ch, 4);
+    if (!pixels) {
+        m_recentThumbCache[path] = 0;
+        return 0;
+    }
+
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    stbi_image_free(pixels);
+
+    m_recentThumbCache[path] = tex;
+    return tex;
+}
+
+void GuiManager::clearRecentThumbCache() {
+    for (auto& pair : m_recentThumbCache) {
+        if (pair.second != 0) {
+            glDeleteTextures(1, &pair.second);
+        }
+    }
+    m_recentThumbCache.clear();
+}
+
+void GuiManager::drawRecentFilesWindow(Scene& scene, SculptManager* sculpt, RecentFiles& recentFiles) {
+    if (!m_showRecentFilesWindow) return;
+
+    float scale = getUiScale();
+    ImGui::SetNextWindowSize(ImVec2(880.0f * scale, 560.0f * scale), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f * scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f * scale, 14.0f * scale));
+    bool open = true;
+    ImGuiWindowFlags winFlags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar;
+    if (ImGui::Begin("Recent Files##RecentSculptsModal", &open, winFlags)) {
+        const auto& files = recentFiles.getFiles();
+        if (files.empty()) {
+            ImGui::SetCursorPosY(ImGui::GetWindowHeight() * 0.45f);
+            ImGui::TextDisabled("                                No recent project files.");
+        } else {
+            const float CARD_PAD = 6.0f * scale;
+            const float CARD_W   = 176.0f * scale;
+            const float CARD_H   = 214.0f * scale;
+            const float GAP      = 8.0f * scale;
+
+            float availW = ImGui::GetContentRegionAvail().x;
+            int COLS = std::max(1, static_cast<int>((availW + GAP) / (CARD_W + GAP)));
+
+            ImGui::BeginChild("##RecentCardsScroll", ImVec2(0, -36.0f * scale), false);
+
+            int col = 0;
+            for (int i = 0; i < static_cast<int>(files.size()); ++i) {
+                const std::string& filePath = files[i];
+
+                if (col > 0) ImGui::SameLine(0, GAP);
+                if (col == 0 && i > 0) ImGui::SetCursorPosY(ImGui::GetCursorPosY() + GAP);
+
+                bool selected = (m_recentSelectedIdx == i);
+                ImGui::PushID(i);
+
+                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f * scale);
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(CARD_PAD, CARD_PAD));
+                ImVec4 bgColor = selected
+                    ? ImVec4(0.01f, 0.52f, 0.45f, 0.35f)
+                    : ImVec4(0.10f, 0.11f, 0.13f, 0.40f);
+                ImVec4 borderColor = selected
+                    ? ImVec4(0.01f, 0.75f, 0.65f, 0.85f)
+                    : ImVec4(0.25f, 0.28f, 0.32f, 0.45f);
+
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, bgColor);
+                ImGui::PushStyleColor(ImGuiCol_Border, borderColor);
+
+                if (ImGui::BeginChild("##card", ImVec2(CARD_W, CARD_H), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+                    size_t slashIdx = filePath.find_last_of("/\\");
+                    std::string fileName = (slashIdx != std::string::npos) ? filePath.substr(slashIdx + 1) : filePath;
+
+                    float boxW = ImGui::GetContentRegionAvail().x;
+                    float boxH = boxW;
+                    ImVec2 curPos = ImGui::GetCursorPos();
+
+                    GLuint thumbTex = getRecentFileThumbnail(filePath);
+                    if (thumbTex != 0) {
+                        ImGui::Image((ImTextureID)(uintptr_t)thumbTex, ImVec2(boxW, boxH), ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f));
+                    } else {
+                        ImDrawList* drawList = ImGui::GetWindowDrawList();
+                        ImVec2 pMin = ImGui::GetCursorScreenPos();
+                        ImVec2 pMax = ImVec2(pMin.x + boxW, pMin.y + boxH);
+                        drawList->AddRectFilled(pMin, pMax, IM_COL32(30, 33, 36, 255), 4.0f * scale);
+                        drawList->AddRect(pMin, pMax, IM_COL32(50, 55, 60, 200), 4.0f * scale);
+
+                        ImGui::Dummy(ImVec2(boxW, boxH));
+                        ImVec2 centerText(pMin.x + boxW * 0.5f - 16.0f * scale, pMin.y + boxH * 0.5f - 10.0f * scale);
+                        drawList->AddText(centerText, IM_COL32(140, 145, 160, 255), "SPSC");
+                    }
+
+                    ImGui::SetCursorPos(ImVec2(curPos.x, curPos.y + boxH + 6.0f * scale));
+
+                    std::string truncatedName = fileName;
+                    if (truncatedName.size() > 20) {
+                        truncatedName = truncatedName.substr(0, 17) + "...";
+                    }
+                    ImGui::PushStyleColor(ImGuiCol_Text, selected ? ImVec4(0.2f, 0.95f, 0.85f, 1.0f) : ImVec4(0.9f, 0.9f, 0.92f, 1.0f));
+                    ImGui::TextUnformatted(truncatedName.c_str());
+                    ImGui::PopStyleColor();
+
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", filePath.c_str());
+                    }
+
+                    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 2.0f * scale);
+                    std::string fileDate = getRecentFileDate(filePath);
+                    ImGui::TextDisabled("%s", fileDate.c_str());
+
+                    if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0)) {
+                        m_recentSelectedIdx = i;
+                    }
+                    if (ImGui::IsWindowHovered() && ImGui::IsMouseDoubleClicked(0)) {
+                        openSceneFromPath(filePath, scene, sculpt, m_renderer);
+                        m_showRecentFilesWindow = false;
+                    }
+                }
+                ImGui::EndChild();
+                ImGui::PopStyleColor(2);
+                ImGui::PopStyleVar(2);
+                ImGui::PopID();
+
+                col = (col + 1) % COLS;
+            }
+
+            ImGui::EndChild();
+        }
+
+        ImGui::Separator();
+
+        bool hasSelection = (m_recentSelectedIdx >= 0 && m_recentSelectedIdx < static_cast<int>(files.size()));
+
+        if (!hasSelection) ImGui::BeginDisabled();
+        if (ImGui::Button("Open", ImVec2(100.0f * scale, 0))) {
+            if (hasSelection) {
+                openSceneFromPath(files[m_recentSelectedIdx], scene, sculpt, m_renderer);
+                m_showRecentFilesWindow = false;
+            }
+        }
+        if (!hasSelection) ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        if (!hasSelection) ImGui::BeginDisabled();
+        if (ImGui::Button("Remove from List", ImVec2(140.0f * scale, 0))) {
+            if (hasSelection) {
+                recentFiles.removeFile(files[m_recentSelectedIdx]);
+                m_recentSelectedIdx = -1;
+            }
+        }
+        if (!hasSelection) ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        if (ImGui::Button("Clear All", ImVec2(90.0f * scale, 0))) {
+            recentFiles.clear();
+            clearRecentThumbCache();
+            m_recentSelectedIdx = -1;
+        }
+
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 80.0f * scale);
+        if (ImGui::Button("Close", ImVec2(80.0f * scale, 0))) {
+            m_showRecentFilesWindow = false;
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+
+    if (!open) m_showRecentFilesWindow = false;
 }
 
 

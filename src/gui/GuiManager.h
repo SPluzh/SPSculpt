@@ -17,6 +17,8 @@
 #include <string>
 #include "timelapse/TimelapsePlayer.h"
 
+#include "common/RecentFiles.h"
+
 class AngleRenderer;
 class IniFile;
 
@@ -185,6 +187,14 @@ private:
     GLuint getIconTexture(const std::string& iconName);
     GLuint getXrayIconTexture();
 
+    RecentFiles* m_recentFiles = nullptr;
+    bool m_showRecentFilesWindow = false;
+    int m_recentSelectedIdx = -1;
+    std::unordered_map<std::string, GLuint> m_recentThumbCache;
+    GLuint getRecentFileThumbnail(const std::string& path);
+    void clearRecentThumbCache();
+    void drawRecentFilesWindow(Scene& scene, SculptManager* sculpt, RecentFiles& recentFiles);
+
 public:
     GuiManager();
     ~GuiManager();
@@ -245,6 +255,13 @@ public:
     void togglePreferencesPanel() { m_showPreferencesPanel = !m_showPreferencesPanel; }
     void toggleCameraBookmarksPanel() { m_showCameraBookmarksPanel = !m_showCameraBookmarksPanel; }
     void toggleBrushIconCapturePanel();
+    void toggleRecentFilesWindow() { m_showRecentFilesWindow = !m_showRecentFilesWindow; }
+
+    void setRecentFiles(RecentFiles* rf) { m_recentFiles = rf; }
+    RecentFiles* getRecentFiles() const { return m_recentFiles; }
+    bool getShowRecentFilesWindow() const { return m_showRecentFilesWindow; }
+    void setShowRecentFilesWindow(bool show) { m_showRecentFilesWindow = show; }
+    std::vector<uint8_t> renderSceneThumbnailPng(const Scene& scene, AngleRenderer& renderer, int w = 256, int h = 256);
 
     bool getShowCameraBookmarksPanel() const { return m_showCameraBookmarksPanel; }
     void setShowCameraBookmarksPanel(bool show) { m_showCameraBookmarksPanel = show; }

@@ -76,7 +76,7 @@ public:
     const std::vector<uint8_t>& getBuffer() const { return m_buffer; }
 };
 
-std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& scene, const AngleRenderer& renderer, const SculptManager& sculpt) {
+std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& scene, const AngleRenderer& renderer, const SculptManager& sculpt, const std::vector<uint8_t>& thumbnail) {
     BinaryWriter writer;
     
     // Magic "SPSC" + Version 14
@@ -402,6 +402,13 @@ std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& sc
         if (embedSize > 0) {
             writer.writeBytes(embedData.data(), embedSize);
         }
+    }
+
+    // Thumbnail (Version >= 16)
+    writer.writeU32(thumbnail.empty() ? 0 : 1);
+    if (!thumbnail.empty()) {
+        writer.writeU32(static_cast<uint32_t>(thumbnail.size()));
+        writer.writeBytes(thumbnail.data(), thumbnail.size());
     }
 
     return writer.getBuffer();

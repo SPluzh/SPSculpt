@@ -202,7 +202,8 @@ bool FileManager::exportMeshes(const std::string& path,
                                const std::vector<Mesh*>& meshes,
                                const Scene* scene,
                                const AngleRenderer* renderer,
-                               const SculptManager* sculpt) {
+                               const SculptManager* sculpt,
+                               const std::vector<uint8_t>& thumbnail) {
     std::string ext = getExtension(path);
     
     if (ext == Format::PROJECT_EXT || ext == Format::LEGACY_EXT) {
@@ -210,7 +211,7 @@ bool FileManager::exportMeshes(const std::string& path,
             std::cerr << "Exporting project requires Scene, Renderer, and Sculpt pointers" << std::endl;
             return false;
         }
-        std::vector<uint8_t> buffer = ExportSGL::exportSGL(meshes, *scene, *renderer, *sculpt);
+        std::vector<uint8_t> buffer = ExportSGL::exportSGL(meshes, *scene, *renderer, *sculpt, thumbnail);
         if (buffer.empty()) return false;
         return writeBinaryFile(path, buffer);
     }
