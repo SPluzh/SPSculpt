@@ -731,7 +731,7 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
     }
 
     // Sync split mode and right camera from scene
-    m_splitMode = m_isTakingScreenshot ? false : (scene.getSplitMode() != Scene::SplitMode::OFF);
+    m_splitMode = (scene.getSplitMode() != Scene::SplitMode::OFF);
     m_cameraRight = scene.getCameraRight();
 
     // 0. Ensure all mesh dirty buffers are uploaded first (must run on the active GL thread/context)
@@ -2961,7 +2961,8 @@ void AngleRenderer::drawReferenceImages(const Scene& scene, const Camera& camera
     float vpWidth = (float)vp[2];
     float vpHeight = (float)vp[3];
 
-    float refVpWidth = (m_isTakingScreenshot && m_mainViewportWidth > 0) ? (float)m_mainViewportWidth : vpWidth;
+    float mainVpWidth = m_splitMode ? (m_mainViewportWidth * 0.5f) : (float)m_mainViewportWidth;
+    float refVpWidth = (m_isTakingScreenshot && m_mainViewportWidth > 0) ? mainVpWidth : vpWidth;
     float refVpHeight = (m_isTakingScreenshot && m_mainViewportHeight > 0) ? (float)m_mainViewportHeight : vpHeight;
     float screenAspect = (refVpHeight > 0.0f) ? (refVpWidth / refVpHeight) : 1.0f;
 
@@ -4145,6 +4146,7 @@ void AngleRenderer::updateSnapshotIfNeeded(const Scene& scene) {
     activeCam = m_snapshot.frozenCamera;
     activeCam.onResize(m_snapshot.width, m_snapshot.height);
     m_isTakingScreenshot = true;
+    m_splitMode = false;
 
     render(scene, m_snapshot.rt.fbo);
 

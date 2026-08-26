@@ -3,7 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [0.2.16]
-- **Project Files**: Saved and restored Split Viewport configuration (mode and dual camera state) persistently in `.spsculpt` project files.
+- **Project Files**: Saved and restored Split Viewport settings (mode and dual cameras) in `.spsculpt` files.
+- **Screenshots & Previews**: Added full dual-viewport captures for screenshots and thumbnails when split screen is active, including reference images.
 
 ## [0.2.15]
 - **Work Timer**: Added active project time tracking that automatically pauses when idle or when switching away from the app.
