@@ -79,6 +79,7 @@ public:
     void onResize(int width, int height);
     void updateView();
     void updateProjection();
+    void setCustomOrtho(float halfW, float halfH);
     void optimizeNearFar(const float* bbox);
 
     Ray getRay(float mouseX, float mouseY) const;

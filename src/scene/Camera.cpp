@@ -250,6 +250,10 @@ void Camera::updateOrtho() {
     m_projMatrix = glm::ortho(-w, w, -h, h, -m_near, m_far);
 }
 
+void Camera::setCustomOrtho(float halfW, float halfH) {
+    m_projMatrix = glm::ortho(-halfW, halfW, -halfH, halfH, -m_near, m_far);
+}
+
 float Camera::getOrthoZoom() const {
     return std::abs(m_trans.z) * 0.00055f;
 }
@@ -481,8 +485,9 @@ void Camera::resetViewToMeshes(const std::vector<Mesh*>& meshes, bool animate) {
             {localBbox[3], localBbox[4], localBbox[5]}
         };
 
+        glm::mat4 fullTransform = mesh->matrix * mesh->editMatrix;
         for (int i = 0; i < 8; ++i) {
-            glm::vec3 wPos = glm::vec3(mesh->matrix * glm::vec4(corners[i], 1.0f));
+            glm::vec3 wPos = glm::vec3(fullTransform * glm::vec4(corners[i], 1.0f));
             worldPoints.push_back(wPos);
         }
     }

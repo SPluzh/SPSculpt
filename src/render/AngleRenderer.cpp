@@ -3679,6 +3679,12 @@ std::vector<uint8_t> AngleRenderer::renderToBuffer(const Scene& scene, int w, in
     int oldCamH = camera.getHeight();
     if (needsResize) {
         camera.onResize(w, h);
+        if (camera.isOrthographic() && oldCamH > 0) {
+            float delta = camera.getOrthoZoom();
+            float orthoH = oldCamH * delta;
+            float orthoW = orthoH * (static_cast<float>(w) / static_cast<float>(h));
+            camera.setCustomOrtho(orthoW, orthoH);
+        }
     }
     
     // Create temporary offscreen framebuffer & texture to render the final blit

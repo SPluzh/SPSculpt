@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [0.2.14]
 - **Recent Files**: Added Recent Files modal (`Ctrl + Shift + O`) with card grid and 16:9 previews.
 - **Thumbnails**: Preserved viewport aspect ratio for `.spsculpt` thumbnails with auto-refresh on save.
+- **Thumbnails**: Fixed orthographic screenshot scaling and framing for transformed meshes.
 - **Settings**: Added option in Preferences to save a PNG preview next to `.spsculpt` files.
 
 ## [0.2.13]
