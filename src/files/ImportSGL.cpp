@@ -396,6 +396,13 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
                 reader.readBytes(mesh->vertOnEdge.data(), nVertOnEdge);
             }
         }
+        if (version >= 19) {
+            mesh->symEnabled = (reader.readU32() != 0);
+            mesh->symX       = (reader.readU32() != 0);
+            mesh->symY       = (reader.readU32() != 0);
+            mesh->symZ       = (reader.readU32() != 0);
+            mesh->symMode    = static_cast<int>(reader.readU32());
+        }
 
         sculpt_log("[SGL Import] Mesh %u loaded | Verts: %d, Faces: %d, VisibleV1: %d, VisibleV2: %d, Scale: %.4f, Center: (%.2f, %.2f, %.2f)\n",
                    i, mesh->nbVerts, mesh->nbFaces, mesh->isVisible(0), mesh->isVisible(1), scale, cx, cy, cz);
@@ -422,6 +429,15 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
 
     for (auto* m : meshes) {
         m->postInit();
+        if (sculpt) sculpt->registerKnownMesh(m);
+    }
+
+    Mesh* selectedMesh = scene.getSelected();
+    if (!selectedMesh && !meshes.empty()) {
+        selectedMesh = meshes[0];
+    }
+    if (sculpt && selectedMesh) {
+        sculpt->loadSymmetryFromMesh(selectedMesh);
     }
 
     if (version >= 6) {
@@ -784,6 +800,11 @@ ProjectMetadata extractProjectMetadata(const std::vector<uint8_t>& buffer) {
             if (nVertRingVert > 0) reader.skipWords(nVertRingVert);
             uint32_t nVertOnEdge = reader.readU32();
             if (nVertOnEdge > 0) reader.skipWords((nVertOnEdge + 3) / 4);
+        }
+
+        // Per-mesh symmetry state (version >= 19)
+        if (version >= 19) {
+            reader.skipWords(5); // symEnabled, symX, symY, symZ, symMode
         }
     }
 

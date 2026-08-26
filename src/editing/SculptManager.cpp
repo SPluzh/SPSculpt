@@ -3274,7 +3274,60 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
     }
 }
 
+void SculptManager::saveSymmetryToMesh(Mesh* mesh) {
+    if (!mesh) return;
+    mesh->symEnabled = m_useSym;
+    mesh->symX       = m_symX;
+    mesh->symY       = m_symY;
+    mesh->symZ       = m_symZ;
+    mesh->symMode    = static_cast<int>(m_symmetryMode);
+}
+
+void SculptManager::loadSymmetryFromMesh(const Mesh* mesh) {
+    if (!mesh) return;
+    m_useSym        = mesh->symEnabled;
+    m_symX          = mesh->symX;
+    m_symY          = mesh->symY;
+    m_symZ          = mesh->symZ;
+    m_symmetryMode  = static_cast<SymmetryMode>(mesh->symMode);
+}
+
 void SculptManager::processFrame(Scene& scene) {
+    Mesh* activeMeshSelected = scene.getSelected();
+    const auto& sceneMeshes = scene.getMeshes();
+
+    // Prune deleted meshes from m_knownMeshes
+    for (auto it = m_knownMeshes.begin(); it != m_knownMeshes.end(); ) {
+        if (std::find(sceneMeshes.begin(), sceneMeshes.end(), *it) == sceneMeshes.end()) {
+            it = m_knownMeshes.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    bool lastValid = (m_lastActiveMesh != nullptr && std::find(sceneMeshes.begin(), sceneMeshes.end(), m_lastActiveMesh) != sceneMeshes.end());
+    if (!lastValid) {
+        m_lastActiveMesh = nullptr;
+    }
+
+    if (activeMeshSelected) {
+        if (m_knownMeshes.find(activeMeshSelected) == m_knownMeshes.end()) {
+            // New mesh: inherit active global symmetry settings
+            saveSymmetryToMesh(activeMeshSelected);
+            m_knownMeshes.insert(activeMeshSelected);
+        }
+    }
+
+    if (activeMeshSelected != m_lastActiveMesh) {
+        if (m_lastActiveMesh != nullptr) {
+            saveSymmetryToMesh(m_lastActiveMesh);
+        }
+        m_lastActiveMesh = activeMeshSelected;
+        if (m_lastActiveMesh != nullptr) {
+            loadSymmetryFromMesh(m_lastActiveMesh);
+        }
+    }
+
     if (m_isClipCurveActive) {
         m_clipCurveAlt = (SDL_GetModState() & KMOD_ALT) != 0;
     }

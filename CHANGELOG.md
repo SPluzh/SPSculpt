@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.18]
+- **Symmetry**: Saved and restored per-mesh symmetry settings persistently in `.spsculpt` project files.
+- **Scene Outliner**: Added a symmetry toggle button directly on object cards to view and control symmetry status for each mesh.
+
 ## [0.2.17]
 - **Recent Files**: Accelerated the Recent Files window with background loading and persistent thumbnail caching to eliminate UI pauses on startup.
 - **Recent Files**: Implemented smooth lazy loading for project preview cards to ensure fluid, lag-free scrolling across file histories.

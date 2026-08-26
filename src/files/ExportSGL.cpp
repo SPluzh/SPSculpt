@@ -285,6 +285,13 @@ std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& sc
         if (nVertOnEdge > 0) {
             writer.writeBytes(mesh->vertOnEdge.data(), nVertOnEdge);
         }
+
+        // Per-mesh symmetry state (Version >= 19)
+        writer.writeU32(mesh->symEnabled ? 1 : 0);
+        writer.writeU32(mesh->symX ? 1 : 0);
+        writer.writeU32(mesh->symY ? 1 : 0);
+        writer.writeU32(mesh->symZ ? 1 : 0);
+        writer.writeU32(static_cast<uint32_t>(mesh->symMode));
     }
 
     auto writeAnchor = [&](const MeasurementAnchor& anchor) {

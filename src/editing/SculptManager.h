@@ -7,6 +7,7 @@
 #include "editing/BrushCursor.h"
 #include <vector>
 #include <string>
+#include <unordered_set>
 
 #include "brushes/BrushPreset.h"
 #include "editing/PolyGroupTool.h"
@@ -293,6 +294,7 @@ public:
         if (prev != getUseSym()) {
             m_symmetryLineTriggered = true;
         }
+        if (m_lastActiveMesh) saveSymmetryToMesh(m_lastActiveMesh);
     }
 
     bool getSymX() const { return m_symX; }
@@ -301,6 +303,7 @@ public:
         m_symX = val;
         if (m_symX || m_symY || m_symZ) m_useSym = true;
         if (prev != val) m_symmetryLineTriggered = true;
+        if (m_lastActiveMesh) saveSymmetryToMesh(m_lastActiveMesh);
     }
 
     bool getSymY() const { return m_symY; }
@@ -309,6 +312,7 @@ public:
         m_symY = val;
         if (m_symX || m_symY || m_symZ) m_useSym = true;
         if (prev != val) m_symmetryLineTriggered = true;
+        if (m_lastActiveMesh) saveSymmetryToMesh(m_lastActiveMesh);
     }
 
     bool getSymZ() const { return m_symZ; }
@@ -317,6 +321,7 @@ public:
         m_symZ = val;
         if (m_symX || m_symY || m_symZ) m_useSym = true;
         if (prev != val) m_symmetryLineTriggered = true;
+        if (m_lastActiveMesh) saveSymmetryToMesh(m_lastActiveMesh);
     }
 
     int getSymAxis() const {
@@ -331,6 +336,7 @@ public:
         m_symZ = (val == 2);
         m_useSym = true;
         m_symmetryLineTriggered = true;
+        if (m_lastActiveMesh) saveSymmetryToMesh(m_lastActiveMesh);
     }
 
     SymmetryMode getSymmetryMode() const { return m_symmetryMode; }
@@ -339,7 +345,13 @@ public:
             m_symmetryLineTriggered = true;
         }
         m_symmetryMode = mode;
+        if (m_lastActiveMesh) saveSymmetryToMesh(m_lastActiveMesh);
     }
+
+    void saveSymmetryToMesh(Mesh* mesh);
+    void loadSymmetryFromMesh(const Mesh* mesh);
+    void registerKnownMesh(const Mesh* mesh) { if (mesh) m_knownMeshes.insert(mesh); }
+    void clearKnownMeshes() { m_knownMeshes.clear(); }
 
     std::vector<glm::vec3> getActiveSymmetryScales() const;
 
@@ -450,6 +462,8 @@ public:
     ArmatureTool* getArmatureTool() const { return m_armatureTool.get(); }
 
 private:
+    Mesh* m_lastActiveMesh = nullptr;
+    std::unordered_set<const Mesh*> m_knownMeshes;
     bool m_symmetryLineTriggered = false;
     float m_stylusPressure = 1.0f;
     bool m_usingStylus = false;

@@ -2381,6 +2381,27 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
                     ImGui::SameLine();
 
+                    // Symmetry Toggle Button
+                    ImGui::PushID(3);
+                    bool symOn = mesh->symEnabled;
+                    if (symOn) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.9f, 0.8f, 1.0f));
+                    else ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
+                    if (ImGui::Button(symOn ? ICON_LC_FLIP_HORIZONTAL " Sym" : ICON_LC_FLIP_HORIZONTAL " Sym", ImVec2(btnSz * 2.1f, btnSz))) {
+                        mesh->symEnabled = !symOn;
+                        if (mesh->symEnabled && !mesh->symX && !mesh->symY && !mesh->symZ) {
+                            mesh->symX = true;
+                        }
+                        if (mesh == scene.getSelected()) {
+                            sculpt.loadSymmetryFromMesh(mesh);
+                        }
+                        scene.setModified(true);
+                    }
+                    ImGui::PopStyleColor();
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip(symOn ? "Symmetry: Enabled (Click to toggle)" : "Symmetry: Disabled (Click to toggle)");
+                    ImGui::PopID();
+
+                    ImGui::SameLine();
+
                     // Frame Camera Button
                     if (ImGui::Button(ICON_LC_CROSSHAIR "##frame", ImVec2(btnSz, btnSz))) {
                         scene.getCamera().resetViewToMeshes({mesh}, m_animateBookmarks);

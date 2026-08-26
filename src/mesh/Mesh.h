@@ -86,6 +86,14 @@ public:
     // SGL/OBJ migration properties
     bool visibleV1 = true;
     bool visibleV2 = true;
+    
+    // Per-mesh symmetry state
+    bool symEnabled = false;
+    bool symX = true;
+    bool symY = false;
+    bool symZ = false;
+    int symMode = 0; // 0 = Local, 1 = World
+
     glm::vec3 center{0.0f};
     float scale = 1.0f;
     float symmetryOffset = 0.0f;
@@ -158,6 +166,11 @@ public:
         dirtyVertMax = other.dirtyVertMax;
         visibleV1 = other.visibleV1;
         visibleV2 = other.visibleV2;
+        symEnabled = other.symEnabled;
+        symX = other.symX;
+        symY = other.symY;
+        symZ = other.symZ;
+        symMode = other.symMode;
         center = other.center;
         scale = other.scale;
         texCoords = other.texCoords;
