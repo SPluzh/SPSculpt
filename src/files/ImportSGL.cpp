@@ -152,6 +152,56 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
                 scene.getCameraRight()->setRefDragEnabled(false);
             }
         }
+
+        if (version >= 18 && reader.hasData()) {
+            uint32_t splitModeVal = reader.readU32();
+            scene.setSplitMode(static_cast<Scene::SplitMode>(splitModeVal));
+
+            uint32_t hasRightCam = reader.readU32();
+            if (hasRightCam && scene.getCameraRight()) {
+                Camera* camRight = scene.getCameraRight().get();
+                Camera::CameraState rcs = camRight->getCurrentState();
+
+                uint32_t rProjType = reader.readU32();
+                uint32_t rMode     = reader.readU32();
+                float    rFov      = reader.readF32();
+                uint32_t rUsePivot = reader.readU32();
+
+                rcs.projectionType = (rProjType == 0 ? CameraEnums::Projection::PERSPECTIVE : CameraEnums::Projection::ORTHOGRAPHIC);
+                rcs.mode           = static_cast<CameraEnums::CameraMode>(rMode);
+                rcs.fov            = rFov;
+                rcs.usePivot       = (rUsePivot != 0);
+
+                rcs.quatRot.x = reader.readF32();
+                rcs.quatRot.y = reader.readF32();
+                rcs.quatRot.z = reader.readF32();
+                rcs.quatRot.w = reader.readF32();
+                rcs.trans.x   = reader.readF32();
+                rcs.trans.y   = reader.readF32();
+                rcs.trans.z   = reader.readF32();
+                rcs.center.x  = reader.readF32();
+                rcs.center.y  = reader.readF32();
+                rcs.center.z  = reader.readF32();
+                rcs.offset.x  = reader.readF32();
+                rcs.offset.y  = reader.readF32();
+                rcs.offset.z  = reader.readF32();
+                rcs.rotX      = reader.readF32();
+                rcs.rotY      = reader.readF32();
+                rcs.view2DOffsetX = reader.readF32();
+                rcs.view2DOffsetY = reader.readF32();
+                rcs.view2DZoom    = reader.readF32();
+                rcs.ref2DMode     = (reader.readU32() != 0);
+                reader.readU32(); // refDrag — always forced to false
+                rcs.refDrag = false;
+
+                camRight->applyState(rcs);
+                camRight->setRefDragEnabled(false);
+            } else if (hasRightCam) {
+                reader.skipWords(4 + 20); // projType, mode, fov, usePivot + 20 state fields
+            }
+        } else {
+            scene.setSplitMode(Scene::SplitMode::OFF);
+        }
     }
 
     uint32_t nbMeshes = reader.readU32();
@@ -659,6 +709,14 @@ std::vector<uint8_t> extractThumbnail(const std::vector<uint8_t>& buffer) {
         reader.skipWords(20); // camState (quatRot x,y,z,w, trans x,y,z, center x,y,z, offset x,y,z, rotX, rotY, view2DOffsetX, view2DOffsetY, view2DZoom, ref2DMode, refDrag)
     }
 
+    if (version >= 18 && reader.hasData()) {
+        reader.readU32(); // splitMode
+        uint32_t hasRightCam = reader.readU32();
+        if (hasRightCam) {
+            reader.skipWords(24); // 4 + 20
+        }
+    }
+
     // Meshes
     uint32_t nbMeshes = reader.readU32();
     for (uint32_t i = 0; i < nbMeshes; ++i) {
@@ -850,6 +908,14 @@ uint64_t extractWorkTime(const std::vector<uint8_t>& buffer) {
 
     if (version >= 12) {
         reader.skipWords(20); // camState
+    }
+
+    if (version >= 18 && reader.hasData()) {
+        reader.readU32(); // splitMode
+        uint32_t hasRightCam = reader.readU32();
+        if (hasRightCam) {
+            reader.skipWords(24); // 4 + 20
+        }
     }
 
     // Meshes

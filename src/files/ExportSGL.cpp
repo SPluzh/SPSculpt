@@ -124,6 +124,47 @@ std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& sc
     writer.writeU32(camState.ref2DMode ? 1 : 0);
     writer.writeU32(camState.refDrag ? 1 : 0);
 
+    // Split Viewport (Version >= 18)
+    uint32_t splitModeVal = static_cast<uint32_t>(scene.getSplitMode());
+    writer.writeU32(splitModeVal);
+
+    // Right camera state (only meaningful if INDEPENDENT)
+    const Camera* camRight = nullptr;
+    if (auto cr = scene.getCameraRight()) {
+        camRight = cr.get();
+    }
+    uint32_t hasRightCam = (camRight != nullptr) ? 1 : 0;
+    writer.writeU32(hasRightCam);
+
+    if (hasRightCam) {
+        Camera::CameraState rcs = camRight->getCurrentState();
+        writer.writeU32(camRight->getProjectionType() == CameraEnums::Projection::PERSPECTIVE ? 0 : 1);
+        writer.writeU32(static_cast<uint32_t>(camRight->getMode()));
+        writer.writeF32(camRight->getFov());
+        writer.writeU32(camRight->getUsePivot() ? 1 : 0);
+
+        writer.writeF32(rcs.quatRot.x);
+        writer.writeF32(rcs.quatRot.y);
+        writer.writeF32(rcs.quatRot.z);
+        writer.writeF32(rcs.quatRot.w);
+        writer.writeF32(rcs.trans.x);
+        writer.writeF32(rcs.trans.y);
+        writer.writeF32(rcs.trans.z);
+        writer.writeF32(rcs.center.x);
+        writer.writeF32(rcs.center.y);
+        writer.writeF32(rcs.center.z);
+        writer.writeF32(rcs.offset.x);
+        writer.writeF32(rcs.offset.y);
+        writer.writeF32(rcs.offset.z);
+        writer.writeF32(rcs.rotX);
+        writer.writeF32(rcs.rotY);
+        writer.writeF32(rcs.view2DOffsetX);
+        writer.writeF32(rcs.view2DOffsetY);
+        writer.writeF32(rcs.view2DZoom);
+        writer.writeU32(rcs.ref2DMode ? 1 : 0);
+        writer.writeU32(0); // refDrag — always false on save
+    }
+
     // Meshes
     uint32_t nbMeshes = static_cast<uint32_t>(meshes.size());
     writer.writeU32(nbMeshes);

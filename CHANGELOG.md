@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.16]
+- **Project Files**: Saved and restored Split Viewport configuration (mode and dual camera state) persistently in `.spsculpt` project files.
+
 ## [0.2.15]
 - **Work Timer**: Added active project time tracking that automatically pauses when idle or when switching away from the app.
 - **HUD**: Displayed project work time directly in a dedicated viewport island in full `HH:MM:SS` format.

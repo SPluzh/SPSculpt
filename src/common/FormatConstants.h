@@ -6,7 +6,7 @@ namespace Format {
     constexpr const char* PROJECT_DOT_EXT   = ".spsculpt";
     constexpr const char* PROJECT_FILTER    = "*.spsculpt";
     constexpr const char* PROJECT_NAME      = "SPSculpt Project";
-    constexpr int         CURRENT_VERSION   = 17;
+    constexpr int         CURRENT_VERSION   = 18;
 
     // Legacy extensions for backward-compatible import
     constexpr const char* LEGACY_EXT        = "sgl";
