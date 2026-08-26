@@ -629,6 +629,7 @@ glm::mat4 Camera::computeWorldToScreenMatrix() const {
 }
 
 void Camera::onResize(int width, int height) {
+    if (m_width == width && m_height == height) return;
     m_width = width;
     m_height = height;
     m_viewportMatrix = glm::mat4(1.0f);

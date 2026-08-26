@@ -92,6 +92,7 @@ public:
     void resize(int width, int height, float dpiScale = 1.0f);
     int getWidth() const { return m_width; }
     int getHeight() const { return m_height; }
+    float getDpiScale() const { return m_dpiScale; }
 
     void setRenderMode(RenderMode mode) { m_renderMode = mode; resetAccumulation(); }
     RenderMode getRenderMode() const { return m_renderMode; }

@@ -330,6 +330,26 @@ bool GuiManager::openSceneFromPath(const std::string& path, Scene& scene, Sculpt
         scene.addMesh(mesh);
     }
 
+    if (r) {
+        int w = r->getWidth();
+        int h = r->getHeight();
+        float dpi = r->getDpiScale();
+        if (w > 0 && h > 0) {
+            if (scene.getSplitMode() != Scene::SplitMode::OFF) {
+                int halfW = static_cast<int>((w / 2) / dpi);
+                int logicalH = static_cast<int>(h / dpi);
+                scene.getCamera().onResize(halfW, logicalH);
+                if (scene.getCameraRight()) {
+                    scene.getCameraRight()->onResize(static_cast<int>((w - w / 2) / dpi), logicalH);
+                }
+            } else {
+                int logicalW = static_cast<int>(w / dpi);
+                int logicalH = static_cast<int>(h / dpi);
+                scene.getCamera().onResize(logicalW, logicalH);
+            }
+        }
+    }
+
     auto tHistStart = std::chrono::high_resolution_clock::now();
     if (!newMeshes.empty()) {
         scene.selectMesh(newMeshes.front());

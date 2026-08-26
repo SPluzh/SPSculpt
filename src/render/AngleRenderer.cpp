@@ -1323,7 +1323,13 @@ void AngleRenderer::renderScenePass(const Scene& scene, int passType) {
         glViewport(0, 0, m_width, m_height);
         glScissor(0, 0, m_width, m_height);
         glEnable(GL_SCISSOR_TEST);
-        drawPassGeometry(scene, passType, scene.getCamera(), 0);
+        const Camera* camLeft = scene.getCameraByIndex(0);
+        if (camLeft) {
+            int logicalW = (int)(m_width / m_dpiScale);
+            int logicalH = (int)(m_height / m_dpiScale);
+            const_cast<Camera*>(camLeft)->onResize(logicalW, logicalH);
+            drawPassGeometry(scene, passType, *camLeft, 0);
+        }
         glDisable(GL_SCISSOR_TEST);
     } else {
         int w2 = m_width / 2;

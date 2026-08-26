@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.17]
+- **Viewport & Rendering**: Fixed single-viewport aspect ratio distortion when opening `.spsculpt` projects with split mode disabled (`SplitMode::OFF`).
+- **Camera Pipeline**: Ensured primary camera viewport dimensions automatically synchronize with active renderer aspect ratio during rendering passes and file loading.
+
 ## [0.2.16]
 - **Project Files**: Saved and restored Split Viewport settings (mode and dual cameras) in `.spsculpt` files.
 - **Screenshots & Previews**: Added full dual-viewport captures for screenshots and thumbnails when split screen is active, including reference images.
