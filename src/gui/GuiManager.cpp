@@ -387,6 +387,66 @@ bool GuiManager::openSceneFromPath(const std::string& path, Scene& scene, Sculpt
     return loaded;
 }
 
+static std::string getThumbCacheDir() {
+    return "resources/thumbcache/";
+}
+
+static std::string getThumbCachePath(const std::string& projectPath) {
+    size_t h = std::hash<std::string>{}(projectPath);
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%016zx", h);
+    return getThumbCacheDir() + buf + ".png";
+}
+
+static std::string getThumbMetaPath(const std::string& projectPath) {
+    return getThumbCachePath(projectPath) + ".meta";
+}
+
+static uint64_t getFileMtime(const std::string& path) {
+    std::error_code ec;
+    auto ftime = std::filesystem::last_write_time(path, ec);
+    if (ec) return 0;
+    return static_cast<uint64_t>(ftime.time_since_epoch().count());
+}
+
+static uint64_t readMtimeFromMeta(const std::string& metaPath) {
+#ifdef _WIN32
+    std::ifstream f(utf8ToWide(metaPath).c_str(), std::ios::binary);
+#else
+    std::ifstream f(metaPath, std::ios::binary);
+#endif
+    if (!f.is_open()) return 0;
+    uint64_t mtime = 0;
+    f.read(reinterpret_cast<char*>(&mtime), sizeof(mtime));
+    return mtime;
+}
+
+static void writeMtimeToMeta(const std::string& metaPath, uint64_t mtime) {
+    std::error_code ec;
+    std::filesystem::create_directories(getThumbCacheDir(), ec);
+#ifdef _WIN32
+    std::ofstream f(utf8ToWide(metaPath).c_str(), std::ios::binary);
+#else
+    std::ofstream f(metaPath, std::ios::binary);
+#endif
+    if (f.is_open()) {
+        f.write(reinterpret_cast<const char*>(&mtime), sizeof(mtime));
+    }
+}
+
+static void writeBinaryFile(const std::string& path, const std::vector<uint8_t>& data) {
+    std::error_code ec;
+    std::filesystem::create_directories(getThumbCacheDir(), ec);
+#ifdef _WIN32
+    std::ofstream f(utf8ToWide(path).c_str(), std::ios::binary);
+#else
+    std::ofstream f(path, std::ios::binary);
+#endif
+    if (f.is_open() && !data.empty()) {
+        f.write(reinterpret_cast<const char*>(data.data()), data.size());
+    }
+}
+
 void GuiManager::openScene(Scene& scene, SculptManager* sculpt) {
     std::string path = FileDialog::openFile(FileDialog::getImportFilters(), "Open File");
     if (!path.empty()) {
@@ -405,7 +465,16 @@ void GuiManager::saveScene(Scene& scene, SculptManager* sculpt) {
         if (FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer, sculpt, thumb, m_savePngNextToProject, totalTime)) {
             scene.setModified(false);
             invalidateRecentFileThumbnail(m_currentScenePath);
-            m_recentFileWorkTimes.erase(m_currentScenePath);
+            uint64_t currentMtime = getFileMtime(m_currentScenePath);
+            if (!thumb.empty()) {
+                writeBinaryFile(getThumbCachePath(m_currentScenePath), thumb);
+                writeMtimeToMeta(getThumbMetaPath(m_currentScenePath), currentMtime);
+                uploadRecentThumbnailToGPU(m_currentScenePath, thumb);
+                std::error_code ec;
+                auto currentFtime = std::filesystem::last_write_time(m_currentScenePath, ec);
+                if (!ec) m_recentThumbTimestamps[m_currentScenePath] = currentFtime;
+            }
+            m_recentFileWorkTimes[m_currentScenePath] = totalTime;
             if (m_recentFiles) {
                 m_recentFiles->addFile(m_currentScenePath);
             }
@@ -433,7 +502,16 @@ void GuiManager::saveSceneAs(Scene& scene, SculptManager* sculpt) {
         if (FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer, sculpt, thumb, m_savePngNextToProject, totalTime)) {
             scene.setModified(false);
             invalidateRecentFileThumbnail(m_currentScenePath);
-            m_recentFileWorkTimes.erase(m_currentScenePath);
+            uint64_t currentMtime = getFileMtime(m_currentScenePath);
+            if (!thumb.empty()) {
+                writeBinaryFile(getThumbCachePath(m_currentScenePath), thumb);
+                writeMtimeToMeta(getThumbMetaPath(m_currentScenePath), currentMtime);
+                uploadRecentThumbnailToGPU(m_currentScenePath, thumb);
+                std::error_code ec;
+                auto currentFtime = std::filesystem::last_write_time(m_currentScenePath, ec);
+                if (!ec) m_recentThumbTimestamps[m_currentScenePath] = currentFtime;
+            }
+            m_recentFileWorkTimes[m_currentScenePath] = totalTime;
             if (m_recentFiles) {
                 m_recentFiles->addFile(m_currentScenePath);
             }
@@ -9486,6 +9564,99 @@ static std::string getRecentFileDate(const std::string& path) {
     return std::string(buf);
 }
 
+std::string GuiManager::getRecentFileDateCached(const std::string& path) {
+    auto it = m_recentFileDateCache.find(path);
+    if (it != m_recentFileDateCache.end()) return it->second;
+    std::string dateStr = getRecentFileDate(path);
+    m_recentFileDateCache[path] = dateStr;
+    return dateStr;
+}
+
+GLuint GuiManager::uploadRecentThumbnailToGPU(const std::string& path, const std::vector<uint8_t>& pngData) {
+    if (pngData.empty()) {
+        m_recentThumbCache[path] = 0;
+        return 0;
+    }
+    int w = 0, h = 0, ch = 0;
+    stbi_set_flip_vertically_on_load(false);
+    uint8_t* pixels = stbi_load_from_memory(pngData.data(), static_cast<int>(pngData.size()), &w, &h, &ch, 4);
+    if (!pixels) {
+        m_recentThumbCache[path] = 0;
+        return 0;
+    }
+
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    stbi_image_free(pixels);
+
+    m_recentThumbCache[path] = tex;
+    m_recentThumbSizes[path] = ImVec2(static_cast<float>(w), static_cast<float>(h));
+    return tex;
+}
+
+void GuiManager::prefetchRecentFileMetadata(const RecentFiles& recentFiles) {
+    for (const auto& path : recentFiles.getFiles()) {
+        if (m_recentThumbCache.count(path) == 0 && m_recentLoadTasks.count(path) == 0) {
+            auto& task = m_recentLoadTasks[path];
+            task.path = path;
+            task.submitted = true;
+            task.future = std::async(std::launch::async, [path]() {
+                uint64_t currentMtime = getFileMtime(path);
+                std::string cachePng  = getThumbCachePath(path);
+                std::string cacheMeta = getThumbMetaPath(path);
+                uint64_t cachedMtime  = readMtimeFromMeta(cacheMeta);
+
+                if (cachedMtime != 0 && cachedMtime == currentMtime) {
+                    auto pngData = readBinaryFileHelper(cachePng);
+                    if (!pngData.empty()) {
+                        uint64_t wt = ImportSGL::extractWorkTime(path);
+                        return ImportSGL::ProjectMetadata{ pngData, wt };
+                    }
+                }
+
+                auto meta = ImportSGL::extractProjectMetadata(path);
+                if (!meta.thumbnailPng.empty()) {
+                    writeBinaryFile(cachePng, meta.thumbnailPng);
+                    writeMtimeToMeta(cacheMeta, currentMtime);
+                }
+                return meta;
+            });
+        }
+    }
+}
+
+void GuiManager::pollRecentLoadTasks() {
+    for (auto it = m_recentLoadTasks.begin(); it != m_recentLoadTasks.end(); ) {
+        auto& task = it->second;
+        if (task.future.valid() &&
+            task.future.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+        {
+            auto meta = task.future.get();
+            std::error_code ec;
+            auto currentFtime = std::filesystem::last_write_time(task.path, ec);
+            if (!ec) m_recentThumbTimestamps[task.path] = currentFtime;
+
+            if (!meta.thumbnailPng.empty()) {
+                uploadRecentThumbnailToGPU(task.path, meta.thumbnailPng);
+            } else {
+                m_recentThumbCache[task.path] = 0;
+            }
+            m_recentFileWorkTimes[task.path] = meta.workTime;
+            it = m_recentLoadTasks.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 void GuiManager::invalidateRecentFileThumbnail(const std::string& path) {
     auto it = m_recentThumbCache.find(path);
     if (it != m_recentThumbCache.end()) {
@@ -9496,6 +9667,12 @@ void GuiManager::invalidateRecentFileThumbnail(const std::string& path) {
         m_recentThumbSizes.erase(path);
         m_recentThumbTimestamps.erase(path);
     }
+    m_recentFileDateCache.erase(path);
+    m_recentFileWorkTimes.erase(path);
+
+    std::error_code ec;
+    std::filesystem::remove(getThumbCachePath(path), ec);
+    std::filesystem::remove(getThumbMetaPath(path), ec);
 }
 
 GLuint GuiManager::getRecentFileThumbnail(const std::string& path) {
@@ -9515,50 +9692,31 @@ GLuint GuiManager::getRecentFileThumbnail(const std::string& path) {
         invalidateRecentFileThumbnail(path);
     }
 
-    sculpt_log("[Recent Files Thumb] Loading thumbnail for '%s'\n", path.c_str());
-    std::vector<uint8_t> fileData = readBinaryFileHelper(path);
-    if (fileData.empty()) {
-        sculpt_log("[Recent Files Thumb ERROR] Failed to read binary file '%s'\n", path.c_str());
-        m_recentThumbCache[path] = 0;
-        if (!ec) m_recentThumbTimestamps[path] = currentFtime;
-        return 0;
+    uint64_t currentMtime = getFileMtime(path);
+    std::string cachePng  = getThumbCachePath(path);
+    std::string cacheMeta = getThumbMetaPath(path);
+    uint64_t cachedMtime  = readMtimeFromMeta(cacheMeta);
+
+    if (cachedMtime != 0 && cachedMtime == currentMtime) {
+        auto pngData = readBinaryFileHelper(cachePng);
+        if (!pngData.empty()) {
+            if (m_recentFileWorkTimes.find(path) == m_recentFileWorkTimes.end()) {
+                m_recentFileWorkTimes[path] = ImportSGL::extractWorkTime(path);
+            }
+            if (!ec) m_recentThumbTimestamps[path] = currentFtime;
+            return uploadRecentThumbnailToGPU(path, pngData);
+        }
     }
 
-    std::vector<uint8_t> pngData = ImportSGL::extractThumbnail(fileData);
-    if (pngData.empty()) {
-        sculpt_log("[Recent Files Thumb WARNING] extractThumbnail returned empty vector for '%s'\n", path.c_str());
-        m_recentThumbCache[path] = 0;
-        if (!ec) m_recentThumbTimestamps[path] = currentFtime;
-        return 0;
+    sculpt_log("[Recent Files Thumb] Extracting metadata for '%s'\n", path.c_str());
+    auto meta = ImportSGL::extractProjectMetadata(path);
+    if (!meta.thumbnailPng.empty()) {
+        writeBinaryFile(cachePng, meta.thumbnailPng);
+        writeMtimeToMeta(cacheMeta, currentMtime);
     }
-
-    int w = 0, h = 0, ch = 0;
-    stbi_set_flip_vertically_on_load(false);
-    uint8_t* pixels = stbi_load_from_memory(pngData.data(), static_cast<int>(pngData.size()), &w, &h, &ch, 4);
-    if (!pixels) {
-        sculpt_log("[Recent Files Thumb ERROR] stbi_load_from_memory failed for thumbnail PNG data (%zu bytes)\n", pngData.size());
-        m_recentThumbCache[path] = 0;
-        if (!ec) m_recentThumbTimestamps[path] = currentFtime;
-        return 0;
-    }
-
-    GLuint tex = 0;
-    glGenTextures(1, &tex);
-    glBindTexture(GL_TEXTURE_2D, tex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glBindTexture(GL_TEXTURE_2D, 0);
-
-    stbi_image_free(pixels);
-
-    sculpt_log("[Recent Files Thumb SUCCESS] Loaded thumbnail texture ID %u (%dx%d) for '%s'\n", tex, w, h, path.c_str());
-    m_recentThumbCache[path] = tex;
-    m_recentThumbSizes[path] = ImVec2(static_cast<float>(w), static_cast<float>(h));
+    m_recentFileWorkTimes[path] = meta.workTime;
     if (!ec) m_recentThumbTimestamps[path] = currentFtime;
-    return tex;
+    return uploadRecentThumbnailToGPU(path, meta.thumbnailPng);
 }
 
 uint64_t GuiManager::getRecentFileWorkTime(const std::string& path) {
@@ -9581,6 +9739,8 @@ void GuiManager::clearRecentThumbCache() {
     m_recentThumbSizes.clear();
     m_recentThumbTimestamps.clear();
     m_recentFileWorkTimes.clear();
+    m_recentFileDateCache.clear();
+    m_recentLoadTasks.clear();
 }
 
 void GuiManager::drawWorkTimerIsland(Scene& scene) {
@@ -9636,6 +9796,9 @@ void GuiManager::drawWorkTimerIsland(Scene& scene) {
 void GuiManager::drawRecentFilesWindow(Scene& scene, SculptManager* sculpt, RecentFiles& recentFiles) {
     if (!m_showRecentFilesWindow) return;
 
+    pollRecentLoadTasks();
+    prefetchRecentFileMetadata(recentFiles);
+
     float scale = getUiScale();
     ImGui::SetNextWindowSize(ImVec2(880.0f * scale, 560.0f * scale), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
@@ -9658,6 +9821,9 @@ void GuiManager::drawRecentFilesWindow(Scene& scene, SculptManager* sculpt, Rece
             int COLS = std::max(1, static_cast<int>((availW + GAP) / (CARD_W + GAP)));
 
             ImGui::BeginChild("##RecentCardsScroll", ImVec2(0, -36.0f * scale), false);
+
+            ImVec2 winMin = ImGui::GetWindowPos();
+            ImVec2 winMax = ImVec2(winMin.x + ImGui::GetWindowWidth(), winMin.y + ImGui::GetWindowHeight());
 
             int col = 0;
             for (int i = 0; i < static_cast<int>(files.size()); ++i) {
@@ -9689,7 +9855,20 @@ void GuiManager::drawRecentFilesWindow(Scene& scene, SculptManager* sculpt, Rece
                     float containerH = 96.0f * scale;
                     ImVec2 curPos = ImGui::GetCursorPos();
 
-                    GLuint thumbTex = getRecentFileThumbnail(filePath);
+                    ImVec2 cardScreenPos = ImGui::GetCursorScreenPos();
+                    bool isVisible = (cardScreenPos.y < winMax.y + 100.0f * scale) &&
+                                     (cardScreenPos.y + CARD_H > winMin.y - 100.0f * scale);
+
+                    GLuint thumbTex = 0;
+                    if (isVisible) {
+                        thumbTex = getRecentFileThumbnail(filePath);
+                    } else {
+                        auto cacheIt = m_recentThumbCache.find(filePath);
+                        if (cacheIt != m_recentThumbCache.end()) {
+                            thumbTex = cacheIt->second;
+                        }
+                    }
+
                     if (thumbTex != 0) {
                         float texAspect = 16.0f / 9.0f;
                         auto sizeIt = m_recentThumbSizes.find(filePath);
@@ -9743,7 +9922,7 @@ void GuiManager::drawRecentFilesWindow(Scene& scene, SculptManager* sculpt, Rece
                     }
 
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 2.0f * scale);
-                    std::string fileDate = getRecentFileDate(filePath);
+                    std::string fileDate = getRecentFileDateCached(filePath);
                     uint64_t wt = getRecentFileWorkTime(filePath);
                     if (wt > 0) {
                         ImGui::TextDisabled("%s  " ICON_LC_CLOCK " %s", fileDate.c_str(), WorkTimer::format(wt, true).c_str());

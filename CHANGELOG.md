@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [0.2.17]
+- **Recent Files**: Accelerated the Recent Files window with background loading and persistent thumbnail caching to eliminate UI pauses on startup.
+- **Recent Files**: Implemented smooth lazy loading for project preview cards to ensure fluid, lag-free scrolling across file histories.
 - **Viewport & Rendering**: Fixed single-viewport aspect ratio distortion when opening `.spsculpt` projects with split mode disabled (`SplitMode::OFF`).
 - **Camera Pipeline**: Ensured primary camera viewport dimensions automatically synchronize with active renderer aspect ratio during rendering passes and file loading.
 

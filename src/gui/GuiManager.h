@@ -7,6 +7,7 @@
 #include <deque>
 #include <chrono>
 #include <thread>
+#include <future>
 #include <atomic>
 #include <mutex>
 #include <array>
@@ -19,6 +20,7 @@
 
 #include "common/RecentFiles.h"
 #include "common/WorkTimer.h"
+#include "files/ImportSGL.h"
 
 class AngleRenderer;
 class IniFile;
@@ -189,6 +191,12 @@ private:
     GLuint getIconTexture(const std::string& iconName);
     GLuint getXrayIconTexture();
 
+    struct RecentThumbTask {
+        std::string path;
+        std::future<ImportSGL::ProjectMetadata> future;
+        bool submitted = false;
+    };
+
     RecentFiles* m_recentFiles = nullptr;
     bool m_showRecentFilesWindow = false;
     int m_recentSelectedIdx = -1;
@@ -196,8 +204,15 @@ private:
     std::unordered_map<std::string, ImVec2> m_recentThumbSizes;
     std::unordered_map<std::string, std::filesystem::file_time_type> m_recentThumbTimestamps;
     std::unordered_map<std::string, uint64_t> m_recentFileWorkTimes;
+    std::unordered_map<std::string, std::string> m_recentFileDateCache;
+    std::unordered_map<std::string, RecentThumbTask> m_recentLoadTasks;
+
     GLuint getRecentFileThumbnail(const std::string& path);
     uint64_t getRecentFileWorkTime(const std::string& path);
+    GLuint uploadRecentThumbnailToGPU(const std::string& path, const std::vector<uint8_t>& pngData);
+    std::string getRecentFileDateCached(const std::string& path);
+    void prefetchRecentFileMetadata(const RecentFiles& recentFiles);
+    void pollRecentLoadTasks();
     void invalidateRecentFileThumbnail(const std::string& path);
     void clearRecentThumbCache();
     void drawRecentFilesWindow(Scene& scene, SculptManager* sculpt, RecentFiles& recentFiles);
