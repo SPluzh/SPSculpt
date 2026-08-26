@@ -9,6 +9,6 @@
 
 namespace ExportSGL {
 
-std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& scene, const AngleRenderer& renderer, const SculptManager& sculpt, const std::vector<uint8_t>& thumbnail = {});
+std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& scene, const AngleRenderer& renderer, const SculptManager& sculpt, const std::vector<uint8_t>& thumbnail = {}, uint64_t workTimeSeconds = 0);
 
 } // namespace ExportSGL

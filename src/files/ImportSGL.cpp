@@ -65,7 +65,7 @@ public:
     bool hasData() const { return m_wordOffset * 4 < m_size; }
 };
 
-std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, AngleRenderer& renderer, SculptManager* sculpt) {
+std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, AngleRenderer& renderer, SculptManager* sculpt, uint64_t* outWorkTime) {
     if (buffer.size() < 4) return {};
 
     BinaryReader reader(buffer.data(), buffer.size());
@@ -621,6 +621,18 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
         }
     }
 
+    // Work Timer (version >= 17)
+    uint64_t workTime = 0;
+    if (version >= 17 && reader.hasData()) {
+        uint32_t hi = reader.readU32();
+        uint32_t lo = reader.readU32();
+        workTime = (static_cast<uint64_t>(hi) << 32) | static_cast<uint64_t>(lo);
+        sculpt_log("[SGL Import] Loaded work time: %llu seconds\n", static_cast<unsigned long long>(workTime));
+    }
+    if (outWorkTime) {
+        *outWorkTime = workTime;
+    }
+
     return meshes;
 }
 
@@ -815,6 +827,177 @@ std::vector<uint8_t> extractThumbnail(const std::vector<uint8_t>& buffer) {
     }
 
     return {};
+}
+
+uint64_t extractWorkTime(const std::vector<uint8_t>& buffer) {
+    if (buffer.size() < 8) return 0;
+
+    BinaryReader reader(buffer.data(), buffer.size());
+    uint32_t firstWord = reader.readU32();
+    uint32_t version = 0;
+
+    if (std::memcmp(buffer.data(), "SPSC", 4) == 0) {
+        version = reader.readU32();
+    } else {
+        version = firstWord;
+    }
+
+    if (version < 17) return 0;
+
+    // Camera and renderer settings (version >= 2)
+    reader.skipWords(3); // showGrid, showSymmetryLine, showContour
+    reader.skipWords(4); // projType, mode, fov, usePivot
+
+    if (version >= 12) {
+        reader.skipWords(20); // camState
+    }
+
+    // Meshes
+    uint32_t nbMeshes = reader.readU32();
+    for (uint32_t i = 0; i < nbMeshes; ++i) {
+        if (!reader.hasData()) return 0;
+
+        reader.skipWords(5); // sType, mIdx, wire, flat, alpha
+        reader.skipWords(2); // visibleV1, visibleV2
+        reader.skipWords(3 + 16 + 1); // cx,cy,cz, m[16], scale
+
+        uint32_t nbVertices = reader.readU32();
+        reader.skipWords(nbVertices * 3);
+        reader.skipWords((nbVertices + 3) / 4);
+
+        uint32_t nbColors = reader.readU32();
+        if (nbColors > 0) reader.skipWords(nbColors * 3);
+
+        uint32_t nbMaterials = reader.readU32();
+        if (nbMaterials > 0) reader.skipWords(nbMaterials * 3);
+
+        uint32_t nbFaces = reader.readU32();
+        reader.skipWords(nbFaces * 4);
+
+        uint32_t nbTexCoords = reader.readU32();
+        if (nbTexCoords > 0) reader.skipWords(nbTexCoords * 2);
+
+        uint32_t nbFacesTexCoords = reader.readU32();
+        if (nbFacesTexCoords > 0) reader.skipWords(nbFacesTexCoords * 4);
+
+        if (version >= 7) {
+            uint32_t nbLayers = reader.readU32();
+            reader.readI32();
+            for (uint32_t l = 0; l < nbLayers; ++l) {
+                uint32_t nameLen = reader.readU32();
+                if (nameLen > 0) reader.skipWords((nameLen + 3) / 4);
+                reader.skipWords(2);
+                uint32_t nbDelta = reader.readU32();
+                if (nbDelta > 0) reader.skipWords(nbDelta);
+            }
+        }
+
+        if (version >= 13) {
+            uint32_t nVrfStartCount = reader.readU32();
+            if (nVrfStartCount > 0) reader.skipWords(nVrfStartCount);
+            uint32_t nVertRingFace = reader.readU32();
+            if (nVertRingFace > 0) reader.skipWords(nVertRingFace);
+            uint32_t nVrvStartCount = reader.readU32();
+            if (nVrvStartCount > 0) reader.skipWords(nVrvStartCount);
+            uint32_t nVertRingVert = reader.readU32();
+            if (nVertRingVert > 0) reader.skipWords(nVertRingVert);
+            uint32_t nVertOnEdge = reader.readU32();
+            if (nVertOnEdge > 0) reader.skipWords((nVertOnEdge + 3) / 4);
+        }
+    }
+
+    // Measure & Divider
+    if (version >= 6) {
+        auto skipAnchor = [&]() {
+            uint32_t type = reader.readU32();
+            reader.skipWords(3);
+        };
+        reader.skipWords(2);
+        uint32_t nbMeasureSegments = reader.readU32();
+        for (uint32_t s = 0; s < nbMeasureSegments; ++s) {
+            skipAnchor(); skipAnchor(); reader.readU32();
+        }
+        reader.skipWords(3);
+        uint32_t nbDividerSegments = reader.readU32();
+        for (uint32_t s = 0; s < nbDividerSegments; ++s) {
+            skipAnchor(); skipAnchor();
+            if (reader.hasData()) reader.readU32();
+        }
+    }
+
+    // Bookmarks
+    if (version >= 9 && reader.hasData()) {
+        uint32_t nbBookmarks = reader.readU32();
+        for (uint32_t b = 0; b < nbBookmarks; ++b) {
+            uint32_t nameLen = reader.readU32();
+            if (nameLen > 0) reader.skipWords((nameLen + 3) / 4);
+            reader.skipWords(24);
+
+            uint32_t nbRefSnaps = reader.readU32();
+            for (uint32_t r = 0; r < nbRefSnaps; ++r) {
+                uint32_t pathLen = reader.readU32();
+                if (pathLen > 0) reader.skipWords((pathLen + 3) / 4);
+                reader.skipWords(8);
+            }
+
+            if (version >= 11) {
+                uint32_t previewSize = reader.readU32();
+                if (previewSize > 0) reader.skipWords((previewSize + 3) / 4);
+            }
+
+            if (version >= 15) {
+                uint32_t nbHideSnaps = reader.readU32();
+                for (uint32_t h = 0; h < nbHideSnaps; ++h) {
+                    reader.readU32();
+                    uint32_t mNameLen = reader.readU32();
+                    if (mNameLen > 0) reader.skipWords((mNameLen + 3) / 4);
+                    reader.skipWords(2);
+                    uint32_t fCount = reader.readU32();
+                    if (fCount > 0) reader.skipWords((fCount + 3) / 4);
+                }
+            }
+        }
+    }
+
+    // Reference Images
+    if (version >= 10 && reader.hasData()) {
+        uint32_t nbRefImages = reader.readU32();
+        for (uint32_t r = 0; r < nbRefImages; ++r) {
+            uint32_t pathLen = reader.readU32();
+            if (pathLen > 0) reader.skipWords((pathLen + 3) / 4);
+            reader.skipWords(10);
+            uint32_t embedSize = reader.readU32();
+            if (embedSize > 0) reader.skipWords((embedSize + 3) / 4);
+        }
+    }
+
+    // Thumbnail
+    if (version >= 16 && reader.hasData()) {
+        uint32_t hasThumbnail = reader.readU32();
+        if (hasThumbnail != 0) {
+            uint32_t thumbSize = reader.readU32();
+            if (thumbSize > 0) {
+                reader.skipWords((thumbSize + 3) / 4);
+            }
+        }
+    }
+
+    // Work Timer
+    if (version >= 17 && reader.hasData()) {
+        uint32_t hi = reader.readU32();
+        uint32_t lo = reader.readU32();
+        return (static_cast<uint64_t>(hi) << 32) | static_cast<uint64_t>(lo);
+    }
+
+    return 0;
+}
+
+uint64_t extractWorkTime(const std::string& path) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file.is_open()) return 0;
+
+    std::vector<uint8_t> buffer((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    return extractWorkTime(buffer);
 }
 
 } // namespace ImportSGL

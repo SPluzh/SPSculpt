@@ -18,6 +18,7 @@
 #include "timelapse/TimelapsePlayer.h"
 
 #include "common/RecentFiles.h"
+#include "common/WorkTimer.h"
 
 class AngleRenderer;
 class IniFile;
@@ -194,12 +195,19 @@ private:
     std::unordered_map<std::string, GLuint> m_recentThumbCache;
     std::unordered_map<std::string, ImVec2> m_recentThumbSizes;
     std::unordered_map<std::string, std::filesystem::file_time_type> m_recentThumbTimestamps;
+    std::unordered_map<std::string, uint64_t> m_recentFileWorkTimes;
     GLuint getRecentFileThumbnail(const std::string& path);
+    uint64_t getRecentFileWorkTime(const std::string& path);
     void invalidateRecentFileThumbnail(const std::string& path);
     void clearRecentThumbCache();
     void drawRecentFilesWindow(Scene& scene, SculptManager* sculpt, RecentFiles& recentFiles);
+    void drawWorkTimerIsland(Scene& scene);
+
+    WorkTimer m_workTimer;
 
 public:
+    WorkTimer& getWorkTimer() { return m_workTimer; }
+    const WorkTimer& getWorkTimer() const { return m_workTimer; }
     GuiManager();
     ~GuiManager();
 

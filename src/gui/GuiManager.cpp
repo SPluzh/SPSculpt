@@ -322,7 +322,8 @@ bool GuiManager::openSceneFromPath(const std::string& path, Scene& scene, Sculpt
     AngleRenderer* r = renderer ? renderer : m_renderer;
     snprintf(m_importPath, sizeof(m_importPath), "%s", path.c_str());
     scene.clear();
-    auto newMeshes = FileManager::importFiles(path, &scene, r, sculpt);
+    uint64_t loadedWorkTime = 0;
+    auto newMeshes = FileManager::importFiles(path, &scene, r, sculpt, &loadedWorkTime);
     auto tImportEnd = std::chrono::high_resolution_clock::now();
 
     for (auto* mesh : newMeshes) {
@@ -345,6 +346,9 @@ bool GuiManager::openSceneFromPath(const std::string& path, Scene& scene, Sculpt
 
     if (FileManager::getExtension(path) == Format::PROJECT_EXT || FileManager::getExtension(path) == Format::LEGACY_EXT) {
         m_currentScenePath = path;
+        m_workTimer.reset();
+        m_workTimer.setTotalSeconds(loadedWorkTime);
+        m_workTimer.startSession();
     } else {
         m_currentScenePath.clear();
     }
@@ -353,8 +357,8 @@ bool GuiManager::openSceneFromPath(const std::string& path, Scene& scene, Sculpt
     double msImport = std::chrono::duration<double, std::milli>(tImportEnd - tStart).count();
     double msHist = std::chrono::duration<double, std::milli>(tHistEnd - tHistStart).count();
     double msTotal = std::chrono::duration<double, std::milli>(tHistEnd - tStart).count();
-    sculpt_log("[Scene Import] openSceneFromPath('%s') completed in %.2f ms (ImportFiles: %.2fms, HistoryPush: %.2fms)\n",
-              path.c_str(), msTotal, msImport, msHist);
+    sculpt_log("[Scene Import] openSceneFromPath('%s') completed in %.2f ms (ImportFiles: %.2fms, HistoryPush: %.2fms, WorkTime: %llu s)\n",
+              path.c_str(), msTotal, msImport, msHist, static_cast<unsigned long long>(loadedWorkTime));
 
     bool loaded = !newMeshes.empty() || FileManager::getExtension(path) == Format::PROJECT_EXT || FileManager::getExtension(path) == Format::LEGACY_EXT;
     if (loaded && m_recentFiles && (FileManager::getExtension(path) == Format::PROJECT_EXT || FileManager::getExtension(path) == Format::LEGACY_EXT)) {
@@ -377,13 +381,15 @@ void GuiManager::saveScene(Scene& scene, SculptManager* sculpt) {
         sculpt_log("[Save Scene] Saving scene to '%s'...\n", m_currentScenePath.c_str());
         std::vector<uint8_t> thumb = renderSceneThumbnailPng(scene, *m_renderer, 0, 0);
         sculpt_log("[Save Scene] Generated thumbnail size: %zu bytes\n", thumb.size());
-        if (FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer, sculpt, thumb, m_savePngNextToProject)) {
+        uint64_t totalTime = m_workTimer.getTotalSeconds();
+        if (FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer, sculpt, thumb, m_savePngNextToProject, totalTime)) {
             scene.setModified(false);
             invalidateRecentFileThumbnail(m_currentScenePath);
+            m_recentFileWorkTimes.erase(m_currentScenePath);
             if (m_recentFiles) {
                 m_recentFiles->addFile(m_currentScenePath);
             }
-            sculpt_log("[Save Scene] Successfully saved project to '%s'\n", m_currentScenePath.c_str());
+            sculpt_log("[Save Scene] Successfully saved project to '%s' with work time %llu s\n", m_currentScenePath.c_str(), static_cast<unsigned long long>(totalTime));
         } else {
             sculpt_log("[Save Scene ERROR] Failed to save project to '%s'\n", m_currentScenePath.c_str());
         }
@@ -403,13 +409,15 @@ void GuiManager::saveSceneAs(Scene& scene, SculptManager* sculpt) {
         sculpt_log("[Save Scene As] Saving scene to '%s'...\n", m_currentScenePath.c_str());
         std::vector<uint8_t> thumb = renderSceneThumbnailPng(scene, *m_renderer, 0, 0);
         sculpt_log("[Save Scene As] Generated thumbnail size: %zu bytes\n", thumb.size());
-        if (FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer, sculpt, thumb, m_savePngNextToProject)) {
+        uint64_t totalTime = m_workTimer.getTotalSeconds();
+        if (FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer, sculpt, thumb, m_savePngNextToProject, totalTime)) {
             scene.setModified(false);
             invalidateRecentFileThumbnail(m_currentScenePath);
+            m_recentFileWorkTimes.erase(m_currentScenePath);
             if (m_recentFiles) {
                 m_recentFiles->addFile(m_currentScenePath);
             }
-            sculpt_log("[Save Scene As] Successfully saved project to '%s'\n", m_currentScenePath.c_str());
+            sculpt_log("[Save Scene As] Successfully saved project to '%s' with work time %llu s\n", m_currentScenePath.c_str(), static_cast<unsigned long long>(totalTime));
         } else {
             sculpt_log("[Save Scene As ERROR] Failed to save project to '%s'\n", m_currentScenePath.c_str());
         }
@@ -4548,6 +4556,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     }
 
     drawFloatingIslandHUD(sculpt, scene, renderer);
+    drawWorkTimerIsland(scene);
     drawModelSnapshotWindow(scene, renderer);
     drawDebugLogPanel();
     drawTimelapsePanel(scene, renderer);
@@ -9532,6 +9541,16 @@ GLuint GuiManager::getRecentFileThumbnail(const std::string& path) {
     return tex;
 }
 
+uint64_t GuiManager::getRecentFileWorkTime(const std::string& path) {
+    auto it = m_recentFileWorkTimes.find(path);
+    if (it != m_recentFileWorkTimes.end()) {
+        return it->second;
+    }
+    uint64_t wt = ImportSGL::extractWorkTime(path);
+    m_recentFileWorkTimes[path] = wt;
+    return wt;
+}
+
 void GuiManager::clearRecentThumbCache() {
     for (auto& pair : m_recentThumbCache) {
         if (pair.second != 0) {
@@ -9541,6 +9560,57 @@ void GuiManager::clearRecentThumbCache() {
     m_recentThumbCache.clear();
     m_recentThumbSizes.clear();
     m_recentThumbTimestamps.clear();
+    m_recentFileWorkTimes.clear();
+}
+
+void GuiManager::drawWorkTimerIsland(Scene& scene) {
+    if (!m_showFloatingIsland) return;
+
+    float scale = getFloatingIslandScale();
+    float fontScale = m_floatingIslandScale / std::max(0.01f, m_uiScale);
+
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+
+    // Align to the left of the top-right island (##FloatingIslandHUD_v2)
+    float targetRightX = viewport->Pos.x + viewport->Size.x - 240.0f * scale;
+    ImGuiWindow* trWin = ImGui::FindWindowByName("##FloatingIslandHUD_v2");
+    if (trWin && trWin->Active) {
+        targetRightX = trWin->Pos.x - 2.0f * scale;
+    }
+
+    ImGui::SetNextWindowPos(ImVec2(targetRightX, viewport->Pos.y), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.09f, 0.10f, 0.90f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.01f, 0.52f, 0.45f, 0.40f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f * scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f * scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f * scale, 3.0f * scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f * scale, 4.0f * scale));
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                             ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse |
+                             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove;
+
+    if (ImGui::Begin("##WorkTimerIsland", nullptr, flags)) {
+        ImGui::SetWindowFontScale(fontScale);
+
+        uint64_t totalSeconds = m_workTimer.getTotalSeconds();
+        std::string timeStr = WorkTimer::format(totalSeconds, true);
+
+        ImGui::TextColored(ImVec4(0.01f, 0.75f, 0.65f, 1.0f), "%s", ICON_LC_CLOCK);
+        ImGui::SameLine(0.0f, 4.0f * scale);
+        ImGui::Text("%s", timeStr.c_str());
+
+        if (ImGui::IsItemHovered() || ImGui::IsWindowHovered()) {
+            uint64_t sessionSeconds = m_workTimer.getSessionSeconds();
+            std::string sessionStr = WorkTimer::format(sessionSeconds, true);
+            ImGui::SetTooltip("Project Work Time\nTotal: %s\nSession: %s", timeStr.c_str(), sessionStr.c_str());
+        }
+    }
+    ImGui::End();
+
+    ImGui::PopStyleVar(4);
+    ImGui::PopStyleColor(2);
 }
 
 void GuiManager::drawRecentFilesWindow(Scene& scene, SculptManager* sculpt, RecentFiles& recentFiles) {
@@ -9654,7 +9724,12 @@ void GuiManager::drawRecentFilesWindow(Scene& scene, SculptManager* sculpt, Rece
 
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 2.0f * scale);
                     std::string fileDate = getRecentFileDate(filePath);
-                    ImGui::TextDisabled("%s", fileDate.c_str());
+                    uint64_t wt = getRecentFileWorkTime(filePath);
+                    if (wt > 0) {
+                        ImGui::TextDisabled("%s  " ICON_LC_CLOCK " %s", fileDate.c_str(), WorkTimer::format(wt, true).c_str());
+                    } else {
+                        ImGui::TextDisabled("%s", fileDate.c_str());
+                    }
 
                     if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0)) {
                         m_recentSelectedIdx = i;

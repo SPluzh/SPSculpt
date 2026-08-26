@@ -92,7 +92,8 @@ std::string FileManager::getExtension(const std::string& path) {
 std::vector<Mesh*> FileManager::importFiles(const std::string& path,
                                            Scene* scene,
                                            AngleRenderer* renderer,
-                                           SculptManager* sculpt) {
+                                           SculptManager* sculpt,
+                                           uint64_t* outWorkTime) {
     std::string ext = getExtension(path);
     
     if (ext == Format::PROJECT_EXT || ext == Format::LEGACY_EXT) {
@@ -102,7 +103,7 @@ std::vector<Mesh*> FileManager::importFiles(const std::string& path,
         }
         std::vector<uint8_t> buffer = readBinaryFile(path);
         if (buffer.empty()) return {};
-        return ImportSGL::importSGL(buffer, *scene, *renderer, sculpt);
+        return ImportSGL::importSGL(buffer, *scene, *renderer, sculpt, outWorkTime);
     }
     
     if (ext == "obj") {
@@ -204,7 +205,8 @@ bool FileManager::exportMeshes(const std::string& path,
                                const AngleRenderer* renderer,
                                const SculptManager* sculpt,
                                const std::vector<uint8_t>& thumbnail,
-                               bool savePngNextToProject) {
+                               bool savePngNextToProject,
+                               uint64_t workTimeSeconds) {
     std::string ext = getExtension(path);
     
     if (ext == Format::PROJECT_EXT || ext == Format::LEGACY_EXT) {
@@ -212,8 +214,8 @@ bool FileManager::exportMeshes(const std::string& path,
             sculpt_log("[FileManager Export ERROR] Exporting project requires Scene, Renderer, and Sculpt pointers\n");
             return false;
         }
-        sculpt_log("[FileManager Export] Exporting scene to '%s' | Meshes: %zu | Thumbnail size: %zu bytes\n", path.c_str(), meshes.size(), thumbnail.size());
-        std::vector<uint8_t> buffer = ExportSGL::exportSGL(meshes, *scene, *renderer, *sculpt, thumbnail);
+        sculpt_log("[FileManager Export] Exporting scene to '%s' | Meshes: %zu | Thumbnail size: %zu bytes | Work time: %llu s\n", path.c_str(), meshes.size(), thumbnail.size(), static_cast<unsigned long long>(workTimeSeconds));
+        std::vector<uint8_t> buffer = ExportSGL::exportSGL(meshes, *scene, *renderer, *sculpt, thumbnail, workTimeSeconds);
         if (buffer.empty()) {
             sculpt_log("[FileManager Export ERROR] ExportSGL returned empty binary buffer!\n");
             return false;

@@ -77,10 +77,10 @@ public:
     const std::vector<uint8_t>& getBuffer() const { return m_buffer; }
 };
 
-std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& scene, const AngleRenderer& renderer, const SculptManager& sculpt, const std::vector<uint8_t>& thumbnail) {
+std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& scene, const AngleRenderer& renderer, const SculptManager& sculpt, const std::vector<uint8_t>& thumbnail, uint64_t workTimeSeconds) {
     BinaryWriter writer;
     
-    // Magic "SPSC" + Version 14
+    // Magic "SPSC" + Version 17
     writer.writeBytes(reinterpret_cast<const uint8_t*>("SPSC"), 4);
     writer.writeU32(Format::CURRENT_VERSION);
 
@@ -415,6 +415,13 @@ std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& sc
         writer.writeU32(0);
         sculpt_log("[SGL Export] WARNING | Exporting project without thumbnail (thumbnail vector is empty)\n");
     }
+
+    // Work Timer (Version >= 17)
+    uint32_t workTimeHi = static_cast<uint32_t>(workTimeSeconds >> 32);
+    uint32_t workTimeLo = static_cast<uint32_t>(workTimeSeconds & 0xFFFFFFFF);
+    writer.writeU32(workTimeHi);
+    writer.writeU32(workTimeLo);
+    sculpt_log("[SGL Export] Work time written to project buffer (%llu seconds)\n", static_cast<unsigned long long>(workTimeSeconds));
 
     sculpt_log("[SGL Export] Export completed | Total project binary size: %zu bytes\n", writer.getBuffer().size());
     return writer.getBuffer();

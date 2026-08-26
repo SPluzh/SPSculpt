@@ -13,7 +13,8 @@ public:
     static std::vector<Mesh*> importFiles(const std::string& path,
                                           Scene* scene = nullptr,
                                           AngleRenderer* renderer = nullptr,
-                                          SculptManager* sculpt = nullptr);
+                                          SculptManager* sculpt = nullptr,
+                                          uint64_t* outWorkTime = nullptr);
 
     // Export: determines format by extension
     static bool exportMeshes(const std::string& path,
@@ -22,7 +23,8 @@ public:
                              const AngleRenderer* renderer = nullptr,
                              const SculptManager* sculpt = nullptr,
                              const std::vector<uint8_t>& thumbnail = {},
-                             bool savePngNextToProject = false);
+                             bool savePngNextToProject = false,
+                             uint64_t workTimeSeconds = 0);
 
     static std::string getExtension(const std::string& path);
 };

@@ -850,6 +850,11 @@ int main(int argc, char* argv[]) {
         renderer.render(scene);
         double renderMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tRenderStart).count();
 
+        Uint32 winFlags = SDL_GetWindowFlags(window);
+        bool appHasFocus = (winFlags & SDL_WINDOW_INPUT_FOCUS) != 0;
+        bool activeActivity = hadActivity || isSculptingActive || sculpt.getCameraController().isDragging();
+        gui.getWorkTimer().tick(deltaTime, appHasFocus, activeActivity);
+
         auto tGuiStart = std::chrono::high_resolution_clock::now();
         gui.render(sculpt, scene, renderer, window);
         double guiMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tGuiStart).count();

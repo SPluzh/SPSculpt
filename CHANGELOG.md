@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.15]
+- **Work Timer**: Added active project time tracking that automatically pauses when idle or when switching away from the app.
+- **HUD**: Displayed project work time directly in a dedicated viewport island in full `HH:MM:SS` format.
+- **Recent Files**: Showed cumulative work time on project cards in the Recent Files window.
+- **Project Files**: Saved total work time into `.spsculpt` project files so session progress continues seamlessly when re-opened.
+
 ## [0.2.14]
 - **Recent Files**: Added Recent Files modal (`Ctrl + Shift + O`) with card grid and 16:9 previews.
 - **Thumbnails**: Preserved viewport aspect ratio for `.spsculpt` thumbnails with auto-refresh on save.
