@@ -751,7 +751,7 @@ std::vector<uint8_t> extractThumbnail(const std::vector<uint8_t>& buffer) {
             uint32_t nameLen = reader.readU32();
             if (nameLen > 0) reader.skipWords((nameLen + 3) / 4);
 
-            reader.skipWords(21); // camState
+            reader.skipWords(24); // camState (24 words)
 
             uint32_t nbRefSnaps = reader.readU32();
             for (uint32_t r = 0; r < nbRefSnaps; ++r) {
@@ -802,9 +802,16 @@ std::vector<uint8_t> extractThumbnail(const std::vector<uint8_t>& buffer) {
             if (thumbSize > 0) {
                 std::vector<uint8_t> pngData(thumbSize);
                 reader.readBytes(pngData.data(), thumbSize);
+                sculpt_log("[SGL Extract Thumbnail] SUCCESS | Extracted PNG thumbnail (%u bytes)\n", thumbSize);
                 return pngData;
+            } else {
+                sculpt_log("[SGL Extract Thumbnail] WARNING | hasThumbnail=1 but thumbSize=0\n");
             }
+        } else {
+            sculpt_log("[SGL Extract Thumbnail] INFO | hasThumbnail flag is 0 in project header\n");
         }
+    } else {
+        sculpt_log("[SGL Extract Thumbnail] WARNING | Failed to reach thumbnail section (version: %u, hasData: %d)\n", version, reader.hasData());
     }
 
     return {};

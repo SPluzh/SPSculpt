@@ -374,12 +374,18 @@ void GuiManager::saveScene(Scene& scene, SculptManager* sculpt) {
     if (m_currentScenePath.empty()) {
         saveSceneAs(scene, sculpt);
     } else {
-        std::vector<uint8_t> thumb = renderSceneThumbnailPng(scene, *m_renderer, 256, 256);
+        sculpt_log("[Save Scene] Saving scene to '%s'...\n", m_currentScenePath.c_str());
+        std::vector<uint8_t> thumb = renderSceneThumbnailPng(scene, *m_renderer, 0, 0);
+        sculpt_log("[Save Scene] Generated thumbnail size: %zu bytes\n", thumb.size());
         if (FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer, sculpt, thumb)) {
             scene.setModified(false);
+            invalidateRecentFileThumbnail(m_currentScenePath);
             if (m_recentFiles) {
                 m_recentFiles->addFile(m_currentScenePath);
             }
+            sculpt_log("[Save Scene] Successfully saved project to '%s'\n", m_currentScenePath.c_str());
+        } else {
+            sculpt_log("[Save Scene ERROR] Failed to save project to '%s'\n", m_currentScenePath.c_str());
         }
     }
 }
@@ -394,12 +400,18 @@ void GuiManager::saveSceneAs(Scene& scene, SculptManager* sculpt) {
     if (!path.empty()) {
         m_currentScenePath = path;
         snprintf(m_exportPath, sizeof(m_exportPath), "%s", path.c_str());
-        std::vector<uint8_t> thumb = renderSceneThumbnailPng(scene, *m_renderer, 256, 256);
+        sculpt_log("[Save Scene As] Saving scene to '%s'...\n", m_currentScenePath.c_str());
+        std::vector<uint8_t> thumb = renderSceneThumbnailPng(scene, *m_renderer, 0, 0);
+        sculpt_log("[Save Scene As] Generated thumbnail size: %zu bytes\n", thumb.size());
         if (FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer, sculpt, thumb)) {
             scene.setModified(false);
+            invalidateRecentFileThumbnail(m_currentScenePath);
             if (m_recentFiles) {
                 m_recentFiles->addFile(m_currentScenePath);
             }
+            sculpt_log("[Save Scene As] Successfully saved project to '%s'\n", m_currentScenePath.c_str());
+        } else {
+            sculpt_log("[Save Scene As ERROR] Failed to save project to '%s'\n", m_currentScenePath.c_str());
         }
     }
 }
@@ -9357,8 +9369,24 @@ void GuiManager::drawCameraBookmarksPanel(Scene& scene, AngleRenderer& renderer)
 }
 
 std::vector<uint8_t> GuiManager::renderSceneThumbnailPng(const Scene& scene, AngleRenderer& renderer, int w, int h) {
+    if (w <= 0 || h <= 0) {
+        int mainW = renderer.getWidth();
+        int mainH = renderer.getHeight();
+        float aspect = (mainW > 0 && mainH > 0) ? ((float)mainW / (float)mainH) : (16.0f / 9.0f);
+        if (aspect >= 1.0f) {
+            w = 384;
+            h = std::max(1, static_cast<int>(std::round(384.0f / aspect)));
+        } else {
+            h = 384;
+            w = std::max(1, static_cast<int>(std::round(384.0f * aspect)));
+        }
+    }
+    sculpt_log("[Thumbnail Render] Rendering scene thumbnail (%dx%d, aspect ratio %.3f)...\n", w, h, (h > 0 ? (float)w / (float)h : 1.0f));
     std::vector<uint8_t> rawPixels = renderer.renderToBuffer(scene, w, h);
-    if (rawPixels.empty()) return {};
+    if (rawPixels.empty()) {
+        sculpt_log("[Thumbnail Render ERROR] renderToBuffer returned empty buffer!\n");
+        return {};
+    }
 
     std::vector<uint8_t> pngData;
     int stride = w * 4;
@@ -9367,6 +9395,12 @@ std::vector<uint8_t> GuiManager::renderSceneThumbnailPng(const Scene& scene, Ang
         const auto* b = static_cast<const uint8_t*>(data);
         vec->insert(vec->end(), b, b + size);
     }, &pngData, w, h, 4, rawPixels.data(), stride);
+
+    if (pngData.empty()) {
+        sculpt_log("[Thumbnail Render ERROR] stbi_write_png_to_func failed to encode PNG\n");
+    } else {
+        sculpt_log("[Thumbnail Render SUCCESS] Encoded PNG thumbnail (%zu bytes, raw pixels: %zu bytes)\n", pngData.size(), rawPixels.size());
+    }
 
     return pngData;
 }
@@ -9407,19 +9441,49 @@ static std::string getRecentFileDate(const std::string& path) {
     return std::string(buf);
 }
 
-GLuint GuiManager::getRecentFileThumbnail(const std::string& path) {
+void GuiManager::invalidateRecentFileThumbnail(const std::string& path) {
     auto it = m_recentThumbCache.find(path);
-    if (it != m_recentThumbCache.end()) return it->second;
+    if (it != m_recentThumbCache.end()) {
+        if (it->second != 0) {
+            glDeleteTextures(1, &it->second);
+        }
+        m_recentThumbCache.erase(it);
+        m_recentThumbSizes.erase(path);
+        m_recentThumbTimestamps.erase(path);
+    }
+}
 
+GLuint GuiManager::getRecentFileThumbnail(const std::string& path) {
+    std::error_code ec;
+    auto currentFtime = std::filesystem::last_write_time(path, ec);
+
+    auto it = m_recentThumbCache.find(path);
+    if (it != m_recentThumbCache.end()) {
+        if (!ec) {
+            auto tsIt = m_recentThumbTimestamps.find(path);
+            if (tsIt != m_recentThumbTimestamps.end() && tsIt->second == currentFtime) {
+                return it->second;
+            }
+        } else {
+            return it->second;
+        }
+        invalidateRecentFileThumbnail(path);
+    }
+
+    sculpt_log("[Recent Files Thumb] Loading thumbnail for '%s'\n", path.c_str());
     std::vector<uint8_t> fileData = readBinaryFileHelper(path);
     if (fileData.empty()) {
+        sculpt_log("[Recent Files Thumb ERROR] Failed to read binary file '%s'\n", path.c_str());
         m_recentThumbCache[path] = 0;
+        if (!ec) m_recentThumbTimestamps[path] = currentFtime;
         return 0;
     }
 
     std::vector<uint8_t> pngData = ImportSGL::extractThumbnail(fileData);
     if (pngData.empty()) {
+        sculpt_log("[Recent Files Thumb WARNING] extractThumbnail returned empty vector for '%s'\n", path.c_str());
         m_recentThumbCache[path] = 0;
+        if (!ec) m_recentThumbTimestamps[path] = currentFtime;
         return 0;
     }
 
@@ -9427,7 +9491,9 @@ GLuint GuiManager::getRecentFileThumbnail(const std::string& path) {
     stbi_set_flip_vertically_on_load(false);
     uint8_t* pixels = stbi_load_from_memory(pngData.data(), static_cast<int>(pngData.size()), &w, &h, &ch, 4);
     if (!pixels) {
+        sculpt_log("[Recent Files Thumb ERROR] stbi_load_from_memory failed for thumbnail PNG data (%zu bytes)\n", pngData.size());
         m_recentThumbCache[path] = 0;
+        if (!ec) m_recentThumbTimestamps[path] = currentFtime;
         return 0;
     }
 
@@ -9443,7 +9509,10 @@ GLuint GuiManager::getRecentFileThumbnail(const std::string& path) {
 
     stbi_image_free(pixels);
 
+    sculpt_log("[Recent Files Thumb SUCCESS] Loaded thumbnail texture ID %u (%dx%d) for '%s'\n", tex, w, h, path.c_str());
     m_recentThumbCache[path] = tex;
+    m_recentThumbSizes[path] = ImVec2(static_cast<float>(w), static_cast<float>(h));
+    if (!ec) m_recentThumbTimestamps[path] = currentFtime;
     return tex;
 }
 
@@ -9454,6 +9523,8 @@ void GuiManager::clearRecentThumbCache() {
         }
     }
     m_recentThumbCache.clear();
+    m_recentThumbSizes.clear();
+    m_recentThumbTimestamps.clear();
 }
 
 void GuiManager::drawRecentFilesWindow(Scene& scene, SculptManager* sculpt, RecentFiles& recentFiles) {
@@ -9474,7 +9545,7 @@ void GuiManager::drawRecentFilesWindow(Scene& scene, SculptManager* sculpt, Rece
         } else {
             const float CARD_PAD = 6.0f * scale;
             const float CARD_W   = 176.0f * scale;
-            const float CARD_H   = 214.0f * scale;
+            const float CARD_H   = 148.0f * scale;
             const float GAP      = 8.0f * scale;
 
             float availW = ImGui::GetContentRegionAvail().x;
@@ -9509,25 +9580,49 @@ void GuiManager::drawRecentFilesWindow(Scene& scene, SculptManager* sculpt, Rece
                     std::string fileName = (slashIdx != std::string::npos) ? filePath.substr(slashIdx + 1) : filePath;
 
                     float boxW = ImGui::GetContentRegionAvail().x;
-                    float boxH = boxW;
+                    float containerH = 96.0f * scale;
                     ImVec2 curPos = ImGui::GetCursorPos();
 
                     GLuint thumbTex = getRecentFileThumbnail(filePath);
                     if (thumbTex != 0) {
-                        ImGui::Image((ImTextureID)(uintptr_t)thumbTex, ImVec2(boxW, boxH), ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f));
+                        float texAspect = 16.0f / 9.0f;
+                        auto sizeIt = m_recentThumbSizes.find(filePath);
+                        if (sizeIt != m_recentThumbSizes.end() && sizeIt->second.y > 0.0f) {
+                            texAspect = sizeIt->second.x / sizeIt->second.y;
+                        }
+
+                        float renderW = boxW;
+                        float renderH = containerH;
+                        float containerAspect = (containerH > 0.0f) ? (boxW / containerH) : 1.0f;
+
+                        if (texAspect > containerAspect) {
+                            renderW = boxW;
+                            renderH = boxW / texAspect;
+                        } else {
+                            renderH = containerH;
+                            renderW = containerH * texAspect;
+                        }
+
+                        float offsetX = (boxW - renderW) * 0.5f;
+                        float offsetY = (containerH - renderH) * 0.5f;
+
+                        ImGui::SetCursorPos(ImVec2(curPos.x + offsetX, curPos.y + offsetY));
+                        ImGui::Image((ImTextureID)(uintptr_t)thumbTex, ImVec2(renderW, renderH));
+                        ImGui::SetCursorPos(curPos);
+                        ImGui::Dummy(ImVec2(boxW, containerH));
                     } else {
                         ImDrawList* drawList = ImGui::GetWindowDrawList();
                         ImVec2 pMin = ImGui::GetCursorScreenPos();
-                        ImVec2 pMax = ImVec2(pMin.x + boxW, pMin.y + boxH);
+                        ImVec2 pMax = ImVec2(pMin.x + boxW, pMin.y + containerH);
                         drawList->AddRectFilled(pMin, pMax, IM_COL32(30, 33, 36, 255), 4.0f * scale);
                         drawList->AddRect(pMin, pMax, IM_COL32(50, 55, 60, 200), 4.0f * scale);
 
-                        ImGui::Dummy(ImVec2(boxW, boxH));
-                        ImVec2 centerText(pMin.x + boxW * 0.5f - 16.0f * scale, pMin.y + boxH * 0.5f - 10.0f * scale);
+                        ImGui::Dummy(ImVec2(boxW, containerH));
+                        ImVec2 centerText(pMin.x + boxW * 0.5f - 16.0f * scale, pMin.y + containerH * 0.5f - 10.0f * scale);
                         drawList->AddText(centerText, IM_COL32(140, 145, 160, 255), "SPSC");
                     }
 
-                    ImGui::SetCursorPos(ImVec2(curPos.x, curPos.y + boxH + 6.0f * scale));
+                    ImGui::SetCursorPos(ImVec2(curPos.x, curPos.y + containerH + 4.0f * scale));
 
                     std::string truncatedName = fileName;
                     if (truncatedName.size() > 20) {

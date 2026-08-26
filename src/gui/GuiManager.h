@@ -191,7 +191,10 @@ private:
     bool m_showRecentFilesWindow = false;
     int m_recentSelectedIdx = -1;
     std::unordered_map<std::string, GLuint> m_recentThumbCache;
+    std::unordered_map<std::string, ImVec2> m_recentThumbSizes;
+    std::unordered_map<std::string, std::filesystem::file_time_type> m_recentThumbTimestamps;
     GLuint getRecentFileThumbnail(const std::string& path);
+    void invalidateRecentFileThumbnail(const std::string& path);
     void clearRecentThumbCache();
     void drawRecentFilesWindow(Scene& scene, SculptManager* sculpt, RecentFiles& recentFiles);
 
@@ -261,7 +264,7 @@ public:
     RecentFiles* getRecentFiles() const { return m_recentFiles; }
     bool getShowRecentFilesWindow() const { return m_showRecentFilesWindow; }
     void setShowRecentFilesWindow(bool show) { m_showRecentFilesWindow = show; }
-    std::vector<uint8_t> renderSceneThumbnailPng(const Scene& scene, AngleRenderer& renderer, int w = 256, int h = 256);
+    std::vector<uint8_t> renderSceneThumbnailPng(const Scene& scene, AngleRenderer& renderer, int w = 0, int h = 0);
 
     bool getShowCameraBookmarksPanel() const { return m_showCameraBookmarksPanel; }
     void setShowCameraBookmarksPanel(bool show) { m_showCameraBookmarksPanel = show; }

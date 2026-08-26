@@ -453,6 +453,8 @@ private:
 
     int m_width = 0;
     int m_height = 0;
+    int m_mainViewportWidth = 0;
+    int m_mainViewportHeight = 0;
     float m_dpiScale = 1.0f;
     bool m_showBackground = true;
     bool m_transparentClear = false;

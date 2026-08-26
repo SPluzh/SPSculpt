@@ -208,12 +208,28 @@ bool FileManager::exportMeshes(const std::string& path,
     
     if (ext == Format::PROJECT_EXT || ext == Format::LEGACY_EXT) {
         if (!scene || !renderer || !sculpt) {
-            std::cerr << "Exporting project requires Scene, Renderer, and Sculpt pointers" << std::endl;
+            sculpt_log("[FileManager Export ERROR] Exporting project requires Scene, Renderer, and Sculpt pointers\n");
             return false;
         }
+        sculpt_log("[FileManager Export] Exporting scene to '%s' | Meshes: %zu | Thumbnail size: %zu bytes\n", path.c_str(), meshes.size(), thumbnail.size());
         std::vector<uint8_t> buffer = ExportSGL::exportSGL(meshes, *scene, *renderer, *sculpt, thumbnail);
-        if (buffer.empty()) return false;
-        return writeBinaryFile(path, buffer);
+        if (buffer.empty()) {
+            sculpt_log("[FileManager Export ERROR] ExportSGL returned empty binary buffer!\n");
+            return false;
+        }
+        bool success = writeBinaryFile(path, buffer);
+        if (success) {
+            sculpt_log("[FileManager Export] SUCCESS | Written %zu bytes to '%s'\n", buffer.size(), path.c_str());
+            if (!thumbnail.empty()) {
+                std::string pngPath = path + ".png";
+                if (writeBinaryFile(pngPath, thumbnail)) {
+                    sculpt_log("[FileManager Export] Saved preview image next to project: '%s'\n", pngPath.c_str());
+                }
+            }
+        } else {
+            sculpt_log("[FileManager Export ERROR] Failed to write binary file '%s'\n", path.c_str());
+        }
+        return success;
     }
     
     if (ext == "obj") {

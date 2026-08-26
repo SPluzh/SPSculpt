@@ -2,6 +2,7 @@
 #include "common/Constants.h"
 #include "common/FormatConstants.h"
 #include "common/StringUtils.h"
+#include "common/Logger.h"
 #include <cstring>
 #include <cmath>
 #include <algorithm>
@@ -405,12 +406,17 @@ std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& sc
     }
 
     // Thumbnail (Version >= 16)
-    writer.writeU32(thumbnail.empty() ? 0 : 1);
     if (!thumbnail.empty()) {
+        writer.writeU32(1);
         writer.writeU32(static_cast<uint32_t>(thumbnail.size()));
         writer.writeBytes(thumbnail.data(), thumbnail.size());
+        sculpt_log("[SGL Export] Thumbnail written to project buffer (%zu bytes)\n", thumbnail.size());
+    } else {
+        writer.writeU32(0);
+        sculpt_log("[SGL Export] WARNING | Exporting project without thumbnail (thumbnail vector is empty)\n");
     }
 
+    sculpt_log("[SGL Export] Export completed | Total project binary size: %zu bytes\n", writer.getBuffer().size());
     return writer.getBuffer();
 }
 

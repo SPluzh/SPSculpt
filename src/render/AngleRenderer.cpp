@@ -276,6 +276,8 @@ GLuint AngleRenderer::loadAndCompileProgram(const std::string& vertFile, const s
 bool AngleRenderer::init(int width, int height) {
     m_width = width;
     m_height = height;
+    m_mainViewportWidth = width;
+    m_mainViewportHeight = height;
 
     // Compile Shaders from files
     m_bgProgram = loadAndCompileProgram("background.vert", "background.frag");
@@ -475,6 +477,10 @@ bool AngleRenderer::init(int width, int height) {
 void AngleRenderer::resize(int width, int height, float dpiScale) {
     m_width = width;
     m_height = height;
+    if (!m_isTakingScreenshot) {
+        m_mainViewportWidth = width;
+        m_mainViewportHeight = height;
+    }
     m_dpiScale = dpiScale;
     glViewport(0, 0, width, height);
 
@@ -2954,7 +2960,10 @@ void AngleRenderer::drawReferenceImages(const Scene& scene, const Camera& camera
     glGetIntegerv(GL_VIEWPORT, vp);
     float vpWidth = (float)vp[2];
     float vpHeight = (float)vp[3];
-    float screenAspect = (vpHeight > 0.0f) ? (vpWidth / vpHeight) : 1.0f;
+
+    float refVpWidth = (m_isTakingScreenshot && m_mainViewportWidth > 0) ? (float)m_mainViewportWidth : vpWidth;
+    float refVpHeight = (m_isTakingScreenshot && m_mainViewportHeight > 0) ? (float)m_mainViewportHeight : vpHeight;
+    float screenAspect = (refVpHeight > 0.0f) ? (refVpWidth / refVpHeight) : 1.0f;
 
     for (const auto& img : images) {
         if (!scene.isRefImageRenderVisible(img, viewportIdx) || img.texId == 0) continue;
@@ -2968,7 +2977,7 @@ void AngleRenderer::drawReferenceImages(const Scene& scene, const Camera& camera
             glDisable(GL_DEPTH_TEST);
             glUniform1i(locPinned2D, 1);
             glUniform2f(locOffset, img.offsetX, img.offsetY);
-            float pixelScaleY = (img.height > 0 && vpHeight > 0.0f) ? ((float)img.height / vpHeight) : 1.0f;
+            float pixelScaleY = (img.height > 0 && refVpHeight > 0.0f) ? ((float)img.height / refVpHeight) : 1.0f;
             glUniform1f(locScale, img.scale * pixelScaleY);
             if (locRotation != -1) {
                 glUniform1f(locRotation, -glm::radians(img.rotation));
