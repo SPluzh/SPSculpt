@@ -90,6 +90,7 @@ private:
     bool m_remeshKeepPolyGroups = true;
     bool m_remeshAlignSymmetry = false;
     bool m_animateBookmarks = true;
+    bool m_savePngNextToProject = false;
     bool m_imguiInitialized = false;
     bool m_editPivot = false;
     float m_gizmoSize = 0.10f;
@@ -317,6 +318,9 @@ public:
 
     bool getAnimateBookmarks() const { return m_animateBookmarks; }
     void setAnimateBookmarks(bool val) { m_animateBookmarks = val; }
+
+    bool getSavePngNextToProject() const { return m_savePngNextToProject; }
+    void setSavePngNextToProject(bool val) { m_savePngNextToProject = val; }
 
     float getGizmoSize() const { return m_gizmoSize; }
     void setGizmoSize(float val) { m_gizmoSize = val; }

@@ -203,7 +203,8 @@ bool FileManager::exportMeshes(const std::string& path,
                                const Scene* scene,
                                const AngleRenderer* renderer,
                                const SculptManager* sculpt,
-                               const std::vector<uint8_t>& thumbnail) {
+                               const std::vector<uint8_t>& thumbnail,
+                               bool savePngNextToProject) {
     std::string ext = getExtension(path);
     
     if (ext == Format::PROJECT_EXT || ext == Format::LEGACY_EXT) {
@@ -220,8 +221,14 @@ bool FileManager::exportMeshes(const std::string& path,
         bool success = writeBinaryFile(path, buffer);
         if (success) {
             sculpt_log("[FileManager Export] SUCCESS | Written %zu bytes to '%s'\n", buffer.size(), path.c_str());
-            if (!thumbnail.empty()) {
-                std::string pngPath = path + ".png";
+            if (savePngNextToProject && !thumbnail.empty()) {
+                std::string pngPath = path;
+                size_t dotPos = pngPath.find_last_of('.');
+                if (dotPos != std::string::npos) {
+                    pngPath = pngPath.substr(0, dotPos) + ".png";
+                } else {
+                    pngPath += ".png";
+                }
                 if (writeBinaryFile(pngPath, thumbnail)) {
                     sculpt_log("[FileManager Export] Saved preview image next to project: '%s'\n", pngPath.c_str());
                 }

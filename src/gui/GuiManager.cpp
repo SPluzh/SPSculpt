@@ -377,7 +377,7 @@ void GuiManager::saveScene(Scene& scene, SculptManager* sculpt) {
         sculpt_log("[Save Scene] Saving scene to '%s'...\n", m_currentScenePath.c_str());
         std::vector<uint8_t> thumb = renderSceneThumbnailPng(scene, *m_renderer, 0, 0);
         sculpt_log("[Save Scene] Generated thumbnail size: %zu bytes\n", thumb.size());
-        if (FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer, sculpt, thumb)) {
+        if (FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer, sculpt, thumb, m_savePngNextToProject)) {
             scene.setModified(false);
             invalidateRecentFileThumbnail(m_currentScenePath);
             if (m_recentFiles) {
@@ -403,7 +403,7 @@ void GuiManager::saveSceneAs(Scene& scene, SculptManager* sculpt) {
         sculpt_log("[Save Scene As] Saving scene to '%s'...\n", m_currentScenePath.c_str());
         std::vector<uint8_t> thumb = renderSceneThumbnailPng(scene, *m_renderer, 0, 0);
         sculpt_log("[Save Scene As] Generated thumbnail size: %zu bytes\n", thumb.size());
-        if (FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer, sculpt, thumb)) {
+        if (FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer, sculpt, thumb, m_savePngNextToProject)) {
             scene.setModified(false);
             invalidateRecentFileThumbnail(m_currentScenePath);
             if (m_recentFiles) {
@@ -507,7 +507,12 @@ void GuiManager::exportFile(Scene& scene, SculptManager* sculpt) {
     std::string path = FileDialog::saveFile(FileDialog::getExportFilters(), Format::PROJECT_EXT, "Export File");
     if (!path.empty()) {
         snprintf(m_exportPath, sizeof(m_exportPath), "%s", path.c_str());
-        FileManager::exportMeshes(path, scene.getMeshes(), &scene, m_renderer, sculpt);
+        std::string ext = FileManager::getExtension(path);
+        std::vector<uint8_t> thumb;
+        if (ext == Format::PROJECT_EXT || ext == Format::LEGACY_EXT) {
+            thumb = renderSceneThumbnailPng(scene, *m_renderer, 0, 0);
+        }
+        FileManager::exportMeshes(path, scene.getMeshes(), &scene, m_renderer, sculpt, thumb, m_savePngNextToProject);
     }
 }
 
@@ -4948,6 +4953,7 @@ bool GuiManager::saveSettings(IniFile& ini) {
     ini.setBool(genSec, "fpsLimitEnabled", m_fpsLimitEnabled);
     ini.setInt(genSec, "fpsLimit", m_fpsLimit);
     ini.setBool(genSec, "animateBookmarks", m_animateBookmarks);
+    ini.setBool(genSec, "savePngNextToProject", m_savePngNextToProject);
 
     std::string remeshSec = "Remesh";
     ini.setInt(remeshSec, "resolution", m_remeshResolution);
@@ -5019,6 +5025,7 @@ bool GuiManager::loadSettings(const IniFile& ini) {
             if (m_fpsLimit > 240) m_fpsLimit = 240;
         }
         if (ini.hasKey(genSec, "animateBookmarks")) m_animateBookmarks = ini.getBool(genSec, "animateBookmarks");
+        if (ini.hasKey(genSec, "savePngNextToProject")) m_savePngNextToProject = ini.getBool(genSec, "savePngNextToProject");
     }
 
     std::string remeshSec = "Remesh";
@@ -7838,6 +7845,15 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle the Mesh Statistics HUD (active/total points and FPS) in the bottom-right corner");
                 ImGui::Checkbox("Show Hotkey HUD (Bottom-Left)", &m_showHotkeyHUD);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle the Keyboard Shortcuts HUD overlay in the bottom-left corner");
+
+                ImGui::Spacing();
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Project File Saving");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                ImGui::Checkbox("Save PNG preview image alongside .spsculpt file", &m_savePngNextToProject);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("When saving a .spsculpt project, automatically write a PNG preview image file next to the project file");
 
                 ImGui::EndTabItem();
             }

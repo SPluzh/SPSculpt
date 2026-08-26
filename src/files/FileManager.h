@@ -21,7 +21,8 @@ public:
                              const Scene* scene = nullptr,
                              const AngleRenderer* renderer = nullptr,
                              const SculptManager* sculpt = nullptr,
-                             const std::vector<uint8_t>& thumbnail = {});
+                             const std::vector<uint8_t>& thumbnail = {},
+                             bool savePngNextToProject = false);
 
     static std::string getExtension(const std::string& path);
 };

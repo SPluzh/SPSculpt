@@ -3,9 +3,9 @@
 All notable changes to this project will be documented in this file.
 
 ## [0.2.14]
-- **Recent Files**: Redesigned modal window with compact grid layout, 16:9 thumbnail ratio, optimized card height (148px), and card styling matching Scene Outliner.
-- **Hotkeys**: Added `Ctrl + Shift + O` shortcut to open Recent Files.
-- **Thumbnails**: Fixed `.spsculpt` project thumbnail generation and parsing. Preserved natural viewport aspect ratio (384px-based dynamic resolution) for PNG thumbnail generation without square distortion, added aspect-fit rendering in Recent Files cards, and implemented automatic file modification timestamp tracking to instantly update preview textures upon saving or replacing projects.
+- **Recent Files**: Added Recent Files modal (`Ctrl + Shift + O`) with card grid and 16:9 previews.
+- **Thumbnails**: Preserved viewport aspect ratio for `.spsculpt` thumbnails with auto-refresh on save.
+- **Settings**: Added option in Preferences to save a PNG preview next to `.spsculpt` files.
 
 ## [0.2.13]
 - **glTF Import**: Added vertex welding and dual-index rendering to fix seam cuts and UV stretching.
