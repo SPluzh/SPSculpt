@@ -1154,10 +1154,17 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     glm::vec3 localRayDir = glm::normalize(glm::vec3(invMatrix * glm::vec4(ray.dir, 0.0f)));
 
     BrushType activeBrush = m_currentBrush;
-    if (SDL_GetModState() & KMOD_SHIFT) {
+    bool isMayaNav = (camera.getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
+    bool isCtrl = (SDL_GetModState() & KMOD_CTRL) != 0;
+    bool isAlt = (SDL_GetModState() & KMOD_ALT) != 0;
+    bool isShift = (SDL_GetModState() & KMOD_SHIFT) != 0;
+
+    if (isShift) {
         activeBrush = BRUSH_SMOOTH;
-    } else if ((SDL_GetModState() & KMOD_CTRL) && m_currentBrush != BRUSH_POLYGROUP) {
-        activeBrush = BRUSH_MASK;
+    } else if (isMayaNav ? (isCtrl && !isAlt) : isCtrl) {
+        if (m_currentBrush != BRUSH_POLYGROUP) {
+            activeBrush = BRUSH_MASK;
+        }
     }
     if (activeBrush != m_currentBrush && (activeBrush == BRUSH_SMOOTH || activeBrush == BRUSH_MASK)) {
         m_brushSettings[activeBrush].radius = m_brushSettings[m_currentBrush].radius;
@@ -1251,13 +1258,17 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     m_lastFrameProfile.raycastMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
 
     if (activeBrush == BRUSH_POLYGROUP) {
-        if ((SDL_GetModState() & KMOD_ALT) != 0) {
+        bool isMayaNav = (camera.getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
+        bool isCtrl = (SDL_GetModState() & KMOD_CTRL) != 0;
+        bool isAlt = (SDL_GetModState() & KMOD_ALT) != 0;
+        bool eyedropperMod = isMayaNav ? (isCtrl && isAlt) : isAlt;
+        if (eyedropperMod) {
             if (m_currentIntersectionValid && intersectFaceId != 0xffffffff) {
                 m_activeGroupId = m_polyGroupTool.getGroupAtFace(mesh, intersectFaceId);
                 std::cout << "[PolyGroup] Eyedropper picked Group ID: " << m_activeGroupId << std::endl;
             }
             return;
-        } else if ((SDL_GetModState() & KMOD_CTRL) != 0) {
+        } else if (isCtrl && !eyedropperMod) {
             if (m_currentIntersectionValid && intersectFaceId != 0xffffffff && m_firstStrokeFrame) {
                 m_polyGroupTool.floodFillGroup(mesh, intersectFaceId, m_activeGroupId);
             }
@@ -1337,8 +1348,11 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     std::vector<uint32_t> allAffectedVerts;
 
     if (!pickedVertices.empty()) {
-        bool altPressed = (SDL_GetModState() & KMOD_ALT) != 0;
-        bool negative = getSettings(activeBrush).negative ^ altPressed;
+        bool isMayaNav = (camera.getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
+        bool isCtrl = (SDL_GetModState() & KMOD_CTRL) != 0;
+        bool isAlt = (SDL_GetModState() & KMOD_ALT) != 0;
+        bool invertModifier = isMayaNav ? (isCtrl && isAlt) : isAlt;
+        bool negative = getSettings(activeBrush).negative ^ invertModifier;
 
         if (isGrabBrush) {
             tStage = std::chrono::high_resolution_clock::now();
@@ -2898,7 +2912,12 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             int dragDistY = std::abs(event.button.y - m_mouseDownY);
             bool wasClick = (dragDistX <= 12 && dragDistY <= 12);
 
-            if (wasClick && (m_currentBrush == BRUSH_MASK || (SDL_GetModState() & KMOD_CTRL)) && mesh) {
+            bool isMayaNav = (camera.getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
+            bool ctrlPressed = (SDL_GetModState() & KMOD_CTRL) != 0;
+            bool altPressed = (SDL_GetModState() & KMOD_ALT) != 0;
+            bool isMaskAction = (m_currentBrush == BRUSH_MASK) || (isMayaNav ? (ctrlPressed && !altPressed) : ctrlPressed);
+
+            if (wasClick && isMaskAction && mesh) {
                 sculpt_log("[MaskClick] Ctrl+Click mask action detected. Canceling active click stroke...\n");
                 g_undoManager.cancelSculptStroke();
 
@@ -3242,10 +3261,17 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             
             BrushType activeBrush = m_currentBrush;
             SDL_Keymod mod = SDL_GetModState();
-            if (mod & KMOD_SHIFT) {
+            bool isMayaNav = (camera.getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
+            bool isCtrl = (mod & KMOD_CTRL) != 0;
+            bool isAlt = (mod & KMOD_ALT) != 0;
+            bool isShift = (mod & KMOD_SHIFT) != 0;
+
+            if (isShift) {
                 activeBrush = BRUSH_SMOOTH;
-            } else if ((mod & KMOD_CTRL) && m_currentBrush != BRUSH_POLYGROUP) {
-                activeBrush = BRUSH_MASK;
+            } else if (isMayaNav ? (isCtrl && !isAlt) : isCtrl) {
+                if (m_currentBrush != BRUSH_POLYGROUP) {
+                    activeBrush = BRUSH_MASK;
+                }
             }
             if (activeBrush != m_currentBrush && (activeBrush == BRUSH_SMOOTH || activeBrush == BRUSH_MASK)) {
                 m_brushSettings[activeBrush].radius = m_brushSettings[m_currentBrush].radius;
@@ -3351,11 +3377,12 @@ void SculptManager::processFrame(Scene& scene) {
         if (activeBrush == BRUSH_ARMATURE_SPHERES) {
             m_armatureTool->preUpdate(scene, scene.getCamera(), (float)m_rawMouseX, (float)m_rawMouseY, (mod & KMOD_CTRL) != 0, (mod & KMOD_ALT) != 0);
         }
+        bool isMayaNav = (scene.getCamera().getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
         if ((mod & KMOD_CTRL) && (mod & KMOD_SHIFT)) {
             activeBrush = BRUSH_VISIBILITY;
         } else if (mod & KMOD_SHIFT) {
             activeBrush = BRUSH_SMOOTH;
-        } else if (mod & KMOD_CTRL) {
+        } else if (isMayaNav ? ((mod & KMOD_CTRL) && !(mod & KMOD_ALT)) : (mod & KMOD_CTRL)) {
             activeBrush = BRUSH_MASK;
         }
 

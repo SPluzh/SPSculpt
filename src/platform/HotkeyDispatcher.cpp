@@ -107,8 +107,19 @@ bool HotkeyDispatcher::processEvent(const SDL_Event& event, SculptManager& sculp
 }
 
 void HotkeyDispatcher::updateModifiers(const SDL_Event& event, SculptManager& sculpt, Scene& scene, AngleRenderer* renderer) {
+    bool isMayaNav = (scene.getCamera().getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
+
     if (event.type == SDL_KEYDOWN) {
-        if (event.key.keysym.sym == SDLK_LSHIFT || event.key.keysym.sym == SDLK_RSHIFT) {
+        if (event.key.keysym.sym == SDLK_LALT || event.key.keysym.sym == SDLK_RALT) {
+            if (!m_altActive) {
+                m_altActive = true;
+                if (isMayaNav && m_ctrlActive && !m_shiftActive) {
+                    // In Maya navigation, Ctrl+Alt is Invert Sculpt rather than Masking.
+                    // Restore the active sculpt brush.
+                    sculpt.setBrush(m_prevBrush);
+                }
+            }
+        } else if (event.key.keysym.sym == SDLK_LSHIFT || event.key.keysym.sym == SDLK_RSHIFT) {
             if (!m_shiftActive) {
                 if (!m_ctrlActive) {
                     m_prevBrush = sculpt.getBrush();
@@ -135,8 +146,11 @@ void HotkeyDispatcher::updateModifiers(const SDL_Event& event, SculptManager& sc
             if (!m_ctrlActive) {
                 if (!m_shiftActive) {
                     m_prevBrush = sculpt.getBrush();
-                    sculpt.getSettings(BRUSH_MASK).radius = sculpt.getSettings(m_prevBrush).radius;
-                    sculpt.setBrush(BRUSH_MASK);
+                    // In Maya mode: if Alt is already held, Ctrl+Alt is Invert Sculpt, not Mask.
+                    if (!(isMayaNav && m_altActive)) {
+                        sculpt.getSettings(BRUSH_MASK).radius = sculpt.getSettings(m_prevBrush).radius;
+                        sculpt.setBrush(BRUSH_MASK);
+                    }
                 } else {
                     sculpt.getSettings(BRUSH_VISIBILITY).radius = sculpt.getSettings(m_prevBrush).radius;
                     sculpt.setBrush(BRUSH_VISIBILITY);
@@ -156,12 +170,25 @@ void HotkeyDispatcher::updateModifiers(const SDL_Event& event, SculptManager& sc
             }
         }
     } else if (event.type == SDL_KEYUP) {
-        if (event.key.keysym.sym == SDLK_LSHIFT || event.key.keysym.sym == SDLK_RSHIFT) {
+        if (event.key.keysym.sym == SDLK_LALT || event.key.keysym.sym == SDLK_RALT) {
+            if (m_altActive) {
+                m_altActive = false;
+                if (isMayaNav && m_ctrlActive && !m_shiftActive) {
+                    // Releasing Alt while Ctrl is still held returns to Masking in Maya mode
+                    sculpt.getSettings(BRUSH_MASK).radius = sculpt.getSettings(m_prevBrush).radius;
+                    sculpt.setBrush(BRUSH_MASK);
+                }
+            }
+        } else if (event.key.keysym.sym == SDLK_LSHIFT || event.key.keysym.sym == SDLK_RSHIFT) {
             if (m_shiftActive) {
                 m_shiftActive = false;
                 if (m_ctrlActive) {
-                    sculpt.getSettings(BRUSH_MASK).radius = sculpt.getSettings(m_prevBrush).radius;
-                    sculpt.setBrush(BRUSH_MASK);
+                    if (isMayaNav && m_altActive) {
+                        sculpt.setBrush(m_prevBrush);
+                    } else {
+                        sculpt.getSettings(BRUSH_MASK).radius = sculpt.getSettings(m_prevBrush).radius;
+                        sculpt.setBrush(BRUSH_MASK);
+                    }
                 } else {
                     sculpt.setBrush(m_prevBrush);
                 }
@@ -188,9 +215,10 @@ void HotkeyDispatcher::updateModifiers(const SDL_Event& event, SculptManager& sc
 }
 
 void HotkeyDispatcher::resetModifiers(SculptManager& sculpt, AngleRenderer* renderer) {
-    if (m_ctrlActive || m_shiftActive) {
+    if (m_ctrlActive || m_shiftActive || m_altActive) {
         m_ctrlActive = false;
         m_shiftActive = false;
+        m_altActive = false;
         sculpt.setBrush(m_prevBrush);
     }
     if (m_polyGroupsTemporarilyEnabled) {

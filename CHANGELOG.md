@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [0.2.19]
 - **Viewport Navigation**: Added Maya (`Alt + Mouse`) and Blender (`MMB`) navigation styles alongside default ZBrush controls.
+- **Maya Navigation**: Resolved `Alt + LMB` orbit conflict by remapping alternative sculpting (negative brush mode) and PolyGroup eyedropper to `Ctrl + Alt + LMB` on mesh.
 - **Preferences**: Added navigation preset selector with keybind hints in Preferences (`Camera & Viewport`).
 
 ## [0.2.18]

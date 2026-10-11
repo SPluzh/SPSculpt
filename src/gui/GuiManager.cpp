@@ -6375,7 +6375,10 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
 
         // 2. Alt Button & Brush Settings Toggle Button (Side by side below Active Tool Button)
         bool isAltPhysicallyPressed = ImGui::GetIO().KeyAlt || ((SDL_GetModState() & KMOD_ALT) != 0);
-        bool isAltActive = isAltPhysicallyPressed || sculpt.getNegative();
+        bool isCtrlPhysicallyPressed = ImGui::GetIO().KeyCtrl || ((SDL_GetModState() & KMOD_CTRL) != 0);
+        bool isMayaNav = (scene.getCamera().getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
+        bool isAltModifierActive = isMayaNav ? (isCtrlPhysicallyPressed && isAltPhysicallyPressed) : isAltPhysicallyPressed;
+        bool isAltActive = isAltModifierActive || sculpt.getNegative();
 
         if (isAltActive) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
@@ -6387,7 +6390,11 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             sculpt.toggleNegative();
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Invert Brush Mode (Alt)");
+            if (isMayaNav) {
+                ImGui::SetTooltip("Invert Brush Mode (Ctrl+Alt / N)");
+            } else {
+                ImGui::SetTooltip("Invert Brush Mode (Alt / N)");
+            }
         }
 
         if (isAltActive) {
@@ -8031,7 +8038,7 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                 if (camera.getNavigationStyle() == CameraEnums::NavigationStyle::ZBRUSH) {
                     ImGui::TextWrapped("Controls: RMB = Orbit (Shift to snap), Alt+RMB / MMB = Pan, Ctrl+RMB / Wheel = Zoom, Shift+MMB = Rotate Light, Alt+LMB = Select SubTool.");
                 } else if (camera.getNavigationStyle() == CameraEnums::NavigationStyle::MAYA) {
-                    ImGui::TextWrapped("Controls: Alt+LMB = Orbit, Alt+MMB = Pan, Alt+RMB / Wheel = Zoom, Ctrl+Shift+MMB = Rotate Light, Ctrl+Alt+LMB = Select SubTool.");
+                    ImGui::TextWrapped("Controls: Alt+LMB = Orbit, Alt+MMB = Pan, Alt+RMB / Wheel = Zoom, Ctrl+Shift+MMB = Rotate Light, Ctrl+Alt+LMB = Invert Sculpt / Select SubTool.");
                 } else if (camera.getNavigationStyle() == CameraEnums::NavigationStyle::BLENDER) {
                     ImGui::TextWrapped("Controls: MMB = Orbit, Shift+MMB = Pan, Ctrl+MMB / Wheel = Zoom, Ctrl+Shift+MMB = Rotate Light, Alt+LMB = Select SubTool.");
                 }

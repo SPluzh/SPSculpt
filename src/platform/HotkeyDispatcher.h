@@ -109,6 +109,7 @@ private:
     BrushType m_prevBrush = BRUSH_FLATTEN;
     bool m_shiftActive = false;
     bool m_ctrlActive = false;
+    bool m_altActive = false;
     bool m_polyGroupsTemporarilyEnabled = false;
     bool m_prevPolyGroupsState = false;
 };
