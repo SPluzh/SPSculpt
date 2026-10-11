@@ -1,4 +1,5 @@
 #include "editing/CameraController.h"
+#include "platform/HotkeyManager.h"
 #include "mesh/Mesh.h"
 #include "mesh/Octree.h"
 #include "scene/Scene.h"
@@ -124,7 +125,29 @@ void CameraController::startDrag(DragMode mode, int mouseX, int mouseY, Camera& 
     }
 }
 
+bool CameraController::isNavigationEvent(const SDL_Event& e, bool isRef2D) const {
+    if (m_drag != DragMode::None) {
+        if (e.type == SDL_MOUSEMOTION || e.type == SDL_MOUSEBUTTONUP) {
+            return true;
+        }
+    }
+
+    if (e.type == SDL_MOUSEWHEEL) {
+        return true;
+    }
+
+    if (m_manager) {
+        return m_manager->isNavigationEvent(e, isRef2D);
+    }
+
+    return isNavigationEvent(e, CameraEnums::NavigationStyle::ZBRUSH);
+}
+
 bool CameraController::isNavigationEvent(const SDL_Event& e, CameraEnums::NavigationStyle style) const {
+    if (m_manager) {
+        return isNavigationEvent(e, false);
+    }
+
     if (m_drag != DragMode::None) {
         if (e.type == SDL_MOUSEMOTION || e.type == SDL_MOUSEBUTTONUP) {
             return true;
@@ -311,17 +334,62 @@ void CameraController::handleEventBlender(const SDL_Event& e, Camera& camera, co
 
 void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std::vector<Mesh*>& meshes, bool animate, Scene* scene, AngleRenderer* renderer) {
     if (e.type == SDL_MOUSEBUTTONDOWN) {
-        switch (camera.getNavigationStyle()) {
-            case CameraEnums::NavigationStyle::MAYA:
-                handleEventMaya(e, camera, meshes, animate, scene, renderer);
-                break;
-            case CameraEnums::NavigationStyle::BLENDER:
-                handleEventBlender(e, camera, meshes, animate, scene, renderer);
-                break;
-            case CameraEnums::NavigationStyle::ZBRUSH:
-            default:
-                handleEventZBrush(e, camera, meshes, animate, scene, renderer);
-                break;
+        if (m_manager) {
+            bool isRef2D = camera.getRef2DMode();
+            bool ctrl = (SDL_GetModState() & KMOD_CTRL) != 0;
+            bool alt = (SDL_GetModState() & KMOD_ALT) != 0;
+            bool shift = (SDL_GetModState() & KMOD_SHIFT) != 0;
+            bool doubleClick = (e.button.clicks >= 2);
+
+            NavAction act = m_manager->lookupMouseNavAction(e.button.button, ctrl, alt, shift, doubleClick, isRef2D);
+            switch (act) {
+                case NavAction::ResetView2D:
+                    camera.resetView2D();
+                    stopDrag(&camera);
+                    return;
+                case NavAction::ResetView:
+                    camera.resetView();
+                    stopDrag(&camera);
+                    return;
+                case NavAction::Orbit:
+                    startDrag(DragMode::Orbit, e.button.x, e.button.y, camera, meshes, e.button.button);
+                    return;
+                case NavAction::Pan:
+                    startDrag(DragMode::Pan, e.button.x, e.button.y, camera, meshes, e.button.button);
+                    return;
+                case NavAction::Zoom:
+                    startDrag(DragMode::Zoom, e.button.x, e.button.y, camera, meshes, e.button.button);
+                    return;
+                case NavAction::Roll:
+                    if (camera.getMode() != CameraEnums::CameraMode::ORBIT) {
+                        startDrag(DragMode::Roll, e.button.x, e.button.y, camera, meshes, e.button.button);
+                    }
+                    return;
+                case NavAction::RotateLight:
+                    startDrag(DragMode::RotateLight, e.button.x, e.button.y, camera, meshes, e.button.button);
+                    return;
+                case NavAction::Pan2D:
+                    startDrag(DragMode::Pan2D, e.button.x, e.button.y, camera, meshes, e.button.button);
+                    return;
+                case NavAction::Zoom2D:
+                    startDrag(DragMode::Zoom2D, e.button.x, e.button.y, camera, meshes, e.button.button);
+                    return;
+                default:
+                    break;
+            }
+        } else {
+            switch (camera.getNavigationStyle()) {
+                case CameraEnums::NavigationStyle::MAYA:
+                    handleEventMaya(e, camera, meshes, animate, scene, renderer);
+                    break;
+                case CameraEnums::NavigationStyle::BLENDER:
+                    handleEventBlender(e, camera, meshes, animate, scene, renderer);
+                    break;
+                case CameraEnums::NavigationStyle::ZBRUSH:
+                default:
+                    handleEventZBrush(e, camera, meshes, animate, scene, renderer);
+                    break;
+            }
         }
     } else if (e.type == SDL_MOUSEBUTTONUP) {
         if (m_drag != DragMode::None) {

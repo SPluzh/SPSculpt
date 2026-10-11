@@ -101,6 +101,17 @@ bool IniFile::hasKey(const std::string& section, const std::string& key) const {
     return secIt->second.find(key) != secIt->second.end();
 }
 
+const std::vector<std::string>& IniFile::getKeys(const std::string& section) const {
+    static const std::vector<std::string> s_empty;
+    auto it = m_keyOrder.find(section);
+    if (it != m_keyOrder.end()) return it->second;
+    return s_empty;
+}
+
+const std::vector<std::string>& IniFile::getSections() const {
+    return m_sectionOrder;
+}
+
 std::string IniFile::get(const std::string& section, const std::string& key, const std::string& defaultVal) const {
     auto secIt = m_data.find(section);
     if (secIt == m_data.end()) return defaultVal;

@@ -4,83 +4,9 @@
 #include "scene/Scene.h"
 #include "gui/GuiManager.h"
 
-enum class HKAction {
-    // Tools
-    ToolPaint = 0,
-    ToolBrush,
-    ToolInflate,
-    ToolTwist,
-    ToolVTool,
-    ToolTransform,
-    ToolSmooth,
-    ToolFlatten,
-    ToolPinch,
-    ToolCrease,
-    ToolDrag,
-    ToolMove,
-    ToolClayBuildup,
-    ToolDamStandard,
-    ToolTopology,
-    
-    // Sculpting Parameters
-    BrushIntensity,        // A (modal)
-    BrushRadius,           // S (modal)
-    BrushFocalShift,       // D (modal)
-    BrushNegative,         // N (toggle)
-    BrushPicker,           // I (toggle)
-    ToggleSymmetry,        // Alt+X (toggle)
-    RemeshResolution,      // X (modal)
-    TopologyDetail,        // Z (modal)
-    DeleteSelected,        // Del
-    
-    // Camera / Viewport
-    CameraFov,             // G (modal)
-    CameraProjection,      // P (toggle Perspective/Ortho)
-    CameraFrame,           // F (focus on mesh)
-    CameraLeft,            // L
-    CameraReset,           // Space
-    CameraUndo,            // Alt+Z
-    CameraRedo,            // Alt+Shift+Z
-    
-    // Camera Bookmarks
-    ApplyBookmark1,
-    ApplyBookmark2,
-    ApplyBookmark3,
-    ApplyBookmark4,
-    ApplyBookmark5,
-    ApplyBookmark6,
-    ApplyBookmark7,
-    ApplyBookmark8,
-    ApplyBookmark9,
-    
-    // Strife Camera (Arrow keys)
-    StrifeLeft,            // Left
-    StrifeRight,           // Right
-    StrifeUp,              // Up
-    StrifeDown,            // Down
-    
-    // Scene / Files
-    DuplicateSelection,    // Ctrl+D
-    ClearScene,            // Ctrl+Alt+N
-    Undo,                  // Ctrl+Z
-    Redo,                  // Ctrl+Y or Ctrl+Shift+Z
-    OpenFile,              // Ctrl+O
-    OpenRecentFile,        // Ctrl+Shift+O
-    SaveFile,              // Ctrl+S
-    SaveFileAs,            // Ctrl+Shift+S
-    ExportOBJ,             // Ctrl+E
-    ToggleDyntopo,         // Ctrl+T
-    RunRemesh,             // Ctrl+X
-    
-    // Misc
-    ToggleOutliner,        // F1
-    ToggleCameraBookmarks, // F2
-    OpenContextPopup,
-    SoloSelected,          // C
-    ToggleRefImagesVisible,// Shift+Z
-    ToggleRefEditMode,     // Z
-    None
-};
+#include "platform/HotkeyPreset.h"
+
+class HotkeyManager;
 
 
 class AngleRenderer;
@@ -101,10 +27,14 @@ public:
 
     ModalMode getModalMode() const { return m_modalMode; }
 
+    void setHotkeyManager(HotkeyManager* manager) { m_manager = manager; }
+    HotkeyManager* getHotkeyManager() const { return m_manager; }
+
 private:
     HKAction mapKeyToAction(const SDL_Keysym& keysym, bool ctrlPressed, bool altPressed, bool shiftPressed);
     bool executeAction(HKAction action, bool isDown, SculptManager& sculpt, Scene& scene, GuiManager& gui);
 
+    HotkeyManager* m_manager = nullptr;
     ModalMode m_modalMode = ModalMode::NONE;
     BrushType m_prevBrush = BRUSH_FLATTEN;
     bool m_shiftActive = false;

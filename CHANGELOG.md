@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.20]
+- **Hotkeys & Presets**: Added fully customizable keyboard and mouse shortcuts with built-in **ZBrush**, **Maya**, and **Blender** presets, plus custom `.preset` profile support.
+- **Virtual Keyboard**: Added an interactive on-screen keyboard in Preferences (`Hotkeys` tab) to visually view, inspect, and reassign keys across modifier layers.
+- **Conflict Detection & Search**: Added real-time shortcut conflict warnings and instant search across all actions and tools.
+
 ## [0.2.19]
 - **Viewport Navigation**: Added Maya (`Alt + Mouse`) and Blender (`MMB`) navigation styles alongside default ZBrush controls.
 - **Maya Navigation**: Resolved `Alt + LMB` orbit conflict by remapping alternative sculpting (negative brush mode) and PolyGroup eyedropper to `Ctrl + Alt + LMB` on mesh.

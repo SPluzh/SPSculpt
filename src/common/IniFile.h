@@ -25,6 +25,9 @@ public:
     bool hasSection(const std::string& section) const;
     bool hasKey(const std::string& section, const std::string& key) const;
 
+    const std::vector<std::string>& getKeys(const std::string& section) const;
+    const std::vector<std::string>& getSections() const;
+
 private:
     std::vector<std::string> m_sectionOrder;
     std::unordered_map<std::string, std::vector<std::string>> m_keyOrder;

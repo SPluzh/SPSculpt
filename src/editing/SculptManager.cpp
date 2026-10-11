@@ -1,4 +1,5 @@
 #include "editing/SculptManager.h"
+#include "platform/HotkeyManager.h"
 #include "common/IniFile.h"
 #include "brushes/BrushPresetManager.h"
 #include "sculpt/SculptEngine.h"
@@ -1154,7 +1155,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     glm::vec3 localRayDir = glm::normalize(glm::vec3(invMatrix * glm::vec4(ray.dir, 0.0f)));
 
     BrushType activeBrush = m_currentBrush;
-    bool isMayaNav = (camera.getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
+    bool isMayaNav = m_hotkeyManager ? m_hotkeyManager->getModifierBehavior().ctrlAltInvertsBrush : (camera.getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
     bool isCtrl = (SDL_GetModState() & KMOD_CTRL) != 0;
     bool isAlt = (SDL_GetModState() & KMOD_ALT) != 0;
     bool isShift = (SDL_GetModState() & KMOD_SHIFT) != 0;
@@ -1258,7 +1259,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     m_lastFrameProfile.raycastMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
 
     if (activeBrush == BRUSH_POLYGROUP) {
-        bool isMayaNav = (camera.getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
+        bool isMayaNav = m_hotkeyManager ? m_hotkeyManager->getModifierBehavior().ctrlAltInvertsBrush : (camera.getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
         bool isCtrl = (SDL_GetModState() & KMOD_CTRL) != 0;
         bool isAlt = (SDL_GetModState() & KMOD_ALT) != 0;
         bool eyedropperMod = isMayaNav ? (isCtrl && isAlt) : isAlt;
@@ -1348,7 +1349,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     std::vector<uint32_t> allAffectedVerts;
 
     if (!pickedVertices.empty()) {
-        bool isMayaNav = (camera.getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
+        bool isMayaNav = m_hotkeyManager ? m_hotkeyManager->getModifierBehavior().ctrlAltInvertsBrush : (camera.getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
         bool isCtrl = (SDL_GetModState() & KMOD_CTRL) != 0;
         bool isAlt = (SDL_GetModState() & KMOD_ALT) != 0;
         bool invertModifier = isMayaNav ? (isCtrl && isAlt) : isAlt;
@@ -1862,7 +1863,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
         m_mouseDownY = mouseY;
 
         // Check if event is handled by camera navigation preset
-        if (m_cameraController.isNavigationEvent(event, camera.getNavigationStyle())) {
+        if (m_cameraController.isNavigationEvent(event, camera.getRef2DMode())) {
             m_cameraController.handleEvent(event, camera, scene.getMeshes(), true, &scene, m_renderer);
             return;
         }
@@ -1874,9 +1875,9 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             }
             SDL_Keymod mod = SDL_GetModState();
 
-            // In Maya mode: Alt+LMB is camera orbit, SubTool pick is Ctrl+Alt+LMB (Variant B)
-            // In ZBrush / Blender mode: SubTool pick is Alt+LMB (without Ctrl)
-            bool isSubToolSelect = (camera.getNavigationStyle() == CameraEnums::NavigationStyle::MAYA)
+            // Check if SubTool selection is triggered based on preset modifier behavior
+            bool ctrlAltSubTool = m_hotkeyManager ? m_hotkeyManager->getModifierBehavior().ctrlAltSubToolSelect : (camera.getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
+            bool isSubToolSelect = ctrlAltSubTool
                 ? (((mod & KMOD_ALT) != 0) && ((mod & KMOD_CTRL) != 0))
                 : (((mod & KMOD_ALT) != 0) && ((mod & KMOD_CTRL) == 0));
 
@@ -2912,7 +2913,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             int dragDistY = std::abs(event.button.y - m_mouseDownY);
             bool wasClick = (dragDistX <= 12 && dragDistY <= 12);
 
-            bool isMayaNav = (camera.getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
+            bool isMayaNav = m_hotkeyManager ? m_hotkeyManager->getModifierBehavior().ctrlAltInvertsBrush : (camera.getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
             bool ctrlPressed = (SDL_GetModState() & KMOD_CTRL) != 0;
             bool altPressed = (SDL_GetModState() & KMOD_ALT) != 0;
             bool isMaskAction = (m_currentBrush == BRUSH_MASK) || (isMayaNav ? (ctrlPressed && !altPressed) : ctrlPressed);
@@ -3261,7 +3262,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             
             BrushType activeBrush = m_currentBrush;
             SDL_Keymod mod = SDL_GetModState();
-            bool isMayaNav = (camera.getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
+            bool isMayaNav = m_hotkeyManager ? m_hotkeyManager->getModifierBehavior().ctrlAltInvertsBrush : (camera.getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
             bool isCtrl = (mod & KMOD_CTRL) != 0;
             bool isAlt = (mod & KMOD_ALT) != 0;
             bool isShift = (mod & KMOD_SHIFT) != 0;
@@ -3377,7 +3378,7 @@ void SculptManager::processFrame(Scene& scene) {
         if (activeBrush == BRUSH_ARMATURE_SPHERES) {
             m_armatureTool->preUpdate(scene, scene.getCamera(), (float)m_rawMouseX, (float)m_rawMouseY, (mod & KMOD_CTRL) != 0, (mod & KMOD_ALT) != 0);
         }
-        bool isMayaNav = (scene.getCamera().getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
+        bool isMayaNav = m_hotkeyManager ? m_hotkeyManager->getModifierBehavior().ctrlAltInvertsBrush : (scene.getCamera().getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
         if ((mod & KMOD_CTRL) && (mod & KMOD_SHIFT)) {
             activeBrush = BRUSH_VISIBILITY;
         } else if (mod & KMOD_SHIFT) {

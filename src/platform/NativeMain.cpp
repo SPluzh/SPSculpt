@@ -32,6 +32,7 @@
 #include "editing/SculptManager.h"
 #include "gui/GuiManager.h"
 #include "platform/HotkeyDispatcher.h"
+#include "platform/HotkeyManager.h"
 #include "render/RenderSettings.h"
 #include "common/IniFile.h"
 #include "common/RecentFiles.h"
@@ -474,6 +475,39 @@ int main(int argc, char* argv[]) {
     gui.setRenderer(&renderer);
     sculpt.setRenderer(&renderer);
     HotkeyDispatcher dispatcher;
+    HotkeyManager hotkeyManager;
+    hotkeyManager.init();
+
+    // Legacy migration: if older app_settings has Camera.cameraNavigationStyle and no Hotkeys.activePreset
+    if (appSettings.hasKey("Camera", "cameraNavigationStyle") && !appSettings.hasKey("Hotkeys", "activePreset")) {
+        int oldStyle = appSettings.getInt("Camera", "cameraNavigationStyle", 0);
+        if (oldStyle == 1) {
+            hotkeyManager.setActivePreset("Maya");
+        } else if (oldStyle == 2) {
+            hotkeyManager.setActivePreset("Blender");
+        } else {
+            hotkeyManager.setActivePreset("ZBrush");
+        }
+    } else {
+        hotkeyManager.loadActivePresetName(appSettings);
+    }
+
+    // Sync camera navigation style with active preset
+    {
+        const std::string& name = hotkeyManager.getActivePreset().name;
+        CameraEnums::NavigationStyle syncStyle = CameraEnums::NavigationStyle::ZBRUSH;
+        if (name == "Maya") syncStyle = CameraEnums::NavigationStyle::MAYA;
+        else if (name == "Blender") syncStyle = CameraEnums::NavigationStyle::BLENDER;
+        scene.getCamera().setNavigationStyle(syncStyle);
+        for (int cIdx = 0; cIdx < 2; ++cIdx) {
+            Camera* cam = scene.getCameraByIndex(cIdx);
+            if (cam) cam->setNavigationStyle(syncStyle);
+        }
+    }
+
+    dispatcher.setHotkeyManager(&hotkeyManager);
+    sculpt.setHotkeyManager(&hotkeyManager);
+    gui.setHotkeyManager(&hotkeyManager);
 
     if (!fileToOpen.empty()) {
         std::cout << "Opening file from command line parameter: " << fileToOpen << std::endl;
@@ -657,6 +691,12 @@ int main(int argc, char* argv[]) {
 
                 ImGui_ImplSDL2_ProcessEvent(&event);
 
+                if (gui.isCapturingHotkey()) {
+                    if (gui.handleCapturedKeyEvent(eventCopy)) {
+                        continue;
+                    }
+                }
+
                 bool handledByHotkey = dispatcher.processEvent(eventCopy, sculpt, scene, gui, &renderer);
 
                 if (!handledByHotkey) {
@@ -666,9 +706,9 @@ int main(int argc, char* argv[]) {
                     // Prioritize ImGuizmo over camera orbit when hovering/interacting with the gizmo
                     if (sculpt.getBrush() == BRUSH_TRANSFORM && (ImGuizmo::IsOver() || ImGuizmo::IsUsing())) {
                         if (!sculpt.getCameraController().isDragging()) {
-                            bool isCameraEvent = sculpt.getCameraController().isNavigationEvent(eventCopy, scene.getCamera().getNavigationStyle());
+                            bool isCameraEvent = sculpt.getCameraController().isNavigationEvent(eventCopy, scene.getCamera().getRef2DMode());
                             bool isAltClickSettingPivot = (eventCopy.type == SDL_MOUSEBUTTONDOWN && eventCopy.button.button == SDL_BUTTON_LEFT &&
-                                ((scene.getCamera().getNavigationStyle() == CameraEnums::NavigationStyle::MAYA)
+                                (hotkeyManager.getModifierBehavior().ctrlAltSubToolSelect
                                     ? (((SDL_GetModState() & KMOD_ALT) != 0) && ((SDL_GetModState() & KMOD_CTRL) != 0))
                                     : (((SDL_GetModState() & KMOD_ALT) != 0) && ((SDL_GetModState() & KMOD_CTRL) == 0)))
                                 && !ImGuizmo::IsUsing());
@@ -682,10 +722,10 @@ int main(int argc, char* argv[]) {
                         // Never skip mouse events if the camera controller is actively dragging/navigating,
                         // otherwise mouse up or mouse motion events will be swallowed by ImGui and lock navigation state.
                         if (!sculpt.getCameraController().isDragging()) {
-                            bool isCameraEvent = sculpt.getCameraController().isNavigationEvent(eventCopy, scene.getCamera().getNavigationStyle());
+                            bool isCameraEvent = sculpt.getCameraController().isNavigationEvent(eventCopy, scene.getCamera().getRef2DMode());
                             
                             bool isAltClickSettingPivot = (sculpt.getBrush() == BRUSH_TRANSFORM && eventCopy.type == SDL_MOUSEBUTTONDOWN && eventCopy.button.button == SDL_BUTTON_LEFT &&
-                                ((scene.getCamera().getNavigationStyle() == CameraEnums::NavigationStyle::MAYA)
+                                (hotkeyManager.getModifierBehavior().ctrlAltSubToolSelect
                                     ? (((SDL_GetModState() & KMOD_ALT) != 0) && ((SDL_GetModState() & KMOD_CTRL) != 0))
                                     : (((SDL_GetModState() & KMOD_ALT) != 0) && ((SDL_GetModState() & KMOD_CTRL) == 0)))
                                 && !ImGuizmo::IsUsing());
@@ -704,7 +744,7 @@ int main(int argc, char* argv[]) {
                     }
                     if (gui.getTimelapsePlayer().isOpen()) {
                         skipSculpt = true;
-                        bool isCameraEvent = sculpt.getCameraController().isNavigationEvent(eventCopy, scene.getCamera().getNavigationStyle());
+                        bool isCameraEvent = sculpt.getCameraController().isNavigationEvent(eventCopy, scene.getCamera().getRef2DMode());
                         bool isMotionAndDragging = (eventCopy.type == SDL_MOUSEMOTION || eventCopy.type == SDL_MOUSEBUTTONUP) &&
                                                    sculpt.getCameraController().isDragging();
 
@@ -906,6 +946,8 @@ int main(int argc, char* argv[]) {
     RenderSettings::save(saveApp, renderer, scene);
     sculpt.saveSettings(saveApp);
     gui.saveSettings(saveApp);
+    hotkeyManager.saveActivePresetName(saveApp);
+    hotkeyManager.saveAll();
     recentFiles.saveToIni(saveApp);
     saveApp.save("app_settings.cfg");
 

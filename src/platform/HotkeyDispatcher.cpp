@@ -1,4 +1,5 @@
 #include "platform/HotkeyDispatcher.h"
+#include "platform/HotkeyManager.h"
 #include "platform/FileDialog.h"
 #include "files/FileManager.h"
 #include "render/AngleRenderer.h"
@@ -106,16 +107,42 @@ bool HotkeyDispatcher::processEvent(const SDL_Event& event, SculptManager& sculp
     return false;
 }
 
+static BrushType hkActionToBrushType(HKAction act, BrushType fallback) {
+    switch (act) {
+        case HKAction::ToolPaint: return BRUSH_PAINT;
+        case HKAction::ToolBrush: return BRUSH_BRUSH;
+        case HKAction::ToolInflate: return BRUSH_INFLATE;
+        case HKAction::ToolTwist: return BRUSH_TWIST;
+        case HKAction::ToolVTool: return BRUSH_VTOOL;
+        case HKAction::ToolTransform: return BRUSH_TRANSFORM;
+        case HKAction::ToolSmooth: return BRUSH_SMOOTH;
+        case HKAction::ToolFlatten: return BRUSH_FLATTEN;
+        case HKAction::ToolPinch: return BRUSH_PINCH;
+        case HKAction::ToolCrease: return BRUSH_CREASE;
+        case HKAction::ToolDrag: return BRUSH_DRAG;
+        case HKAction::ToolMove: return BRUSH_MOVE;
+        case HKAction::ToolClayBuildup: return BRUSH_CLAYBUILDUP;
+        case HKAction::ToolDamStandard: return BRUSH_DAMSTANDARD;
+        case HKAction::ToolMask: return BRUSH_MASK;
+        case HKAction::ToolVisibility: return BRUSH_VISIBILITY;
+        default: return fallback;
+    }
+}
+
 void HotkeyDispatcher::updateModifiers(const SDL_Event& event, SculptManager& sculpt, Scene& scene, AngleRenderer* renderer) {
-    bool isMayaNav = (scene.getCamera().getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
+    const ModifierBehavior& mb = m_manager ? m_manager->getModifierBehavior() : ModifierBehavior{};
+    bool ctrlAltInverts = mb.ctrlAltInvertsBrush;
+    BrushType shiftBrush = hkActionToBrushType(mb.shiftHoldAction, BRUSH_SMOOTH);
+    BrushType ctrlBrush = hkActionToBrushType(mb.ctrlHoldAction, BRUSH_MASK);
+    BrushType ctrlShiftBrush = hkActionToBrushType(mb.ctrlShiftHoldAction, BRUSH_VISIBILITY);
 
     if (event.type == SDL_KEYDOWN) {
         if (event.key.keysym.sym == SDLK_LALT || event.key.keysym.sym == SDLK_RALT) {
             if (!m_altActive) {
                 m_altActive = true;
-                if (isMayaNav && m_ctrlActive && !m_shiftActive) {
-                    // In Maya navigation, Ctrl+Alt is Invert Sculpt rather than Masking.
-                    // Restore the active sculpt brush.
+                if (ctrlAltInverts && m_ctrlActive && !m_shiftActive) {
+                    // When Ctrl+Alt inverts sculpt rather than masks (e.g. Maya mode),
+                    // restore the active sculpt brush.
                     sculpt.setBrush(m_prevBrush);
                 }
             }
@@ -123,11 +150,11 @@ void HotkeyDispatcher::updateModifiers(const SDL_Event& event, SculptManager& sc
             if (!m_shiftActive) {
                 if (!m_ctrlActive) {
                     m_prevBrush = sculpt.getBrush();
-                    sculpt.getSettings(BRUSH_SMOOTH).radius = sculpt.getSettings(m_prevBrush).radius;
-                    sculpt.setBrush(BRUSH_SMOOTH);
+                    sculpt.getSettings(shiftBrush).radius = sculpt.getSettings(m_prevBrush).radius;
+                    sculpt.setBrush(shiftBrush);
                 } else {
-                    sculpt.getSettings(BRUSH_VISIBILITY).radius = sculpt.getSettings(m_prevBrush).radius;
-                    sculpt.setBrush(BRUSH_VISIBILITY);
+                    sculpt.getSettings(ctrlShiftBrush).radius = sculpt.getSettings(m_prevBrush).radius;
+                    sculpt.setBrush(ctrlShiftBrush);
                     Mesh* selected = scene.getSelected();
                     if (selected && renderer) {
                         auto groupIDs = sculpt.getPolyGroupTool().getAllGroupIDs(selected);
@@ -146,14 +173,14 @@ void HotkeyDispatcher::updateModifiers(const SDL_Event& event, SculptManager& sc
             if (!m_ctrlActive) {
                 if (!m_shiftActive) {
                     m_prevBrush = sculpt.getBrush();
-                    // In Maya mode: if Alt is already held, Ctrl+Alt is Invert Sculpt, not Mask.
-                    if (!(isMayaNav && m_altActive)) {
-                        sculpt.getSettings(BRUSH_MASK).radius = sculpt.getSettings(m_prevBrush).radius;
-                        sculpt.setBrush(BRUSH_MASK);
+                    // If Alt is already held and Ctrl+Alt inverts, do not switch to Mask.
+                    if (!(ctrlAltInverts && m_altActive)) {
+                        sculpt.getSettings(ctrlBrush).radius = sculpt.getSettings(m_prevBrush).radius;
+                        sculpt.setBrush(ctrlBrush);
                     }
                 } else {
-                    sculpt.getSettings(BRUSH_VISIBILITY).radius = sculpt.getSettings(m_prevBrush).radius;
-                    sculpt.setBrush(BRUSH_VISIBILITY);
+                    sculpt.getSettings(ctrlShiftBrush).radius = sculpt.getSettings(m_prevBrush).radius;
+                    sculpt.setBrush(ctrlShiftBrush);
                     Mesh* selected = scene.getSelected();
                     if (selected && renderer) {
                         auto groupIDs = sculpt.getPolyGroupTool().getAllGroupIDs(selected);
@@ -173,21 +200,21 @@ void HotkeyDispatcher::updateModifiers(const SDL_Event& event, SculptManager& sc
         if (event.key.keysym.sym == SDLK_LALT || event.key.keysym.sym == SDLK_RALT) {
             if (m_altActive) {
                 m_altActive = false;
-                if (isMayaNav && m_ctrlActive && !m_shiftActive) {
-                    // Releasing Alt while Ctrl is still held returns to Masking in Maya mode
-                    sculpt.getSettings(BRUSH_MASK).radius = sculpt.getSettings(m_prevBrush).radius;
-                    sculpt.setBrush(BRUSH_MASK);
+                if (ctrlAltInverts && m_ctrlActive && !m_shiftActive) {
+                    // Releasing Alt while Ctrl is held returns to Masking
+                    sculpt.getSettings(ctrlBrush).radius = sculpt.getSettings(m_prevBrush).radius;
+                    sculpt.setBrush(ctrlBrush);
                 }
             }
         } else if (event.key.keysym.sym == SDLK_LSHIFT || event.key.keysym.sym == SDLK_RSHIFT) {
             if (m_shiftActive) {
                 m_shiftActive = false;
                 if (m_ctrlActive) {
-                    if (isMayaNav && m_altActive) {
+                    if (ctrlAltInverts && m_altActive) {
                         sculpt.setBrush(m_prevBrush);
                     } else {
-                        sculpt.getSettings(BRUSH_MASK).radius = sculpt.getSettings(m_prevBrush).radius;
-                        sculpt.setBrush(BRUSH_MASK);
+                        sculpt.getSettings(ctrlBrush).radius = sculpt.getSettings(m_prevBrush).radius;
+                        sculpt.setBrush(ctrlBrush);
                     }
                 } else {
                     sculpt.setBrush(m_prevBrush);
@@ -197,8 +224,8 @@ void HotkeyDispatcher::updateModifiers(const SDL_Event& event, SculptManager& sc
             if (m_ctrlActive) {
                 m_ctrlActive = false;
                 if (m_shiftActive) {
-                    sculpt.getSettings(BRUSH_SMOOTH).radius = sculpt.getSettings(m_prevBrush).radius;
-                    sculpt.setBrush(BRUSH_SMOOTH);
+                    sculpt.getSettings(shiftBrush).radius = sculpt.getSettings(m_prevBrush).radius;
+                    sculpt.setBrush(shiftBrush);
                 } else {
                     sculpt.setBrush(m_prevBrush);
                 }
@@ -230,97 +257,15 @@ void HotkeyDispatcher::resetModifiers(SculptManager& sculpt, AngleRenderer* rend
 }
 
 HKAction HotkeyDispatcher::mapKeyToAction(const SDL_Keysym& keysym, bool ctrlPressed, bool altPressed, bool shiftPressed) {
-    SDL_Keycode sym = keysym.sym;
-    
-    // Check Ctrl combinations
-    if (ctrlPressed) {
-        if (altPressed && sym == SDLK_n) return HKAction::ClearScene;
-        if (sym == SDLK_z) {
-            if (shiftPressed) return HKAction::Redo;
-            return HKAction::Undo;
-        }
-        if (sym == SDLK_s) {
-            if (shiftPressed) return HKAction::SaveFileAs;
-            return HKAction::SaveFile;
-        }
-        if (sym == SDLK_y) return HKAction::Redo;
-        if (sym == SDLK_d) return HKAction::DuplicateSelection;
-        if (sym == SDLK_o) {
-            if (shiftPressed) return HKAction::OpenRecentFile;
-            return HKAction::OpenFile;
-        }
-        if (sym == SDLK_e) return HKAction::ExportOBJ;
-        if (sym == SDLK_t) return HKAction::ToggleDyntopo;
-        if (sym == SDLK_x) return HKAction::RunRemesh;
-        if (sym == SDLK_1) return HKAction::ApplyBookmark1;
-        if (sym == SDLK_2) return HKAction::ApplyBookmark2;
-        if (sym == SDLK_3) return HKAction::ApplyBookmark3;
-        if (sym == SDLK_4) return HKAction::ApplyBookmark4;
-        if (sym == SDLK_5) return HKAction::ApplyBookmark5;
-        if (sym == SDLK_6) return HKAction::ApplyBookmark6;
-        if (sym == SDLK_7) return HKAction::ApplyBookmark7;
-        if (sym == SDLK_8) return HKAction::ApplyBookmark8;
-        if (sym == SDLK_9) return HKAction::ApplyBookmark9;
+    if (m_manager) {
+        return m_manager->lookupKeyAction(keysym.sym, ctrlPressed, altPressed, shiftPressed);
     }
-    
-    // Check Alt combinations
-    if (altPressed) {
-        if (sym == SDLK_x) return HKAction::ToggleSymmetry;
-        if (sym == SDLK_z) {
-            if (shiftPressed) return HKAction::CameraRedo;
-            return HKAction::CameraUndo;
+    static HotkeyPreset s_fallbackPreset = HotkeyPreset::createZBrush();
+    for (const auto& [action, binding] : s_fallbackPreset.keyBindings) {
+        if (binding.matches(keysym.sym, ctrlPressed, altPressed, shiftPressed)) {
+            return action;
         }
     }
-    
-    // Normal keys
-    switch (sym) {
-        case SDLK_0: return HKAction::ToolPaint;
-        case SDLK_1: return HKAction::ToolInflate;
-        case SDLK_2: return HKAction::ToolFlatten;
-        case SDLK_3: return HKAction::ToolVTool;
-        case SDLK_4: return HKAction::ToolTransform;
-        case SDLK_5: return HKAction::ToolSmooth;
-        case SDLK_6: return HKAction::ToolBrush;
-        case SDLK_7: return HKAction::ToolPinch;
-        case SDLK_8: return HKAction::ToolCrease;
-        case SDLK_9: return HKAction::ToolDrag;
-        
-        case SDLK_q: return HKAction::ToolMove;
-        case SDLK_w: return HKAction::ToolClayBuildup;
-        case SDLK_e: return HKAction::ToolDamStandard;
-        case SDLK_r: return HKAction::ToolPinch;
-        case SDLK_t: return HKAction::ToolTopology;
-        
-        case SDLK_a: return HKAction::BrushIntensity;
-        case SDLK_s: return HKAction::BrushRadius;
-        case SDLK_d: return HKAction::BrushFocalShift;
-        case SDLK_n: return HKAction::BrushNegative;
-        case SDLK_i: return HKAction::BrushPicker;
-        case SDLK_x: return HKAction::RemeshResolution;
-        case SDLK_z:
-            if (shiftPressed && !ctrlPressed && !altPressed) return HKAction::ToggleRefImagesVisible;
-            if (!ctrlPressed && !altPressed && !shiftPressed) return HKAction::ToggleRefEditMode;
-            return HKAction::None;
-        
-        case SDLK_DELETE: return HKAction::DeleteSelected;
-        
-        case SDLK_g: return HKAction::CameraFov;
-        case SDLK_p: return HKAction::CameraProjection;
-        case SDLK_f: return HKAction::CameraFrame;
-        case SDLK_l: return HKAction::CameraLeft;
-        
-        case SDLK_LEFT: return HKAction::StrifeLeft;
-        case SDLK_RIGHT: return HKAction::StrifeRight;
-        case SDLK_UP: return HKAction::StrifeUp;
-        case SDLK_DOWN: return HKAction::StrifeDown;
-        
-        case SDLK_c: return HKAction::SoloSelected;
-        case SDLK_F1: return HKAction::ToggleOutliner;
-        case SDLK_F2: return HKAction::ToggleCameraBookmarks;
-        
-        default: break;
-    }
-    
     return HKAction::None;
 }
 
@@ -343,9 +288,12 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
             case HKAction::ToolTwist: sculpt.setBrush(BRUSH_TWIST); break;
             case HKAction::ToolVTool: sculpt.setBrush(BRUSH_VTOOL); break;
             case HKAction::ToolTransform: sculpt.setBrush(BRUSH_TRANSFORM); break;
+            case HKAction::ToolMask: sculpt.setBrush(BRUSH_MASK); break;
+            case HKAction::ToolVisibility: sculpt.setBrush(BRUSH_VISIBILITY); break;
             
             case HKAction::BrushNegative: sculpt.toggleNegative(); break;
             case HKAction::ToggleSymmetry: sculpt.setUseSym(!sculpt.getUseSym()); break;
+            case HKAction::BrushPicker: sculpt.getSettings(BRUSH_PAINT).pickColor = !sculpt.getSettings(BRUSH_PAINT).pickColor; break;
             
             case HKAction::BrushIntensity: {
                 if (m_modalMode != ModalMode::INTENSITY) {
@@ -464,6 +412,7 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
             case HKAction::StrifeDown: scene.getCamera().translate(0.0f, -10.0f); break;
             
             case HKAction::ClearScene: scene.clear(); break;
+            case HKAction::DuplicateSelection: scene.duplicateSelection(); break;
             case HKAction::Undo:
                 sculpt_log_lvl(LogLevel::Info, "[Hotkey] Undo action triggered by key shortcut\n");
                 scene.undo();

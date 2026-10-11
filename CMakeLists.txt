@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(SPSculpt VERSION 0.2.17 LANGUAGES CXX)
+project(SPSculpt VERSION 0.2.20 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 
 
@@ -119,6 +119,8 @@ add_executable(SPSculpt
     # gui
     src/gui/GuiManager.cpp
     # platform
+    src/platform/HotkeyPreset.cpp
+    src/platform/HotkeyManager.cpp
     src/platform/HotkeyDispatcher.cpp
     src/platform/TabletInput.cpp
     src/platform/FileDialog.cpp

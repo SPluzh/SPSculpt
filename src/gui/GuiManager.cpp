@@ -1,6 +1,7 @@
 #include <GLES3/gl3.h>
 #include <future>
 #include "gui/GuiManager.h"
+#include "platform/HotkeyManager.h"
 #include "common/IniFile.h"
 #include "mesh/Multimesh.h"
 #include "mesh/NormalCalc.h"
@@ -5099,10 +5100,18 @@ bool GuiManager::saveSettings(IniFile& ini) {
     ini.setFloat(undoSec, "maxMemoryGB", (float)g_undoManager.getMaxMemoryGB());
     ini.setInt(undoSec, "maxEntries", (int)g_undoManager.getMaxEntries());
 
+    if (m_hotkeyManager) {
+        m_hotkeyManager->saveActivePresetName(ini);
+    }
+
     return true;
 }
 
 bool GuiManager::loadSettings(const IniFile& ini) {
+    if (m_hotkeyManager) {
+        m_hotkeyManager->loadActivePresetName(ini);
+    }
+
     std::string panelSec = "Panels";
     if (ini.hasSection(panelSec)) {
         if (ini.hasKey(panelSec, "showToolbar")) m_showToolbar = ini.getBool(panelSec, "showToolbar");
@@ -6376,7 +6385,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         // 2. Alt Button & Brush Settings Toggle Button (Side by side below Active Tool Button)
         bool isAltPhysicallyPressed = ImGui::GetIO().KeyAlt || ((SDL_GetModState() & KMOD_ALT) != 0);
         bool isCtrlPhysicallyPressed = ImGui::GetIO().KeyCtrl || ((SDL_GetModState() & KMOD_CTRL) != 0);
-        bool isMayaNav = (scene.getCamera().getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
+        bool isMayaNav = m_hotkeyManager ? m_hotkeyManager->getModifierBehavior().ctrlAltInvertsBrush : (scene.getCamera().getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
         bool isAltModifierActive = isMayaNav ? (isCtrlPhysicallyPressed && isAltPhysicallyPressed) : isAltPhysicallyPressed;
         bool isAltActive = isAltModifierActive || sculpt.getNegative();
 
@@ -8024,14 +8033,39 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                     camera.setMode((CameraEnums::CameraMode)currentMode);
                 }
 
-                const char* navStyles[] = { "ZBrush Style", "Maya Style", "Blender Style" };
-                int currentNav = static_cast<int>(camera.getNavigationStyle());
-                if (ImGui::Combo("Navigation Preset", &currentNav, navStyles, IM_ARRAYSIZE(navStyles))) {
-                    auto newStyle = static_cast<CameraEnums::NavigationStyle>(currentNav);
-                    camera.setNavigationStyle(newStyle);
-                    for (int cIdx = 0; cIdx < 2; ++cIdx) {
-                        Camera* cam = scene.getCameraByIndex(cIdx);
-                        if (cam) cam->setNavigationStyle(newStyle);
+                if (m_hotkeyManager) {
+                    const auto& presets = m_hotkeyManager->getPresets();
+                    int activeIdx = m_hotkeyManager->getActivePresetIndex();
+                    std::vector<const char*> presetNames;
+                    for (const auto& p : presets) {
+                        presetNames.push_back(p.name.c_str());
+                    }
+                    if (ImGui::Combo("Hotkey & Nav Preset", &activeIdx, presetNames.data(), (int)presetNames.size())) {
+                        m_hotkeyManager->setActivePresetIndex(activeIdx);
+                        const std::string& name = m_hotkeyManager->getActivePreset().name;
+                        CameraEnums::NavigationStyle syncStyle = CameraEnums::NavigationStyle::ZBRUSH;
+                        if (name == "Maya") syncStyle = CameraEnums::NavigationStyle::MAYA;
+                        else if (name == "Blender") syncStyle = CameraEnums::NavigationStyle::BLENDER;
+                        camera.setNavigationStyle(syncStyle);
+                        for (int cIdx = 0; cIdx < 2; ++cIdx) {
+                            Camera* cam = scene.getCameraByIndex(cIdx);
+                            if (cam) cam->setNavigationStyle(syncStyle);
+                        }
+                    }
+                    if (ImGui::Button("Customize Hotkeys & Keyboard...")) {
+                        m_showPreferencesPanel = true;
+                        m_preferencesActiveTab = 7;
+                    }
+                } else {
+                    const char* navStyles[] = { "ZBrush Style", "Maya Style", "Blender Style" };
+                    int currentNav = static_cast<int>(camera.getNavigationStyle());
+                    if (ImGui::Combo("Navigation Preset", &currentNav, navStyles, IM_ARRAYSIZE(navStyles))) {
+                        auto newStyle = static_cast<CameraEnums::NavigationStyle>(currentNav);
+                        camera.setNavigationStyle(newStyle);
+                        for (int cIdx = 0; cIdx < 2; ++cIdx) {
+                            Camera* cam = scene.getCameraByIndex(cIdx);
+                            if (cam) cam->setNavigationStyle(newStyle);
+                        }
                     }
                 }
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.75f, 0.8f, 1.0f));
@@ -9274,6 +9308,13 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
             }
 #endif
 
+            // 8. Hotkeys & Navigation Tab
+            ImGuiTabItemFlags hotkeysTabFlags = (m_preferencesActiveTab == 7) ? ImGuiTabItemFlags_SetSelected : 0;
+            if (ImGui::BeginTabItem("Hotkeys", nullptr, hotkeysTabFlags)) {
+                drawHotkeysTab(scene, sculpt);
+                ImGui::EndTabItem();
+            }
+
             if (m_preferencesActiveTab >= 0) {
                 m_preferencesActiveTab = -1;
             }
@@ -9289,6 +9330,10 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
             IniFile ini;
             saveSettings(ini);
             sculpt.saveSettings(ini);
+            if (m_hotkeyManager) {
+                m_hotkeyManager->saveActivePresetName(ini);
+                m_hotkeyManager->saveAll();
+            }
             ini.save("app_settings.cfg");
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save settings to app_settings.cfg");
@@ -9299,6 +9344,697 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
         }
     }
     ImGui::End();
+}
+
+bool GuiManager::handleCapturedKeyEvent(const SDL_Event& e) {
+    if (m_capturingAction == HKAction::None || !m_hotkeyManager) return false;
+
+    if (e.type == SDL_KEYDOWN) {
+        SDL_Keycode sym = e.key.keysym.sym;
+
+        if (sym == SDLK_ESCAPE) {
+            m_capturingAction = HKAction::None;
+            return true;
+        }
+
+        if ((sym == SDLK_BACKSPACE || sym == SDLK_DELETE) &&
+            (e.key.keysym.mod & (KMOD_CTRL | KMOD_ALT | KMOD_SHIFT)) == 0) {
+            auto& preset = m_hotkeyManager->getActivePreset();
+            preset.keyBindings.erase(m_capturingAction);
+            m_capturingAction = HKAction::None;
+            return true;
+        }
+
+        if (sym == SDLK_LCTRL || sym == SDLK_RCTRL ||
+            sym == SDLK_LALT || sym == SDLK_RALT ||
+            sym == SDLK_LSHIFT || sym == SDLK_RSHIFT ||
+            sym == SDLK_LGUI || sym == SDLK_RGUI) {
+            return true;
+        }
+
+        bool ctrl = (e.key.keysym.mod & KMOD_CTRL) != 0;
+        bool alt = (e.key.keysym.mod & KMOD_ALT) != 0;
+        bool shift = (e.key.keysym.mod & KMOD_SHIFT) != 0;
+
+        auto& preset = m_hotkeyManager->getActivePreset();
+        preset.keyBindings[m_capturingAction] = { sym, ctrl, alt, shift };
+        m_capturingAction = HKAction::None;
+        return true;
+    }
+
+    return false;
+}
+
+struct KeyVisual {
+    const char* label;
+    float x, y, width;
+    SDL_Keycode keycode;
+};
+
+static const KeyVisual s_keyboardLayout[] = {
+    // Row 0 (Function Keys)
+    { "Esc", 0.0f, 0.0f, 1.2f, SDLK_ESCAPE },
+    { "F1", 1.8f, 0.0f, 1.0f, SDLK_F1 },
+    { "F2", 2.9f, 0.0f, 1.0f, SDLK_F2 },
+    { "F3", 4.0f, 0.0f, 1.0f, SDLK_F3 },
+    { "F4", 5.1f, 0.0f, 1.0f, SDLK_F4 },
+    { "F5", 6.5f, 0.0f, 1.0f, SDLK_F5 },
+    { "F6", 7.6f, 0.0f, 1.0f, SDLK_F6 },
+    { "F7", 8.7f, 0.0f, 1.0f, SDLK_F7 },
+    { "F8", 9.8f, 0.0f, 1.0f, SDLK_F8 },
+    { "F9", 11.2f, 0.0f, 1.0f, SDLK_F9 },
+    { "F10", 12.3f, 0.0f, 1.0f, SDLK_F10 },
+    { "F11", 13.4f, 0.0f, 1.0f, SDLK_F11 },
+    { "F12", 14.5f, 0.0f, 1.0f, SDLK_F12 },
+    { "Del", 15.8f, 0.0f, 1.2f, SDLK_DELETE },
+
+    // Row 1 (Numbers)
+    { "`", 0.0f, 1.15f, 1.0f, SDLK_BACKQUOTE },
+    { "1", 1.05f, 1.15f, 1.0f, SDLK_1 },
+    { "2", 2.10f, 1.15f, 1.0f, SDLK_2 },
+    { "3", 3.15f, 1.15f, 1.0f, SDLK_3 },
+    { "4", 4.20f, 1.15f, 1.0f, SDLK_4 },
+    { "5", 5.25f, 1.15f, 1.0f, SDLK_5 },
+    { "6", 6.30f, 1.15f, 1.0f, SDLK_6 },
+    { "7", 7.35f, 1.15f, 1.0f, SDLK_7 },
+    { "8", 8.40f, 1.15f, 1.0f, SDLK_8 },
+    { "9", 9.45f, 1.15f, 1.0f, SDLK_9 },
+    { "0", 10.50f, 1.15f, 1.0f, SDLK_0 },
+    { "-", 11.55f, 1.15f, 1.0f, SDLK_MINUS },
+    { "=", 12.60f, 1.15f, 1.0f, SDLK_EQUALS },
+    { "Bksp", 13.65f, 1.15f, 3.35f, SDLK_BACKSPACE },
+
+    // Row 2 (QWERTY)
+    { "Tab", 0.0f, 2.20f, 1.5f, SDLK_TAB },
+    { "Q", 1.55f, 2.20f, 1.0f, SDLK_q },
+    { "W", 2.60f, 2.20f, 1.0f, SDLK_w },
+    { "E", 3.65f, 2.20f, 1.0f, SDLK_e },
+    { "R", 4.70f, 2.20f, 1.0f, SDLK_r },
+    { "T", 5.75f, 2.20f, 1.0f, SDLK_t },
+    { "Y", 6.80f, 2.20f, 1.0f, SDLK_y },
+    { "U", 7.85f, 2.20f, 1.0f, SDLK_u },
+    { "I", 8.90f, 2.20f, 1.0f, SDLK_i },
+    { "O", 9.95f, 2.20f, 1.0f, SDLK_o },
+    { "P", 11.00f, 2.20f, 1.0f, SDLK_p },
+    { "[", 12.05f, 2.20f, 1.0f, SDLK_LEFTBRACKET },
+    { "]", 13.10f, 2.20f, 1.0f, SDLK_RIGHTBRACKET },
+    { "\\", 14.15f, 2.20f, 2.85f, SDLK_BACKSLASH },
+
+    // Row 3 (ASDF)
+    { "Caps", 0.0f, 3.25f, 1.8f, SDLK_CAPSLOCK },
+    { "A", 1.85f, 3.25f, 1.0f, SDLK_a },
+    { "S", 2.90f, 3.25f, 1.0f, SDLK_s },
+    { "D", 3.95f, 3.25f, 1.0f, SDLK_d },
+    { "F", 5.00f, 3.25f, 1.0f, SDLK_f },
+    { "G", 6.05f, 3.25f, 1.0f, SDLK_g },
+    { "H", 7.10f, 3.25f, 1.0f, SDLK_h },
+    { "J", 8.15f, 3.25f, 1.0f, SDLK_j },
+    { "K", 9.20f, 3.25f, 1.0f, SDLK_k },
+    { "L", 10.25f, 3.25f, 1.0f, SDLK_l },
+    { ";", 11.30f, 3.25f, 1.0f, SDLK_SEMICOLON },
+    { "'", 12.35f, 3.25f, 1.0f, SDLK_QUOTE },
+    { "Enter", 13.40f, 3.25f, 3.60f, SDLK_RETURN },
+
+    // Row 4 (ZXCV)
+    { "Shift", 0.0f, 4.30f, 2.3f, SDLK_LSHIFT },
+    { "Z", 2.35f, 4.30f, 1.0f, SDLK_z },
+    { "X", 3.40f, 4.30f, 1.0f, SDLK_x },
+    { "C", 4.45f, 4.30f, 1.0f, SDLK_c },
+    { "V", 5.50f, 4.30f, 1.0f, SDLK_v },
+    { "B", 6.55f, 4.30f, 1.0f, SDLK_b },
+    { "N", 7.60f, 4.30f, 1.0f, SDLK_n },
+    { "M", 8.65f, 4.30f, 1.0f, SDLK_m },
+    { ",", 9.70f, 4.30f, 1.0f, SDLK_COMMA },
+    { ".", 10.75f, 4.30f, 1.0f, SDLK_PERIOD },
+    { "/", 11.80f, 4.30f, 1.0f, SDLK_SLASH },
+    { "Up", 14.50f, 4.30f, 1.0f, SDLK_UP },
+    { "RShift", 15.55f, 4.30f, 1.45f, SDLK_RSHIFT },
+
+    // Row 5 (Space / Arrows)
+    { "Ctrl", 0.0f, 5.35f, 1.5f, SDLK_LCTRL },
+    { "Alt", 1.55f, 5.35f, 1.5f, SDLK_LALT },
+    { "Space", 3.10f, 5.35f, 6.3f, SDLK_SPACE },
+    { "RAlt", 9.45f, 5.35f, 1.5f, SDLK_RALT },
+    { "RCtrl", 11.00f, 5.35f, 1.5f, SDLK_RCTRL },
+    { "Left", 13.45f, 5.35f, 1.0f, SDLK_LEFT },
+    { "Down", 14.50f, 5.35f, 1.0f, SDLK_DOWN },
+    { "Right", 15.55f, 5.35f, 1.0f, SDLK_RIGHT }
+};
+
+void GuiManager::drawVirtualKeyboard(ImDrawList* dl, ImVec2 origin, float scale, const HotkeyPreset& preset) {
+    float keyUnitSize = 36.0f * scale;
+    float keySpacing = 3.0f * scale;
+    float keyRounding = 4.0f * scale;
+
+    bool layerCtrl = (m_keyboardModifierLayer == 1 || m_keyboardModifierLayer == 4 || m_keyboardModifierLayer == 5);
+    bool layerAlt = (m_keyboardModifierLayer == 2 || m_keyboardModifierLayer == 5);
+    bool layerShift = (m_keyboardModifierLayer == 3 || m_keyboardModifierLayer == 4);
+
+    ImVec2 mousePos = ImGui::GetIO().MousePos;
+    const KeyVisual* hoveredKey = nullptr;
+    std::vector<const HKActionInfo*> hoveredActions;
+
+    for (const auto& kv : s_keyboardLayout) {
+        ImVec2 pos = ImVec2(origin.x + kv.x * (keyUnitSize + keySpacing),
+                            origin.y + kv.y * (keyUnitSize + keySpacing));
+        ImVec2 size = ImVec2(kv.width * keyUnitSize + (kv.width - 1.0f) * keySpacing, keyUnitSize);
+
+        std::vector<const HKActionInfo*> matchedActions;
+        for (const auto& [action, binding] : preset.keyBindings) {
+            if (binding.matches(kv.keycode, layerCtrl, layerAlt, layerShift)) {
+                const auto* info = getHKActionInfo(action);
+                if (info) matchedActions.push_back(info);
+            }
+        }
+
+        ImU32 fillColor = IM_COL32(36, 40, 48, 255);
+        ImU32 textColor = IM_COL32(185, 192, 205, 255);
+        ImU32 actionColor = IM_COL32(230, 240, 255, 255);
+        const char* shortName = "";
+
+        if (matchedActions.size() > 1) {
+            fillColor = IM_COL32(185, 30, 30, 255);
+            shortName = "!";
+            actionColor = IM_COL32(255, 255, 100, 255);
+        } else if (matchedActions.size() == 1) {
+            if (matchedActions[0]->isModal) {
+                fillColor = IM_COL32(190, 110, 15, 255);
+            } else {
+                fillColor = IM_COL32(0, 120, 110, 255);
+            }
+            shortName = matchedActions[0]->shortName;
+        }
+
+        bool isHovered = (mousePos.x >= pos.x && mousePos.x <= pos.x + size.x &&
+                          mousePos.y >= pos.y && mousePos.y <= pos.y + size.y);
+
+        if (isHovered) {
+            hoveredKey = &kv;
+            hoveredActions = matchedActions;
+            fillColor = ImColor(std::min(1.0f, ImColor(fillColor).Value.x * 1.3f),
+                                std::min(1.0f, ImColor(fillColor).Value.y * 1.3f),
+                                std::min(1.0f, ImColor(fillColor).Value.z * 1.3f), 1.0f);
+
+            if (ImGui::IsMouseClicked(0)) {
+                m_selectedVirtualKey = kv.keycode;
+            }
+            if (ImGui::IsMouseDoubleClicked(0) && !matchedActions.empty()) {
+                m_capturingAction = matchedActions[0]->action;
+            }
+        }
+
+        dl->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y), fillColor, keyRounding);
+
+        ImU32 borderColor = IM_COL32(65, 70, 80, 255);
+        float borderThickness = 1.0f;
+        if (kv.keycode == m_selectedVirtualKey) {
+            borderColor = IM_COL32(255, 255, 255, 255);
+            borderThickness = 2.0f;
+        } else if (isHovered) {
+            borderColor = IM_COL32(140, 210, 255, 255);
+            borderThickness = 1.5f;
+        }
+        dl->AddRect(pos, ImVec2(pos.x + size.x, pos.y + size.y), borderColor, keyRounding, 0, borderThickness);
+
+        ImVec2 labelPos = ImVec2(pos.x + 4.0f * scale, pos.y + 3.0f * scale);
+        dl->AddText(labelPos, textColor, kv.label);
+
+        if (shortName && shortName[0] != '\0') {
+            ImVec2 txtSz = ImGui::CalcTextSize(shortName);
+            ImVec2 actPos = ImVec2(pos.x + size.x - txtSz.x - 3.0f * scale,
+                                   pos.y + size.y - txtSz.y - 2.0f * scale);
+            dl->AddText(actPos, actionColor, shortName);
+        }
+    }
+
+    if (hoveredKey) {
+        ImGui::BeginTooltip();
+        ImGui::TextColored(ImVec4(0.3f, 0.9f, 1.0f, 1.0f), "Key: %s", hoveredKey->label);
+        if (hoveredActions.empty()) {
+            ImGui::TextDisabled("Status: Free (unassigned in this modifier layer)");
+            ImGui::TextDisabled("Click to select, or click an action below to bind");
+        } else if (hoveredActions.size() == 1) {
+            const auto* info = hoveredActions[0];
+            ImGui::Text("Action: %s [%s]", info->displayName, info->category);
+            if (info->isModal) {
+                ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f), "Type: Modal (hold and drag mouse to adjust)");
+            }
+            ImGui::TextDisabled("Double-click key to reassign");
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "⚠ CONFLICT: %d actions bound to this key combination:", (int)hoveredActions.size());
+            for (const auto* info : hoveredActions) {
+                ImGui::BulletText("%s (%s)", info->displayName, info->category);
+            }
+        }
+        ImGui::EndTooltip();
+    }
+}
+
+void GuiManager::drawHotkeysTab(Scene& scene, SculptManager& sculpt) {
+    if (!m_hotkeyManager) {
+        ImGui::TextDisabled("HotkeyManager not initialized.");
+        return;
+    }
+
+    float scale = getUiScale();
+    auto& preset = m_hotkeyManager->getActivePreset();
+
+    // 1. Preset Management Bar
+    ImGui::Spacing();
+    ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Active Hotkey & Navigation Preset");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    const auto& presets = m_hotkeyManager->getPresets();
+    int activeIdx = m_hotkeyManager->getActivePresetIndex();
+    std::vector<const char*> presetNames;
+    for (const auto& p : presets) {
+        presetNames.push_back(p.name.c_str());
+    }
+
+    ImGui::SetNextItemWidth(200.0f * scale);
+    if (ImGui::Combo("Preset", &activeIdx, presetNames.data(), (int)presetNames.size())) {
+        m_hotkeyManager->setActivePresetIndex(activeIdx);
+        // Sync camera navigation style for built-in parity
+        const std::string& name = m_hotkeyManager->getActivePreset().name;
+        CameraEnums::NavigationStyle syncStyle = CameraEnums::NavigationStyle::ZBRUSH;
+        if (name == "Maya") syncStyle = CameraEnums::NavigationStyle::MAYA;
+        else if (name == "Blender") syncStyle = CameraEnums::NavigationStyle::BLENDER;
+        scene.getCamera().setNavigationStyle(syncStyle);
+        for (int cIdx = 0; cIdx < 2; ++cIdx) {
+            Camera* cam = scene.getCameraByIndex(cIdx);
+            if (cam) cam->setNavigationStyle(syncStyle);
+        }
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Duplicate Preset")) {
+        snprintf(m_newPresetNameBuf, sizeof(m_newPresetNameBuf), "Copy of %s", preset.name.c_str());
+        m_showNewPresetDialog = true;
+    }
+
+    ImGui::SameLine();
+    bool canDelete = !preset.isBuiltin;
+    if (!canDelete) ImGui::BeginDisabled();
+    if (ImGui::Button("Delete Preset")) {
+        m_hotkeyManager->removePreset(preset.name);
+    }
+    if (!canDelete) {
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("Built-in presets cannot be deleted");
+        }
+    }
+
+    ImGui::SameLine();
+    if (preset.isBuiltin) {
+        if (ImGui::Button("Reset to Defaults")) {
+            m_hotkeyManager->resetPresetToDefault(preset.name);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Revert this preset to factory default bindings");
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Export...")) {
+        std::vector<FileDialog::FilterSpec> filters = { {"Hotkey Preset (*.preset)", "*.preset"} };
+        std::string path = FileDialog::saveFile(filters, "preset", "Export Hotkey Preset");
+        if (!path.empty()) {
+            preset.saveToFile(path);
+        }
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Import...")) {
+        std::vector<FileDialog::FilterSpec> filters = { {"Hotkey Preset (*.preset)", "*.preset"} };
+        std::string path = FileDialog::openFile(filters, "Import Hotkey Preset");
+        if (!path.empty()) {
+            HotkeyPreset imported;
+            if (imported.loadFromFile(path)) {
+                m_hotkeyManager->addPreset(imported);
+                m_hotkeyManager->setActivePreset(imported.name);
+            }
+        }
+    }
+
+    // Modal popup for creating/duplicating a preset
+    if (m_showNewPresetDialog) {
+        ImGui::OpenPopup("Duplicate Preset##dialog");
+        m_showNewPresetDialog = false;
+    }
+    if (ImGui::BeginPopupModal("Duplicate Preset##dialog", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Enter a name for the new preset:");
+        ImGui::InputText("##NewPresetName", m_newPresetNameBuf, sizeof(m_newPresetNameBuf));
+        ImGui::Spacing();
+        if (ImGui::Button("Create", ImVec2(100.0f * scale, 0))) {
+            if (m_newPresetNameBuf[0] != '\0') {
+                m_hotkeyManager->duplicatePreset(preset.name, m_newPresetNameBuf);
+            }
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(100.0f * scale, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    // Conflicts notification
+    auto conflicts = m_hotkeyManager->findConflicts();
+    if (!conflicts.empty()) {
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.9f, 0.2f, 0.2f, 0.8f));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.25f, 0.08f, 0.08f, 0.5f));
+        ImGui::BeginChild("##ConflictBanner", ImVec2(0, 42.0f * scale), true, ImGuiWindowFlags_None);
+        ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "⚠ %d Key Conflict(s) Detected! (Highlighted in Red on keyboard below)", (int)conflicts.size());
+        ImGui::EndChild();
+        ImGui::PopStyleColor(2);
+    }
+
+    // Active key capture notification
+    if (m_capturingAction != HKAction::None) {
+        const auto* capInfo = getHKActionInfo(m_capturingAction);
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0f, 0.8f, 0.1f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.28f, 0.22f, 0.05f, 0.8f));
+        ImGui::BeginChild("##CaptureBanner", ImVec2(0, 42.0f * scale), true, ImGuiWindowFlags_None);
+        ImGui::TextColored(ImVec4(1.0f, 0.95f, 0.2f, 1.0f), "▶ PRESS ANY KEY TO BIND TO '%s' (Esc = Cancel, Backspace = Clear)", capInfo ? capInfo->displayName : "");
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel##capCancel")) {
+            m_capturingAction = HKAction::None;
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleColor(2);
+    }
+
+    // 2. Virtual Keyboard Visualizer
+    ImGui::Spacing();
+    ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Virtual Keyboard & Modifier Layers");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Layer switch buttons
+    ImGui::Text("Modifier Layer: ");
+    ImGui::SameLine();
+    const char* layerNames[] = { "None", "Ctrl", "Alt", "Shift", "Ctrl+Shift", "Ctrl+Alt" };
+    for (int i = 0; i < 6; ++i) {
+        bool isActiveLayer = (m_keyboardModifierLayer == i);
+        if (isActiveLayer) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 1.0f));
+        }
+        if (ImGui::Button(layerNames[i])) {
+            m_keyboardModifierLayer = i;
+        }
+        if (isActiveLayer) {
+            ImGui::PopStyleColor();
+        }
+        ImGui::SameLine();
+    }
+    ImGui::NewLine();
+
+    // Draw keyboard canvas
+    float keyUnitSize = 36.0f * scale;
+    float keySpacing = 3.0f * scale;
+    float kbWidth = 17.1f * (keyUnitSize + keySpacing);
+    float kbHeight = 6.6f * (keyUnitSize + keySpacing);
+
+    ImVec2 origin = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("##VirtualKeyboardCanvas", ImVec2(kbWidth, kbHeight));
+    drawVirtualKeyboard(ImGui::GetWindowDrawList(), origin, scale, preset);
+
+    // Legend
+    ImGui::Spacing();
+    ImGui::Text("Legend: ");
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.0f, 0.75f, 0.68f, 1.0f), "[■ Bound]");
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.95f, 0.60f, 0.15f, 1.0f), "[■ Modal Parameter]");
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.95f, 0.25f, 0.25f, 1.0f), "[■ Conflict]");
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.55f, 0.58f, 0.65f, 1.0f), "[■ Free / Unbound]");
+
+    // Key Inspector bar
+    if (m_selectedVirtualKey != SDLK_UNKNOWN) {
+        bool layerCtrl = (m_keyboardModifierLayer == 1 || m_keyboardModifierLayer == 4 || m_keyboardModifierLayer == 5);
+        bool layerAlt = (m_keyboardModifierLayer == 2 || m_keyboardModifierLayer == 5);
+        bool layerShift = (m_keyboardModifierLayer == 3 || m_keyboardModifierLayer == 4);
+
+        std::vector<HKAction> actionsOnKey;
+        for (const auto& [action, binding] : preset.keyBindings) {
+            if (binding.matches(m_selectedVirtualKey, layerCtrl, layerAlt, layerShift)) {
+                actionsOnKey.push_back(action);
+            }
+        }
+
+        const char* keyName = SDL_GetKeyName(m_selectedVirtualKey);
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.14f, 0.17f, 0.6f));
+        ImGui::BeginChild("##KeyInspector", ImVec2(0, 36.0f * scale), true);
+        ImGui::Text("Selected Key: [%s] | Current Action: ", keyName ? keyName : "Unknown");
+        ImGui::SameLine();
+        if (actionsOnKey.empty()) {
+            ImGui::TextDisabled("Unassigned");
+        } else {
+            for (size_t a = 0; a < actionsOnKey.size(); ++a) {
+                if (a > 0) ImGui::SameLine(), ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "|");
+                const auto* info = getHKActionInfo(actionsOnKey[a]);
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(0.2f, 0.9f, 0.8f, 1.0f), "%s", info ? info->displayName : "");
+                ImGui::SameLine();
+                std::string reassignId = "Reassign##act" + std::to_string((int)actionsOnKey[a]);
+                if (ImGui::SmallButton(reassignId.c_str())) {
+                    m_capturingAction = actionsOnKey[a];
+                }
+                ImGui::SameLine();
+                std::string clearId = "Clear##act" + std::to_string((int)actionsOnKey[a]);
+                if (ImGui::SmallButton(clearId.c_str())) {
+                    preset.keyBindings.erase(actionsOnKey[a]);
+                }
+            }
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+    }
+
+    // 3. Search & Key Bindings List
+    ImGui::Spacing();
+    ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Keyboard Shortcuts Editor");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::SetNextItemWidth(250.0f * scale);
+    ImGui::InputTextWithHint("##HotkeySearchFilter", "Search actions...", m_hotkeySearchFilter, sizeof(m_hotkeySearchFilter));
+
+    std::string searchLower = m_hotkeySearchFilter;
+    std::transform(searchLower.begin(), searchLower.end(), searchLower.begin(), ::tolower);
+
+    const char* categories[] = { "Tools", "Parameters", "Camera", "Bookmarks", "Files", "Misc" };
+    for (const char* cat : categories) {
+        // Collect actions in category
+        std::vector<const HKActionInfo*> catActions;
+        for (const auto& info : getAllHKActions()) {
+            if (strcmp(info.category, cat) != 0) continue;
+
+            if (!searchLower.empty()) {
+                std::string nameLower = info.displayName;
+                std::transform(nameLower.begin(), nameLower.end(), nameLower.begin(), ::tolower);
+                auto it = preset.keyBindings.find(info.action);
+                std::string bindStr = (it != preset.keyBindings.end() && it->second.isValid()) ? it->second.toString() : "";
+                std::transform(bindStr.begin(), bindStr.end(), bindStr.begin(), ::tolower);
+
+                if (nameLower.find(searchLower) == std::string::npos && bindStr.find(searchLower) == std::string::npos) {
+                    continue;
+                }
+            }
+            catActions.push_back(&info);
+        }
+
+        if (catActions.empty()) continue;
+
+        if (ImGui::CollapsingHeader(cat, ImGuiTreeNodeFlags_DefaultOpen)) {
+            std::string tableId = std::string("##Table_") + cat;
+            if (ImGui::BeginTable(tableId.c_str(), 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV)) {
+                ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("Shortcut", ImGuiTableColumnFlags_WidthFixed, 140.0f * scale);
+                ImGui::TableSetupColumn("Reset", ImGuiTableColumnFlags_WidthFixed, 60.0f * scale);
+                ImGui::TableHeadersRow();
+
+                for (const auto* info : catActions) {
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%s", info->displayName);
+                    if (info->isModal) {
+                        ImGui::SameLine();
+                        ImGui::TextColored(ImVec4(0.95f, 0.60f, 0.15f, 1.0f), "[Hold Modal]");
+                    }
+
+                    ImGui::TableNextColumn();
+                    auto it = preset.keyBindings.find(info->action);
+                    std::string bindText = (it != preset.keyBindings.end() && it->second.isValid()) ? it->second.toString() : "None";
+                    if (m_capturingAction == info->action) {
+                        bindText = "Press key...";
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.70f, 0.05f, 0.9f));
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+                    }
+
+                    std::string btnId = bindText + "##bind_" + info->id;
+                    if (ImGui::Button(btnId.c_str(), ImVec2(-1.0f, 0.0f))) {
+                        m_capturingAction = info->action;
+                    }
+                    if (m_capturingAction == info->action) {
+                        ImGui::PopStyleColor(2);
+                    }
+
+                    ImGui::TableNextColumn();
+                    std::string clearId = "Clear##clr_" + std::string(info->id);
+                    if (ImGui::Button(clearId.c_str(), ImVec2(-1.0f, 0.0f))) {
+                        preset.keyBindings.erase(info->action);
+                    }
+                }
+                ImGui::EndTable();
+            }
+        }
+    }
+
+    // 4. Mouse Navigation Settings
+    ImGui::Spacing();
+    ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Mouse Navigation Bindings");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    if (ImGui::CollapsingHeader("Mouse Navigation Mapping", ImGuiTreeNodeFlags_DefaultOpen)) {
+        static const NavAction s_allNavActions[] = {
+            NavAction::Orbit, NavAction::Pan, NavAction::Zoom, NavAction::Roll, NavAction::RotateLight,
+            NavAction::Pan2D, NavAction::Zoom2D, NavAction::ResetView2D, NavAction::ResetView,
+            NavAction::SubToolSelect, NavAction::InvertSculpt
+        };
+
+        if (ImGui::BeginTable("##MouseNavTable", 5, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV)) {
+            ImGui::TableSetupColumn("Mouse Button", ImGuiTableColumnFlags_WidthFixed, 90.0f * scale);
+            ImGui::TableSetupColumn("Modifiers & Mode", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 180.0f * scale);
+            ImGui::TableSetupColumn("Delete", ImGuiTableColumnFlags_WidthFixed, 50.0f * scale);
+            ImGui::TableHeadersRow();
+
+            int removeIdx = -1;
+            for (size_t i = 0; i < preset.mouseNavBindings.size(); ++i) {
+                auto& b = preset.mouseNavBindings[i];
+                ImGui::TableNextRow();
+
+                // Mouse button column
+                ImGui::TableNextColumn();
+                const char* btnNames[] = { "LMB", "MMB", "RMB" };
+                int currentBtnIdx = (b.mouseButton == SDL_BUTTON_LEFT) ? 0 : ((b.mouseButton == SDL_BUTTON_MIDDLE) ? 1 : 2);
+                std::string btnComboId = "##btn_" + std::to_string(i);
+                ImGui::SetNextItemWidth(-1.0f);
+                if (ImGui::Combo(btnComboId.c_str(), &currentBtnIdx, btnNames, 3)) {
+                    b.mouseButton = (currentBtnIdx == 0) ? SDL_BUTTON_LEFT : ((currentBtnIdx == 1) ? SDL_BUTTON_MIDDLE : SDL_BUTTON_RIGHT);
+                }
+
+                // Modifiers and Mode column
+                ImGui::TableNextColumn();
+                std::string ctrlId = "Ctrl##ctrl_" + std::to_string(i);
+                ImGui::Checkbox(ctrlId.c_str(), &b.ctrl);
+                ImGui::SameLine();
+                std::string altId = "Alt##alt_" + std::to_string(i);
+                ImGui::Checkbox(altId.c_str(), &b.alt);
+                ImGui::SameLine();
+                std::string shiftId = "Shift##shift_" + std::to_string(i);
+                ImGui::Checkbox(shiftId.c_str(), &b.shift);
+                ImGui::SameLine();
+                std::string dblId = "2x Click##dbl_" + std::to_string(i);
+                ImGui::Checkbox(dblId.c_str(), &b.doubleClick);
+                ImGui::SameLine();
+                std::string refId = "2D Ref##ref_" + std::to_string(i);
+                ImGui::Checkbox(refId.c_str(), &b.ref2D);
+
+                // Action column
+                ImGui::TableNextColumn();
+                int currentActIdx = 0;
+                for (int a = 0; a < (int)IM_ARRAYSIZE(s_allNavActions); ++a) {
+                    if (s_allNavActions[a] == b.action) {
+                        currentActIdx = a;
+                        break;
+                    }
+                }
+                std::vector<const char*> navActionNames;
+                for (int a = 0; a < (int)IM_ARRAYSIZE(s_allNavActions); ++a) {
+                    navActionNames.push_back(navActionGetDisplayName(s_allNavActions[a]));
+                }
+                std::string actComboId = "##act_" + std::to_string(i);
+                ImGui::SetNextItemWidth(-1.0f);
+                if (ImGui::Combo(actComboId.c_str(), &currentActIdx, navActionNames.data(), (int)navActionNames.size())) {
+                    b.action = s_allNavActions[currentActIdx];
+                }
+
+                // Delete column
+                ImGui::TableNextColumn();
+                std::string delId = "X##del_" + std::to_string(i);
+                if (ImGui::Button(delId.c_str(), ImVec2(-1.0f, 0.0f))) {
+                    removeIdx = (int)i;
+                }
+            }
+
+            if (removeIdx >= 0) {
+                preset.mouseNavBindings.erase(preset.mouseNavBindings.begin() + removeIdx);
+            }
+
+            ImGui::EndTable();
+        }
+
+        if (ImGui::Button("+ Add Mouse Navigation Binding")) {
+            preset.mouseNavBindings.push_back({ SDL_BUTTON_RIGHT, false, false, false, false, false, NavAction::Orbit });
+        }
+    }
+
+    // 5. Modifier Key Behavior
+    ImGui::Spacing();
+    ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Modifier Keys Behavior");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    if (ImGui::CollapsingHeader("Hold Actions & Invert Rules", ImGuiTreeNodeFlags_DefaultOpen)) {
+        static const HKAction s_holdActions[] = {
+            HKAction::ToolSmooth, HKAction::ToolMask, HKAction::ToolVisibility,
+            HKAction::ToolFlatten, HKAction::ToolInflate, HKAction::ToolBrush, HKAction::ToolPinch
+        };
+
+        auto getHoldActionIdx = [](HKAction a) -> int {
+            for (int i = 0; i < (int)IM_ARRAYSIZE(s_holdActions); ++i) {
+                if (s_holdActions[i] == a) return i;
+            }
+            return 0;
+        };
+
+        std::vector<const char*> holdNames;
+        for (int i = 0; i < (int)IM_ARRAYSIZE(s_holdActions); ++i) {
+            const auto* info = getHKActionInfo(s_holdActions[i]);
+            holdNames.push_back(info ? info->displayName : "Tool");
+        }
+
+        int shiftIdx = getHoldActionIdx(preset.modifierBehavior.shiftHoldAction);
+        ImGui::SetNextItemWidth(200.0f * scale);
+        if (ImGui::Combo("Shift Hold Tool", &shiftIdx, holdNames.data(), (int)holdNames.size())) {
+            preset.modifierBehavior.shiftHoldAction = s_holdActions[shiftIdx];
+        }
+
+        int ctrlIdx = getHoldActionIdx(preset.modifierBehavior.ctrlHoldAction);
+        ImGui::SetNextItemWidth(200.0f * scale);
+        if (ImGui::Combo("Ctrl Hold Tool", &ctrlIdx, holdNames.data(), (int)holdNames.size())) {
+            preset.modifierBehavior.ctrlHoldAction = s_holdActions[ctrlIdx];
+        }
+
+        int csIdx = getHoldActionIdx(preset.modifierBehavior.ctrlShiftHoldAction);
+        ImGui::SetNextItemWidth(200.0f * scale);
+        if (ImGui::Combo("Ctrl+Shift Hold Tool", &csIdx, holdNames.data(), (int)holdNames.size())) {
+            preset.modifierBehavior.ctrlShiftHoldAction = s_holdActions[csIdx];
+        }
+
+        ImGui::Spacing();
+        ImGui::Checkbox("Alt alone inverts brush stroke (ZBrush / Blender mode)", &preset.modifierBehavior.altInvertsBrush);
+        ImGui::Checkbox("Ctrl+Alt inverts brush stroke (Maya mode)", &preset.modifierBehavior.ctrlAltInvertsBrush);
+        ImGui::Checkbox("Ctrl+Alt selects SubTool (Maya mode)", &preset.modifierBehavior.ctrlAltSubToolSelect);
+    }
 }
 
 void GuiManager::drawHotkeyHUD() {

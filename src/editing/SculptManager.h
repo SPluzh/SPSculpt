@@ -14,6 +14,7 @@
 
 class ArmatureTool;
 class IniFile;
+class HotkeyManager;
 
 glm::vec3 reflectPointSymmetry(const glm::vec3& pt, const glm::vec3& sScale, const Mesh* mesh, SymmetryMode mode);
 glm::vec3 reflectVectorSymmetry(const glm::vec3& vec, const glm::vec3& sScale, const Mesh* mesh, SymmetryMode mode);
@@ -364,6 +365,12 @@ public:
     CameraController& getCameraController() { return m_cameraController; }
     const CameraController& getCameraController() const { return m_cameraController; }
 
+    void setHotkeyManager(HotkeyManager* hm) {
+        m_hotkeyManager = hm;
+        m_cameraController.setHotkeyManager(hm);
+    }
+    HotkeyManager* getHotkeyManager() const { return m_hotkeyManager; }
+
     bool isLassoActive() const { return m_isLassoActive; }
     const std::vector<glm::vec2>& getLassoPoints() const { return m_lassoPoints; }
     bool getLassoAlt() const { return m_lassoAlt; }
@@ -544,6 +551,8 @@ private:
     SculptFrameProfile m_lastFrameProfile;
     uint32_t m_strokeTargetPolyGroup = 0;
     void filterPolyGroupVertices(std::vector<uint32_t>& pickedVertices, const Mesh* mesh, uint32_t targetGroupId);
+
+    HotkeyManager* m_hotkeyManager = nullptr;
 
     int doStrokePass(
         Scene& scene,

@@ -9,6 +9,7 @@
 class Mesh;
 class Scene;
 class AngleRenderer;
+class HotkeyManager;
 
 class CameraController {
 public:
@@ -17,8 +18,12 @@ public:
     CameraController() = default;
     ~CameraController() = default;
 
+    void setHotkeyManager(HotkeyManager* manager) { m_manager = manager; }
+    HotkeyManager* getHotkeyManager() const { return m_manager; }
+
     void handleEvent(const SDL_Event& e, Camera& camera, const std::vector<Mesh*>& meshes, bool animate = true, Scene* scene = nullptr, AngleRenderer* renderer = nullptr);
     
+    bool isNavigationEvent(const SDL_Event& e, bool isRef2D = false) const;
     bool isNavigationEvent(const SDL_Event& e, CameraEnums::NavigationStyle style) const;
 
     void startDrag(DragMode mode, int mouseX, int mouseY, Camera& camera, const std::vector<Mesh*>& meshes, uint8_t button = 0);
@@ -42,5 +47,6 @@ private:
     int m_prevX = 0, m_prevY = 0;
     int m_startX = 0, m_startY = 0;
     bool m_snapTriggered = false;
+    HotkeyManager* m_manager = nullptr;
 };
 
