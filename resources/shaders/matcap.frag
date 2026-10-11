@@ -33,7 +33,8 @@ vec3 groupColor(uint gid) {
 }
 
 void main() {
-    vec3 normal = (uIsXRay == 1) ? normalize(vNormal) : getNormal();
+    float lenN = length(vNormal);
+    vec3 normal = (uIsXRay == 1) ? (lenN > 1e-4 ? vNormal / lenN : vec3(0.0, 0.0, 1.0)) : getNormal();
     vec3 eye = normalize(-vVertex);
     if (uHasNormalMap == 1) {
         vec3 mapN = texture(uNormalMap, vTexCoord).rgb * 2.0 - 1.0;

@@ -1600,6 +1600,29 @@ void AngleRenderer::drawMeshForThumbnail(Mesh* mesh, const Camera& cam) {
     glUniform1i(glGetUniformLocation(m_matcapProgram, "uIsXRay"), 0);
 
     glBindVertexArray(it->second->vao);
+
+    glBindBuffer(GL_ARRAY_BUFFER, it->second->vboVertices);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    glBindBuffer(GL_ARRAY_BUFFER, it->second->vboNormals);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(1);
+
+    glBindBuffer(GL_ARRAY_BUFFER, it->second->vboColors);
+    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(2);
+
+    glBindBuffer(GL_ARRAY_BUFFER, it->second->vboMaterials);
+    glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(3);
+
+    if (it->second->vboFaceGroups) {
+        glBindBuffer(GL_ARRAY_BUFFER, it->second->vboFaceGroups);
+        glVertexAttribIPointer(5, 1, GL_UNSIGNED_INT, sizeof(uint32_t), (void*)0);
+        glEnableVertexAttribArray(5);
+    }
+
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, it->second->eboTriangles);
     glDrawElements(GL_TRIANGLES,
                    static_cast<GLsizei>(it->second->triIndexCount),
@@ -2757,15 +2780,23 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
         
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
         glBufferData(GL_ARRAY_BUFFER, mesh->verts.size() * sizeof(float), mesh->verts.data(), GL_DYNAMIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
         
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
         glBufferData(GL_ARRAY_BUFFER, mesh->normals.size() * sizeof(float), mesh->normals.data(), GL_DYNAMIC_DRAW);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(1);
         
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboColors);
         glBufferData(GL_ARRAY_BUFFER, mesh->colors.size() * sizeof(float), mesh->colors.data(), GL_DYNAMIC_DRAW);
+        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(2);
         
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
         glBufferData(GL_ARRAY_BUFFER, mesh->materials.size() * sizeof(float), mesh->materials.data(), GL_DYNAMIC_DRAW);
+        glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(3);
 
         std::vector<uint32_t> vertGroups(mesh->nbVerts, 0);
         if (mesh->faceGroups.size() == (size_t)mesh->nbFaces) {
@@ -2783,6 +2814,8 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
         }
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboFaceGroups);
         glBufferData(GL_ARRAY_BUFFER, vertGroups.size() * sizeof(uint32_t), vertGroups.data(), GL_DYNAMIC_DRAW);
+        glVertexAttribIPointer(5, 1, GL_UNSIGNED_INT, sizeof(uint32_t), (void*)0);
+        glEnableVertexAttribArray(5);
 
         if (!mesh->uvFlat.empty()) {
             if (!bufs->vboTexCoords) glGenBuffers(1, &bufs->vboTexCoords);

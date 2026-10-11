@@ -29,8 +29,17 @@ vec3 getAlignedNormal() {
     if (uBevelEnabled == 1) {
         return getBevelNormal();
     }
-    vec3 N = normalize(vNormal);
-    vec3 flatNormal = -normalize(cross(dFdy(vVertex), dFdx(vVertex)));
+    vec3 dX = dFdx(vVertex);
+    vec3 dY = dFdy(vVertex);
+    vec3 crossN = cross(dY, dX);
+    float lenCross = length(crossN);
+    vec3 flatNormal = lenCross > 1e-6 ? -(crossN / lenCross) : vec3(0.0, 0.0, 1.0);
+
+    float lenN = length(vNormal);
+    if (lenN < 1e-4 || isnan(lenN)) {
+        return flatNormal;
+    }
+    vec3 N = vNormal / lenN;
     if (dot(N, flatNormal) < 0.0) {
         return -N;
     }
@@ -41,7 +50,14 @@ vec3 getNormal() {
     if (uBevelEnabled == 1) {
         return getBevelNormal();
     }
-    return uFlat == 0 ? getAlignedNormal() : -normalize(cross(dFdy(vVertex), dFdx(vVertex)));
+    if (uFlat != 0) {
+        vec3 dX = dFdx(vVertex);
+        vec3 dY = dFdy(vVertex);
+        vec3 crossN = cross(dY, dX);
+        float lenCross = length(crossN);
+        return lenCross > 1e-6 ? -(crossN / lenCross) : vec3(0.0, 0.0, 1.0);
+    }
+    return getAlignedNormal();
 }
 
 vec3 sRGBToLinear(const in vec3 col) {

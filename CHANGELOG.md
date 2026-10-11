@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.21]
+- **Scene Outliner**: Fixed object preview turning into a flat color after Voxel Remesh.
+- **Voxel Remesh**: Fixed surface normals not recalculating for the new mesh.
+
 ## [0.2.20]
 - **Hotkeys & Presets**: Added fully customizable keyboard and mouse shortcuts with built-in **ZBrush**, **Maya**, and **Blender** presets, plus custom `.preset` profile support.
 - **Virtual Keyboard**: Added an interactive on-screen keyboard in Preferences (`Hotkeys` tab) to visually view, inspect, and reassign keys across modifier layers.

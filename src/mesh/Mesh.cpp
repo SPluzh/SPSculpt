@@ -221,8 +221,9 @@ void Mesh::postInit() {
         isFaceGroupDirty = true;
     }
 
-    if (normals.size() != nbVerts * 3) {
-        normals.resize(nbVerts * 3, 0.0f);
+    if (normals.size() != (size_t)nbVerts * 3) {
+        hasCustomNormals = false;
+        normals.assign(nbVerts * 3, 0.0f);
     }
     if (colors.size() != nbVerts * 3) {
         colors.assign(nbVerts * 3, 1.0f);
@@ -267,19 +268,7 @@ void Mesh::postInit() {
     );
     auto tFNormEnd = std::chrono::high_resolution_clock::now();
 
-    bool hasImportedNormals = false;
-    if (normals.size() == (size_t)nbVerts * 3) {
-        for (size_t i = 0; i < normals.size(); ++i) {
-            if (normals[i] != 0.0f) {
-                hasImportedNormals = true;
-                break;
-            }
-        }
-    } else {
-        normals.resize(nbVerts * 3, 0.0f);
-    }
-
-    if (!hasImportedNormals) {
+    if (!hasCustomNormals) {
         updateVertexNormals(
             nullptr, -1, nbVerts,
             vrfStartCount.data(),

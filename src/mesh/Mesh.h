@@ -28,6 +28,7 @@ public:
     // Geometry
     std::vector<float>    verts;        // nbVerts * 3
     std::vector<float>    normals;      // nbVerts * 3
+    bool                  hasCustomNormals = false; // Preserved imported normals (e.g. from glTF)
     std::vector<float>    colors;       // nbVerts * 3
     std::vector<float>    materials;    // nbVerts * 3
     std::vector<float>    faceNormals;  // nbFaces * 3
@@ -136,6 +137,7 @@ public:
         normalMapTexId = other.normalMapTexId;
         verts = other.verts;
         normals = other.normals;
+        hasCustomNormals = other.hasCustomNormals;
         colors = other.colors;
         materials = other.materials;
         faceNormals = other.faceNormals;

@@ -474,6 +474,7 @@ static Mesh* parsePrimitive(const json& j, const json& primitive, const std::vec
     Mesh* mesh = new Mesh();
     mesh->verts = weldedVerts;
     mesh->normals = weldedNormals;
+    mesh->hasCustomNormals = !weldedNormals.empty();
     mesh->colors = weldedColors;
     mesh->materials = weldedMaterials;
     mesh->nbVerts = (int)(weldedVerts.size() / 3);

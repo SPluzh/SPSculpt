@@ -4834,6 +4834,16 @@ void GuiManager::applyRemeshResult(Scene& scene, const RemeshResult& r) {
     selectedMesh->materials = r.materials;
     selectedMesh->nbVerts = r.vertices.size() / 3;
     selectedMesh->nbFaces = r.faces.size() / 4;
+    selectedMesh->normals.clear();
+    selectedMesh->hasCustomNormals = false;
+    selectedMesh->uvFlat.clear();
+    selectedMesh->tangents.clear();
+    selectedMesh->texCoords.clear();
+    selectedMesh->facesTexCoord.clear();
+    selectedMesh->hasUV = false;
+    selectedMesh->normalMapTexId = 0;
+    selectedMesh->vertVisible.assign(selectedMesh->nbVerts, 1);
+    selectedMesh->faceVisible.assign(selectedMesh->nbFaces, 1);
 
     if (m_remeshKeepPolyGroups && !r.faceGroups.empty()) {
         selectedMesh->faceGroups = r.faceGroups;
@@ -4905,6 +4915,10 @@ void GuiManager::applyRemeshResult(Scene& scene, const RemeshResult& r) {
     }
 
     selectedMesh->isDirty = true;
+    selectedMesh->isVertexDirty = true;
+    selectedMesh->dirtyVertMin = 0;
+    selectedMesh->dirtyVertMax = selectedMesh->nbVerts > 0 ? (selectedMesh->nbVerts - 1) : 0;
+    thumbInvalidate(selectedMesh->getID());
 
     auto tUndoStart = std::chrono::high_resolution_clock::now();
     HistoryState afterState = scene.saveCurrentState();
