@@ -60,7 +60,8 @@ static bool is3DModelFile(const std::string& path) {
     std::string ext = path.substr(dotPos);
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
     return (ext == ".obj" || ext == ".stl" || ext == ".ply" || 
-            ext == ".glb" || ext == ".gltf" || ext == Format::PROJECT_DOT_EXT || ext == Format::LEGACY_DOT_EXT);
+            ext == ".glb" || ext == ".gltf" || ext == ".fbx" ||
+            ext == Format::PROJECT_DOT_EXT || ext == Format::LEGACY_DOT_EXT);
 }
 
 static void setAppWindowIcon(SDL_Window* window, const char* iconPath) {
@@ -658,6 +659,9 @@ int main(int argc, char* argv[]) {
                         sculpt_log("[DragNDrop] 3D model import '%s' completed in %.2f ms (ImportFiles: %.2fms, HistoryPush: %.2fms)\n",
                                   droppedPath.c_str(), msTotal, msImport, msHist);
                         std::cout << "[DragNDrop] Imported 3D model file: " << droppedPath << std::endl;
+                    } else {
+                        sculpt_log("[DragNDrop] Warning: Unsupported file format dropped: '%s'\n", droppedPath.c_str());
+                        std::cout << "[DragNDrop] Warning: Unsupported file format dropped: " << droppedPath << std::endl;
                     }
                 }
             } else {
