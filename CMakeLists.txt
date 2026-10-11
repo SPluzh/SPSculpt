@@ -1,7 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
-project(SPSculpt VERSION 0.2.21 LANGUAGES CXX)
+project(SPSculpt VERSION 0.2.22 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 
+add_library(ufbx STATIC third_party/ufbx/ufbx.c)
+target_include_directories(ufbx PUBLIC third_party/ufbx)
+target_compile_options(ufbx PRIVATE -O3)
 
 add_subdirectory(third_party/glm)
 
@@ -99,6 +102,7 @@ add_executable(SPSculpt
     src/files/ExportPLY.cpp
     src/files/ImportGLTF.cpp
     src/files/ExportGLTF.cpp
+    src/files/ImportFBX.cpp
     src/files/MeshUtils.cpp
     # editing
     src/editing/SculptManager.cpp
@@ -140,7 +144,7 @@ else()
     include_directories(${SDL2_INCLUDE_DIRS})
 endif()
 
-target_link_libraries(SPSculpt PRIVATE imgui ${EGL_LIBRARY} ${GLES_LIBRARY} glm nlohmann_json::nlohmann_json)
+target_link_libraries(SPSculpt PRIVATE imgui ${EGL_LIBRARY} ${GLES_LIBRARY} glm nlohmann_json::nlohmann_json ufbx)
 target_compile_options(SPSculpt PRIVATE -O3)
 
 if(MINGW)

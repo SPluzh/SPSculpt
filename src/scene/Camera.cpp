@@ -230,9 +230,9 @@ void Camera::updateProjection() {
     if (m_width <= 0 || m_height <= 0) return;
 
     // Dynamically adjust near and far planes based on distance to prevent Z-fighting & depth precision loss
-    float eyeDist = std::max(0.1f, getTransZ());
-    m_near = std::clamp(eyeDist * 0.005f, 0.05f, 50.0f);
-    m_far = std::max(m_near + 10.0f, eyeDist * 10.0f + 1000.0f);
+    float eyeDist = std::max(0.001f, getTransZ());
+    m_near = std::clamp(eyeDist * 0.005f, 0.001f, 50.0f);
+    m_far = std::max(m_near + 1.0f, eyeDist * 10.0f + 1000.0f);
 
     if (m_projectionType == CameraEnums::Projection::PERSPECTIVE) {
         m_projMatrix = glm::perspective(getFovDegrees() * (float)M_PI / 180.0f, (float)m_width / m_height, m_near, m_far);
@@ -426,7 +426,7 @@ void Camera::resetViewToWorldPoints(const std::vector<glm::vec3>& worldPoints, b
         }
 
         // Apply a comfortable 15% safety margin factor (1.15)
-        float eyeDist = std::max(1.0f, maxReqD * 1.15f);
+        float eyeDist = std::max(0.001f, maxReqD * 1.15f);
         targetTransZ = eyeDist * (fovY_deg / 45.0f);
     } else {
         // Orthographic projection
@@ -436,7 +436,7 @@ void Camera::resetViewToWorldPoints(const std::vector<glm::vec3>& worldPoints, b
             float reqZ_y = (std::abs(pCam.y) * 1.15f) / (h * 0.00055f);
             maxReqTransZ = std::max({maxReqTransZ, reqZ_x, reqZ_y});
         }
-        targetTransZ = std::max(1.0f, maxReqTransZ);
+        targetTransZ = std::max(0.001f, maxReqTransZ);
     }
 
     CameraState targetState;

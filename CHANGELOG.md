@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.22]
+- **FBX Import**: Added support for Autodesk FBX (`.fbx`) files (Binary and ASCII) via file dialog and drag-and-drop.
+- **Geometry & Topology**: Preserves quad topology (4-sided polygons) and prepares meshes cleanly for sculpting.
+- **Shading & Materials**: Fixed surface normals and shading, with automatic import of vertex colors, materials, PolyGroups, UVs, and normal maps.
+- **Scene Outliner**: Fixed tiny and clipped preview thumbnails for imported objects.
+
 ## [0.2.21]
 - **Scene Outliner**: Fixed object preview turning into a flat color after Voxel Remesh.
 - **Voxel Remesh**: Fixed surface normals not recalculating for the new mesh.

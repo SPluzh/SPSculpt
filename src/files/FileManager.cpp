@@ -9,6 +9,7 @@
 #include "files/ExportPLY.h"
 #include "files/ImportGLTF.h"
 #include "files/ExportGLTF.h"
+#include "files/ImportFBX.h"
 #include "common/FormatConstants.h"
 #include "common/StringUtils.h"
 #include "common/Logger.h"
@@ -193,6 +194,10 @@ std::vector<Mesh*> FileManager::importFiles(const std::string& path,
         sculpt_log("[GLTF Import] FileManager::importFiles completed GLTF import in %.2f ms (Parse/Build: %.2f ms, Meshes: %zu)\n",
                    msTotal, msParse, meshes.size());
         return meshes;
+    }
+    
+    if (ext == "fbx") {
+        return ImportFBX::importFBX(path);
     }
     
     std::cerr << "Unsupported import file format: ." << ext << std::endl;

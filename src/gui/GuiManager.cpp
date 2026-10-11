@@ -829,9 +829,8 @@ void GuiManager::thumbRender(MeshThumbnail& t, Mesh* mesh, AngleRenderer& render
 
     Camera thumbCam;
     thumbCam.onResize(THUMB_SIZE, THUMB_SIZE);
-    thumbCam.resetViewToMesh(mesh);
-    thumbCam.update(1.0f);
     thumbCam.setOrbitAngles(glm::radians(25.0f), glm::radians(45.0f));
+    thumbCam.resetViewToMesh(mesh, false);
     thumbCam.updateView();
     thumbCam.updateProjection();
 
