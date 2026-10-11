@@ -1847,8 +1847,8 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
         m_mouseDownX = mouseX;
         m_mouseDownY = mouseY;
 
-        // Middle button and Right button are always camera controls
-        if (event.button.button == SDL_BUTTON_MIDDLE || event.button.button == SDL_BUTTON_RIGHT) {
+        // Check if event is handled by camera navigation preset
+        if (m_cameraController.isNavigationEvent(event, camera.getNavigationStyle())) {
             m_cameraController.handleEvent(event, camera, scene.getMeshes(), true, &scene, m_renderer);
             return;
         }
@@ -1860,8 +1860,13 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             }
             SDL_Keymod mod = SDL_GetModState();
 
+            // In Maya mode: Alt+LMB is camera orbit, SubTool pick is Ctrl+Alt+LMB (Variant B)
+            // In ZBrush / Blender mode: SubTool pick is Alt+LMB (without Ctrl)
+            bool isSubToolSelect = (camera.getNavigationStyle() == CameraEnums::NavigationStyle::MAYA)
+                ? (((mod & KMOD_ALT) != 0) && ((mod & KMOD_CTRL) != 0))
+                : (((mod & KMOD_ALT) != 0) && ((mod & KMOD_CTRL) == 0));
 
-            if ((mod & KMOD_ALT) && !(mod & KMOD_CTRL)) {
+            if (isSubToolSelect) {
                 float minT = std::numeric_limits<float>::infinity();
                 Mesh* closestMesh = nullptr;
                 uint32_t closestFaceId = 0xffffffff;
@@ -2347,7 +2352,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             }
         }
     } else if (event.type == SDL_MOUSEBUTTONUP) {
-        if (event.button.button == SDL_BUTTON_MIDDLE || event.button.button == SDL_BUTTON_RIGHT) {
+        if (m_cameraController.isDragging() || event.button.button == SDL_BUTTON_MIDDLE || event.button.button == SDL_BUTTON_RIGHT) {
             m_cameraController.handleEvent(event, camera, scene.getMeshes(), true, &scene, m_renderer);
             return;
         }

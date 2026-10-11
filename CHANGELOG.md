@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.19]
+- **Viewport Navigation**: Added Maya (`Alt + Mouse`) and Blender (`MMB`) navigation styles alongside default ZBrush controls.
+- **Preferences**: Added navigation preset selector with keybind hints in Preferences (`Camera & Viewport`).
+
 ## [0.2.18]
 - **Symmetry**: Saved and restored per-mesh symmetry settings persistently in `.spsculpt` project files.
 - **Scene Outliner**: Added a symmetry toggle button directly on object cards to view and control symmetry status for each mesh.

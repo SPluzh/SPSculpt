@@ -14,6 +14,11 @@ namespace CameraEnums {
         PLANE = 1,
         SPHERICAL = 2
     };
+    enum class NavigationStyle {
+        ZBRUSH = 0,
+        MAYA = 1,
+        BLENDER = 2
+    };
 }
 
 class Mesh;
@@ -111,6 +116,9 @@ public:
     void setUsePivot(bool use) { m_usePivot = use; }
     bool getUsePivot() const { return m_usePivot; }
 
+    CameraEnums::NavigationStyle getNavigationStyle() const { return m_navigationStyle; }
+    void setNavigationStyle(CameraEnums::NavigationStyle style) { m_navigationStyle = style; }
+
     void setSpeedRotate(float val) { m_speedRotate = val; }
     float getSpeedRotate() const { return m_speedRotate; }
     void setSpeedTranslate(float val) { m_speedTranslate = val; }
@@ -201,6 +209,7 @@ private:
     bool m_ref2DMode = false;
     bool m_refDrag = false;
     bool m_isSplitViewport = false;
+    CameraEnums::NavigationStyle m_navigationStyle = CameraEnums::NavigationStyle::ZBRUSH;
 
     CameraState m_startState;
     CameraState m_targetState;

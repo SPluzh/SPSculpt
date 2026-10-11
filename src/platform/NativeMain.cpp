@@ -666,15 +666,12 @@ int main(int argc, char* argv[]) {
                     // Prioritize ImGuizmo over camera orbit when hovering/interacting with the gizmo
                     if (sculpt.getBrush() == BRUSH_TRANSFORM && (ImGuizmo::IsOver() || ImGuizmo::IsUsing())) {
                         if (!sculpt.getCameraController().isDragging()) {
-                            bool isCameraEvent = false;
-                            if (eventCopy.type == SDL_MOUSEBUTTONDOWN || eventCopy.type == SDL_MOUSEBUTTONUP) {
-                                if (eventCopy.button.button == SDL_BUTTON_RIGHT || eventCopy.button.button == SDL_BUTTON_MIDDLE) {
-                                    isCameraEvent = true;
-                                }
-                            } else if (eventCopy.type == SDL_MOUSEWHEEL) {
-                                isCameraEvent = true;
-                            }
-                            bool isAltClickSettingPivot = (eventCopy.type == SDL_MOUSEBUTTONDOWN && eventCopy.button.button == SDL_BUTTON_LEFT && ((SDL_GetModState() & KMOD_ALT) != 0) && !ImGuizmo::IsUsing());
+                            bool isCameraEvent = sculpt.getCameraController().isNavigationEvent(eventCopy, scene.getCamera().getNavigationStyle());
+                            bool isAltClickSettingPivot = (eventCopy.type == SDL_MOUSEBUTTONDOWN && eventCopy.button.button == SDL_BUTTON_LEFT &&
+                                ((scene.getCamera().getNavigationStyle() == CameraEnums::NavigationStyle::MAYA)
+                                    ? (((SDL_GetModState() & KMOD_ALT) != 0) && ((SDL_GetModState() & KMOD_CTRL) != 0))
+                                    : (((SDL_GetModState() & KMOD_ALT) != 0) && ((SDL_GetModState() & KMOD_CTRL) == 0)))
+                                && !ImGuizmo::IsUsing());
                             if (!isCameraEvent && !isAltClickSettingPivot) {
                                 skipSculpt = true;
                             }
@@ -685,16 +682,13 @@ int main(int argc, char* argv[]) {
                         // Never skip mouse events if the camera controller is actively dragging/navigating,
                         // otherwise mouse up or mouse motion events will be swallowed by ImGui and lock navigation state.
                         if (!sculpt.getCameraController().isDragging()) {
-                            bool isCameraEvent = false;
-                            if (eventCopy.type == SDL_MOUSEBUTTONDOWN || eventCopy.type == SDL_MOUSEBUTTONUP) {
-                                if (eventCopy.button.button == SDL_BUTTON_RIGHT || eventCopy.button.button == SDL_BUTTON_MIDDLE) {
-                                    isCameraEvent = true;
-                                }
-                            } else if (eventCopy.type == SDL_MOUSEWHEEL) {
-                                isCameraEvent = true;
-                            }
+                            bool isCameraEvent = sculpt.getCameraController().isNavigationEvent(eventCopy, scene.getCamera().getNavigationStyle());
                             
-                            bool isAltClickSettingPivot = (sculpt.getBrush() == BRUSH_TRANSFORM && eventCopy.type == SDL_MOUSEBUTTONDOWN && eventCopy.button.button == SDL_BUTTON_LEFT && ((SDL_GetModState() & KMOD_ALT) != 0) && !ImGuizmo::IsUsing());
+                            bool isAltClickSettingPivot = (sculpt.getBrush() == BRUSH_TRANSFORM && eventCopy.type == SDL_MOUSEBUTTONDOWN && eventCopy.button.button == SDL_BUTTON_LEFT &&
+                                ((scene.getCamera().getNavigationStyle() == CameraEnums::NavigationStyle::MAYA)
+                                    ? (((SDL_GetModState() & KMOD_ALT) != 0) && ((SDL_GetModState() & KMOD_CTRL) != 0))
+                                    : (((SDL_GetModState() & KMOD_ALT) != 0) && ((SDL_GetModState() & KMOD_CTRL) == 0)))
+                                && !ImGuizmo::IsUsing());
                             if (isCameraEvent) {
                                 ImVec2 mpos(io.MousePos.x, io.MousePos.y);
                                 if (eventCopy.type == SDL_MOUSEWHEEL && gui.isPointOverWindow(mpos)) {
@@ -710,13 +704,11 @@ int main(int argc, char* argv[]) {
                     }
                     if (gui.getTimelapsePlayer().isOpen()) {
                         skipSculpt = true;
-                        bool isCameraEvent = (eventCopy.type == SDL_MOUSEBUTTONDOWN || eventCopy.type == SDL_MOUSEBUTTONUP) &&
-                                             (eventCopy.button.button == SDL_BUTTON_RIGHT || eventCopy.button.button == SDL_BUTTON_MIDDLE);
-                        bool isWheelEvent = (eventCopy.type == SDL_MOUSEWHEEL);
+                        bool isCameraEvent = sculpt.getCameraController().isNavigationEvent(eventCopy, scene.getCamera().getNavigationStyle());
                         bool isMotionAndDragging = (eventCopy.type == SDL_MOUSEMOTION || eventCopy.type == SDL_MOUSEBUTTONUP) &&
                                                    sculpt.getCameraController().isDragging();
 
-                        if ((!io.WantCaptureMouse && (isCameraEvent || isWheelEvent)) || isMotionAndDragging) {
+                        if ((!io.WantCaptureMouse && isCameraEvent) || isMotionAndDragging) {
                             sculpt.getCameraController().handleEvent(eventCopy, scene.getCamera(), scene.getMeshes(), true, &scene, &renderer);
                         }
                     }

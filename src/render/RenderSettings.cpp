@@ -67,6 +67,7 @@ bool RenderSettings::save(IniFile& ini, const AngleRenderer& renderer, const Sce
     const Camera* mainCam = scene.getCameraByIndex(0);
     if (mainCam) {
         ini.setInt(sec, "cameraMode", static_cast<int>(mainCam->getMode()));
+        ini.setInt(sec, "cameraNavigationStyle", static_cast<int>(mainCam->getNavigationStyle()));
         ini.setInt(sec, "cameraProjection", static_cast<int>(mainCam->getProjectionType()));
         ini.setFloat(sec, "cameraFov", mainCam->getFov());
         ini.setBool(sec, "cameraUsePivot", mainCam->getUsePivot());
@@ -166,6 +167,13 @@ bool RenderSettings::load(const IniFile& ini, AngleRenderer& renderer, Scene& sc
         for (int cIdx = 0; cIdx < 2; ++cIdx) {
             Camera* cam = scene.getCameraByIndex(cIdx);
             if (cam) cam->setUsePivot(val);
+        }
+    }
+    if (ini.hasKey(sec, "cameraNavigationStyle")) {
+        auto val = static_cast<CameraEnums::NavigationStyle>(ini.getInt(sec, "cameraNavigationStyle", 0));
+        for (int cIdx = 0; cIdx < 2; ++cIdx) {
+            Camera* cam = scene.getCameraByIndex(cIdx);
+            if (cam) cam->setNavigationStyle(val);
         }
     }
 

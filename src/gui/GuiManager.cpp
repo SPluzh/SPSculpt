@@ -8017,6 +8017,26 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                     camera.setMode((CameraEnums::CameraMode)currentMode);
                 }
 
+                const char* navStyles[] = { "ZBrush Style", "Maya Style", "Blender Style" };
+                int currentNav = static_cast<int>(camera.getNavigationStyle());
+                if (ImGui::Combo("Navigation Preset", &currentNav, navStyles, IM_ARRAYSIZE(navStyles))) {
+                    auto newStyle = static_cast<CameraEnums::NavigationStyle>(currentNav);
+                    camera.setNavigationStyle(newStyle);
+                    for (int cIdx = 0; cIdx < 2; ++cIdx) {
+                        Camera* cam = scene.getCameraByIndex(cIdx);
+                        if (cam) cam->setNavigationStyle(newStyle);
+                    }
+                }
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.75f, 0.8f, 1.0f));
+                if (camera.getNavigationStyle() == CameraEnums::NavigationStyle::ZBRUSH) {
+                    ImGui::TextWrapped("Controls: RMB = Orbit (Shift to snap), Alt+RMB / MMB = Pan, Ctrl+RMB / Wheel = Zoom, Shift+MMB = Rotate Light, Alt+LMB = Select SubTool.");
+                } else if (camera.getNavigationStyle() == CameraEnums::NavigationStyle::MAYA) {
+                    ImGui::TextWrapped("Controls: Alt+LMB = Orbit, Alt+MMB = Pan, Alt+RMB / Wheel = Zoom, Ctrl+Shift+MMB = Rotate Light, Ctrl+Alt+LMB = Select SubTool.");
+                } else if (camera.getNavigationStyle() == CameraEnums::NavigationStyle::BLENDER) {
+                    ImGui::TextWrapped("Controls: MMB = Orbit, Shift+MMB = Pan, Ctrl+MMB / Wheel = Zoom, Ctrl+Shift+MMB = Rotate Light, Alt+LMB = Select SubTool.");
+                }
+                ImGui::PopStyleColor();
+
                 ImGui::Spacing();
                 ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Camera Bookmarks");
                 ImGui::Separator();

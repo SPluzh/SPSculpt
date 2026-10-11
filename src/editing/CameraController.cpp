@@ -101,15 +101,17 @@ void CameraController::stopDrag(Camera* camera) {
             camera->pushState();
         }
         m_drag = DragMode::None;
+        m_dragButton = 0;
         m_snapTriggered = false;
     }
 }
 
-void CameraController::startDrag(DragMode mode, int mouseX, int mouseY, Camera& camera, const std::vector<Mesh*>& meshes) {
+void CameraController::startDrag(DragMode mode, int mouseX, int mouseY, Camera& camera, const std::vector<Mesh*>& meshes, uint8_t button) {
     if (m_drag == DragMode::None) {
         camera.pushState();
     }
     m_drag = mode;
+    m_dragButton = button;
     m_prevX = mouseX;
     m_prevY = mouseY;
     m_startX = mouseX;
@@ -122,52 +124,211 @@ void CameraController::startDrag(DragMode mode, int mouseX, int mouseY, Camera& 
     }
 }
 
-void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std::vector<Mesh*>& meshes, bool animate, Scene* scene, AngleRenderer* renderer) {
-    if (e.type == SDL_MOUSEBUTTONDOWN) {
-        int mouseX = e.button.x;
-        int mouseY = e.button.y;
-        
+bool CameraController::isNavigationEvent(const SDL_Event& e, CameraEnums::NavigationStyle style) const {
+    if (m_drag != DragMode::None) {
+        if (e.type == SDL_MOUSEMOTION || e.type == SDL_MOUSEBUTTONUP) {
+            return true;
+        }
+    }
+
+    if (e.type == SDL_MOUSEWHEEL) {
+        return true;
+    }
+
+    if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) {
         bool altPressed = (SDL_GetModState() & KMOD_ALT) != 0;
         bool shiftPressed = (SDL_GetModState() & KMOD_SHIFT) != 0;
         bool ctrlPressed = (SDL_GetModState() & KMOD_CTRL) != 0;
 
-        if (camera.getRef2DMode()) {
-            if (e.button.button == SDL_BUTTON_RIGHT) {
-                if (e.button.clicks >= 2) {
-                    camera.resetView2D();
-                    stopDrag(&camera);
-                } else if (ctrlPressed) {
-                    startDrag(DragMode::Zoom2D, mouseX, mouseY, camera, meshes);
-                } else if (altPressed) {
-                    startDrag(DragMode::Pan2D, mouseX, mouseY, camera, meshes);
+        switch (style) {
+            case CameraEnums::NavigationStyle::ZBRUSH: {
+                if (e.button.button == SDL_BUTTON_RIGHT || e.button.button == SDL_BUTTON_MIDDLE) {
+                    return true;
                 }
+                break;
             }
-            return; // Block all other 3D navigation mouse-down triggers in 2D mode
+            case CameraEnums::NavigationStyle::MAYA: {
+                // Alt + LMB: Orbit (except Ctrl+Alt+LMB which is SubTool selection in Variant B)
+                if (altPressed && !ctrlPressed && e.button.button == SDL_BUTTON_LEFT) {
+                    return true;
+                }
+                // Alt + MMB (Pan), Alt + RMB (Zoom)
+                if (altPressed && (e.button.button == SDL_BUTTON_MIDDLE || e.button.button == SDL_BUTTON_RIGHT)) {
+                    return true;
+                }
+                // Ctrl + Shift + MMB: Rotate light
+                if (ctrlPressed && shiftPressed && e.button.button == SDL_BUTTON_MIDDLE) {
+                    return true;
+                }
+                // Standalone MMB: Pan or ResetView (double click)
+                if (e.button.button == SDL_BUTTON_MIDDLE) {
+                    return true;
+                }
+                break;
+            }
+            case CameraEnums::NavigationStyle::BLENDER: {
+                // MMB: Orbit, Shift+MMB: Pan, Ctrl+MMB: Zoom, Ctrl+Shift+MMB: Rotate Light
+                if (e.button.button == SDL_BUTTON_MIDDLE) {
+                    return true;
+                }
+                break;
+            }
         }
+    }
 
+    return false;
+}
+
+void CameraController::handleEventZBrush(const SDL_Event& e, Camera& camera, const std::vector<Mesh*>& meshes, bool animate, Scene* scene, AngleRenderer* renderer) {
+    int mouseX = e.button.x;
+    int mouseY = e.button.y;
+    
+    bool altPressed = (SDL_GetModState() & KMOD_ALT) != 0;
+    bool shiftPressed = (SDL_GetModState() & KMOD_SHIFT) != 0;
+    bool ctrlPressed = (SDL_GetModState() & KMOD_CTRL) != 0;
+
+    if (camera.getRef2DMode()) {
+        if (e.button.button == SDL_BUTTON_RIGHT) {
+            if (e.button.clicks >= 2) {
+                camera.resetView2D();
+                stopDrag(&camera);
+            } else if (ctrlPressed) {
+                startDrag(DragMode::Zoom2D, mouseX, mouseY, camera, meshes, SDL_BUTTON_RIGHT);
+            } else if (altPressed) {
+                startDrag(DragMode::Pan2D, mouseX, mouseY, camera, meshes, SDL_BUTTON_RIGHT);
+            }
+        }
+        return;
+    }
+
+    if (e.button.button == SDL_BUTTON_MIDDLE) {
+        if (e.button.clicks >= 2) {
+            camera.resetView();
+            stopDrag(&camera);
+        } else if (shiftPressed) {
+            startDrag(DragMode::RotateLight, mouseX, mouseY, camera, meshes, SDL_BUTTON_MIDDLE);
+        } else {
+            startDrag(DragMode::Pan, mouseX, mouseY, camera, meshes, SDL_BUTTON_MIDDLE);
+        }
+    } else if (e.button.button == SDL_BUTTON_RIGHT) {
+        if (ctrlPressed) {
+            startDrag(DragMode::Zoom, mouseX, mouseY, camera, meshes, SDL_BUTTON_RIGHT);
+        } else if (shiftPressed && altPressed && camera.getMode() != CameraEnums::CameraMode::ORBIT) {
+            startDrag(DragMode::Roll, mouseX, mouseY, camera, meshes, SDL_BUTTON_RIGHT);
+        } else if (altPressed) {
+            startDrag(DragMode::Pan, mouseX, mouseY, camera, meshes, SDL_BUTTON_RIGHT);
+        } else {
+            startDrag(DragMode::Orbit, mouseX, mouseY, camera, meshes, SDL_BUTTON_RIGHT);
+        }
+    }
+}
+
+void CameraController::handleEventMaya(const SDL_Event& e, Camera& camera, const std::vector<Mesh*>& meshes, bool animate, Scene* scene, AngleRenderer* renderer) {
+    int mouseX = e.button.x;
+    int mouseY = e.button.y;
+    
+    bool altPressed = (SDL_GetModState() & KMOD_ALT) != 0;
+    bool shiftPressed = (SDL_GetModState() & KMOD_SHIFT) != 0;
+    bool ctrlPressed = (SDL_GetModState() & KMOD_CTRL) != 0;
+
+    if (camera.getRef2DMode()) {
+        if (e.button.button == SDL_BUTTON_MIDDLE && e.button.clicks >= 2) {
+            camera.resetView2D();
+            stopDrag(&camera);
+        } else if (altPressed) {
+            if (e.button.button == SDL_BUTTON_MIDDLE) {
+                startDrag(DragMode::Pan2D, mouseX, mouseY, camera, meshes, SDL_BUTTON_MIDDLE);
+            } else if (e.button.button == SDL_BUTTON_RIGHT) {
+                startDrag(DragMode::Zoom2D, mouseX, mouseY, camera, meshes, SDL_BUTTON_RIGHT);
+            }
+        }
+        return;
+    }
+
+    if (e.button.button == SDL_BUTTON_MIDDLE && e.button.clicks >= 2) {
+        camera.resetView();
+        stopDrag(&camera);
+        return;
+    }
+
+    if (ctrlPressed && shiftPressed && e.button.button == SDL_BUTTON_MIDDLE) {
+        startDrag(DragMode::RotateLight, mouseX, mouseY, camera, meshes, SDL_BUTTON_MIDDLE);
+        return;
+    }
+
+    if (altPressed && !ctrlPressed) {
+        if (e.button.button == SDL_BUTTON_LEFT) {
+            startDrag(DragMode::Orbit, mouseX, mouseY, camera, meshes, SDL_BUTTON_LEFT);
+        } else if (e.button.button == SDL_BUTTON_MIDDLE) {
+            startDrag(DragMode::Pan, mouseX, mouseY, camera, meshes, SDL_BUTTON_MIDDLE);
+        } else if (e.button.button == SDL_BUTTON_RIGHT) {
+            startDrag(DragMode::Zoom, mouseX, mouseY, camera, meshes, SDL_BUTTON_RIGHT);
+        }
+    } else if (e.button.button == SDL_BUTTON_MIDDLE) {
+        startDrag(DragMode::Pan, mouseX, mouseY, camera, meshes, SDL_BUTTON_MIDDLE);
+    }
+}
+
+void CameraController::handleEventBlender(const SDL_Event& e, Camera& camera, const std::vector<Mesh*>& meshes, bool animate, Scene* scene, AngleRenderer* renderer) {
+    int mouseX = e.button.x;
+    int mouseY = e.button.y;
+    
+    bool altPressed = (SDL_GetModState() & KMOD_ALT) != 0;
+    bool shiftPressed = (SDL_GetModState() & KMOD_SHIFT) != 0;
+    bool ctrlPressed = (SDL_GetModState() & KMOD_CTRL) != 0;
+
+    if (camera.getRef2DMode()) {
         if (e.button.button == SDL_BUTTON_MIDDLE) {
             if (e.button.clicks >= 2) {
-                camera.resetView();
+                camera.resetView2D();
                 stopDrag(&camera);
             } else if (shiftPressed) {
-                startDrag(DragMode::RotateLight, mouseX, mouseY, camera, meshes);
-            } else {
-                startDrag(DragMode::Pan, mouseX, mouseY, camera, meshes);
-            }
-        } else if (e.button.button == SDL_BUTTON_RIGHT) {
-            if (ctrlPressed) {
-                startDrag(DragMode::Zoom, mouseX, mouseY, camera, meshes);
-            } else if (shiftPressed && altPressed && camera.getMode() != CameraEnums::CameraMode::ORBIT) {
-                startDrag(DragMode::Roll, mouseX, mouseY, camera, meshes);
-            } else if (altPressed) {
-                startDrag(DragMode::Pan, mouseX, mouseY, camera, meshes);
-            } else {
-                startDrag(DragMode::Orbit, mouseX, mouseY, camera, meshes);
+                startDrag(DragMode::Pan2D, mouseX, mouseY, camera, meshes, SDL_BUTTON_MIDDLE);
+            } else if (ctrlPressed) {
+                startDrag(DragMode::Zoom2D, mouseX, mouseY, camera, meshes, SDL_BUTTON_MIDDLE);
             }
         }
-    } else if (e.type == SDL_MOUSEBUTTONUP) {
-        if (e.button.button == SDL_BUTTON_MIDDLE || e.button.button == SDL_BUTTON_RIGHT || e.button.button == SDL_BUTTON_LEFT) {
+        return;
+    }
+
+    if (e.button.button == SDL_BUTTON_MIDDLE) {
+        if (e.button.clicks >= 2) {
+            camera.resetView();
             stopDrag(&camera);
+        } else if (ctrlPressed && shiftPressed) {
+            startDrag(DragMode::RotateLight, mouseX, mouseY, camera, meshes, SDL_BUTTON_MIDDLE);
+        } else if (shiftPressed) {
+            startDrag(DragMode::Pan, mouseX, mouseY, camera, meshes, SDL_BUTTON_MIDDLE);
+        } else if (ctrlPressed) {
+            startDrag(DragMode::Zoom, mouseX, mouseY, camera, meshes, SDL_BUTTON_MIDDLE);
+        } else if (altPressed && camera.getMode() != CameraEnums::CameraMode::ORBIT) {
+            startDrag(DragMode::Roll, mouseX, mouseY, camera, meshes, SDL_BUTTON_MIDDLE);
+        } else {
+            startDrag(DragMode::Orbit, mouseX, mouseY, camera, meshes, SDL_BUTTON_MIDDLE);
+        }
+    }
+}
+
+void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std::vector<Mesh*>& meshes, bool animate, Scene* scene, AngleRenderer* renderer) {
+    if (e.type == SDL_MOUSEBUTTONDOWN) {
+        switch (camera.getNavigationStyle()) {
+            case CameraEnums::NavigationStyle::MAYA:
+                handleEventMaya(e, camera, meshes, animate, scene, renderer);
+                break;
+            case CameraEnums::NavigationStyle::BLENDER:
+                handleEventBlender(e, camera, meshes, animate, scene, renderer);
+                break;
+            case CameraEnums::NavigationStyle::ZBRUSH:
+            default:
+                handleEventZBrush(e, camera, meshes, animate, scene, renderer);
+                break;
+        }
+    } else if (e.type == SDL_MOUSEBUTTONUP) {
+        if (m_drag != DragMode::None) {
+            if (m_dragButton == 0 || e.button.button == m_dragButton ||
+                e.button.button == SDL_BUTTON_LEFT || e.button.button == SDL_BUTTON_MIDDLE || e.button.button == SDL_BUTTON_RIGHT) {
+                stopDrag(&camera);
+            }
         }
     } else if (e.type == SDL_MOUSEWHEEL) {
         if (camera.getRef2DMode()) {
@@ -220,7 +381,8 @@ void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std
             } else if (m_drag == DragMode::Pan) {
                 camera.translate(static_cast<float>(dx), static_cast<float>(dy));
             } else if (m_drag == DragMode::Zoom) {
-                camera.zoom(static_cast<float>(dx) * 0.01f, static_cast<float>(m_startX), static_cast<float>(m_startY));
+                float zoomDelta = (static_cast<float>(dx) - static_cast<float>(dy)) * 0.008f;
+                camera.zoom(zoomDelta, static_cast<float>(m_startX), static_cast<float>(m_startY));
             } else if (m_drag == DragMode::RotateLight) {
                 float deltaAngle = static_cast<float>(dx) * 0.008f;
                 if (scene) {
@@ -236,7 +398,7 @@ void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std
                 float dyNorm = -static_cast<float>(dy) / (h / 2.0f);
                 camera.setView2DOffset(camera.getView2DOffsetX() + dxNorm, camera.getView2DOffsetY() + dyNorm);
             } else if (m_drag == DragMode::Zoom2D) {
-                float factor = 1.0f + static_cast<float>(dx) * 0.005f;
+                float factor = 1.0f + (static_cast<float>(dx) - static_cast<float>(dy)) * 0.004f;
                 camera.zoom2D(factor, static_cast<float>(m_startX), static_cast<float>(m_startY));
             } else if (m_drag == DragMode::Roll) {
                 float w = camera.getWidth() > 0 ? static_cast<float>(camera.getWidth()) : 1000.0f;
