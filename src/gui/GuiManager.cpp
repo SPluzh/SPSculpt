@@ -7121,8 +7121,67 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             renderer.setShowWireframe(!showWireframe);
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Wireframe Shading");
+
+        ImVec2 wfMin = ImGui::GetItemRectMin();
+
+        // Flush narrow arrow button directly attached to Wireframe button
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, ImGui::GetStyle().FramePadding.y));
+        ImGui::SetWindowFontScale(fontScale * 0.65f);
+        bool openWfPopup = ImGui::Button(ICON_LC_CHEVRON_DOWN "##hudWireframeArrow", halfSquareBtn);
+        ImGui::SetWindowFontScale(fontScale);
+        ImGui::PopStyleVar();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Wireframe Settings");
+
+        ImVec2 wfMax = ImGui::GetItemRectMax();
+
         if (showWireframe) {
             ImGui::PopStyleColor(3);
+        }
+
+        float wfCenterX = (wfMin.x + wfMax.x) * 0.5f;
+        float wfBottomY = wfMax.y + 4.0f * scale;
+
+        if (openWfPopup) {
+            ImGui::OpenPopup("##hudWireframePopup");
+        }
+
+        ImGui::SetNextWindowPos(ImVec2(wfCenterX, wfBottomY), ImGuiCond_Appearing, ImVec2(0.5f, 0.0f));
+        if (ImGui::BeginPopup("##hudWireframePopup")) {
+            ImGui::SetWindowFontScale(fontScale);
+            ImGui::TextUnformatted("Wireframe Settings");
+            ImGui::Separator();
+
+            bool enable = renderer.getShowWireframe();
+            if (ImGui::Checkbox("Enable Wireframe", &enable)) {
+                renderer.setShowWireframe(enable);
+            }
+
+            ImGui::Separator();
+            float wfOpacity = renderer.getWireframeOpacity();
+            ImGui::TextUnformatted("Opacity:");
+            ImGui::SameLine();
+            ImGui::PushItemWidth(120.0f * scale);
+            if (ImGui::SliderFloat("##hudWfOpacity", &wfOpacity, 0.05f, 1.0f, "%.2f")) {
+                renderer.setWireframeOpacity(wfOpacity);
+                glm::vec4 col = renderer.getWireframeColor();
+                col.a = wfOpacity;
+                renderer.setWireframeColor(col);
+            }
+            ImGui::PopItemWidth();
+
+            ImGui::Separator();
+            ImGui::TextUnformatted("Wireframe Color:");
+            glm::vec4 wfCol = renderer.getWireframeColor();
+            wfCol.a = renderer.getWireframeOpacity();
+            if (ImGui::ColorEdit4("##hudWireframeColor", &wfCol.r, ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_NoInputs)) {
+                renderer.setWireframeColor(wfCol);
+                renderer.setWireframeOpacity(wfCol.a);
+            }
+            ImGui::SameLine();
+            ImGui::TextUnformatted("Color & Alpha");
+
+            ImGui::EndPopup();
         }
 
         ImGui::SameLine();
@@ -8357,6 +8416,18 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                 bool polyGroups = renderer.getShowPolyGroups();
                 if (ImGui::Checkbox("Show PolyGroups", &polyGroups)) {
                     renderer.setShowPolyGroups(polyGroups);
+                }
+                if (wire) {
+                    ImGui::Indent();
+                    float wfOpacity = renderer.getWireframeOpacity();
+                    if (ImGui::SliderFloat("Wireframe Opacity", &wfOpacity, 0.05f, 1.0f, "%.2f")) {
+                        renderer.setWireframeOpacity(wfOpacity);
+                    }
+                    glm::vec4 wfColor = renderer.getWireframeColor();
+                    if (ImGui::ColorEdit3("Wireframe Color", glm::value_ptr(wfColor))) {
+                        renderer.setWireframeColor(wfColor);
+                    }
+                    ImGui::Unindent();
                 }
 
                 bool flat = renderer.getFlatShading();

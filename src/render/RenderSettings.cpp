@@ -39,6 +39,9 @@ bool RenderSettings::save(IniFile& ini, const AngleRenderer& renderer, const Sce
     ini.setInt(sec, "shaderType", renderer.getShaderType());
     ini.setInt(sec, "matcapIdx", renderer.getMatcap());
     ini.setBool(sec, "showWireframe", renderer.getShowWireframe());
+    ini.setFloat(sec, "wireframeOpacity", renderer.getWireframeOpacity());
+    glm::vec4 wfColor = renderer.getWireframeColor();
+    ini.set(sec, "wireframeColor", std::to_string(wfColor.r) + " " + std::to_string(wfColor.g) + " " + std::to_string(wfColor.b) + " " + std::to_string(wfColor.a));
     ini.setBool(sec, "flatShading", renderer.getFlatShading());
     ini.setFloat(sec, "curvature", renderer.getCurvature());
     ini.setBool(sec, "bevelEnabled", renderer.getBevelEnabled());
@@ -232,6 +235,14 @@ bool RenderSettings::load(const IniFile& ini, AngleRenderer& renderer, Scene& sc
         }
     }
     if (ini.hasKey(sec, "showWireframe")) renderer.setShowWireframe(ini.getBool(sec, "showWireframe"));
+    if (ini.hasKey(sec, "wireframeOpacity")) renderer.setWireframeOpacity(ini.getFloat(sec, "wireframeOpacity", 0.45f));
+    if (ini.hasKey(sec, "wireframeColor")) {
+        std::stringstream ss(ini.get(sec, "wireframeColor"));
+        float r, g, b, a;
+        if (ss >> r >> g >> b >> a) {
+            renderer.setWireframeColor(glm::vec4(r, g, b, a));
+        }
+    }
     if (ini.hasKey(sec, "flatShading")) renderer.setFlatShading(ini.getBool(sec, "flatShading"));
     if (ini.hasKey(sec, "curvature")) renderer.setCurvature(ini.getFloat(sec, "curvature", 0.0f));
     if (ini.hasKey(sec, "bevelEnabled")) renderer.setBevelEnabled(ini.getBool(sec, "bevelEnabled"));

@@ -1395,9 +1395,6 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
                         }
                     } else {
                         drawMeshSolid(mesh, scene, camera);
-                        if (m_showWireframe) {
-                            drawWireframe(mesh, scene, camera);
-                        }
                     }
                 }
             }
@@ -1418,9 +1415,6 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
                     }
                 } else {
                     drawMeshSolid(mesh, scene, camera);
-                    if (m_showWireframe) {
-                        drawWireframe(mesh, scene, camera);
-                    }
                 }
             }
         }
@@ -1446,9 +1440,6 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
                             }
                         } else {
                             drawMeshSolid(mesh, scene, camera);
-                            if (m_showWireframe) {
-                                drawWireframe(mesh, scene, camera);
-                            }
                         }
                     }
                 }
@@ -1460,6 +1451,15 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
         }
         if (scene.getVoxelPreview()) {
             drawVoxelPreview(scene, camera, viewportIdx);
+        }
+
+        // Render wireframe overlay into transparent buffer over solid depth
+        if (m_showWireframe) {
+            for (auto* mesh : scene.getMeshes()) {
+                if (scene.isMeshRenderVisible(mesh, viewportIdx) && (!mesh->isArmature || !mesh->armatureGraph)) {
+                    drawWireframe(mesh, scene, camera);
+                }
+            }
         }
     } else if (passType == 4) {
         // Bevel pre-pass
@@ -2058,15 +2058,16 @@ void AngleRenderer::drawWireframe(Mesh* mesh, const Scene& scene, const Camera& 
 
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_FALSE);
     glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 
 #ifndef GL_POLYGON_OFFSET_LINE
 #define GL_POLYGON_OFFSET_LINE 0x2A02
 #endif
     glEnable(GL_POLYGON_OFFSET_LINE);
     glEnable(GL_POLYGON_OFFSET_FILL);
-    glPolygonOffset(-1.0f, -2.0f);
+    glPolygonOffset(-0.5f, -1.0f);
 
     glUseProgram(m_wireframeProgram);
     
@@ -2074,15 +2075,29 @@ void AngleRenderer::drawWireframe(Mesh* mesh, const Scene& scene, const Camera& 
     glm::mat4 mvp = mesh->mvpMatrix;
     if (m_useTaa) {
         if (camera.isOrthographic()) {
-            mvp[3][0] += m_taaState.currentJitter.x * 2.5f;
-            mvp[3][1] += m_taaState.currentJitter.y * 2.5f;
+            mvp[3][0] += m_taaState.currentJitter.x * 2.0f;
+            mvp[3][1] += m_taaState.currentJitter.y * 2.0f;
         } else {
-            mvp[2][0] += m_taaState.currentJitter.x * 2.5f;
-            mvp[2][1] += m_taaState.currentJitter.y * 2.5f;
+            mvp[2][0] += m_taaState.currentJitter.x * 2.0f;
+            mvp[2][1] += m_taaState.currentJitter.y * 2.0f;
         }
     }
+    bool isXRay = isMeshXRay(scene, mesh);
+
+    glUniformMatrix4fv(glGetUniformLocation(m_wireframeProgram, "uMV"), 1, GL_FALSE, glm::value_ptr(mesh->mvMatrix));
     glUniformMatrix4fv(glGetUniformLocation(m_wireframeProgram, "uMVP"), 1, GL_FALSE, glm::value_ptr(mvp));
+    glUniformMatrix3fv(glGetUniformLocation(m_wireframeProgram, "uN"), 1, GL_FALSE, glm::value_ptr(mesh->nMatrix));
     glUniformMatrix4fv(glGetUniformLocation(m_wireframeProgram, "uEM"), 1, GL_FALSE, glm::value_ptr(mesh->editMatrix));
+    glUniformMatrix3fv(glGetUniformLocation(m_wireframeProgram, "uEN"), 1, GL_FALSE, glm::value_ptr(mesh->enMatrix));
+    glUniform1i(glGetUniformLocation(m_wireframeProgram, "uIsOrtho"), camera.isOrthographic() ? 1 : 0);
+    glUniform1i(glGetUniformLocation(m_wireframeProgram, "uCullBackfaces"), isXRay ? 0 : 1);
+
+    float alpha = std::clamp(m_wireframeColor.a * m_wireframeOpacity, 0.0f, 1.0f);
+    glUniform4f(glGetUniformLocation(m_wireframeProgram, "uWireColor"),
+                m_wireframeColor.r * alpha,
+                m_wireframeColor.g * alpha,
+                m_wireframeColor.b * alpha,
+                alpha);
 
     glBindVertexArray(bufs->vao);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboWireframe);
@@ -2092,6 +2107,7 @@ void AngleRenderer::drawWireframe(Mesh* mesh, const Scene& scene, const Camera& 
     glDisable(GL_POLYGON_OFFSET_LINE);
     glDisable(GL_POLYGON_OFFSET_FILL);
     glDisable(GL_BLEND);
+    glDepthMask(GL_TRUE);
 }
 
 void AngleRenderer::drawSelectionCursor(const Scene& scene, bool isRight) {
@@ -2559,11 +2575,21 @@ void AngleRenderer::generateTriangleIndices(const Mesh* mesh, std::vector<uint32
 void AngleRenderer::generateWireframeIndices(const Mesh* mesh, std::vector<uint32_t>& outEdges) {
     outEdges.clear();
     if (!mesh || mesh->nbFaces <= 0) return;
-    outEdges.reserve(mesh->nbFaces * 8);
     const auto& visible = mesh->vertVisible;
     const auto& fVisible = mesh->faceVisible;
     bool hasVisibility = !visible.empty();
     bool hasFaceVis = (fVisible.size() == (size_t)mesh->nbFaces);
+
+    std::vector<uint64_t> allEdges;
+    allEdges.reserve(mesh->nbFaces * 4);
+
+    auto addEdge = [&allEdges](uint32_t a, uint32_t b) {
+        if (a != b) {
+            uint32_t u = (a < b) ? a : b;
+            uint32_t v = (a < b) ? b : a;
+            allEdges.push_back((static_cast<uint64_t>(u) << 32) | static_cast<uint64_t>(v));
+        }
+    };
 
     for (int i = 0; i < mesh->nbFaces; ++i) {
         if (hasFaceVis) {
@@ -2585,18 +2611,27 @@ void AngleRenderer::generateWireframeIndices(const Mesh* mesh, std::vector<uint3
         uint32_t iv4 = mesh->faces[i * 4 + 3];
         bool isQuad = (iv4 != 0xffffffff);
 
-        outEdges.push_back(iv1);
-        outEdges.push_back(iv2);
-        outEdges.push_back(iv2);
-        outEdges.push_back(iv3);
+        addEdge(iv1, iv2);
+        addEdge(iv2, iv3);
         if (isQuad) {
-            outEdges.push_back(iv3);
-            outEdges.push_back(iv4);
-            outEdges.push_back(iv4);
-            outEdges.push_back(iv1);
+            addEdge(iv3, iv4);
+            addEdge(iv4, iv1);
         } else {
-            outEdges.push_back(iv3);
-            outEdges.push_back(iv1);
+            addEdge(iv3, iv1);
+        }
+    }
+
+    if (allEdges.empty()) return;
+
+    std::sort(allEdges.begin(), allEdges.end());
+
+    outEdges.reserve(allEdges.size() * 2);
+    uint64_t prev = 0xFFFFFFFFFFFFFFFFULL;
+    for (uint64_t key : allEdges) {
+        if (key != prev) {
+            outEdges.push_back(static_cast<uint32_t>(key >> 32));
+            outEdges.push_back(static_cast<uint32_t>(key & 0xFFFFFFFFULL));
+            prev = key;
         }
     }
 }

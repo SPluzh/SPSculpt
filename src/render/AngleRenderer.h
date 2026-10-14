@@ -258,6 +258,10 @@ public:
     bool getDarkenUnselected() const { return m_darkenUnselected; }
     void setShowWireframe(bool show) { m_showWireframe = show; }
     bool getShowWireframe() const { return m_showWireframe; }
+    void setWireframeOpacity(float opacity) { m_wireframeOpacity = std::clamp(opacity, 0.0f, 1.0f); }
+    float getWireframeOpacity() const { return m_wireframeOpacity; }
+    void setWireframeColor(const glm::vec4& color) { m_wireframeColor = color; }
+    const glm::vec4& getWireframeColor() const { return m_wireframeColor; }
 
     // X-Ray mode controls
     void setXrayEnabled(bool enable) { m_xrayEnabled = enable; }
@@ -641,6 +645,8 @@ private:
     bool m_flatShading = false;
     bool m_darkenUnselected = true;
     bool m_showWireframe = false;
+    float m_wireframeOpacity = 0.45f;
+    glm::vec4 m_wireframeColor{0.15f, 0.15f, 0.15f, 1.0f};
     bool m_showPolyGroups = false;
     bool m_xrayEnabled = false;
     int m_xrayTarget = 0; // 0: Unselected (default), 1: Selected, 2: All
