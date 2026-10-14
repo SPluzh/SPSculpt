@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.24]
+- **Camera Navigation**: Fixed zoom to pivot in Orthographic mode to smoothly focus on the surface point under cursor without drift or clipping when zooming up close.
+
 ## [0.2.23]
 - **Wireframe Overhaul**: Fixed dotted/broken lines, flickering, and prevented the wireframe from bleeding through objects when zooming out.
 - **Wireframe Settings**: Added an arrow dropdown next to the Wireframe button in HUD with an opacity slider and color picker.

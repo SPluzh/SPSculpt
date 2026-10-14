@@ -249,13 +249,13 @@ void Camera::updateOrtho() {
     float h = m_height * delta;
     float eyeDist = std::max(0.001f, getTransZ());
     m_far = std::max(m_far, eyeDist * 20.0f + 50000.0f);
-    m_projMatrix = glm::ortho(-w, w, -h, h, -m_near, m_far);
+    m_projMatrix = glm::ortho(-w, w, -h, h, -m_far, m_far);
 }
 
 void Camera::setCustomOrtho(float halfW, float halfH) {
     float eyeDist = std::max(0.001f, getTransZ());
     m_far = std::max(m_far, eyeDist * 20.0f + 50000.0f);
-    m_projMatrix = glm::ortho(-halfW, halfW, -halfH, halfH, -m_near, m_far);
+    m_projMatrix = glm::ortho(-halfW, halfW, -halfH, halfH, -m_far, m_far);
 }
 
 float Camera::getOrthoZoom() const {
@@ -298,31 +298,15 @@ void Camera::zoom(float df, float mouseX, float mouseY) {
     float scaleFactor = std::pow(2.0f, -df * m_speedZoom);
     float newTransZ = std::max(0.001f, std::min(oldTransZ * scaleFactor, 50000000.0f));
 
-    if (m_projectionType == CameraEnums::Projection::PERSPECTIVE) {
-        float oldD = oldTransZ - m_offset.z;
-        float newD = newTransZ - m_offset.z;
-        if (std::abs(oldD) > 1e-6f) {
-            float ratio = newD / oldD;
-            m_trans.x = m_offset.x + (m_trans.x - m_offset.x) * ratio;
-            m_trans.y = m_offset.y + (m_trans.y - m_offset.y) * ratio;
-        }
-        m_trans.z = newTransZ;
-        updateProjection();
-    } else {
-        float oldOrtho = getOrthoZoom();
-        m_trans.z = newTransZ;
-        float newOrtho = getOrthoZoom();
-        float deltaZoom = newOrtho - oldOrtho;
-
-        if (mouseX >= 0.0f && mouseY >= 0.0f) {
-            float ndcX = (2.0f * mouseX / static_cast<float>(m_width)) - 1.0f;
-            float ndcY = 1.0f - (2.0f * mouseY / static_cast<float>(m_height));
-            m_trans.x += ndcX * static_cast<float>(m_width) * deltaZoom;
-            m_trans.y += ndcY * static_cast<float>(m_height) * deltaZoom;
-        }
-
-        updateProjection();
+    float oldD = (m_projectionType == CameraEnums::Projection::PERSPECTIVE) ? (oldTransZ - m_offset.z) : oldTransZ;
+    float newD = (m_projectionType == CameraEnums::Projection::PERSPECTIVE) ? (newTransZ - m_offset.z) : newTransZ;
+    if (std::abs(oldD) > 1e-6f) {
+        float ratio = newD / oldD;
+        m_trans.x = m_offset.x + (m_trans.x - m_offset.x) * ratio;
+        m_trans.y = m_offset.y + (m_trans.y - m_offset.y) * ratio;
     }
+    m_trans.z = newTransZ;
+    updateProjection();
     updateView();
 }
 
