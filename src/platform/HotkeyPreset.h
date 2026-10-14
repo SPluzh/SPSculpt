@@ -16,6 +16,7 @@ enum class HKAction {
     ToolVTool,
     ToolTransform,
     ToolSmooth,
+    ToolRelax,
     ToolFlatten,
     ToolPinch,
     ToolCrease,

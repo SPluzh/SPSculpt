@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(SPSculpt VERSION 0.2.25 LANGUAGES C CXX)
+project(SPSculpt VERSION 0.2.27 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 
 add_library(ufbx STATIC third_party/ufbx/ufbx.c)
@@ -83,6 +83,7 @@ add_executable(SPSculpt
     # sculpt algorithms
     src/sculpt/SculptEngine.cpp
     src/sculpt/Remesh.cpp
+    src/sculpt/RelaxEngine.cpp
     src/editing/Subdivision.cpp
     src/editing/Reversion.cpp
     # render

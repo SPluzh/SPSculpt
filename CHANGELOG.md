@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.27]
+- **Relax Brush**: Added Relax brush to equalize mesh wireframe without losing volume or surface details.
+- **Topology Controls**: Supports Tangential slide, Surface Reprojection, boundary locking, and crease preservation.
+
+## [0.2.26]
+- **UI Styling**: Replaced default blue ImGui window resize grips, borders, and interaction highlights with the application's teal accent palette.
+
 ## [0.2.25]
 - **Record Mode**: Added `REC` button to toggle stroke recording on/off per layer.
 - **Invert Slider**: Extended intensity slider from `-100%` to `100%` to invert layers.

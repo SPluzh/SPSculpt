@@ -11,6 +11,7 @@
 
 #include "brushes/BrushPreset.h"
 #include "editing/PolyGroupTool.h"
+#include "sculpt/RelaxEngine.h"
 
 class ArmatureTool;
 class IniFile;
@@ -111,6 +112,16 @@ struct BrushSettings {
     bool smoothRelax = false;
     bool smoothStable = false;
     bool smoothStickyBorder = false;
+
+    // Relax settings (from C4D_RelaxTool)
+    int relaxAlgorithm = 1; // 0: Laplacian, 1: Tangential Slide, 2: Surface Reprojection
+    int relaxMode = 0;      // 0: Auto-lock, 1: Interior Only, 2: Border Only, 3: All Vertices
+    bool relaxLockBorder = false;
+    bool relaxLockInterior = false;
+    bool relaxPreserveCreases = true;
+    float relaxCreaseAngle = 45.0f;
+    int relaxIterations = 1;
+
     DepthFilter depthFilter;
     bool connectedTopology = false;
     bool onlyFrontFace = false;
@@ -153,7 +164,9 @@ class SculptManager {
 private:
     AngleRenderer* m_renderer = nullptr;
     BrushType m_currentBrush = BRUSH_MOVE;
-    BrushSettings m_brushSettings[32]; // Increased to 32 to support BRUSH_COUNT safely
+    BrushSettings m_brushSettings[64]; // Safe buffer to support all brushes including BRUSH_RELAX
+
+    RelaxEngine m_relaxEngine;
 
     std::unique_ptr<ArmatureTool> m_armatureTool;
 
@@ -230,6 +243,9 @@ public:
     const PolyGroupTool& getPolyGroupTool() const { return m_polyGroupTool; }
     uint32_t getActiveGroupID() const { return m_activeGroupId; }
     void setActiveGroupID(uint32_t id) { m_activeGroupId = id; }
+
+    RelaxEngine& getRelaxEngine() { return m_relaxEngine; }
+    const RelaxEngine& getRelaxEngine() const { return m_relaxEngine; }
 
     BrushType getBrush() const { return m_currentBrush; }
     void setBrush(BrushType brush) { 

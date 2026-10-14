@@ -230,6 +230,12 @@ void BrushCursor::update(int mouseX, int mouseY,
         } else {
             m_state.color = glm::vec3(0.0f, 0.6f, 1.0f);
         }
+    } else if (brushType == BRUSH_RELAX) {
+        if (drawCircle && hitMesh) {
+            m_state.color = glm::vec3(0.0f, 0.75f, 0.7f);
+        } else {
+            m_state.color = glm::vec3(0.0f, 0.9f, 0.85f);
+        }
     } else if (brushType == BRUSH_MASK) {
         if (drawCircle && hitMesh) {
             m_state.color = glm::vec3(0.9f, 0.9f, 0.0f);

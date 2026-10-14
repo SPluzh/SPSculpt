@@ -201,6 +201,7 @@ static const char* getBrushNameLocal(BrushType brush) {
         case BRUSH_CLIP_CURVE: return "Clip Curve";
         case BRUSH_TRIM:       return "Trim";
         case BRUSH_DELETE_LAYER: return "Delete Layer";
+        case BRUSH_RELAX:       return "Relax";
     }
     return "Unknown";
 }
@@ -240,6 +241,7 @@ static const char* getBrushIconKey(BrushType brush) {
         case BRUSH_MEASURE:     return "measuretool";
         case BRUSH_POLYGROUP:   return "polygroup";
         case BRUSH_TRANSFORM:   return "transformtool";
+        case BRUSH_RELAX:       return "relax_tool";
         default:                return nullptr;
     }
 }
@@ -711,6 +713,13 @@ void GuiManager::rebuildFontsAndStyles() {
     style.Colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.08f, 0.09f, 0.10f, 0.60f);
     style.Colors[ImGuiCol_PlotHistogram] = tealAccent;
     style.Colors[ImGuiCol_PlotHistogramHovered] = tealAccentHover;
+    style.Colors[ImGuiCol_ResizeGrip] = ImVec4(0.01f, 0.52f, 0.45f, 0.25f);
+    style.Colors[ImGuiCol_ResizeGripHovered] = ImVec4(0.02f, 0.65f, 0.54f, 0.67f);
+    style.Colors[ImGuiCol_ResizeGripActive] = ImVec4(0.00f, 0.39f, 0.30f, 0.95f);
+    style.Colors[ImGuiCol_SeparatorHovered] = ImVec4(0.02f, 0.65f, 0.54f, 0.78f);
+    style.Colors[ImGuiCol_SeparatorActive] = ImVec4(0.00f, 0.39f, 0.30f, 1.00f);
+    style.Colors[ImGuiCol_TextSelectedBg] = ImVec4(0.01f, 0.52f, 0.45f, 0.35f);
+    style.Colors[ImGuiCol_NavHighlight] = tealAccent;
 
     if (combinedScale > 1.0f) {
         style.ScaleAllSizes(combinedScale);
@@ -1100,7 +1109,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         const char* tools[] = { 
             "Flatten", "Smooth", "Inflate", "Pinch", "Crease", "V-Tool", "Move", "Drag", "Elastic", 
             "Mask", "Paint", "Twist", "Local Scale", "Clay", "Clay Buildup", "Dam Standard", "Square Brush", "Visibility", "Mask Gradient Blur",
-            "Measure", "Divider", "Transform", "Armature Spheres", "Brush", "PolyGroup", "Clip Curve", "Trim", "Delete Layer"
+            "Measure", "Divider", "Transform", "Armature Spheres", "Brush", "PolyGroup", "Clip Curve", "Trim", "Delete Layer", "Relax"
         };
         BrushType current = sculpt.getBrush();
         float btnH = 26.0f * scale;
@@ -1319,7 +1328,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         }
 
         // 3. Tool-Specific Parameters Section
-        bool hasSpecialParams = (brushType == BRUSH_SMOOTH || brushType == BRUSH_MOVE || 
+        bool hasSpecialParams = (brushType == BRUSH_SMOOTH || brushType == BRUSH_RELAX || brushType == BRUSH_MOVE || 
                                  brushType == BRUSH_ELASTIC || brushType == BRUSH_CLAY || 
                                  brushType == BRUSH_CLAYBUILDUP || 
                                  brushType == BRUSH_SQUAREBRUSH || brushType == BRUSH_PAINT || 
@@ -1333,6 +1342,31 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 if (brushType == BRUSH_SMOOTH) {
                     ImGui::Checkbox("Tangential Smoothing", &settings.tangent);
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Applies smoothing tangentially to the surface");
+                }
+                else if (brushType == BRUSH_RELAX) {
+                    const char* algos[] = { "Laplacian", "Tangential Slide", "Project to Surface" };
+                    ImGui::Combo("Algorithm", &settings.relaxAlgorithm, algos, IM_ARRAYSIZE(algos));
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Laplacian: uniform centroid averaging\nTangential Slide: sliding on tangent plane (preserves volume)\nProject to Surface: reprojects to initial surface shape (maintains sculpt form)");
+
+                    const char* modes[] = { "Auto-lock", "Interior Only", "Border Only", "All Vertices" };
+                    ImGui::Combo("Mode", &settings.relaxMode, modes, IM_ARRAYSIZE(modes));
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Auto-lock: smart border/interior locking based on stroke origin\nInterior Only: locks borders, smooths interior\nBorder Only: locks interior, smooths borders\nAll Vertices: relaxes entire surface");
+
+                    ImGui::SliderInt("Iterations", &settings.relaxIterations, 1, 10);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Number of relaxation passes per stroke step");
+
+                    ImGui::Checkbox("Preserve Creases", &settings.relaxPreserveCreases);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Preserves sharp feature edges during relaxation");
+
+                    if (settings.relaxPreserveCreases) {
+                        ImGui::SliderFloat("Crease Angle", &settings.relaxCreaseAngle, 5.0f, 90.0f, "%.1f deg");
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dihedral threshold angle to treat edges as sharp creases");
+                    }
+
+                    if (settings.relaxMode == RELAX_MODE_ALL) {
+                        ImGui::Checkbox("Lock Border", &settings.relaxLockBorder);
+                        ImGui::Checkbox("Lock Interior", &settings.relaxLockInterior);
+                    }
                 }
                 else if (brushType == BRUSH_MOVE || brushType == BRUSH_ELASTIC) {
                     ImGui::Checkbox("Topological Check", &settings.topoCheck);

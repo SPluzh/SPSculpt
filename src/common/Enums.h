@@ -31,6 +31,7 @@ enum BrushType {
     BRUSH_CLIP_CURVE,
     BRUSH_TRIM,
     BRUSH_DELETE_LAYER,
+    BRUSH_RELAX,
     BRUSH_COUNT
 };
 
@@ -79,6 +80,7 @@ inline const char* getBrushNameStr(BrushType brush) {
         case BRUSH_CLIP_CURVE: return "Clip Curve";
         case BRUSH_TRIM: return "Trim";
         case BRUSH_DELETE_LAYER: return "Delete Layer";
+        case BRUSH_RELAX: return "Relax";
         default: return "Unknown";
     }
 }

@@ -116,6 +116,7 @@ static BrushType hkActionToBrushType(HKAction act, BrushType fallback) {
         case HKAction::ToolVTool: return BRUSH_VTOOL;
         case HKAction::ToolTransform: return BRUSH_TRANSFORM;
         case HKAction::ToolSmooth: return BRUSH_SMOOTH;
+        case HKAction::ToolRelax: return BRUSH_RELAX;
         case HKAction::ToolFlatten: return BRUSH_FLATTEN;
         case HKAction::ToolPinch: return BRUSH_PINCH;
         case HKAction::ToolCrease: return BRUSH_CREASE;
@@ -277,6 +278,7 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
             case HKAction::ToolBrush: sculpt.setBrush(BRUSH_BRUSH); break;
             case HKAction::ToolInflate: sculpt.setBrush(BRUSH_INFLATE); break;
             case HKAction::ToolSmooth: sculpt.setBrush(BRUSH_SMOOTH); break;
+            case HKAction::ToolRelax: sculpt.setBrush(BRUSH_RELAX); break;
             case HKAction::ToolFlatten: sculpt.setBrush(BRUSH_FLATTEN); break;
             case HKAction::ToolPinch: sculpt.setBrush(BRUSH_PINCH); break;
             case HKAction::ToolCrease: sculpt.setBrush(BRUSH_CREASE); break;

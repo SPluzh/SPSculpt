@@ -3,9 +3,9 @@
 namespace Version {
     constexpr int MAJOR = 0;
     constexpr int MINOR = 2;
-    constexpr int PATCH = 25;
+    constexpr int PATCH = 27;
     constexpr const char* SUFFIX = "";
-    constexpr const char* STRING = "0.2.25";
+    constexpr const char* STRING = "0.2.27";
     constexpr const char* APP_NAME = "SPSculpt";
 }
 

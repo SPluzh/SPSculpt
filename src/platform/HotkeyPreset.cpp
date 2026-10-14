@@ -11,6 +11,7 @@ static const std::vector<HKActionInfo> s_actionInfoList = {
     { HKAction::ToolVTool,        "ToolVTool",        "V-Tool",               "VTL", "Tools", false },
     { HKAction::ToolTransform,    "ToolTransform",    "Transform Gizmo",      "TRN", "Tools", false },
     { HKAction::ToolSmooth,       "ToolSmooth",       "Smooth",               "SMO", "Tools", false },
+    { HKAction::ToolRelax,        "ToolRelax",        "Relax",                "RLX", "Tools", false },
     { HKAction::ToolFlatten,      "ToolFlatten",      "Flatten",              "FLT", "Tools", false },
     { HKAction::ToolPinch,        "ToolPinch",        "Pinch",                "PIN", "Tools", false },
     { HKAction::ToolCrease,       "ToolCrease",       "Crease",               "CRE", "Tools", false },

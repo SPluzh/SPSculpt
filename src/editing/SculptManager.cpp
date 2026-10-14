@@ -303,6 +303,15 @@ SculptManager::SculptManager() {
     m_brushSettings[BRUSH_DELETE_LAYER].radius = 50.0f;
     m_brushSettings[BRUSH_DELETE_LAYER].intensity = 0.5f;
     m_brushSettings[BRUSH_DELETE_LAYER].culling = true;
+
+    m_brushSettings[BRUSH_RELAX].radius = 50.0f;
+    m_brushSettings[BRUSH_RELAX].intensity = 0.5f;
+    m_brushSettings[BRUSH_RELAX].culling = true;
+    m_brushSettings[BRUSH_RELAX].relaxAlgorithm = RELAX_ALGO_TANGENTIAL;
+    m_brushSettings[BRUSH_RELAX].relaxMode = RELAX_MODE_AUTOLOCK;
+    m_brushSettings[BRUSH_RELAX].relaxPreserveCreases = true;
+    m_brushSettings[BRUSH_RELAX].relaxCreaseAngle = 45.0f;
+    m_brushSettings[BRUSH_RELAX].relaxIterations = 1;
 }
 
 std::vector<glm::vec3> SculptManager::getActiveSymmetryScales() const {
@@ -422,6 +431,17 @@ int SculptManager::doStrokePass(
                 getCurrentSettings().tangent,
                 getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
                 false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
+            );
+            break;
+        }
+        case BRUSH_RELAX: {
+            deformedCount = m_relaxEngine.relaxVertices(
+                mesh,
+                pickedVertices,
+                currentIntersection,
+                localRadius,
+                intensity,
+                getCurrentSettings()
             );
             break;
         }
@@ -1119,6 +1139,7 @@ int SculptManager::doStrokePass(
 void SculptManager::cancelStroke() {
     m_isSculpting = false;
     m_pendingOctreeUpdate = false;
+    m_relaxEngine.endStroke();
     m_grabbedVertices.clear();
     m_grabbedVerticesSyms.clear();
     m_initialSymIntersections.clear();
@@ -1169,6 +1190,11 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     }
     if (activeBrush != m_currentBrush && (activeBrush == BRUSH_SMOOTH || activeBrush == BRUSH_MASK)) {
         m_brushSettings[activeBrush].radius = m_brushSettings[m_currentBrush].radius;
+    }
+
+    if (m_firstStrokeFrame && activeBrush == BRUSH_RELAX && mesh) {
+        const BrushSettings& rSettings = getSettings(BRUSH_RELAX);
+        m_relaxEngine.beginStroke(mesh, rSettings.relaxAlgorithm, rSettings.relaxPreserveCreases, rSettings.relaxCreaseAngle);
     }
 
     bool isGrabBrush = (activeBrush == BRUSH_MOVE || activeBrush == BRUSH_DRAG || activeBrush == BRUSH_ELASTIC);
@@ -2929,6 +2955,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
         if (m_isSculpting) {
             m_isSculpting = false;
+            m_relaxEngine.endStroke();
             m_currentIntersectionValid = false;
             m_hasAnyValidIntersection = false;
             int dragDistX = std::abs(event.button.x - m_mouseDownX);
@@ -3711,6 +3738,14 @@ bool SculptManager::saveSettings(IniFile& ini) {
         ini.setFloat(sec, "stampBlur", m_brushSettings[i].stampBlur);
         ini.setBool(sec, "stampLockRotation", m_brushSettings[i].stampLockRotation);
         ini.setBool(sec, "stampUseTilt", m_brushSettings[i].stampUseTilt);
+
+        ini.setInt(sec, "relaxAlgorithm", m_brushSettings[i].relaxAlgorithm);
+        ini.setInt(sec, "relaxMode", m_brushSettings[i].relaxMode);
+        ini.setBool(sec, "relaxLockBorder", m_brushSettings[i].relaxLockBorder);
+        ini.setBool(sec, "relaxLockInterior", m_brushSettings[i].relaxLockInterior);
+        ini.setBool(sec, "relaxPreserveCreases", m_brushSettings[i].relaxPreserveCreases);
+        ini.setFloat(sec, "relaxCreaseAngle", m_brushSettings[i].relaxCreaseAngle);
+        ini.setInt(sec, "relaxIterations", m_brushSettings[i].relaxIterations);
     }
 
     std::string genSec = "General";
@@ -3782,6 +3817,14 @@ bool SculptManager::loadSettings(const IniFile& ini) {
         if (ini.hasKey(sec, "stampBlur")) m_brushSettings[i].stampBlur = ini.getFloat(sec, "stampBlur", 0.0f);
         if (ini.hasKey(sec, "stampLockRotation")) m_brushSettings[i].stampLockRotation = ini.getBool(sec, "stampLockRotation");
         if (ini.hasKey(sec, "stampUseTilt")) m_brushSettings[i].stampUseTilt = ini.getBool(sec, "stampUseTilt");
+
+        if (ini.hasKey(sec, "relaxAlgorithm")) m_brushSettings[i].relaxAlgorithm = ini.getInt(sec, "relaxAlgorithm", 1);
+        if (ini.hasKey(sec, "relaxMode")) m_brushSettings[i].relaxMode = ini.getInt(sec, "relaxMode", 0);
+        if (ini.hasKey(sec, "relaxLockBorder")) m_brushSettings[i].relaxLockBorder = ini.getBool(sec, "relaxLockBorder");
+        if (ini.hasKey(sec, "relaxLockInterior")) m_brushSettings[i].relaxLockInterior = ini.getBool(sec, "relaxLockInterior");
+        if (ini.hasKey(sec, "relaxPreserveCreases")) m_brushSettings[i].relaxPreserveCreases = ini.getBool(sec, "relaxPreserveCreases");
+        if (ini.hasKey(sec, "relaxCreaseAngle")) m_brushSettings[i].relaxCreaseAngle = ini.getFloat(sec, "relaxCreaseAngle", 45.0f);
+        if (ini.hasKey(sec, "relaxIterations")) m_brushSettings[i].relaxIterations = ini.getInt(sec, "relaxIterations", 1);
     }
 
     std::string genSec = "General";
