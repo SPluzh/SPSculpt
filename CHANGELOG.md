@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [0.2.22]
 - **FBX Import**: Added support for Autodesk FBX (`.fbx`) files (Binary and ASCII) via file dialog and drag-and-drop.
+- **3D Camera**: Increased maximum zoom-out distance limit and dynamically expanded far clipping planes to allow seamless zooming out on large models and scans without clipping.
 
 ## [0.2.21]
 - **Scene Outliner**: Fixed object preview turning into a flat color after Voxel Remesh.

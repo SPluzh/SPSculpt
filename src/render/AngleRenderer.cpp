@@ -852,7 +852,7 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
         const Camera* camRight = scene.getCameraByIndex(1);
 
         float nearVals[2] = { 0.05f, 0.05f };
-        float farVals[2] = { 5000.0f, 5000.0f };
+        float farVals[2] = { 50000.0f, 50000.0f };
         float targetDists[2] = { 100.0f, 100.0f };
         int projTypes[2] = { 0, 0 };
         float orthoZooms[2] = { 0.044f, 0.044f };

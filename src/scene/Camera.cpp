@@ -232,7 +232,7 @@ void Camera::updateProjection() {
     // Dynamically adjust near and far planes based on distance to prevent Z-fighting & depth precision loss
     float eyeDist = std::max(0.001f, getTransZ());
     m_near = std::clamp(eyeDist * 0.005f, 0.001f, 50.0f);
-    m_far = std::max(m_near + 1.0f, eyeDist * 10.0f + 1000.0f);
+    m_far = std::max(m_near + 1.0f, eyeDist * 20.0f + 50000.0f);
 
     if (m_projectionType == CameraEnums::Projection::PERSPECTIVE) {
         m_projMatrix = glm::perspective(getFovDegrees() * (float)M_PI / 180.0f, (float)m_width / m_height, m_near, m_far);
@@ -247,10 +247,14 @@ void Camera::updateOrtho() {
     float delta = getOrthoZoom();
     float w = m_width * delta;
     float h = m_height * delta;
+    float eyeDist = std::max(0.001f, getTransZ());
+    m_far = std::max(m_far, eyeDist * 20.0f + 50000.0f);
     m_projMatrix = glm::ortho(-w, w, -h, h, -m_near, m_far);
 }
 
 void Camera::setCustomOrtho(float halfW, float halfH) {
+    float eyeDist = std::max(0.001f, getTransZ());
+    m_far = std::max(m_far, eyeDist * 20.0f + 50000.0f);
     m_projMatrix = glm::ortho(-halfW, halfW, -halfH, halfH, -m_near, m_far);
 }
 
@@ -292,7 +296,7 @@ void Camera::zoom(float df, float mouseX, float mouseY) {
 
     float oldTransZ = m_trans.z;
     float scaleFactor = std::pow(2.0f, -df * m_speedZoom);
-    float newTransZ = std::max(0.001f, std::min(oldTransZ * scaleFactor, 100000.0f));
+    float newTransZ = std::max(0.001f, std::min(oldTransZ * scaleFactor, 50000000.0f));
 
     if (m_projectionType == CameraEnums::Projection::PERSPECTIVE) {
         float oldD = oldTransZ - m_offset.z;
@@ -303,6 +307,7 @@ void Camera::zoom(float df, float mouseX, float mouseY) {
             m_trans.y = m_offset.y + (m_trans.y - m_offset.y) * ratio;
         }
         m_trans.z = newTransZ;
+        updateProjection();
     } else {
         float oldOrtho = getOrthoZoom();
         m_trans.z = newTransZ;
@@ -316,7 +321,7 @@ void Camera::zoom(float df, float mouseX, float mouseY) {
             m_trans.y += ndcY * static_cast<float>(m_height) * deltaZoom;
         }
 
-        updateOrtho();
+        updateProjection();
     }
     updateView();
 }

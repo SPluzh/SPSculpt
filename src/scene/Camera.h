@@ -200,7 +200,7 @@ private:
     float m_rotY = 0.0f;
 
     float m_near = 0.05f;
-    float m_far = 5000.0f;
+    float m_far = 50000.0f;
 
     float m_view2DOffsetX = 0.0f;
     float m_view2DOffsetY = 0.0f;
