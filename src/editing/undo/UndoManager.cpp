@@ -70,8 +70,8 @@ void UndoManager::recordAffectedVertices(Scene& scene,
     }
     uint32_t currentStamp = s_recordedCurrentStamp;
 
-    Layer* activeLayer = mesh->isLayerActive() ? mesh->layerStack.getActive() : nullptr;
-    int activeLayerIdx = mesh->isLayerActive() ? mesh->layerStack.getActiveIdx() : -1;
+    Layer* activeLayer = mesh->isLayerRecording() ? mesh->layerStack.getActive() : nullptr;
+    int activeLayerIdx = mesh->isLayerRecording() ? mesh->layerStack.getActiveIdx() : -1;
     if (activeLayer) {
         delta.hasLayerDeltas = true;
         delta.activeLayerIdx = activeLayerIdx;
@@ -134,8 +134,8 @@ void UndoManager::endSculptStroke(Scene& scene) {
             delta.nextMaterials.reserve(delta.indices.size() * 3);
         }
 
-        Layer* activeLayer = (delta.hasLayerDeltas && mesh->isLayerActive()) ? mesh->layerStack.getLayer(delta.activeLayerIdx) : nullptr;
-        if (!activeLayer && delta.hasLayerDeltas && mesh->isLayerActive()) {
+        Layer* activeLayer = (delta.hasLayerDeltas && mesh->hasLayers()) ? mesh->layerStack.getLayer(delta.activeLayerIdx) : nullptr;
+        if (!activeLayer && delta.hasLayerDeltas && mesh->hasLayers()) {
             activeLayer = mesh->layerStack.getActive();
         }
         if (activeLayer) {
@@ -350,7 +350,7 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
             const auto& srcMats = isUndo ? delta.prevMaterials : delta.nextMaterials;
             const auto& srcLayerDeltas = isUndo ? delta.prevLayerDeltas : delta.nextLayerDeltas;
 
-            bool restoreLayer = delta.hasLayerDeltas && mesh->isLayerActive();
+            bool restoreLayer = delta.hasLayerDeltas && mesh->hasLayers();
             Layer* targetLayer = restoreLayer ? mesh->layerStack.getLayer(delta.activeLayerIdx) : nullptr;
             if (restoreLayer && !targetLayer) {
                 targetLayer = mesh->layerStack.getActive();

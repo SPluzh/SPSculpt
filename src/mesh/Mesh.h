@@ -55,8 +55,9 @@ public:
 
     // Layers
     LayerStack layerStack;
-    bool hasLayers() const { return layerStack.hasBase(); }
+    bool hasLayers() const { return layerStack.hasBase() && layerStack.count() > 0; }
     bool isLayerActive() const { return layerStack.hasBase() && layerStack.getActiveIdx() >= 0; }
+    bool isLayerRecording() const { return layerStack.hasBase() && layerStack.count() > 0 && layerStack.isRecording(); }
 
     int nbVerts = 0;
     int nbFaces = 0;

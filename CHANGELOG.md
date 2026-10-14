@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.25]
+- **Record Mode**: Added `REC` button to toggle stroke recording on/off per layer.
+- **Invert Slider**: Extended intensity slider from `-100%` to `100%` to invert layers.
+- **Rename & Reorder**: Added double-click renaming and drag-and-drop / button reordering.
+- **Merge Layers**: Added per-layer merge down and "Merge All" to bake layers into base mesh.
+
 ## [0.2.24]
 - **Camera Navigation**: Fixed zoom to pivot in Orthographic mode to smoothly focus on the surface point under cursor without drift or clipping when zooming up close.
 

@@ -367,6 +367,9 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
                 }
             }
             mesh->layerStack.setActiveIdx(activeIdx);
+            for (int l = 0; l < mesh->layerStack.count(); ++l) {
+                mesh->layerStack.at(l).recording = (l == activeIdx);
+            }
         }
 
         if (version >= 13) {

@@ -2048,7 +2048,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     // 3.6 Sculpt Layers Panel
     if (m_showLayersPanel) {
         ImGui::SetNextWindowPos({160.0f * scale, 450.0f * scale}, ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize({300.0f * scale, 240.0f * scale}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize({340.0f * scale, 240.0f * scale}, ImGuiCond_FirstUseEver);
         ImGui::Begin("Sculpt Layers", &m_showLayersPanel);
 
         Mesh* selectedMesh = scene.getSelected();
@@ -2057,7 +2057,11 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         } else {
             LayerStack& stack = selectedMesh->layerStack;
 
-            if (ImGui::Button("Add Layer (+)", ImVec2(120, 26))) {
+            static uint32_t renameLayerId = 0;
+            static char renameLayerBuf[128] = "";
+            static bool renameLayerJustOpened = false;
+
+            if (ImGui::Button("Add (+)", ImVec2(70 * scale, 26 * scale))) {
                 scene.pushHistoryState();
                 selectedMesh = scene.getSelected();
                 if (selectedMesh) {
@@ -2067,22 +2071,68 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     selectedMesh->layerStack.addLayer(selectedMesh->nbVerts, "Layer " + std::to_string(selectedMesh->layerStack.count() + 1));
                 }
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add New Layer");
+
             ImGui::SameLine();
             if (stack.getActiveIdx() >= 0) {
-                if (ImGui::Button("Delete Active (-)", ImVec2(130, 26))) {
+                if (ImGui::Button("Delete (-)", ImVec2(75 * scale, 26 * scale))) {
                     scene.pushHistoryState();
                     selectedMesh = scene.getSelected();
                     if (selectedMesh) {
                         selectedMesh->layerStack.removeLayer(selectedMesh->layerStack.getActiveIdx());
                         selectedMesh->layerStack.bake(selectedMesh->layerStack.getBase(), selectedMesh->verts);
                         selectedMesh->updateAfterLayerBake();
+                        if (selectedMesh->layerStack.count() == 0) {
+                            selectedMesh->layerStack.clear();
+                        }
                     }
                 }
             } else {
                 ImGui::BeginDisabled();
-                ImGui::Button("Delete Active (-)", ImVec2(130, 26));
+                ImGui::Button("Delete (-)", ImVec2(75 * scale, 26 * scale));
                 ImGui::EndDisabled();
             }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Delete Active Layer");
+
+            int activeIdx = stack.getActiveIdx();
+            bool canMoveUp = (activeIdx >= 0 && activeIdx < stack.count() - 1);
+            bool canMoveDown = (activeIdx > 0);
+
+            ImGui::SameLine();
+            if (!canMoveUp) ImGui::BeginDisabled();
+            if (ImGui::Button(ICON_LC_CHEVRON_UP "##moveUp", ImVec2(26 * scale, 26 * scale))) {
+                scene.pushHistoryState();
+                stack.moveLayer(activeIdx, activeIdx + 1);
+                stack.bake(stack.getBase(), selectedMesh->verts);
+                selectedMesh->updateAfterLayerBake();
+            }
+            if (!canMoveUp) ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Move Active Layer Up");
+
+            ImGui::SameLine();
+            if (!canMoveDown) ImGui::BeginDisabled();
+            if (ImGui::Button(ICON_LC_CHEVRON_DOWN "##moveDown", ImVec2(26 * scale, 26 * scale))) {
+                scene.pushHistoryState();
+                stack.moveLayer(activeIdx, activeIdx - 1);
+                stack.bake(stack.getBase(), selectedMesh->verts);
+                selectedMesh->updateAfterLayerBake();
+            }
+            if (!canMoveDown) ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Move Active Layer Down");
+
+            bool hasLayers = (stack.count() > 0);
+            ImGui::SameLine();
+            if (!hasLayers) ImGui::BeginDisabled();
+            if (ImGui::Button(ICON_LC_MERGE " Merge All", ImVec2(95 * scale, 26 * scale))) {
+                scene.pushHistoryState();
+                selectedMesh = scene.getSelected();
+                if (selectedMesh) {
+                    selectedMesh->layerStack.mergeAll(selectedMesh->verts);
+                    selectedMesh->updateAfterLayerBake();
+                }
+            }
+            if (!hasLayers) ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Merge All Layers into Base Mesh");
 
             ImGui::Separator();
 
@@ -2092,14 +2142,134 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             } else {
                 for (int i = numLayers - 1; i >= 0; --i) {
                     Layer& l = stack.at(i);
-                    ImGui::PushID(i);
+                    ImGui::PushID((int)l.id);
 
                     bool isActive = (i == stack.getActiveIdx());
-                    if (ImGui::Selectable(l.name.c_str(), isActive, 0, ImVec2(110, 0))) {
-                        stack.setActiveIdx(i);
+
+                    if (renameLayerId == l.id) {
+                        ImGui::SetNextItemWidth(80.0f * scale);
+                        if (renameLayerJustOpened) {
+                            ImGui::SetKeyboardFocusHere();
+                            renameLayerJustOpened = false;
+                        }
+                        bool enter = ImGui::InputText("##renameInput", renameLayerBuf, sizeof(renameLayerBuf),
+                                                     ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+                        if (enter) {
+                            if (renameLayerBuf[0] != '\0' && l.name != renameLayerBuf) {
+                                scene.pushHistoryState();
+                                l.name = renameLayerBuf;
+                            }
+                            renameLayerId = 0;
+                        } else if (ImGui::IsItemDeactivated()) {
+                            if (renameLayerId == l.id) {
+                                if (renameLayerBuf[0] != '\0' && l.name != renameLayerBuf) {
+                                    scene.pushHistoryState();
+                                    l.name = renameLayerBuf;
+                                }
+                                renameLayerId = 0;
+                            }
+                        }
+                        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+                            renameLayerId = 0;
+                        }
+                    } else {
+                        if (ImGui::Selectable(l.name.c_str(), isActive, 0, ImVec2(80.0f * scale, 0))) {
+                            stack.setActiveIdx(i);
+                        }
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("Click to select\nDouble-click to rename\nDrag & drop to reorder\nRight-click for options");
+                            if (ImGui::IsMouseDoubleClicked(0)) {
+                                renameLayerId = l.id;
+                                strncpy(renameLayerBuf, l.name.c_str(), sizeof(renameLayerBuf) - 1);
+                                renameLayerBuf[sizeof(renameLayerBuf) - 1] = '\0';
+                                renameLayerJustOpened = true;
+                            }
+                        }
+
+                        // Drag and drop reordering
+                        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
+                            int payloadIdx = i;
+                            ImGui::SetDragDropPayload("SCULPT_LAYER_INDEX", &payloadIdx, sizeof(int));
+                            ImGui::Text("Move %s", l.name.c_str());
+                            ImGui::EndDragDropSource();
+                        }
+                        if (ImGui::BeginDragDropTarget()) {
+                            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SCULPT_LAYER_INDEX")) {
+                                if (payload->DataSize == sizeof(int)) {
+                                    int fromIdx = *(const int*)payload->Data;
+                                    if (fromIdx >= 0 && fromIdx < stack.count() && fromIdx != i) {
+                                        scene.pushHistoryState();
+                                        stack.moveLayer(fromIdx, i);
+                                        stack.bake(stack.getBase(), selectedMesh->verts);
+                                        selectedMesh->updateAfterLayerBake();
+                                    }
+                                }
+                            }
+                            ImGui::EndDragDropTarget();
+                        }
                     }
+
+                    // Context menu (right-click)
+                    if (ImGui::BeginPopupContextItem("##LayerCtx")) {
+                        stack.setActiveIdx(i);
+
+                        if (ImGui::MenuItem(ICON_LC_PENCIL " Rename")) {
+                            renameLayerId = l.id;
+                            strncpy(renameLayerBuf, l.name.c_str(), sizeof(renameLayerBuf) - 1);
+                            renameLayerBuf[sizeof(renameLayerBuf) - 1] = '\0';
+                            renameLayerJustOpened = true;
+                        }
+
+                        ImGui::Separator();
+
+                        bool canUp = (i < numLayers - 1);
+                        if (ImGui::MenuItem(ICON_LC_CHEVRON_UP " Move Up", nullptr, false, canUp)) {
+                            scene.pushHistoryState();
+                            stack.moveLayer(i, i + 1);
+                            stack.bake(stack.getBase(), selectedMesh->verts);
+                            selectedMesh->updateAfterLayerBake();
+                        }
+
+                        bool canDown = (i > 0);
+                        if (ImGui::MenuItem(ICON_LC_CHEVRON_DOWN " Move Down", nullptr, false, canDown)) {
+                            scene.pushHistoryState();
+                            stack.moveLayer(i, i - 1);
+                            stack.bake(stack.getBase(), selectedMesh->verts);
+                            selectedMesh->updateAfterLayerBake();
+                        }
+
+                        if (ImGui::MenuItem(i > 0 ? ICON_LC_MERGE " Merge Down" : ICON_LC_MERGE " Merge into Base")) {
+                            scene.pushHistoryState();
+                            stack.mergeDown(i);
+                            if (stack.count() > 0) {
+                                stack.bake(stack.getBase(), selectedMesh->verts);
+                            }
+                            selectedMesh->updateAfterLayerBake();
+                        }
+
+                        ImGui::Separator();
+
+                        if (ImGui::MenuItem(ICON_LC_COPY " Duplicate")) {
+                            scene.pushHistoryState();
+                            stack.duplicateLayer(i);
+                        }
+
+                        if (ImGui::MenuItem(ICON_LC_TRASH " Delete")) {
+                            scene.pushHistoryState();
+                            stack.removeLayer(i);
+                            stack.bake(stack.getBase(), selectedMesh->verts);
+                            selectedMesh->updateAfterLayerBake();
+                            if (stack.count() == 0) {
+                                stack.clear();
+                            }
+                        }
+
+                        ImGui::EndPopup();
+                    }
+
                     ImGui::SameLine();
 
+                    // Visibility checkbox
                     bool vis = l.visible;
                     if (ImGui::Checkbox("##vis", &vis)) {
                         l.visible = vis;
@@ -2109,13 +2279,61 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Layer Visibility");
 
                     ImGui::SameLine();
+
+                    // Record button
+                    if (l.recording) {
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.18f, 0.18f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.28f, 0.28f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.70f, 0.12f, 0.12f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+                    } else {
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.19f, 0.21f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.28f, 0.30f, 0.33f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.35f, 0.38f, 0.42f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.55f, 0.55f, 1.0f));
+                    }
+
+                    if (ImGui::Button(ICON_LC_CIRCLE_DOT " REC##rec", ImVec2(54.0f * scale, 0))) {
+                        if (l.recording) {
+                            l.recording = false;
+                        } else {
+                            stack.setActiveIdx(i);
+                            for (int j = 0; j < stack.count(); ++j) {
+                                stack.at(j).recording = (j == i);
+                            }
+                        }
+                    }
+                    ImGui::PopStyleColor(4);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip(l.recording ? "Recording Active (Click to Pause)" : "Recording Inactive (Click to Record)");
+                    }
+
+                    ImGui::SameLine();
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.19f, 0.21f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.28f, 0.30f, 0.33f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.35f, 0.38f, 0.42f, 1.0f));
+                    if (ImGui::Button(ICON_LC_MERGE "##mergeLayer", ImVec2(24.0f * scale, 0))) {
+                        scene.pushHistoryState();
+                        stack.mergeDown(i);
+                        if (stack.count() > 0) {
+                            stack.bake(stack.getBase(), selectedMesh->verts);
+                        }
+                        selectedMesh->updateAfterLayerBake();
+                    }
+                    ImGui::PopStyleColor(3);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip(i > 0 ? "Merge Down into layer below" : "Merge into Base Mesh");
+                    }
+
+                    ImGui::SameLine();
                     float intensityPct = l.intensity * 100.0f;
                     ImGui::PushItemWidth(-1);
-                    if (ImGui::SliderFloat("##intensity", &intensityPct, 0.0f, 100.0f, "%.0f%%")) {
+                    if (ImGui::SliderFloat("##intensity", &intensityPct, -100.0f, 100.0f, "%.0f%%")) {
                         l.intensity = intensityPct * 0.01f;
                         stack.bake(stack.getBase(), selectedMesh->verts);
                         selectedMesh->updateAfterLayerBake();
                     }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Layer Intensity (-100% to 100%)");
                     ImGui::PopItemWidth();
 
                     ImGui::PopID();

@@ -11,6 +11,10 @@ int LayerStack::addLayer(int nbVerts, const std::string& name) {
         layer.name = "Layer " + std::to_string(m_layers.size() + 1);
     }
     layer.deltaVerts.assign(nbVerts * 3, 0.0f);
+    layer.recording = true;
+    for (auto& l : m_layers) {
+        l.recording = false;
+    }
     m_layers.push_back(layer);
     m_activeIdx = (int)m_layers.size() - 1;
     return m_activeIdx;
@@ -18,11 +22,15 @@ int LayerStack::addLayer(int nbVerts, const std::string& name) {
 
 void LayerStack::removeLayer(int idx) {
     if (idx < 0 || idx >= (int)m_layers.size()) return;
+    bool wasRecording = m_layers[idx].recording;
     m_layers.erase(m_layers.begin() + idx);
     if (m_layers.empty()) {
         m_activeIdx = -1;
     } else {
         m_activeIdx = std::clamp(m_activeIdx, 0, (int)m_layers.size() - 1);
+        if (wasRecording && m_activeIdx >= 0) {
+            m_layers[m_activeIdx].recording = true;
+        }
     }
 }
 
@@ -43,22 +51,56 @@ void LayerStack::duplicateLayer(int idx) {
     static uint32_t s_dupId = 1000;
     dup.id = ++s_dupId;
     dup.name += " Copy";
+    dup.recording = true;
+    for (auto& l : m_layers) {
+        l.recording = false;
+    }
     m_layers.insert(m_layers.begin() + idx + 1, dup);
     m_activeIdx = idx + 1;
 }
 
 void LayerStack::mergeDown(int idx) {
-    if (idx <= 0 || idx >= (int)m_layers.size()) return;
-    Layer& target = m_layers[idx - 1];
-    const Layer& source = m_layers[idx];
+    if (idx < 0 || idx >= (int)m_layers.size()) return;
 
-    size_t count = std::min(target.deltaVerts.size(), source.deltaVerts.size());
-    for (size_t i = 0; i < count; ++i) {
-        target.deltaVerts[i] += source.deltaVerts[i] * source.intensity;
+    if (idx > 0) {
+        Layer& target = m_layers[idx - 1];
+        const Layer& source = m_layers[idx];
+
+        bool wasRecording = source.recording || target.recording;
+        float targetScale = (std::abs(target.intensity) > 1e-4f) ? (1.0f / target.intensity) : 1.0f;
+        size_t count = std::min(target.deltaVerts.size(), source.deltaVerts.size());
+        for (size_t i = 0; i < count; ++i) {
+            target.deltaVerts[i] += source.deltaVerts[i] * source.intensity * targetScale;
+        }
+
+        removeLayer(idx);
+        m_activeIdx = idx - 1;
+        if (wasRecording && m_activeIdx >= 0) {
+            m_layers[m_activeIdx].recording = true;
+        }
+    } else {
+        const Layer& source = m_layers[0];
+        if (!m_baseVerts.empty()) {
+            size_t count = std::min(m_baseVerts.size(), source.deltaVerts.size());
+            for (size_t i = 0; i < count; ++i) {
+                m_baseVerts[i] += source.deltaVerts[i] * source.intensity;
+            }
+        }
+        removeLayer(0);
+        if (m_layers.empty()) {
+            clear();
+        } else {
+            m_activeIdx = 0;
+        }
     }
+}
 
-    removeLayer(idx);
-    m_activeIdx = idx - 1;
+void LayerStack::mergeAll(std::vector<float>& outVerts) {
+    if (m_layers.empty()) return;
+    if (!m_baseVerts.empty()) {
+        bake(m_baseVerts, outVerts);
+    }
+    clear();
 }
 
 void LayerStack::bake(const std::vector<float>& baseVerts, std::vector<float>& outVerts) const {

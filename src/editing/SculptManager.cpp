@@ -346,7 +346,7 @@ int SculptManager::doStrokePass(
     const glm::vec3& sScale
 ) {
     std::vector<float> preVerts;
-    bool isLayerDeform = mesh && mesh->isLayerActive() && activeBrush != BRUSH_DELETE_LAYER &&
+    bool isLayerDeform = mesh && mesh->isLayerRecording() && activeBrush != BRUSH_DELETE_LAYER &&
                          activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_POLYGROUP;
     if (isLayerDeform && !pickedVertices.empty()) {
         preVerts.resize(pickedVertices.size() * 3);
@@ -1031,7 +1031,7 @@ int SculptManager::doStrokePass(
             break;
         }
         case BRUSH_DELETE_LAYER: {
-            if (!mesh->isLayerActive()) break;
+            if (!mesh->isLayerRecording()) break;
             Layer* layer = mesh->layerStack.getActive();
             if (!layer || !layer->visible) break;
             if (layer->deltaVerts.size() != mesh->verts.size()) {
@@ -1137,7 +1137,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     if (m_firstStrokeFrame) {
         m_cachedInvMatrix = glm::inverse(mesh->matrix);
         m_cachedCamWorldMatrix = glm::inverse(camera.getViewMatrix());
-        if (mesh && mesh->isLayerActive()) {
+        if (mesh && mesh->isLayerRecording()) {
             Layer* layer = mesh->layerStack.getActive();
             if (layer) {
                 m_strokeStartLayerDeltas = layer->deltaVerts;
@@ -1172,6 +1172,11 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     }
 
     bool isGrabBrush = (activeBrush == BRUSH_MOVE || activeBrush == BRUSH_DRAG || activeBrush == BRUSH_ELASTIC);
+
+    bool isDeformBrush = (activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_POLYGROUP);
+    if (mesh && mesh->hasLayers() && isDeformBrush && !mesh->isLayerRecording()) {
+        return;
+    }
 
     uint32_t intersectFaceId = 0xffffffff;
 
@@ -2308,6 +2313,23 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             }
 
             if (hitMesh) {
+                BrushType activeBrush = m_currentBrush;
+                bool isMayaNav = m_hotkeyManager ? m_hotkeyManager->getModifierBehavior().ctrlAltInvertsBrush : (camera.getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
+                bool isCtrl = (mod & KMOD_CTRL) != 0;
+                bool isAlt = (mod & KMOD_ALT) != 0;
+                bool isShift = (mod & KMOD_SHIFT) != 0;
+                if (isShift) {
+                    activeBrush = BRUSH_SMOOTH;
+                } else if (isMayaNav ? (isCtrl && !isAlt) : isCtrl) {
+                    if (m_currentBrush != BRUSH_POLYGROUP) {
+                        activeBrush = BRUSH_MASK;
+                    }
+                }
+                bool isDeformBrush = (activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_POLYGROUP);
+                if (mesh && mesh->hasLayers() && isDeformBrush && !mesh->isLayerRecording()) {
+                    return;
+                }
+
                 bool strokeAffectsColors = (m_currentBrush == BRUSH_PAINT && getCurrentSettings().writeAlbedo);
                 bool strokeAffectsMaterials = (m_currentBrush == BRUSH_PAINT && (getCurrentSettings().writeRoughness || getCurrentSettings().writeMetalness)) ||
                                                (m_currentBrush == BRUSH_MASK || m_currentBrush == BRUSH_MASK_GRADIENT_BLUR);
@@ -3041,7 +3063,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     );
                     m_pendingOctreeUpdate = false;
                 }
-                if (mesh && mesh->isLayerActive()) {
+                if (mesh && mesh->isLayerRecording()) {
                     mesh->layerStack.bake(mesh->layerStack.getBase(), mesh->verts);
                     mesh->updateAfterLayerBake();
                 }

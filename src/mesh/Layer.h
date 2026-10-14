@@ -8,7 +8,8 @@ struct Layer {
     uint32_t    id        = 0;
     std::string name      = "Layer";
     bool        visible   = true;
-    float       intensity = 1.0f; // 0.0 - 1.0
+    bool        recording = true;
+    float       intensity = 1.0f; // -1.0 - 1.0
 
     // Per-vertex displacement from base pose (nbVerts * 3 floats)
     std::vector<float> deltaVerts;
@@ -29,6 +30,7 @@ public:
     void moveLayer(int from, int to);
     void duplicateLayer(int idx);
     void mergeDown(int idx);
+    void mergeAll(std::vector<float>& outVerts);
 
     int getActiveIdx() const { return m_activeIdx; }
     void setActiveIdx(int idx) {
@@ -46,6 +48,11 @@ public:
             return &m_layers[m_activeIdx];
         }
         return nullptr;
+    }
+
+    bool isRecording() const {
+        const Layer* l = getActive();
+        return l && l->recording;
     }
 
     int count() const { return (int)m_layers.size(); }
