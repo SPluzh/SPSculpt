@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstring>
 #include <map>
+#include <unordered_map>
 #include <utility>
 #include <glm/gtc/matrix_transform.hpp>
 #include "files/MeshUtils.h"
@@ -409,8 +410,33 @@ bool Scene::canRedo() const {
     return g_undoManager.canRedo();
 }
 
+uint32_t Scene::getNextFreePolyGroupID() const {
+    uint32_t maxId = 0;
+    for (const Mesh* m : m_meshes) {
+        if (!m) continue;
+        for (uint32_t gid : m->faceGroups) {
+            if (gid > maxId) maxId = gid;
+        }
+    }
+    return maxId + 1;
+}
+
 void Scene::addMesh(Mesh* m) {
+    if (!m) return;
     if (std::find(m_meshes.begin(), m_meshes.end(), m) == m_meshes.end()) {
+        if (!m->isArmature && m->nbFaces > 0) {
+            bool hasValidGroup = false;
+            for (uint32_t gid : m->faceGroups) {
+                if (gid != 0) {
+                    hasValidGroup = true;
+                    break;
+                }
+            }
+            if (!hasValidGroup) {
+                uint32_t gid = getNextFreePolyGroupID();
+                m->initFaceGroups(gid);
+            }
+        }
         m_meshes.push_back(m);
     }
 }
@@ -816,6 +842,7 @@ void Scene::loadDefaultSphere() {
     mesh->vrvStartCount = vrvStartCount;
     mesh->vertRingVert = vertRingVert;
     mesh->vertOnEdge = vertOnEdge;
+    mesh->initFaceGroups(getNextFreePolyGroupID());
     mesh->postInit();
 
     addMesh(mesh);
@@ -1233,6 +1260,7 @@ void Scene::addSphere() {
     mesh->vertRingVert = vertRingVert;
     mesh->vertOnEdge = vertOnEdge;
     mesh->outlinerName = "Sphere " + std::to_string(mesh->m_id);
+    mesh->initFaceGroups(getNextFreePolyGroupID());
     mesh->postInit();
 
     pushHistoryState();
@@ -1270,6 +1298,7 @@ void Scene::addGeosphere() {
     mesh->vertRingVert = vertRingVert;
     mesh->vertOnEdge = vertOnEdge;
     mesh->outlinerName = "Geosphere " + std::to_string(mesh->m_id);
+    mesh->initFaceGroups(getNextFreePolyGroupID());
     mesh->postInit();
 
     pushHistoryState();
@@ -1307,6 +1336,7 @@ void Scene::addCube() {
     mesh->vertRingVert = vertRingVert;
     mesh->vertOnEdge = vertOnEdge;
     mesh->outlinerName = "Cube " + std::to_string(mesh->m_id);
+    mesh->initFaceGroups(getNextFreePolyGroupID());
     mesh->postInit();
 
     pushHistoryState();
@@ -1344,6 +1374,7 @@ void Scene::addCylinder() {
     mesh->vertRingVert = vertRingVert;
     mesh->vertOnEdge = vertOnEdge;
     mesh->outlinerName = "Cylinder " + std::to_string(mesh->m_id);
+    mesh->initFaceGroups(getNextFreePolyGroupID());
     mesh->postInit();
 
     pushHistoryState();
@@ -1381,6 +1412,7 @@ void Scene::addTorus() {
     mesh->vertRingVert = vertRingVert;
     mesh->vertOnEdge = vertOnEdge;
     mesh->outlinerName = "Torus " + std::to_string(mesh->m_id);
+    mesh->initFaceGroups(getNextFreePolyGroupID());
     mesh->postInit();
 
     pushHistoryState();
@@ -1471,6 +1503,7 @@ void Scene::addPrimitiveAtMask(const std::string& type, bool useSym, bool symX, 
         mesh->vrvStartCount = vrvStartCount;
         mesh->vertRingVert = vertRingVert;
         mesh->vertOnEdge = vertOnEdge;
+        mesh->initFaceGroups(getNextFreePolyGroupID());
         mesh->postInit();
 
         glm::vec3 worldCenter = glm::vec3(activeMesh->matrix * glm::vec4(locCenter, 1.0f));
@@ -1517,10 +1550,14 @@ void Scene::duplicateSelection() {
     pushHistoryState();
 
     std::vector<Mesh*> newCopies;
+    uint32_t nextGid = getNextFreePolyGroupID();
+    std::unordered_map<uint32_t, uint32_t> groupRemap;
+
     for (Mesh* src : m_selectedMeshes) {
         Mesh* copy = new Mesh();
         copy->verts = src->verts;
         copy->colors = src->colors;
+        copy->materials = src->materials;
         copy->faces = src->faces;
         copy->vrfStartCount = src->vrfStartCount;
         copy->vertRingFace = src->vertRingFace;
@@ -1536,6 +1573,20 @@ void Scene::duplicateSelection() {
         copy->visibleV2 = src->visibleV2;
 
         copy->outlinerName = src->outlinerName + " Copy";
+
+        copy->faceGroups.resize(copy->nbFaces);
+        for (int f = 0; f < copy->nbFaces; ++f) {
+            uint32_t srcGid = (f < (int)src->faceGroups.size()) ? src->faceGroups[f] : 0;
+            auto it = groupRemap.find(srcGid);
+            if (it == groupRemap.end()) {
+                uint32_t assigned = std::max(nextGid, getNextFreePolyGroupID());
+                groupRemap[srcGid] = assigned;
+                nextGid = assigned + 1;
+            }
+            copy->faceGroups[f] = groupRemap[srcGid];
+        }
+        copy->isFaceGroupDirty = true;
+
         copy->postInit();
         addMesh(copy);
         newCopies.push_back(copy);
@@ -1576,6 +1627,8 @@ void Scene::mergeSelection() {
     mergedMesh->faces = mm.faces;
     mergedMesh->colors = mm.colors;
     mergedMesh->materials = mm.materials;
+    mergedMesh->faceGroups = std::move(mm.faceGroups);
+    mergedMesh->isFaceGroupDirty = true;
     mergedMesh->nbVerts = mm.nbVerts;
     mergedMesh->nbFaces = mm.nbFaces;
     mergedMesh->vrfStartCount = vrfStartCount;

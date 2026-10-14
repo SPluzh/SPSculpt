@@ -89,6 +89,8 @@ public:
     void mergeSelection();
     void clearScene();
 
+    uint32_t getNextFreePolyGroupID() const;
+
     Camera& getCamera();
     const Camera& getCamera() const;
     Camera* getCameraPtr();

@@ -8,6 +8,7 @@ struct MergedMesh {
     std::vector<float> colors;
     std::vector<float> materials;
     std::vector<uint32_t> faces;
+    std::vector<uint32_t> faceGroups;
     int nbVerts = 0;
     int nbFaces = 0;
 };

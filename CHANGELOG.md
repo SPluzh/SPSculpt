@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.29]
+- **Auto PolyGroups**: Every newly created primitive, spawned object, and duplicate now automatically gets a distinct, unique PolyGroup ID and color.
+- **Merge PolyGroups**: Merging multiple meshes now preserves the individual PolyGroups of each component.
+
 ## [0.2.28]
 - **HUD Shading**: Added Matcap & PBR switch buttons with custom icons and settings dropdowns.
 - **Matcap Previews**: Added visual thumbnail grid for quick matcap selection.

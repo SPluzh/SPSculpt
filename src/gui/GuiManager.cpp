@@ -1763,7 +1763,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     }
                     ImGui::SameLine();
                     if (ImGui::Button("New Group (+)", ImVec2(100, 24))) {
-                        uint32_t nextId = selectedMesh ? selectedMesh->getNextFreeGroupID() : (currentGid + 1);
+                        uint32_t nextId = scene.getNextFreePolyGroupID();
                         sculpt.setActiveGroupID(nextId);
                     }
 

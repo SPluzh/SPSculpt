@@ -3,6 +3,7 @@
 #include <glm/glm.hpp>
 #include <cmath>
 #include <algorithm>
+#include <set>
 
 namespace MeshUtils {
 
@@ -67,6 +68,13 @@ MergedMesh mergeMeshes(const std::vector<Mesh*>& meshes) {
                 mm.materials.push_back(0.0f);
                 mm.materials.push_back(1.0f);
             }
+        }
+
+        // Face groups
+        bool hasValidGroups = (mesh->faceGroups.size() == (size_t)mf);
+        for (int i = 0; i < mf; ++i) {
+            uint32_t gid = hasValidGroups ? mesh->faceGroups[i] : 0;
+            mm.faceGroups.push_back(gid);
         }
         
         // Faces (shifting index by vertOffset)

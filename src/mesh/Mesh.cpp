@@ -8,8 +8,8 @@
 #include "common/Constants.h"
 #include "common/Logger.h"
 
-void Mesh::initFaceGroups() {
-    faceGroups.assign(nbFaces, 0);
+void Mesh::initFaceGroups(uint32_t defaultGid) {
+    faceGroups.assign(nbFaces, defaultGid);
     isFaceGroupDirty = true;
 }
 

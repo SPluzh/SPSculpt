@@ -71,7 +71,7 @@ public:
     uint32_t dirtyVertMin = 0;
     uint32_t dirtyVertMax = 0;
 
-    void initFaceGroups();
+    void initFaceGroups(uint32_t defaultGid = 0);
     uint32_t getNextFreeGroupID() const;
     void setFaceGroup(uint32_t faceIdx, uint32_t gid);
     void initEdges();
