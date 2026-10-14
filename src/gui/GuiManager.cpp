@@ -7317,6 +7317,302 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
 
         ImGui::SameLine();
 
+        // Matcap Shading Switch Button + Dropdown Arrow
+        bool isMatcap = (renderer.getShaderType() == 1);
+        if (isMatcap) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+        GLuint mcTex = getIconTexture("matcap");
+        bool clickedMc = false;
+        if (mcTex != 0) {
+            clickedMc = ImGui::Button("##hudMatcap", squareBtn);
+            ImVec2 pMin = ImGui::GetItemRectMin();
+            ImVec2 pMax = ImGui::GetItemRectMax();
+            float pad = 1.0f * scale;
+            ImVec2 imgMin(pMin.x + pad, pMin.y + pad);
+            ImVec2 imgMax(pMax.x - pad, pMax.y - pad);
+            ImU32 tintCol = isMatcap ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 240);
+            ImGui::GetWindowDrawList()->AddImage((ImTextureID)(uintptr_t)mcTex, imgMin, imgMax, ImVec2(0, 1), ImVec2(1, 0), tintCol);
+        } else {
+            clickedMc = ImGui::Button("MC##hudMatcap", squareBtn);
+        }
+
+        bool openMcPopup = false;
+        if (clickedMc) {
+            if (isMatcap) {
+                openMcPopup = true;
+            } else {
+                m_previousShaderType = 1;
+                renderer.setShaderType(1);
+            }
+        }
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+            openMcPopup = true;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Matcap Shading (Click to switch, click again or right-click for presets)");
+        }
+
+        ImVec2 mcMin = ImGui::GetItemRectMin();
+
+        // Flush narrow arrow button directly attached to Matcap button
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, ImGui::GetStyle().FramePadding.y));
+        ImGui::SetWindowFontScale(fontScale * 0.65f);
+        if (ImGui::Button(ICON_LC_CHEVRON_DOWN "##hudMatcapArrow", halfSquareBtn)) {
+            openMcPopup = true;
+        }
+        ImGui::SetWindowFontScale(fontScale);
+        ImGui::PopStyleVar();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Matcap Presets & Settings");
+
+        ImVec2 mcMax = ImGui::GetItemRectMax();
+
+        if (isMatcap) {
+            ImGui::PopStyleColor(3);
+        }
+
+        float mcCenterX = (mcMin.x + mcMax.x) * 0.5f;
+        float mcBottomY = mcMax.y + 4.0f * scale;
+
+        if (openMcPopup) {
+            ImGui::OpenPopup("##hudMatcapPopup");
+        }
+
+        ImGui::SetNextWindowPos(ImVec2(mcCenterX, mcBottomY), ImGuiCond_Appearing, ImVec2(0.5f, 0.0f));
+        if (ImGui::BeginPopup("##hudMatcapPopup")) {
+            ImGui::SetWindowFontScale(fontScale);
+            ImGui::TextUnformatted("Matcap Shading");
+            ImGui::Separator();
+
+            const auto& matcaps = renderer.getMatcaps();
+            int curIdx = renderer.getMatcap();
+            if (curIdx >= 0 && curIdx < static_cast<int>(matcaps.size())) {
+                ImGui::TextColored(ImVec4(0.01f, 0.75f, 0.65f, 1.0f), "Active: %s", matcaps[curIdx].name.c_str());
+            }
+
+            float thumbSize = 44.0f * scale;
+            float pad = 4.0f * scale;
+            int cols = 4;
+            int totalMatcaps = static_cast<int>(matcaps.size());
+            int numRows = (totalMatcaps + cols - 1) / cols;
+            float scrollHeight = std::min(220.0f * scale, numRows * (thumbSize + pad) + 8.0f * scale);
+            float scrollWidth = (thumbSize + pad) * cols + 20.0f * scale;
+
+            if (ImGui::BeginChild("##hudMatcapGrid", ImVec2(scrollWidth, scrollHeight), true)) {
+                ImDrawList* drawList = ImGui::GetWindowDrawList();
+                for (int i = 0; i < totalMatcaps; ++i) {
+                    renderer.ensureMatcapLoaded(i);
+                    GLuint texId = matcaps[i].textureId;
+                    bool isSelected = (curIdx == i && renderer.getShaderType() == 1);
+
+                    ImGui::PushID(i);
+                    if (i % cols != 0) ImGui::SameLine(0.0f, pad);
+
+                    ImVec2 p0 = ImGui::GetCursorScreenPos();
+                    ImVec2 p1 = ImVec2(p0.x + thumbSize, p0.y + thumbSize);
+
+                    bool clickedThumb = ImGui::InvisibleButton("##mcThumb", ImVec2(thumbSize, thumbSize));
+                    bool isHovered = ImGui::IsItemHovered();
+
+                    ImVec2 center = ImVec2((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f);
+                    float radius = thumbSize * 0.5f - 2.0f * scale;
+
+                    if (texId != 0) {
+                        drawList->AddImageRounded((ImTextureID)(uintptr_t)texId,
+                            ImVec2(center.x - radius, center.y - radius),
+                            ImVec2(center.x + radius, center.y + radius),
+                            ImVec2(0, 1), ImVec2(1, 0), IM_COL32(255, 255, 255, 255), radius);
+                    } else {
+                        drawList->AddCircleFilled(center, radius, IM_COL32(70, 70, 70, 255));
+                    }
+
+                    if (isSelected) {
+                        drawList->AddCircle(center, radius + 1.5f * scale, IM_COL32(2, 200, 168, 255), 32, 2.5f * scale);
+                    } else if (isHovered) {
+                        drawList->AddCircle(center, radius + 1.0f * scale, IM_COL32(255, 255, 255, 220), 32, 1.5f * scale);
+                    }
+
+                    if (clickedThumb) {
+                        renderer.setMatcap(i);
+                        m_previousShaderType = 1;
+                        renderer.setShaderType(1);
+                    }
+
+                    if (isHovered) {
+                        ImGui::SetTooltip("%s", matcaps[i].name.c_str());
+                    }
+
+                    ImGui::PopID();
+                }
+            }
+            ImGui::EndChild();
+
+            ImGui::Separator();
+            if (ImGui::Button(ICON_LC_FOLDER_OPEN " Import Custom Matcap...", ImVec2(-1.0f, 24.0f * scale))) {
+                static const std::vector<FileDialog::FilterSpec> imgFilters = {
+                    {"Image Files (*.png, *.jpg, *.jpeg)", "*.png;*.jpg;*.jpeg"},
+                    {"All Files (*.*)", "*.*"}
+                };
+                std::string picked = FileDialog::openFile(imgFilters, "Import Matcap Texture");
+                if (!picked.empty()) {
+                    size_t lastSlash = picked.find_last_of("/\\");
+                    std::string name = (lastSlash != std::string::npos) ? picked.substr(lastSlash + 1) : picked;
+                    renderer.importMatcap(name, picked);
+                    int newIdx = renderer.findMatcapIndexByName(name);
+                    if (newIdx >= 0) {
+                        renderer.setMatcap(newIdx);
+                        renderer.setShaderType(1);
+                        m_previousShaderType = 1;
+                    }
+                }
+            }
+
+            ImGui::EndPopup();
+        }
+
+        ImGui::SameLine();
+
+        // PBR Shader Switch Button + Dropdown Arrow
+        bool isPbr = (renderer.getShaderType() == 0);
+        if (isPbr) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+        GLuint pbrTex = getIconTexture("pbr");
+        bool clickedPbr = false;
+        if (pbrTex != 0) {
+            clickedPbr = ImGui::Button("##hudPbr", squareBtn);
+            ImVec2 pMin = ImGui::GetItemRectMin();
+            ImVec2 pMax = ImGui::GetItemRectMax();
+            float pad = 1.0f * scale;
+            ImVec2 imgMin(pMin.x + pad, pMin.y + pad);
+            ImVec2 imgMax(pMax.x - pad, pMax.y - pad);
+            ImU32 tintCol = isPbr ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 240);
+            ImGui::GetWindowDrawList()->AddImage((ImTextureID)(uintptr_t)pbrTex, imgMin, imgMax, ImVec2(0, 1), ImVec2(1, 0), tintCol);
+        } else {
+            clickedPbr = ImGui::Button("PBR##hudPbr", squareBtn);
+        }
+
+        bool openPbrPopup = false;
+        if (clickedPbr) {
+            if (isPbr) {
+                openPbrPopup = true;
+            } else {
+                m_previousShaderType = 0;
+                renderer.setShaderType(0);
+            }
+        }
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+            openPbrPopup = true;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("PBR Shader (Click to switch, click again or right-click for environments)");
+        }
+
+        ImVec2 pbrMin = ImGui::GetItemRectMin();
+
+        // Flush narrow arrow button directly attached to PBR button
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, ImGui::GetStyle().FramePadding.y));
+        ImGui::SetWindowFontScale(fontScale * 0.65f);
+        if (ImGui::Button(ICON_LC_CHEVRON_DOWN "##hudPbrArrow", halfSquareBtn)) {
+            openPbrPopup = true;
+        }
+        ImGui::SetWindowFontScale(fontScale);
+        ImGui::PopStyleVar();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("PBR Environment & Lighting Settings");
+
+        ImVec2 pbrMax = ImGui::GetItemRectMax();
+
+        if (isPbr) {
+            ImGui::PopStyleColor(3);
+        }
+
+        float pbrCenterX = (pbrMin.x + pbrMax.x) * 0.5f;
+        float pbrBottomY = pbrMax.y + 4.0f * scale;
+
+        if (openPbrPopup) {
+            ImGui::OpenPopup("##hudPbrPopup");
+        }
+
+        ImGui::SetNextWindowPos(ImVec2(pbrCenterX, pbrBottomY), ImGuiCond_Appearing, ImVec2(0.5f, 0.0f));
+        if (ImGui::BeginPopup("##hudPbrPopup")) {
+            ImGui::SetWindowFontScale(fontScale);
+            ImGui::TextUnformatted("PBR Environment & Lighting");
+            ImGui::Separator();
+
+            const auto& envs = renderer.getEnvironments();
+            int curEnvIdx = renderer.getCurrentEnvIdx();
+            const char* currentEnvName = (curEnvIdx >= 0 && curEnvIdx < static_cast<int>(envs.size())) ? envs[curEnvIdx].name.c_str() : "None";
+
+            ImGui::TextUnformatted("Environment Preset:");
+            ImGui::PushItemWidth(180.0f * scale);
+            if (ImGui::BeginCombo("##hudEnvCombo", currentEnvName)) {
+                for (int i = 0; i < static_cast<int>(envs.size()); ++i) {
+                    bool selected = (curEnvIdx == i);
+                    if (ImGui::Selectable(envs[i].name.c_str(), selected)) {
+                        renderer.setEnvironmentPreset(i);
+                        m_previousShaderType = 0;
+                        renderer.setShaderType(0);
+                    }
+                    if (selected) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::PopItemWidth();
+
+            ImGui::Separator();
+
+            float envRotDeg = glm::degrees(renderer.getEnvRotation());
+            while (envRotDeg < 0.0f) envRotDeg += 360.0f;
+            while (envRotDeg >= 360.0f) envRotDeg -= 360.0f;
+            ImGui::TextUnformatted("Rotation:");
+            ImGui::SameLine();
+            ImGui::PushItemWidth(120.0f * scale);
+            if (ImGui::SliderFloat("##hudEnvRot", &envRotDeg, 0.0f, 360.0f, "%.0f°")) {
+                renderer.setEnvRotation(glm::radians(envRotDeg));
+            }
+            ImGui::PopItemWidth();
+
+            float curvatureVal = renderer.getCurvature() * 20.0f;
+            ImGui::TextUnformatted("Curvature:");
+            ImGui::SameLine();
+            ImGui::PushItemWidth(120.0f * scale);
+            if (ImGui::SliderFloat("##hudPbrCurvature", &curvatureVal, 0.0f, 100.0f, "%.0f")) {
+                renderer.setCurvature(curvatureVal / 20.0f);
+            }
+            ImGui::PopItemWidth();
+
+            ImGui::Separator();
+            ImGui::TextDisabled("Material Properties:");
+
+            float roughness = renderer.getRoughness();
+            ImGui::TextUnformatted("Roughness:");
+            ImGui::SameLine();
+            ImGui::PushItemWidth(110.0f * scale);
+            if (ImGui::SliderFloat("##hudPbrRoughness", &roughness, 0.0f, 1.0f, "%.2f")) {
+                renderer.setRoughness(roughness);
+            }
+            ImGui::PopItemWidth();
+
+            float metallic = renderer.getMetallic();
+            ImGui::TextUnformatted("Metallic: ");
+            ImGui::SameLine();
+            ImGui::PushItemWidth(110.0f * scale);
+            if (ImGui::SliderFloat("##hudPbrMetallic", &metallic, 0.0f, 1.0f, "%.2f")) {
+                renderer.setMetallic(metallic);
+            }
+            ImGui::PopItemWidth();
+
+            ImGui::EndPopup();
+        }
+
+        ImGui::SameLine();
+
         bool flatShading = renderer.getFlatShading();
         if (flatShading) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));

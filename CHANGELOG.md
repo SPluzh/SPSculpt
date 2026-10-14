@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.28]
+- **HUD Shading**: Added Matcap & PBR switch buttons with custom icons and settings dropdowns.
+- **Matcap Previews**: Added visual thumbnail grid for quick matcap selection.
+
 ## [0.2.27]
 - **Relax Brush**: Added Relax brush to equalize mesh wireframe without losing volume or surface details.
 - **Topology Controls**: Supports Tangential slide, Surface Reprojection, boundary locking, and crease preservation.
