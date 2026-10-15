@@ -201,6 +201,7 @@ static const char* getBrushNameLocal(BrushType brush) {
         case BRUSH_POLYGROUP: return "PolyGroup";
         case BRUSH_CLIP_CURVE: return "Clip Curve";
         case BRUSH_TRIM:       return "Trim";
+        case BRUSH_SPLIT:      return "Split";
         case BRUSH_DELETE_LAYER: return "Delete Layer";
         case BRUSH_RELAX:       return "Relax";
     }
@@ -1110,7 +1111,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         const char* tools[] = { 
             "Flatten", "Smooth", "Inflate", "Pinch", "Crease", "V-Tool", "Move", "Drag", "Elastic", 
             "Mask", "Paint", "Twist", "Local Scale", "Clay", "Clay Buildup", "Dam Standard", "Square Brush", "Visibility", "Mask Gradient Blur",
-            "Measure", "Divider", "Transform", "Armature Spheres", "Brush", "PolyGroup", "Clip Curve", "Trim", "Delete Layer", "Relax"
+            "Measure", "Divider", "Transform", "Armature Spheres", "Brush", "PolyGroup", "Clip Curve", "Trim", "Split", "Delete Layer", "Relax"
         };
         BrushType current = sculpt.getBrush();
         float btnH = 26.0f * scale;
@@ -1337,7 +1338,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                  brushType == BRUSH_MEASURE || brushType == BRUSH_DIVIDER ||
                                  brushType == BRUSH_TRANSFORM || brushType == BRUSH_ARMATURE_SPHERES ||
                                  brushType == BRUSH_BRUSH || brushType == BRUSH_POLYGROUP ||
-                                 brushType == BRUSH_TRIM);
+                                 brushType == BRUSH_TRIM || brushType == BRUSH_SPLIT);
 
         if (hasSpecialParams) {
             if (ImGui::CollapsingHeader("Tool Specific Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -1956,6 +1957,21 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 }
                 else if (brushType == BRUSH_TRIM) {
                     ImGui::TextDisabled("Trim / Lasso Mode:\n - Default: Cut & fill hole\n - Alt: Keep inside volume only\n - QuadCap: Auto-applied (Nomad style)");
+                }
+                else if (brushType == BRUSH_SPLIT) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.15f, 1.0f), "Split Tool (Manifold CSG):");
+                    ImGui::TextDisabled("Separates mesh into 2 watertight subtools with Quad Caps.");
+                    ImGui::Separator();
+                    const char* modes[] = { "Lasso (like Trim)", "Line (Slice)" };
+                    ImGui::Combo("Mode", &settings.splitMode, modes, IM_ARRAYSIZE(modes));
+                    if (settings.splitMode == 0) {
+                        ImGui::BulletText("Draw a closed lasso around the section to separate.");
+                        ImGui::BulletText("Default: Separated part goes into new subtool.");
+                        ImGui::BulletText("Alt: Invert part assignment.");
+                    } else {
+                        ImGui::BulletText("Draw a line across the mesh to slice with plane.");
+                    }
+                    ImGui::BulletText("Both parts are capped with regular quads.");
                 }
             }
         }

@@ -7,6 +7,7 @@
 #include "editing/ArmatureTool.h"
 #include "editing/ClipCurveTool.h"
 #include "editing/TrimTool.h"
+#include "editing/SplitTool.h"
 #include "editing/undo/UndoManager.h"
 #include "common/Logger.h"
 #include <glm/gtc/matrix_transform.hpp>
@@ -291,6 +292,9 @@ SculptManager::SculptManager() {
     m_brushSettings[BRUSH_DIVIDER].culling = false;
     m_brushSettings[BRUSH_TRANSFORM].culling = false;
     m_brushSettings[BRUSH_CLIP_CURVE].culling = false;
+    m_brushSettings[BRUSH_TRIM].culling = false;
+    m_brushSettings[BRUSH_SPLIT].culling = false;
+    m_brushSettings[BRUSH_SPLIT].splitMode = 0; // 0 = Lasso (like Trim)
 
     m_brushSettings[BRUSH_BRUSH].radius = 50.0f;
     m_brushSettings[BRUSH_BRUSH].intensity = 0.5f;
@@ -2189,6 +2193,16 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 return;
             }
 
+            if (m_currentBrush == BRUSH_SPLIT) {
+                m_isSplitLassoActive = true;
+                m_splitLassoAlt = (mod & KMOD_ALT) != 0;
+                m_splitLassoPoints.clear();
+                m_splitLassoPoints.push_back(glm::vec2((float)mouseX, (float)mouseY));
+                sculpt_log("[SplitTool] MouseDown: started split at (%.0f, %.0f), alt=%d, mode=%d\n",
+                           (float)mouseX, (float)mouseY, m_splitLassoAlt ? 1 : 0, m_brushSettings[BRUSH_SPLIT].splitMode);
+                return;
+            }
+
             if (m_currentBrush == BRUSH_MASK_GRADIENT_BLUR && mesh) {
                 if (mod & KMOD_ALT) {
                     return;
@@ -2953,6 +2967,62 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             return;
         }
 
+        if (m_isSplitLassoActive) {
+            m_isSplitLassoActive = false;
+            int splitMode = m_brushSettings[BRUSH_SPLIT].splitMode;
+
+            sculpt_log("[SplitTool] MouseUp: stroke completed. Points: %zu, Mesh: %p (verts: %d), alt=%d, mode=%d\n",
+                       m_splitLassoPoints.size(), (void*)mesh, mesh ? mesh->nbVerts : 0, m_splitLassoAlt ? 1 : 0, splitMode);
+
+            if (mesh) {
+                if (splitMode == 1 && m_splitLassoPoints.size() >= 2) {
+                    scene.pushHistoryState();
+                    std::vector<glm::vec3> symScales = getActiveSymmetryScales();
+                    bool modified = sculpt::SplitTool::sliceByLine(
+                        scene,
+                        mesh,
+                        camera,
+                        m_splitLassoPoints.front(),
+                        m_splitLassoPoints.back(),
+                        getUseSym(),
+                        m_symmetryMode,
+                        symScales
+                    );
+                    if (modified) {
+                        scene.setModified(true);
+                        sculpt_log("[SplitTool] sliceByLine modified the scene successfully.\n");
+                    } else {
+                        sculpt_log("[SplitTool] sliceByLine returned false (unmodified).\n");
+                    }
+                } else if (splitMode == 0 && m_splitLassoPoints.size() >= 3) {
+                    scene.pushHistoryState();
+                    std::vector<glm::vec3> symScales = getActiveSymmetryScales();
+                    bool modified = sculpt::SplitTool::splitByLasso(
+                        scene,
+                        mesh,
+                        camera,
+                        m_splitLassoPoints,
+                        m_splitLassoAlt,
+                        getUseSym(),
+                        m_symmetryMode,
+                        symScales
+                    );
+                    if (modified) {
+                        scene.setModified(true);
+                        sculpt_log("[SplitTool] splitByLasso modified the scene successfully.\n");
+                    } else {
+                        sculpt_log("[SplitTool] splitByLasso returned false (unmodified).\n");
+                    }
+                } else {
+                    sculpt_log("[SplitTool] Stroke too small (points=%zu). Skipping execution.\n",
+                               m_splitLassoPoints.size());
+                }
+            }
+
+            m_splitLassoPoints.clear();
+            return;
+        }
+
         if (m_isSculpting) {
             m_isSculpting = false;
             m_relaxEngine.endStroke();
@@ -3282,6 +3352,29 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             return;
         }
 
+        if (m_isSplitLassoActive) {
+            glm::vec2 newPt((float)mouseX, (float)mouseY);
+            int splitMode = m_brushSettings[BRUSH_SPLIT].splitMode;
+            if (splitMode == 1) { // Line (Slice) mode
+                if (m_splitLassoPoints.size() < 2) {
+                    m_splitLassoPoints.push_back(newPt);
+                } else {
+                    m_splitLassoPoints.back() = newPt;
+                }
+            } else { // Lasso mode (like Trim)
+                if (m_splitLassoPoints.empty()) {
+                    m_splitLassoPoints.push_back(newPt);
+                } else {
+                    glm::vec2 diff = newPt - m_splitLassoPoints.back();
+                    if (glm::dot(diff, diff) >= 4.0f) {
+                        m_splitLassoPoints.push_back(newPt);
+                    }
+                }
+            }
+            m_splitLassoAlt = (SDL_GetModState() & KMOD_ALT) != 0;
+            return;
+        }
+
         if (m_cameraController.isDragging()) {
             m_cameraController.handleEvent(event, camera, scene.getMeshes(), true, &scene, m_renderer);
         } else if (m_isSculpting && mesh) {
@@ -3414,6 +3507,9 @@ void SculptManager::processFrame(Scene& scene) {
     }
     if (m_isTrimLassoActive) {
         m_trimLassoAlt = (SDL_GetModState() & KMOD_ALT) != 0;
+    }
+    if (m_isSplitLassoActive) {
+        m_splitLassoAlt = (SDL_GetModState() & KMOD_ALT) != 0;
     }
 
     bool isRefDragMode = (scene.getCamera().getRefDragEnabled() || (scene.getCameraRight() && scene.getCameraRight()->getRefDragEnabled())) && scene.areAnyReferenceImagesVisible();
@@ -3746,6 +3842,7 @@ bool SculptManager::saveSettings(IniFile& ini) {
         ini.setBool(sec, "relaxPreserveCreases", m_brushSettings[i].relaxPreserveCreases);
         ini.setFloat(sec, "relaxCreaseAngle", m_brushSettings[i].relaxCreaseAngle);
         ini.setInt(sec, "relaxIterations", m_brushSettings[i].relaxIterations);
+        ini.setInt(sec, "splitMode", m_brushSettings[i].splitMode);
     }
 
     std::string genSec = "General";
@@ -3825,6 +3922,7 @@ bool SculptManager::loadSettings(const IniFile& ini) {
         if (ini.hasKey(sec, "relaxPreserveCreases")) m_brushSettings[i].relaxPreserveCreases = ini.getBool(sec, "relaxPreserveCreases");
         if (ini.hasKey(sec, "relaxCreaseAngle")) m_brushSettings[i].relaxCreaseAngle = ini.getFloat(sec, "relaxCreaseAngle", 45.0f);
         if (ini.hasKey(sec, "relaxIterations")) m_brushSettings[i].relaxIterations = ini.getInt(sec, "relaxIterations", 1);
+        if (ini.hasKey(sec, "splitMode")) m_brushSettings[i].splitMode = ini.getInt(sec, "splitMode", 0);
     }
 
     std::string genSec = "General";

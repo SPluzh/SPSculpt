@@ -141,6 +141,9 @@ struct BrushSettings {
     float stampBlur = 0.0f;  // edge blur, 0.0 to 1.0
     bool stampLockRotation = false;
     bool stampUseTilt = false;
+
+    // Split tool settings
+    int splitMode = 0; // 0 = Lasso (like Trim), 1 = Line (Slice)
 };
 
 struct MeasurementAnchor {
@@ -400,6 +403,10 @@ public:
     const std::vector<glm::vec2>& getTrimLassoPoints() const { return m_trimLassoPoints; }
     bool getTrimLassoAlt() const { return m_trimLassoAlt; }
 
+    bool isSplitLassoActive() const { return m_isSplitLassoActive; }
+    const std::vector<glm::vec2>& getSplitLassoPoints() const { return m_splitLassoPoints; }
+    bool getSplitLassoAlt() const { return m_splitLassoAlt; }
+
     std::vector<uint32_t> getVerticesInLasso(Mesh* mesh, const Camera& camera);
 
     void clearMask(Mesh* mesh, Scene* scene = nullptr);
@@ -504,6 +511,10 @@ private:
     bool m_isTrimLassoActive = false;
     std::vector<glm::vec2> m_trimLassoPoints;
     bool m_trimLassoAlt = false;
+
+    bool m_isSplitLassoActive = false;
+    std::vector<glm::vec2> m_splitLassoPoints;
+    bool m_splitLassoAlt = false;
 
     // Cache buffers for fast dirty faces lookup
     std::vector<uint32_t> m_tagFlags;
