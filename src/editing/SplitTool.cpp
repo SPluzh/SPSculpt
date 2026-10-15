@@ -153,6 +153,8 @@ bool SplitTool::splitByLasso(
         }
     }
     float targetEdgeLen = (edgeSampleCount > 0) ? (sumEdgeLen / edgeSampleCount) : 1.0f;
+    sculpt_log("[SPLIT CSG] Mesh BBox: [%.2f, %.2f, %.2f] to [%.2f, %.2f, %.2f], targetEdgeLen: %.3f mm\n",
+               bMin.x, bMin.y, bMin.z, bMax.x, bMax.y, bMax.z, targetEdgeLen);
 
     glm::mat4 invMeshMatrix = glm::inverse(mesh->matrix);
     manifold::Manifold cutter = LassoCutter::build3DCutterPrism(

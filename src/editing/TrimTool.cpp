@@ -79,6 +79,9 @@ bool TrimTool::execute(
         }
     }
     float targetEdgeLen = (edgeSampleCount > 0) ? (sumEdgeLen / edgeSampleCount) : 1.0f;
+    sculpt_log("[TrimTool] Mesh BBox: [%.2f, %.2f, %.2f] to [%.2f, %.2f, %.2f] (size: [%.2f, %.2f, %.2f]), targetEdgeLen: %.3f mm\n",
+               bMin.x, bMin.y, bMin.z, bMax.x, bMax.y, bMax.z,
+               bMax.x - bMin.x, bMax.y - bMin.y, bMax.z - bMin.z, targetEdgeLen);
 
     // 4. Build 3D cutter prism in mesh local space with regular quad grid
     glm::mat4 invMeshMatrix = glm::inverse(mesh->matrix);

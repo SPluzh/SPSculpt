@@ -229,6 +229,12 @@ static manifold::Manifold buildSinglePrism(
     const size_t N = resampledPoly.size();
     if (N < 3) return manifold::Manifold();
 
+    sculpt_log("[CUTTER 3D] Camera: %s, Screen Centroid: (%.1f, %.1f), TargetEdgeLen: %.3f mm, Units/Px: %.4f\n",
+               camera.isOrthographic() ? "Orthographic" : "Perspective",
+               center2D.x, center2D.y, targetEdgeLength, localUnitsPerPx);
+    sculpt_log("[CUTTER 3D] Depth Range: [%.2f, %.2f] (span: %.2f mm), Target Spacing: %.2f px -> Resampled %zu points\n",
+               tNear, tFar, tFar - tNear, targetSpacingPx, N);
+
     // 6. Solid prism extrusion (M = 1 depth segment for clean, fast CSG cut boundary)
     float depthSpan = tFar - tNear;
     const int M = 1;
@@ -239,6 +245,7 @@ static manifold::Manifold buildSinglePrism(
         glm::vec3 dir;
     };
     std::vector<LocalRay> localRays(N);
+    float minRayAngle = 180.0f, maxRayAngle = 0.0f, sumRayAngle = 0.0f;
     for (size_t i = 0; i < N; ++i) {
         Ray r = camera.getRay(resampledPoly[i].x, resampledPoly[i].y);
         glm::vec3 o = glm::vec3(invMeshMatrix * glm::vec4(r.origin, 1.0f));
@@ -247,7 +254,16 @@ static manifold::Manifold buildSinglePrism(
         if (dLen > 1e-6f) d /= dLen;
         else d = cDirLocal;
         localRays[i] = {o, d};
+
+        float dotR = std::clamp(glm::dot(d, cDirLocal), -1.0f, 1.0f);
+        float a = glm::degrees(std::acos(dotR));
+        minRayAngle = std::min(minRayAngle, a);
+        maxRayAngle = std::max(maxRayAngle, a);
+        sumRayAngle += a;
     }
+    float avgRayAngle = N > 0 ? (sumRayAngle / (float)N) : 0.0f;
+    sculpt_log("[CUTTER 3D] Ray spread vs Center Ray [%.2f, %.2f, %.2f]: min=%.2f deg, max=%.2f deg, avg=%.2f deg\n",
+               cDirLocal.x, cDirLocal.y, cDirLocal.z, minRayAngle, maxRayAngle, avgRayAngle);
 
     manifold::MeshGL meshGL;
     meshGL.numProp = 3; // positions only for cutter
