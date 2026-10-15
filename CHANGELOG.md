@@ -4,8 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [0.3.0]
 - **Topology-Preserving Boolean**: Union, Difference, and Intersection preserve 100% of original mesh quads and density outside the cut seam.
-- **Trim & Split Tools**: Added solid Line and Lasso cutting with real-time viewport preview, splitting objects into clean watertight meshes.
-- **Quad Capping**: Cut surfaces are automatically filled with uniform quad grids matching the mesh resolution instead of messy triangles.
+- **Trim Tool**: Added solid Lasso cutting with real-time viewport preview, cutting away unwanted geometry with Nomad-style QuadCap.
+- **Split Tool**: Separates objects into independent subtools via Lasso or Line cuts.
+- **Quad Capping**: Automatically seals cut surfaces with clean quads matching mesh density.
 - **PolyGroup & Shading Retention**: Preserves colors and PolyGroups across boolean cuts, with smooth shading and no dark crease artifacts.
 
 ## [0.2.29]

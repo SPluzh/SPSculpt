@@ -21,16 +21,24 @@ public:
         Mesh* mesh,
         const Camera& camera,
         const glm::vec2& lineStart,
-        const glm::vec2& lineEnd
+        const glm::vec2& lineEnd,
+        bool useSym = false,
+        SymmetryMode symMode = SymmetryMode::Local,
+        const std::vector<glm::vec3>& symScales = {}
     );
 
     // Splits mesh by a 3D lasso cutter prism.
     // Replaces target mesh with outside part and adds inside part to the Scene as "OriginalName_Cut".
+    // When isAlt is true, target mesh keeps inside and outside becomes "OriginalName_Cut".
     static bool splitByLasso(
         Scene& scene,
         Mesh* mesh,
         const Camera& camera,
-        const std::vector<glm::vec2>& lassoPoints
+        const std::vector<glm::vec2>& lassoPoints,
+        bool isAlt = false,
+        bool useSym = false,
+        SymmetryMode symMode = SymmetryMode::Local,
+        const std::vector<glm::vec3>& symScales = {}
     );
 };
 

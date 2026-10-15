@@ -806,6 +806,7 @@ int main(int argc, char* argv[]) {
         renderer.setLassoParameters(sculpt.isLassoActive(), sculpt.getLassoPoints(), sculpt.getLassoAlt(), sculpt.isMaskLasso());
         renderer.setClipCurveOverlay(sculpt.isClipCurveActive(), sculpt.getClipCurvePoints(), sculpt.getClipCurveAlt());
         renderer.setTrimLassoOverlay(sculpt.isTrimLassoActive(), sculpt.getTrimLassoPoints(), sculpt.getTrimLassoAlt());
+        renderer.setSplitLassoOverlay(sculpt.isSplitLassoActive(), sculpt.getSplitLassoPoints(), sculpt.getSplitLassoAlt(), sculpt.getSettings(BRUSH_SPLIT).splitMode);
         renderer.setActiveBrush(sculpt.getBrush());
 
         static std::vector<SymmetryPlaneData> s_lastSymmetryPlanes;
