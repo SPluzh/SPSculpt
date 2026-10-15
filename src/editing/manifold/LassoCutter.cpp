@@ -232,14 +232,17 @@ static manifold::Manifold buildSinglePrism(
     sculpt_log("[CUTTER 3D] Camera: %s, Screen Centroid: (%.1f, %.1f), TargetEdgeLen: %.3f mm, Units/Px: %.4f\n",
                camera.isOrthographic() ? "Orthographic" : "Perspective",
                center2D.x, center2D.y, targetEdgeLength, localUnitsPerPx);
-    // 6. Solid prism extrusion subdivided into M depth slices matching targetEdgeLength
+    // 6. Solid prism extrusion subdivided into M depth slices.
+    // Rays are straight lines, so the lateral surfaces are ruled bilinear patches.
+    // Clamping M to 1..6 prevents generating tens of thousands of redundant cutter triangles,
+    // which massively accelerates Manifold CSG boolean and prevents memory bloat.
     float depthSpan = tFar - tNear;
     int M = 1;
     if (targetEdgeLength > 1e-4f) {
-        float sliceStep = std::max(targetEdgeLength, 0.25f);
+        float sliceStep = std::max(targetEdgeLength * 4.0f, 2.0f);
         M = static_cast<int>(std::round(depthSpan / sliceStep));
     }
-    M = std::clamp(M, 1, 80);
+    M = std::clamp(M, 1, 6);
 
     sculpt_log("[CUTTER 3D] Depth Range: [%.2f, %.2f] (span: %.2f mm, M=%d slices, step: %.3f mm), Target Spacing: %.2f px -> Resampled %zu points\n",
                tNear, tFar, depthSpan, M, depthSpan / static_cast<float>(M), targetSpacingPx, N);

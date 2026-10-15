@@ -1819,7 +1819,6 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
         mesh.faceEdges.clear();
 
         mesh.hasCustomNormals = false;
-        mesh.initTopology();
         mesh.postInit();
 
         mesh.isDirty = true;
@@ -1830,6 +1829,12 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
         mesh.invalidateLocalRadius();
 
         result.success = true;
+    } else {
+        // If no patch was modified, run postInit once to build topology/normals
+        // for the un-capped Manifold mesh (since toMesh deferred postInit).
+        if (mesh.vrfStartCount.empty()) {
+            mesh.postInit();
+        }
     }
 
     auto tEnd = std::chrono::high_resolution_clock::now();

@@ -23,7 +23,20 @@ FetchContent_Declare(json
     GIT_TAG v3.11.3
 )
 
-set(MANIFOLD_PAR "NONE" CACHE STRING "Parallel backend" FORCE)
+find_package(TBB QUIET)
+if(TBB_FOUND)
+    set(MANIFOLD_PAR "TBB" CACHE STRING "Parallel backend" FORCE)
+    message(STATUS "Manifold Parallel Backend: TBB enabled")
+else()
+    set(MANIFOLD_PAR "NONE" CACHE STRING "Parallel backend" FORCE)
+    message(WARNING "Manifold Parallel Backend: TBB not found, using NONE")
+endif()
+
+find_package(OpenMP QUIET)
+if(OpenMP_CXX_FOUND)
+    message(STATUS "OpenMP CXX found: enabling multithreaded algorithms")
+endif()
+
 set(MANIFOLD_EXPORT OFF CACHE BOOL "" FORCE)
 set(MANIFOLD_TEST OFF CACHE BOOL "" FORCE)
 set(MANIFOLD_PYBIND OFF CACHE BOOL "" FORCE)
@@ -178,6 +191,9 @@ else()
 endif()
 
 target_link_libraries(SPSculpt PRIVATE imgui ${EGL_LIBRARY} ${GLES_LIBRARY} glm::glm nlohmann_json::nlohmann_json ufbx manifold Clipper2 CDT)
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(SPSculpt PRIVATE OpenMP::OpenMP_CXX)
+endif()
 target_compile_options(SPSculpt PRIVATE -O3)
 
 if(MINGW)
@@ -189,7 +205,13 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_SOURCE_DIR}/resources
         $<TARGET_FILE_DIR:SPSculpt>/resources
-    COMMENT "Copying resources to binary output directory"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:manifold>
+        $<TARGET_FILE_DIR:SPSculpt>/
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:polygon>
+        $<TARGET_FILE_DIR:SPSculpt>/
+    COMMENT "Copying resources and DLLs to binary output directory"
 )
 
 

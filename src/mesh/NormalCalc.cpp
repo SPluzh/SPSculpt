@@ -132,18 +132,43 @@ void updateVertexNormals(
             continue;
         }
 
-        // Fetch and normalize each incident face normal
-        float fnx_stack[16], fny_stack[16], fnz_stack[16];
-        std::vector<float> fn_dyn;
+        // For dense vertex fans (k > 24, e.g. cap junctions), cluster-weighted O(k²)
+        // is expensive and unnecessary. Direct averaging is O(k) with zero heap allocation.
+        if (count > 24) {
+            float nx = 0.0f, ny = 0.0f, nz = 0.0f;
+            for (uint32_t j = 0; j < count; ++j) {
+                uint32_t id = vertRingFace[start + j] * 3;
+                float fx = faceNormals[id];
+                float fy = faceNormals[id + 1];
+                float fz = faceNormals[id + 2];
+                float flen = std::sqrt(fx * fx + fy * fy + fz * fz);
+                if (flen > 1e-12f) {
+                    float inv = 1.0f / flen;
+                    nx += fx * inv;
+                    ny += fy * inv;
+                    nz += fz * inv;
+                }
+            }
+            uint32_t ind3 = ind * 3;
+            float lenSq = nx * nx + ny * ny + nz * nz;
+            if (lenSq > 1e-12f) {
+                float invLen = 1.0f / std::sqrt(lenSq);
+                outNormals[ind3]     = nx * invLen;
+                outNormals[ind3 + 1] = ny * invLen;
+                outNormals[ind3 + 2] = nz * invLen;
+            } else {
+                outNormals[ind3]     = 0.0f;
+                outNormals[ind3 + 1] = 1.0f;
+                outNormals[ind3 + 2] = 0.0f;
+            }
+            continue;
+        }
+
+        // Fetch and normalize each incident face normal on stack (zero heap allocation)
+        float fnx_stack[24], fny_stack[24], fnz_stack[24];
         float* pFnx = fnx_stack;
         float* pFny = fny_stack;
         float* pFnz = fnz_stack;
-        if (count > 16) {
-            fn_dyn.resize(count * 3);
-            pFnx = fn_dyn.data();
-            pFny = fn_dyn.data() + count;
-            pFnz = fn_dyn.data() + count * 2;
-        }
 
         for (uint32_t j = 0; j < count; ++j) {
             uint32_t id = vertRingFace[start + j] * 3;
@@ -162,16 +187,18 @@ void updateVertexNormals(
         }
 
         // Cluster-weighted accumulation:
-        // When multiple coplanar faces (e.g. 3-6 fan triangles from CDT belt on a cut cap)
-        // meet 1 quad on the uncut mesh across a crease, naive summation gives 3-6x weight
-        // to the cap, pulling the vertex normal by up to 82 deg into the cut cavity.
-        // By scaling each face inversely by the density of its coplanar cluster (faces with dot > 0.707),
-        // each distinct geometric surface patch gets balanced 1:1 weight (true angle bisector at creases).
+        // When multiple coplanar faces meet 1 quad across a crease, naive summation gives
+        // excessive weight to the planar cluster. Inverse cluster density scaling balances 1:1 weight.
         float nx = 0.0f;
         float ny = 0.0f;
         float nz = 0.0f;
+        float avgFx = 0.0f, avgFy = 0.0f, avgFz = 0.0f;
 
         for (uint32_t j = 0; j < count; ++j) {
+            avgFx += pFnx[j];
+            avgFy += pFny[j];
+            avgFz += pFnz[j];
+
             float clusterWeight = 0.0f;
             for (uint32_t k = 0; k < count; ++k) {
                 float dot = pFnx[j] * pFnx[k] + pFny[j] * pFny[k] + pFnz[j] * pFnz[k];
@@ -183,6 +210,13 @@ void updateVertexNormals(
             nx += pFnx[j] * w;
             ny += pFny[j] * w;
             nz += pFnz[j] * w;
+        }
+
+        // R2: Verify normal-to-face orientation. If inverted (dot < 0 with average face normal), flip it.
+        if (nx * avgFx + ny * avgFy + nz * avgFz < 0.0f) {
+            nx = -nx;
+            ny = -ny;
+            nz = -nz;
         }
 
         uint32_t ind3 = ind * 3;

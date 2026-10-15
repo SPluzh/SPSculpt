@@ -288,6 +288,7 @@ void Mesh::postInit() {
             faceNormals.data(),
             normals.data()
         );
+#ifdef SPSCULPT_DEBUG_NORMALS
         diagnoseMeshNormals(
             verts.data(), nbVerts,
             faces.data(), nbFaces,
@@ -297,6 +298,7 @@ void Mesh::postInit() {
             faceNormals.data(),
             normals.data()
         );
+#endif
     } else {
         sculpt_log("[Mesh] Preserved %zu pre-calculated imported vertex normals in postInit\n", normals.size() / 3);
     }

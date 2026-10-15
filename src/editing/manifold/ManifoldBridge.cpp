@@ -296,20 +296,31 @@ void ManifoldBridge::toMesh(
         bool forward; // true if tri has min(a,b) -> max(a,b)
     };
 
+    struct EdgeHalfEntry {
+        EdgeHalf halves[2];
+        uint8_t count = 0;
+        inline void add(const EdgeHalf& h) {
+            if (count < 2) {
+                halves[count] = h;
+            }
+            count++;
+        }
+    };
+
     auto makeEdgeKey = [](uint32_t a, uint32_t b) -> uint64_t {
         uint32_t u = std::min(a, b);
         uint32_t v = std::max(a, b);
         return ((uint64_t)u << 32) | (uint64_t)v;
     };
 
-    std::unordered_map<uint64_t, std::vector<EdgeHalf>> edgeMap;
+    std::unordered_map<uint64_t, EdgeHalfEntry> edgeMap;
     edgeMap.reserve(VT * 3 / 2);
 
     for (size_t t = 0; t < VT; ++t) {
         const auto& tri = validTris[t];
-        edgeMap[makeEdgeKey(tri.i0, tri.i1)].push_back({(int)t, tri.i2, tri.i0 < tri.i1});
-        edgeMap[makeEdgeKey(tri.i1, tri.i2)].push_back({(int)t, tri.i0, tri.i1 < tri.i2});
-        edgeMap[makeEdgeKey(tri.i2, tri.i0)].push_back({(int)t, tri.i1, tri.i2 < tri.i0});
+        edgeMap[makeEdgeKey(tri.i0, tri.i1)].add({(int)t, tri.i2, tri.i0 < tri.i1});
+        edgeMap[makeEdgeKey(tri.i1, tri.i2)].add({(int)t, tri.i0, tri.i1 < tri.i2});
+        edgeMap[makeEdgeKey(tri.i2, tri.i0)].add({(int)t, tri.i1, tri.i2 < tri.i0});
     }
 
     struct CandidatePair {
@@ -321,11 +332,11 @@ void ManifoldBridge::toMesh(
     std::vector<CandidatePair> candidates;
     candidates.reserve(VT / 2);
 
-    for (const auto& [key, list] : edgeMap) {
-        if (list.size() != 2) continue;
+    for (const auto& [key, entry] : edgeMap) {
+        if (entry.count != 2) continue;
 
-        const auto& hA = list[0];
-        const auto& hB = list[1];
+        const auto& hA = entry.halves[0];
+        const auto& hB = entry.halves[1];
         if (hA.forward == hB.forward) continue; // Non-manifold or inverted
 
         int tA = hA.triIdx;

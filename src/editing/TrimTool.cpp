@@ -41,7 +41,11 @@ bool TrimTool::execute(
     if (newCapGid == 0) newCapGid = 1;
 
     // 2. Convert source mesh to Manifold
+    auto tFromMeshStart = std::chrono::high_resolution_clock::now();
     manifold::Manifold target = sculpt::ManifoldBridge::fromMesh(*mesh);
+    auto tFromMeshEnd = std::chrono::high_resolution_clock::now();
+    double fromMeshMs = std::chrono::duration<double, std::milli>(tFromMeshEnd - tFromMeshStart).count();
+
     if (target.IsEmpty() || target.Status() != manifold::Manifold::Error::NoError) {
         sculpt_log("[TrimTool] Failed to convert mesh to valid Manifold. Status: %d\n", (int)target.Status());
         return false;
@@ -84,6 +88,7 @@ bool TrimTool::execute(
                bMax.x - bMin.x, bMax.y - bMin.y, bMax.z - bMin.z, targetEdgeLen);
 
     // 4. Build 3D cutter prism in mesh local space with regular quad grid
+    auto tCutterStart = std::chrono::high_resolution_clock::now();
     glm::mat4 invMeshMatrix = glm::inverse(mesh->matrix);
     manifold::Manifold cutter = sculpt::LassoCutter::build3DCutterPrism(
         lassoPoints,
@@ -125,6 +130,8 @@ bool TrimTool::execute(
 
     cutter = cutter.AsOriginal();
     int cutterOrigID = cutter.OriginalID();
+    auto tCutterEnd = std::chrono::high_resolution_clock::now();
+    double cutterMs = std::chrono::duration<double, std::milli>(tCutterEnd - tCutterStart).count();
 
     // 5. Perform Boolean operation
     auto tCsgStart = std::chrono::high_resolution_clock::now();
@@ -143,15 +150,25 @@ bool TrimTool::execute(
     sculpt_log("[MANIFOLD CSG] Boolean %s completed in %.2f ms: %d -> %d verts, %d -> %d tris (status: %d)\n",
                isAlt ? "Intersection (Alt)" : "Difference", csgMs, inVerts, outVerts, inFaces, outTris, (int)result.Status());
 
-    // 6. Convert Manifold result back to Mesh
+    // 6. Convert Manifold result back to Mesh (runPostInit=false to avoid redundant postInit before QuadCap)
+    auto tToMeshStart = std::chrono::high_resolution_clock::now();
     mesh->hasCustomNormals = false;
-    sculpt::ManifoldBridge::toMesh(result, *mesh, true, cutterOrigID, newCapGid);
+    sculpt::ManifoldBridge::toMesh(result, *mesh, false, cutterOrigID, newCapGid);
+    auto tToMeshEnd = std::chrono::high_resolution_clock::now();
+    double toMeshMs = std::chrono::duration<double, std::milli>(tToMeshEnd - tToMeshStart).count();
 
     // 7. Generate Nomad Sculpt-style regular quad cap with CDT transition belt
+    // Note: QuadCapGenerator performs a single complete postInit on the final topology
+    auto tQuadCapStart = std::chrono::high_resolution_clock::now();
     sculpt::QuadCapResult capRes = sculpt::QuadCapGenerator::generateQuadCap(*mesh, newCapGid, targetEdgeLen);
+    auto tQuadCapEnd = std::chrono::high_resolution_clock::now();
+    double quadCapMs = std::chrono::duration<double, std::milli>(tQuadCapEnd - tQuadCapStart).count();
 
     auto tTotalEnd = std::chrono::high_resolution_clock::now();
     double totalMs = std::chrono::duration<double, std::milli>(tTotalEnd - tTotalStart).count();
+
+    sculpt_log("[TRIM PROFILING] Total: %.2f ms | fromMesh: %.1fms | Cutter: %.1fms | CSG Boolean: %.1fms | toMesh: %.1fms | QuadCap+postInit: %.1fms\n",
+               totalMs, fromMeshMs, cutterMs, csgMs, toMeshMs, quadCapMs);
 
     sculpt_log("[TRIM COMPLETE] Total Time: %.2f ms (in: %d tris, out: %d faces, Cap Group ID: %u)\n",
                totalMs, inFaces, mesh->nbFaces, newCapGid);

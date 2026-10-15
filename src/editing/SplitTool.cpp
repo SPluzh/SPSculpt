@@ -82,15 +82,15 @@ bool SplitTool::sliceByLine(
     uint32_t gid1 = mesh->getNextFreeGroupID();
     uint32_t gid2 = gid1 + 1;
 
-    // 5. Update original mesh with Part 1
-    ManifoldBridge::toMesh(part1, *mesh, true, cutterOrigID, gid1);
+    // 5. Update original mesh with Part 1 (runPostInit=false, QuadCap will postInit)
+    ManifoldBridge::toMesh(part1, *mesh, false, cutterOrigID, gid1);
     QuadCapGenerator::generateQuadCap(*mesh, gid1);
 
-    // 6. Create second subtool with Part 2
+    // 6. Create second subtool with Part 2 (runPostInit=false, QuadCap will postInit)
     Mesh* cutMesh = new Mesh();
     cutMesh->matrix = mesh->matrix;
     cutMesh->outlinerName = mesh->outlinerName + "_Cut";
-    ManifoldBridge::toMesh(part2, *cutMesh, true, cutterOrigID, gid2);
+    ManifoldBridge::toMesh(part2, *cutMesh, false, cutterOrigID, gid2);
     QuadCapGenerator::generateQuadCap(*cutMesh, gid2);
 
     scene.addMesh(cutMesh);
@@ -190,15 +190,15 @@ bool SplitTool::splitByLasso(
     uint32_t gid1 = mesh->getNextFreeGroupID();
     uint32_t gid2 = gid1 + 1;
 
-    // Outside stays in mesh
-    ManifoldBridge::toMesh(outside, *mesh, true, cutterOrigID, gid1);
+    // Outside stays in mesh (runPostInit=false, QuadCap will postInit)
+    ManifoldBridge::toMesh(outside, *mesh, false, cutterOrigID, gid1);
     QuadCapGenerator::generateQuadCap(*mesh, gid1, targetEdgeLen);
 
-    // Inside goes into new subtool
+    // Inside goes into new subtool (runPostInit=false, QuadCap will postInit)
     Mesh* cutMesh = new Mesh();
     cutMesh->matrix = mesh->matrix;
     cutMesh->outlinerName = mesh->outlinerName + "_Cut";
-    ManifoldBridge::toMesh(inside, *cutMesh, true, cutterOrigID, gid2);
+    ManifoldBridge::toMesh(inside, *cutMesh, false, cutterOrigID, gid2);
     QuadCapGenerator::generateQuadCap(*cutMesh, gid2, targetEdgeLen);
 
     scene.addMesh(cutMesh);
