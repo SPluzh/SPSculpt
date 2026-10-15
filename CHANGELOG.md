@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0]
+- **Topology-Preserving Boolean**: Union, Difference, and Intersection preserve 100% of original mesh quads and density outside the cut seam.
+- **Trim & Split Tools**: Added solid Line and Lasso cutting with real-time viewport preview, splitting objects into clean watertight meshes.
+- **Quad Capping**: Cut surfaces are automatically filled with uniform quad grids matching the mesh resolution instead of messy triangles.
+- **PolyGroup & Shading Retention**: Preserves colors and PolyGroups across boolean cuts, with smooth shading and no dark crease artifacts.
+
 ## [0.2.29]
 - **Auto PolyGroups**: Every newly created primitive, spawned object, and duplicate now automatically gets a distinct, unique PolyGroup ID and color.
 - **Merge PolyGroups**: Merging multiple meshes now preserves the individual PolyGroups of each component.

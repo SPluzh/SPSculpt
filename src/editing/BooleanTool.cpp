@@ -36,9 +36,13 @@ bool BooleanTool::execute(
                opName, meshA->outlinerName.c_str(), meshA->nbVerts, meshA->nbFaces,
                meshB->outlinerName.c_str(), meshB->nbVerts, meshB->nbFaces);
 
-    // 1. Convert meshA and meshB to Manifold
-    manifold::Manifold mA = ManifoldBridge::fromMesh(*meshA);
-    manifold::Manifold mB = ManifoldBridge::fromMesh(*meshB);
+    // 1. Reserve distinct original IDs for tracking source meshes
+    uint32_t origIdA = manifold::Manifold::ReserveIDs(1);
+    uint32_t origIdB = manifold::Manifold::ReserveIDs(1);
+
+    // Convert meshA and meshB to Manifold
+    manifold::Manifold mA = ManifoldBridge::fromMesh(*meshA, origIdA);
+    manifold::Manifold mB = ManifoldBridge::fromMesh(*meshB, origIdB);
 
     if (mA.IsEmpty() || mA.Status() != manifold::Manifold::Error::NoError) {
         sculpt_log("[BOOLEAN] Failed to convert meshA to valid Manifold. Status: %d\n", (int)mA.Status());
@@ -54,12 +58,10 @@ bool BooleanTool::execute(
     glm::mat4x3 affine(mB_to_A);
     mB = mB.Transform(affine);
 
-    // 3. Mark mB as original to track cut cap / boundary faces
-    mB = mB.AsOriginal();
-    int mBOrigID = mB.OriginalID();
-    uint32_t newCapGid = meshA->getNextFreeGroupID();
+    // 3. Perform CSG Boolean with triangle cleanup disabled to preserve non-intersecting quads
+    bool prevCleanup = manifold::ManifoldParams().cleanupTriangles;
+    manifold::ManifoldParams().cleanupTriangles = false;
 
-    // 4. Perform CSG Boolean
     manifold::Manifold result;
     switch (op) {
         case BooleanOp::Union:
@@ -73,18 +75,20 @@ bool BooleanTool::execute(
             break;
     }
 
+    manifold::ManifoldParams().cleanupTriangles = prevCleanup;
+
     if (result.IsEmpty()) {
         sculpt_log("[BOOLEAN] CSG operation resulted in an empty mesh.\n");
         return false;
     }
 
-    // 5. Save history state before applying changes to scene
+    // 4. Save history state before applying changes to scene
     scene.pushHistoryState();
 
-    // 6. Update meshA with result
-    ManifoldBridge::toMesh(result, *meshA, true, mBOrigID, newCapGid);
+    // 5. Update meshA with result, restoring original quads everywhere except intersection seam
+    ManifoldBridge::toMeshBoolean(result, *meshA, *meshA, origIdA, *meshB, origIdB, true);
 
-    // 7. Remove meshB from scene (removeMesh handles deletion internally)
+    // 6. Remove meshB from scene (removeMesh handles deletion internally)
     scene.removeMesh(meshB);
 
     scene.setModified(true);
