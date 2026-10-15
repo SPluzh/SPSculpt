@@ -1035,9 +1035,9 @@ static void generateCylinder(
             uint32_t outerJ = (capRings == 1) ? (startIdx + j) : (ring1StartIdx + j);
             uint32_t outerNext = (capRings == 1) ? (startIdx + next) : (ring1StartIdx + next);
 
+            faces.push_back(baseCapIdx);
             faces.push_back(outerJ);
             faces.push_back(outerNext);
-            faces.push_back(baseCapIdx);
             faces.push_back(TRI_INDEX);
         }
 
@@ -1047,10 +1047,10 @@ static void generateCylinder(
             uint32_t outerRingStart = (rIdx + 1 == capRings) ? startIdx : (baseCapIdx + 1 + rIdx * radSegments);
             for (int j = 0; j < radSegments; ++j) {
                 int next = (j == radSegments - 1) ? 0 : j + 1;
-                uint32_t v0 = innerRingStart + j;
-                uint32_t v1 = innerRingStart + next;
-                uint32_t v2 = outerRingStart + next;
-                uint32_t v3 = outerRingStart + j;
+                uint32_t v0 = innerRingStart + next;
+                uint32_t v1 = innerRingStart + j;
+                uint32_t v2 = outerRingStart + j;
+                uint32_t v3 = outerRingStart + next;
 
                 faces.push_back(v0);
                 faces.push_back(v1);
@@ -1095,9 +1095,9 @@ static void generateCylinder(
             uint32_t outerJ = (capRings == 1) ? (startIdx + end + j) : (ring1StartIdx + j);
             uint32_t outerNext = (capRings == 1) ? (startIdx + (j == radSegments - 1 ? end : end + j + 1)) : (ring1StartIdx + next);
 
+            faces.push_back(baseCapIdx);
             faces.push_back(outerNext);
             faces.push_back(outerJ);
-            faces.push_back(baseCapIdx);
             faces.push_back(TRI_INDEX);
         }
 
@@ -1107,10 +1107,10 @@ static void generateCylinder(
             uint32_t outerRingStart = (rIdx + 1 == capRings) ? (startIdx + end) : (baseCapIdx + 1 + rIdx * radSegments);
             for (int j = 0; j < radSegments; ++j) {
                 int next = (j == radSegments - 1) ? 0 : j + 1;
-                uint32_t v0 = innerRingStart + next;
-                uint32_t v1 = innerRingStart + j;
-                uint32_t v2 = outerRingStart + j;
-                uint32_t v3 = outerRingStart + next;
+                uint32_t v0 = innerRingStart + j;
+                uint32_t v1 = innerRingStart + next;
+                uint32_t v2 = outerRingStart + next;
+                uint32_t v3 = outerRingStart + j;
 
                 faces.push_back(v0);
                 faces.push_back(v1);

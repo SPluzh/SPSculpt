@@ -13,8 +13,8 @@ public:
     // Cleans screen 2D lasso points using Clipper2 and Chaikin smoothing
     static std::vector<std::vector<glm::vec2>> cleanLasso2D(
         const std::vector<glm::vec2>& inputPoints,
-        float simplifyTolerance = 1.5f,
-        int chaikinIterations = 1
+        float simplifyTolerance = 1.0f,
+        int chaikinIterations = 2
     );
 
     // Builds a 3D cutter Manifold from screen lasso points and camera

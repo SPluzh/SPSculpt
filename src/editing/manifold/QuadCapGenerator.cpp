@@ -80,6 +80,61 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID)
     }
     sculpt_log("[QUAD CAP] Total faces: %d, Cap faces count with ID %u: %zu\n", nbFaces, capGroupID, capFaceIndices.size());
 
+    // 1.5. Planarity check:
+    // A planar cut (like SliceByLine or straight knife cut) has faces whose normals are all nearly identical.
+    // A 3D curved cut (like lasso cut, circular bite, or curved tunnel) has faces curving through volume in 3D.
+    // Flattening a 3D curved cut onto a single 2D plane creates a flat lid ("крышка плоская") and jagged edges!
+    // For 3D curved cuts, Manifold CSG has already computed the exact 3D volume, which is quadified in toMesh.
+    glm::vec3 avgNormal(0.0f);
+    float totalCapArea = 0.0f;
+    for (int f : capFaceIndices) {
+        uint32_t v0 = mesh.faces[f * 4 + 0];
+        uint32_t v1 = mesh.faces[f * 4 + 1];
+        uint32_t v2 = mesh.faces[f * 4 + 2];
+        glm::vec3 p0(mesh.verts[v0 * 3], mesh.verts[v0 * 3 + 1], mesh.verts[v0 * 3 + 2]);
+        glm::vec3 p1(mesh.verts[v1 * 3], mesh.verts[v1 * 3 + 1], mesh.verts[v1 * 3 + 2]);
+        glm::vec3 p2(mesh.verts[v2 * 3], mesh.verts[v2 * 3 + 1], mesh.verts[v2 * 3 + 2]);
+        glm::vec3 fn = glm::cross(p1 - p0, p2 - p0);
+        float area = glm::length(fn);
+        if (area > 1e-6f) {
+            avgNormal += fn;
+            totalCapArea += area;
+        }
+    }
+
+    float normLen = glm::length(avgNormal);
+    bool isPlanar = true;
+    if (totalCapArea <= 1e-6f || (normLen / totalCapArea) < 0.90f) {
+        isPlanar = false;
+    } else {
+        glm::vec3 unitAvgNorm = avgNormal / normLen;
+        for (int f : capFaceIndices) {
+            uint32_t v0 = mesh.faces[f * 4 + 0];
+            uint32_t v1 = mesh.faces[f * 4 + 1];
+            uint32_t v2 = mesh.faces[f * 4 + 2];
+            glm::vec3 p0(mesh.verts[v0 * 3], mesh.verts[v0 * 3 + 1], mesh.verts[v0 * 3 + 2]);
+            glm::vec3 p1(mesh.verts[v1 * 3], mesh.verts[v1 * 3 + 1], mesh.verts[v1 * 3 + 2]);
+            glm::vec3 p2(mesh.verts[v2 * 3], mesh.verts[v2 * 3 + 1], mesh.verts[v2 * 3 + 2]);
+            glm::vec3 fn = glm::cross(p1 - p0, p2 - p0);
+            float len = glm::length(fn);
+            if (len > 1e-6f && glm::dot(fn / len, unitAvgNorm) < 0.85f) {
+                isPlanar = false;
+                break;
+            }
+        }
+    }
+
+    if (!isPlanar) {
+        sculpt_log("[QUAD CAP] Cap %u is 3D curved (non-planar). Preserving exact 3D CSG surface geometry.\n", capGroupID);
+        result.success = true;
+        result.numTris = (int)capFaceIndices.size();
+        result.numQuads = 0;
+        result.quadRatio = 0.0f;
+        auto tEnd = std::chrono::high_resolution_clock::now();
+        result.executionTimeMs = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
+        return result;
+    }
+
     // 2. Extract boundary halfedges of the cap region
     // A directed edge (u, v) is a boundary edge if the face it belongs to is in capFaceIndices,
     // but the twin edge (v, u) does not exist or belongs to a non-cap face.
