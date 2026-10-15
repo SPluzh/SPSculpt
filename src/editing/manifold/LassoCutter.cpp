@@ -232,12 +232,17 @@ static manifold::Manifold buildSinglePrism(
     sculpt_log("[CUTTER 3D] Camera: %s, Screen Centroid: (%.1f, %.1f), TargetEdgeLen: %.3f mm, Units/Px: %.4f\n",
                camera.isOrthographic() ? "Orthographic" : "Perspective",
                center2D.x, center2D.y, targetEdgeLength, localUnitsPerPx);
-    sculpt_log("[CUTTER 3D] Depth Range: [%.2f, %.2f] (span: %.2f mm), Target Spacing: %.2f px -> Resampled %zu points\n",
-               tNear, tFar, tFar - tNear, targetSpacingPx, N);
-
-    // 6. Solid prism extrusion (M = 1 depth segment for clean, fast CSG cut boundary)
+    // 6. Solid prism extrusion subdivided into M depth slices matching targetEdgeLength
     float depthSpan = tFar - tNear;
-    const int M = 1;
+    int M = 1;
+    if (targetEdgeLength > 1e-4f) {
+        float sliceStep = std::max(targetEdgeLength, 0.25f);
+        M = static_cast<int>(std::round(depthSpan / sliceStep));
+    }
+    M = std::clamp(M, 1, 80);
+
+    sculpt_log("[CUTTER 3D] Depth Range: [%.2f, %.2f] (span: %.2f mm, M=%d slices, step: %.3f mm), Target Spacing: %.2f px -> Resampled %zu points\n",
+               tNear, tFar, depthSpan, M, depthSpan / static_cast<float>(M), targetSpacingPx, N);
 
     // 7. Precompute local rays for all perimeter points
     struct LocalRay {
@@ -288,15 +293,22 @@ static manifold::Manifold buildSinglePrism(
     for (size_t i = 0; i < N; ++i) {
         cdtVerts.push_back(CDT::V2d<float>::make(resampledPoly[i].x, resampledPoly[i].y));
     }
-    cdt.insertVertices(cdtVerts);
 
-    std::vector<CDT::Edge> edges;
-    edges.reserve(N);
-    for (size_t i = 0; i < N; ++i) {
-        edges.push_back(CDT::Edge(static_cast<CDT::VertInd>(i), static_cast<CDT::VertInd>((i + 1) % N)));
+    try {
+        cdt.insertVertices(cdtVerts);
+
+        std::vector<CDT::Edge> edges;
+        edges.reserve(N);
+        for (size_t i = 0; i < N; ++i) {
+            edges.push_back(CDT::Edge(static_cast<CDT::VertInd>(i), static_cast<CDT::VertInd>((i + 1) % N)));
+        }
+        cdt.insertEdges(edges);
+        cdt.eraseOuterTrianglesAndHoles();
+    } catch (const std::exception& ex) {
+        sculpt_log("[LassoCutter] CDT triangulation failed: %s. Using triangle fan fallback.\n", ex.what());
+    } catch (...) {
+        sculpt_log("[LassoCutter] CDT triangulation unknown error. Using triangle fan fallback.\n");
     }
-    cdt.insertEdges(edges);
-    cdt.eraseOuterTrianglesAndHoles();
 
     std::vector<uint32_t> triVerts;
     triVerts.reserve((2 * N * M + 2 * std::max((size_t)N, cdt.triangles.size())) * 3);
