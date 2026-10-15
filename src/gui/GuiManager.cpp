@@ -18,6 +18,7 @@
 #include "platform/FileDialog.h"
 #include "brushes/BrushPresetManager.h"
 #include "editing/ArmatureTool.h"
+#include "editing/BooleanTool.h"
 #include "editing/undo/UndoManager.h"
 #include <imgui.h>
 #include "gui/IconsLucide.h"
@@ -1335,7 +1336,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                  brushType == BRUSH_MASK || brushType == BRUSH_MASK_GRADIENT_BLUR ||
                                  brushType == BRUSH_MEASURE || brushType == BRUSH_DIVIDER ||
                                  brushType == BRUSH_TRANSFORM || brushType == BRUSH_ARMATURE_SPHERES ||
-                                 brushType == BRUSH_BRUSH || brushType == BRUSH_POLYGROUP);
+                                 brushType == BRUSH_BRUSH || brushType == BRUSH_POLYGROUP ||
+                                 brushType == BRUSH_CLIP_CURVE || brushType == BRUSH_TRIM);
 
         if (hasSpecialParams) {
             if (ImGui::CollapsingHeader("Tool Specific Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -1951,6 +1953,17 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             if (graph) graph->clear();
                         }
                     }
+                }
+                else if (brushType == BRUSH_CLIP_CURVE) {
+                    int modeIdx = (sculpt.getClipCurveMode() == SculptManager::ClipCurveMode::Slice) ? 0 : 1;
+                    const char* modes[] = { "Slice (Split to Subtool)", "Clip (Flatten to Plane)" };
+                    if (ImGui::Combo("Curve Mode", &modeIdx, modes, IM_ARRAYSIZE(modes))) {
+                        sculpt.setClipCurveMode(modeIdx == 0 ? SculptManager::ClipCurveMode::Slice : SculptManager::ClipCurveMode::Clip);
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Slice: Cuts mesh into 2 solid subtools with quad caps\nClip: Flattens geometry onto the plane");
+                }
+                else if (brushType == BRUSH_TRIM) {
+                    ImGui::TextDisabled("Trim / Lasso Mode:\n - Default: Cut & fill hole\n - Alt: Keep inside volume only\n - QuadCap: Auto-applied (Nomad style)");
                 }
             }
         }
@@ -2686,6 +2699,45 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
                     ImGui::EndGroup();
                     ImGui::EndChild();
+
+                    if (ImGui::BeginPopupContextItem("##MeshOutlinerCtx")) {
+                        ImGui::TextDisabled("Mesh: %s", displayName.c_str());
+                        ImGui::Separator();
+
+                        if (meshes.size() >= 2) {
+                            if (ImGui::BeginMenu(ICON_LC_PUZZLE " Boolean (CSG)")) {
+                                for (size_t otherIdx = 0; otherIdx < meshes.size(); ++otherIdx) {
+                                    if (otherIdx == (size_t)i) continue;
+                                    Mesh* otherMesh = meshes[otherIdx];
+                                    std::string otherName = otherMesh->outlinerName.empty() ? ("Mesh " + std::to_string(otherIdx + 1)) : otherMesh->outlinerName;
+
+                                    if (ImGui::BeginMenu(otherName.c_str())) {
+                                        if (ImGui::MenuItem("Union (A + B)")) {
+                                            sculpt::BooleanTool::execute(scene, mesh, otherMesh, sculpt::BooleanOp::Union);
+                                        }
+                                        if (ImGui::MenuItem("Difference (A - B)")) {
+                                            sculpt::BooleanTool::execute(scene, mesh, otherMesh, sculpt::BooleanOp::Difference);
+                                        }
+                                        if (ImGui::MenuItem("Intersection (A ^ B)")) {
+                                            sculpt::BooleanTool::execute(scene, mesh, otherMesh, sculpt::BooleanOp::Intersection);
+                                        }
+                                        ImGui::EndMenu();
+                                    }
+                                }
+                                ImGui::EndMenu();
+                            }
+                            ImGui::Separator();
+                        }
+
+                        if (ImGui::MenuItem(ICON_LC_COPY " Duplicate", "Ctrl+D")) {
+                            scene.setOrUnsetMesh(mesh, false);
+                            scene.duplicateSelection();
+                        }
+                        if (ImGui::MenuItem(ICON_LC_TRASH_2 " Delete", "Delete")) {
+                            scene.removeMesh(mesh);
+                        }
+                        ImGui::EndPopup();
+                    }
 
                     if (ImGui::IsItemClicked(0) && !ImGui::IsItemEdited()) {
                         bool ctrl = ImGui::GetIO().KeyCtrl;
@@ -4937,6 +4989,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     drawReferenceImageManipulator(sculpt, scene, renderer);
     drawCameraBookmarksPanel(scene, renderer);
     drawHotkeyHUD();
+    drawToastHUD();
     if (m_showRecentFilesWindow && m_recentFiles) {
         drawRecentFilesWindow(scene, &sculpt, *m_recentFiles);
     }
@@ -10738,6 +10791,77 @@ void GuiManager::drawHotkeyHUD() {
 
     ImGui::PopStyleVar(3);
     ImGui::PopStyleColor(2);
+}
+
+struct ToastItem {
+    std::string message;
+    float remainingTime;
+    float totalDuration;
+};
+static std::vector<ToastItem> s_toasts;
+static std::mutex s_toastMutex;
+
+void GuiManager::showToast(const std::string& message, float duration) {
+    std::lock_guard<std::mutex> lock(s_toastMutex);
+    s_toasts.push_back({ message, duration, duration });
+    if (s_toasts.size() > 5) {
+        s_toasts.erase(s_toasts.begin());
+    }
+}
+
+void GuiManager::drawToastHUD() {
+    std::lock_guard<std::mutex> lock(s_toastMutex);
+    if (s_toasts.empty()) return;
+
+    float dt = ImGui::GetIO().DeltaTime;
+    for (auto it = s_toasts.begin(); it != s_toasts.end(); ) {
+        it->remainingTime -= dt;
+        if (it->remainingTime <= 0.0f) {
+            it = s_toasts.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (s_toasts.empty()) return;
+
+    float scale = getUiScale();
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+
+    float yOffset = 40.0f * scale;
+    for (size_t i = 0; i < s_toasts.size(); ++i) {
+        const auto& toast = s_toasts[i];
+        float alpha = std::clamp(toast.remainingTime / std::min(0.5f, toast.totalDuration), 0.0f, 1.0f);
+
+        ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + 20.0f * scale, viewport->Pos.y + viewport->Size.y - yOffset), ImGuiCond_Always, ImVec2(0.0f, 1.0f));
+        ImGui::SetNextWindowBgAlpha(0.85f * alpha);
+
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.10f, 0.12f, 0.85f * alpha));
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.01f, 0.52f, 0.45f, 0.70f * alpha)); // Teal Accent
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, alpha));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f * scale);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f * scale, 8.0f * scale));
+
+        ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar |
+                                 ImGuiWindowFlags_NoResize |
+                                 ImGuiWindowFlags_NoScrollbar |
+                                 ImGuiWindowFlags_NoSavedSettings |
+                                 ImGuiWindowFlags_AlwaysAutoResize |
+                                 ImGuiWindowFlags_NoFocusOnAppearing |
+                                 ImGuiWindowFlags_NoNav |
+                                 ImGuiWindowFlags_NoMove |
+                                 ImGuiWindowFlags_NoInputs;
+
+        char winId[32];
+        snprintf(winId, sizeof(winId), "##ToastHUD_%zu", i);
+        if (ImGui::Begin(winId, nullptr, flags)) {
+            ImGui::TextUnformatted(toast.message.c_str());
+            yOffset += (ImGui::GetWindowHeight() + 6.0f * scale);
+        }
+        ImGui::End();
+
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor(3);
+    }
 }
 
 void GuiManager::drawCameraBookmarksPanel(Scene& scene, AngleRenderer& renderer) {

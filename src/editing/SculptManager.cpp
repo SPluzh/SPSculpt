@@ -7,6 +7,7 @@
 #include "editing/ArmatureTool.h"
 #include "editing/ClipCurveTool.h"
 #include "editing/TrimTool.h"
+#include "editing/SplitTool.h"
 #include "editing/undo/UndoManager.h"
 #include "common/Logger.h"
 #include <glm/gtc/matrix_transform.hpp>
@@ -2885,19 +2886,33 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
             if (m_clipCurvePoints.size() >= 2 && mesh) {
                 scene.pushHistoryState();
-                std::vector<glm::vec3> symScales = getActiveSymmetryScales();
-                bool modified = ClipCurveTool::execute(
-                    mesh,
-                    scene.getCamera(),
-                    m_clipCurvePoints,
-                    m_clipCurveAlt,
-                    m_useSym,
-                    m_symmetryMode,
-                    symScales
-                );
-                sculpt_log("[SculptManager] ClipCurveTool::execute result = %s\n", modified ? "TRUE (modified)" : "FALSE (unmodified)");
-                if (modified) {
-                    scene.setModified(true);
+                if (m_clipCurveMode == ClipCurveMode::Slice) {
+                    bool modified = sculpt::SplitTool::sliceByLine(
+                        scene,
+                        mesh,
+                        scene.getCamera(),
+                        m_clipCurvePoints.front(),
+                        m_clipCurvePoints.back()
+                    );
+                    sculpt_log("[SculptManager] SplitTool::sliceByLine result = %s\n", modified ? "TRUE (modified)" : "FALSE (unmodified)");
+                    if (modified) {
+                        scene.setModified(true);
+                    }
+                } else {
+                    std::vector<glm::vec3> symScales = getActiveSymmetryScales();
+                    bool modified = ClipCurveTool::execute(
+                        mesh,
+                        scene.getCamera(),
+                        m_clipCurvePoints,
+                        m_clipCurveAlt,
+                        m_useSym,
+                        m_symmetryMode,
+                        symScales
+                    );
+                    sculpt_log("[SculptManager] ClipCurveTool::execute result = %s\n", modified ? "TRUE (modified)" : "FALSE (unmodified)");
+                    if (modified) {
+                        scene.setModified(true);
+                    }
                 }
             } else {
                 sculpt_log("[SculptManager] ClipCurve skipped execution (points < 2 or mesh is null)\n");

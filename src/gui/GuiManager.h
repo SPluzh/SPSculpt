@@ -168,6 +168,7 @@ private:
     void drawTimelapsePanel(Scene& scene, AngleRenderer& renderer);
     void drawPreferencesPanel(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer, SDL_Window* window = nullptr);
     void drawHotkeyHUD();
+    void drawToastHUD();
     void drawBrushIconCapturePanel(const Scene& scene, AngleRenderer& renderer);
     void drawBrushIconFrameOverlay();
     void captureBrushIcon(const Scene& scene, AngleRenderer& renderer);
@@ -233,6 +234,7 @@ private:
     WorkTimer m_workTimer;
 
 public:
+    static void showToast(const std::string& message, float duration = 3.0f);
     WorkTimer& getWorkTimer() { return m_workTimer; }
     const WorkTimer& getWorkTimer() const { return m_workTimer; }
     GuiManager();

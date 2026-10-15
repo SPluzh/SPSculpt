@@ -2497,7 +2497,7 @@ void AngleRenderer::drawClipCurve() {
     GLint locRef2DMode = glGetUniformLocation(m_selectionProgram, "uRef2DMode");
     if (locRef2DMode != -1) glUniform1i(locRef2DMode, 0);
 
-    glm::vec3 curveColor = m_clipCurveAlt ? glm::vec3(1.0f, 0.5f, 0.1f) : glm::vec3(1.0f, 0.2f, 0.2f);
+    glm::vec3 curveColor = m_clipCurveAlt ? glm::vec3(1.0f, 0.85f, 0.1f) : glm::vec3(0.0f, 0.85f, 0.75f);
     glUniform3fv(locColor, 1, &curveColor[0]);
 
     glm::mat4 identityMVP(1.0f);
@@ -2509,12 +2509,50 @@ void AngleRenderer::drawClipCurve() {
     glBindVertexArray(m_lassoVao);
     glBindBuffer(GL_ARRAY_BUFFER, m_lassoVbo);
 
-    // Draw main polyline
+    // 0. Draw semi-transparent shaded overlay on the removed/separated side
+    std::vector<float> shadeNdcPoints;
+    for (size_t i = 0; i < m_clipCurvePoints.size() - 1; ++i) {
+        glm::vec2 pA = m_clipCurvePoints[i];
+        glm::vec2 pB = m_clipCurvePoints[i + 1];
+        glm::vec2 d = pB - pA;
+        float segLen = glm::length(d);
+        if (segLen < 1e-4f) continue;
+        glm::vec2 segDir = d / segLen;
+        glm::vec2 clipNormal = m_clipCurveAlt ? glm::vec2(segDir.y, -segDir.x) : glm::vec2(-segDir.y, segDir.x);
+        glm::vec2 pA_far = pA + clipNormal * 2000.0f;
+        glm::vec2 pB_far = pB + clipNormal * 2000.0f;
+
+        glm::vec3 nA = toNDC(pA);
+        glm::vec3 nB = toNDC(pB);
+        glm::vec3 nB_far = toNDC(pB_far);
+        glm::vec3 nA_far = toNDC(pA_far);
+
+        shadeNdcPoints.push_back(nA.x); shadeNdcPoints.push_back(nA.y); shadeNdcPoints.push_back(nA.z);
+        shadeNdcPoints.push_back(nB.x); shadeNdcPoints.push_back(nB.y); shadeNdcPoints.push_back(nB.z);
+        shadeNdcPoints.push_back(nB_far.x); shadeNdcPoints.push_back(nB_far.y); shadeNdcPoints.push_back(nB_far.z);
+
+        shadeNdcPoints.push_back(nA.x); shadeNdcPoints.push_back(nA.y); shadeNdcPoints.push_back(nA.z);
+        shadeNdcPoints.push_back(nB_far.x); shadeNdcPoints.push_back(nB_far.y); shadeNdcPoints.push_back(nB_far.z);
+        shadeNdcPoints.push_back(nA_far.x); shadeNdcPoints.push_back(nA_far.y); shadeNdcPoints.push_back(nA_far.z);
+    }
+    if (!shadeNdcPoints.empty()) {
+        glm::vec3 shadeColor(0.85f, 0.15f, 0.15f);
+        glUniform3fv(locColor, 1, &shadeColor[0]);
+        if (locAlpha != -1) glUniform1f(locAlpha, 0.28f);
+        glBufferData(GL_ARRAY_BUFFER, shadeNdcPoints.size() * sizeof(float), shadeNdcPoints.data(), GL_DYNAMIC_DRAW);
+        glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(shadeNdcPoints.size() / 3));
+
+        // Restore curve line color and alpha
+        glUniform3fv(locColor, 1, &curveColor[0]);
+        if (locAlpha != -1) glUniform1f(locAlpha, 1.0f);
+    }
+
+    // 1. Draw main polyline
     glBufferData(GL_ARRAY_BUFFER, lineNdcPoints.size() * sizeof(float), lineNdcPoints.data(), GL_DYNAMIC_DRAW);
     glLineWidth(2.5f);
     glDrawArrays(GL_LINE_STRIP, 0, (GLsizei)m_clipCurvePoints.size());
 
-    // Draw directional arrows pointing into clipped region
+    // 2. Draw directional arrows pointing into clipped region
     if (!arrowNdcPoints.empty()) {
         glBufferData(GL_ARRAY_BUFFER, arrowNdcPoints.size() * sizeof(float), arrowNdcPoints.data(), GL_DYNAMIC_DRAW);
         glLineWidth(2.0f);

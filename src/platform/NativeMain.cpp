@@ -42,6 +42,12 @@
 #include "brushes/BrushPresetManager.h"
 #include "files/FileManager.h"
 #include "stb_image.h"
+#include "manifold.h"
+#include "editing/manifold/ManifoldBridge.h"
+#include "editing/manifold/LassoCutter.h"
+#include "editing/TrimTool.h"
+#include "editing/SplitTool.h"
+#include "editing/BooleanTool.h"
 #include <cctype>
 
 static bool isImageFile(const std::string& path) {
@@ -335,6 +341,9 @@ int main(int argc, char* argv[]) {
     setvbuf(stderr, NULL, _IONBF, 0);
     sculpt_log_init();
 
+    auto testCube = manifold::Manifold::Cube(glm::vec3(10.0f));
+    sculpt_log("[SMOKE TEST] Manifold initialized successfully. Test cube volume: %.2f\n", (float)testCube.GetProperties().volume);
+
     // Register crash signal handlers
     std::signal(SIGSEGV, crashHandler);
     std::signal(SIGABRT, crashHandler);
@@ -450,6 +459,7 @@ int main(int argc, char* argv[]) {
     Scene scene;
     scene.getCamera().onResize(width, height);
     scene.loadDefaultSphere();
+
 
     // Apply default matcap preset globally to the renderer
     int defaultFvIdx = renderer.findMatcapIndexByName("Matcap FV");

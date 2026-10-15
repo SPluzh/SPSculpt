@@ -6,7 +6,7 @@ add_library(ufbx STATIC third_party/ufbx/ufbx.c)
 target_include_directories(ufbx PUBLIC third_party/ufbx)
 target_compile_options(ufbx PRIVATE -O3)
 
-add_subdirectory(third_party/glm)
+find_package(glm REQUIRED)
 
 include(FetchContent)
 FetchContent_Declare(imgui
@@ -22,7 +22,34 @@ FetchContent_Declare(json
     GIT_REPOSITORY https://github.com/nlohmann/json.git
     GIT_TAG v3.11.3
 )
-FetchContent_MakeAvailable(json)
+
+set(MANIFOLD_PAR "NONE" CACHE STRING "Parallel backend" FORCE)
+set(MANIFOLD_EXPORT OFF CACHE BOOL "" FORCE)
+set(MANIFOLD_TEST OFF CACHE BOOL "" FORCE)
+set(MANIFOLD_PYBIND OFF CACHE BOOL "" FORCE)
+set(MANIFOLD_CBIND OFF CACHE BOOL "" FORCE)
+
+FetchContent_Declare(manifold
+    GIT_REPOSITORY https://github.com/elalish/manifold.git
+    GIT_TAG v2.5.1
+    GIT_SHALLOW TRUE
+)
+
+FetchContent_Declare(cdt
+    GIT_REPOSITORY https://github.com/artem-ogre/CDT.git
+    GIT_TAG 1.4.1
+    GIT_SHALLOW TRUE
+)
+FetchContent_GetProperties(cdt)
+if(NOT cdt_POPULATED)
+    FetchContent_Populate(cdt)
+    add_library(CDT INTERFACE)
+    target_include_directories(CDT INTERFACE ${cdt_SOURCE_DIR}/CDT/include)
+    add_library(CDT::CDT ALIAS CDT)
+endif()
+
+FetchContent_MakeAvailable(json manifold)
+
 
 add_library(imgui STATIC
     ${imgui_SOURCE_DIR}/imgui.cpp
@@ -106,9 +133,14 @@ add_executable(SPSculpt
     src/files/ImportFBX.cpp
     src/files/MeshUtils.cpp
     # editing
+    src/editing/manifold/ManifoldBridge.cpp
+    src/editing/manifold/LassoCutter.cpp
+    src/editing/manifold/QuadCapGenerator.cpp
     src/editing/SculptManager.cpp
     src/editing/ClipCurveTool.cpp
     src/editing/TrimTool.cpp
+    src/editing/SplitTool.cpp
+    src/editing/BooleanTool.cpp
     src/editing/CameraController.cpp
     src/editing/BrushCursor.cpp
     src/editing/ArmatureTool.cpp
@@ -145,7 +177,7 @@ else()
     include_directories(${SDL2_INCLUDE_DIRS})
 endif()
 
-target_link_libraries(SPSculpt PRIVATE imgui ${EGL_LIBRARY} ${GLES_LIBRARY} glm nlohmann_json::nlohmann_json ufbx)
+target_link_libraries(SPSculpt PRIVATE imgui ${EGL_LIBRARY} ${GLES_LIBRARY} glm::glm nlohmann_json::nlohmann_json ufbx manifold Clipper2 CDT)
 target_compile_options(SPSculpt PRIVATE -O3)
 
 if(MINGW)

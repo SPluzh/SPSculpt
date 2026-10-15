@@ -67,10 +67,12 @@ public:
         
         // Output to stdout
         printf("[%s] %s", timeStr.c_str(), msg.c_str());
+        fflush(stdout);
 
         // Write to log file if open
         if (m_logFile.is_open()) {
             m_logFile << "[" << timeStr << "] " << msg;
+            m_logFile.flush();
         }
 
         m_entries.push_back({level, timeStr, msg});
