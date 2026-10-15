@@ -392,12 +392,9 @@ public:
     bool getLassoAlt() const { return m_lassoAlt; }
     bool isMaskLasso() const { return m_isMaskLasso; }
 
-    enum class ClipCurveMode { Slice = 0, Clip = 1 };
     bool isClipCurveActive() const { return m_isClipCurveActive; }
     const std::vector<glm::vec2>& getClipCurvePoints() const { return m_clipCurvePoints; }
     bool getClipCurveAlt() const { return m_clipCurveAlt; }
-    ClipCurveMode getClipCurveMode() const { return m_clipCurveMode; }
-    void setClipCurveMode(ClipCurveMode mode) { m_clipCurveMode = mode; }
 
     bool isTrimLassoActive() const { return m_isTrimLassoActive; }
     const std::vector<glm::vec2>& getTrimLassoPoints() const { return m_trimLassoPoints; }
@@ -503,7 +500,6 @@ private:
     bool m_isClipCurveActive = false;
     std::vector<glm::vec2> m_clipCurvePoints;
     bool m_clipCurveAlt = false;
-    ClipCurveMode m_clipCurveMode = ClipCurveMode::Slice;
 
     bool m_isTrimLassoActive = false;
     std::vector<glm::vec2> m_trimLassoPoints;

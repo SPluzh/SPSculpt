@@ -1337,7 +1337,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                  brushType == BRUSH_MEASURE || brushType == BRUSH_DIVIDER ||
                                  brushType == BRUSH_TRANSFORM || brushType == BRUSH_ARMATURE_SPHERES ||
                                  brushType == BRUSH_BRUSH || brushType == BRUSH_POLYGROUP ||
-                                 brushType == BRUSH_CLIP_CURVE || brushType == BRUSH_TRIM);
+                                 brushType == BRUSH_TRIM);
 
         if (hasSpecialParams) {
             if (ImGui::CollapsingHeader("Tool Specific Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -1953,14 +1953,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             if (graph) graph->clear();
                         }
                     }
-                }
-                else if (brushType == BRUSH_CLIP_CURVE) {
-                    int modeIdx = (sculpt.getClipCurveMode() == SculptManager::ClipCurveMode::Slice) ? 0 : 1;
-                    const char* modes[] = { "Slice (Split to Subtool)", "Clip (Flatten to Plane)" };
-                    if (ImGui::Combo("Curve Mode", &modeIdx, modes, IM_ARRAYSIZE(modes))) {
-                        sculpt.setClipCurveMode(modeIdx == 0 ? SculptManager::ClipCurveMode::Slice : SculptManager::ClipCurveMode::Clip);
-                    }
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Slice: Cuts mesh into 2 solid subtools with quad caps\nClip: Flattens geometry onto the plane");
                 }
                 else if (brushType == BRUSH_TRIM) {
                     ImGui::TextDisabled("Trim / Lasso Mode:\n - Default: Cut & fill hole\n - Alt: Keep inside volume only\n - QuadCap: Auto-applied (Nomad style)");
