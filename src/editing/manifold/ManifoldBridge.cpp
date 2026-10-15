@@ -196,9 +196,15 @@ void ManifoldBridge::toMesh(
         }
 
         if (propStride >= 9) {
-            outMesh.colors[u * 3 + 0] = gl.vertProperties[base + 6];
-            outMesh.colors[u * 3 + 1] = gl.vertProperties[base + 7];
-            outMesh.colors[u * 3 + 2] = gl.vertProperties[base + 8];
+            float r = gl.vertProperties[base + 6];
+            float g = gl.vertProperties[base + 7];
+            float b = gl.vertProperties[base + 8];
+            if (r <= 1e-4f && g <= 1e-4f && b <= 1e-4f) {
+                r = g = b = 1.0f;
+            }
+            outMesh.colors[u * 3 + 0] = r;
+            outMesh.colors[u * 3 + 1] = g;
+            outMesh.colors[u * 3 + 2] = b;
         } else {
             outMesh.colors[u * 3 + 0] = 1.0f;
             outMesh.colors[u * 3 + 1] = 1.0f;
@@ -206,9 +212,17 @@ void ManifoldBridge::toMesh(
         }
 
         if (propStride >= 12) {
-            outMesh.materials[u * 3 + 0] = gl.vertProperties[base + 9];
-            outMesh.materials[u * 3 + 1] = gl.vertProperties[base + 10];
-            outMesh.materials[u * 3 + 2] = gl.vertProperties[base + 11];
+            float rough = gl.vertProperties[base + 9];
+            float metal = gl.vertProperties[base + 10];
+            float mask  = gl.vertProperties[base + 11];
+            if (mask <= 1e-4f) mask = 1.0f; // unmasked
+            if (rough <= 1e-4f && metal <= 1e-4f) {
+                rough = 0.5f;
+                metal = 0.0f;
+            }
+            outMesh.materials[u * 3 + 0] = rough;
+            outMesh.materials[u * 3 + 1] = metal;
+            outMesh.materials[u * 3 + 2] = mask;
         } else {
             outMesh.materials[u * 3 + 0] = 0.5f;
             outMesh.materials[u * 3 + 1] = 0.0f;
@@ -419,6 +433,7 @@ void ManifoldBridge::toMesh(
     outMesh.faceEdges.clear();
 
     if (runPostInit) {
+        outMesh.hasCustomNormals = false;
         outMesh.initTopology();
         outMesh.postInit();
     }

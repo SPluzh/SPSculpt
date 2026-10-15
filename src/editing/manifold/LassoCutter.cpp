@@ -271,18 +271,27 @@ static manifold::Manifold buildSinglePrism(
                cDirLocal.x, cDirLocal.y, cDirLocal.z, minRayAngle, maxRayAngle, avgRayAngle);
 
     manifold::MeshGL meshGL;
-    meshGL.numProp = 3; // positions only for cutter
-    meshGL.vertProperties.resize((M + 1) * N * 3);
+    meshGL.numProp = 12; // pos(3), norm(3), color(3), material(3) to match mesh and prevent zeroed properties in CSG
+    meshGL.vertProperties.resize((M + 1) * N * 12);
 
     for (int s = 0; s <= M; ++s) {
         float frac = static_cast<float>(s) / static_cast<float>(M);
         float t = tNear + frac * depthSpan;
         for (size_t i = 0; i < N; ++i) {
             glm::vec3 pos = localRays[i].origin + t * localRays[i].dir;
-            size_t idx = (s * N + i) * 3;
+            size_t idx = (s * N + i) * 12;
             meshGL.vertProperties[idx + 0] = pos.x;
             meshGL.vertProperties[idx + 1] = pos.y;
             meshGL.vertProperties[idx + 2] = pos.z;
+            meshGL.vertProperties[idx + 3] = 0.0f;
+            meshGL.vertProperties[idx + 4] = 1.0f;
+            meshGL.vertProperties[idx + 5] = 0.0f;
+            meshGL.vertProperties[idx + 6] = 1.0f;
+            meshGL.vertProperties[idx + 7] = 1.0f;
+            meshGL.vertProperties[idx + 8] = 1.0f;
+            meshGL.vertProperties[idx + 9] = 0.5f;
+            meshGL.vertProperties[idx + 10] = 0.0f;
+            meshGL.vertProperties[idx + 11] = 1.0f; // unmasked
         }
     }
 

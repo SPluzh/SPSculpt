@@ -557,6 +557,121 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
 
         sculpt_log("[QUAD CAP PATCH #%zu] Detected %zu boundary loop(s)\n", patchIdx + 1, patchLoops.size());
 
+        // Analyze boundary dihedral angles and existing polygroup seams
+        {
+            std::unordered_set<int> patchFaceSet(patchFaces.begin(), patchFaces.end());
+            std::unordered_map<EdgeKey, int, EdgeKeyHash> outsideEdges;
+            outsideEdges.reserve(mesh.nbFaces * 3);
+            for (int f = 0; f < mesh.nbFaces; ++f) {
+                if (patchFaceSet.find(f) != patchFaceSet.end()) continue;
+                uint32_t ov0 = mesh.faces[f * 4 + 0];
+                uint32_t ov1 = mesh.faces[f * 4 + 1];
+                uint32_t ov2 = mesh.faces[f * 4 + 2];
+                uint32_t ov3 = mesh.faces[f * 4 + 3];
+                outsideEdges[{ov0, ov1}] = f;
+                outsideEdges[{ov1, ov2}] = f;
+                if (ov3 != TRI_INDEX) {
+                    outsideEdges[{ov2, ov3}] = f;
+                    outsideEdges[{ov3, ov0}] = f;
+                } else {
+                    outsideEdges[{ov2, ov0}] = f;
+                }
+            }
+
+            int bUnder30 = 0, b30to60 = 0, b60to90 = 0, b90to120 = 0, bOver120 = 0;
+            float minDihedral = 180.0f, maxDihedral = 0.0f, sumDihedral = 0.0f;
+            int numBoundaryEdges = 0;
+
+            struct BoundaryCorner {
+                uint32_t vid;
+                float x, y, z;
+                float maxDihedral;
+                std::string groupsStr;
+            };
+            std::unordered_map<uint32_t, std::unordered_set<uint32_t>> vertOutGroups;
+            std::unordered_map<uint32_t, float> vertMaxDihedral;
+
+            for (const auto& [edge, fIdx] : patchDirectedEdges) {
+                if (patchDirectedEdges.find({edge.v, edge.u}) != patchDirectedEdges.end()) continue;
+                // Boundary edge (edge.u -> edge.v). The matching outside half-edge is edge.v -> edge.u
+                auto it = outsideEdges.find({edge.v, edge.u});
+                if (it == outsideEdges.end()) continue;
+                int outF = it->second;
+
+                uint32_t outGid = (outF < (int)mesh.faceGroups.size()) ? mesh.faceGroups[outF] : 0;
+                vertOutGroups[edge.u].insert(outGid);
+                vertOutGroups[edge.v].insert(outGid);
+
+                uint32_t f0 = mesh.faces[outF * 4 + 0];
+                uint32_t f1 = mesh.faces[outF * 4 + 1];
+                uint32_t f2 = mesh.faces[outF * 4 + 2];
+                uint32_t f3 = mesh.faces[outF * 4 + 3];
+                glm::vec3 op0(mesh.verts[f0 * 3], mesh.verts[f0 * 3 + 1], mesh.verts[f0 * 3 + 2]);
+                glm::vec3 op1(mesh.verts[f1 * 3], mesh.verts[f1 * 3 + 1], mesh.verts[f1 * 3 + 2]);
+                glm::vec3 op2(mesh.verts[f2 * 3], mesh.verts[f2 * 3 + 1], mesh.verts[f2 * 3 + 2]);
+                glm::vec3 ofn = glm::cross(op1 - op0, op2 - op0);
+                if (f3 != TRI_INDEX) {
+                    glm::vec3 op3(mesh.verts[f3 * 3], mesh.verts[f3 * 3 + 1], mesh.verts[f3 * 3 + 2]);
+                    ofn += glm::cross(op2 - op0, op3 - op0);
+                }
+                float oflen = glm::length(ofn);
+                if (oflen > 1e-6f) ofn /= oflen;
+
+                float dotDihedral = std::clamp(glm::dot(patchNormal, ofn), -1.0f, 1.0f);
+                float dihedralDeg = glm::degrees(std::acos(dotDihedral));
+
+                numBoundaryEdges++;
+                sumDihedral += dihedralDeg;
+                if (dihedralDeg < minDihedral) minDihedral = dihedralDeg;
+                if (dihedralDeg > maxDihedral) maxDihedral = dihedralDeg;
+
+                if (dihedralDeg < 30.0f) bUnder30++;
+                else if (dihedralDeg < 60.0f) b30to60++;
+                else if (dihedralDeg < 90.0f) b60to90++;
+                else if (dihedralDeg < 120.0f) b90to120++;
+                else bOver120++;
+
+                vertMaxDihedral[edge.u] = std::max(vertMaxDihedral[edge.u], dihedralDeg);
+                vertMaxDihedral[edge.v] = std::max(vertMaxDihedral[edge.v], dihedralDeg);
+            }
+
+            float avgDihedral = numBoundaryEdges > 0 ? (sumDihedral / (float)numBoundaryEdges) : 0.0f;
+            sculpt_log("[QUAD CAP PATCH #%zu] Boundary Dihedral Angles (%d edges): avg=%.1f deg [min: %.1f, max: %.1f] | <30°: %d, 30-60°: %d, 60-90°: %d, 90-120°: %d, >120°: %d\n",
+                       patchIdx + 1, numBoundaryEdges, avgDihedral, minDihedral, maxDihedral,
+                       bUnder30, b30to60, b60to90, b90to120, bOver120);
+
+            std::vector<BoundaryCorner> corners;
+            for (const auto& [vid, gSet] : vertOutGroups) {
+                if (gSet.size() >= 2) {
+                    std::string gStr;
+                    for (uint32_t gid : gSet) {
+                        if (!gStr.empty()) gStr += ", ";
+                        gStr += std::to_string(gid);
+                    }
+                    corners.push_back({
+                        vid,
+                        mesh.verts[vid * 3], mesh.verts[vid * 3 + 1], mesh.verts[vid * 3 + 2],
+                        vertMaxDihedral[vid],
+                        gStr
+                    });
+                }
+            }
+
+            if (!corners.empty()) {
+                std::sort(corners.begin(), corners.end(), [](const BoundaryCorner& a, const BoundaryCorner& b) {
+                    return a.maxDihedral > b.maxDihedral;
+                });
+                sculpt_log("[QUAD CAP PATCH #%zu] Boundary intersects %zu existing seam(s)/corner(s):\n",
+                           patchIdx + 1, corners.size());
+                int show = std::min((int)corners.size(), 6);
+                for (int k = 0; k < show; ++k) {
+                    const auto& c = corners[k];
+                    sculpt_log("  Corner Vert #%u at (%.2f, %.2f, %.2f) | Outside Groups: [%s] | Max Dihedral: %.1f deg\n",
+                               c.vid, c.x, c.y, c.z, c.groupsStr.c_str(), c.maxDihedral);
+                }
+            }
+        }
+
         if (patchLoops.empty()) {
             fallbackPatch("No closed boundary loop detected");
             continue;
@@ -717,6 +832,7 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
                 dst = target;
             }
 
+            // Remap vertex indices in newFaces
             for (auto& vid : newFaces) {
                 if (vid != TRI_INDEX) {
                     auto it = weldMap.find(vid);
@@ -725,8 +841,90 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
                     }
                 }
             }
-            sculpt_log("[QUAD CAP PATCH #%zu] Welded %zu micro-vertices (< %.3f mm) on boundary\n",
-                       patchIdx + 1, weldMap.size(), weldDist);
+
+            // Clean up and compact newFaces and newFaceGroups:
+            // Remove zero-area degenerate triangles, convert collapsed quads into valid triangles
+            std::vector<uint32_t> compactedFaces;
+            std::vector<uint32_t> compactedFaceGroups;
+            compactedFaces.reserve(newFaces.size());
+            compactedFaceGroups.reserve(newFaceGroups.size());
+
+            size_t nbOrigF = newFaces.size() / 4;
+            int degenerateRemoved = 0;
+            int quadsToTris = 0;
+
+            for (size_t f = 0; f < nbOrigF; ++f) {
+                uint32_t v0 = newFaces[f * 4 + 0];
+                uint32_t v1 = newFaces[f * 4 + 1];
+                uint32_t v2 = newFaces[f * 4 + 2];
+                uint32_t v3 = newFaces[f * 4 + 3];
+                uint32_t gid = (f < newFaceGroups.size()) ? newFaceGroups[f] : 0;
+
+                if (v3 == TRI_INDEX) {
+                    // Triangle: must have 3 distinct vertices
+                    if (v0 != v1 && v1 != v2 && v2 != v0) {
+                        compactedFaces.push_back(v0);
+                        compactedFaces.push_back(v1);
+                        compactedFaces.push_back(v2);
+                        compactedFaces.push_back(TRI_INDEX);
+                        compactedFaceGroups.push_back(gid);
+                    } else {
+                        degenerateRemoved++;
+                    }
+                } else {
+                    // Quad:
+                    // Check duplicate vertices
+                    if (v0 == v1 && v1 != v2 && v2 != v3 && v3 != v0) {
+                        // v0 == v1: turns into triangle (v0, v2, v3)
+                        compactedFaces.push_back(v0);
+                        compactedFaces.push_back(v2);
+                        compactedFaces.push_back(v3);
+                        compactedFaces.push_back(TRI_INDEX);
+                        compactedFaceGroups.push_back(gid);
+                        quadsToTris++;
+                    } else if (v1 == v2 && v0 != v1 && v2 != v3 && v3 != v0) {
+                        // v1 == v2: turns into triangle (v0, v1, v3)
+                        compactedFaces.push_back(v0);
+                        compactedFaces.push_back(v1);
+                        compactedFaces.push_back(v3);
+                        compactedFaces.push_back(TRI_INDEX);
+                        compactedFaceGroups.push_back(gid);
+                        quadsToTris++;
+                    } else if (v2 == v3 && v0 != v1 && v1 != v2 && v3 != v0) {
+                        // v2 == v3: turns into triangle (v0, v1, v2)
+                        compactedFaces.push_back(v0);
+                        compactedFaces.push_back(v1);
+                        compactedFaces.push_back(v2);
+                        compactedFaces.push_back(TRI_INDEX);
+                        compactedFaceGroups.push_back(gid);
+                        quadsToTris++;
+                    } else if (v3 == v0 && v0 != v1 && v1 != v2 && v2 != v3) {
+                        // v3 == v0: turns into triangle (v0, v1, v2)
+                        compactedFaces.push_back(v0);
+                        compactedFaces.push_back(v1);
+                        compactedFaces.push_back(v2);
+                        compactedFaces.push_back(TRI_INDEX);
+                        compactedFaceGroups.push_back(gid);
+                        quadsToTris++;
+                    } else if (v0 != v1 && v1 != v2 && v2 != v3 && v3 != v0 && v0 != v2 && v1 != v3) {
+                        // All 4 distinct and no diagonal collapse
+                        compactedFaces.push_back(v0);
+                        compactedFaces.push_back(v1);
+                        compactedFaces.push_back(v2);
+                        compactedFaces.push_back(v3);
+                        compactedFaceGroups.push_back(gid);
+                    } else {
+                        // More than 1 duplicate vertex or collapsed diagonals
+                        degenerateRemoved++;
+                    }
+                }
+            }
+
+            newFaces = std::move(compactedFaces);
+            newFaceGroups = std::move(compactedFaceGroups);
+
+            sculpt_log("[QUAD CAP PATCH #%zu] Welded %zu micro-vertices (< %.3f mm) on boundary. Cleaned %d degenerate faces, converted %d collapsed quads to tris.\n",
+                       patchIdx + 1, weldMap.size(), weldDist, degenerateRemoved, quadsToTris);
         }
 
         // Build 2D polygons for outer loop and all holes
@@ -1491,6 +1689,56 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
                        elongNormal.x, elongNormal.y, elongNormal.z, angleToPatchN);
         }
 
+        // ---------------------------------------------------------
+        // Cap Faces Normal Alignment & Inversion Diagnostics
+        // ---------------------------------------------------------
+        int capInverted = 0;
+        int capSteep = 0;
+        float capMinDot = 1.0f, capMaxDot = -1.0f, capSumDot = 0.0f;
+        int capTotalFaces = (int)(acceptedGridQuads.size() + transitionQuads.size() + remainingTris.size());
+
+        auto checkFaceNormal = [&](const glm::vec3& fn, const char* type, int idx) {
+            float len = glm::length(fn);
+            if (len < 1e-6f) return;
+            glm::vec3 n = fn / len;
+            float d = glm::dot(n, patchNormal);
+            if (d < capMinDot) capMinDot = d;
+            if (d > capMaxDot) capMaxDot = d;
+            capSumDot += d;
+            if (d < 0.0f) {
+                capInverted++;
+                if (capInverted <= 3) {
+                    sculpt_log("[QUAD CAP PATCH #%zu] WARNING: INVERTED %s #%d! dot vs patchN: %.3f\n",
+                               patchIdx + 1, type, idx, d);
+                }
+            } else if (d < 0.2f) {
+                capSteep++;
+            }
+        };
+
+        for (size_t i = 0; i < acceptedGridQuads.size(); ++i) {
+            const auto& q = acceptedGridQuads[i];
+            glm::vec3 p0 = getVertPos3D(q.v00), p1 = getVertPos3D(q.v10), p2 = getVertPos3D(q.v11), p3 = getVertPos3D(q.v01);
+            glm::vec3 fn = glm::cross(p1 - p0, p2 - p0) + glm::cross(p2 - p0, p3 - p0);
+            checkFaceNormal(fn, "GridQuad", (int)i);
+        }
+        for (size_t i = 0; i < transitionQuads.size(); ++i) {
+            const auto& tq = transitionQuads[i];
+            glm::vec3 p0 = getVertPos3D(tq.v0), p1 = getVertPos3D(tq.v1), p2 = getVertPos3D(tq.v2), p3 = getVertPos3D(tq.v3);
+            glm::vec3 fn = glm::cross(p1 - p0, p2 - p0) + glm::cross(p2 - p0, p3 - p0);
+            checkFaceNormal(fn, "TransQuad", (int)i);
+        }
+        for (size_t i = 0; i < remainingTris.size(); ++i) {
+            const auto& t = remainingTris[i];
+            glm::vec3 p0 = getVertPos3D(t[0]), p1 = getVertPos3D(t[1]), p2 = getVertPos3D(t[2]);
+            glm::vec3 fn = glm::cross(p1 - p0, p2 - p0);
+            checkFaceNormal(fn, "BeltTri", (int)i);
+        }
+
+        float capAvgDot = capTotalFaces > 0 ? (capSumDot / (float)capTotalFaces) : 1.0f;
+        sculpt_log("[QUAD CAP PATCH #%zu] Cap Faces Normal Alignment: %d faces | avg dot vs patchN: %.3f [min: %.3f, max: %.3f] | Inverted (dot<0): %d, Steep (dot<0.2): %d\n",
+                   patchIdx + 1, capTotalFaces, capAvgDot, capMinDot, capMaxDot, capInverted, capSteep);
+
         // Emit new patch faces into buffers:
         // 1. Inner grid quads
         for (const auto& q : acceptedGridQuads) {
@@ -1512,6 +1760,7 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
 
         // 3. Remaining transition triangles
         for (const auto& t : remainingTris) {
+            if (t[0] == t[1] || t[1] == t[2] || t[2] == t[0]) continue;
             newFaces.push_back(t[0]);
             newFaces.push_back(t[1]);
             newFaces.push_back(t[2]);
@@ -1569,6 +1818,7 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
         mesh.edges.clear();
         mesh.faceEdges.clear();
 
+        mesh.hasCustomNormals = false;
         mesh.initTopology();
         mesh.postInit();
 

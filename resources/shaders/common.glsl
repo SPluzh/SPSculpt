@@ -40,8 +40,26 @@ vec3 getAlignedNormal() {
         return flatNormal;
     }
     vec3 N = vNormal / lenN;
+
+    // Two-sided normal consistency: guarantee flatNormal faces the camera
+    vec3 eye = -vVertex;
+    if (dot(flatNormal, eye) < 0.0) {
+        flatNormal = -flatNormal;
+    }
     if (dot(N, flatNormal) < 0.0) {
-        return -N;
+        N = -N;
+    }
+
+    float d = dot(N, flatNormal);
+    // Smooth crease threshold:
+    // On smooth curved surfaces, d is always > 0.95 (angle < 18 deg).
+    // Across sharp cut edges and corners, d drops significantly (d < 0.90, angle > 25 deg).
+    // When d < 0.90, blend directly towards flatNormal.
+    // For any crease >= 36 deg (d <= 0.80, including cuts and obtuse corners):
+    // fully clamp to flatNormal so cut surfaces and corners stay crisp and NEVER darken or blacken!
+    if (d < 0.90) {
+        float t = clamp((d - 0.80) / (0.90 - 0.80), 0.0, 1.0);
+        N = normalize(mix(flatNormal, N, t * t));
     }
     return N;
 }

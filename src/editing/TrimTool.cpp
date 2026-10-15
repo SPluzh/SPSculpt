@@ -144,6 +144,7 @@ bool TrimTool::execute(
                isAlt ? "Intersection (Alt)" : "Difference", csgMs, inVerts, outVerts, inFaces, outTris, (int)result.Status());
 
     // 6. Convert Manifold result back to Mesh
+    mesh->hasCustomNormals = false;
     sculpt::ManifoldBridge::toMesh(result, *mesh, true, cutterOrigID, newCapGid);
 
     // 7. Generate Nomad Sculpt-style regular quad cap with CDT transition belt

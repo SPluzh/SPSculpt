@@ -54,16 +54,24 @@ void main() {
     float alphaToUse = uAlpha;
 
     if (uUseTexture == 1) {
-        vec3 matcapN = normal;
-        if (dot(matcapN, eye) < 0.0) {
-            matcapN = normalize(matcapN - 1.8 * dot(matcapN, eye) * eye);
+        vec3 nm_z = normalize(vVertex);
+        vec3 nm_x = vec3(-nm_z.z, 0.0, nm_z.x);
+        float lenX = length(nm_x);
+        nm_x = lenX > 1e-4 ? (nm_x / lenX) : vec3(1.0, 0.0, 0.0);
+        vec3 nm_y = normalize(cross(nm_x, nm_z));
+
+        vec2 nm_xy = vec2(dot(normal, nm_x), dot(normal, nm_y));
+        float lenXY = length(nm_xy);
+        if (lenXY > 1.0) {
+            nm_xy /= lenXY;
         }
-        vec3 r = reflect(-eye, matcapN);
-        float m = 2.0 * sqrt(max(0.0, r.x*r.x + r.y*r.y + (r.z + 1.0)*(r.z + 1.0)));
-        vec2 texCoord = (m > 0.0001) ? (r.xy / m + 0.5) : vec2(0.5);
-        texCoord = clamp(texCoord, vec2(0.015), vec2(0.985));
+        // Matcap lit sphere extends to ~0.44 radius in standard textures.
+        // Scaling silhouette (lenXY = 1.0) to 0.380 guarantees grazing angles, cuts, and corners
+        // remain fully within the lit sphere and NEVER sample the dark border/void.
+        vec2 texCoord = 0.5 + 0.380 * nm_xy;
 
         vec3 matcapColor = texture(uTexture0, texCoord).rgb;
+        matcapColor = max(matcapColor, vec3(0.18));
 
         if (uIsXRay == 1) {
             float luma = max(matcapColor.r, max(matcapColor.g, matcapColor.b));

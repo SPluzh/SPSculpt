@@ -17,3 +17,13 @@ void updateVertexNormals(
     const float* faceNormals,
     float* outNormals
 );
+
+void diagnoseMeshNormals(
+    const float* verts, int nbVerts,
+    const uint32_t* faces, int nbFaces,
+    const uint32_t* faceGroups,
+    const uint32_t* vrfStartCount,
+    const uint32_t* vertRingFace,
+    const float* faceNormals,
+    const float* vertNormals
+);
