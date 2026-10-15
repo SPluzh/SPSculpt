@@ -125,11 +125,19 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID)
     }
 
     if (!isPlanar) {
-        sculpt_log("[QUAD CAP] Cap %u is 3D curved (non-planar). Preserving exact 3D CSG surface geometry.\n", capGroupID);
+        int qCount = 0;
+        int tCount = 0;
+        for (int f : capFaceIndices) {
+            if (mesh.faces[f * 4 + 3] != TRI_INDEX) qCount++;
+            else tCount++;
+        }
+        float ratio = (qCount + tCount > 0) ? (float)qCount / (float)(qCount + tCount) : 0.0f;
+        sculpt_log("[QUAD CAP] Cap %u is 3D surface: %d Quads (%.1f%%), %d Tris\n",
+                   capGroupID, qCount, ratio * 100.0f, tCount);
         result.success = true;
-        result.numTris = (int)capFaceIndices.size();
-        result.numQuads = 0;
-        result.quadRatio = 0.0f;
+        result.numQuads = qCount;
+        result.numTris = tCount;
+        result.quadRatio = ratio;
         auto tEnd = std::chrono::high_resolution_clock::now();
         result.executionTimeMs = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
         return result;

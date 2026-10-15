@@ -8,6 +8,7 @@
 #include "mesh/Mesh.h"
 #include "gui/GuiManager.h"
 #include "common/Logger.h"
+#include "common/Constants.h"
 
 #include <chrono>
 #include <glm/gtc/matrix_transform.hpp>
@@ -121,8 +122,48 @@ bool SplitTool::splitByLasso(
     sculpt_log("[SPLIT CSG] Starting Split By Lasso on '%s' (%d verts, %d faces)...\n",
                mesh->outlinerName.c_str(), mesh->nbVerts, mesh->nbFaces);
 
+    float bbox[6] = {0};
+    mesh->computeBbox(bbox);
+    glm::vec3 bMin(bbox[0], bbox[1], bbox[2]);
+    glm::vec3 bMax(bbox[3], bbox[4], bbox[5]);
+
+    float sumEdgeLen = 0.0f;
+    int edgeSampleCount = 0;
+    const int faceStep = std::max(1, mesh->nbFaces / 1000);
+    for (int f = 0; f < mesh->nbFaces; f += faceStep) {
+        uint32_t v0 = mesh->faces[f * 4 + 0];
+        uint32_t v1 = mesh->faces[f * 4 + 1];
+        uint32_t v2 = mesh->faces[f * 4 + 2];
+        uint32_t v3 = mesh->faces[f * 4 + 3];
+        if (v0 >= (uint32_t)mesh->nbVerts || v1 >= (uint32_t)mesh->nbVerts || v2 >= (uint32_t)mesh->nbVerts) continue;
+        glm::vec3 p0(mesh->verts[v0 * 3], mesh->verts[v0 * 3 + 1], mesh->verts[v0 * 3 + 2]);
+        glm::vec3 p1(mesh->verts[v1 * 3], mesh->verts[v1 * 3 + 1], mesh->verts[v1 * 3 + 2]);
+        glm::vec3 p2(mesh->verts[v2 * 3], mesh->verts[v2 * 3 + 1], mesh->verts[v2 * 3 + 2]);
+        sumEdgeLen += glm::distance(p0, p1);
+        sumEdgeLen += glm::distance(p1, p2);
+        edgeSampleCount += 2;
+        if (v3 != TRI_INDEX && v3 < (uint32_t)mesh->nbVerts) {
+            glm::vec3 p3(mesh->verts[v3 * 3], mesh->verts[v3 * 3 + 1], mesh->verts[v3 * 3 + 2]);
+            sumEdgeLen += glm::distance(p2, p3);
+            sumEdgeLen += glm::distance(p3, p0);
+            edgeSampleCount += 2;
+        } else {
+            sumEdgeLen += glm::distance(p2, p0);
+            edgeSampleCount += 1;
+        }
+    }
+    float targetEdgeLen = (edgeSampleCount > 0) ? (sumEdgeLen / edgeSampleCount) : 1.0f;
+
     glm::mat4 invMeshMatrix = glm::inverse(mesh->matrix);
-    manifold::Manifold cutter = LassoCutter::build3DCutterPrism(lassoPoints, camera, invMeshMatrix);
+    manifold::Manifold cutter = LassoCutter::build3DCutterPrism(
+        lassoPoints,
+        camera,
+        invMeshMatrix,
+        0,
+        bMin,
+        bMax,
+        targetEdgeLen
+    );
     if (cutter.IsEmpty() || cutter.Status() != manifold::Manifold::Error::NoError) {
         sculpt_log("[SPLIT CSG] Failed to build valid cutter prism. Status: %d\n", (int)cutter.Status());
         return false;

@@ -7,6 +7,7 @@
 #include "mesh/Mesh.h"
 #include "scene/Camera.h"
 #include "common/Logger.h"
+#include "common/Constants.h"
 #include <chrono>
 #include <vector>
 #include <string>
@@ -46,13 +47,49 @@ bool TrimTool::execute(
         return false;
     }
 
-    // 3. Build 3D cutter prism in mesh local space
+    // 3. Compute local bounding box and average edge length for regular cutter grid
+    float bbox[6] = {0};
+    mesh->computeBbox(bbox);
+    glm::vec3 bMin(bbox[0], bbox[1], bbox[2]);
+    glm::vec3 bMax(bbox[3], bbox[4], bbox[5]);
+
+    float sumEdgeLen = 0.0f;
+    int edgeSampleCount = 0;
+    const int faceStep = std::max(1, mesh->nbFaces / 1000);
+    for (int f = 0; f < mesh->nbFaces; f += faceStep) {
+        uint32_t v0 = mesh->faces[f * 4 + 0];
+        uint32_t v1 = mesh->faces[f * 4 + 1];
+        uint32_t v2 = mesh->faces[f * 4 + 2];
+        uint32_t v3 = mesh->faces[f * 4 + 3];
+        if (v0 >= (uint32_t)mesh->nbVerts || v1 >= (uint32_t)mesh->nbVerts || v2 >= (uint32_t)mesh->nbVerts) continue;
+        glm::vec3 p0(mesh->verts[v0 * 3], mesh->verts[v0 * 3 + 1], mesh->verts[v0 * 3 + 2]);
+        glm::vec3 p1(mesh->verts[v1 * 3], mesh->verts[v1 * 3 + 1], mesh->verts[v1 * 3 + 2]);
+        glm::vec3 p2(mesh->verts[v2 * 3], mesh->verts[v2 * 3 + 1], mesh->verts[v2 * 3 + 2]);
+        sumEdgeLen += glm::distance(p0, p1);
+        sumEdgeLen += glm::distance(p1, p2);
+        edgeSampleCount += 2;
+        if (v3 != TRI_INDEX && v3 < (uint32_t)mesh->nbVerts) {
+            glm::vec3 p3(mesh->verts[v3 * 3], mesh->verts[v3 * 3 + 1], mesh->verts[v3 * 3 + 2]);
+            sumEdgeLen += glm::distance(p2, p3);
+            sumEdgeLen += glm::distance(p3, p0);
+            edgeSampleCount += 2;
+        } else {
+            sumEdgeLen += glm::distance(p2, p0);
+            edgeSampleCount += 1;
+        }
+    }
+    float targetEdgeLen = (edgeSampleCount > 0) ? (sumEdgeLen / edgeSampleCount) : 1.0f;
+
+    // 4. Build 3D cutter prism in mesh local space with regular quad grid
     glm::mat4 invMeshMatrix = glm::inverse(mesh->matrix);
     manifold::Manifold cutter = sculpt::LassoCutter::build3DCutterPrism(
         lassoPoints,
         camera,
         invMeshMatrix,
-        newCapGid
+        newCapGid,
+        bMin,
+        bMax,
+        targetEdgeLen
     );
 
     if (cutter.IsEmpty() || cutter.Status() != manifold::Manifold::Error::NoError) {
@@ -60,10 +97,7 @@ bool TrimTool::execute(
         return false;
     }
 
-    cutter = cutter.AsOriginal();
-    int cutterOrigID = cutter.OriginalID();
-
-    // 4. Handle symmetry (mirror cutter prism across symmetry axes)
+    // 5. Handle symmetry (mirror cutter prism across symmetry axes)
     if (useSym && !symScales.empty()) {
         std::vector<manifold::Manifold> symCutters;
         symCutters.push_back(cutter);
@@ -85,6 +119,9 @@ bool TrimTool::execute(
             sculpt_log("[TrimTool] Applied symmetry: combined %zu cutter prisms.\n", symCutters.size());
         }
     }
+
+    cutter = cutter.AsOriginal();
+    int cutterOrigID = cutter.OriginalID();
 
     // 5. Perform Boolean operation
     auto tCsgStart = std::chrono::high_resolution_clock::now();
