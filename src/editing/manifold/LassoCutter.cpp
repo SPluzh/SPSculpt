@@ -229,13 +229,9 @@ static manifold::Manifold buildSinglePrism(
     const size_t N = resampledPoly.size();
     if (N < 3) return manifold::Manifold();
 
-    // 6. Subdivide depth range into M slices matching targetEdgeLength
+    // 6. Solid prism extrusion (M = 1 depth segment for clean, fast CSG cut boundary)
     float depthSpan = tFar - tNear;
-    int M = 16;
-    if (targetEdgeLength > 1e-4f) {
-        M = static_cast<int>(std::round(depthSpan / targetEdgeLength));
-    }
-    M = std::clamp(M, 6, 80);
+    const int M = 1;
 
     // 7. Precompute local rays for all perimeter points
     struct LocalRay {

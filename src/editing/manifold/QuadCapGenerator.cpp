@@ -55,7 +55,7 @@ static float distToPolyBoundary(const glm::vec2& p, const std::vector<glm::vec2>
     return std::sqrt(minD2);
 }
 
-QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID) {
+QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID, float targetEdgeLen) {
     QuadCapResult result;
     auto tStart = std::chrono::high_resolution_clock::now();
 
@@ -80,67 +80,32 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID)
     }
     sculpt_log("[QUAD CAP] Total faces: %d, Cap faces count with ID %u: %zu\n", nbFaces, capGroupID, capFaceIndices.size());
 
-    // 1.5. Planarity check:
-    // A planar cut (like SliceByLine or straight knife cut) has faces whose normals are all nearly identical.
-    // A 3D curved cut (like lasso cut, circular bite, or curved tunnel) has faces curving through volume in 3D.
-    // Flattening a 3D curved cut onto a single 2D plane creates a flat lid ("крышка плоская") and jagged edges!
-    // For 3D curved cuts, Manifold CSG has already computed the exact 3D volume, which is quadified in toMesh.
-    glm::vec3 avgNormal(0.0f);
+    // 2. Compute area-weighted average normal and center of the cap faces
+    glm::vec3 cutNormal(0.0f);
+    glm::vec3 cutCenter(0.0f);
     float totalCapArea = 0.0f;
     for (int f : capFaceIndices) {
         uint32_t v0 = mesh.faces[f * 4 + 0];
         uint32_t v1 = mesh.faces[f * 4 + 1];
         uint32_t v2 = mesh.faces[f * 4 + 2];
+        if (v0 >= (uint32_t)mesh.nbVerts || v1 >= (uint32_t)mesh.nbVerts || v2 >= (uint32_t)mesh.nbVerts) continue;
         glm::vec3 p0(mesh.verts[v0 * 3], mesh.verts[v0 * 3 + 1], mesh.verts[v0 * 3 + 2]);
         glm::vec3 p1(mesh.verts[v1 * 3], mesh.verts[v1 * 3 + 1], mesh.verts[v1 * 3 + 2]);
         glm::vec3 p2(mesh.verts[v2 * 3], mesh.verts[v2 * 3 + 1], mesh.verts[v2 * 3 + 2]);
         glm::vec3 fn = glm::cross(p1 - p0, p2 - p0);
         float area = glm::length(fn);
         if (area > 1e-6f) {
-            avgNormal += fn;
+            cutNormal += fn;
+            cutCenter += (p0 + p1 + p2) * (area / 3.0f);
             totalCapArea += area;
         }
     }
 
-    float normLen = glm::length(avgNormal);
-    bool isPlanar = true;
-    if (totalCapArea <= 1e-6f || (normLen / totalCapArea) < 0.90f) {
-        isPlanar = false;
+    if (totalCapArea > 1e-6f) {
+        cutNormal = glm::normalize(cutNormal);
+        cutCenter /= totalCapArea;
     } else {
-        glm::vec3 unitAvgNorm = avgNormal / normLen;
-        for (int f : capFaceIndices) {
-            uint32_t v0 = mesh.faces[f * 4 + 0];
-            uint32_t v1 = mesh.faces[f * 4 + 1];
-            uint32_t v2 = mesh.faces[f * 4 + 2];
-            glm::vec3 p0(mesh.verts[v0 * 3], mesh.verts[v0 * 3 + 1], mesh.verts[v0 * 3 + 2]);
-            glm::vec3 p1(mesh.verts[v1 * 3], mesh.verts[v1 * 3 + 1], mesh.verts[v1 * 3 + 2]);
-            glm::vec3 p2(mesh.verts[v2 * 3], mesh.verts[v2 * 3 + 1], mesh.verts[v2 * 3 + 2]);
-            glm::vec3 fn = glm::cross(p1 - p0, p2 - p0);
-            float len = glm::length(fn);
-            if (len > 1e-6f && glm::dot(fn / len, unitAvgNorm) < 0.85f) {
-                isPlanar = false;
-                break;
-            }
-        }
-    }
-
-    if (!isPlanar) {
-        int qCount = 0;
-        int tCount = 0;
-        for (int f : capFaceIndices) {
-            if (mesh.faces[f * 4 + 3] != TRI_INDEX) qCount++;
-            else tCount++;
-        }
-        float ratio = (qCount + tCount > 0) ? (float)qCount / (float)(qCount + tCount) : 0.0f;
-        sculpt_log("[QUAD CAP] Cap %u is 3D surface: %d Quads (%.1f%%), %d Tris\n",
-                   capGroupID, qCount, ratio * 100.0f, tCount);
-        result.success = true;
-        result.numQuads = qCount;
-        result.numTris = tCount;
-        result.quadRatio = ratio;
-        auto tEnd = std::chrono::high_resolution_clock::now();
-        result.executionTimeMs = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
-        return result;
+        cutNormal = glm::vec3(0.0f, 1.0f, 0.0f);
     }
 
     // 2. Extract boundary halfedges of the cap region
@@ -244,10 +209,11 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID)
     // Process each boundary loop
     for (const auto& loop : loops) {
         const size_t K = loop.size();
+        if (K < 3) continue;
 
-        // Compute loop center and Newell normal
-        glm::vec3 center(0.0f);
-        glm::vec3 normal(0.0f);
+        // Loop centroid and Newell normal
+        glm::vec3 loopCenter(0.0f);
+        glm::vec3 loopNewell(0.0f);
         float totalEdgeLen = 0.0f;
 
         for (size_t i = 0; i < K; ++i) {
@@ -258,47 +224,44 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID)
             glm::vec3 pi(mesh.verts[vi * 3], mesh.verts[vi * 3 + 1], mesh.verts[vi * 3 + 2]);
             glm::vec3 pj(mesh.verts[vj * 3], mesh.verts[vj * 3 + 1], mesh.verts[vj * 3 + 2]);
 
-            center += pi;
+            loopCenter += pi;
             totalEdgeLen += glm::distance(pi, pj);
 
-            normal.x += (pi.y - pj.y) * (pi.z + pj.z);
-            normal.y += (pi.z - pj.z) * (pi.x + pj.x);
-            normal.z += (pi.x - pj.x) * (pi.y + pj.y);
+            loopNewell.x += (pi.y - pj.y) * (pi.z + pj.z);
+            loopNewell.y += (pi.z - pj.z) * (pi.x + pj.x);
+            loopNewell.z += (pi.x - pj.x) * (pi.y + pj.y);
         }
 
-        center /= static_cast<float>(K);
-        float normLen = glm::length(normal);
-        if (normLen > 1e-6f) {
-            normal /= normLen;
-        } else {
-            normal = glm::vec3(0.0f, 1.0f, 0.0f);
-        }
+        loopCenter /= static_cast<float>(K);
 
-        float Lavg = totalEdgeLen / static_cast<float>(K);
-        Lavg = std::clamp(Lavg, 0.05f, 50.0f);
+        // Align cutNormal with loop's boundary orientation
+        glm::vec3 normal = cutNormal;
+        if (glm::length(loopNewell) > 1e-6f && glm::dot(normal, loopNewell) < 0.0f) {
+            normal = -normal;
+        }
 
         // Build 2D basis (U, V) perpendicular to normal
         glm::vec3 up = (std::abs(normal.y) < 0.9f) ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
         glm::vec3 U = glm::normalize(glm::cross(up, normal));
         glm::vec3 V = glm::cross(normal, U);
 
-        // Project loop into 2D
+        // Project loop into 2D and record 3D height offsets relative to the plane through loopCenter
         std::vector<glm::vec2> poly2D(K);
+        std::vector<float> hList(K);
         float minU = 1e9f, minV = 1e9f, maxU = -1e9f, maxV = -1e9f;
         for (size_t i = 0; i < K; ++i) {
             uint32_t vi = loop[i];
             glm::vec3 p(mesh.verts[vi * 3], mesh.verts[vi * 3 + 1], mesh.verts[vi * 3 + 2]);
-            glm::vec3 rel = p - center;
+            glm::vec3 rel = p - loopCenter;
             poly2D[i] = glm::vec2(glm::dot(rel, U), glm::dot(rel, V));
+            hList[i] = glm::dot(rel, normal);
             minU = std::min(minU, poly2D[i].x);
             minV = std::min(minV, poly2D[i].y);
             maxU = std::max(maxU, poly2D[i].x);
             maxV = std::max(maxV, poly2D[i].y);
         }
 
-        // Ensure CCW 2D polygon winding without reversing the 3D boundary vertex sequence!
-        // Reversing loop would invert the directed boundary edges and create non-manifold geometry.
-        // Instead, flip V and normal so U x V stays aligned and poly2D becomes CCW.
+        // Ensure CCW 2D polygon winding without reversing the 3D boundary vertex sequence
         float signedArea = 0.0f;
         for (size_t i = 0; i < K; ++i) {
             size_t j = (i + 1) % K;
@@ -311,17 +274,19 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID)
             maxV = -1e9f;
             for (size_t i = 0; i < K; ++i) {
                 poly2D[i].y = -poly2D[i].y;
+                hList[i] = -hList[i];
                 minV = std::min(minV, poly2D[i].y);
                 maxV = std::max(maxV, poly2D[i].y);
             }
-            signedArea = -signedArea;
         }
 
-        std::vector<uint32_t> curLoop = loop;
-
-        // Build candidate 2D regular quad grid
-        float step = Lavg;
-        float margin = step * 0.65f;
+        // Use targetEdgeLen from mesh
+        float step = targetEdgeLen;
+        if (step <= 1e-4f) {
+            step = totalEdgeLen / static_cast<float>(K);
+        }
+        step = std::clamp(step, 0.5f, 50.0f);
+        float margin = step * 0.70f;
 
         struct GridPt {
             int gx, gy;
@@ -341,10 +306,24 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID)
             for (int gx = gxMin; gx <= gxMax; ++gx) {
                 glm::vec2 pt(gx * step, gy * step);
                 if (pointInPoly2D(pt, poly2D) && distToPolyBoundary(pt, poly2D) >= margin) {
-                    // Add new vertex to mesh
-                    glm::vec3 p3D = center + pt.x * U + pt.y * V;
-                    uint32_t newVid = static_cast<uint32_t>(mesh.verts.size() / 3);
+                    // Interpolate height offset hVal from boundary using IDW
+                    float sumW = 0.0f;
+                    float sumH = 0.0f;
+                    for (size_t i = 0; i < K; ++i) {
+                        float d2 = glm::dot(pt - poly2D[i], pt - poly2D[i]);
+                        if (d2 < 1e-4f) {
+                            sumH = hList[i];
+                            sumW = 1.0f;
+                            break;
+                        }
+                        float w = 1.0f / (d2 * d2);
+                        sumW += w;
+                        sumH += w * hList[i];
+                    }
+                    float hVal = (sumW > 1e-8f) ? (sumH / sumW) : 0.0f;
+                    glm::vec3 p3D = loopCenter + pt.x * U + pt.y * V + hVal * normal;
 
+                    uint32_t newVid = static_cast<uint32_t>(mesh.verts.size() / 3);
                     mesh.verts.push_back(p3D.x);
                     mesh.verts.push_back(p3D.y);
                     mesh.verts.push_back(p3D.z);
@@ -403,7 +382,7 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID)
         // 1. Boundary loop vertices
         for (size_t i = 0; i < K; ++i) {
             cdtVerts.push_back(CDT::V2d<float>::make(poly2D[i].x, poly2D[i].y));
-            cdtToMeshVid.push_back(curLoop[i]);
+            cdtToMeshVid.push_back(loop[i]);
         }
 
         // 2. Grid vertices
@@ -423,8 +402,8 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID)
         cdt.insertEdges(cdtEdges);
         cdt.eraseOuterTrianglesAndHoles();
 
-        sculpt_log("[QUAD CAP DEBUG] Loop %zu verts, AABB: [%.2f, %.2f] to [%.2f, %.2f], Lavg: %.3f, gridPts: %zu, quads: %zu, CDT tris: %zu\n",
-                   K, minU, minV, maxU, maxV, Lavg, gridPoints.size(), quads.size(), cdt.triangles.size());
+        sculpt_log("[QUAD CAP DEBUG] Loop %zu verts, AABB: [%.2f, %.2f] to [%.2f, %.2f], step: %.3f, gridPts: %zu, quads: %zu, CDT tris: %zu\n",
+                   K, minU, minV, maxU, maxV, step, gridPoints.size(), quads.size(), cdt.triangles.size());
 
         // Classify CDT triangles:
         // Group triangles belonging to each candidate quad cell

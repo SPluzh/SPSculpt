@@ -144,7 +144,7 @@ bool TrimTool::execute(
     sculpt::ManifoldBridge::toMesh(result, *mesh, true, cutterOrigID, newCapGid);
 
     // 7. Generate Nomad Sculpt-style regular quad cap with CDT transition belt
-    sculpt::QuadCapResult capRes = sculpt::QuadCapGenerator::generateQuadCap(*mesh, newCapGid);
+    sculpt::QuadCapResult capRes = sculpt::QuadCapGenerator::generateQuadCap(*mesh, newCapGid, targetEdgeLen);
 
     auto tTotalEnd = std::chrono::high_resolution_clock::now();
     double totalMs = std::chrono::duration<double, std::milli>(tTotalEnd - tTotalStart).count();

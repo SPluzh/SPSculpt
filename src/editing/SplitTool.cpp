@@ -190,14 +190,14 @@ bool SplitTool::splitByLasso(
 
     // Outside stays in mesh
     ManifoldBridge::toMesh(outside, *mesh, true, cutterOrigID, gid1);
-    QuadCapGenerator::generateQuadCap(*mesh, gid1);
+    QuadCapGenerator::generateQuadCap(*mesh, gid1, targetEdgeLen);
 
     // Inside goes into new subtool
     Mesh* cutMesh = new Mesh();
     cutMesh->matrix = mesh->matrix;
     cutMesh->outlinerName = mesh->outlinerName + "_Cut";
     ManifoldBridge::toMesh(inside, *cutMesh, true, cutterOrigID, gid2);
-    QuadCapGenerator::generateQuadCap(*cutMesh, gid2);
+    QuadCapGenerator::generateQuadCap(*cutMesh, gid2, targetEdgeLen);
 
     scene.addMesh(cutMesh);
     scene.setModified(true);

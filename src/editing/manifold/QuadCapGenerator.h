@@ -22,7 +22,8 @@ public:
     // for all cap faces of the specified capGroupID on the mesh.
     static QuadCapResult generateQuadCap(
         Mesh& mesh,
-        uint32_t capGroupID
+        uint32_t capGroupID,
+        float targetEdgeLen = 0.0f
     );
 };
 
