@@ -2723,7 +2723,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.12f, 0.12f, 1.0f));
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.18f, 0.18f, 1.0f));
                     if (ImGui::Button(ICON_LC_TRASH_2 "##del", ImVec2(btnSz, btnSz))) {
-                        scene.removeMesh(mesh);
+                        scene.deleteMesh(mesh);
                         ImGui::PopStyleColor(2);
                         ImGui::EndGroup();
                         ImGui::EndChild();
@@ -2735,6 +2735,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     ImGui::EndGroup();
                     ImGui::EndChild();
 
+                    bool meshDeleted = false;
                     if (ImGui::BeginPopupContextItem("##MeshOutlinerCtx")) {
                         ImGui::TextDisabled("Mesh: %s", displayName.c_str());
                         ImGui::Separator();
@@ -2772,9 +2773,15 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             scene.duplicateSelection();
                         }
                         if (ImGui::MenuItem(ICON_LC_TRASH_2 " Delete", "Delete")) {
-                            scene.removeMesh(mesh);
+                            scene.deleteMesh(mesh);
+                            meshDeleted = true;
                         }
                         ImGui::EndPopup();
+                    }
+
+                    if (meshDeleted) {
+                        ImGui::PopID();
+                        break;
                     }
 
                     if (ImGui::IsItemClicked(0) && !ImGui::IsItemEdited()) {
@@ -3479,10 +3486,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
             if (!hasSelection) ImGui::BeginDisabled();
             if (ImGui::Button("Delete", ImVec2(bDelW, 0))) {
-                std::vector<Mesh*> toDel = scene.getSelectedMeshes();
-                for (Mesh* m : toDel) {
-                    scene.removeMesh(m);
-                }
+                scene.deleteSelection();
             }
             if (!hasSelection) ImGui::EndDisabled();
             ImGui::SameLine();
@@ -3531,10 +3535,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             float r2BtnW = (availBottomW - bottomSpacing) * 0.45f;
             if (!hasSelection) ImGui::BeginDisabled();
             if (ImGui::Button("Delete", ImVec2(r2BtnW, 0))) {
-                std::vector<Mesh*> toDel = scene.getSelectedMeshes();
-                for (Mesh* m : toDel) {
-                    scene.removeMesh(m);
-                }
+                scene.deleteSelection();
             }
             if (!hasSelection) ImGui::EndDisabled();
             ImGui::SameLine();

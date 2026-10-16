@@ -10,6 +10,7 @@
 #include "mesh/NormalCalc.h"
 #include "common/Constants.h"
 #include "common/Logger.h"
+#include "gui/GuiManager.h"
 
 Scene::Scene() {
     LightSource mainLight;
@@ -185,6 +186,12 @@ HistoryState Scene::saveCurrentState(bool includeTopology) const {
         ms.outlinerName = m->outlinerName;
         ms.visibleV1 = m->visibleV1;
         ms.visibleV2 = m->visibleV2;
+        ms.isArmature = m->isArmature;
+        ms.symEnabled = m->symEnabled;
+        ms.symX = m->symX;
+        ms.symY = m->symY;
+        ms.symZ = m->symZ;
+        ms.symMode = m->symMode;
         
         hs.meshes.push_back(ms);
     }
@@ -261,6 +268,12 @@ void Scene::restoreState(const HistoryState& hs) {
         m->outlinerName = ms.outlinerName;
         m->visibleV1 = ms.visibleV1;
         m->visibleV2 = ms.visibleV2;
+        m->isArmature = ms.isArmature;
+        m->symEnabled = ms.symEnabled;
+        m->symX = ms.symX;
+        m->symY = ms.symY;
+        m->symZ = ms.symZ;
+        m->symMode = ms.symMode;
 
         auto tPostInitStart = std::chrono::high_resolution_clock::now();
 
@@ -372,6 +385,7 @@ void Scene::restoreState(const HistoryState& hs) {
     auto tEnd = std::chrono::high_resolution_clock::now();
     double msTotal = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
     sculpt_log_lvl(LogLevel::Info, "[Scene Diagnostics] restoreState: COMPLETED in %.2f ms\n", msTotal);
+    GuiManager::invalidateAllThumbnails();
 }
 
 #include "editing/undo/UndoManager.h"
@@ -391,11 +405,13 @@ void Scene::pushHistoryState() {
 void Scene::undo() {
     m_isModified = true;
     g_undoManager.undo(*this);
+    GuiManager::invalidateAllThumbnails();
 }
 
 void Scene::redo() {
     m_isModified = true;
     g_undoManager.redo(*this);
+    GuiManager::invalidateAllThumbnails();
 }
 
 void Scene::clearHistory() {
@@ -471,6 +487,34 @@ void Scene::removeMesh(Mesh* m) {
             m_selectedIdx--;
         }
     }
+}
+
+void Scene::deleteMesh(Mesh* m) {
+    if (!m) return;
+    std::string name = m->outlinerName.empty() ? ("Mesh " + std::to_string(m->getID())) : m->outlinerName;
+    g_undoManager.pushTopologyChange(*this, "Delete " + name, [this, m]() {
+        removeMesh(m);
+    });
+}
+
+void Scene::deleteSelection() {
+    std::vector<Mesh*> toDel = m_selectedMeshes;
+    if (toDel.empty() && getSelected()) {
+        toDel.push_back(getSelected());
+    }
+    std::sort(toDel.begin(), toDel.end());
+    toDel.erase(std::unique(toDel.begin(), toDel.end()), toDel.end());
+    if (toDel.empty()) return;
+
+    std::string desc = (toDel.size() == 1)
+        ? ("Delete " + (toDel[0]->outlinerName.empty() ? ("Mesh " + std::to_string(toDel[0]->getID())) : toDel[0]->outlinerName))
+        : ("Delete " + std::to_string(toDel.size()) + " Meshes");
+
+    g_undoManager.pushTopologyChange(*this, desc, [this, toDel]() {
+        for (Mesh* m : toDel) {
+            removeMesh(m);
+        }
+    });
 }
 
 void Scene::replaceMesh(Mesh* oldMesh, Mesh* newMesh) {
@@ -1645,8 +1689,10 @@ void Scene::mergeSelection() {
 }
 
 void Scene::clearScene() {
-    pushHistoryState();
-    clear();
+    if (m_meshes.empty()) return;
+    g_undoManager.pushTopologyChange(*this, "Clear Scene", [this]() {
+        clear();
+    });
 }
 
 void Scene::updateVoxelPreview(float step, const std::vector<Mesh*>& meshes) {

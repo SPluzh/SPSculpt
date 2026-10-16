@@ -3,6 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [0.3.1]
+- **Undo for Object Deletion in Outliner**: Deleting an object via Outliner trash button, context menu, bottom bar Delete, or Delete key can now be completely undone via Ctrl+Z (and redone via Ctrl+Y), restoring full geometry, topology, PolyGroups, symmetry state, and outliner previews.
 - **Outliner Boolean Tool**: Added a dedicated Boolean button with dropdown menu at the bottom of Scene Outliner supporting CSG operations across 2 or more selected objects with responsive layout and base selection.
 - **Larger Object Previews**: Outliner and Bookmark thumbnails now tightly frame 3D objects, making previews significantly larger with minimal empty margins.
 
