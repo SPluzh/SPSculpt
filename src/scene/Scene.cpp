@@ -11,6 +11,8 @@
 #include "common/Constants.h"
 #include "common/Logger.h"
 #include "gui/GuiManager.h"
+#include "editing/SculptManager.h"
+
 
 Scene::Scene() {
     LightSource mainLight;
@@ -195,12 +197,19 @@ HistoryState Scene::saveCurrentState(bool includeTopology) const {
         
         hs.meshes.push_back(ms);
     }
+
+    if (m_sculptManager) {
+        hs.measureSegments = m_sculptManager->getMeasureSegments();
+        hs.dividerSegments = m_sculptManager->getDividerSegments();
+    }
+
     auto tEnd = std::chrono::high_resolution_clock::now();
     double msSave = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
     sculpt_log_lvl(LogLevel::Info, "[Scene Diagnostics] saveCurrentState: Saved state for %zu meshes in %.2f ms (Topology: %s)\n",
                    hs.meshes.size(), msSave, includeTopology ? "Included" : "Skipped");
     return hs;
 }
+
 
 void Scene::restoreState(const HistoryState& hs) {
     auto tStart = std::chrono::high_resolution_clock::now();
@@ -382,11 +391,34 @@ void Scene::restoreState(const HistoryState& hs) {
         m_selectedMeshes.push_back(m_meshes[m_selectedIdx]);
     }
 
+    if (m_sculptManager) {
+        m_sculptManager->getMeasureSegments() = hs.measureSegments;
+        m_sculptManager->getDividerSegments() = hs.dividerSegments;
+        for (auto& seg : m_sculptManager->getMeasureSegments()) {
+            if (seg.vertA.type == MeasurementAnchor::VERTEX && seg.vertA.meshId != 0) {
+                seg.vertA.mesh = getMeshById(seg.vertA.meshId);
+            }
+            if (seg.vertB.type == MeasurementAnchor::VERTEX && seg.vertB.meshId != 0) {
+                seg.vertB.mesh = getMeshById(seg.vertB.meshId);
+            }
+        }
+        for (auto& seg : m_sculptManager->getDividerSegments()) {
+            if (seg.vertA.type == MeasurementAnchor::VERTEX && seg.vertA.meshId != 0) {
+                seg.vertA.mesh = getMeshById(seg.vertA.meshId);
+            }
+            if (seg.vertB.type == MeasurementAnchor::VERTEX && seg.vertB.meshId != 0) {
+                seg.vertB.mesh = getMeshById(seg.vertB.meshId);
+            }
+        }
+        m_sculptManager->validateSegments(*this);
+    }
+
     auto tEnd = std::chrono::high_resolution_clock::now();
     double msTotal = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
     sculpt_log_lvl(LogLevel::Info, "[Scene Diagnostics] restoreState: COMPLETED in %.2f ms\n", msTotal);
     GuiManager::invalidateAllThumbnails();
 }
+
 
 #include "editing/undo/UndoManager.h"
 
@@ -1689,11 +1721,17 @@ void Scene::mergeSelection() {
 }
 
 void Scene::clearScene() {
-    if (m_meshes.empty()) return;
+    bool hasMeshes = !m_meshes.empty();
+    bool hasMeasurements = m_sculptManager && (!m_sculptManager->getMeasureSegments().empty() || !m_sculptManager->getDividerSegments().empty());
+    if (!hasMeshes && !hasMeasurements) return;
     g_undoManager.pushTopologyChange(*this, "Clear Scene", [this]() {
         clear();
+        if (m_sculptManager) {
+            m_sculptManager->clearMeasurements();
+        }
     });
 }
+
 
 void Scene::updateVoxelPreview(float step, const std::vector<Mesh*>& meshes) {
     if (step <= 0.0f || meshes.empty()) {

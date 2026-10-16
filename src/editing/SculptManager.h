@@ -146,22 +146,10 @@ struct BrushSettings {
     int splitMode = 0; // 0 = Lasso (like Trim), 1 = Line (Slice)
 };
 
-struct MeasurementAnchor {
-    enum Type { VERTEX, FREE } type = FREE;
-    Mesh* mesh = nullptr;
-    uint32_t vertIdx = 0;       // Если привязано к вершине
-    glm::vec3 worldPos{0.0f};   // Координаты в мировом пространстве
-};
-
-struct MeasurementSegment {
-    MeasurementAnchor vertA;
-    MeasurementAnchor vertB;
-    bool isReference = false;   // Для Measure: является ли отрезок эталоном
-    int divisions = 3;          // Индивидуальное количество делений (для Divider)
-    std::string name = "";
-};
+#include "editing/MeasurementTypes.h"
 
 class AngleRenderer;
+
 
 class SculptManager {
 private:
@@ -472,9 +460,35 @@ public:
         m_hasPending = false;
         m_draggedSegment = nullptr;
         m_hoveredSegment = nullptr;
+        m_selectedMeasureIdx = -1;
+        m_selectedDividerIdx = -1;
     }
 
+    int getSelectedMeasureIndex() const { return m_selectedMeasureIdx; }
+    void setSelectedMeasureIndex(int idx) {
+        m_selectedMeasureIdx = idx;
+        if (idx >= 0) m_selectedDividerIdx = -1;
+    }
+
+    int getSelectedDividerIndex() const { return m_selectedDividerIdx; }
+    void setSelectedDividerIndex(int idx) {
+        m_selectedDividerIdx = idx;
+        if (idx >= 0) m_selectedMeasureIdx = -1;
+    }
+
+    void clearToolSelection() {
+        m_selectedMeasureIdx = -1;
+        m_selectedDividerIdx = -1;
+    }
+
+    void deleteMeasureSegment(Scene& scene, int index);
+    void clearMeasureSegments(Scene& scene);
+    void deleteDividerSegment(Scene& scene, int index);
+    void clearDividerSegments(Scene& scene);
+    void clearAllMeasurements(Scene* scene = nullptr);
+
     const MeasurementSegment* getHoveredSegment() const { return m_hoveredSegment; }
+
     std::string getHoveredVertexKey() const { return m_hoveredVertexKey; }
     const MeasurementSegment* getDraggedSegment() const { return m_draggedSegment; }
     std::string getDraggedVertexKey() const { return m_draggedVertexKey; }
@@ -567,7 +581,11 @@ private:
     MeasurementSegment* m_hoveredSegment = nullptr;
     std::string m_hoveredVertexKey = "";
 
+    int m_selectedMeasureIdx = -1;
+    int m_selectedDividerIdx = -1;
+
     int m_dividerDivisions = 3; // От 2 до 6
+
     bool m_measureUseDistanceThickness = true;
 
     bool m_isMeasureVisibleV1 = true;

@@ -30,7 +30,9 @@
 #include "mesh/Mesh.h"
 #include "scene/Camera.h"
 #include "editing/SculptManager.h"
+#include "editing/undo/UndoManager.h"
 #include "gui/GuiManager.h"
+
 #include "platform/HotkeyDispatcher.h"
 #include "platform/HotkeyManager.h"
 #include "render/RenderSettings.h"
@@ -482,7 +484,10 @@ int main(int argc, char* argv[]) {
     BrushPresetManager::instance().loadDefaults();
     SculptManager sculpt;
     sculpt.loadSettings(appSettings);
+    scene.setSculptManager(&sculpt);
+    g_undoManager.setSculptManager(&sculpt);
     gui.init(window, glContext);
+
     gui.setRenderer(&renderer);
     sculpt.setRenderer(&renderer);
     HotkeyDispatcher dispatcher;

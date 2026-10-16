@@ -360,9 +360,18 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
             }
             
             case HKAction::DeleteSelected: {
-                scene.deleteSelection();
+                if (sculpt.getSelectedMeasureIndex() >= 0) {
+                    sculpt.deleteMeasureSegment(scene, sculpt.getSelectedMeasureIndex());
+                    sculpt.setSelectedMeasureIndex(-1);
+                } else if (sculpt.getSelectedDividerIndex() >= 0) {
+                    sculpt.deleteDividerSegment(scene, sculpt.getSelectedDividerIndex());
+                    sculpt.setSelectedDividerIndex(-1);
+                } else {
+                    scene.deleteSelection();
+                }
                 break;
             }
+
             case HKAction::CameraProjection: {
                 Camera& camera = scene.getCamera();
                 if (camera.isOrthographic()) {

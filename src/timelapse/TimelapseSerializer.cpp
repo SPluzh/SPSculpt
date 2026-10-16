@@ -198,7 +198,9 @@ bool TimelapseSerializer::saveToFile(
             case UndoEntryType::Sculpt: tag = 0x01; break;
             case UndoEntryType::Topology: tag = 0x02; break;
             case UndoEntryType::SceneMeta: tag = 0x03; break;
+            case UndoEntryType::Measurement: tag = 0x00; break;
         }
+
 
         writePOD(os, tag);
 

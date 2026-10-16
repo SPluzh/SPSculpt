@@ -7,6 +7,10 @@
 
 #include "scene/CameraBookmark.h"
 #include "scene/LightSource.h"
+#include "editing/MeasurementTypes.h"
+
+class SculptManager;
+
 
 struct MeshState {
     std::vector<float> verts;
@@ -45,6 +49,8 @@ struct HistoryState {
     int selectedMeshIdx = -1;
     std::vector<int> selectedMeshIndices;
     std::vector<MeshState> meshes;
+    std::vector<MeasurementSegment> measureSegments;
+    std::vector<MeasurementSegment> dividerSegments;
 };
 
 class Scene {
@@ -53,12 +59,16 @@ private:
     std::vector<Mesh*> m_selectedMeshes;
     int m_selectedIdx = -1;
     Camera m_camera;
+    SculptManager* m_sculptManager = nullptr;
 
     friend class UndoManager;
     friend class TimelapsePlayer;
     friend class GuiManager;
 
 public:
+    void setSculptManager(SculptManager* sm) { m_sculptManager = sm; }
+    SculptManager* getSculptManager() const { return m_sculptManager; }
+
     HistoryState saveCurrentState(bool includeTopology = false) const;
     void restoreState(const HistoryState& state);
     Mesh* getMeshById(uint32_t id) const;

@@ -5,8 +5,10 @@
 enum class UndoEntryType {
     Sculpt,      // Delta for vertex positions, colors, materials
     Topology,    // Full state snapshot for mesh topology changes
-    SceneMeta    // Scene metadata changes (transforms, names, visibility, selection)
+    SceneMeta,   // Scene metadata changes (transforms, names, visibility, selection)
+    Measurement  // Measurement / Divider tools
 };
+
 
 class UndoEntry {
 public:

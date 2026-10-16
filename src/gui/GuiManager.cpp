@@ -1832,7 +1832,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         sculpt.setMeasureUseDistanceThickness(useDist);
                     }
                     if (ImGui::Button("Clear Measurements", ImVec2(-1, 26))) {
-                        sculpt.clearMeasurements();
+                        sculpt.clearMeasureSegments(scene);
                     }
                 }
                 else if (brushType == BRUSH_DIVIDER) {
@@ -1845,9 +1845,10 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         sculpt.setMeasureUseDistanceThickness(useDist);
                     }
                     if (ImGui::Button("Clear Dividers", ImVec2(-1, 26))) {
-                        sculpt.clearMeasurements();
+                        sculpt.clearDividerSegments(scene);
                     }
                 }
+
                 else if (brushType == BRUSH_TRANSFORM) {
                     ImGui::Checkbox("Edit Pivot (Alt)", &m_editPivot);
                     ImGui::Separator();
@@ -2785,6 +2786,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     }
 
                     if (ImGui::IsItemClicked(0) && !ImGui::IsItemEdited()) {
+                        sculpt.clearToolSelection();
                         bool ctrl = ImGui::GetIO().KeyCtrl;
                         bool shift = ImGui::GetIO().KeyShift;
                         if (ctrl) {
@@ -2801,6 +2803,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             scene.setOrUnsetMesh(mesh, false);
                         }
                     }
+
 
                     ImGui::PopID();
                     ImGui::Spacing();
@@ -3062,12 +3065,21 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.15f, 0.15f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.65f, 0.20f, 0.20f, 1.0f));
                 if (ImGui::Button(ICON_LC_TRASH_2 " Clear", ImVec2(btnSz * 2.4f, btnSz))) {
-                    measureSegs.clear();
+                    sculpt.clearMeasureSegments(scene);
                 }
                 ImGui::PopStyleColor(2);
 
                 ImGui::EndGroup();
                 ImGui::EndChild();
+
+                if (ImGui::BeginPopupContextItem("##MsrGroupCtx")) {
+                    ImGui::TextDisabled("Measure Tools Group");
+                    ImGui::Separator();
+                    if (ImGui::MenuItem(ICON_LC_TRASH_2 " Clear All Measures")) {
+                        sculpt.clearMeasureSegments(scene);
+                    }
+                    ImGui::EndPopup();
+                }
 
                 if (ImGui::IsItemClicked(0) && !ImGui::IsItemEdited()) {
                     msrGroupExpanded = !msrGroupExpanded;
@@ -3099,10 +3111,14 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         float worldDist = glm::distance(worldA, worldB);
 
                         bool isToolActive = (sculpt.getBrush() == BRUSH_MEASURE);
+                        bool isSelected = (sculpt.getSelectedMeasureIndex() == i);
 
                         ImGui::PushID(200000 + i);
 
-                        if (seg.isReference || isToolActive) {
+                        if (isSelected) {
+                            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.38f, 0.18f, 0.55f, 0.45f));
+                            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.95f, 0.45f, 1.0f, 0.95f));
+                        } else if (seg.isReference || isToolActive) {
                             ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.30f, 0.15f, 0.45f, 0.35f));
                             ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.70f, 0.35f, 0.90f, 0.85f));
                         } else {
@@ -3182,6 +3198,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
                         if (ImGui::Button(ICON_LC_RULER " Tool", ImVec2(btnSz * 2.2f, btnSz))) {
                             sculpt.setTool(BRUSH_MEASURE);
+                            sculpt.setSelectedMeasureIndex(i);
+                            scene.setOrUnsetMesh(nullptr, false);
                         }
                         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Activate Measure Tool");
 
@@ -3197,8 +3215,19 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         ImGui::EndGroup();
                         ImGui::EndChild();
 
+                        if (ImGui::BeginPopupContextItem("##MsrItemCtx")) {
+                            ImGui::TextDisabled("Measure: %s", displayName.c_str());
+                            ImGui::Separator();
+                            if (ImGui::MenuItem(ICON_LC_TRASH_2 " Delete", "Delete")) {
+                                deleteMeasureIdx = i;
+                            }
+                            ImGui::EndPopup();
+                        }
+
                         if (ImGui::IsItemClicked(0) && !ImGui::IsItemEdited()) {
                             sculpt.setTool(BRUSH_MEASURE);
+                            sculpt.setSelectedMeasureIndex(i);
+                            scene.setOrUnsetMesh(nullptr, false);
                         }
 
                         ImGui::PopID();
@@ -3206,15 +3235,15 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     }
 
                     if (deleteMeasureIdx >= 0 && deleteMeasureIdx < (int)measureSegs.size()) {
-                        bool wasRef = measureSegs[deleteMeasureIdx].isReference;
-                        measureSegs.erase(measureSegs.begin() + deleteMeasureIdx);
-                        if (wasRef && !measureSegs.empty()) {
-                            measureSegs[0].isReference = true;
+                        sculpt.deleteMeasureSegment(scene, deleteMeasureIdx);
+                        if (sculpt.getSelectedMeasureIndex() == deleteMeasureIdx) {
+                            sculpt.setSelectedMeasureIndex(-1);
                         }
                     }
 
                     ImGui::Unindent(10.0f * scale);
                 }
+
             }
 
             // 4. Divider Tools Group Card
@@ -3296,12 +3325,21 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.15f, 0.15f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.65f, 0.20f, 0.20f, 1.0f));
                 if (ImGui::Button(ICON_LC_TRASH_2 " Clear", ImVec2(btnSz * 2.4f, btnSz))) {
-                    dividerSegs.clear();
+                    sculpt.clearDividerSegments(scene);
                 }
                 ImGui::PopStyleColor(2);
 
                 ImGui::EndGroup();
                 ImGui::EndChild();
+
+                if (ImGui::BeginPopupContextItem("##DvdGroupCtx")) {
+                    ImGui::TextDisabled("Divider Tools Group");
+                    ImGui::Separator();
+                    if (ImGui::MenuItem(ICON_LC_TRASH_2 " Clear All Dividers")) {
+                        sculpt.clearDividerSegments(scene);
+                    }
+                    ImGui::EndPopup();
+                }
 
                 if (ImGui::IsItemClicked(0) && !ImGui::IsItemEdited()) {
                     dvdGroupExpanded = !dvdGroupExpanded;
@@ -3333,10 +3371,14 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         float worldDist = glm::distance(worldA, worldB);
 
                         bool isToolActive = (sculpt.getBrush() == BRUSH_DIVIDER);
+                        bool isSelected = (sculpt.getSelectedDividerIndex() == j);
 
                         ImGui::PushID(300000 + j);
 
-                        if (isToolActive) {
+                        if (isSelected) {
+                            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.18f, 0.42f, 0.55f, 0.45f));
+                            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.35f, 0.85f, 1.0f, 0.95f));
+                        } else if (isToolActive) {
                             ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.35f, 0.45f, 0.35f));
                             ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.30f, 0.75f, 0.90f, 0.85f));
                         } else {
@@ -3401,6 +3443,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
                         if (ImGui::Button(ICON_LC_SCISSORS " Tool", ImVec2(btnSz * 2.2f, btnSz))) {
                             sculpt.setTool(BRUSH_DIVIDER);
+                            sculpt.setSelectedDividerIndex(j);
+                            scene.setOrUnsetMesh(nullptr, false);
                         }
                         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Activate Divider Tool");
 
@@ -3416,8 +3460,19 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         ImGui::EndGroup();
                         ImGui::EndChild();
 
+                        if (ImGui::BeginPopupContextItem("##DvdItemCtx")) {
+                            ImGui::TextDisabled("Divider: %s", displayName.c_str());
+                            ImGui::Separator();
+                            if (ImGui::MenuItem(ICON_LC_TRASH_2 " Delete", "Delete")) {
+                                deleteDividerIdx = j;
+                            }
+                            ImGui::EndPopup();
+                        }
+
                         if (ImGui::IsItemClicked(0) && !ImGui::IsItemEdited()) {
                             sculpt.setTool(BRUSH_DIVIDER);
+                            sculpt.setSelectedDividerIndex(j);
+                            scene.setOrUnsetMesh(nullptr, false);
                         }
 
                         ImGui::PopID();
@@ -3425,11 +3480,15 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     }
 
                     if (deleteDividerIdx >= 0 && deleteDividerIdx < (int)dividerSegs.size()) {
-                        dividerSegs.erase(dividerSegs.begin() + deleteDividerIdx);
+                        sculpt.deleteDividerSegment(scene, deleteDividerIdx);
+                        if (sculpt.getSelectedDividerIndex() == deleteDividerIdx) {
+                            sculpt.setSelectedDividerIndex(-1);
+                        }
                     }
 
                     ImGui::Unindent(10.0f * scale);
                 }
+
             }
 
             ImGui::EndChild(); // MeshListCards;
@@ -3439,6 +3498,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         bool canMerge = selectedMeshes.size() >= 2;
         bool canBoolean = selectedMeshes.size() >= 2;
         bool hasSelection = !selectedMeshes.empty();
+        bool hasToolSelection = (sculpt.getSelectedMeasureIndex() >= 0 || sculpt.getSelectedDividerIndex() >= 0);
+        bool canDelete = hasSelection || hasToolSelection;
 
         float availBottomW = ImGui::GetContentRegionAvail().x;
         float bottomSpacing = ImGui::GetStyle().ItemSpacing.x;
@@ -3484,16 +3545,23 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             }
             ImGui::SameLine();
 
-            if (!hasSelection) ImGui::BeginDisabled();
+            if (!canDelete) ImGui::BeginDisabled();
             if (ImGui::Button("Delete", ImVec2(bDelW, 0))) {
-                scene.deleteSelection();
+                if (sculpt.getSelectedMeasureIndex() >= 0) {
+                    sculpt.deleteMeasureSegment(scene, sculpt.getSelectedMeasureIndex());
+                    sculpt.setSelectedMeasureIndex(-1);
+                } else if (sculpt.getSelectedDividerIndex() >= 0) {
+                    sculpt.deleteDividerSegment(scene, sculpt.getSelectedDividerIndex());
+                    sculpt.setSelectedDividerIndex(-1);
+                } else {
+                    scene.deleteSelection();
+                }
             }
-            if (!hasSelection) ImGui::EndDisabled();
+            if (!canDelete) ImGui::EndDisabled();
             ImGui::SameLine();
 
             if (ImGui::Button("Clear All", ImVec2(-1, 0))) {
                 scene.clearScene();
-                sculpt.clearMeasurements();
             }
         } else {
             // Responsive 2-row layout when Outliner is narrower
@@ -3533,18 +3601,26 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
             // Row 2
             float r2BtnW = (availBottomW - bottomSpacing) * 0.45f;
-            if (!hasSelection) ImGui::BeginDisabled();
+            if (!canDelete) ImGui::BeginDisabled();
             if (ImGui::Button("Delete", ImVec2(r2BtnW, 0))) {
-                scene.deleteSelection();
+                if (sculpt.getSelectedMeasureIndex() >= 0) {
+                    sculpt.deleteMeasureSegment(scene, sculpt.getSelectedMeasureIndex());
+                    sculpt.setSelectedMeasureIndex(-1);
+                } else if (sculpt.getSelectedDividerIndex() >= 0) {
+                    sculpt.deleteDividerSegment(scene, sculpt.getSelectedDividerIndex());
+                    sculpt.setSelectedDividerIndex(-1);
+                } else {
+                    scene.deleteSelection();
+                }
             }
-            if (!hasSelection) ImGui::EndDisabled();
+            if (!canDelete) ImGui::EndDisabled();
             ImGui::SameLine();
 
             if (ImGui::Button("Clear All", ImVec2(-1, 0))) {
                 scene.clearScene();
-                sculpt.clearMeasurements();
             }
         }
+
 
         // Boolean Dropdown Popup Menu
         if (ImGui::BeginPopup("OutlinerBooleanMenu")) {
@@ -9823,9 +9899,11 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                         }
                         if (ImGui::IsItemHovered()) {
                             const char* typeStr = (entry->getType() == UndoEntryType::Sculpt) ? "Delta Sculpt" :
-                                                  (entry->getType() == UndoEntryType::Topology) ? "Topology Snapshot" : "Meta Snapshot";
+                                                  (entry->getType() == UndoEntryType::Topology) ? "Topology Snapshot" :
+                                                  (entry->getType() == UndoEntryType::Measurement) ? "Measurement" : "Meta Snapshot";
                             ImGui::SetTooltip("Size: %s | Type: %s\nClick to jump to this undo state", sizeStr.c_str(), typeStr);
                         }
+
                         ImGui::PopID();
 
                         if (isCurrentTop) {
