@@ -1834,6 +1834,7 @@ MeasurementAnchor SculptManager::pickAnchor(float mouseX, float mouseY, Scene& s
                 MeasurementAnchor anchor;
                 anchor.type = MeasurementAnchor::VERTEX;
                 anchor.mesh = mesh;
+                anchor.meshId = mesh ? mesh->getID() : 0;
                 anchor.vertIdx = closestVert;
                 glm::vec3 localPos(mesh->verts[closestVert * 3], mesh->verts[closestVert * 3 + 1], mesh->verts[closestVert * 3 + 2]);
                 anchor.worldPos = glm::vec3(mesh->matrix * glm::vec4(localPos, 1.0f));
@@ -1859,9 +1860,90 @@ MeasurementAnchor SculptManager::pickAnchor(float mouseX, float mouseY, Scene& s
     return anchor;
 }
 
+void SculptManager::deleteMeasureSegment(Scene& scene, int index) {
+    if (index < 0 || index >= (int)m_measureSegments.size()) return;
+    std::string name = m_measureSegments[index].name.empty()
+        ? ("Measure " + std::to_string(index + 1))
+        : m_measureSegments[index].name;
+
+    g_undoManager.pushMeasurementChange(scene, "Delete " + name, [this, index]() {
+        if (index >= 0 && index < (int)m_measureSegments.size()) {
+            bool wasRef = m_measureSegments[index].isReference;
+            m_measureSegments.erase(m_measureSegments.begin() + index);
+            if (wasRef && !m_measureSegments.empty()) {
+                m_measureSegments[0].isReference = true;
+            }
+        }
+    });
+}
+
+void SculptManager::clearMeasureSegments(Scene& scene) {
+    if (m_measureSegments.empty()) return;
+    g_undoManager.pushMeasurementChange(scene, "Clear Measure Tools", [this]() {
+        m_measureSegments.clear();
+        m_hasPending = false;
+        m_draggedSegment = nullptr;
+        m_hoveredSegment = nullptr;
+        m_selectedMeasureIdx = -1;
+    });
+}
+
+void SculptManager::deleteDividerSegment(Scene& scene, int index) {
+    if (index < 0 || index >= (int)m_dividerSegments.size()) return;
+    std::string name = m_dividerSegments[index].name.empty()
+        ? ("Divider " + std::to_string(index + 1))
+        : m_dividerSegments[index].name;
+
+    g_undoManager.pushMeasurementChange(scene, "Delete " + name, [this, index]() {
+        if (index >= 0 && index < (int)m_dividerSegments.size()) {
+            m_dividerSegments.erase(m_dividerSegments.begin() + index);
+        }
+    });
+}
+
+void SculptManager::clearDividerSegments(Scene& scene) {
+    if (m_dividerSegments.empty()) return;
+    g_undoManager.pushMeasurementChange(scene, "Clear Divider Tools", [this]() {
+        m_dividerSegments.clear();
+        m_hasPending = false;
+        m_draggedSegment = nullptr;
+        m_hoveredSegment = nullptr;
+        m_selectedDividerIdx = -1;
+    });
+}
+
+void SculptManager::clearAllMeasurements(Scene* scene) {
+    if (m_measureSegments.empty() && m_dividerSegments.empty()) return;
+    if (scene) {
+        g_undoManager.pushMeasurementChange(*scene, "Clear Measurements", [this]() {
+            clearMeasurements();
+        });
+    } else {
+        clearMeasurements();
+    }
+}
+
 void SculptManager::validateSegments(Scene& scene) {
     const auto& meshes = scene.getMeshes();
     auto validate = [&](std::vector<MeasurementSegment>& segments) {
+        for (auto& seg : segments) {
+            if (seg.vertA.type == MeasurementAnchor::VERTEX) {
+                if (!seg.vertA.mesh && seg.vertA.meshId != 0) {
+                    seg.vertA.mesh = scene.getMeshById(seg.vertA.meshId);
+                }
+                if (seg.vertA.mesh && seg.vertA.meshId == 0) {
+                    seg.vertA.meshId = seg.vertA.mesh->getID();
+                }
+            }
+            if (seg.vertB.type == MeasurementAnchor::VERTEX) {
+                if (!seg.vertB.mesh && seg.vertB.meshId != 0) {
+                    seg.vertB.mesh = scene.getMeshById(seg.vertB.meshId);
+                }
+                if (seg.vertB.mesh && seg.vertB.meshId == 0) {
+                    seg.vertB.meshId = seg.vertB.mesh->getID();
+                }
+            }
+        }
         segments.erase(std::remove_if(segments.begin(), segments.end(), [&](const MeasurementSegment& seg) {
             if (seg.vertA.type == MeasurementAnchor::VERTEX) {
                 if (!seg.vertA.mesh || std::find(meshes.begin(), meshes.end(), seg.vertA.mesh) == meshes.end()) return true;
@@ -1877,6 +1959,7 @@ void SculptManager::validateSegments(Scene& scene) {
     validate(m_measureSegments);
     validate(m_dividerSegments);
 }
+
 
 void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
     Mesh* mesh = scene.getSelected();
@@ -2444,9 +2527,13 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 glm::vec3 posA = getAnchorWorldPos(m_draggedSegment->vertA);
                 glm::vec3 posB = getAnchorWorldPos(m_draggedSegment->vertB);
                 if (glm::distance(posA, posB) < 1e-4f) {
-                    segments.erase(std::remove_if(segments.begin(), segments.end(),
-                        [&](const MeasurementSegment& seg) { return &seg == m_draggedSegment; }),
-                        segments.end());
+                    std::string segName = m_draggedSegment->name.empty() ? "Segment" : m_draggedSegment->name;
+                    MeasurementSegment* toDel = m_draggedSegment;
+                    g_undoManager.pushMeasurementChange(scene, "Delete " + segName, [&]() {
+                        segments.erase(std::remove_if(segments.begin(), segments.end(),
+                            [&](const MeasurementSegment& seg) { return &seg == toDel; }),
+                            segments.end());
+                    });
                 }
                 m_draggedSegment = nullptr;
                 m_draggedVertexKey = "";
@@ -2484,11 +2571,14 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                         newSeg.divisions = m_dividerDivisions;
                     }
 
-                    segments.push_back(newSeg);
+                    g_undoManager.pushMeasurementChange(scene, "Create " + newSeg.name, [&]() {
+                        segments.push_back(newSeg);
+                    });
                 }
                 m_hasPending = false;
                 return;
             }
+
             return;
         }
 

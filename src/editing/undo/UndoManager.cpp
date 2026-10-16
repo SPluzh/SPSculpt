@@ -3,6 +3,8 @@
 #include "mesh/Mesh.h"
 #include "mesh/NormalCalc.h"
 #include "common/Logger.h"
+#include "editing/SculptManager.h"
+
 #include <algorithm>
 #include <unordered_set>
 
@@ -267,6 +269,34 @@ void UndoManager::pushMetaChange(Scene& scene,
     pushEntry(std::move(entry));
     scene.setModified(true);
 }
+
+void UndoManager::pushMeasurementChange(Scene& scene,
+                                        const std::string& description,
+                                        std::function<void()> operation) {
+    SculptManager* sculpt = scene.getSculptManager();
+    if (!sculpt) sculpt = m_sculptManager;
+    if (!sculpt) {
+        if (operation) operation();
+        return;
+    }
+
+    auto entry = std::make_unique<MeasurementUndoEntry>();
+    entry->description = description;
+    entry->beforeMeasure = sculpt->getMeasureSegments();
+    entry->beforeDivider = sculpt->getDividerSegments();
+
+    if (operation) {
+        operation();
+    }
+
+    entry->afterMeasure = sculpt->getMeasureSegments();
+    entry->afterDivider = sculpt->getDividerSegments();
+
+    sculpt_log_lvl(LogLevel::Info, "[Undo] Measurement change pushed: '%s'\n", description.c_str());
+    pushEntry(std::move(entry));
+    scene.setModified(true);
+}
+
 
 void UndoManager::pushLegacyState(Scene& scene, const std::string& description) {
     auto entry = std::make_unique<TopologyUndoEntry>();
@@ -551,6 +581,25 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
             sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] SceneMeta apply (%s) completed in %.2f ms\n",
                            isUndo ? "UNDO" : "REDO", msTotal);
         }
+    } else if (entry->getType() == UndoEntryType::Measurement) {
+        auto* e = static_cast<MeasurementUndoEntry*>(entry);
+        sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] Applying Measurement %s: '%s'\n",
+                       isUndo ? "UNDO" : "REDO", e->getDescription().c_str());
+
+        SculptManager* sculpt = scene.getSculptManager();
+        if (!sculpt) sculpt = g_undoManager.getSculptManager();
+        if (sculpt) {
+            sculpt->getMeasureSegments() = isUndo ? e->beforeMeasure : e->afterMeasure;
+            sculpt->getDividerSegments() = isUndo ? e->beforeDivider : e->afterDivider;
+            sculpt->validateSegments(scene);
+        } else {
+            sculpt_log_lvl(LogLevel::Warning, "[Undo] SculptManager not available for measurement undo\n");
+        }
+
+        auto tDone = std::chrono::high_resolution_clock::now();
+        double msTotal = std::chrono::duration<double, std::milli>(tDone - tStart).count();
+        sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] Measurement apply (%s) completed in %.2f ms\n",
+                       isUndo ? "UNDO" : "REDO", msTotal);
     }
 }
 
@@ -589,10 +638,13 @@ void UndoManager::undo(Scene& scene) {
     auto entry = std::move(m_undoStack.back());
     m_undoStack.pop_back();
 
+    const char* typeStr = "SceneMeta";
+    if (entry->getType() == UndoEntryType::Sculpt) typeStr = "Sculpt";
+    else if (entry->getType() == UndoEntryType::Topology) typeStr = "Topology";
+    else if (entry->getType() == UndoEntryType::Measurement) typeStr = "Measurement";
+
     sculpt_log_lvl(LogLevel::Info, "[Undo] START UNDO: '%s' (Type: %s, UndoStack size left: %zu, Total Mem: %.2f MB)\n",
-                   entry->getDescription().c_str(),
-                   entry->getType() == UndoEntryType::Sculpt ? "Sculpt" :
-                   (entry->getType() == UndoEntryType::Topology ? "Topology" : "SceneMeta"),
+                   entry->getDescription().c_str(), typeStr,
                    m_undoStack.size(), getTotalMemoryUsage() / (1024.0f * 1024.0f));
     applyEntry(entry.get(), scene, true);
 
@@ -620,10 +672,13 @@ void UndoManager::redo(Scene& scene) {
     auto entry = std::move(m_redoStack.back());
     m_redoStack.pop_back();
 
+    const char* typeStr = "SceneMeta";
+    if (entry->getType() == UndoEntryType::Sculpt) typeStr = "Sculpt";
+    else if (entry->getType() == UndoEntryType::Topology) typeStr = "Topology";
+    else if (entry->getType() == UndoEntryType::Measurement) typeStr = "Measurement";
+
     sculpt_log_lvl(LogLevel::Info, "[Undo] START REDO: '%s' (Type: %s, RedoStack size left: %zu, Total Mem: %.2f MB)\n",
-                   entry->getDescription().c_str(),
-                   entry->getType() == UndoEntryType::Sculpt ? "Sculpt" :
-                   (entry->getType() == UndoEntryType::Topology ? "Topology" : "SceneMeta"),
+                   entry->getDescription().c_str(), typeStr,
                    m_redoStack.size(), getTotalMemoryUsage() / (1024.0f * 1024.0f));
     applyEntry(entry.get(), scene, false);
 
@@ -634,4 +689,5 @@ void UndoManager::redo(Scene& scene) {
     double msTotal = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
     sculpt_log_lvl(LogLevel::Info, "[Undo] FINISHED REDO in %.2f ms\n", msTotal);
 }
+
 

@@ -4,6 +4,7 @@
 #include "TopologyUndoEntry.h"
 #include "SceneMetaUndoEntry.h"
 #include "TransformUndoEntry.h"
+#include "MeasurementUndoEntry.h"
 
 #include <deque>
 #include <memory>
@@ -14,6 +15,8 @@
 
 class Scene;
 class Mesh;
+class SculptManager;
+
 
 class UndoManager {
 public:
@@ -63,6 +66,14 @@ public:
                         std::function<void()> operation);
 
     void pushTransformChange(Scene& scene, TransformUndoEntry entry);
+
+    // --- API for measurement/divider changes ---
+    void pushMeasurementChange(Scene& scene,
+                               const std::string& description,
+                               std::function<void()> operation);
+
+    void setSculptManager(SculptManager* sm) { m_sculptManager = sm; }
+    SculptManager* getSculptManager() const { return m_sculptManager; }
 
 
     // Legacy fallback state push
@@ -119,8 +130,11 @@ private:
     std::unique_ptr<SculptUndoEntry> m_activeSculptEntry;
     std::unordered_map<uint32_t, size_t> m_activeMeshDeltaMap;
 
+    SculptManager* m_sculptManager = nullptr;
+
     void pushEntry(std::unique_ptr<UndoEntry> entry);
     void trimToMemoryLimit();
 };
+
 
 extern UndoManager g_undoManager;
