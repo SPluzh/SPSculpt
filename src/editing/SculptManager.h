@@ -75,8 +75,14 @@ struct BrushSettings {
     // Brush-specific
     bool clay = true; // For Brush / SquareBrush
     bool tangent = false; // For Smooth (tangential smoothing)
-    bool topoCheck = false; // For Move / Elastic
+    bool topoCheck = false; // For Move / Elastic / SnakeHook
     float elasticity = 1.0f; // For Elastic
+    
+    // SnakeHook settings
+    float snakePinch = 0.0f;
+    float snakeMagnify = 0.0f;
+    float snakeTwist = 0.0f;
+    float snakeRelax = 0.05f;
     
     // Paint settings
     glm::vec3 paintColor{0.72f, 0.52f, 0.45f};
@@ -209,6 +215,11 @@ private:
 
     std::vector<std::vector<uint32_t>> m_grabbedVerticesSyms;
     std::vector<glm::vec3>             m_initialSymIntersections;
+
+    std::vector<uint32_t>              m_snakeActiveVerts;
+    std::vector<std::vector<uint32_t>> m_snakeActiveVertsSyms;
+    glm::vec3                          m_snakePrevTipPos{0.0f};
+    std::vector<glm::vec3>             m_snakePrevTipPosSyms;
 
     PolyGroupTool m_polyGroupTool;
     uint32_t m_activeGroupId = 1;

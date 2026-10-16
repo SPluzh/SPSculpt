@@ -319,6 +319,15 @@ SculptManager::SculptManager() {
     m_brushSettings[BRUSH_RELAX].relaxPreserveCreases = true;
     m_brushSettings[BRUSH_RELAX].relaxCreaseAngle = 45.0f;
     m_brushSettings[BRUSH_RELAX].relaxIterations = 1;
+
+    m_brushSettings[BRUSH_SNAKEHOOK].radius = 60.0f;
+    m_brushSettings[BRUSH_SNAKEHOOK].intensity = 1.0f;
+    m_brushSettings[BRUSH_SNAKEHOOK].culling = false;
+    m_brushSettings[BRUSH_SNAKEHOOK].spacing = 0.1f;
+    m_brushSettings[BRUSH_SNAKEHOOK].snakePinch = 0.0f;
+    m_brushSettings[BRUSH_SNAKEHOOK].snakeMagnify = 0.0f;
+    m_brushSettings[BRUSH_SNAKEHOOK].snakeTwist = 0.0f;
+    m_brushSettings[BRUSH_SNAKEHOOK].snakeRelax = 0.05f;
 }
 
 std::vector<glm::vec3> SculptManager::getActiveSymmetryScales() const {
@@ -638,6 +647,49 @@ int SculptManager::doStrokePass(
                 false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false,
                 false, nullptr
             );
+            break;
+        }
+        case BRUSH_SNAKEHOOK: {
+            glm::vec3 tipStart = isSymmetry ? reflectPointSymmetry(m_snakePrevTipPos, sScale, mesh, m_symmetryMode)
+                                            : m_snakePrevTipPos;
+            glm::vec3 tipEnd = currentIntersection;
+
+            deformedCount = strokeSnakeHook(
+                mesh->verts.data(),
+                mesh->materials.data(),
+                pickedVertices.data(),
+                static_cast<int>(pickedVertices.size()),
+                tipStart.x, tipStart.y, tipStart.z,
+                tipEnd.x, tipEnd.y, tipEnd.z,
+                localRadius, intensity,
+                getCurrentSettings().snakePinch,
+                getCurrentSettings().snakeMagnify,
+                getCurrentSettings().snakeTwist,
+                getCurrentSettings().focalShift,
+                getCurrentSettings().focalShiftFalloff,
+                negative,
+                false, nullptr
+            );
+
+            if (getCurrentSettings().snakeRelax > 1e-4f && deformedCount > 0 && !mesh->vertRingVert.empty()) {
+                strokeSmooth(
+                    mesh->verts.data(),
+                    mesh->normals.data(),
+                    mesh->materials.data(),
+                    mesh->vrvStartCount.data(),
+                    mesh->vertRingVert.data(),
+                    mesh->vertOnEdge.data(),
+                    pickedVertices.data(),
+                    deformedCount,
+                    tipEnd.x, tipEnd.y, tipEnd.z,
+                    localRadius,
+                    getCurrentSettings().snakeRelax * 0.3f,
+                    true,
+                    getCurrentSettings().focalShift,
+                    getCurrentSettings().focalShiftFalloff,
+                    false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
+                );
+            }
             break;
         }
         case BRUSH_MASK: {
@@ -1109,9 +1161,13 @@ int SculptManager::doStrokePass(
             for (int i = 0; i < deformedCount; ++i) {
                 uint32_t v = pickedVertices[i];
                 if (v * 3 + 2 < mesh->verts.size() && v * 3 + 2 < layer->deltaVerts.size()) {
-                    float dx = (mesh->verts[v * 3 + 0] - mesh->vertProxy[v * 3 + 0]) * invIntensity;
-                    float dy = (mesh->verts[v * 3 + 1] - mesh->vertProxy[v * 3 + 1]) * invIntensity;
-                    float dz = (mesh->verts[v * 3 + 2] - mesh->vertProxy[v * 3 + 2]) * invIntensity;
+                    bool isSnakeBrush = (activeBrush == BRUSH_SNAKEHOOK);
+                    float dx = isSnakeBrush ? ((mesh->verts[v * 3 + 0] - preVerts[i * 3 + 0]) * invIntensity)
+                                            : ((mesh->verts[v * 3 + 0] - mesh->vertProxy[v * 3 + 0]) * invIntensity);
+                    float dy = isSnakeBrush ? ((mesh->verts[v * 3 + 1] - preVerts[i * 3 + 1]) * invIntensity)
+                                            : ((mesh->verts[v * 3 + 1] - mesh->vertProxy[v * 3 + 1]) * invIntensity);
+                    float dz = isSnakeBrush ? ((mesh->verts[v * 3 + 2] - preVerts[i * 3 + 2]) * invIntensity)
+                                            : ((mesh->verts[v * 3 + 2] - mesh->vertProxy[v * 3 + 2]) * invIntensity);
 
                     if (std::isnan(dx) || std::isnan(dy) || std::isnan(dz) ||
                         std::isinf(dx) || std::isinf(dy) || std::isinf(dz)) {
@@ -1132,9 +1188,15 @@ int SculptManager::doStrokePass(
                         layer->deltaVerts[v * 3 + 2] += dz;
                     }
 
-                    mesh->verts[v * 3 + 0] = mesh->vertProxy[v * 3 + 0] + dx * layerIntensity;
-                    mesh->verts[v * 3 + 1] = mesh->vertProxy[v * 3 + 1] + dy * layerIntensity;
-                    mesh->verts[v * 3 + 2] = mesh->vertProxy[v * 3 + 2] + dz * layerIntensity;
+                    if (isSnakeBrush) {
+                        mesh->verts[v * 3 + 0] = preVerts[i * 3 + 0] + dx * layerIntensity;
+                        mesh->verts[v * 3 + 1] = preVerts[i * 3 + 1] + dy * layerIntensity;
+                        mesh->verts[v * 3 + 2] = preVerts[i * 3 + 2] + dz * layerIntensity;
+                    } else {
+                        mesh->verts[v * 3 + 0] = mesh->vertProxy[v * 3 + 0] + dx * layerIntensity;
+                        mesh->verts[v * 3 + 1] = mesh->vertProxy[v * 3 + 1] + dy * layerIntensity;
+                        mesh->verts[v * 3 + 2] = mesh->vertProxy[v * 3 + 2] + dz * layerIntensity;
+                    }
                 }
             }
         }
@@ -1149,6 +1211,9 @@ void SculptManager::cancelStroke() {
     m_relaxEngine.endStroke();
     m_grabbedVertices.clear();
     m_grabbedVerticesSyms.clear();
+    m_snakeActiveVerts.clear();
+    m_snakeActiveVertsSyms.clear();
+    m_snakePrevTipPosSyms.clear();
     m_initialSymIntersections.clear();
     m_lassoPoints.clear();
     m_isLassoActive = false;
@@ -1205,6 +1270,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     }
 
     bool isGrabBrush = (activeBrush == BRUSH_MOVE || activeBrush == BRUSH_DRAG || activeBrush == BRUSH_ELASTIC);
+    bool isSnakeBrush = (activeBrush == BRUSH_SNAKEHOOK);
 
     bool isDeformBrush = (activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_POLYGROUP);
     if (mesh && mesh->hasLayers() && isDeformBrush && !mesh->isLayerRecording()) {
@@ -1215,15 +1281,15 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 
     // --- Stage 1: Raycast ---
     auto tStage = std::chrono::high_resolution_clock::now();
-    if (isGrabBrush && !m_firstStrokeFrame) {
-        // Bypass raycast for grab brushes on subsequent frames
+    if ((isGrabBrush || isSnakeBrush) && !m_firstStrokeFrame) {
+        // Bypass raycast for grab/snake brushes on subsequent frames
         glm::vec3 camFrontLocal = -glm::normalize(glm::vec3(m_cachedInvMatrix * glm::vec4(glm::vec3(m_cachedCamWorldMatrix[2]), 0.0f)));
         float denom = glm::dot(camFrontLocal, localRayDir);
         if (std::abs(denom) > 1e-12f) {
             float t = glm::dot(camFrontLocal, m_initialIntersection - localRayOrigin) / denom;
             m_currentIntersection = localRayOrigin + localRayDir * t;
         } else {
-            m_currentIntersection = m_initialIntersection;
+            m_currentIntersection = isSnakeBrush ? m_snakePrevTipPos : m_initialIntersection;
         }
         m_currentIntersectionValid = true;
 
@@ -1293,6 +1359,9 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         if (m_firstStrokeFrame && intersectFaceId != 0xffffffff && !mesh->faceGroups.empty() && intersectFaceId < (uint32_t)mesh->nbFaces) {
             m_strokeTargetPolyGroup = mesh->faceGroups[intersectFaceId];
         }
+        if (m_firstStrokeFrame && isSnakeBrush) {
+            m_snakePrevTipPos = m_currentIntersection;
+        }
     }
     m_lastFrameProfile.raycastMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
 
@@ -1355,7 +1424,26 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     // --- Stage 2: Pick Vertices ---
     tStage = std::chrono::high_resolution_clock::now();
     std::vector<uint32_t> pickedVertices;
-    if (isGrabBrush && !m_firstStrokeFrame) {
+    if (isSnakeBrush) {
+        if (m_firstStrokeFrame) {
+            if (getSettings(activeBrush).topoCheck) {
+                pickedVertices = pickVerticesInSphereTopological(mesh, m_currentIntersection, radius2, intersectFaceId);
+            } else {
+                pickedVertices = mesh->octree.pickVerticesInSphere(
+                    m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z, radius2, mesh->vertVisible.data()
+                );
+            }
+            if (getSettings(activeBrush).culling) {
+                filterCullingVertices(pickedVertices, mesh, localRayDir);
+            }
+            if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty()) {
+                filterPolyGroupVertices(pickedVertices, mesh, m_strokeTargetPolyGroup);
+            }
+            m_snakeActiveVerts = pickedVertices;
+        } else {
+            pickedVertices = m_snakeActiveVerts;
+        }
+    } else if (isGrabBrush && !m_firstStrokeFrame) {
         pickedVertices = m_grabbedVertices;
     } else {
         if (getSettings(activeBrush).topoCheck) {
@@ -1371,7 +1459,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 
     // --- Stage 3: Culling & PolyGroup Filtering ---
     tStage = std::chrono::high_resolution_clock::now();
-    if (!isGrabBrush || m_firstStrokeFrame) {
+    if (!isSnakeBrush && (!isGrabBrush || m_firstStrokeFrame)) {
         if (getSettings(activeBrush).culling) {
             filterCullingVertices(pickedVertices, mesh, localRayDir);
         }
@@ -1500,6 +1588,13 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                     m_initialSymIntersections[sIdx] = reflectPointSymmetry(m_initialIntersection, symScales[sIdx], mesh, m_symmetryMode);
                 }
                 m_grabbedVerticesSyms.resize(symScales.size());
+                if (isSnakeBrush) {
+                    m_snakeActiveVertsSyms.resize(symScales.size());
+                    m_snakePrevTipPosSyms.resize(symScales.size());
+                    for (size_t sIdx = 0; sIdx < symScales.size(); ++sIdx) {
+                        m_snakePrevTipPosSyms[sIdx] = m_initialSymIntersections[sIdx];
+                    }
+                }
             }
 
             for (size_t sIdx = 0; sIdx < symScales.size(); ++sIdx) {
@@ -1507,7 +1602,28 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 glm::vec3 symCenter;
                 std::vector<uint32_t> symVerts;
 
-                if (isGrabBrush && !m_firstStrokeFrame) {
+                if (isSnakeBrush) {
+                    symCenter = reflectPointSymmetry(m_currentIntersection, sScale, mesh, m_symmetryMode);
+                    if (m_firstStrokeFrame) {
+                        symVerts = mesh->octree.pickVerticesInSphere(
+                            symCenter.x, symCenter.y, symCenter.z,
+                            radius2, mesh->vertVisible.data()
+                        );
+                        if (getSettings(activeBrush).culling && !symVerts.empty()) {
+                            glm::vec3 symRayDir = reflectVectorSymmetry(localRayDir, sScale, mesh, m_symmetryMode);
+                            filterCullingVertices(symVerts, mesh, symRayDir);
+                        }
+                        if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty() && !symVerts.empty()) {
+                            filterPolyGroupVertices(symVerts, mesh, m_strokeTargetPolyGroup);
+                        }
+                        if (sIdx >= m_snakeActiveVertsSyms.size()) m_snakeActiveVertsSyms.resize(sIdx + 1);
+                        m_snakeActiveVertsSyms[sIdx] = symVerts;
+                    } else {
+                        if (sIdx < m_snakeActiveVertsSyms.size()) {
+                            symVerts = m_snakeActiveVertsSyms[sIdx];
+                        }
+                    }
+                } else if (isGrabBrush && !m_firstStrokeFrame) {
                     glm::vec3 symRayOrigin = reflectPointSymmetry(localRayOrigin, sScale, mesh, m_symmetryMode);
                     glm::vec3 symRayDir = reflectVectorSymmetry(localRayDir, sScale, mesh, m_symmetryMode);
                     const glm::vec3& initSymInter = (sIdx < m_initialSymIntersections.size()) ? m_initialSymIntersections[sIdx] : reflectPointSymmetry(m_initialIntersection, sScale, mesh, m_symmetryMode);
@@ -1581,6 +1697,10 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             }
         }
         m_lastFrameProfile.symmetryMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
+    }
+
+    if (activeBrush == BRUSH_SNAKEHOOK) {
+        m_snakePrevTipPos = m_currentIntersection;
     }
 
     if (isGrabBrush && !m_firstStrokeFrame && !m_grabbedAffectedVerts.empty()) {
@@ -3135,6 +3255,9 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             m_relaxEngine.endStroke();
             m_currentIntersectionValid = false;
             m_hasAnyValidIntersection = false;
+            m_snakeActiveVerts.clear();
+            m_snakeActiveVertsSyms.clear();
+            m_snakePrevTipPosSyms.clear();
             int dragDistX = std::abs(event.button.x - m_mouseDownX);
             int dragDistY = std::abs(event.button.y - m_mouseDownY);
             bool wasClick = (dragDistX <= 12 && dragDistY <= 12);
@@ -3538,7 +3661,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             const auto& activeSettings = getSettings(activeBrush);
             float minSpacing = activeSettings.spacing * activeSettings.radius;
 
-            bool isGrabBrush = (activeBrush == BRUSH_MOVE || activeBrush == BRUSH_DRAG || activeBrush == BRUSH_ELASTIC);
+            bool isGrabBrush = (activeBrush == BRUSH_MOVE || activeBrush == BRUSH_DRAG || activeBrush == BRUSH_ELASTIC || activeBrush == BRUSH_SNAKEHOOK);
 
             if (isGrabBrush || minSpacing <= 0.0f) {
                 executeStroke(scene, mesh, camera, (float)mouseX, (float)mouseY, currentPressure);

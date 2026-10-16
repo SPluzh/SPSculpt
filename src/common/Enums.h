@@ -34,6 +34,7 @@ enum BrushType {
     BRUSH_DELETE_LAYER,
     BRUSH_RELAX,
     BRUSH_POSE,
+    BRUSH_SNAKEHOOK,
     BRUSH_COUNT
 };
 
@@ -85,6 +86,7 @@ inline const char* getBrushNameStr(BrushType brush) {
         case BRUSH_DELETE_LAYER: return "Delete Layer";
         case BRUSH_RELAX: return "Relax";
         case BRUSH_POSE: return "Pose";
+        case BRUSH_SNAKEHOOK: return "SnakeHook";
         default: return "Unknown";
     }
 }

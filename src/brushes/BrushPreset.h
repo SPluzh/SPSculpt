@@ -79,12 +79,17 @@ struct BrushPreset {
     // Depth filter
     DepthFilter depthFilter;
 
-    // Topology
     bool connectedTopology = false;
     bool onlyFrontFace     = false;
     bool topoCheck         = false;
     bool useDynamicTopology = false;
     float elasticity       = 1.5f;
+
+    // SnakeHook
+    float snakePinch       = 0.0f;
+    float snakeMagnify     = 0.0f;
+    float snakeTwist       = 0.0f;
+    float snakeRelax       = 0.1f;
 
     // Paint
     std::array<float,3> paintColor{1.0f, 0.766f, 0.336f};

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(SPSculpt VERSION 0.3.3 LANGUAGES C CXX)
+project(SPSculpt VERSION 0.3.4 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 
 add_library(ufbx STATIC third_party/ufbx/ufbx.c)

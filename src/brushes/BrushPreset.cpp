@@ -124,6 +124,12 @@ BrushPreset normalizeBrushJSON(const nlohmann::json& raw, const std::string& nam
     p.useDynamicTopology = raw.value("use_dynamic_topology", p.useDynamicTopology);
     p.elasticity = raw.value("elasticity", p.elasticity);
 
+    // SnakeHook
+    p.snakePinch = raw.value("snake_pinch", p.snakePinch);
+    p.snakeMagnify = raw.value("snake_magnify", p.snakeMagnify);
+    p.snakeTwist = raw.value("snake_twist", p.snakeTwist);
+    p.snakeRelax = raw.value("snake_relax", p.snakeRelax);
+
     // Paint
     if (raw.contains("painting_config")) {
         auto pc = raw["painting_config"];

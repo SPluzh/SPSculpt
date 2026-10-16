@@ -206,6 +206,7 @@ static const char* getBrushNameLocal(BrushType brush) {
         case BRUSH_DELETE_LAYER: return "Delete Layer";
         case BRUSH_RELAX:       return "Relax";
         case BRUSH_POSE:        return "Pose";
+        case BRUSH_SNAKEHOOK:   return "SnakeHook";
     }
     return "Unknown";
 }
@@ -248,6 +249,7 @@ static const char* getBrushIconKey(BrushType brush) {
         case BRUSH_TRANSFORM:   return "transformtool";
         case BRUSH_RELAX:       return "relax_tool";
         case BRUSH_POSE:        return "posetool";
+        case BRUSH_SNAKEHOOK:   return "snakehook_tool";
         default:                return nullptr;
     }
 }
@@ -1152,7 +1154,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         const char* tools[] = { 
             "Flatten", "Smooth", "Inflate", "Pinch", "Crease", "V-Tool", "Move", "Drag", "Elastic", 
             "Mask", "Paint", "Twist", "Local Scale", "Clay", "Clay Buildup", "Dam Standard", "Square Brush", "Visibility", "Mask Gradient Blur",
-            "Measure", "Divider", "Transform", "Armature Spheres", "Brush", "PolyGroup", "Clip Curve", "Trim", "Split", "Delete Layer", "Relax", "Pose"
+            "Measure", "Divider", "Transform", "Armature Spheres", "Brush", "PolyGroup", "Clip Curve", "Trim", "Split", "Delete Layer", "Relax", "Pose", "SnakeHook"
         };
         BrushType current = sculpt.getBrush();
         float btnH = 26.0f * scale;
@@ -1336,7 +1338,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
             ImGui::Checkbox("Focal Shift Falloff", &settings.focalShiftFalloff);
 
-            bool isGrabBrush = (brushType == BRUSH_MOVE || brushType == BRUSH_DRAG || brushType == BRUSH_ELASTIC);
+            bool isGrabBrush = (brushType == BRUSH_MOVE || brushType == BRUSH_DRAG || brushType == BRUSH_ELASTIC || brushType == BRUSH_SNAKEHOOK);
             if (!isGrabBrush) {
                 ImGui::SliderFloat("Spacing", &settings.spacing, 0.01f, 1.0f, "%.2f");
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spacing between stroke points as fraction of radius");
@@ -1379,7 +1381,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                  brushType == BRUSH_MEASURE || brushType == BRUSH_DIVIDER ||
                                  brushType == BRUSH_TRANSFORM || brushType == BRUSH_ARMATURE_SPHERES ||
                                  brushType == BRUSH_BRUSH || brushType == BRUSH_POLYGROUP ||
-                                 brushType == BRUSH_TRIM || brushType == BRUSH_SPLIT || brushType == BRUSH_POSE);
+                                 brushType == BRUSH_TRIM || brushType == BRUSH_SPLIT || brushType == BRUSH_POSE ||
+                                 brushType == BRUSH_SNAKEHOOK);
 
         if (hasSpecialParams) {
             if (ImGui::CollapsingHeader("Tool Specific Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -1419,6 +1422,22 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     if (brushType == BRUSH_ELASTIC) {
                         ImGui::SliderFloat("Elasticity", &settings.elasticity, 0.1f, 3.0f, "%.2f");
                     }
+                }
+                else if (brushType == BRUSH_SNAKEHOOK) {
+                    ImGui::Checkbox("Topological Check", &settings.topoCheck);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only affects topologically connected vertices within radius");
+
+                    ImGui::SliderFloat("Pinch", &settings.snakePinch, -1.0f, 1.0f, "%.2f");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pinch (>0 tapers towards tip, <0 flares tip)");
+
+                    ImGui::SliderFloat("Magnify", &settings.snakeMagnify, -1.0f, 1.0f, "%.2f");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Compensates volume loss during stretching");
+
+                    ImGui::SliderFloat("Twist", &settings.snakeTwist, -360.0f, 360.0f, "%.1f°");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotates vertices around stroke direction vector");
+
+                    ImGui::SliderFloat("Relax Stabilizer", &settings.snakeRelax, 0.0f, 0.5f, "%.2f");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tangential relaxation to reduce polygon distortion without losing volume");
                 }
                 else if (brushType == BRUSH_CLAY || brushType == BRUSH_CLAYBUILDUP || 
                          brushType == BRUSH_SQUAREBRUSH) {

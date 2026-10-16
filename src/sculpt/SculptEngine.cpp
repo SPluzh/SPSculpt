@@ -1,5 +1,6 @@
 #include "sculpt/SculptEngine.h"
 #include "common/Logger.h"
+#include <glm/glm.hpp>
 #include <cmath>
 #include <algorithm>
 #include <vector>
@@ -1157,6 +1158,109 @@ int strokeElastic(
         verts[ind + 1] += (uy / S) * fallOff;
         verts[ind + 2] += (uz / S) * fallOff;
     }
+    return nbIVerts;
+}
+
+int strokeSnakeHook(
+    float* verts,
+    const float* materials,
+    uint32_t* iVerts, int nbIVerts,
+    float startX, float startY, float startZ,
+    float endX, float endY, float endZ,
+    float radius, float intensity,
+    float pinch, float magnify, float twist,
+    float focalShift, bool focalShiftFalloff,
+    bool negative,
+    bool useAccuCurve, const float* accuCurveLut
+) {
+    if (radius <= 1e-7f || nbIVerts <= 0 || !verts || !materials || !iVerts) {
+        return 0;
+    }
+
+    glm::vec3 pStart(startX, startY, startZ);
+    glm::vec3 pEnd(endX, endY, endZ);
+    glm::vec3 totalDelta = pEnd - pStart;
+    float totalDist = glm::length(totalDelta);
+
+    if (totalDist < 1e-7f) {
+        return nbIVerts;
+    }
+
+    if (negative) {
+        totalDelta = -totalDelta;
+    }
+
+    // Determine sub-steps for smooth trajectory
+    float stepSize = std::max(1e-4f, radius * 0.15f);
+    int numSteps = std::clamp(static_cast<int>(std::ceil(totalDist / stepSize)), 1, 32);
+    glm::vec3 stepDelta = (totalDelta / static_cast<float>(numSteps)) * intensity;
+    float stepLen = glm::length(stepDelta);
+    glm::vec3 stepDir = (stepLen > 1e-7f) ? (stepDelta / stepLen) : glm::vec3(0.0f, 1.0f, 0.0f);
+
+    const float radiusSq = radius * radius;
+    float invRadius = 1.0f / radius;
+
+    for (int step = 0; step < numSteps; ++step) {
+        float t = static_cast<float>(step + 1) / static_cast<float>(numSteps);
+        glm::vec3 center = glm::mix(pStart, pEnd, t);
+
+        #pragma omp parallel for schedule(static) if(nbIVerts > 1000)
+        for (int i = 0; i < nbIVerts; ++i) {
+            uint32_t id = iVerts[i];
+            int ind = id * 3;
+
+            float matVal = materials[ind + 2];
+            if (matVal <= 0.0f) {
+                continue;
+            }
+
+            float vx = verts[ind];
+            float vy = verts[ind + 1];
+            float vz = verts[ind + 2];
+
+            float dx = vx - center.x;
+            float dy = vy - center.y;
+            float dz = vz - center.z;
+            float distSq = (dx * dx + dy * dy + dz * dz) / radiusSq;
+            if (distSq >= 1.0f) {
+                continue;
+            }
+
+            float dist = std::sqrt(distSq);
+            float fallOff = getMoveFallOff(dist, focalShift, useAccuCurve, accuCurveLut) * matVal;
+            if (fallOff <= 1e-6f) {
+                continue;
+            }
+
+            // 1. Primary translation along stroke motion
+            glm::vec3 disp = stepDelta * fallOff;
+
+            // 2. Radial components perpendicular to stroke axis
+            glm::vec3 r(dx, dy, dz);
+            float rDotDir = glm::dot(r, stepDir);
+            glm::vec3 rParallel = stepDir * rDotDir;
+            glm::vec3 rPerp = r - rParallel;
+            float rPerpLen = glm::length(rPerp);
+
+            // 3. Pinch & Magnify
+            float radialFactor = (-pinch + magnify) * (stepLen * invRadius) * fallOff;
+            disp += rPerp * radialFactor;
+
+            // 4. Twist around step direction
+            if (std::abs(twist) > 1e-4f && rPerpLen > 1e-7f) {
+                float angle = twist * 3.14159265f * (stepLen * invRadius) * fallOff;
+                // Rodrigues' rotation of rPerp around stepDir
+                glm::vec3 crossDir = glm::cross(stepDir, rPerp);
+                glm::vec3 rRot = rPerp * std::cos(angle) + crossDir * std::sin(angle);
+                disp += (rRot - rPerp);
+            }
+
+            verts[ind]     += disp.x;
+            verts[ind + 1] += disp.y;
+            verts[ind + 2] += disp.z;
+        }
+    }
+
     return nbIVerts;
 }
 

@@ -160,6 +160,19 @@ int strokeElastic(
     bool useAccuCurve, const float* accuCurveLut
 );
 
+int strokeSnakeHook(
+    float* verts,
+    const float* materials,
+    uint32_t* iVerts, int nbIVerts,
+    float startX, float startY, float startZ,
+    float endX, float endY, float endZ,
+    float radius, float intensity,
+    float pinch, float magnify, float twist,
+    float focalShift, bool focalShiftFalloff,
+    bool negative,
+    bool useAccuCurve, const float* accuCurveLut
+);
+
 int strokeMask(
     float* verts,
     float* materials,

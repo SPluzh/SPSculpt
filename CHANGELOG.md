@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.4]
+- **SnakeHook Brush**: Pull horns, tentacles, and curved hooks smoothly out of meshes into 3D space.
+- **Shape Controls**: Built-in Pinch (tapering), Magnify (volume preservation), Twist, and mesh relaxation.
+- **Workflow Integration**: Seamless dragging into empty space with full support for symmetry, masks, and layers.
+
 ## [0.3.3]
 - **Pose Tool**: Pose and bend character limbs using a 3D gizmo or classic Action Line.
 - **Natural Deformations**: Smooth joint bending with limb isolation and mask support.
