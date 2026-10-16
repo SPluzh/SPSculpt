@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vector>
+#include <cstdint>
 #include "manifold.h"
 #include "mesh/Mesh.h"
 
@@ -28,6 +30,16 @@ public:
         uint32_t origIdA,
         const Mesh& meshB,
         uint32_t origIdB,
+        bool runPostInit = true
+    );
+
+    // Converts a manifold::Manifold back into an SPSculpt Mesh after a Boolean operation with multiple source meshes,
+    // preserving 100% of the original quad topology on uncut regions of all source meshes.
+    static void toMeshBooleanMultiple(
+        const manifold::Manifold& m,
+        Mesh& outMesh,
+        const std::vector<const Mesh*>& sourceMeshes,
+        const std::vector<uint32_t>& origIds,
         bool runPostInit = true
     );
 

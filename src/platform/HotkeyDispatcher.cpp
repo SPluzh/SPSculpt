@@ -418,10 +418,12 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
             case HKAction::Undo:
                 sculpt_log_lvl(LogLevel::Info, "[Hotkey] Undo action triggered by key shortcut\n");
                 scene.undo();
+                gui.thumbInvalidateAll();
                 break;
             case HKAction::Redo:
                 sculpt_log_lvl(LogLevel::Info, "[Hotkey] Redo action triggered by key shortcut\n");
                 scene.redo();
+                gui.thumbInvalidateAll();
                 break;
             
             case HKAction::OpenFile: gui.openScene(scene, &sculpt); break;

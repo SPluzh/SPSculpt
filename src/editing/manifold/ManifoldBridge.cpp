@@ -4,6 +4,7 @@
 #include <chrono>
 #include <numeric>
 #include <map>
+#include <unordered_map>
 
 namespace sculpt {
 
@@ -459,25 +460,50 @@ void ManifoldBridge::toMesh(
                ms, outMesh.nbVerts, outMesh.nbFaces);
 }
 
-void ManifoldBridge::toMeshBoolean(
+void ManifoldBridge::toMeshBooleanMultiple(
     const manifold::Manifold& m,
     Mesh& outMesh,
-    const Mesh& meshA,
-    uint32_t origIdA,
-    const Mesh& meshB,
-    uint32_t origIdB,
+    const std::vector<const Mesh*>& sourceMeshes,
+    const std::vector<uint32_t>& origIds,
     bool runPostInit
 ) {
     auto tStart = std::chrono::high_resolution_clock::now();
+    const size_t numSrc = sourceMeshes.size();
+    if (numSrc == 0) return;
 
-    // Make local copies of source metadata in case &outMesh == &meshA
-    const int nbFacesA = meshA.nbFaces;
-    const std::vector<uint32_t> facesA = meshA.faces;
-    const std::vector<uint32_t> faceGroupsA = meshA.faceGroups;
+    // 1. Copy source face and faceGroup metadata in case &outMesh == sourceMeshes[i]
+    struct SourceData {
+        int nbFaces = 0;
+        std::vector<uint32_t> faces;
+        std::vector<uint32_t> faceGroups;
+        uint32_t origId = 0;
+        uint32_t offset = 0;
+    };
+    std::vector<SourceData> srcData(numSrc);
+    std::unordered_map<uint32_t, size_t> origIdToIdx;
 
-    const int nbFacesB = meshB.nbFaces;
-    const std::vector<uint32_t> facesB = meshB.faces;
-    const std::vector<uint32_t> faceGroupsB = meshB.faceGroups;
+    uint32_t currentOffset = 0;
+    for (size_t i = 0; i < numSrc; ++i) {
+        const Mesh* sm = sourceMeshes[i];
+        srcData[i].nbFaces = sm ? sm->nbFaces : 0;
+        if (sm) {
+            srcData[i].faces = sm->faces;
+            srcData[i].faceGroups = sm->faceGroups;
+        }
+        uint32_t oid = (i < origIds.size()) ? origIds[i] : 0;
+        srcData[i].origId = oid;
+        srcData[i].offset = currentOffset;
+        if (oid != 0) {
+            origIdToIdx[oid] = i;
+        }
+
+        uint32_t maxG = 0;
+        for (uint32_t g : srcData[i].faceGroups) {
+            if (g > maxG) maxG = g;
+        }
+        currentOffset += maxG + 1;
+    }
+    uint32_t seamGid = currentOffset + 1;
 
     manifold::MeshGL gl = m.GetMeshGL();
     gl.Merge();
@@ -606,22 +632,11 @@ void ManifoldBridge::toMeshBoolean(
         }
     }
 
-    // PolyGroup ID ranges: Mesh A keeps its PolyGroups, Mesh B PolyGroups are offset
-    uint32_t maxGidA = 0;
-    for (uint32_t g : faceGroupsA) {
-        if (g > maxGidA) maxGidA = g;
+    // Group triangles by source mesh and source face
+    std::vector<std::vector<std::vector<int>>> trisForFace(numSrc);
+    for (size_t i = 0; i < numSrc; ++i) {
+        trisForFace[i].resize(srcData[i].nbFaces);
     }
-    uint32_t offsetB = maxGidA + 1;
-
-    uint32_t maxGidB = 0;
-    for (uint32_t g : faceGroupsB) {
-        if (g > maxGidB) maxGidB = g;
-    }
-    uint32_t seamGid = offsetB + maxGidB + 1;
-
-    // Group triangles by source face
-    std::vector<std::vector<int>> trisForFaceA(nbFacesA);
-    std::vector<std::vector<int>> trisForFaceB(nbFacesB);
 
     for (int t = 0; t < numT; ++t) {
         uint32_t i0 = compactIndex[gl.triVerts[t * 3 + 0]];
@@ -632,10 +647,12 @@ void ManifoldBridge::toMeshBoolean(
         uint32_t orig = triOrigID[t];
         uint32_t fid = (t < (int)gl.faceID.size()) ? gl.faceID[t] : (uint32_t)-1;
 
-        if (orig == origIdA && fid < (uint32_t)nbFacesA) {
-            trisForFaceA[fid].push_back(t);
-        } else if (orig == origIdB && fid < (uint32_t)nbFacesB) {
-            trisForFaceB[fid].push_back(t);
+        auto it = origIdToIdx.find(orig);
+        if (it != origIdToIdx.end()) {
+            size_t sIdx = it->second;
+            if (fid < (uint32_t)srcData[sIdx].nbFaces) {
+                trisForFace[sIdx][fid].push_back(t);
+            }
         }
     }
 
@@ -702,48 +719,31 @@ void ManifoldBridge::toMeshBoolean(
         return false;
     };
 
-    // 1. Restore untouched faces from Mesh A
-    for (int f = 0; f < nbFacesA; ++f) {
-        uint32_t gid = (!faceGroupsA.empty() && f < (int)faceGroupsA.size()) ? faceGroupsA[f] : 1;
-        bool wasQuad = (facesA[f * 4 + 3] != TRI_INDEX);
-        const auto& tList = trisForFaceA[f];
+    // Restore untouched faces for all source meshes
+    for (size_t sIdx = 0; sIdx < numSrc; ++sIdx) {
+        const auto& src = srcData[sIdx];
+        for (int f = 0; f < src.nbFaces; ++f) {
+            uint32_t origGid = (!src.faceGroups.empty() && f < (int)src.faceGroups.size()) ? src.faceGroups[f] : 1;
+            uint32_t gid = origGid + src.offset;
+            bool wasQuad = (src.faces[f * 4 + 3] != TRI_INDEX);
+            const auto& tList = trisForFace[sIdx][f];
 
-        if (wasQuad && tList.size() == 2) {
-            tryRestoreQuad(tList[0], tList[1], gid);
-        } else if (!wasQuad && tList.size() == 1) {
-            int t = tList[0];
-            outFaces.push_back((uint32_t)compactIndex[gl.triVerts[t * 3 + 0]]);
-            outFaces.push_back((uint32_t)compactIndex[gl.triVerts[t * 3 + 1]]);
-            outFaces.push_back((uint32_t)compactIndex[gl.triVerts[t * 3 + 2]]);
-            outFaces.push_back(TRI_INDEX);
-            outFaceGroups.push_back(gid);
-            triUsed[t] = true;
-            numRestoredTris++;
+            if (wasQuad && tList.size() == 2) {
+                tryRestoreQuad(tList[0], tList[1], gid);
+            } else if (!wasQuad && tList.size() == 1) {
+                int t = tList[0];
+                outFaces.push_back((uint32_t)compactIndex[gl.triVerts[t * 3 + 0]]);
+                outFaces.push_back((uint32_t)compactIndex[gl.triVerts[t * 3 + 1]]);
+                outFaces.push_back((uint32_t)compactIndex[gl.triVerts[t * 3 + 2]]);
+                outFaces.push_back(TRI_INDEX);
+                outFaceGroups.push_back(gid);
+                triUsed[t] = true;
+                numRestoredTris++;
+            }
         }
     }
 
-    // 2. Restore untouched faces from Mesh B
-    for (int f = 0; f < nbFacesB; ++f) {
-        uint32_t origGid = (!faceGroupsB.empty() && f < (int)faceGroupsB.size()) ? faceGroupsB[f] : 1;
-        uint32_t gid = origGid + offsetB;
-        bool wasQuad = (facesB[f * 4 + 3] != TRI_INDEX);
-        const auto& tList = trisForFaceB[f];
-
-        if (wasQuad && tList.size() == 2) {
-            tryRestoreQuad(tList[0], tList[1], gid);
-        } else if (!wasQuad && tList.size() == 1) {
-            int t = tList[0];
-            outFaces.push_back((uint32_t)compactIndex[gl.triVerts[t * 3 + 0]]);
-            outFaces.push_back((uint32_t)compactIndex[gl.triVerts[t * 3 + 1]]);
-            outFaces.push_back((uint32_t)compactIndex[gl.triVerts[t * 3 + 2]]);
-            outFaces.push_back(TRI_INDEX);
-            outFaceGroups.push_back(gid);
-            triUsed[t] = true;
-            numRestoredTris++;
-        }
-    }
-
-    // 3. Process remaining cut/seam triangles
+    // Process remaining cut/seam triangles
     struct SeamTri {
         uint32_t i0, i1, i2;
         uint32_t gid;
@@ -762,10 +762,13 @@ void ManifoldBridge::toMeshBoolean(
         uint32_t orig = triOrigID[t];
         uint32_t fid = (t < (int)gl.faceID.size()) ? gl.faceID[t] : (uint32_t)-1;
         uint32_t gid = seamGid;
-        if (orig == origIdA && fid < (uint32_t)nbFacesA && !faceGroupsA.empty()) {
-            gid = faceGroupsA[fid];
-        } else if (orig == origIdB && fid < (uint32_t)nbFacesB && !faceGroupsB.empty()) {
-            gid = faceGroupsB[fid] + offsetB;
+
+        auto it = origIdToIdx.find(orig);
+        if (it != origIdToIdx.end()) {
+            size_t sIdx = it->second;
+            if (fid < (uint32_t)srcData[sIdx].nbFaces && !srcData[sIdx].faceGroups.empty()) {
+                gid = srcData[sIdx].faceGroups[fid] + srcData[sIdx].offset;
+            }
         }
 
         glm::vec3 p0(outMesh.verts[i0 * 3], outMesh.verts[i0 * 3 + 1], outMesh.verts[i0 * 3 + 2]);
@@ -904,8 +907,8 @@ void ManifoldBridge::toMeshBoolean(
     outMesh.faces = std::move(outFaces);
     outMesh.faceGroups = std::move(outFaceGroups);
 
-    sculpt_log("[MANIFOLD BRIDGE] Boolean Topology: Restored %d original quads, %d original tris | Seam: %d quads, %d tris (Total: %d faces, %d verts)\n",
-               numRestoredQuads, numRestoredTris, numSeamQuads, numSeamTris, outMesh.nbFaces, outMesh.nbVerts);
+    sculpt_log("[MANIFOLD BRIDGE] Boolean Topology (%zu meshes): Restored %d original quads, %d original tris | Seam: %d quads, %d tris (Total: %d faces, %d verts)\n",
+               numSrc, numRestoredQuads, numRestoredTris, numSeamQuads, numSeamTris, outMesh.nbFaces, outMesh.nbVerts);
 
     outMesh.vrfStartCount.clear();
     outMesh.vertRingFace.clear();
@@ -930,8 +933,20 @@ void ManifoldBridge::toMeshBoolean(
 
     auto tEnd = std::chrono::high_resolution_clock::now();
     double ms = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
-    sculpt_log("[MANIFOLD BRIDGE] Converted Boolean Manifold -> Mesh in %.2f ms (%d verts, %d faces)\n",
-               ms, outMesh.nbVerts, outMesh.nbFaces);
+    sculpt_log("[MANIFOLD BRIDGE] Converted Boolean Manifold (%zu meshes) -> Mesh in %.2f ms (%d verts, %d faces)\n",
+               numSrc, ms, outMesh.nbVerts, outMesh.nbFaces);
+}
+
+void ManifoldBridge::toMeshBoolean(
+    const manifold::Manifold& m,
+    Mesh& outMesh,
+    const Mesh& meshA,
+    uint32_t origIdA,
+    const Mesh& meshB,
+    uint32_t origIdB,
+    bool runPostInit
+) {
+    toMeshBooleanMultiple(m, outMesh, {&meshA, &meshB}, {origIdA, origIdB}, runPostInit);
 }
 
 bool ManifoldBridge::verifyRoundTrip(const Mesh& originalMesh) {

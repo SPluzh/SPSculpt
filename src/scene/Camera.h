@@ -97,6 +97,8 @@ public:
     void resetViewToMeshes(const std::vector<Mesh*>& meshes, bool animate = true);
     void resetViewToMesh(const Mesh* mesh, bool animate = true);
     void resetViewToMesh(const float* bbox, bool animate = true);
+    void resetViewToMeshesTight(const std::vector<Mesh*>& meshes, float fillFactor = 0.92f);
+    void resetViewToMeshTight(const Mesh* mesh, float fillFactor = 0.92f);
     void resetViewToWorldPoints(const std::vector<glm::vec3>& worldPoints, bool animate = true);
     float computeFrustumFit() const;
     void snapClosestRotation(bool animate = true);

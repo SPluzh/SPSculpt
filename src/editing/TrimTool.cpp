@@ -167,6 +167,7 @@ bool TrimTool::execute(
                  inFaces, mesh->nbFaces, totalMs, newCapGid);
     }
     GuiManager::showToast(toastBuf, 3.0f);
+    GuiManager::invalidateThumbnail(mesh->getID());
 
     return true;
 }

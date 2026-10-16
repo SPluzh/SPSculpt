@@ -841,7 +841,7 @@ void GuiManager::thumbRender(MeshThumbnail& t, Mesh* mesh, AngleRenderer& render
     Camera thumbCam;
     thumbCam.onResize(THUMB_SIZE, THUMB_SIZE);
     thumbCam.setOrbitAngles(glm::radians(25.0f), glm::radians(45.0f));
-    thumbCam.resetViewToMesh(mesh, false);
+    thumbCam.resetViewToMeshTight(mesh, 0.92f);
     thumbCam.updateView();
     thumbCam.updateProjection();
 
@@ -858,11 +858,22 @@ void GuiManager::thumbRender(MeshThumbnail& t, Mesh* mesh, AngleRenderer& render
     t.dirty = false;
 }
 
+static std::vector<uint32_t> s_pendingThumbInvalidations;
+static bool s_pendingThumbInvalidateAll = false;
+static std::mutex s_thumbMutex;
+
+void GuiManager::invalidateThumbnail(uint32_t meshId) {
+    std::lock_guard<std::mutex> lock(s_thumbMutex);
+    s_pendingThumbInvalidations.push_back(meshId);
+}
+
+void GuiManager::invalidateAllThumbnails() {
+    std::lock_guard<std::mutex> lock(s_thumbMutex);
+    s_pendingThumbInvalidateAll = true;
+}
+
 void GuiManager::thumbInvalidate(uint32_t meshId) {
-    auto it = m_thumbCache.find(meshId);
-    if (it != m_thumbCache.end()) {
-        it->second.dirty = true;
-    }
+    m_thumbCache[meshId].dirty = true;
 }
 
 void GuiManager::thumbInvalidateAll() {
@@ -954,9 +965,9 @@ void GuiManager::renderBookmarkPreview(int bmIdx, const Scene& scene, AngleRende
         }
     }
     if (!visMeshes.empty()) {
-        previewCam.resetViewToMeshes(visMeshes, false);
+        previewCam.resetViewToMeshesTight(visMeshes, 0.92f);
     } else if (!scene.getMeshes().empty()) {
-        previewCam.resetViewToMeshes(scene.getMeshes(), false);
+        previewCam.resetViewToMeshesTight(scene.getMeshes(), 0.92f);
     }
 
     previewCam.updateView();
@@ -1031,15 +1042,31 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     }
     s_wasSculpting = nowSculpting;
 
+    {
+        std::lock_guard<std::mutex> lock(s_thumbMutex);
+        if (s_pendingThumbInvalidateAll) {
+            thumbInvalidateAll();
+            s_pendingThumbInvalidateAll = false;
+            s_pendingThumbInvalidations.clear();
+        } else if (!s_pendingThumbInvalidations.empty()) {
+            for (uint32_t id : s_pendingThumbInvalidations) {
+                thumbInvalidate(id);
+            }
+            s_pendingThumbInvalidations.clear();
+        }
+    }
+
     if (m_showScenePanel && !nowSculpting) {
         thumbCleanup(scene);
 
+        int renderedCount = 0;
         for (auto* mesh : scene.getMeshes()) {
             uint32_t id = mesh->getID();
             auto& thumb = m_thumbCache[id];
             if (thumb.dirty) {
                 thumbRender(thumb, mesh, renderer);
-                break;
+                renderedCount++;
+                if (renderedCount >= 3) break;
             }
         }
     }
@@ -2530,7 +2557,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
             // --- Scrollable Cards Container ---
             const float cardW = ImGui::GetContentRegionAvail().x;
-            const float previewSz = 72.0f * scale;
+            const float previewSz = 78.0f * scale;
             const float cardH = previewSz + 12.0f * scale;
             const float thumbSz = previewSz;
 
@@ -2722,12 +2749,15 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                     if (ImGui::BeginMenu(otherName.c_str())) {
                                         if (ImGui::MenuItem("Union (A + B)")) {
                                             sculpt::BooleanTool::execute(scene, mesh, otherMesh, sculpt::BooleanOp::Union);
+                                            thumbInvalidate(mesh->getID());
                                         }
                                         if (ImGui::MenuItem("Difference (A - B)")) {
                                             sculpt::BooleanTool::execute(scene, mesh, otherMesh, sculpt::BooleanOp::Difference);
+                                            thumbInvalidate(mesh->getID());
                                         }
                                         if (ImGui::MenuItem("Intersection (A ^ B)")) {
                                             sculpt::BooleanTool::execute(scene, mesh, otherMesh, sculpt::BooleanOp::Intersection);
+                                            thumbInvalidate(mesh->getID());
                                         }
                                         ImGui::EndMenu();
                                     }
@@ -3398,31 +3428,225 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGui::EndChild(); // MeshListCards;
 
         // Selection Actions
-        bool canMerge = scene.getSelectedMeshes().size() >= 2;
-        bool hasSelection = !scene.getSelectedMeshes().empty();
+        const auto& selectedMeshes = scene.getSelectedMeshes();
+        bool canMerge = selectedMeshes.size() >= 2;
+        bool canBoolean = selectedMeshes.size() >= 2;
+        bool hasSelection = !selectedMeshes.empty();
 
-        if (ImGui::Button("Duplicate", ImVec2(80, 0))) {
-            scene.duplicateSelection();
-        }
-        ImGui::SameLine();
-        if (!canMerge) ImGui::BeginDisabled();
-        if (ImGui::Button("Merge", ImVec2(60, 0))) {
-            scene.mergeSelection();
-        }
-        if (!canMerge) ImGui::EndDisabled();
-        ImGui::SameLine();
-        if (!hasSelection) ImGui::BeginDisabled();
-        if (ImGui::Button("Delete", ImVec2(60, 0))) {
-            std::vector<Mesh*> toDel = scene.getSelectedMeshes();
-            for (Mesh* m : toDel) {
-                scene.removeMesh(m);
+        float availBottomW = ImGui::GetContentRegionAvail().x;
+        float bottomSpacing = ImGui::GetStyle().ItemSpacing.x;
+        float bDupW = 62.0f * scale;
+        float bMrgW = 46.0f * scale;
+        float bBoolW = 76.0f * scale;
+        float bDelW = 48.0f * scale;
+        float totalRowNeeded = bDupW + bMrgW + bBoolW + bDelW + 58.0f * scale + bottomSpacing * 4.0f;
+
+        if (availBottomW >= totalRowNeeded) {
+            // Fits all 5 buttons on one row
+            if (ImGui::Button("Duplicate", ImVec2(bDupW, 0))) {
+                scene.duplicateSelection();
+            }
+            ImGui::SameLine();
+
+            if (!canMerge) ImGui::BeginDisabled();
+            if (ImGui::Button("Merge", ImVec2(bMrgW, 0))) {
+                scene.mergeSelection();
+            }
+            if (!canMerge) ImGui::EndDisabled();
+            ImGui::SameLine();
+
+            if (!canBoolean) ImGui::BeginDisabled();
+            if (canBoolean) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.08f, 0.45f, 0.40f, 0.85f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.12f, 0.60f, 0.52f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.70f, 0.60f, 1.0f));
+            }
+            if (ImGui::Button("Boolean " ICON_LC_CHEVRON_DOWN, ImVec2(bBoolW, 0))) {
+                ImGui::OpenPopup("OutlinerBooleanMenu");
+            }
+            if (canBoolean) {
+                ImGui::PopStyleColor(3);
+            }
+            if (!canBoolean) ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                if (canBoolean) {
+                    ImGui::SetTooltip("Boolean CSG: Union, Difference, or Intersection on %d selected meshes", (int)selectedMeshes.size());
+                } else {
+                    ImGui::SetTooltip("Boolean CSG: Select 2 or more meshes to perform operations");
+                }
+            }
+            ImGui::SameLine();
+
+            if (!hasSelection) ImGui::BeginDisabled();
+            if (ImGui::Button("Delete", ImVec2(bDelW, 0))) {
+                std::vector<Mesh*> toDel = scene.getSelectedMeshes();
+                for (Mesh* m : toDel) {
+                    scene.removeMesh(m);
+                }
+            }
+            if (!hasSelection) ImGui::EndDisabled();
+            ImGui::SameLine();
+
+            if (ImGui::Button("Clear All", ImVec2(-1, 0))) {
+                scene.clearScene();
+                sculpt.clearMeasurements();
+            }
+        } else {
+            // Responsive 2-row layout when Outliner is narrower
+            float r1BtnW = (availBottomW - bottomSpacing * 2.0f) / 3.0f;
+            if (ImGui::Button("Duplicate", ImVec2(r1BtnW, 0))) {
+                scene.duplicateSelection();
+            }
+            ImGui::SameLine();
+
+            if (!canMerge) ImGui::BeginDisabled();
+            if (ImGui::Button("Merge", ImVec2(r1BtnW, 0))) {
+                scene.mergeSelection();
+            }
+            if (!canMerge) ImGui::EndDisabled();
+            ImGui::SameLine();
+
+            if (!canBoolean) ImGui::BeginDisabled();
+            if (canBoolean) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.08f, 0.45f, 0.40f, 0.85f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.12f, 0.60f, 0.52f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.70f, 0.60f, 1.0f));
+            }
+            if (ImGui::Button("Boolean " ICON_LC_CHEVRON_DOWN, ImVec2(-1, 0))) {
+                ImGui::OpenPopup("OutlinerBooleanMenu");
+            }
+            if (canBoolean) {
+                ImGui::PopStyleColor(3);
+            }
+            if (!canBoolean) ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                if (canBoolean) {
+                    ImGui::SetTooltip("Boolean CSG: Union, Difference, or Intersection on %d selected meshes", (int)selectedMeshes.size());
+                } else {
+                    ImGui::SetTooltip("Boolean CSG: Select 2 or more meshes to perform operations");
+                }
+            }
+
+            // Row 2
+            float r2BtnW = (availBottomW - bottomSpacing) * 0.45f;
+            if (!hasSelection) ImGui::BeginDisabled();
+            if (ImGui::Button("Delete", ImVec2(r2BtnW, 0))) {
+                std::vector<Mesh*> toDel = scene.getSelectedMeshes();
+                for (Mesh* m : toDel) {
+                    scene.removeMesh(m);
+                }
+            }
+            if (!hasSelection) ImGui::EndDisabled();
+            ImGui::SameLine();
+
+            if (ImGui::Button("Clear All", ImVec2(-1, 0))) {
+                scene.clearScene();
+                sculpt.clearMeasurements();
             }
         }
-        if (!hasSelection) ImGui::EndDisabled();
-        ImGui::SameLine();
-        if (ImGui::Button("Clear All", ImVec2(-1, 0))) {
-            scene.clearScene();
-            sculpt.clearMeasurements();
+
+        // Boolean Dropdown Popup Menu
+        if (ImGui::BeginPopup("OutlinerBooleanMenu")) {
+            const auto& sel = scene.getSelectedMeshes();
+            if (sel.size() < 2) {
+                ImGui::TextDisabled("Select 2 or more meshes");
+                ImGui::EndPopup();
+            } else {
+                Mesh* activeMesh = scene.getSelected();
+                if (!activeMesh || std::find(sel.begin(), sel.end(), activeMesh) == sel.end()) {
+                    activeMesh = sel[0];
+                }
+
+                std::string activeName = activeMesh->outlinerName.empty() ? ("Mesh " + std::to_string(activeMesh->getID())) : activeMesh->outlinerName;
+
+                ImGui::TextColored(ImVec4(0.2f, 0.95f, 0.85f, 1.0f), ICON_LC_PUZZLE " Boolean Operations (CSG)");
+                ImGui::TextDisabled("Base (Active): %s  (%d selected)", activeName.c_str(), (int)sel.size());
+                ImGui::Separator();
+
+                if (sel.size() == 2) {
+                    Mesh* otherMesh = (sel[0] == activeMesh) ? sel[1] : sel[0];
+                    std::string otherName = otherMesh->outlinerName.empty() ? ("Mesh " + std::to_string(otherMesh->getID())) : otherMesh->outlinerName;
+
+                    // Union
+                    std::string unionLabel = ICON_LC_PLUS " Union (" + activeName + " + " + otherName + ")";
+                    if (ImGui::MenuItem(unionLabel.c_str())) {
+                        sculpt::BooleanTool::executeMultiple(scene, activeMesh, {otherMesh}, sculpt::BooleanOp::Union);
+                        thumbInvalidate(activeMesh->getID());
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Combine both meshes into a single continuous solid");
+
+                    // Difference (A - B)
+                    std::string diffLabelA = ICON_LC_MINUS " Difference (" + activeName + " - " + otherName + ")";
+                    if (ImGui::MenuItem(diffLabelA.c_str())) {
+                        sculpt::BooleanTool::executeMultiple(scene, activeMesh, {otherMesh}, sculpt::BooleanOp::Difference);
+                        thumbInvalidate(activeMesh->getID());
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Subtract '%s' from '%s'", otherName.c_str(), activeName.c_str());
+
+                    // Difference (B - A)
+                    std::string diffLabelB = ICON_LC_MINUS " Difference (" + otherName + " - " + activeName + ")";
+                    if (ImGui::MenuItem(diffLabelB.c_str())) {
+                        sculpt::BooleanTool::executeMultiple(scene, otherMesh, {activeMesh}, sculpt::BooleanOp::Difference);
+                        thumbInvalidate(otherMesh->getID());
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Subtract '%s' from '%s'", activeName.c_str(), otherName.c_str());
+
+                    // Intersection
+                    std::string interLabel = ICON_LC_SQUARES_INTERSECT " Intersection (" + activeName + " ^ " + otherName + ")";
+                    if (ImGui::MenuItem(interLabel.c_str())) {
+                        sculpt::BooleanTool::executeMultiple(scene, activeMesh, {otherMesh}, sculpt::BooleanOp::Intersection);
+                        thumbInvalidate(activeMesh->getID());
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep only the overlapping intersection volume");
+                } else {
+                    // >= 3 meshes selected
+                    std::vector<Mesh*> otherMeshes;
+                    for (Mesh* m : sel) {
+                        if (m != activeMesh) otherMeshes.push_back(m);
+                    }
+
+                    // Union
+                    if (ImGui::MenuItem(ICON_LC_PLUS " Union (All Selected)")) {
+                        sculpt::BooleanTool::executeMultiple(scene, activeMesh, otherMeshes, sculpt::BooleanOp::Union);
+                        thumbInvalidate(activeMesh->getID());
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Combine all %d selected meshes into one single mesh", (int)sel.size());
+
+                    // Difference (Active - Others)
+                    std::string diffLabel = ICON_LC_MINUS " Difference (" + activeName + " - Others)";
+                    if (ImGui::MenuItem(diffLabel.c_str())) {
+                        sculpt::BooleanTool::executeMultiple(scene, activeMesh, otherMeshes, sculpt::BooleanOp::Difference);
+                        thumbInvalidate(activeMesh->getID());
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Subtract all other %zu meshes from active base '%s'", otherMeshes.size(), activeName.c_str());
+
+                    // Difference from specific base mesh submenu
+                    if (ImGui::BeginMenu(ICON_LC_MINUS " Difference from...")) {
+                        for (Mesh* baseCandidate : sel) {
+                            std::string candName = baseCandidate->outlinerName.empty() ? ("Mesh " + std::to_string(baseCandidate->getID())) : baseCandidate->outlinerName;
+                            if (baseCandidate == activeMesh) candName += " (Active)";
+                            if (ImGui::MenuItem(candName.c_str())) {
+                                std::vector<Mesh*> rest;
+                                for (Mesh* m : sel) {
+                                    if (m != baseCandidate) rest.push_back(m);
+                                }
+                                sculpt::BooleanTool::executeMultiple(scene, baseCandidate, rest, sculpt::BooleanOp::Difference);
+                                thumbInvalidate(baseCandidate->getID());
+                            }
+                        }
+                        ImGui::EndMenu();
+                    }
+
+                    // Intersection
+                    if (ImGui::MenuItem(ICON_LC_SQUARES_INTERSECT " Intersection (All Selected)")) {
+                        sculpt::BooleanTool::executeMultiple(scene, activeMesh, otherMeshes, sculpt::BooleanOp::Intersection);
+                        thumbInvalidate(activeMesh->getID());
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep only the volume common to all %d selected meshes", (int)sel.size());
+                }
+
+                ImGui::EndPopup();
+            }
         }
 
         ImGui::End();
@@ -10903,7 +11127,7 @@ void GuiManager::drawCameraBookmarksPanel(Scene& scene, AngleRenderer& renderer)
     ImGui::Spacing();
 
     const float cardW = ImGui::GetContentRegionAvail().x;
-    const float previewSz = 72.0f * scale;
+    const float previewSz = 78.0f * scale;
 
     for (int i = 0; i < (int)bookmarks.size(); i++) {
         auto& bm = bookmarks[i];

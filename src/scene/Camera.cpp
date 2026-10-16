@@ -511,6 +511,153 @@ void Camera::resetViewToMesh(const float* bbox, bool animate) {
     resetViewToWorldPoints(worldPoints, animate);
 }
 
+void Camera::resetViewToMeshesTight(const std::vector<Mesh*>& meshes, float fillFactor) {
+    if (meshes.empty()) return;
+
+    fillFactor = std::clamp(fillFactor, 0.5f, 0.98f);
+
+    glm::quat rot = m_quatRot;
+    glm::mat4 rotMat = glm::mat4_cast(rot);
+
+    // Pass 1: Find visual center in camera-rotated space across all meshes
+    glm::vec3 camMin(1e9f), camMax(-1e9f);
+    bool hasVerts = false;
+
+    for (const Mesh* mesh : meshes) {
+        if (!mesh || mesh->nbVerts == 0 || mesh->verts.empty()) continue;
+        hasVerts = true;
+        glm::mat4 fullTransform = mesh->matrix * mesh->editMatrix;
+        glm::mat4 M = rotMat * fullTransform;
+
+        int totalVerts = mesh->nbVerts;
+        int step = std::max(1, totalVerts / 50000);
+        const float* vData = mesh->verts.data();
+
+        for (int i = 0; i < totalVerts; i += step) {
+            glm::vec4 localPos(vData[i * 3], vData[i * 3 + 1], vData[i * 3 + 2], 1.0f);
+            glm::vec3 pCam = glm::vec3(M * localPos);
+            camMin = glm::min(camMin, pCam);
+            camMax = glm::max(camMax, pCam);
+        }
+        if ((totalVerts - 1) % step != 0) {
+            int i = totalVerts - 1;
+            glm::vec4 localPos(vData[i * 3], vData[i * 3 + 1], vData[i * 3 + 2], 1.0f);
+            glm::vec3 pCam = glm::vec3(M * localPos);
+            camMin = glm::min(camMin, pCam);
+            camMax = glm::max(camMax, pCam);
+        }
+    }
+
+    if (!hasVerts) {
+        resetViewToMeshes(meshes, false);
+        return;
+    }
+
+    glm::vec3 camCenter = (camMin + camMax) * 0.5f;
+    glm::vec3 adjustedCenterWorld = glm::inverse(rot) * camCenter;
+
+    float w = m_width > 0 ? static_cast<float>(m_width) : 1.0f;
+    float h = m_height > 0 ? static_cast<float>(m_height) : 1.0f;
+
+    float targetTransZ = 30.0f;
+
+    if (m_projectionType == CameraEnums::Projection::PERSPECTIVE) {
+        float fovY_deg = getFovDegrees();
+        float theta_y = (fovY_deg * 0.5f) * (float)M_PI / 180.0f;
+        float tan_y = std::tan(theta_y);
+        float aspect = w / h;
+        float tan_x = aspect * tan_y;
+
+        float maxReqD = 0.001f;
+        for (const Mesh* mesh : meshes) {
+            if (!mesh || mesh->nbVerts == 0 || mesh->verts.empty()) continue;
+            glm::mat4 fullTransform = mesh->matrix * mesh->editMatrix;
+            glm::mat4 M = rotMat * fullTransform;
+
+            int totalVerts = mesh->nbVerts;
+            int step = std::max(1, totalVerts / 50000);
+            const float* vData = mesh->verts.data();
+
+            for (int i = 0; i < totalVerts; i += step) {
+                glm::vec4 localPos(vData[i * 3], vData[i * 3 + 1], vData[i * 3 + 2], 1.0f);
+                glm::vec3 pView = glm::vec3(M * localPos) - camCenter;
+                float reqD_y = std::abs(pView.y) / (fillFactor * tan_y) + pView.z;
+                float reqD_x = std::abs(pView.x) / (fillFactor * tan_x) + pView.z;
+                maxReqD = std::max({maxReqD, reqD_y, reqD_x});
+            }
+            if ((totalVerts - 1) % step != 0) {
+                int i = totalVerts - 1;
+                glm::vec4 localPos(vData[i * 3], vData[i * 3 + 1], vData[i * 3 + 2], 1.0f);
+                glm::vec3 pView = glm::vec3(M * localPos) - camCenter;
+                float reqD_y = std::abs(pView.y) / (fillFactor * tan_y) + pView.z;
+                float reqD_x = std::abs(pView.x) / (fillFactor * tan_x) + pView.z;
+                maxReqD = std::max({maxReqD, reqD_y, reqD_x});
+            }
+        }
+
+        float diag = glm::distance(camMin, camMax);
+        float minEyeDist = (diag > 1e-4f) ? 0.001f : 1.0f;
+        float eyeDist = std::max(minEyeDist, maxReqD);
+        targetTransZ = eyeDist * (fovY_deg / 45.0f);
+    } else {
+        // Orthographic projection
+        float maxReqTransZ = 0.001f;
+        for (const Mesh* mesh : meshes) {
+            if (!mesh || mesh->nbVerts == 0 || mesh->verts.empty()) continue;
+            glm::mat4 fullTransform = mesh->matrix * mesh->editMatrix;
+            glm::mat4 M = rotMat * fullTransform;
+
+            int totalVerts = mesh->nbVerts;
+            int step = std::max(1, totalVerts / 50000);
+            const float* vData = mesh->verts.data();
+
+            for (int i = 0; i < totalVerts; i += step) {
+                glm::vec4 localPos(vData[i * 3], vData[i * 3 + 1], vData[i * 3 + 2], 1.0f);
+                glm::vec3 pView = glm::vec3(M * localPos) - camCenter;
+                float reqZ_x = std::abs(pView.x) / (fillFactor * w * 0.00055f);
+                float reqZ_y = std::abs(pView.y) / (fillFactor * h * 0.00055f);
+                maxReqTransZ = std::max({maxReqTransZ, reqZ_x, reqZ_y});
+            }
+            if ((totalVerts - 1) % step != 0) {
+                int i = totalVerts - 1;
+                glm::vec4 localPos(vData[i * 3], vData[i * 3 + 1], vData[i * 3 + 2], 1.0f);
+                glm::vec3 pView = glm::vec3(M * localPos) - camCenter;
+                float reqZ_x = std::abs(pView.x) / (fillFactor * w * 0.00055f);
+                float reqZ_y = std::abs(pView.y) / (fillFactor * h * 0.00055f);
+                maxReqTransZ = std::max({maxReqTransZ, reqZ_x, reqZ_y});
+            }
+        }
+        targetTransZ = std::max(0.001f, maxReqTransZ);
+    }
+
+    CameraState targetState;
+    targetState.center = adjustedCenterWorld;
+    targetState.offset = glm::vec3(0.0f);
+    targetState.trans = glm::vec3(0.0f, 0.0f, targetTransZ);
+    targetState.quatRot = m_quatRot;
+    targetState.rotX = m_rotX;
+    targetState.rotY = m_rotY;
+    targetState.fov = m_fov;
+    targetState.projectionType = m_projectionType;
+    targetState.mode = m_mode;
+    targetState.usePivot = m_usePivot;
+    targetState.view2DOffsetX = 0.0f;
+    targetState.view2DOffsetY = 0.0f;
+    targetState.view2DZoom = 1.0f;
+    targetState.ref2DMode = m_ref2DMode;
+    targetState.refDrag = m_refDrag;
+
+    applyState(targetState);
+}
+
+void Camera::resetViewToMeshTight(const Mesh* mesh, float fillFactor) {
+    if (!mesh) {
+        resetView();
+        return;
+    }
+    resetViewToMeshesTight({const_cast<Mesh*>(mesh)}, fillFactor);
+}
+
 float Camera::computeFrustumFit() const {
     float nearVal = m_near;
     float x;
