@@ -14,6 +14,7 @@
 #include "editing/SculptManager.h"
 #include "scene/Scene.h"
 #include "sculpt/Remesh.h"
+#include "mesh/Decimation.h"
 #include <unordered_map>
 #include <string>
 #include "timelapse/TimelapsePlayer.h"
@@ -36,6 +37,14 @@ public:
         std::atomic<int>  stage     { 0 };   // 0=voxelize, 1=floodfill, 2=reconstruct
         std::atomic<int>  progress  { 0 };   // 0–100
         RemeshResult      result;            // written by worker, read by main after Done
+        std::thread       worker;
+    };
+
+    struct DecimationProgress {
+        std::atomic<RemeshState> state { RemeshState::Idle };
+        std::atomic<int>  progress  { 0 };   // 0–100
+        std::unique_ptr<Mesh> resultMesh;
+        DecimationResult  resultInfo;
         std::thread       worker;
     };
 
@@ -126,7 +135,18 @@ private:
 
     RemeshProgress m_remeshAsync;
     HistoryState m_remeshBeforeState;
+    DecimationProgress m_decimAsync;
+    HistoryState m_decimBeforeState;
     AngleRenderer* m_renderer = nullptr;
+
+    // Decimation settings
+    int m_decimMode = 0;              // 0 = Ratio, 1 = Target Faces
+    float m_decimRatio = 0.5f;        // 0.01 .. 0.99
+    int m_decimTargetFaces = 10000;
+    float m_decimVolumeWeight = 1.0f; // 0.0 .. 10.0
+    bool m_decimPreservePolyGroups = true;
+    bool m_decimPreserveBoundary = true;
+    bool m_decimLockSymmetry = true;
 
     ModalMode m_activeModalMode = ModalMode::NONE;
     int m_modalStartMouseX = 0;
@@ -372,6 +392,11 @@ public:
     void applyRemeshResult(Scene& scene, const RemeshResult& r);
     void drawRemeshProgressModal();
     bool isRemeshRunning() const { return m_remeshAsync.state == RemeshState::Running; }
+
+    void performDecimation(Scene& scene);
+    void applyDecimationResult(Scene& scene);
+    void drawDecimationProgressModal();
+    bool isDecimationRunning() const { return m_decimAsync.state == RemeshState::Running; }
 
     void setModalMode(ModalMode mode, int startX, int startY) {
         m_activeModalMode = mode;

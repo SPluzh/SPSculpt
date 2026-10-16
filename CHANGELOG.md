@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.2]
+- **Mesh Decimation**: Added topology simplification with volume preservation (QEM + dihedral curvature), decimating flat areas while preserving curved details.
+- **Feature Preservation**: Manifold-safe edge collapse with normal flip protection, symmetry plane alignment, and PolyGroup/border retention.
+- **UI & Undo**: Background worker with progress modal in "Topology & Remesh" panel and full Undo/Redo support.
+
 ## [0.3.1]
 - **Undo for Measure & Divider Tools**: Deleting or clearing measure and divider segments in Outliner now supports full undo/redo (Ctrl+Z / Ctrl+Y).
 - **Undo for Object Deletion**: Deleting objects in Outliner can now be undone via Ctrl+Z, fully restoring geometry, PolyGroups, and symmetry.
