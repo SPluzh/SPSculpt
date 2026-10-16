@@ -723,7 +723,7 @@ int main(int argc, char* argv[]) {
                     bool skipSculpt = false;
                     
                     // Prioritize ImGuizmo over camera orbit when hovering/interacting with the gizmo
-                    if (sculpt.getBrush() == BRUSH_TRANSFORM && (ImGuizmo::IsOver() || ImGuizmo::IsUsing())) {
+                    if ((sculpt.getBrush() == BRUSH_TRANSFORM || sculpt.getBrush() == BRUSH_POSE) && (ImGuizmo::IsOver() || ImGuizmo::IsUsing())) {
                         if (!sculpt.getCameraController().isDragging()) {
                             bool isCameraEvent = sculpt.getCameraController().isNavigationEvent(eventCopy, scene.getCamera().getRef2DMode());
                             bool isAltClickSettingPivot = (eventCopy.type == SDL_MOUSEBUTTONDOWN && eventCopy.button.button == SDL_BUTTON_LEFT &&
@@ -743,7 +743,7 @@ int main(int argc, char* argv[]) {
                         if (!sculpt.getCameraController().isDragging()) {
                             bool isCameraEvent = sculpt.getCameraController().isNavigationEvent(eventCopy, scene.getCamera().getRef2DMode());
                             
-                            bool isAltClickSettingPivot = (sculpt.getBrush() == BRUSH_TRANSFORM && eventCopy.type == SDL_MOUSEBUTTONDOWN && eventCopy.button.button == SDL_BUTTON_LEFT &&
+                            bool isAltClickSettingPivot = ((sculpt.getBrush() == BRUSH_TRANSFORM || sculpt.getBrush() == BRUSH_POSE) && eventCopy.type == SDL_MOUSEBUTTONDOWN && eventCopy.button.button == SDL_BUTTON_LEFT &&
                                 (hotkeyManager.getModifierBehavior().ctrlAltSubToolSelect
                                     ? (((SDL_GetModState() & KMOD_ALT) != 0) && ((SDL_GetModState() & KMOD_CTRL) != 0))
                                     : (((SDL_GetModState() & KMOD_ALT) != 0) && ((SDL_GetModState() & KMOD_CTRL) == 0)))

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.3]
+- **Pose Tool**: Pose and bend character limbs using a 3D gizmo or classic Action Line.
+- **Natural Deformations**: Smooth joint bending with limb isolation and mask support.
+- **Symmetry & Undo**: Full support for symmetry and instant Undo/Redo (Ctrl+Z).
+
 ## [0.3.2]
 - **Mesh Decimation**: Added topology simplification with volume preservation (QEM + dihedral curvature), decimating flat areas while preserving curved details.
 - **Feature Preservation**: Manifold-safe edge collapse with normal flip protection, symmetry plane alignment, and PolyGroup/border retention.

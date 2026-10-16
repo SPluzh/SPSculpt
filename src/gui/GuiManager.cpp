@@ -18,6 +18,7 @@
 #include "platform/FileDialog.h"
 #include "brushes/BrushPresetManager.h"
 #include "editing/ArmatureTool.h"
+#include "editing/PoseTool.h"
 #include "editing/BooleanTool.h"
 #include "editing/undo/UndoManager.h"
 #include <imgui.h>
@@ -204,6 +205,7 @@ static const char* getBrushNameLocal(BrushType brush) {
         case BRUSH_SPLIT:      return "Split";
         case BRUSH_DELETE_LAYER: return "Delete Layer";
         case BRUSH_RELAX:       return "Relax";
+        case BRUSH_POSE:        return "Pose";
     }
     return "Unknown";
 }
@@ -213,6 +215,7 @@ static const char* getBrushHotkey(BrushType brush) {
         case BRUSH_INFLATE:     return "1";
         case BRUSH_FLATTEN:     return "2";
         case BRUSH_TRANSFORM:   return "4";
+        case BRUSH_POSE:        return "5";
         case BRUSH_MOVE:        return "Q";
         case BRUSH_CLAYBUILDUP: return "W";
         case BRUSH_DAMSTANDARD: return "E";
@@ -244,6 +247,7 @@ static const char* getBrushIconKey(BrushType brush) {
         case BRUSH_POLYGROUP:   return "polygroup";
         case BRUSH_TRANSFORM:   return "transformtool";
         case BRUSH_RELAX:       return "relax_tool";
+        case BRUSH_POSE:        return "posetool";
         default:                return nullptr;
     }
 }
@@ -1148,7 +1152,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         const char* tools[] = { 
             "Flatten", "Smooth", "Inflate", "Pinch", "Crease", "V-Tool", "Move", "Drag", "Elastic", 
             "Mask", "Paint", "Twist", "Local Scale", "Clay", "Clay Buildup", "Dam Standard", "Square Brush", "Visibility", "Mask Gradient Blur",
-            "Measure", "Divider", "Transform", "Armature Spheres", "Brush", "PolyGroup", "Clip Curve", "Trim", "Split", "Delete Layer", "Relax"
+            "Measure", "Divider", "Transform", "Armature Spheres", "Brush", "PolyGroup", "Clip Curve", "Trim", "Split", "Delete Layer", "Relax", "Pose"
         };
         BrushType current = sculpt.getBrush();
         float btnH = 26.0f * scale;
@@ -1375,7 +1379,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                  brushType == BRUSH_MEASURE || brushType == BRUSH_DIVIDER ||
                                  brushType == BRUSH_TRANSFORM || brushType == BRUSH_ARMATURE_SPHERES ||
                                  brushType == BRUSH_BRUSH || brushType == BRUSH_POLYGROUP ||
-                                 brushType == BRUSH_TRIM || brushType == BRUSH_SPLIT);
+                                 brushType == BRUSH_TRIM || brushType == BRUSH_SPLIT || brushType == BRUSH_POSE);
 
         if (hasSpecialParams) {
             if (ImGui::CollapsingHeader("Tool Specific Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -1965,6 +1969,60 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             sculpt_log("[TRANSFORM TOOL PROFILE] Reset Matrix | Mesh: '%s' (Verts: %d) | Total: %.2fms\n",
                                       selectedMesh->outlinerName.c_str(), selectedMesh->nbVerts, totalBtnMs);
                         }
+                    }
+                }
+                else if (brushType == BRUSH_POSE) {
+                    PoseTool* poseTool = sculpt.getPoseTool();
+
+                    ImGui::TextUnformatted("Manipulator Mode");
+                    int gizmoType = settings.poseGizmoType;
+                    if (ImGui::RadioButton("Hybrid Gizmo", &gizmoType, 0)) {
+                        settings.poseGizmoType = gizmoType;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::RadioButton("Action Line", &gizmoType, 1)) {
+                        settings.poseGizmoType = gizmoType;
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hybrid: 3D Gizmo at joint pivot\nAction Line: ZBrush 3-ring transpose line");
+
+                    ImGui::Separator();
+                    ImGui::TextUnformatted("Operation");
+                    int op = settings.poseOperation;
+                    if (ImGui::RadioButton("Rotate (R)", &op, 0)) settings.poseOperation = op;
+                    ImGui::SameLine();
+                    if (ImGui::RadioButton("Move (W)", &op, 1)) settings.poseOperation = op;
+                    ImGui::SameLine();
+                    if (ImGui::RadioButton("Scale (E)", &op, 2)) settings.poseOperation = op;
+
+                    ImGui::Separator();
+                    if (ImGui::SliderFloat("Falloff Width", &settings.poseFalloffWidth, 0.1f, 3.0f, "%.2fx")) {
+                        if (poseTool && scene.getSelected()) {
+                            poseTool->computeWeights(scene.getSelected());
+                        }
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Width of the smooth bending zone along the line");
+
+                    if (ImGui::SliderFloat("Capsule Limit", &settings.poseCapsuleRadius, 0.0f, 10.0f, settings.poseCapsuleRadius <= 0.001f ? "Infinite (Off)" : "%.2f")) {
+                        if (poseTool && scene.getSelected()) {
+                            poseTool->computeWeights(scene.getSelected());
+                        }
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Radial bounding distance to restrict deformation to the limb\n0 = Disabled (infinite cylinder)");
+
+                    if (ImGui::Checkbox("Use Vertex Mask", &settings.poseUseMask)) {
+                        if (poseTool && scene.getSelected()) {
+                            poseTool->computeWeights(scene.getSelected());
+                        }
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Multiplies pose deformation by the existing painted mask");
+
+                    ImGui::Separator();
+                    if (poseTool && poseTool->hasValidLine()) {
+                        if (ImGui::Button("Clear Pose Line", ImVec2(-1, 26))) {
+                            poseTool->clearLine();
+                        }
+                    } else {
+                        ImGui::TextDisabled("Drag on mesh to draw bone line");
                     }
                 }
                 else if (brushType == BRUSH_ARMATURE_SPHERES) {
@@ -4458,6 +4516,17 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         }
     } else {
         renderer.setArmatureState(nullptr, nullptr, nullptr, sculpt.getUseSym());
+    }
+
+    // Pose Tool (Transpose) Overlay & Gizmo
+    if (sculpt.getBrush() == BRUSH_POSE) {
+        if (auto* poseTool = sculpt.getPoseTool()) {
+            const Camera& camera = scene.getCamera();
+            float vW = (float)camera.getWidth();
+            float vH = (float)camera.getHeight();
+            poseTool->renderOverlay(scene, camera, vW, vH);
+            poseTool->renderGizmoAndDeform(scene, camera, vW, vH);
+        }
     }
 
     if (sculpt.getBrush() == BRUSH_TRANSFORM) {
@@ -7521,6 +7590,40 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         }
 
         if (isMeasureActive) {
+            ImGui::PopStyleColor(3);
+        }
+
+        // Pose Tool (Transpose) Button
+        bool isPoseActive = (currentBrush == BRUSH_POSE);
+        if (isPoseActive) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+
+        GLuint poseTex = getIconTexture("posetool");
+        bool clickedPose = false;
+        if (poseTex != 0) {
+            clickedPose = ImGui::Button("##hudVertPoseTool", ImVec2(squareSize, squareSize));
+            ImVec2 pMin = ImGui::GetItemRectMin();
+            ImVec2 pMax = ImGui::GetItemRectMax();
+            float pad = 1.0f * scale;
+            ImVec2 imgMin(pMin.x + pad, pMin.y + pad);
+            ImVec2 imgMax(pMax.x - pad, pMax.y - pad);
+            ImU32 tintCol = isPoseActive ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 240);
+            ImGui::GetWindowDrawList()->AddImage((ImTextureID)(uintptr_t)poseTex, imgMin, imgMax, ImVec2(0, 1), ImVec2(1, 0), tintCol);
+        } else {
+            clickedPose = ImGui::Button(ICON_LC_MOVE_3D "##hudVertPoseTool", ImVec2(squareSize, squareSize));
+        }
+
+        if (clickedPose) {
+            sculpt.setBrush(BRUSH_POSE);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Pose Tool (Transpose)");
+        }
+
+        if (isPoseActive) {
             ImGui::PopStyleColor(3);
         }
 

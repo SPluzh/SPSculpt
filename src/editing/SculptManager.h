@@ -14,6 +14,7 @@
 #include "sculpt/RelaxEngine.h"
 
 class ArmatureTool;
+class PoseTool;
 class IniFile;
 class HotkeyManager;
 
@@ -144,6 +145,13 @@ struct BrushSettings {
 
     // Split tool settings
     int splitMode = 0; // 0 = Lasso (like Trim), 1 = Line (Slice)
+
+    // Pose tool settings
+    int poseOperation = 0; // 0 = Rotate, 1 = Translate, 2 = Scale
+    int poseGizmoType = 0; // 0 = Hybrid Gizmo, 1 = Action Line
+    float poseFalloffWidth = 1.0f;
+    float poseCapsuleRadius = 0.0f; // 0 = infinite (disabled)
+    bool poseUseMask = true;
 };
 
 #include "editing/MeasurementTypes.h"
@@ -160,6 +168,7 @@ private:
     RelaxEngine m_relaxEngine;
 
     std::unique_ptr<ArmatureTool> m_armatureTool;
+    std::unique_ptr<PoseTool> m_poseTool;
 
     CameraController m_cameraController;
     bool m_isSculpting = false;
@@ -504,6 +513,7 @@ public:
     void applyActivePreset();
 
     ArmatureTool* getArmatureTool() const { return m_armatureTool.get(); }
+    PoseTool* getPoseTool() const { return m_poseTool.get(); }
 
 private:
     Mesh* m_lastActiveMesh = nullptr;

@@ -33,6 +33,7 @@ enum BrushType {
     BRUSH_SPLIT,
     BRUSH_DELETE_LAYER,
     BRUSH_RELAX,
+    BRUSH_POSE,
     BRUSH_COUNT
 };
 
@@ -83,6 +84,7 @@ inline const char* getBrushNameStr(BrushType brush) {
         case BRUSH_SPLIT: return "Split";
         case BRUSH_DELETE_LAYER: return "Delete Layer";
         case BRUSH_RELAX: return "Relax";
+        case BRUSH_POSE: return "Pose";
         default: return "Unknown";
     }
 }

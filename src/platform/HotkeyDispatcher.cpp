@@ -127,6 +127,7 @@ static BrushType hkActionToBrushType(HKAction act, BrushType fallback) {
         case HKAction::ToolDamStandard: return BRUSH_DAMSTANDARD;
         case HKAction::ToolMask: return BRUSH_MASK;
         case HKAction::ToolVisibility: return BRUSH_VISIBILITY;
+        case HKAction::ToolPose: return BRUSH_POSE;
         default: return fallback;
     }
 }
@@ -291,6 +292,7 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
             case HKAction::ToolTwist: sculpt.setBrush(BRUSH_TWIST); break;
             case HKAction::ToolVTool: sculpt.setBrush(BRUSH_VTOOL); break;
             case HKAction::ToolTransform: sculpt.setBrush(BRUSH_TRANSFORM); break;
+            case HKAction::ToolPose: sculpt.setBrush(BRUSH_POSE); break;
             case HKAction::ToolMask: sculpt.setBrush(BRUSH_MASK); break;
             case HKAction::ToolVisibility: sculpt.setBrush(BRUSH_VISIBILITY); break;
             
