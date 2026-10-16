@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 #include <glm/glm.hpp>
 
 class Scene;
@@ -22,6 +23,15 @@ public:
         Scene& scene,
         Mesh* meshA,
         Mesh* meshB,
+        BooleanOp op
+    );
+
+    // Performs exact polygonal CSG boolean between targetMesh and otherMeshes (2 or more meshes total).
+    // Result replaces targetMesh, otherMeshes are removed from the Scene.
+    static bool executeMultiple(
+        Scene& scene,
+        Mesh* targetMesh,
+        const std::vector<Mesh*>& otherMeshes,
         BooleanOp op
     );
 };

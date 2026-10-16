@@ -410,6 +410,8 @@ public:
 
     void thumbInvalidate(uint32_t meshId);
     void thumbInvalidateAll();
+    static void invalidateThumbnail(uint32_t meshId);
+    static void invalidateAllThumbnails();
 
 private:
     GLuint m_thumbSharedDepth = 0;

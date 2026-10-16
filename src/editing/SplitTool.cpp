@@ -176,6 +176,8 @@ bool SplitTool::sliceByLine(
     snprintf(toastBuf, sizeof(toastBuf), "[Split] Created '%s' in %.0fms (%d & %d faces)",
              cutMesh->outlinerName.c_str(), totalMs, mesh->nbFaces, cutMesh->nbFaces);
     GuiManager::showToast(toastBuf, 3.0f);
+    GuiManager::invalidateThumbnail(mesh->getID());
+    GuiManager::invalidateThumbnail(cutMesh->getID());
 
     return true;
 }
@@ -292,6 +294,8 @@ bool SplitTool::splitByLasso(
     snprintf(toastBuf, sizeof(toastBuf), "[Split] Created '%s' in %.0fms (%d & %d faces)",
              cutMesh->outlinerName.c_str(), totalMs, mesh->nbFaces, cutMesh->nbFaces);
     GuiManager::showToast(toastBuf, 3.0f);
+    GuiManager::invalidateThumbnail(mesh->getID());
+    GuiManager::invalidateThumbnail(cutMesh->getID());
 
     return true;
 }
