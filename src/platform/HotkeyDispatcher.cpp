@@ -33,8 +33,9 @@ bool HotkeyDispatcher::processEvent(const SDL_Event& event, SculptManager& sculp
 
             bool isUndoRedoHotkey = (isCtrl && (sym == SDLK_z || sym == SDLK_y)) ||
                                     (isAlt && sym == SDLK_z);
+            bool isDeleteHotkey = (sym == SDLK_DELETE || sym == SDLK_BACKSPACE);
 
-            if (!isUndoRedoHotkey || io.WantTextInput) {
+            if ((!isUndoRedoHotkey && !isDeleteHotkey) || io.WantTextInput) {
                 return false;
             }
         }
@@ -359,10 +360,7 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
             }
             
             case HKAction::DeleteSelected: {
-                Mesh* selected = scene.getSelected();
-                if (selected) {
-                    scene.removeMesh(selected);
-                }
+                scene.deleteSelection();
                 break;
             }
             case HKAction::CameraProjection: {

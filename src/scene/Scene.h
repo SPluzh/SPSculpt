@@ -33,6 +33,12 @@ struct MeshState {
     std::string outlinerName;
     bool visibleV1 = true;
     bool visibleV2 = true;
+    bool isArmature = false;
+    bool symEnabled = false;
+    bool symX = true;
+    bool symY = false;
+    bool symZ = false;
+    int symMode = 0;
 };
 
 struct HistoryState {
@@ -67,6 +73,8 @@ public:
 
     void addMesh(Mesh* m);
     void removeMesh(Mesh* m);
+    void deleteMesh(Mesh* m);
+    void deleteSelection();
     void replaceMesh(Mesh* oldMesh, Mesh* newMesh);
     void clear();
     const std::vector<Mesh*>& getMeshes() const;
