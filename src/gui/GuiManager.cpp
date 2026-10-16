@@ -1106,6 +1106,16 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         m_remeshAsync.state = RemeshState::Idle;
     }
 
+    if (m_decimAsync.state == RemeshState::Done) {
+        applyDecimationResult(scene);
+        sculpt.cancelStroke();
+        SDL_SetModState(KMOD_NONE);
+        m_decimAsync.state = RemeshState::Idle;
+    } else if (m_decimAsync.state == RemeshState::Error) {
+        m_decimAsync.state = RemeshState::Idle;
+        showToast("Decimation failed or produced invalid mesh");
+    }
+
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
@@ -3757,6 +3767,38 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 std::cout << "[Topology] Trigger remesh with resolution: " << m_remeshResolution << std::endl;
                 performRemesh(scene);
             }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Text("Decimation (QEM + Volume)");
+
+            ImGui::RadioButton("Ratio##DecimMode", &m_decimMode, 0);
+            ImGui::SameLine();
+            ImGui::RadioButton("Target Faces##DecimMode", &m_decimMode, 1);
+
+            if (m_decimMode == 0) {
+                float pct = (1.0f - m_decimRatio) * 100.0f;
+                if (ImGui::SliderFloat("Reduce %##Decim", &pct, 5.0f, 95.0f, "%.0f%%")) {
+                    m_decimRatio = 1.0f - (pct / 100.0f);
+                }
+                int estimatedFaces = std::max(4, static_cast<int>(selectedMesh->nbFaces * m_decimRatio));
+                ImGui::TextDisabled("Target: ~%d faces", estimatedFaces);
+            } else {
+                ImGui::SliderInt("Target Faces##Decim", &m_decimTargetFaces, 100, std::max(200, selectedMesh->nbFaces));
+            }
+
+            ImGui::SliderFloat("Volume Penalty##Decim", &m_decimVolumeWeight, 0.0f, 10.0f, "%.2f");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Controls volume conservation. Higher values prevent shape shrinkage.");
+            }
+
+            ImGui::Checkbox("Keep PolyGroups##Decim", &m_decimPreservePolyGroups);
+            ImGui::Checkbox("Preserve Borders##Decim", &m_decimPreserveBoundary);
+            ImGui::Checkbox("Lock Symmetry Plane##Decim", &m_decimLockSymmetry);
+
+            if (ImGui::Button("Decimate", ImVec2(-1, 0))) {
+                performDecimation(scene);
+            }
         } else {
             ImGui::Text("No active mesh selected");
         }
@@ -5032,6 +5074,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     }
 
     drawRemeshProgressModal();
+    drawDecimationProgressModal();
 
     // Render brush cursor using ImGui foreground draw list for beautiful antialiased lines
     if (renderer.getSmoothCursor()) {
@@ -5572,6 +5615,126 @@ void GuiManager::drawRemeshProgressModal() {
         float progressFloat = (float)progress / 100.0f;
         char buf[32];
         sprintf(buf, "%d%%", progress);
+        ImGui::ProgressBar(progressFloat, ImVec2(-1.0f, 26.0f * scale), buf);
+
+        ImGui::EndPopup();
+    }
+}
+
+void GuiManager::performDecimation(Scene& scene) {
+    sculpt_log("[DEBUG performDecimation] Entered performDecimation. state = %d\n", (int)m_decimAsync.state.load());
+    if (m_decimAsync.state == RemeshState::Running) {
+        return;
+    }
+
+    Mesh* selectedMesh = scene.getSelected();
+    if (!selectedMesh) {
+        return;
+    }
+
+    selectedMesh->bakeScale();
+    m_decimBeforeState = scene.saveCurrentState();
+
+    m_decimAsync.state = RemeshState::Running;
+    m_decimAsync.progress = 0;
+
+    auto meshCopy = std::make_unique<Mesh>(*selectedMesh);
+
+    DecimationOptions opts;
+    opts.targetFaces = (m_decimMode == 1) ? m_decimTargetFaces : -1;
+    opts.targetRatio = (m_decimMode == 0) ? m_decimRatio : 0.5f;
+    opts.volumeWeight = m_decimVolumeWeight;
+    opts.preservePolyGroups = m_decimPreservePolyGroups;
+    opts.preserveBoundary = m_decimPreserveBoundary;
+    opts.lockSymmetryPlane = m_decimLockSymmetry;
+    opts.onProgress = [this](int pct) {
+        m_decimAsync.progress = pct;
+    };
+
+    std::thread([this, mesh = std::move(meshCopy), opts]() mutable {
+        try {
+            DecimationResult res = MeshDecimator::simplify(*mesh, opts);
+            m_decimAsync.resultInfo = res;
+            m_decimAsync.resultMesh = std::move(mesh);
+            m_decimAsync.state = res.success ? RemeshState::Done : RemeshState::Error;
+        } catch (...) {
+            m_decimAsync.state = RemeshState::Error;
+        }
+    }).detach();
+}
+
+void GuiManager::applyDecimationResult(Scene& scene) {
+    Mesh* selectedMesh = scene.getSelected();
+    if (!selectedMesh || !m_decimAsync.resultMesh) {
+        return;
+    }
+
+    Mesh* decimated = m_decimAsync.resultMesh.get();
+    selectedMesh->verts = std::move(decimated->verts);
+    selectedMesh->colors = std::move(decimated->colors);
+    selectedMesh->materials = std::move(decimated->materials);
+    selectedMesh->faces = std::move(decimated->faces);
+    selectedMesh->faceGroups = std::move(decimated->faceGroups);
+    selectedMesh->nbVerts = decimated->nbVerts;
+    selectedMesh->nbFaces = decimated->nbFaces;
+
+    selectedMesh->vrfStartCount.clear();
+    selectedMesh->vertRingFace.clear();
+    selectedMesh->vrvStartCount.clear();
+    selectedMesh->vertRingVert.clear();
+    selectedMesh->initTopology();
+    selectedMesh->postInit();
+
+    Multimesh* multimesh = dynamic_cast<Multimesh*>(selectedMesh);
+    if (multimesh) {
+        multimesh->meshes.clear();
+        auto baseRes = std::make_unique<MeshResolution>(*multimesh, true);
+        multimesh->meshes.push_back(std::move(baseRes));
+        multimesh->sel = 0;
+        multimesh->setSelection(0);
+    }
+
+    selectedMesh->isDirty = true;
+    selectedMesh->isVertexDirty = true;
+    selectedMesh->dirtyVertMin = 0;
+    selectedMesh->dirtyVertMax = selectedMesh->nbVerts > 0 ? (selectedMesh->nbVerts - 1) : 0;
+    thumbInvalidate(selectedMesh->getID());
+
+    HistoryState afterState = scene.saveCurrentState();
+    g_undoManager.pushTopologyChange(scene, "Decimation", std::move(m_decimBeforeState), std::move(afterState));
+
+    char toastBuf[128];
+    snprintf(toastBuf, sizeof(toastBuf), "Decimated: %d -> %d faces (ΔVol: %+.2f%%)",
+             m_decimAsync.resultInfo.originalFaces, m_decimAsync.resultInfo.finalFaces,
+             m_decimAsync.resultInfo.volumeChange);
+    showToast(toastBuf, 4.0f);
+
+    m_decimAsync.resultMesh.reset();
+}
+
+void GuiManager::drawDecimationProgressModal() {
+    if (m_decimAsync.state != RemeshState::Running) {
+        return;
+    }
+    float scale = getUiScale();
+
+    ImGui::OpenPopup("Decimating...");
+
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(300.0f * scale, 120.0f * scale));
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar;
+
+    if (ImGui::BeginPopupModal("Decimating...", nullptr, flags)) {
+        int progress = m_decimAsync.progress.load();
+
+        ImGui::TextUnformatted("Simplifying topology (QEM + Volume)...");
+        ImGui::Separator();
+
+        float progressFloat = (float)progress / 100.0f;
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%d%%", progress);
         ImGui::ProgressBar(progressFloat, ImVec2(-1.0f, 26.0f * scale), buf);
 
         ImGui::EndPopup();

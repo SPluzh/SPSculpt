@@ -120,6 +120,7 @@ add_executable(SPSculpt
     src/mesh/NormalCalc.cpp
     src/mesh/Topology.cpp
     src/mesh/Layer.cpp
+    src/mesh/Decimation.cpp
     # sculpt algorithms
     src/sculpt/SculptEngine.cpp
     src/sculpt/Remesh.cpp
