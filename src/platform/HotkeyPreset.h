@@ -29,6 +29,7 @@ enum class HKAction {
     ToolVisibility,
     ToolPose,
     ToolSnakeHook,
+    ToolTube,
     
     // Sculpting Parameters
     BrushIntensity,        // A (modal)

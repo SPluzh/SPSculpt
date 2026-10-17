@@ -303,6 +303,8 @@ public:
     // Panel toggles
     void toggleToolbar() { m_showToolbar = !m_showToolbar; }
     void toggleSculptingPanel() { m_showSculptingPanel = !m_showSculptingPanel; }
+    void setShowSculptingPanel(bool show) { m_showSculptingPanel = show; }
+    bool isSculptingPanelVisible() const { return m_showSculptingPanel; }
     void toggleScenePanel() { m_showScenePanel = !m_showScenePanel; }
     void toggleTopologyPanel() { m_showTopologyPanel = !m_showTopologyPanel; }
     void toggleCameraPanel() { m_showPreferencesPanel = true; m_preferencesActiveTab = 1; }

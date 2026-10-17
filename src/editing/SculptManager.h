@@ -15,6 +15,7 @@
 
 class ArmatureTool;
 class PoseTool;
+class TubeTool;
 class IniFile;
 class HotkeyManager;
 
@@ -175,6 +176,7 @@ private:
 
     std::unique_ptr<ArmatureTool> m_armatureTool;
     std::unique_ptr<PoseTool> m_poseTool;
+    std::unique_ptr<TubeTool> m_tubeTool;
 
     CameraController m_cameraController;
     bool m_isSculpting = false;
@@ -525,6 +527,7 @@ public:
 
     ArmatureTool* getArmatureTool() const { return m_armatureTool.get(); }
     PoseTool* getPoseTool() const { return m_poseTool.get(); }
+    TubeTool* getTubeTool() const { return m_tubeTool.get(); }
 
 private:
     Mesh* m_lastActiveMesh = nullptr;

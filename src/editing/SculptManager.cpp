@@ -6,6 +6,7 @@
 #include "mesh/NormalCalc.h"
 #include "editing/ArmatureTool.h"
 #include "editing/PoseTool.h"
+#include "editing/TubeTool.h"
 #include "editing/ClipCurveTool.h"
 #include "editing/TrimTool.h"
 #include "editing/SplitTool.h"
@@ -197,6 +198,7 @@ SculptManager::~SculptManager() = default;
 SculptManager::SculptManager() {
     m_armatureTool = std::make_unique<ArmatureTool>(*this);
     m_poseTool = std::make_unique<PoseTool>(*this);
+    m_tubeTool = std::make_unique<TubeTool>(*this);
     // Initialise all brushes with baseline defaults
     for (int i = 0; i < BRUSH_COUNT; ++i) {
         m_brushSettings[i].radius = 50.0f;
@@ -2376,6 +2378,13 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 return;
             }
 
+            if (m_currentBrush == BRUSH_TUBE) {
+                if (m_tubeTool) {
+                    m_tubeTool->handleMouseDown(scene, camera, (float)mouseX, (float)mouseY, (mod & KMOD_CTRL) != 0, (mod & KMOD_ALT) != 0, (mod & KMOD_SHIFT) != 0);
+                }
+                return;
+            }
+
             bool isVisibilityTool = (m_currentBrush == BRUSH_VISIBILITY);
             bool isLassoMode = (mod & KMOD_CTRL) && (mod & KMOD_SHIFT);
 
@@ -2727,6 +2736,13 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
         if (m_currentBrush == BRUSH_POSE) {
             if (event.button.button == SDL_BUTTON_LEFT && m_poseTool) {
                 m_poseTool->handleMouseUp(scene);
+            }
+            return;
+        }
+
+        if (m_currentBrush == BRUSH_TUBE) {
+            if (event.button.button == SDL_BUTTON_LEFT && m_tubeTool) {
+                m_tubeTool->handleMouseUp(scene);
             }
             return;
         }
@@ -3491,6 +3507,15 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             return;
         }
 
+        if (m_currentBrush == BRUSH_TUBE) {
+            if (m_cameraController.isDragging()) {
+                m_cameraController.handleEvent(event, camera, scene.getMeshes(), true, &scene, m_renderer);
+            } else if (m_tubeTool) {
+                m_tubeTool->handleMouseMove(scene, camera, (float)mouseX, (float)mouseY);
+            }
+            return;
+        }
+
         if (m_currentBrush == BRUSH_MASK_GRADIENT_BLUR && mesh && m_gradActive && m_gradActivePoint != '\0') {
             glm::vec2 mousePos((float)mouseX, (float)mouseY);
             if (m_gradActivePoint == 'A') {
@@ -3752,7 +3777,7 @@ void SculptManager::processFrame(Scene& scene) {
     }
 
     bool isRefDragMode = (scene.getCamera().getRefDragEnabled() || (scene.getCameraRight() && scene.getCameraRight()->getRefDragEnabled())) && scene.areAnyReferenceImagesVisible();
-    if (isRefDragMode || m_cameraController.isDragging() || m_currentBrush == BRUSH_MEASURE || m_currentBrush == BRUSH_DIVIDER || m_currentBrush == BRUSH_TRANSFORM || m_currentBrush == BRUSH_POSE) {
+    if (isRefDragMode || m_cameraController.isDragging() || m_currentBrush == BRUSH_MEASURE || m_currentBrush == BRUSH_DIVIDER || m_currentBrush == BRUSH_TRANSFORM || m_currentBrush == BRUSH_POSE || m_currentBrush == BRUSH_TUBE) {
         m_cursor.hide();
     } else {
         // Resolve dynamic brush modifier swap (Shift->Smooth, Ctrl->Mask, Ctrl+Shift->Visibility)
@@ -3763,12 +3788,14 @@ void SculptManager::processFrame(Scene& scene) {
             m_armatureTool->preUpdate(scene, scene.getCamera(), (float)m_rawMouseX, (float)m_rawMouseY, (mod & KMOD_CTRL) != 0, (mod & KMOD_ALT) != 0);
         }
         bool isMayaNav = m_hotkeyManager ? m_hotkeyManager->getModifierBehavior().ctrlAltInvertsBrush : (scene.getCamera().getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
-        if ((mod & KMOD_CTRL) && (mod & KMOD_SHIFT)) {
-            activeBrush = BRUSH_VISIBILITY;
-        } else if (mod & KMOD_SHIFT) {
-            activeBrush = BRUSH_SMOOTH;
-        } else if (isMayaNav ? ((mod & KMOD_CTRL) && !(mod & KMOD_ALT)) : (mod & KMOD_CTRL)) {
-            activeBrush = BRUSH_MASK;
+        if (m_currentBrush != BRUSH_TUBE && m_currentBrush != BRUSH_POSE && m_currentBrush != BRUSH_TRANSFORM) {
+            if ((mod & KMOD_CTRL) && (mod & KMOD_SHIFT)) {
+                activeBrush = BRUSH_VISIBILITY;
+            } else if (mod & KMOD_SHIFT) {
+                activeBrush = BRUSH_SMOOTH;
+            } else if (isMayaNav ? ((mod & KMOD_CTRL) && !(mod & KMOD_ALT)) : (mod & KMOD_CTRL)) {
+                activeBrush = BRUSH_MASK;
+            }
         }
 
         if (activeBrush != m_currentBrush && (activeBrush == BRUSH_SMOOTH || activeBrush == BRUSH_MASK || activeBrush == BRUSH_VISIBILITY)) {

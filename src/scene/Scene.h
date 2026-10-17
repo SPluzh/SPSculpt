@@ -38,11 +38,88 @@ struct MeshState {
     bool visibleV1 = true;
     bool visibleV2 = true;
     bool isArmature = false;
+    bool isTube = false;
+    std::unique_ptr<TubeData> tubeData;
     bool symEnabled = false;
     bool symX = true;
     bool symY = false;
     bool symZ = false;
     int symMode = 0;
+
+    MeshState() = default;
+    MeshState(const MeshState& o) {
+        verts = o.verts;
+        colors = o.colors;
+        materials = o.materials;
+        faces = o.faces;
+        faceGroups = o.faceGroups;
+        vrfStartCount = o.vrfStartCount;
+        vertRingFace = o.vertRingFace;
+        vrvStartCount = o.vrvStartCount;
+        vertRingVert = o.vertRingVert;
+        vertOnEdge = o.vertOnEdge;
+        vertVisible = o.vertVisible;
+        faceVisible = o.faceVisible;
+        vertsGeneration = o.vertsGeneration;
+        nbVerts = o.nbVerts;
+        nbFaces = o.nbFaces;
+        matrix = o.matrix;
+        layerStack = o.layerStack;
+        id = o.id;
+        outlinerName = o.outlinerName;
+        visibleV1 = o.visibleV1;
+        visibleV2 = o.visibleV2;
+        isArmature = o.isArmature;
+        isTube = o.isTube;
+        if (o.tubeData) {
+            tubeData = std::make_unique<TubeData>(*o.tubeData);
+        }
+        symEnabled = o.symEnabled;
+        symX = o.symX;
+        symY = o.symY;
+        symZ = o.symZ;
+        symMode = o.symMode;
+    }
+    MeshState(MeshState&&) noexcept = default;
+    MeshState& operator=(const MeshState& o) {
+        if (this != &o) {
+            verts = o.verts;
+            colors = o.colors;
+            materials = o.materials;
+            faces = o.faces;
+            faceGroups = o.faceGroups;
+            vrfStartCount = o.vrfStartCount;
+            vertRingFace = o.vertRingFace;
+            vrvStartCount = o.vrvStartCount;
+            vertRingVert = o.vertRingVert;
+            vertOnEdge = o.vertOnEdge;
+            vertVisible = o.vertVisible;
+            faceVisible = o.faceVisible;
+            vertsGeneration = o.vertsGeneration;
+            nbVerts = o.nbVerts;
+            nbFaces = o.nbFaces;
+            matrix = o.matrix;
+            layerStack = o.layerStack;
+            id = o.id;
+            outlinerName = o.outlinerName;
+            visibleV1 = o.visibleV1;
+            visibleV2 = o.visibleV2;
+            isArmature = o.isArmature;
+            isTube = o.isTube;
+            if (o.tubeData) {
+                tubeData = std::make_unique<TubeData>(*o.tubeData);
+            } else {
+                tubeData = nullptr;
+            }
+            symEnabled = o.symEnabled;
+            symX = o.symX;
+            symY = o.symY;
+            symZ = o.symZ;
+            symMode = o.symMode;
+        }
+        return *this;
+    }
+    MeshState& operator=(MeshState&&) noexcept = default;
 };
 
 struct HistoryState {

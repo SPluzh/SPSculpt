@@ -11,6 +11,7 @@
 #include "mesh/Layer.h"
 
 #include "sculpt/ArmatureGraph.h"
+#include "sculpt/TubeData.h"
 
 #include "common/Enums.h"
 
@@ -21,6 +22,10 @@ public:
     // Armature support
     bool isArmature = false;
     std::unique_ptr<ArmatureGraph> armatureGraph;
+
+    // Procedural Tube support
+    bool isTube = false;
+    std::unique_ptr<TubeData> tubeData;
 
     // Per-mesh normal map (loaded from glTF, never a ReferenceImage)
     GLuint normalMapTexId = 0;
@@ -135,6 +140,12 @@ public:
     Mesh(const Mesh& other) {
         isArmature = false;
         armatureGraph = nullptr;
+        isTube = other.isTube;
+        if (other.tubeData) {
+            tubeData = std::make_unique<TubeData>(*other.tubeData);
+        } else {
+            tubeData = nullptr;
+        }
         normalMapTexId = other.normalMapTexId;
         verts = other.verts;
         normals = other.normals;

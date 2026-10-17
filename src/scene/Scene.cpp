@@ -12,6 +12,7 @@
 #include "common/Logger.h"
 #include "gui/GuiManager.h"
 #include "editing/SculptManager.h"
+#include "editing/TubeTool.h"
 
 
 Scene::Scene() {
@@ -189,6 +190,12 @@ HistoryState Scene::saveCurrentState(bool includeTopology) const {
         ms.visibleV1 = m->visibleV1;
         ms.visibleV2 = m->visibleV2;
         ms.isArmature = m->isArmature;
+        ms.isTube = m->isTube;
+        if (m->tubeData) {
+            ms.tubeData = std::make_unique<TubeData>(*m->tubeData);
+        } else {
+            ms.tubeData = nullptr;
+        }
         ms.symEnabled = m->symEnabled;
         ms.symX = m->symX;
         ms.symY = m->symY;
@@ -278,6 +285,12 @@ void Scene::restoreState(const HistoryState& hs) {
         m->visibleV1 = ms.visibleV1;
         m->visibleV2 = ms.visibleV2;
         m->isArmature = ms.isArmature;
+        m->isTube = ms.isTube;
+        if (ms.tubeData) {
+            m->tubeData = std::make_unique<TubeData>(*ms.tubeData);
+        } else {
+            m->tubeData = nullptr;
+        }
         m->symEnabled = ms.symEnabled;
         m->symX = ms.symX;
         m->symY = ms.symY;
@@ -411,6 +424,14 @@ void Scene::restoreState(const HistoryState& hs) {
             }
         }
         m_sculptManager->validateSegments(*this);
+        if (auto* tube = m_sculptManager->getTubeTool()) {
+            Mesh* sel = getSelected();
+            if (sel && sel->isTube && sel->tubeData) {
+                tube->loadFromMesh(sel);
+            } else if (tube->getActiveTubeMesh() && std::find(m_meshes.begin(), m_meshes.end(), tube->getActiveTubeMesh()) == m_meshes.end()) {
+                tube->notifyMeshDeleted(tube->getActiveTubeMesh());
+            }
+        }
     }
 
     auto tEnd = std::chrono::high_resolution_clock::now();
@@ -504,6 +525,11 @@ void Scene::removeMesh(Mesh* m) {
             m_selectedMeshes.erase(selIt);
         }
         
+        if (m_sculptManager) {
+            if (auto* tube = m_sculptManager->getTubeTool()) {
+                tube->notifyMeshDeleted(m);
+            }
+        }
         delete m;
         
         if (m_selectedIdx == idx) {

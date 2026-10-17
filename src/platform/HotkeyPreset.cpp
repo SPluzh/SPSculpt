@@ -24,6 +24,7 @@ static const std::vector<HKActionInfo> s_actionInfoList = {
     { HKAction::ToolVisibility,   "ToolVisibility",   "Visibility Brush",     "VIS", "Tools", false },
     { HKAction::ToolPose,         "ToolPose",         "Pose Tool (Transpose)","POS", "Tools", false },
     { HKAction::ToolSnakeHook,    "ToolSnakeHook",    "SnakeHook",            "SNK", "Tools", false },
+    { HKAction::ToolTube,         "ToolTube",         "Tube / Curve Tool",    "TUB", "Tools", false },
 
     // Sculpting Parameters
     { HKAction::BrushIntensity,   "BrushIntensity",   "Brush Intensity",      "INT", "Parameters", true },
@@ -373,7 +374,7 @@ static void populateCommonKeyBindings(HotkeyPreset& p) {
     p.keyBindings[HKAction::ToolMove]          = { SDLK_q };
     p.keyBindings[HKAction::ToolClayBuildup]    = { SDLK_w };
     p.keyBindings[HKAction::ToolDamStandard]   = { SDLK_e };
-    p.keyBindings[HKAction::ToolTopology]      = { SDLK_t };
+    p.keyBindings[HKAction::ToolTube]          = { SDLK_t };
 
     p.keyBindings[HKAction::BrushIntensity]    = { SDLK_a };
     p.keyBindings[HKAction::BrushRadius]       = { SDLK_s };

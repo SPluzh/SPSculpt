@@ -4,6 +4,7 @@
 #include "files/FileManager.h"
 #include "render/AngleRenderer.h"
 #include "common/Logger.h"
+#include "editing/TubeTool.h"
 #include <imgui.h>
 #include <algorithm>
 #include <cmath>
@@ -129,6 +130,7 @@ static BrushType hkActionToBrushType(HKAction act, BrushType fallback) {
         case HKAction::ToolVisibility: return BRUSH_VISIBILITY;
         case HKAction::ToolPose: return BRUSH_POSE;
         case HKAction::ToolSnakeHook: return BRUSH_SNAKEHOOK;
+        case HKAction::ToolTube: return BRUSH_TUBE;
         default: return fallback;
     }
 }
@@ -295,6 +297,14 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
             case HKAction::ToolTransform: sculpt.setBrush(BRUSH_TRANSFORM); break;
             case HKAction::ToolPose: sculpt.setBrush(BRUSH_POSE); break;
             case HKAction::ToolSnakeHook: sculpt.setBrush(BRUSH_SNAKEHOOK); break;
+            case HKAction::ToolTube: {
+                sculpt.setBrush(BRUSH_TUBE);
+                gui.setShowSculptingPanel(true);
+                if (auto* tube = sculpt.getTubeTool()) {
+                    tube->onActivate(scene);
+                }
+                break;
+            }
             case HKAction::ToolMask: sculpt.setBrush(BRUSH_MASK); break;
             case HKAction::ToolVisibility: sculpt.setBrush(BRUSH_VISIBILITY); break;
             

@@ -19,6 +19,7 @@
 #include "brushes/BrushPresetManager.h"
 #include "editing/ArmatureTool.h"
 #include "editing/PoseTool.h"
+#include "editing/TubeTool.h"
 #include "editing/BooleanTool.h"
 #include "editing/undo/UndoManager.h"
 #include <imgui.h>
@@ -207,6 +208,7 @@ static const char* getBrushNameLocal(BrushType brush) {
         case BRUSH_RELAX:       return "Relax";
         case BRUSH_POSE:        return "Pose";
         case BRUSH_SNAKEHOOK:   return "SnakeHook";
+        case BRUSH_TUBE:        return "Tube";
     }
     return "Unknown";
 }
@@ -217,6 +219,7 @@ static const char* getBrushHotkey(BrushType brush) {
         case BRUSH_FLATTEN:     return "2";
         case BRUSH_TRANSFORM:   return "4";
         case BRUSH_POSE:        return "5";
+        case BRUSH_TUBE:        return "T";
         case BRUSH_MOVE:        return "Q";
         case BRUSH_CLAYBUILDUP: return "W";
         case BRUSH_DAMSTANDARD: return "E";
@@ -250,6 +253,7 @@ static const char* getBrushIconKey(BrushType brush) {
         case BRUSH_RELAX:       return "relax_tool";
         case BRUSH_POSE:        return "posetool";
         case BRUSH_SNAKEHOOK:   return "snakehook_tool";
+        case BRUSH_TUBE:        return "tubetool";
         default:                return nullptr;
     }
 }
@@ -1154,7 +1158,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         const char* tools[] = { 
             "Flatten", "Smooth", "Inflate", "Pinch", "Crease", "V-Tool", "Move", "Drag", "Elastic", 
             "Mask", "Paint", "Twist", "Local Scale", "Clay", "Clay Buildup", "Dam Standard", "Square Brush", "Visibility", "Mask Gradient Blur",
-            "Measure", "Divider", "Transform", "Armature Spheres", "Brush", "PolyGroup", "Clip Curve", "Trim", "Split", "Delete Layer", "Relax", "Pose", "SnakeHook"
+            "Measure", "Divider", "Transform", "Armature Spheres", "Brush", "PolyGroup", "Clip Curve", "Trim", "Split", "Delete Layer", "Relax", "Pose", "SnakeHook", "Tube"
         };
         BrushType current = sculpt.getBrush();
         float btnH = 26.0f * scale;
@@ -1186,6 +1190,12 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
             if (clicked) {
                 sculpt.setBrush(bType);
+                if (bType == BRUSH_TUBE) {
+                    m_showSculptingPanel = true;
+                    if (auto* tube = sculpt.getTubeTool()) {
+                        tube->onActivate(scene);
+                    }
+                }
             }
             if (selected) {
                 ImGui::PopStyleColor();
@@ -1198,15 +1208,259 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     if (m_showSculptingPanel) {
         ImGui::SetNextWindowPos({160.0f * scale, 40.0f * scale}, ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize({300.0f * scale, 400.0f * scale}, ImGuiCond_FirstUseEver);
-        ImGui::Begin("Sculpting Settings", &m_showSculptingPanel, ImGuiWindowFlags_AlwaysAutoResize);
+
+        BrushType brushType = sculpt.getBrush();
+        const char* winTitle = (brushType == BRUSH_TUBE) ? "Tube & Curve Settings###SculptingPanel" : "Sculpting Settings###SculptingPanel";
+        ImGui::Begin(winTitle, &m_showSculptingPanel, ImGuiWindowFlags_AlwaysAutoResize);
 
         BrushSettings& settings = sculpt.getCurrentSettings();
-        BrushType brushType = sculpt.getBrush();
 
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.9f, 1.0f, 1.0f));
-        ImGui::Text("Active Brush: %s", getBrushNameLocal(brushType));
+        ImGui::Text("Active Tool: %s", getBrushNameLocal(brushType));
         ImGui::PopStyleColor();
         ImGui::Separator();
+
+        if (brushType == BRUSH_TUBE) {
+            TubeTool* tubeTool = sculpt.getTubeTool();
+            if (tubeTool) {
+                ImGui::TextColored(ImVec4(0.0f, 0.85f, 0.8f, 1.0f), "Tube & Curve Primitives");
+                ImGui::Separator();
+
+                // Creation Mode
+                ImGui::TextUnformatted("Creation Mode");
+                int cMode = static_cast<int>(tubeTool->creationMode);
+                if (ImGui::RadioButton("Freehand Stroke", &cMode, 0)) {
+                    tubeTool->creationMode = TubeCreationMode::FreehandStroke;
+                }
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Point-by-Point", &cMode, 1)) {
+                    tubeTool->creationMode = TubeCreationMode::PointByPoint;
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Freehand: Draw stroke directly on mesh or in air\nPoint-by-Point: Click to place and edit control points");
+                }
+
+                if (tubeTool->creationMode == TubeCreationMode::FreehandStroke) {
+                    ImGui::SliderInt("Smoothing", &tubeTool->strokeSmoothing, 0, 8);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Averages out hand tremors and jitter before curve creation (default: 2).");
+                    }
+                    ImGui::SliderFloat("Simplification", &tubeTool->curveFitTolerance, 0.2f, 3.0f, "%.2f");
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Controls point density: higher values produce fewer points, lower values produce more points.");
+                    }
+                }
+
+                ImGui::Separator();
+                ImGui::TextUnformatted("Radius & Taper");
+                float curBaseR = tubeTool->baseRadius;
+                if (ImGui::SliderFloat("Base Radius", &curBaseR, 0.1f, 50.0f, "%.2f")) {
+                    tubeTool->setBaseRadius(curBaseR);
+                }
+                if (ImGui::IsItemDeactivatedAfterEdit()) {
+                    scene.pushHistoryState();
+                }
+                if (ImGui::SliderFloat("Start Scale", &tubeTool->startRadiusScale, 0.0f, 3.0f, "%.2fx")) {
+                    tubeTool->markGeometryDirty();
+                }
+                if (ImGui::IsItemDeactivatedAfterEdit()) {
+                    scene.pushHistoryState();
+                }
+                if (ImGui::SliderFloat("End Scale (Taper)", &tubeTool->endRadiusScale, 0.0f, 3.0f, "%.2fx")) {
+                    tubeTool->markGeometryDirty();
+                }
+                if (ImGui::IsItemDeactivatedAfterEdit()) {
+                    scene.pushHistoryState();
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Taper to 0.0 for sharp tips (horns, tentacles, spikes, claws)");
+                }
+
+                ImGui::Separator();
+                ImGui::TextUnformatted("Cross-Section Profile");
+                int prof = static_cast<int>(tubeTool->profileType);
+                if (ImGui::RadioButton("Round", &prof, 0)) {
+                    tubeTool->profileType = TubeProfileType::Round;
+                    tubeTool->markGeometryDirty();
+                }
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Flat Ribbon", &prof, 1)) {
+                    tubeTool->profileType = TubeProfileType::FlatRibbon;
+                    tubeTool->markGeometryDirty();
+                }
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Square", &prof, 2)) {
+                    tubeTool->profileType = TubeProfileType::Square;
+                    tubeTool->markGeometryDirty();
+                }
+
+                if (tubeTool->profileType == TubeProfileType::FlatRibbon) {
+                    if (ImGui::SliderFloat("Ribbon Thickness", &tubeTool->ribbonThickness, 0.05f, 1.0f, "%.2f")) {
+                        tubeTool->markGeometryDirty();
+                    }
+                }
+
+                if (tubeTool->profileType == TubeProfileType::Round) {
+                    if (ImGui::SliderInt("Radial Segments", &tubeTool->radialSegments, 3, 64)) {
+                        tubeTool->markGeometryDirty();
+                    }
+                }
+
+                if (ImGui::Checkbox("Auto-Density (Smooth Long Curves)", &tubeTool->autoDensity)) {
+                    tubeTool->markGeometryDirty();
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Dynamically increases segments for long curves to prevent faceting.");
+                }
+
+                if (!tubeTool->autoDensity) {
+                    if (ImGui::SliderInt("Curve Segments", &tubeTool->curveSegments, 8, 1024)) {
+                        tubeTool->markGeometryDirty();
+                    }
+                } else {
+                    if (ImGui::SliderInt("Min Segments", &tubeTool->curveSegments, 8, 512)) {
+                        tubeTool->markGeometryDirty();
+                    }
+                }
+
+                if (ImGui::SliderInt("Bend & Corner Segments", &tubeTool->cornerSegments, 3, 32)) {
+                    tubeTool->markGeometryDirty();
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Cross-section density on smooth bends and sharp corners to keep the tube smooth and prevent breaking/pinching.");
+                }
+
+                if (ImGui::SliderFloat("Twist / Roll", &tubeTool->twistDegrees, -360.0f, 360.0f, "%.1f deg")) {
+                    tubeTool->markGeometryDirty();
+                }
+
+                ImGui::Separator();
+                ImGui::TextUnformatted("End Caps");
+                int cap = static_cast<int>(tubeTool->capType);
+                if (ImGui::RadioButton("Rounded", &cap, 0)) {
+                    tubeTool->capType = TubeCapType::Rounded;
+                    tubeTool->markGeometryDirty();
+                }
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Flat", &cap, 1)) {
+                    tubeTool->capType = TubeCapType::Flat;
+                    tubeTool->markGeometryDirty();
+                }
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Open", &cap, 2)) {
+                    tubeTool->capType = TubeCapType::Open;
+                    tubeTool->markGeometryDirty();
+                }
+
+                ImGui::Separator();
+                ImGui::TextUnformatted("Snapping & Placement");
+                ImGui::Checkbox("Snap to Surface", &tubeTool->snapToSurface);
+                if (tubeTool->snapToSurface) {
+                    if (ImGui::SliderFloat("Surface Offset", &tubeTool->surfaceOffset, -5.0f, 15.0f, "%.2f")) {
+                        tubeTool->markGeometryDirty();
+                    }
+                }
+
+                if (tubeTool->getSelectedPointIndex() != -1 &&
+                    tubeTool->getSelectedPointIndex() < static_cast<int>(tubeTool->getSpline().getPointCount())) {
+                    int pIdx = tubeTool->getSelectedPointIndex();
+                    auto& pt = tubeTool->getSpline().getPoint(pIdx);
+                    ImGui::Separator();
+                    ImGui::Text("Selected Point #%d", pIdx + 1);
+                    if (ImGui::SliderFloat("Point Radius", &pt.radius, 0.05f, 25.0f, "%.2f")) {
+                        tubeTool->markGeometryDirty();
+                    }
+                    int nPts = static_cast<int>(tubeTool->getSpline().getPointCount());
+                    if (nPts > 2 && pIdx > 0 && pIdx < nPts - 1) {
+                        if (ImGui::Button("Smooth Radius with Neighbors")) {
+                            float avgR = (tubeTool->getSpline().getPoint(pIdx - 1).radius +
+                                          tubeTool->getSpline().getPoint(pIdx + 1).radius) * 0.5f;
+                            pt.radius = glm::mix(pt.radius, avgR, 0.5f);
+                            tubeTool->markGeometryDirty();
+                        }
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("Smoothly relax this point's radius towards adjacent points");
+                        }
+                    }
+                    bool isCorner = pt.isCorner;
+                    if (ImGui::Checkbox("Sharp Corner / Right Angle", &isCorner)) {
+                        pt.isCorner = isCorner;
+                        tubeTool->markGeometryDirty();
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Break the curve at a right angle (or single click the point in viewport)");
+                    }
+                    if (isCorner) {
+                        if (ImGui::SliderInt("Corner Segments", &tubeTool->cornerSegments, 3, 32)) {
+                            tubeTool->markGeometryDirty();
+                        }
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("Number of cross-sections around sharp corners to keep tube smooth and unbroken.");
+                        }
+                    }
+                }
+
+                ImGui::Separator();
+                ImGui::TextUnformatted("Tubes & Finalization");
+                bool hasActiveTube = tubeTool->getActiveTubeMesh() != nullptr;
+
+                if (hasActiveTube) {
+                    ImGui::TextColored(ImVec4(0.2f, 0.95f, 0.85f, 1.0f), ICON_LC_CYLINDER " Active: %s", tubeTool->getActiveTubeMesh()->outlinerName.c_str());
+                } else {
+                    ImGui::TextDisabled(ICON_LC_CYLINDER " Ready to draw new tube");
+                }
+
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.50f, 0.35f, 0.85f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.65f, 0.45f, 1.0f));
+                if (ImGui::Button(ICON_LC_PLUS " Start New Tube", ImVec2(-1, 26))) {
+                    tubeTool->startNewTube(scene);
+                }
+                ImGui::PopStyleColor(2);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Preserve current tube and begin a fresh tube");
+                }
+
+                ImGui::BeginDisabled(!hasActiveTube);
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.48f, 0.72f, 0.85f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.58f, 0.85f, 1.0f));
+                if (ImGui::Button(ICON_LC_CHECK " Bake to Mesh", ImVec2(-1, 28))) {
+                    tubeTool->bakeToMesh(scene);
+                }
+                ImGui::PopStyleColor(2);
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    ImGui::SetTooltip("Convert procedural curve into a standard editable sculpt mesh");
+                }
+                ImGui::EndDisabled();
+
+                // Bake All Tubes button if multiple unfinalized tubes exist
+                int tubeCount = 0;
+                for (Mesh* m : scene.getMeshes()) {
+                    if (m && m->isTube) tubeCount++;
+                }
+                if (tubeCount > 1) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.38f, 0.62f, 0.85f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.28f, 0.48f, 0.75f, 1.0f));
+                    std::string bakeAllLabel = ICON_LC_CHECK_CHECK " Bake All Tubes (" + std::to_string(tubeCount) + ")";
+                    if (ImGui::Button(bakeAllLabel.c_str(), ImVec2(-1, 26))) {
+                        tubeTool->bakeAllTubes(scene);
+                    }
+                    ImGui::PopStyleColor(2);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Convert all unfinalized procedural tubes into editable sculpt meshes");
+                    }
+                }
+
+                if (ImGui::Button(ICON_LC_TRASH_2 " Clear Current Curve", ImVec2(-1, 24))) {
+                    tubeTool->clearCurve(&scene);
+                    scene.pushHistoryState();
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Reset curve and remove the active unfinalized tube");
+                }
+
+                tubeTool->updateGeometryIfNeeded(scene);
+            }
+        } else {
 
         // ZBrush Presets Section
         if (ImGui::CollapsingHeader("ZBrush Brush Presets", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -2090,6 +2344,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 }
             }
         }
+        } // end of else (standard sculpting settings)
 
         ImGui::End();
     }
@@ -2735,6 +2990,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
                     // Row 2: Badges & Info Subtext
                     std::string infoStr = formatCount(mesh->nbVerts) + " verts";
+                    if (mesh->isTube) infoStr += "  " ICON_LC_CYLINDER " [Procedural Tube]";
                     if (isActive) infoStr += "  " ICON_LC_CHECK " Active";
                     ImGui::TextDisabled("%s", infoStr.c_str());
 
@@ -2805,6 +3061,19 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     }
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Duplicate mesh (Ctrl+D)");
 
+                    if (mesh->isTube) {
+                        ImGui::SameLine();
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.48f, 0.72f, 0.85f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.58f, 0.85f, 1.0f));
+                        if (ImGui::Button(ICON_LC_CHECK " Bake##card", ImVec2(btnSz * 2.5f, btnSz))) {
+                            if (auto* tt = sculpt.getTubeTool()) {
+                                tt->bakeMesh(scene, mesh);
+                            }
+                        }
+                        ImGui::PopStyleColor(2);
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bake procedural tube into standard editable sculpt mesh");
+                    }
+
                     ImGui::SameLine();
 
                     // Delete Mesh Button
@@ -2856,6 +3125,22 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             ImGui::Separator();
                         }
 
+                        if (mesh->isTube) {
+                            if (ImGui::MenuItem(ICON_LC_CYLINDER " Edit Tube Spline")) {
+                                sculpt.setBrush(BRUSH_TUBE);
+                                m_showSculptingPanel = true;
+                                if (auto* tt = sculpt.getTubeTool()) {
+                                    tt->loadFromMesh(mesh);
+                                }
+                            }
+                            if (ImGui::MenuItem(ICON_LC_CHECK " Bake to Editable Mesh")) {
+                                if (auto* tt = sculpt.getTubeTool()) {
+                                    tt->bakeMesh(scene, mesh);
+                                }
+                            }
+                            ImGui::Separator();
+                        }
+
                         if (ImGui::MenuItem(ICON_LC_COPY " Duplicate", "Ctrl+D")) {
                             scene.setOrUnsetMesh(mesh, false);
                             scene.duplicateSelection();
@@ -2888,6 +3173,11 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             }
                         } else {
                             scene.setOrUnsetMesh(mesh, false);
+                            if (mesh && mesh->isTube && mesh->tubeData && sculpt.getBrush() == BRUSH_TUBE) {
+                                if (auto* tt = sculpt.getTubeTool()) {
+                                    tt->loadFromMesh(mesh);
+                                }
+                            }
                         }
                     }
 
@@ -4545,6 +4835,16 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             float vH = (float)camera.getHeight();
             poseTool->renderOverlay(scene, camera, vW, vH);
             poseTool->renderGizmoAndDeform(scene, camera, vW, vH);
+        }
+    }
+
+    // Tube Tool Overlay
+    if (sculpt.getBrush() == BRUSH_TUBE) {
+        if (auto* tubeTool = sculpt.getTubeTool()) {
+            const Camera& camera = scene.getCamera();
+            float vW = (float)camera.getWidth();
+            float vH = (float)camera.getHeight();
+            tubeTool->renderOverlay(scene, camera, vW, vH);
         }
     }
 
@@ -7218,10 +7518,11 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::GetWindowDrawList()->AddImage((ImTextureID)(uintptr_t)activeIconTex, imgMin, imgMax, ImVec2(0, 1), ImVec2(1, 0), IM_COL32(255, 255, 255, 255));
         } else {
             ImVec2 pMin = ImGui::GetItemRectMin();
-            ImVec2 textSz = ImGui::CalcTextSize(activeBrushName);
+            const char* label = (activeBrush == BRUSH_TUBE) ? ICON_LC_CYLINDER "\nTube" : activeBrushName;
+            ImVec2 textSz = ImGui::CalcTextSize(label);
             ImGui::GetWindowDrawList()->AddText(
                 ImVec2(pMin.x + (bigBtnSize - textSz.x) * 0.5f, pMin.y + (bigBtnSize - textSz.y) * 0.5f),
-                IM_COL32(255, 255, 255, 240), activeBrushName);
+                IM_COL32(255, 255, 255, 240), label);
         }
 
         if (clickedActive) {
@@ -7254,6 +7555,12 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
                 std::string itemLabel = hk ? (std::string(getBrushNameLocal(bType)) + " [" + hk + "]") : getBrushNameLocal(bType);
                 if (ImGui::Selectable(itemLabel.c_str(), isSelected)) {
                     sculpt.setBrush(bType);
+                    if (bType == BRUSH_TUBE) {
+                        m_showSculptingPanel = true;
+                        if (auto* tube = sculpt.getTubeTool()) {
+                            tube->onActivate(scene);
+                        }
+                    }
                 }
                 if (isSelected) ImGui::SetItemDefaultFocus();
             }
@@ -7643,6 +7950,44 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         }
 
         if (isPoseActive) {
+            ImGui::PopStyleColor(3);
+        }
+
+        // Tube Tool (Curves) Button
+        bool isTubeActive = (currentBrush == BRUSH_TUBE);
+        if (isTubeActive) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+
+        GLuint tubeTex = getIconTexture("tubetool");
+        bool clickedTube = false;
+        if (tubeTex != 0) {
+            clickedTube = ImGui::Button("##hudVertTubeTool", ImVec2(squareSize, squareSize));
+            ImVec2 pMin = ImGui::GetItemRectMin();
+            ImVec2 pMax = ImGui::GetItemRectMax();
+            float pad = 1.0f * scale;
+            ImVec2 imgMin(pMin.x + pad, pMin.y + pad);
+            ImVec2 imgMax(pMax.x - pad, pMax.y - pad);
+            ImU32 tintCol = isTubeActive ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 240);
+            ImGui::GetWindowDrawList()->AddImage((ImTextureID)(uintptr_t)tubeTex, imgMin, imgMax, ImVec2(0, 1), ImVec2(1, 0), tintCol);
+        } else {
+            clickedTube = ImGui::Button(ICON_LC_CYLINDER "##hudVertTubeTool", ImVec2(squareSize, squareSize));
+        }
+
+        if (clickedTube) {
+            sculpt.setBrush(BRUSH_TUBE);
+            m_showSculptingPanel = true;
+            if (auto* tube = sculpt.getTubeTool()) {
+                tube->onActivate(scene);
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Tube / Curve Tool\nDraw parametric cylinders and curves along surfaces or in air");
+        }
+
+        if (isTubeActive) {
             ImGui::PopStyleColor(3);
         }
 

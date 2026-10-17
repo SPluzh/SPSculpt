@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.5]
+- **Tube & Curve Tool**: Create 3D curves and tubes by freehand drawing directly on surfaces or in space, or placing points manually.
+- **Interactive Editing**: Move control points in 3D, extrude ends with Alt+Drag, click points to toggle sharp right-angle corners, and adjust thickness with dedicated handles.
+- **Profiles & Tapering**: Supports Round, Flat Ribbon (hair/straps), Square, and Polygon shapes with start/end scaling, tapering, twist, and cap styles.
+- **Symmetry & 1-Click Bake**: Real-time symmetry, persistent curve editing, and instant conversion into a sculptable mesh with full Undo (Ctrl+Z).
+
 ## [0.3.4]
 - **SnakeHook Brush**: Pull horns, tentacles, and curved hooks smoothly out of meshes into 3D space.
 - **Shape Controls**: Built-in Pinch (tapering), Magnify (volume preservation), Twist, and mesh relaxation.
