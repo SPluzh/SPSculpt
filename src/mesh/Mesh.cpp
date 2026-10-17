@@ -288,15 +288,6 @@ void Mesh::postInit() {
             faceNormals.data(),
             normals.data()
         );
-        diagnoseMeshNormals(
-            verts.data(), nbVerts,
-            faces.data(), nbFaces,
-            faceGroups.data(),
-            vrfStartCount.data(),
-            vertRingFace.data(),
-            faceNormals.data(),
-            normals.data()
-        );
     } else {
         sculpt_log("[Mesh] Preserved %zu pre-calculated imported vertex normals in postInit\n", normals.size() / 3);
     }
