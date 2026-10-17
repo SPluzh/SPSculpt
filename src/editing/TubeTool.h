@@ -108,10 +108,13 @@ public:
     Mesh* getBaseMesh() const { return m_baseMesh; }
 
     int hitTestControlPoints(const Camera& camera, float mouseX, float mouseY, float thresholdPx = 14.0f) const;
+    int hitTestTubeControlPoints(const Camera& camera, const CurveSpline& spline, float mouseX, float mouseY, float thresholdPx = 14.0f) const;
     int hitTestRadiusHandle(const Camera& camera, float mouseX, float mouseY, float thresholdPx = 12.0f) const;
     int findClosestSegmentOnCurve(const Camera& camera, float mouseX, float mouseY, float thresholdPx = 12.0f, float* outT = nullptr) const;
+    int findClosestSegmentOnSpline(const Camera& camera, const CurveSpline& spline, float mouseX, float mouseY, float thresholdPx = 12.0f, float* outT = nullptr) const;
     int hitTestEndProfilePoint(const Camera& camera, float mouseX, float mouseY, float thresholdPx = 14.0f) const;
     void rebuildMeshGeometry(Scene& scene);
+    void rebuildTubeMesh(Scene& scene, Mesh* tubeMesh);
 
 private:
     SculptManager& m_sculpt;

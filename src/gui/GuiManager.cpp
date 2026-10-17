@@ -5463,12 +5463,33 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     }
 
     // Tube Tool Overlay: show whenever BRUSH_TUBE is active OR any unfinalized tube mesh is selected
+    bool hasSelectedTubes = false;
+    for (Mesh* m : scene.getSelectedMeshes()) {
+        if (m && m->isTube && m->tubeData != nullptr) {
+            hasSelectedTubes = true;
+            break;
+        }
+    }
     Mesh* selMesh = scene.getSelected();
-    bool isTubeSelected = (selMesh && selMesh->isTube && selMesh->tubeData != nullptr);
-    if (sculpt.getBrush() == BRUSH_TUBE || isTubeSelected) {
+    if (selMesh && selMesh->isTube && selMesh->tubeData != nullptr) {
+        hasSelectedTubes = true;
+    }
+
+    if (sculpt.getBrush() == BRUSH_TUBE || hasSelectedTubes) {
         if (auto* tubeTool = sculpt.getTubeTool()) {
-            if (isTubeSelected && tubeTool->getActiveTubeMesh() != selMesh) {
-                tubeTool->loadFromMesh(selMesh);
+            if (!tubeTool->isInteracting()) {
+                if (selMesh && selMesh->isTube && selMesh->tubeData != nullptr) {
+                    if (tubeTool->getActiveTubeMesh() != selMesh) {
+                        tubeTool->loadFromMesh(selMesh);
+                    }
+                } else if (!tubeTool->getActiveTubeMesh() || !tubeTool->getActiveTubeMesh()->isTube) {
+                    for (Mesh* m : scene.getSelectedMeshes()) {
+                        if (m && m->isTube && m->tubeData != nullptr) {
+                            tubeTool->loadFromMesh(m);
+                            break;
+                        }
+                    }
+                }
             }
             const Camera& camera = scene.getCamera();
             float vW = (float)camera.getWidth();

@@ -622,9 +622,16 @@ private:
     void filterPolyGroupVertices(std::vector<uint32_t>& pickedVertices, const Mesh* mesh, uint32_t targetGroupId);
 
     // Tube Curve Move interaction
+    struct TubeMoveTarget {
+        Mesh* mesh = nullptr;
+        std::vector<glm::vec3> origPoints;
+    };
     bool m_isTubeMoveStroke = false;
+    Mesh* m_tubeMoveHitMesh = nullptr;
     int m_tubeMoveHitPointIdx = -1;
+    std::vector<TubeMoveTarget> m_tubeMoveTargets;
     std::vector<glm::vec3> m_tubeMoveOrigPoints;
+    BrushType m_lastTubeActiveBrush = BRUSH_MOVE;
 
     HotkeyManager* m_hotkeyManager = nullptr;
 

@@ -1222,6 +1222,13 @@ void SculptManager::cancelStroke() {
     m_gradIsDrawing = false;
     m_draggedSegment = nullptr;
     m_hasAlphaOrigin = false;
+    if (m_isTubeMoveStroke) {
+        m_isTubeMoveStroke = false;
+        m_tubeMoveHitMesh = nullptr;
+        m_tubeMoveHitPointIdx = -1;
+        m_tubeMoveTargets.clear();
+        m_tubeMoveOrigPoints.clear();
+    }
 }
 
 void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, float mouseX, float mouseY, float currentPressure) {
@@ -1230,7 +1237,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     auto tFrameStart = std::chrono::high_resolution_clock::now();
 
     if (m_firstStrokeFrame) {
-        m_cachedInvMatrix = glm::inverse(mesh->matrix);
+        m_cachedInvMatrix = glm::inverse(mesh ? mesh->matrix : glm::mat4(1.0f));
         m_cachedCamWorldMatrix = glm::inverse(camera.getViewMatrix());
         if (mesh && mesh->isLayerRecording()) {
             Layer* layer = mesh->layerStack.getActive();
@@ -1283,7 +1290,61 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 
     // --- Stage 1: Raycast ---
     auto tStage = std::chrono::high_resolution_clock::now();
-    if ((isGrabBrush || isSnakeBrush) && !m_firstStrokeFrame) {
+    if (m_isTubeMoveStroke && m_tubeTool) {
+        if (activeBrush == BRUSH_MOVE || activeBrush == BRUSH_DRAG || activeBrush == BRUSH_ELASTIC) {
+            glm::vec3 camFrontLocal = -glm::normalize(glm::vec3(m_cachedInvMatrix * glm::vec4(glm::vec3(m_cachedCamWorldMatrix[2]), 0.0f)));
+            float denom = glm::dot(camFrontLocal, localRayDir);
+            if (std::abs(denom) > 1e-12f) {
+                float t = glm::dot(camFrontLocal, m_initialIntersection - localRayOrigin) / denom;
+                m_currentIntersection = localRayOrigin + localRayDir * t;
+            } else {
+                m_currentIntersection = m_initialIntersection;
+            }
+        } else {
+            // Smooth brush (or other brushes affecting tube curve):
+            // Project ray towards closest point on curves or camera plane
+            float bestT = -1.0f;
+            float bestDist2 = std::numeric_limits<float>::max();
+            for (const auto& target : m_tubeMoveTargets) {
+                if (!target.mesh || !target.mesh->tubeData) continue;
+                const CurveSpline& spl = (target.mesh == m_tubeTool->getActiveTubeMesh()) ? m_tubeTool->getSpline() : target.mesh->tubeData->spline;
+                for (size_t pi = 0; pi < spl.getPointCount(); ++pi) {
+                    glm::vec3 ptPos = spl.getPoint(pi).position;
+                    float t = glm::dot(ptPos - ray.origin, ray.dir);
+                    if (t > 0.0f) {
+                        glm::vec3 pOnRay = ray.origin + t * ray.dir;
+                        glm::vec3 diff = ptPos - pOnRay;
+                        float d2 = glm::dot(diff, diff);
+                        if (d2 < bestDist2) {
+                            bestDist2 = d2;
+                            bestT = t;
+                        }
+                    }
+                }
+            }
+
+            glm::vec3 worldHit;
+            if (bestT > 0.0f && std::sqrt(bestDist2) < 50.0f) {
+                worldHit = ray.origin + bestT * ray.dir;
+            } else {
+                glm::vec3 camFrontLocal = -glm::normalize(glm::vec3(m_cachedInvMatrix * glm::vec4(glm::vec3(m_cachedCamWorldMatrix[2]), 0.0f)));
+                float denom = glm::dot(camFrontLocal, localRayDir);
+                if (std::abs(denom) > 1e-12f) {
+                    float t = glm::dot(camFrontLocal, m_initialIntersection - localRayOrigin) / denom;
+                    worldHit = glm::vec3(mesh ? mesh->matrix * glm::vec4(localRayOrigin + localRayDir * t, 1.0f) : glm::vec4(localRayOrigin + localRayDir * t, 1.0f));
+                } else {
+                    worldHit = glm::vec3(mesh ? mesh->matrix * glm::vec4(m_initialIntersection, 1.0f) : glm::vec4(m_initialIntersection, 1.0f));
+                }
+            }
+            m_currentIntersection = glm::vec3(m_cachedInvMatrix * glm::vec4(worldHit, 1.0f));
+        }
+
+        m_currentIntersectionNormal = glm::vec3(0.0f, 1.0f, 0.0f);
+        m_currentIntersectionValid = true;
+        m_lastValidIntersection = m_currentIntersection;
+        m_lastValidIntersectionNormal = m_currentIntersectionNormal;
+        m_hasAnyValidIntersection = true;
+    } else if ((isGrabBrush || isSnakeBrush) && !m_firstStrokeFrame) {
         // Bypass raycast for grab/snake brushes on subsequent frames
         glm::vec3 camFrontLocal = -glm::normalize(glm::vec3(m_cachedInvMatrix * glm::vec4(glm::vec3(m_cachedCamWorldMatrix[2]), 0.0f)));
         float denom = glm::dot(camFrontLocal, localRayDir);
@@ -1298,24 +1359,28 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         m_lastValidIntersection = m_currentIntersection;
         m_hasAnyValidIntersection = true;
     } else {
-        std::vector<uint32_t> candidateFaces = mesh->octree.collectIntersectRay(
+        std::vector<uint32_t> candidateFaces = mesh ? mesh->octree.collectIntersectRay(
             localRayOrigin.x, localRayOrigin.y, localRayOrigin.z,
             localRayDir.x, localRayDir.y, localRayDir.z
-        );
+        ) : std::vector<uint32_t>();
 
         float minT = std::numeric_limits<float>::infinity();
 
         for (uint32_t faceId : candidateFaces) {
-            if (faceId >= (uint32_t)mesh->nbFaces) continue;
+            if (!mesh || faceId >= (uint32_t)mesh->nbFaces || faceId * 4 + 3 >= mesh->faces.size()) continue;
             uint32_t v0Id = mesh->faces[faceId * 4];
             uint32_t v1Id = mesh->faces[faceId * 4 + 1];
             uint32_t v2Id = mesh->faces[faceId * 4 + 2];
             uint32_t v3Id = mesh->faces[faceId * 4 + 3];
 
+            if (v0Id >= mesh->vertVisible.size() || v1Id >= mesh->vertVisible.size() || v2Id >= mesh->vertVisible.size()) continue;
+            if (v3Id != 0xffffffff && v3Id >= mesh->vertVisible.size()) continue;
+
             if (!mesh->vertVisible[v0Id] || !mesh->vertVisible[v1Id] || !mesh->vertVisible[v2Id] || (v3Id != 0xffffffff && !mesh->vertVisible[v3Id])) {
                 continue;
             }
 
+            if (v0Id * 3 + 2 >= mesh->verts.size() || v1Id * 3 + 2 >= mesh->verts.size() || v2Id * 3 + 2 >= mesh->verts.size()) continue;
             glm::vec3 v0(mesh->verts[v0Id * 3], mesh->verts[v0Id * 3 + 1], mesh->verts[v0Id * 3 + 2]);
             glm::vec3 v1(mesh->verts[v1Id * 3], mesh->verts[v1Id * 3 + 1], mesh->verts[v1Id * 3 + 2]);
             glm::vec3 v2(mesh->verts[v2Id * 3], mesh->verts[v2Id * 3 + 1], mesh->verts[v2Id * 3 + 2]);
@@ -1329,6 +1394,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             }
 
             if (v3Id != 0xffffffff) {
+                if (v3Id * 3 + 2 >= mesh->verts.size()) continue;
                 glm::vec3 v3(mesh->verts[v3Id * 3], mesh->verts[v3Id * 3 + 1], mesh->verts[v3Id * 3 + 2]);
                 if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v2, v3, t)) {
                     if (t < minT) {
@@ -1345,20 +1411,23 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             return;
         }
 
-        m_currentIntersectionValid = true;
         m_currentIntersection = localRayOrigin + minT * localRayDir;
-        m_currentIntersectionNormal = glm::vec3(
-            mesh->faceNormals[intersectFaceId * 3],
-            mesh->faceNormals[intersectFaceId * 3 + 1],
-            mesh->faceNormals[intersectFaceId * 3 + 2]
-        );
+        if (mesh && intersectFaceId < (uint32_t)mesh->nbFaces && intersectFaceId * 3 + 2 < mesh->faceNormals.size()) {
+            m_currentIntersectionNormal = glm::vec3(
+                mesh->faceNormals[intersectFaceId * 3],
+                mesh->faceNormals[intersectFaceId * 3 + 1],
+                mesh->faceNormals[intersectFaceId * 3 + 2]
+            );
+        } else {
+            m_currentIntersectionNormal = glm::vec3(0.0f, 1.0f, 0.0f);
+        }
 
-        // Save last valid intersection to prevent cursor jitter (Step 1b)
+        m_currentIntersectionValid = true;
         m_lastValidIntersection = m_currentIntersection;
         m_lastValidIntersectionNormal = m_currentIntersectionNormal;
         m_hasAnyValidIntersection = true;
 
-        if (m_firstStrokeFrame && intersectFaceId != 0xffffffff && !mesh->faceGroups.empty() && intersectFaceId < (uint32_t)mesh->nbFaces) {
+        if (m_firstStrokeFrame && intersectFaceId != 0xffffffff && mesh && !mesh->faceGroups.empty() && intersectFaceId < (uint32_t)mesh->nbFaces) {
             m_strokeTargetPolyGroup = mesh->faceGroups[intersectFaceId];
         }
         if (m_firstStrokeFrame && isSnakeBrush) {
@@ -1394,7 +1463,8 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     }
 
     glm::vec3 cameraPos = camera.computePosition();
-    glm::vec3 worldIntersection = glm::vec3(mesh->matrix * glm::vec4(m_currentIntersection, 1.0f));
+    glm::mat4 baseMatrix = mesh ? mesh->matrix : glm::mat4(1.0f);
+    glm::vec3 worldIntersection = glm::vec3(baseMatrix * glm::vec4(m_currentIntersection, 1.0f));
     float hitDepth = glm::distance(cameraPos, worldIntersection);
 
     float worldRadius = 0.0f;
@@ -1408,7 +1478,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         worldRadius = brushRadius * hitDepth * std::tan(fov_rad * 0.5f) * 2.0f / screenHeight;
     }
 
-    glm::vec3 col0(mesh->matrix[0][0], mesh->matrix[0][1], mesh->matrix[0][2]);
+    glm::vec3 col0(baseMatrix[0][0], baseMatrix[0][1], baseMatrix[0][2]);
     float scale = glm::length(col0);
     if (scale < 1e-12f) scale = 1.0f;
 
@@ -1424,9 +1494,128 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     float radius2 = localRadius * localRadius;
 
     if (m_isTubeMoveStroke && m_tubeTool) {
-        auto& spline = m_tubeTool->getSpline();
-        size_t ptCount = spline.getPointCount();
-        if (m_tubeMoveOrigPoints.size() == ptCount && ptCount > 0) {
+        if (m_lastTubeActiveBrush != activeBrush) {
+            m_initialIntersection = m_currentIntersection;
+            m_lastTubeActiveBrush = activeBrush;
+            for (auto& target : m_tubeMoveTargets) {
+                if (!target.mesh || !target.mesh->tubeData) continue;
+                bool isPrimary = (target.mesh == m_tubeTool->getActiveTubeMesh());
+                CurveSpline& spl = isPrimary ? m_tubeTool->getSpline() : target.mesh->tubeData->spline;
+                target.origPoints.resize(spl.getPointCount());
+                for (size_t i = 0; i < spl.getPointCount(); ++i) {
+                    target.origPoints[i] = spl.getPoint(i).position;
+                }
+                if (target.mesh == m_tubeMoveHitMesh) {
+                    m_tubeMoveOrigPoints = target.origPoints;
+                }
+            }
+        }
+
+        float worldRad = localRadius * scale;
+        float focalShift = getCurrentSettings().focalShift;
+        float exponent = std::pow(2.0f, (focalShift - 0.6f) * 2.0f) * 3.0f;
+
+        if (activeBrush == BRUSH_SMOOTH) {
+            glm::vec3 worldCurrentCenter = glm::vec3(baseMatrix * glm::vec4(m_currentIntersection, 1.0f));
+
+            if (!m_tubeMoveTargets.empty()) {
+                for (auto& target : m_tubeMoveTargets) {
+                    if (!target.mesh || !target.mesh->tubeData) continue;
+                    bool isPrimary = (target.mesh == m_tubeTool->getActiveTubeMesh());
+                    CurveSpline& spline = isPrimary ? m_tubeTool->getSpline() : target.mesh->tubeData->spline;
+                    size_t ptCount = spline.getPointCount();
+                    if (ptCount < 3) continue;
+
+                    std::vector<glm::vec3> newPositions(ptCount);
+                    std::vector<float> newRadii(ptCount);
+                    for (size_t i = 0; i < ptCount; ++i) {
+                        newPositions[i] = spline.getPoint(i).position;
+                        newRadii[i] = spline.getPoint(i).radius;
+                    }
+
+                    bool anyChanged = false;
+                    for (size_t i = 1; i + 1 < ptCount; ++i) {
+                        float d = glm::distance(spline.getPoint(i).position, worldCurrentCenter);
+                        if (d < worldRad && worldRad > 1e-5f) {
+                            float dist = d / worldRad;
+                            float base = 1.0f - dist * dist;
+                            float falloff = std::pow(std::max(0.0f, base), exponent);
+                            float factor = falloff * intensity * 0.35f;
+                            if (factor > 1e-5f) {
+                                glm::vec3 pTarget = 0.5f * (spline.getPoint(i - 1).position + spline.getPoint(i + 1).position);
+                                newPositions[i] = glm::mix(spline.getPoint(i).position, pTarget, factor);
+
+                                float rTarget = 0.5f * (spline.getPoint(i - 1).radius + spline.getPoint(i + 1).radius);
+                                newRadii[i] = glm::mix(spline.getPoint(i).radius, rTarget, factor);
+                                anyChanged = true;
+                            }
+                        }
+                    }
+
+                    if (anyChanged) {
+                        for (size_t i = 1; i + 1 < ptCount; ++i) {
+                            spline.getPoint(i).position = newPositions[i];
+                            spline.getPoint(i).radius = newRadii[i];
+                        }
+                        if (target.origPoints.size() == ptCount) {
+                            for (size_t i = 0; i < ptCount; ++i) {
+                                target.origPoints[i] = spline.getPoint(i).position;
+                            }
+                        }
+                        if (target.mesh == m_tubeMoveHitMesh) {
+                            m_tubeMoveOrigPoints = target.origPoints;
+                        }
+                        if (isPrimary) {
+                            m_tubeTool->syncToActiveMesh();
+                        }
+                        m_tubeTool->rebuildTubeMesh(scene, target.mesh);
+                    }
+                }
+            } else {
+                auto& spline = m_tubeTool->getSpline();
+                size_t ptCount = spline.getPointCount();
+                if (ptCount >= 3) {
+                    std::vector<glm::vec3> newPositions(ptCount);
+                    std::vector<float> newRadii(ptCount);
+                    for (size_t i = 0; i < ptCount; ++i) {
+                        newPositions[i] = spline.getPoint(i).position;
+                        newRadii[i] = spline.getPoint(i).radius;
+                    }
+
+                    bool anyChanged = false;
+                    for (size_t i = 1; i + 1 < ptCount; ++i) {
+                        float d = glm::distance(spline.getPoint(i).position, worldCurrentCenter);
+                        if (d < worldRad && worldRad > 1e-5f) {
+                            float dist = d / worldRad;
+                            float base = 1.0f - dist * dist;
+                            float falloff = std::pow(std::max(0.0f, base), exponent);
+                            float factor = falloff * intensity * 0.35f;
+                            if (factor > 1e-5f) {
+                                glm::vec3 pTarget = 0.5f * (spline.getPoint(i - 1).position + spline.getPoint(i + 1).position);
+                                newPositions[i] = glm::mix(spline.getPoint(i).position, pTarget, factor);
+
+                                float rTarget = 0.5f * (spline.getPoint(i - 1).radius + spline.getPoint(i + 1).radius);
+                                newRadii[i] = glm::mix(spline.getPoint(i).radius, rTarget, factor);
+                                anyChanged = true;
+                            }
+                        }
+                    }
+
+                    if (anyChanged) {
+                        for (size_t i = 1; i + 1 < ptCount; ++i) {
+                            spline.getPoint(i).position = newPositions[i];
+                            spline.getPoint(i).radius = newRadii[i];
+                        }
+                        if (m_tubeMoveOrigPoints.size() == ptCount) {
+                            for (size_t i = 0; i < ptCount; ++i) {
+                                m_tubeMoveOrigPoints[i] = spline.getPoint(i).position;
+                            }
+                        }
+                        m_tubeTool->rebuildMeshGeometry(scene);
+                    }
+                }
+            }
+        } else {
             bool isMayaNav = m_hotkeyManager ? m_hotkeyManager->getModifierBehavior().ctrlAltInvertsBrush : (camera.getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
             bool isCtrl = (SDL_GetModState() & KMOD_CTRL) != 0;
             bool isAlt = (SDL_GetModState() & KMOD_ALT) != 0;
@@ -1436,7 +1625,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             glm::vec3 localDrag;
             if (negative) {
                 glm::vec3 norm = (glm::length(m_currentIntersectionNormal) > 1e-6f) ? glm::normalize(m_currentIntersectionNormal) : glm::vec3(0.0f, 1.0f, 0.0f);
-                glm::mat4 localToView = scene.getCamera().getViewMatrix() * mesh->matrix;
+                glm::mat4 localToView = scene.getCamera().getViewMatrix() * baseMatrix;
                 glm::vec3 dragVec = m_currentIntersection - m_initialIntersection;
                 glm::vec3 dragView = glm::vec3(localToView * glm::vec4(dragVec, 0.0f));
                 glm::vec3 normView = glm::vec3(localToView * glm::vec4(norm, 0.0f));
@@ -1453,45 +1642,95 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 localDrag = (m_currentIntersection - m_initialIntersection) * intensity;
             }
 
-            glm::vec3 worldDrag = glm::vec3(mesh->matrix * glm::vec4(localDrag, 0.0f));
-            glm::vec3 worldCenter = glm::vec3(mesh->matrix * glm::vec4(m_initialIntersection, 1.0f));
-            float worldRad = localRadius * scale;
+            glm::vec3 worldDrag = glm::vec3(baseMatrix * glm::vec4(localDrag, 0.0f));
+            glm::vec3 worldInitialCenter = glm::vec3(baseMatrix * glm::vec4(m_initialIntersection, 1.0f));
 
-            float focalShift = getCurrentSettings().focalShift;
-            float exponent = std::pow(2.0f, (focalShift - 0.6f) * 2.0f) * 3.0f;
-
-            float minD = std::numeric_limits<float>::max();
-            for (size_t i = 0; i < ptCount; ++i) {
-                float d = glm::distance(m_tubeMoveOrigPoints[i], worldCenter);
-                if (d < minD) minD = d;
-            }
-
-            float effectiveRad = worldRad;
-            if (m_tubeMoveHitPointIdx < 0 && minD >= effectiveRad && minD < 1e8f) {
-                effectiveRad = minD * 1.5f;
-            }
-
-            for (size_t i = 0; i < ptCount; ++i) {
-                float falloff = 0.0f;
-                if (m_tubeMoveHitPointIdx >= 0 && static_cast<int>(i) == m_tubeMoveHitPointIdx) {
-                    falloff = 1.0f;
-                } else if (effectiveRad > 1e-5f) {
-                    float d = glm::distance(m_tubeMoveOrigPoints[i], worldCenter);
-                    float dist = d / effectiveRad;
-                    if (dist < 1.0f) {
-                        float base = 1.0f - dist * dist;
-                        falloff = std::pow(std::max(0.0f, base), exponent);
+            if (!m_tubeMoveTargets.empty()) {
+                float minD = std::numeric_limits<float>::max();
+                for (const auto& target : m_tubeMoveTargets) {
+                    for (const auto& p : target.origPoints) {
+                        float d = glm::distance(p, worldInitialCenter);
+                        if (d < minD) minD = d;
                     }
                 }
 
-                if (falloff > 0.0f) {
-                    spline.getPoint(i).position = m_tubeMoveOrigPoints[i] + worldDrag * falloff;
-                } else {
-                    spline.getPoint(i).position = m_tubeMoveOrigPoints[i];
+                float effectiveRad = worldRad;
+                if (m_tubeMoveHitPointIdx < 0 && minD >= effectiveRad && minD < 1e8f) {
+                    effectiveRad = minD * 1.5f;
+                }
+
+                for (auto& target : m_tubeMoveTargets) {
+                    if (!target.mesh || !target.mesh->tubeData) continue;
+                    bool isPrimary = (target.mesh == m_tubeTool->getActiveTubeMesh());
+                    CurveSpline& spline = isPrimary ? m_tubeTool->getSpline() : target.mesh->tubeData->spline;
+                    size_t ptCount = spline.getPointCount();
+                    if (target.origPoints.size() != ptCount) continue;
+
+                    bool isHitMesh = (target.mesh == m_tubeMoveHitMesh);
+
+                    for (size_t i = 0; i < ptCount; ++i) {
+                        float falloff = 0.0f;
+                        if (isHitMesh && m_tubeMoveHitPointIdx >= 0 && static_cast<int>(i) == m_tubeMoveHitPointIdx) {
+                            falloff = 1.0f;
+                        } else if (effectiveRad > 1e-5f) {
+                            float d = glm::distance(target.origPoints[i], worldInitialCenter);
+                            float dist = d / effectiveRad;
+                            if (dist < 1.0f) {
+                                float base = 1.0f - dist * dist;
+                                falloff = std::pow(std::max(0.0f, base), exponent);
+                            }
+                        }
+
+                        if (falloff > 0.0f) {
+                            spline.getPoint(i).position = target.origPoints[i] + worldDrag * falloff;
+                        } else {
+                            spline.getPoint(i).position = target.origPoints[i];
+                        }
+                    }
+
+                    if (isPrimary) {
+                        m_tubeTool->syncToActiveMesh();
+                    }
+                    m_tubeTool->rebuildTubeMesh(scene, target.mesh);
+                }
+            } else {
+                auto& spline = m_tubeTool->getSpline();
+                size_t ptCount = spline.getPointCount();
+                if (m_tubeMoveOrigPoints.size() == ptCount && ptCount > 0) {
+                    float minD = std::numeric_limits<float>::max();
+                    for (size_t i = 0; i < ptCount; ++i) {
+                        float d = glm::distance(m_tubeMoveOrigPoints[i], worldInitialCenter);
+                        if (d < minD) minD = d;
+                    }
+
+                    float effectiveRad = worldRad;
+                    if (m_tubeMoveHitPointIdx < 0 && minD >= effectiveRad && minD < 1e8f) {
+                        effectiveRad = minD * 1.5f;
+                    }
+
+                    for (size_t i = 0; i < ptCount; ++i) {
+                        float falloff = 0.0f;
+                        if (m_tubeMoveHitPointIdx >= 0 && static_cast<int>(i) == m_tubeMoveHitPointIdx) {
+                            falloff = 1.0f;
+                        } else if (effectiveRad > 1e-5f) {
+                            float d = glm::distance(m_tubeMoveOrigPoints[i], worldInitialCenter);
+                            float dist = d / effectiveRad;
+                            if (dist < 1.0f) {
+                                float base = 1.0f - dist * dist;
+                                falloff = std::pow(std::max(0.0f, base), exponent);
+                            }
+                        }
+
+                        if (falloff > 0.0f) {
+                            spline.getPoint(i).position = m_tubeMoveOrigPoints[i] + worldDrag * falloff;
+                        } else {
+                            spline.getPoint(i).position = m_tubeMoveOrigPoints[i];
+                        }
+                    }
+
+                    m_tubeTool->rebuildMeshGeometry(scene);
                 }
             }
-
-            m_tubeTool->rebuildMeshGeometry(scene);
         }
         m_firstStrokeFrame = false;
         return;
@@ -2452,7 +2691,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 return;
             }
 
-            if (m_currentBrush == BRUSH_TUBE) {
+            if (m_currentBrush == BRUSH_TUBE && !((mod & KMOD_SHIFT) != 0)) {
                 if (m_tubeTool) {
                     m_tubeTool->handleMouseDown(scene, camera, (float)mouseX, (float)mouseY, (mod & KMOD_CTRL) != 0, (mod & KMOD_ALT) != 0, (mod & KMOD_SHIFT) != 0);
                 }
@@ -2605,16 +2844,20 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 );
 
                 for (uint32_t faceId : candidateFaces) {
-                    if (faceId >= (uint32_t)mesh->nbFaces) continue;
+                    if (faceId >= (uint32_t)mesh->nbFaces || faceId * 4 + 3 >= mesh->faces.size()) continue;
                     uint32_t v0Id = mesh->faces[faceId * 4];
                     uint32_t v1Id = mesh->faces[faceId * 4 + 1];
                     uint32_t v2Id = mesh->faces[faceId * 4 + 2];
                     uint32_t v3Id = mesh->faces[faceId * 4 + 3];
 
+                    if (v0Id >= mesh->vertVisible.size() || v1Id >= mesh->vertVisible.size() || v2Id >= mesh->vertVisible.size()) continue;
+                    if (v3Id != 0xffffffff && v3Id >= mesh->vertVisible.size()) continue;
+
                     if (!mesh->vertVisible[v0Id] || !mesh->vertVisible[v1Id] || !mesh->vertVisible[v2Id] || (v3Id != 0xffffffff && !mesh->vertVisible[v3Id])) {
                         continue;
                     }
 
+                    if (v0Id * 3 + 2 >= mesh->verts.size() || v1Id * 3 + 2 >= mesh->verts.size() || v2Id * 3 + 2 >= mesh->verts.size()) continue;
                     glm::vec3 v0(mesh->verts[v0Id * 3], mesh->verts[v0Id * 3 + 1], mesh->verts[v0Id * 3 + 2]);
                     glm::vec3 v1(mesh->verts[v1Id * 3], mesh->verts[v1Id * 3 + 1], mesh->verts[v1Id * 3 + 2]);
                     glm::vec3 v2(mesh->verts[v2Id * 3], mesh->verts[v2Id * 3 + 1], mesh->verts[v2Id * 3 + 2]);
@@ -2628,6 +2871,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     }
 
                     if (v3Id != 0xffffffff) {
+                        if (v3Id * 3 + 2 >= mesh->verts.size()) continue;
                         glm::vec3 v3(mesh->verts[v3Id * 3], mesh->verts[v3Id * 3 + 1], mesh->verts[v3Id * 3 + 2]);
                         if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v2, v3, t)) {
                             if (t < minT) {
@@ -2643,45 +2887,190 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             }
 
             m_isTubeMoveStroke = false;
+            m_tubeMoveHitMesh = nullptr;
             m_tubeMoveHitPointIdx = -1;
+            m_tubeMoveTargets.clear();
             m_tubeMoveOrigPoints.clear();
 
-            if (isTubeSelected && (m_currentBrush == BRUSH_MOVE || m_currentBrush == BRUSH_DRAG)) {
-                int hitPoint = m_tubeTool->hitTestControlPoints(camera, (float)mouseX, (float)mouseY, 18.0f);
-                float segT = 0.5f;
-                int hitSeg = (hitPoint == -1 && !hitMesh) ? m_tubeTool->findClosestSegmentOnCurve(camera, (float)mouseX, (float)mouseY, 18.0f, &segT) : -1;
+            std::vector<Mesh*> selectedTubes;
+            for (Mesh* sm : scene.getSelectedMeshes()) {
+                if (sm && sm->isTube && sm->tubeData != nullptr) {
+                    if (std::find(selectedTubes.begin(), selectedTubes.end(), sm) == selectedTubes.end()) {
+                        selectedTubes.push_back(sm);
+                    }
+                }
+            }
+            if (mesh && mesh->isTube && mesh->tubeData != nullptr) {
+                if (std::find(selectedTubes.begin(), selectedTubes.end(), mesh) == selectedTubes.end()) {
+                    selectedTubes.push_back(mesh);
+                }
+            }
 
-                if (hitPoint != -1 || hitMesh || hitSeg != -1) {
+            bool isShift = (mod & KMOD_SHIFT) != 0;
+            bool isSmooth = (m_currentBrush == BRUSH_SMOOTH || isShift);
+            bool isMove = (m_currentBrush == BRUSH_MOVE || m_currentBrush == BRUSH_DRAG);
+
+            if (m_tubeTool && !selectedTubes.empty() && (isMove || isSmooth)) {
+                Mesh* hitTubeMesh = nullptr;
+                int hitPoint = -1;
+                float brushScreenRad = getSettings(isSmooth ? BRUSH_SMOOTH : m_currentBrush).radius;
+                float closestPtDist = 16.0f;
+                for (Mesh* tMesh : selectedTubes) {
+                    const CurveSpline& spl = (tMesh == m_tubeTool->getActiveTubeMesh()) ? m_tubeTool->getSpline() : tMesh->tubeData->spline;
+                    int ptIdx = m_tubeTool->hitTestTubeControlPoints(camera, spl, (float)mouseX, (float)mouseY, closestPtDist);
+                    if (ptIdx != -1) {
+                        glm::vec3 sProj = camera.project(spl.getPoint(ptIdx).position);
+                        float d = glm::distance(glm::vec2(sProj.x, sProj.y), glm::vec2((float)mouseX, (float)mouseY));
+                        if (d < closestPtDist) {
+                            closestPtDist = d;
+                            hitPoint = ptIdx;
+                            hitTubeMesh = tMesh;
+                        }
+                    }
+                }
+
+                // If no control point hit, check if mouse clicked on tube mesh surface
+                if (hitPoint == -1) {
+                    if (hitMesh && mesh && mesh->isTube && mesh->tubeData != nullptr) {
+                        hitTubeMesh = mesh;
+                    } else {
+                        for (Mesh* tMesh : selectedTubes) {
+                            Ray ray = camera.getRay((float)mouseX, (float)mouseY);
+                            glm::mat4 invMatrix = glm::inverse(tMesh->matrix);
+                            glm::vec3 lOrigin = glm::vec3(invMatrix * glm::vec4(ray.origin, 1.0f));
+                            glm::vec3 lDir = glm::normalize(glm::vec3(invMatrix * glm::vec4(ray.dir, 0.0f)));
+                            std::vector<uint32_t> candFaces = tMesh->octree.collectIntersectRay(
+                                lOrigin.x, lOrigin.y, lOrigin.z,
+                                lDir.x, lDir.y, lDir.z
+                            );
+                            float tHit;
+                            for (uint32_t fId : candFaces) {
+                                if (fId >= (uint32_t)tMesh->nbFaces || fId * 4 + 3 >= tMesh->faces.size()) continue;
+                                uint32_t u0 = tMesh->faces[fId * 4];
+                                uint32_t u1 = tMesh->faces[fId * 4 + 1];
+                                uint32_t u2 = tMesh->faces[fId * 4 + 2];
+                                uint32_t u3 = tMesh->faces[fId * 4 + 3];
+
+                                if (u0 >= tMesh->vertVisible.size() || u1 >= tMesh->vertVisible.size() || u2 >= tMesh->vertVisible.size()) continue;
+                                if (u3 != 0xffffffff && u3 >= tMesh->vertVisible.size()) continue;
+
+                                if (u0 * 3 + 2 >= tMesh->verts.size() || u1 * 3 + 2 >= tMesh->verts.size() || u2 * 3 + 2 >= tMesh->verts.size()) continue;
+                                glm::vec3 cv0(tMesh->verts[u0 * 3], tMesh->verts[u0 * 3 + 1], tMesh->verts[u0 * 3 + 2]);
+                                glm::vec3 cv1(tMesh->verts[u1 * 3], tMesh->verts[u1 * 3 + 1], tMesh->verts[u1 * 3 + 2]);
+                                glm::vec3 cv2(tMesh->verts[u2 * 3], tMesh->verts[u2 * 3 + 1], tMesh->verts[u2 * 3 + 2]);
+                                if (rayTriangleIntersect(lOrigin, lDir, cv0, cv1, cv2, tHit) && tHit < minT) {
+                                    minT = tHit;
+                                    intersectFaceId = fId;
+                                    hitMesh = true;
+                                    hitTubeMesh = tMesh;
+                                    localRayOrigin = lOrigin;
+                                    localRayDir = lDir;
+                                }
+                                if (u3 != 0xffffffff) {
+                                    if (u3 * 3 + 2 >= tMesh->verts.size()) continue;
+                                    glm::vec3 cv3(tMesh->verts[u3 * 3], tMesh->verts[u3 * 3 + 1], tMesh->verts[u3 * 3 + 2]);
+                                    if (rayTriangleIntersect(lOrigin, lDir, cv0, cv2, cv3, tHit) && tHit < minT) {
+                                        minT = tHit;
+                                        intersectFaceId = fId;
+                                        hitMesh = true;
+                                        hitTubeMesh = tMesh;
+                                        localRayOrigin = lOrigin;
+                                        localRayDir = lDir;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // If neither point nor surface mesh hit, check curve segments
+                float segT = 0.5f;
+                int hitSeg = -1;
+                if (hitPoint == -1 && !hitMesh) {
+                    float closestSegDist = std::max(18.0f, brushScreenRad);
+                    for (Mesh* tMesh : selectedTubes) {
+                        const CurveSpline& spl = (tMesh == m_tubeTool->getActiveTubeMesh()) ? m_tubeTool->getSpline() : tMesh->tubeData->spline;
+                        float outT = 0.5f;
+                        int seg = m_tubeTool->findClosestSegmentOnSpline(camera, spl, (float)mouseX, (float)mouseY, closestSegDist, &outT);
+                        if (seg != -1) {
+                            hitSeg = seg;
+                            segT = outT;
+                            hitTubeMesh = tMesh;
+                            closestSegDist = 12.0f;
+                        }
+                    }
+                }
+
+                if (hitTubeMesh && (hitPoint != -1 || hitMesh || hitSeg != -1)) {
                     m_isTubeMoveStroke = true;
+                    m_lastTubeActiveBrush = isSmooth ? BRUSH_SMOOTH : m_currentBrush;
+                    m_tubeMoveHitMesh = hitTubeMesh;
                     m_tubeMoveHitPointIdx = hitPoint;
+
+                    m_tubeTool->syncToActiveMesh();
+
+                    m_tubeMoveTargets.clear();
                     m_tubeMoveOrigPoints.clear();
-                    const auto& spl = m_tubeTool->getSpline();
-                    for (size_t i = 0; i < spl.getPointCount(); ++i) {
-                        m_tubeMoveOrigPoints.push_back(spl.getPoint(i).position);
+                    for (Mesh* tMesh : selectedTubes) {
+                        TubeMoveTarget target;
+                        target.mesh = tMesh;
+                        const CurveSpline& spl = (tMesh == m_tubeTool->getActiveTubeMesh()) ? m_tubeTool->getSpline() : tMesh->tubeData->spline;
+                        for (size_t i = 0; i < spl.getPointCount(); ++i) {
+                            target.origPoints.push_back(spl.getPoint(i).position);
+                        }
+                        if (tMesh == hitTubeMesh) {
+                            m_tubeMoveOrigPoints = target.origPoints;
+                        }
+                        m_tubeMoveTargets.push_back(std::move(target));
                     }
 
                     Ray ray = camera.getRay((float)mouseX, (float)mouseY);
                     glm::vec3 camFacingNormal = (glm::length(ray.dir) > 1e-6f) ? -glm::normalize(ray.dir) : glm::vec3(0.0f, 0.0f, 1.0f);
 
+                    const CurveSpline& hitSpl = (hitTubeMesh == m_tubeTool->getActiveTubeMesh()) ? m_tubeTool->getSpline() : hitTubeMesh->tubeData->spline;
+
+                    glm::mat4 invMat = glm::inverse(hitTubeMesh->matrix);
+                    glm::mat4 camWorldMatrix = glm::inverse(camera.getViewMatrix());
+                    glm::vec3 camFrontLocal = -glm::normalize(glm::vec3(invMat * glm::vec4(glm::vec3(camWorldMatrix[2]), 0.0f)));
+                    glm::vec3 lOrigin = glm::vec3(invMat * glm::vec4(ray.origin, 1.0f));
+                    glm::vec3 lDir = glm::normalize(glm::vec3(invMat * glm::vec4(ray.dir, 0.0f)));
+
+                    glm::vec3 refPtLocal;
                     if (hitPoint != -1) {
-                        m_tubeTool->setSelectedPointIndex(hitPoint);
-                        glm::vec3 ptWorld = spl.getPoint(hitPoint).position;
-                        m_initialIntersection = glm::vec3(glm::inverse(mesh->matrix) * glm::vec4(ptWorld, 1.0f));
-                        m_initialIntersectionNormal = camFacingNormal;
+                        if (hitTubeMesh == m_tubeTool->getActiveTubeMesh()) {
+                            m_tubeTool->setSelectedPointIndex(hitPoint);
+                        }
+                        glm::vec3 ptWorld = hitSpl.getPoint(hitPoint).position;
+                        refPtLocal = glm::vec3(invMat * glm::vec4(ptWorld, 1.0f));
                     } else if (hitMesh) {
-                        m_initialIntersection = localRayOrigin + minT * localRayDir;
-                        m_initialIntersectionNormal = (intersectFaceId != 0xffffffff) ? glm::vec3(
-                            mesh->faceNormals[intersectFaceId * 3],
-                            mesh->faceNormals[intersectFaceId * 3 + 1],
-                            mesh->faceNormals[intersectFaceId * 3 + 2]
-                        ) : camFacingNormal;
+                        refPtLocal = localRayOrigin + minT * localRayDir;
                     } else {
-                        float globalU = (static_cast<float>(hitSeg) + segT) / static_cast<float>(std::max(1, (int)spl.getPointCount() - 1));
-                        glm::vec3 curveWorld = spl.evaluatePosition(globalU);
-                        m_initialIntersection = glm::vec3(glm::inverse(mesh->matrix) * glm::vec4(curveWorld, 1.0f));
+                        float globalU = (static_cast<float>(hitSeg) + segT) / static_cast<float>(std::max(1, (int)hitSpl.getPointCount() - 1));
+                        glm::vec3 curveWorld = hitSpl.evaluatePosition(globalU);
+                        refPtLocal = glm::vec3(invMat * glm::vec4(curveWorld, 1.0f));
+                    }
+
+                    float denom = glm::dot(camFrontLocal, lDir);
+                    if (std::abs(denom) > 1e-12f) {
+                        float t = glm::dot(camFrontLocal, refPtLocal - lOrigin) / denom;
+                        m_initialIntersection = lOrigin + lDir * t;
+                    } else {
+                        m_initialIntersection = refPtLocal;
+                    }
+
+                    if (hitMesh && intersectFaceId != 0xffffffff && hitTubeMesh &&
+                        intersectFaceId < (uint32_t)hitTubeMesh->nbFaces &&
+                        intersectFaceId * 3 + 2 < hitTubeMesh->faceNormals.size()) {
+                        m_initialIntersectionNormal = glm::vec3(
+                            hitTubeMesh->faceNormals[intersectFaceId * 3],
+                            hitTubeMesh->faceNormals[intersectFaceId * 3 + 1],
+                            hitTubeMesh->faceNormals[intersectFaceId * 3 + 2]
+                        );
+                    } else {
                         m_initialIntersectionNormal = camFacingNormal;
                     }
                     hitMesh = true;
+                    mesh = hitTubeMesh;
                 }
             }
 
@@ -2750,7 +3139,9 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 m_lastStrokeY = mouseY;
 
                 // Copy vertices to proxy at start of stroke
-                mesh->vertProxy = mesh->verts;
+                if (mesh && !m_isTubeMoveStroke) {
+                    mesh->vertProxy = mesh->verts;
+                }
 
                 // Check stylus/tablet pressure
                 float currentPressure = 1.0f;
@@ -2866,7 +3257,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             return;
         }
 
-        if (m_currentBrush == BRUSH_TUBE) {
+        if (m_currentBrush == BRUSH_TUBE && !m_isTubeMoveStroke) {
             if (event.button.button == SDL_BUTTON_LEFT && m_tubeTool) {
                 m_tubeTool->handleMouseUp(scene);
             }
@@ -3403,7 +3794,9 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
             if (m_isTubeMoveStroke) {
                 m_isTubeMoveStroke = false;
+                m_tubeMoveHitMesh = nullptr;
                 m_tubeMoveHitPointIdx = -1;
+                m_tubeMoveTargets.clear();
                 m_tubeMoveOrigPoints.clear();
                 if (m_tubeTool) {
                     m_tubeTool->syncToActiveMesh();
@@ -3644,7 +4037,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             return;
         }
 
-        if (m_currentBrush == BRUSH_TUBE) {
+        if (m_currentBrush == BRUSH_TUBE && !m_isSculpting) {
             if (m_cameraController.isDragging()) {
                 m_cameraController.handleEvent(event, camera, scene.getMeshes(), true, &scene, m_renderer);
             } else if (m_tubeTool) {
@@ -3654,7 +4047,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
         }
 
         if (mesh && mesh->isTube && mesh->tubeData != nullptr && m_tubeTool && !m_isSculpting && !m_cameraController.isDragging()) {
-            if (m_tubeTool->getActiveTubeMesh() != mesh) {
+            if (!m_tubeTool->isInteracting() && m_tubeTool->getActiveTubeMesh() != mesh) {
                 m_tubeTool->loadFromMesh(mesh);
             }
             m_tubeTool->handleMouseMove(scene, camera, (float)mouseX, (float)mouseY);
@@ -3785,7 +4178,8 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
         if (m_cameraController.isDragging()) {
             m_cameraController.handleEvent(event, camera, scene.getMeshes(), true, &scene, m_renderer);
-        } else if (m_isSculpting && mesh) {
+        } else if (m_isSculpting && (mesh || m_isTubeMoveStroke)) {
+            Mesh* targetMesh = m_isTubeMoveStroke ? (m_tubeMoveHitMesh ? m_tubeMoveHitMesh : mesh) : mesh;
             // Check stylus/tablet pressure
             float currentPressure = 1.0f;
 #ifdef _WIN32
@@ -3830,10 +4224,10 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             const auto& activeSettings = getSettings(activeBrush);
             float minSpacing = activeSettings.spacing * activeSettings.radius;
 
-            bool isGrabBrush = (activeBrush == BRUSH_MOVE || activeBrush == BRUSH_DRAG || activeBrush == BRUSH_ELASTIC || activeBrush == BRUSH_SNAKEHOOK);
+            bool isGrabBrush = (activeBrush == BRUSH_MOVE || activeBrush == BRUSH_DRAG || activeBrush == BRUSH_ELASTIC || activeBrush == BRUSH_SNAKEHOOK || m_isTubeMoveStroke);
 
             if (isGrabBrush || minSpacing <= 0.0f) {
-                executeStroke(scene, mesh, camera, (float)mouseX, (float)mouseY, currentPressure);
+                executeStroke(scene, targetMesh, camera, (float)mouseX, (float)mouseY, currentPressure);
                 m_lastStrokeX = mouseX;
                 m_lastStrokeY = mouseY;
             } else if (dist > minSpacing) {
@@ -3845,7 +4239,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 float curY = (float)m_lastStrokeY + stepDy;
 
                 for (float i = step; i <= 1.01f; i += step) {
-                    executeStroke(scene, mesh, camera, curX, curY, currentPressure);
+                    executeStroke(scene, targetMesh, camera, curX, curY, currentPressure);
                     curX += stepDx;
                     curY += stepDy;
                 }
@@ -3910,7 +4304,7 @@ void SculptManager::processFrame(Scene& scene) {
         m_lastActiveMesh = activeMeshSelected;
         if (m_lastActiveMesh != nullptr) {
             loadSymmetryFromMesh(m_lastActiveMesh);
-            if (m_tubeTool) {
+            if (m_tubeTool && !m_tubeTool->isInteracting()) {
                 if (m_lastActiveMesh->isTube && m_lastActiveMesh->tubeData != nullptr) {
                     m_tubeTool->loadFromMesh(m_lastActiveMesh);
                 } else if (m_tubeTool->getActiveTubeMesh() != nullptr) {
@@ -3918,7 +4312,7 @@ void SculptManager::processFrame(Scene& scene) {
                 }
             }
         } else {
-            if (m_tubeTool) {
+            if (m_tubeTool && !m_tubeTool->isInteracting()) {
                 m_tubeTool->resetActiveTube();
             }
         }

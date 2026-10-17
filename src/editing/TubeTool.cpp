@@ -95,6 +95,7 @@ void TubeTool::syncToActiveMesh() {
 
 bool TubeTool::loadFromMesh(Mesh* mesh) {
     if (!mesh || !mesh->isTube || !mesh->tubeData) return false;
+    if (isInteracting()) return false;
 
     if (m_activeTubeMesh == mesh) return true;
 
@@ -360,12 +361,12 @@ glm::vec3 TubeTool::intersectRayPlane(
     return planePoint;
 }
 
-int TubeTool::hitTestControlPoints(const Camera& camera, float mouseX, float mouseY, float thresholdPx) const {
+int TubeTool::hitTestTubeControlPoints(const Camera& camera, const CurveSpline& spline, float mouseX, float mouseY, float thresholdPx) const {
     float bestDist = thresholdPx;
     int bestIdx = -1;
 
-    for (size_t i = 0; i < m_spline.getPointCount(); ++i) {
-        glm::vec3 screenPos = camera.project(m_spline.getPoint(i).position);
+    for (size_t i = 0; i < spline.getPointCount(); ++i) {
+        glm::vec3 screenPos = camera.project(spline.getPoint(i).position);
         if (screenPos.z < 0.0f || screenPos.z > 1.0f) continue;
 
         float dist = glm::distance(glm::vec2(mouseX, mouseY), glm::vec2(screenPos.x, screenPos.y));
@@ -375,6 +376,10 @@ int TubeTool::hitTestControlPoints(const Camera& camera, float mouseX, float mou
         }
     }
     return bestIdx;
+}
+
+int TubeTool::hitTestControlPoints(const Camera& camera, float mouseX, float mouseY, float thresholdPx) const {
+    return hitTestTubeControlPoints(camera, m_spline, mouseX, mouseY, thresholdPx);
 }
 
 bool TubeTool::getPointHandleInfo(
@@ -501,17 +506,17 @@ bool TubeTool::hitTestRadiusRing(const Camera& camera, float mouseX, float mouse
     return std::abs(mouseDist - screenRadius) <= thresholdPx;
 }
 
-int TubeTool::findClosestSegmentOnCurve(
-    const Camera& camera, float mouseX, float mouseY, float thresholdPx, float* outT
+int TubeTool::findClosestSegmentOnSpline(
+    const Camera& camera, const CurveSpline& spline, float mouseX, float mouseY, float thresholdPx, float* outT
 ) const {
-    if (m_spline.getPointCount() < 2) return -1;
+    if (spline.getPointCount() < 2) return -1;
 
     float bestDist = 999999.0f;
     int bestSeg = -1;
     float bestT = 0.5f;
 
     const int stepsPerSeg = 20;
-    int numSegments = static_cast<int>(m_spline.getPointCount()) - 1;
+    int numSegments = static_cast<int>(spline.getPointCount()) - 1;
 
     glm::vec2 mousePos(mouseX, mouseY);
 
@@ -522,8 +527,8 @@ int TubeTool::findClosestSegmentOnCurve(
             float u0 = (static_cast<float>(seg) + t0) / numSegments;
             float u1 = (static_cast<float>(seg) + t1) / numSegments;
 
-            glm::vec3 p0 = m_spline.evaluatePosition(u0);
-            glm::vec3 p1 = m_spline.evaluatePosition(u1);
+            glm::vec3 p0 = spline.evaluatePosition(u0);
+            glm::vec3 p1 = spline.evaluatePosition(u1);
 
             glm::vec3 s0 = camera.project(p0);
             glm::vec3 s1 = camera.project(p1);
@@ -539,7 +544,7 @@ int TubeTool::findClosestSegmentOnCurve(
             glm::vec2 proj = a + t * ab;
 
             float subT = t0 + t * (t1 - t0);
-            float rApprox = glm::mix(m_spline.getPoint(seg).radius, m_spline.getPoint(seg + 1).radius, subT);
+            float rApprox = glm::mix(spline.getPoint(seg).radius, spline.getPoint(seg + 1).radius, subT);
             glm::vec3 pMid = glm::mix(p0, p1, t);
             glm::vec3 sOff = camera.project(pMid + glm::vec3(0.0f, rApprox, 0.0f));
             float rPx = glm::distance(glm::vec2(s0.x, s0.y), glm::vec2(sOff.x, sOff.y));
@@ -558,6 +563,12 @@ int TubeTool::findClosestSegmentOnCurve(
         *outT = bestT;
     }
     return bestSeg;
+}
+
+int TubeTool::findClosestSegmentOnCurve(
+    const Camera& camera, float mouseX, float mouseY, float thresholdPx, float* outT
+) const {
+    return findClosestSegmentOnSpline(camera, m_spline, mouseX, mouseY, thresholdPx, outT);
 }
 
 bool TubeTool::getEndProfileFrame(EvaluatedFrame& outFrame, int* outPointIdx) const {
@@ -1005,6 +1016,7 @@ bool TubeTool::handleMouseMove(Scene& scene, const Camera& camera, float mouseX,
                     syncToActiveMesh();
                     m_activeTubeMesh = nullptr;
                     m_spline.clear();
+                    scene.selectMesh(nullptr);
                 }
                 m_rawStroke.emplace_back(ptPos, baseRadius, hitNorm, hasNorm);
             }
@@ -1260,6 +1272,7 @@ bool TubeTool::handleMouseUp(Scene& scene) {
                 syncToActiveMesh();
                 m_activeTubeMesh = nullptr;
                 m_spline.clear();
+                scene.selectMesh(nullptr);
             }
 
             // Average / smooth stroke slightly and extract natural control points to describe curve
@@ -1269,6 +1282,12 @@ bool TubeTool::handleMouseUp(Scene& scene) {
                 curveFitTolerance,
                 baseRadius
             );
+
+            if (simplified.size() < 2 && m_rawStroke.size() >= 2) {
+                simplified.clear();
+                simplified.push_back(m_rawStroke.front());
+                simplified.push_back(m_rawStroke.back());
+            }
 
             // Re-assign spline points
             m_spline.clear();
@@ -1282,7 +1301,7 @@ bool TubeTool::handleMouseUp(Scene& scene) {
             scene.pushHistoryState();
             GuiManager::showToast("New Tube Created", 1.5f);
         } else {
-            // User merely clicked on clean space without dragging:
+            // User merely clicked without dragging:
             if (m_strokeStartHitMesh && m_strokeStartHitMesh->isTube && m_strokeStartHitMesh->tubeData) {
                 // Tapped on another unfinalized tube: switch active selection to that tube!
                 if (m_activeTubeMesh && m_activeTubeMesh != m_strokeStartHitMesh) {
@@ -1291,16 +1310,8 @@ bool TubeTool::handleMouseUp(Scene& scene) {
                 scene.selectMesh(m_strokeStartHitMesh);
                 loadFromMesh(m_strokeStartHitMesh);
                 GuiManager::showToast("Loaded tube for editing", 1.2f);
-            } else {
-                // Tapped on empty viewport or base mesh away from active tube:
-                // Deselect active tube so its curve overlay hides, preserving the tube!
-                if (m_activeTubeMesh) {
-                    syncToActiveMesh();
-                    m_activeTubeMesh = nullptr;
-                    m_spline.clear();
-                    scene.selectMesh(nullptr);
-                }
             }
+            // Do not deactivate curve on empty click: curve stays active until another is selected or drawn
         }
         m_rawStroke.clear();
         m_strokeStartHitMesh = nullptr;
@@ -1991,33 +2002,68 @@ static void buildTubeGeometry(
     }
 }
 
-void TubeTool::rebuildMeshGeometry(Scene& scene) {
-    if (m_spline.getPointCount() < 2) {
-        if (m_activeTubeMesh) {
-            scene.removeMesh(m_activeTubeMesh);
+void TubeTool::rebuildTubeMesh(Scene& scene, Mesh* tubeMesh) {
+    if (!tubeMesh) {
+        tubeMesh = m_activeTubeMesh;
+        if (!tubeMesh) return;
+    }
+    if (!tubeMesh->isTube || !tubeMesh->tubeData) return;
+
+    bool isPrimary = (tubeMesh == m_activeTubeMesh);
+
+    if (isPrimary) {
+        if (m_spline.getPointCount() < 2) {
+            scene.removeMesh(tubeMesh);
             m_activeTubeMesh = nullptr;
+            return;
         }
-        return;
+    } else {
+        if (tubeMesh->tubeData->spline.getPointCount() < 2) {
+            return;
+        }
     }
 
-    // Clean preview during point snapping: evaluate spline with the target point merged
-    const CurveSpline* splineToUse = &m_spline;
+    TubeProfileType profType = isPrimary ? profileType : tubeMesh->tubeData->profileType;
+    TubeCapType cType = isPrimary ? capType : tubeMesh->tubeData->capType;
+    int radSides = isPrimary ? radialSegments : tubeMesh->tubeData->radialSegments;
+    float ribbonThick = isPrimary ? ribbonThickness : tubeMesh->tubeData->ribbonThickness;
+    const std::vector<ProfilePoint2D>& csProfile = isPrimary ? crossSectionProfile : tubeMesh->tubeData->crossSectionProfile;
+    bool csSmooth = isPrimary ? crossSectionSmooth : tubeMesh->tubeData->crossSectionSmooth;
+    float sRadScale = isPrimary ? startRadiusScale : tubeMesh->tubeData->startRadiusScale;
+    float eRadScale = isPrimary ? endRadiusScale : tubeMesh->tubeData->endRadiusScale;
+    float twist = isPrimary ? twistDegrees : tubeMesh->tubeData->twistDegrees;
+    int cSegments = isPrimary ? cornerSegments : tubeMesh->tubeData->cornerSegments;
+    bool useRProfile = isPrimary ? useRadiusProfile : tubeMesh->tubeData->useRadiusProfile;
+    const std::vector<ProfilePoint2D>& rProfile = isPrimary ? radiusProfile : tubeMesh->tubeData->radiusProfile;
+    bool rProfileSmooth = isPrimary ? radiusProfileSmooth : tubeMesh->tubeData->radiusProfileSmooth;
+    int numSamples = isPrimary ? curveSegments : tubeMesh->tubeData->curveSegments;
+    bool isAutoDensity = isPrimary ? autoDensity : tubeMesh->tubeData->autoDensity;
+    float bRadius = isPrimary ? baseRadius : tubeMesh->tubeData->baseRadius;
+
+    const CurveSpline* splineToUse = nullptr;
     CurveSpline tempSpline;
-    if (m_isDraggingPoint && !m_isExtrudingPoint && m_snapTargetPointIdx != -1 && m_spline.getPointCount() > 2 && m_selectedPointIdx >= 0) {
-        if (std::abs(m_snapTargetPointIdx - m_selectedPointIdx) == 1 &&
-            m_snapTargetPointIdx >= 0 && m_snapTargetPointIdx < static_cast<int>(m_spline.getPointCount())) {
-            tempSpline = m_spline;
-            int dragIdx = m_selectedPointIdx;
-            int targetIdx = m_snapTargetPointIdx;
-            float mergedR = (tempSpline.getPoint(dragIdx).radius + tempSpline.getPoint(targetIdx).radius) * 0.5f;
-            tempSpline.getPoint(targetIdx).radius = mergedR;
-            tempSpline.removePoint(dragIdx);
-            splineToUse = &tempSpline;
+
+    if (isPrimary) {
+        splineToUse = &m_spline;
+        if (m_isDraggingPoint && !m_isExtrudingPoint && m_snapTargetPointIdx != -1 && m_spline.getPointCount() > 2 && m_selectedPointIdx >= 0) {
+            if (std::abs(m_snapTargetPointIdx - m_selectedPointIdx) == 1 &&
+                m_snapTargetPointIdx >= 0 && m_snapTargetPointIdx < static_cast<int>(m_spline.getPointCount())) {
+                tempSpline = m_spline;
+                int dragIdx = m_selectedPointIdx;
+                int targetIdx = m_snapTargetPointIdx;
+                float mergedR = (tempSpline.getPoint(dragIdx).radius + tempSpline.getPoint(targetIdx).radius) * 0.5f;
+                tempSpline.getPoint(targetIdx).radius = mergedR;
+                tempSpline.removePoint(dragIdx);
+                splineToUse = &tempSpline;
+            }
         }
+    } else {
+        splineToUse = &tubeMesh->tubeData->spline;
     }
 
-    int numSamples = curveSegments;
-    if (autoDensity) {
+    if (!splineToUse || splineToUse->getPointCount() < 2) return;
+
+    if (isAutoDensity) {
         float totalLen = splineToUse->getTotalLength();
         if (totalLen > 1e-4f) {
             float totalR = 0.0f;
@@ -2025,17 +2071,17 @@ void TubeTool::rebuildMeshGeometry(Scene& scene) {
             for (size_t i = 0; i < ptCount; ++i) {
                 totalR += splineToUse->getPoint(i).radius;
             }
-            float avgR = (ptCount > 0) ? (totalR / static_cast<float>(ptCount)) : baseRadius;
-            float avgRadius = std::max(0.05f, avgR * (startRadiusScale + endRadiusScale) * 0.5f);
+            float avgR = (ptCount > 0) ? (totalR / static_cast<float>(ptCount)) : bRadius;
+            float avgRadius = std::max(0.05f, avgR * (sRadScale + eRadScale) * 0.5f);
             float targetStep = std::max(0.15f, avgRadius * 0.35f);
             int needed = static_cast<int>(std::ceil(totalLen / targetStep));
-            numSamples = std::clamp(std::max(curveSegments, needed), 16, 1024);
+            numSamples = std::clamp(std::max(numSamples, needed), 16, 1024);
         }
     }
 
     std::vector<EvaluatedFrame> frames = splineToUse->evaluateFrames(
-        numSamples, startRadiusScale, endRadiusScale, 0.0f, twistDegrees, cornerSegments,
-        useRadiusProfile, radiusProfile, radiusProfileSmooth
+        numSamples, sRadScale, eRadScale, 0.0f, twist, cSegments,
+        useRProfile, rProfile, rProfileSmooth
     );
 
     if (frames.size() < 2) return;
@@ -2047,8 +2093,8 @@ void TubeTool::rebuildMeshGeometry(Scene& scene) {
 
     // 1. Build primary tube
     buildTubeGeometry(
-        frames, profileType, capType, radialSegments, ribbonThickness,
-        crossSectionProfile, crossSectionSmooth,
+        frames, profType, cType, radSides, ribbonThick,
+        csProfile, csSmooth,
         verts, normals, colors, faces, false
     );
 
@@ -2068,8 +2114,8 @@ void TubeTool::rebuildMeshGeometry(Scene& scene) {
         }
 
         buildTubeGeometry(
-            symFrames, profileType, capType, radialSegments, ribbonThickness,
-            crossSectionProfile, crossSectionSmooth,
+            symFrames, profType, cType, radSides, ribbonThick,
+            csProfile, csSmooth,
             verts, normals, colors, faces, flipSym
         );
     }
@@ -2087,43 +2133,53 @@ void TubeTool::rebuildMeshGeometry(Scene& scene) {
         vrfStartCount, vertRingFace, vrvStartCount, vertRingVert, vertOnEdge
     );
 
-    if (!m_activeTubeMesh) {
-        m_activeTubeMesh = new Mesh();
-        m_activeTubeMesh->isTube = true;
-        m_activeTubeMesh->tubeData = std::make_unique<TubeData>();
-        m_activeTubeMesh->outlinerName = "Tube " + std::to_string(m_activeTubeMesh->m_id);
-        scene.addMesh(m_activeTubeMesh);
-        scene.selectMesh(m_activeTubeMesh);
-    }
-
-    m_activeTubeMesh->verts = std::move(verts);
-    m_activeTubeMesh->normals = std::move(normals);
-    m_activeTubeMesh->colors = std::move(colors);
-    m_activeTubeMesh->faces = std::move(faces);
-    m_activeTubeMesh->nbVerts = nbVerts;
-    m_activeTubeMesh->nbFaces = nbFaces;
-    m_activeTubeMesh->vrfStartCount = std::move(vrfStartCount);
-    m_activeTubeMesh->vertRingFace = std::move(vertRingFace);
-    m_activeTubeMesh->vrvStartCount = std::move(vrvStartCount);
-    m_activeTubeMesh->vertRingVert = std::move(vertRingVert);
-    m_activeTubeMesh->vertOnEdge = std::move(vertOnEdge);
+    tubeMesh->verts = std::move(verts);
+    tubeMesh->normals = std::move(normals);
+    tubeMesh->colors = std::move(colors);
+    tubeMesh->faces = std::move(faces);
+    tubeMesh->nbVerts = nbVerts;
+    tubeMesh->nbFaces = nbFaces;
+    tubeMesh->vrfStartCount = std::move(vrfStartCount);
+    tubeMesh->vertRingFace = std::move(vertRingFace);
+    tubeMesh->vrvStartCount = std::move(vrvStartCount);
+    tubeMesh->vertRingVert = std::move(vertRingVert);
+    tubeMesh->vertOnEdge = std::move(vertOnEdge);
 
     // Initialize visibility and material attributes so wireframe shading is fully visible
-    m_activeTubeMesh->vertVisible.assign(nbVerts, 1);
-    m_activeTubeMesh->faceVisible.assign(nbFaces, 1);
-    m_activeTubeMesh->materials.assign(nbVerts * 3, 0.0f);
+    tubeMesh->vertVisible.assign(nbVerts, 1);
+    tubeMesh->faceVisible.assign(nbFaces, 1);
+    tubeMesh->materials.assign(nbVerts * 3, 0.0f);
     for (int i = 0; i < nbVerts; ++i) {
-        m_activeTubeMesh->materials[i * 3 + 0] = 0.5f; // roughness
-        m_activeTubeMesh->materials[i * 3 + 1] = 0.0f; // metalness
-        m_activeTubeMesh->materials[i * 3 + 2] = 0.0f; // mask = 0 (unmasked)
+        tubeMesh->materials[i * 3 + 0] = 0.5f; // roughness
+        tubeMesh->materials[i * 3 + 1] = 0.0f; // metalness
+        tubeMesh->materials[i * 3 + 2] = 0.0f; // mask = 0 (unmasked)
     }
 
-    m_activeTubeMesh->initFaceGroups(scene.getNextFreePolyGroupID());
-    m_activeTubeMesh->hasCustomNormals = false;
-    m_activeTubeMesh->postInit();
-    m_activeTubeMesh->isDirty = true;
-    m_activeTubeMesh->isTube = true;
-    syncToActiveMesh();
+    tubeMesh->initFaceGroups(scene.getNextFreePolyGroupID());
+    tubeMesh->hasCustomNormals = false;
+    tubeMesh->postInit();
+    tubeMesh->isDirty = true;
+    tubeMesh->isTube = true;
+
+    if (isPrimary) {
+        syncToActiveMesh();
+    }
+}
+
+void TubeTool::rebuildMeshGeometry(Scene& scene) {
+    if (!m_activeTubeMesh) {
+        if (m_spline.getPointCount() >= 2) {
+            m_activeTubeMesh = new Mesh();
+            m_activeTubeMesh->isTube = true;
+            m_activeTubeMesh->tubeData = std::make_unique<TubeData>();
+            m_activeTubeMesh->outlinerName = "Tube " + std::to_string(m_activeTubeMesh->m_id);
+            scene.addMesh(m_activeTubeMesh);
+            scene.selectMesh(m_activeTubeMesh);
+        } else {
+            return;
+        }
+    }
+    rebuildTubeMesh(scene, m_activeTubeMesh);
 }
 
 Mesh* TubeTool::bakeToMesh(Scene& scene) {
@@ -2197,209 +2253,246 @@ void TubeTool::renderOverlay(
     if (!drawList) return;
 
     // 1. Draw raw freehand stroke in progress
-    if (m_isDrawingStroke && m_rawStroke.size() >= 2) {
-        for (size_t i = 1; i < m_rawStroke.size(); ++i) {
-            glm::vec3 s0 = camera.project(m_rawStroke[i - 1].position);
-            glm::vec3 s1 = camera.project(m_rawStroke[i].position);
-            if (s0.z < 0.0f || s1.z < 0.0f) continue;
-            drawList->AddLine(
-                ImVec2(s0.x, s0.y), ImVec2(s1.x, s1.y),
-                IM_COL32(0, 230, 210, 240), 2.5f
-            );
+    if (m_isDrawingStroke) {
+        if (m_rawStroke.size() >= 2) {
+            for (size_t i = 1; i < m_rawStroke.size(); ++i) {
+                glm::vec3 s0 = camera.project(m_rawStroke[i - 1].position);
+                glm::vec3 s1 = camera.project(m_rawStroke[i].position);
+                if (s0.z < 0.0f || s1.z < 0.0f) continue;
+                drawList->AddLine(
+                    ImVec2(s0.x, s0.y), ImVec2(s1.x, s1.y),
+                    IM_COL32(0, 230, 210, 240), 2.5f
+                );
+            }
         }
         return;
     }
 
-    // Only render curve overlay if the tube mesh is currently active and selected
-    Mesh* selMesh = scene.getSelected();
-    if (!selMesh || !selMesh->isTube || selMesh->tubeData == nullptr || m_activeTubeMesh != selMesh) {
-        return;
+    // Collect all selected unfinalized tubes
+    std::vector<Mesh*> selectedTubes;
+    for (Mesh* m : scene.getSelectedMeshes()) {
+        if (m && m->isTube && m->tubeData != nullptr) {
+            if (std::find(selectedTubes.begin(), selectedTubes.end(), m) == selectedTubes.end()) {
+                selectedTubes.push_back(m);
+            }
+        }
+    }
+    Mesh* primaryMesh = scene.getSelected();
+    if (primaryMesh && primaryMesh->isTube && primaryMesh->tubeData != nullptr) {
+        if (std::find(selectedTubes.begin(), selectedTubes.end(), primaryMesh) == selectedTubes.end()) {
+            selectedTubes.push_back(primaryMesh);
+        }
     }
 
-    if (m_spline.getPointCount() < 2) return;
+    // In BRUSH_TUBE mode, if no mesh is explicitly selected in scene yet, but m_activeTubeMesh exists with curve:
+    if (selectedTubes.empty() && m_sculpt.getBrush() == BRUSH_TUBE) {
+        if (m_activeTubeMesh && m_activeTubeMesh->isTube && m_activeTubeMesh->tubeData != nullptr) {
+            selectedTubes.push_back(m_activeTubeMesh);
+        }
+    }
+
+    if (selectedTubes.empty()) {
+        return;
+    }
 
     bool isTubeTool = (m_sculpt.getBrush() == BRUSH_TUBE);
 
-    // 2. Draw smooth spline centerline (dense sampling to look smooth on screen)
-    int numSamples = std::clamp(static_cast<int>(m_spline.getPointCount() * 32), 64, 512);
-    std::vector<ImVec2> screenPoints;
-    screenPoints.reserve(numSamples);
-
-    for (int i = 0; i < numSamples; ++i) {
-        float u = static_cast<float>(i) / static_cast<float>(numSamples - 1);
-        glm::vec3 worldPos = m_spline.evaluatePosition(u);
-        glm::vec3 screenPos = camera.project(worldPos);
-        if (screenPos.z >= 0.0f && screenPos.z <= 1.0f) {
-            screenPoints.emplace_back(screenPos.x, screenPos.y);
-        }
+    // If primaryMesh is a tube and not loaded yet, ensure it is loaded into tubeTool
+    if (!isInteracting() && primaryMesh && primaryMesh->isTube && primaryMesh->tubeData != nullptr && m_activeTubeMesh != primaryMesh) {
+        loadFromMesh(primaryMesh);
     }
 
-    if (screenPoints.size() >= 2) {
-        // Shadow line
-        for (size_t i = 1; i < screenPoints.size(); ++i) {
-            drawList->AddLine(screenPoints[i - 1], screenPoints[i], IM_COL32(0, 0, 0, 160), 4.5f);
+    // Render curves and control points for all selected tubes
+    for (Mesh* tMesh : selectedTubes) {
+        bool isPrimary = (tMesh == m_activeTubeMesh);
+        const CurveSpline& spline = isPrimary ? m_spline : tMesh->tubeData->spline;
+        if (spline.getPointCount() < 2) continue;
+
+        // 2. Draw smooth spline centerline (dense sampling to look smooth on screen)
+        int numSamples = std::clamp(static_cast<int>(spline.getPointCount() * 32), 64, 512);
+        std::vector<ImVec2> screenPoints;
+        screenPoints.reserve(numSamples);
+
+        for (int i = 0; i < numSamples; ++i) {
+            float u = static_cast<float>(i) / static_cast<float>(numSamples - 1);
+            glm::vec3 worldPos = spline.evaluatePosition(u);
+            glm::vec3 screenPos = camera.project(worldPos);
+            if (screenPos.z >= 0.0f && screenPos.z <= 1.0f) {
+                screenPoints.emplace_back(screenPos.x, screenPos.y);
+            }
         }
-        // Accent curve line
-        for (size_t i = 1; i < screenPoints.size(); ++i) {
-            drawList->AddLine(screenPoints[i - 1], screenPoints[i], IM_COL32(0, 220, 200, 255), 2.0f);
+
+        if (screenPoints.size() >= 2) {
+            // Shadow line
+            ImU32 shadowCol = isPrimary ? IM_COL32(0, 0, 0, 160) : IM_COL32(0, 0, 0, 130);
+            float shadowThick = isPrimary ? 4.5f : 3.8f;
+            for (size_t i = 1; i < screenPoints.size(); ++i) {
+                drawList->AddLine(screenPoints[i - 1], screenPoints[i], shadowCol, shadowThick);
+            }
+            // Accent curve line
+            ImU32 lineCol = isPrimary ? IM_COL32(0, 220, 200, 255) : IM_COL32(0, 190, 220, 210);
+            float lineThick = isPrimary ? 2.0f : 1.6f;
+            for (size_t i = 1; i < screenPoints.size(); ++i) {
+                drawList->AddLine(screenPoints[i - 1], screenPoints[i], lineCol, lineThick);
+            }
         }
-    }
 
-    // Hover dot along curve indicating click to insert point (ONLY in Tube Tool)
-    if (isTubeTool && m_hoveredCurveSeg != -1 && m_hoveredPointIdx == -1 && !m_isDraggingPoint && !m_isDrawingStroke) {
-        ImVec2 hPos(m_hoveredCurveScreenPos.x, m_hoveredCurveScreenPos.y);
-        drawList->AddCircleFilled(hPos, 6.0f, IM_COL32(0, 0, 0, 180));
-        drawList->AddCircleFilled(hPos, 4.5f, IM_COL32(255, 255, 255, 255));
-        drawList->AddCircle(hPos, 4.5f, IM_COL32(0, 230, 220, 255), 0, 2.0f);
-        bool bothSharp = (m_hoveredCurveSeg >= 0 && m_hoveredCurveSeg + 1 < static_cast<int>(m_spline.getPointCount()) &&
-                          m_spline.getPoint(m_hoveredCurveSeg).isCorner && m_spline.getPoint(m_hoveredCurveSeg + 1).isCorner);
-        const char* addTip = bothSharp ? "+ Add Corner Point" : "+ Add Point";
-        drawList->AddText(ImVec2(hPos.x + 8.0f, hPos.y - 8.0f), bothSharp ? IM_COL32(255, 220, 100, 230) : IM_COL32(255, 255, 255, 230), addTip);
-    }
-
-    // Draw snap guide line when point is magnetically attracted to adjacent neighbor (ONLY in Tube Tool)
-    if (isTubeTool && m_isDraggingPoint && !m_isExtrudingPoint && m_snapTargetPointIdx >= 0 && m_snapTargetPointIdx < static_cast<int>(m_spline.getPointCount()) &&
-        m_selectedPointIdx >= 0 && m_selectedPointIdx < static_cast<int>(m_spline.getPointCount()) &&
-        std::abs(m_snapTargetPointIdx - m_selectedPointIdx) == 1) {
-        glm::vec3 sDrag = camera.project(m_spline.getPoint(m_selectedPointIdx).position);
-        glm::vec3 sTarget = camera.project(m_spline.getPoint(m_snapTargetPointIdx).position);
-        if (sDrag.z >= 0.0f && sDrag.z <= 1.0f && sTarget.z >= 0.0f && sTarget.z <= 1.0f) {
-            drawList->AddLine(ImVec2(sDrag.x, sDrag.y), ImVec2(sTarget.x, sTarget.y), IM_COL32(255, 140, 0, 230), 2.5f);
+        // Hover dot along curve indicating click to insert point (ONLY in Tube Tool and on primary active tube)
+        if (isTubeTool && isPrimary && m_hoveredCurveSeg != -1 && m_hoveredPointIdx == -1 && !m_isDraggingPoint && !m_isDrawingStroke) {
+            ImVec2 hPos(m_hoveredCurveScreenPos.x, m_hoveredCurveScreenPos.y);
+            drawList->AddCircleFilled(hPos, 6.0f, IM_COL32(0, 0, 0, 180));
+            drawList->AddCircleFilled(hPos, 4.5f, IM_COL32(255, 255, 255, 255));
+            drawList->AddCircle(hPos, 4.5f, IM_COL32(0, 230, 220, 255), 0, 2.0f);
+            bool bothSharp = (m_hoveredCurveSeg >= 0 && m_hoveredCurveSeg + 1 < static_cast<int>(spline.getPointCount()) &&
+                              spline.getPoint(m_hoveredCurveSeg).isCorner && spline.getPoint(m_hoveredCurveSeg + 1).isCorner);
+            const char* addTip = bothSharp ? "+ Add Corner Point" : "+ Add Point";
+            drawList->AddText(ImVec2(hPos.x + 8.0f, hPos.y - 8.0f), bothSharp ? IM_COL32(255, 220, 100, 230) : IM_COL32(255, 255, 255, 230), addTip);
         }
-    }
 
-    // 3. Draw Control Points & Thickness Handles
-    float baseR = 7.0f;
-    for (size_t i = 0; i < m_spline.getPointCount(); ++i) {
-        const auto& pt = m_spline.getPoint(i);
-        glm::vec3 sPos = camera.project(pt.position);
-        if (sPos.z < 0.0f || sPos.z > 1.0f) continue;
+        // Draw snap guide line when point is magnetically attracted to adjacent neighbor (ONLY in Tube Tool and on primary active tube)
+        if (isTubeTool && isPrimary && m_isDraggingPoint && !m_isExtrudingPoint && m_snapTargetPointIdx >= 0 && m_snapTargetPointIdx < static_cast<int>(spline.getPointCount()) &&
+            m_selectedPointIdx >= 0 && m_selectedPointIdx < static_cast<int>(spline.getPointCount()) &&
+            std::abs(m_snapTargetPointIdx - m_selectedPointIdx) == 1) {
+            glm::vec3 sDrag = camera.project(spline.getPoint(m_selectedPointIdx).position);
+            glm::vec3 sTarget = camera.project(spline.getPoint(m_snapTargetPointIdx).position);
+            if (sDrag.z >= 0.0f && sDrag.z <= 1.0f && sTarget.z >= 0.0f && sTarget.z <= 1.0f) {
+                drawList->AddLine(ImVec2(sDrag.x, sDrag.y), ImVec2(sTarget.x, sTarget.y), IM_COL32(255, 140, 0, 230), 2.5f);
+            }
+        }
 
-        ImVec2 p(sPos.x, sPos.y);
-        bool isPointHovered = (static_cast<int>(i) == m_hoveredPointIdx);
-        bool isSelected = (static_cast<int>(i) == m_selectedPointIdx);
-        bool isSnapTarget = isTubeTool && (!m_isExtrudingPoint && static_cast<int>(i) == m_snapTargetPointIdx);
-        bool isHandleHovered = isTubeTool && (static_cast<int>(i) == m_hoveredRadiusHandleIdx);
-        bool isHandleDragging = isTubeTool && (m_isDraggingRadius && static_cast<int>(i) == m_selectedPointIdx);
+        // 3. Draw Control Points & Thickness Handles
+        float baseR = isPrimary ? 7.0f : 5.8f;
+        for (size_t i = 0; i < spline.getPointCount(); ++i) {
+            const auto& pt = spline.getPoint(i);
+            glm::vec3 sPos = camera.project(pt.position);
+            if (sPos.z < 0.0f || sPos.z > 1.0f) continue;
 
-        // Compute thickness stick and square handle (ONLY in Tube Tool)
-        if (isTubeTool) {
-            glm::vec3 cWorld, hWorld, sideDir;
-            glm::vec2 cScreen, hScreen;
-            bool hasHandle = getPointHandleInfo(camera, static_cast<int>(i), cWorld, hWorld, cScreen, hScreen, sideDir);
+            ImVec2 p(sPos.x, sPos.y);
+            bool isPointHovered = isPrimary && (static_cast<int>(i) == m_hoveredPointIdx);
+            bool isSelected = isPrimary && (static_cast<int>(i) == m_selectedPointIdx);
+            bool isSnapTarget = isTubeTool && isPrimary && (!m_isExtrudingPoint && static_cast<int>(i) == m_snapTargetPointIdx);
+            bool isHandleHovered = isTubeTool && isPrimary && (static_cast<int>(i) == m_hoveredRadiusHandleIdx);
+            bool isHandleDragging = isTubeTool && isPrimary && (m_isDraggingRadius && static_cast<int>(i) == m_selectedPointIdx);
 
-            if (hasHandle) {
-            // Optional faint cross-section ring if handle or point is hovered/dragged/selected
-            if (isSelected || isPointHovered || isHandleHovered || isHandleDragging) {
-                glm::vec3 viewDir = glm::normalize(camera.getPivot() - camera.computePosition());
-                glm::vec3 right = sideDir;
-                glm::vec3 up = glm::normalize(glm::cross(right, viewDir));
+            // Compute thickness stick and square handle (ONLY in Tube Tool and on primary active tube)
+            if (isTubeTool && isPrimary) {
+                glm::vec3 cWorld, hWorld, sideDir;
+                glm::vec2 cScreen, hScreen;
+                bool hasHandle = getPointHandleInfo(camera, static_cast<int>(i), cWorld, hWorld, cScreen, hScreen, sideDir);
 
-                const int ringSteps = 24;
-                std::vector<ImVec2> ringScreenPts;
-                ringScreenPts.reserve(ringSteps + 1);
+                if (hasHandle) {
+                    // Optional faint cross-section ring if handle or point is hovered/dragged/selected
+                    if (isSelected || isPointHovered || isHandleHovered || isHandleDragging) {
+                        glm::vec3 viewDir = glm::normalize(camera.getPivot() - camera.computePosition());
+                        glm::vec3 right = sideDir;
+                        glm::vec3 up = glm::normalize(glm::cross(right, viewDir));
 
-                for (int k = 0; k <= ringSteps; ++k) {
-                    float phi = 2.0f * (float)M_PI * static_cast<float>(k) / static_cast<float>(ringSteps);
-                    glm::vec3 ringWorld = pt.position + (right * std::cos(phi) + up * std::sin(phi)) * pt.radius;
-                    glm::vec3 sRing = camera.project(ringWorld);
-                    if (sRing.z >= 0.0f && sRing.z <= 1.0f) {
-                        ringScreenPts.emplace_back(sRing.x, sRing.y);
+                        const int ringSteps = 24;
+                        std::vector<ImVec2> ringScreenPts;
+                        ringScreenPts.reserve(ringSteps + 1);
+
+                        for (int k = 0; k <= ringSteps; ++k) {
+                            float phi = 2.0f * (float)M_PI * static_cast<float>(k) / static_cast<float>(ringSteps);
+                            glm::vec3 ringWorld = pt.position + (right * std::cos(phi) + up * std::sin(phi)) * pt.radius;
+                            glm::vec3 sRing = camera.project(ringWorld);
+                            if (sRing.z >= 0.0f && sRing.z <= 1.0f) {
+                                ringScreenPts.emplace_back(sRing.x, sRing.y);
+                            }
+                        }
+
+                        ImU32 ringCol = (isHandleHovered || isHandleDragging) ? IM_COL32(255, 220, 50, 200) : IM_COL32(255, 255, 255, 120);
+                        if (ringScreenPts.size() >= 2) {
+                            for (size_t k = 1; k < ringScreenPts.size(); ++k) {
+                                drawList->AddLine(ringScreenPts[k - 1], ringScreenPts[k], ringCol, (isHandleHovered || isHandleDragging) ? 1.8f : 1.0f);
+                            }
+                        }
+                    }
+
+                    // Draw Stick Line from point to square
+                    // Shadow
+                    drawList->AddLine(ImVec2(cScreen.x, cScreen.y), ImVec2(hScreen.x, hScreen.y), IM_COL32(0, 0, 0, 160), 3.5f);
+                    // Accent stick
+                    ImU32 stickCol;
+                    if (isHandleHovered || isHandleDragging) {
+                        stickCol = IM_COL32(255, 230, 40, 255); // Glowing yellow
+                    } else if (isSelected) {
+                        stickCol = IM_COL32(255, 200, 50, 230); // Amber
+                    } else {
+                        stickCol = IM_COL32(180, 235, 255, 200); // Light cyan
+                    }
+                    drawList->AddLine(ImVec2(cScreen.x, cScreen.y), ImVec2(hScreen.x, hScreen.y), stickCol, (isHandleHovered || isHandleDragging || isSelected) ? 2.5f : 1.8f);
+
+                    // Draw Square Handle at end of stick
+                    float sqHalf = (isHandleHovered || isHandleDragging) ? 6.5f : (isSelected ? 5.5f : 4.5f);
+                    ImVec2 sqMin(hScreen.x - sqHalf, hScreen.y - sqHalf);
+                    ImVec2 sqMax(hScreen.x + sqHalf, hScreen.y + sqHalf);
+
+                    // Square shadow
+                    drawList->AddRectFilled(ImVec2(sqMin.x - 1.5f, sqMin.y - 1.5f), ImVec2(sqMax.x + 1.5f, sqMax.y + 1.5f), IM_COL32(0, 0, 0, 180), 2.0f);
+
+                    // Square fill
+                    ImU32 sqFill;
+                    if (isHandleHovered || isHandleDragging) {
+                        sqFill = IM_COL32(255, 230, 40, 255);
+                    } else if (isSelected) {
+                        sqFill = IM_COL32(255, 195, 30, 240);
+                    } else {
+                        sqFill = IM_COL32(245, 250, 255, 235);
+                    }
+                    drawList->AddRectFilled(sqMin, sqMax, sqFill, 2.0f);
+                    drawList->AddRect(sqMin, sqMax, IM_COL32(20, 25, 30, 240), 2.0f, 0, 1.5f);
+
+                    // Radius tooltip
+                    if (isHandleHovered || isHandleDragging || isSelected) {
+                        char rText[32];
+                        snprintf(rText, sizeof(rText), "R: %.2f", pt.radius);
+                        drawList->AddText(ImVec2(sqMax.x + 5.0f, hScreen.y - 7.0f), (isHandleHovered || isHandleDragging) ? IM_COL32(255, 240, 100, 255) : IM_COL32(255, 255, 255, 220), rText);
                     }
                 }
+            }
 
-                ImU32 ringCol = (isHandleHovered || isHandleDragging) ? IM_COL32(255, 220, 50, 200) : IM_COL32(255, 255, 255, 120);
-                if (ringScreenPts.size() >= 2) {
-                    for (size_t k = 1; k < ringScreenPts.size(); ++k) {
-                        drawList->AddLine(ringScreenPts[k - 1], ringScreenPts[k], ringCol, (isHandleHovered || isHandleDragging) ? 1.8f : 1.0f);
-                    }
+            // Draw Center Control Point
+            float r = (isPointHovered || isSnapTarget) ? (baseR + 2.5f) : baseR;
+
+            ImU32 fillCol;
+            if (isSnapTarget) {
+                fillCol = IM_COL32(255, 140, 20, 255); // Glowing Orange (Snap target)
+            } else if (i == 0) {
+                fillCol = IM_COL32(40, 220, 90, 255); // Green (Start)
+            } else if (i == spline.getPointCount() - 1) {
+                fillCol = IM_COL32(240, 60, 60, 255); // Red (End/Tip)
+            } else {
+                fillCol = isPrimary ? IM_COL32(0, 200, 230, 255) : IM_COL32(0, 180, 220, 235); // Cyan
+            }
+
+            // Highlight ring if snap target
+            if (isSnapTarget) {
+                drawList->AddCircle(p, r + 7.0f, IM_COL32(255, 140, 0, 255), 0, 3.0f);
+                drawList->AddCircleFilled(p, r + 5.0f, IM_COL32(255, 160, 40, 90));
+                drawList->AddText(ImVec2(p.x + r + 8.0f, p.y + 6.0f), IM_COL32(255, 180, 50, 255), "Snap & Merge");
+            }
+
+            // Drop shadow & Fill: Square for sharp corner point, Circle for smooth point
+            if (pt.isCorner) {
+                drawList->AddRectFilled(ImVec2(p.x - r - 1.5f, p.y - r - 1.5f), ImVec2(p.x + r + 1.5f, p.y + r + 1.5f), IM_COL32(0, 0, 0, 180), 2.0f);
+                drawList->AddRectFilled(ImVec2(p.x - r, p.y - r), ImVec2(p.x + r, p.y + r), fillCol, 2.0f);
+                drawList->AddRect(ImVec2(p.x - r, p.y - r), ImVec2(p.x + r, p.y + r), isSelected ? IM_COL32(255, 230, 40, 255) : IM_COL32(255, 255, 255, 255), 2.0f, 0, isSelected ? 2.5f : 1.5f);
+            } else {
+                drawList->AddCircleFilled(p, r + 1.5f, IM_COL32(0, 0, 0, 180));
+                drawList->AddCircleFilled(p, r, fillCol);
+                drawList->AddCircle(p, r, isSelected ? IM_COL32(255, 230, 40, 255) : IM_COL32(255, 255, 255, 255), 0, isSelected ? 2.5f : 1.5f);
+            }
+
+            // Hover hint to inform user about click-to-toggle or Alt-extrude (ONLY in Tube Tool on primary tube)
+            if (isTubeTool && isPrimary && isPointHovered && !m_isDraggingPoint && !m_isDraggingRadius) {
+                bool isEndPoint = (i == 0 || i == spline.getPointCount() - 1);
+                if (isEndPoint) {
+                    const char* tip = pt.isCorner ? "Corner (Click: Smooth | Alt+Drag: Extrude)" : "Smooth (Click: Break Angle | Alt+Drag: Extrude)";
+                    drawList->AddText(ImVec2(p.x + r + 6.0f, p.y + 8.0f), IM_COL32(255, 230, 120, 255), tip);
+                } else {
+                    const char* tip = pt.isCorner ? "Corner (Click: Smooth | Alt+Click: Delete)" : "Smooth (Click: Break Angle | Alt+Click: Delete)";
+                    drawList->AddText(ImVec2(p.x + r + 6.0f, p.y + 8.0f), IM_COL32(255, 230, 120, 255), tip);
                 }
-            }
-
-            // Draw Stick Line from point to square
-            // Shadow
-            drawList->AddLine(ImVec2(cScreen.x, cScreen.y), ImVec2(hScreen.x, hScreen.y), IM_COL32(0, 0, 0, 160), 3.5f);
-            // Accent stick
-            ImU32 stickCol;
-            if (isHandleHovered || isHandleDragging) {
-                stickCol = IM_COL32(255, 230, 40, 255); // Glowing yellow
-            } else if (isSelected) {
-                stickCol = IM_COL32(255, 200, 50, 230); // Amber
-            } else {
-                stickCol = IM_COL32(180, 235, 255, 200); // Light cyan
-            }
-            drawList->AddLine(ImVec2(cScreen.x, cScreen.y), ImVec2(hScreen.x, hScreen.y), stickCol, (isHandleHovered || isHandleDragging || isSelected) ? 2.5f : 1.8f);
-
-            // Draw Square Handle at end of stick
-            float sqHalf = (isHandleHovered || isHandleDragging) ? 6.5f : (isSelected ? 5.5f : 4.5f);
-            ImVec2 sqMin(hScreen.x - sqHalf, hScreen.y - sqHalf);
-            ImVec2 sqMax(hScreen.x + sqHalf, hScreen.y + sqHalf);
-
-            // Square shadow
-            drawList->AddRectFilled(ImVec2(sqMin.x - 1.5f, sqMin.y - 1.5f), ImVec2(sqMax.x + 1.5f, sqMax.y + 1.5f), IM_COL32(0, 0, 0, 180), 2.0f);
-
-            // Square fill
-            ImU32 sqFill;
-            if (isHandleHovered || isHandleDragging) {
-                sqFill = IM_COL32(255, 230, 40, 255);
-            } else if (isSelected) {
-                sqFill = IM_COL32(255, 195, 30, 240);
-            } else {
-                sqFill = IM_COL32(245, 250, 255, 235);
-            }
-            drawList->AddRectFilled(sqMin, sqMax, sqFill, 2.0f);
-            drawList->AddRect(sqMin, sqMax, IM_COL32(20, 25, 30, 240), 2.0f, 0, 1.5f);
-
-            // Radius tooltip
-            if (isHandleHovered || isHandleDragging || isSelected) {
-                char rText[32];
-                snprintf(rText, sizeof(rText), "R: %.2f", pt.radius);
-                drawList->AddText(ImVec2(sqMax.x + 5.0f, hScreen.y - 7.0f), (isHandleHovered || isHandleDragging) ? IM_COL32(255, 240, 100, 255) : IM_COL32(255, 255, 255, 220), rText);
-            }
-        }
-    }
-
-        // Draw Center Control Point
-        float r = (isPointHovered || isSnapTarget) ? (baseR + 2.5f) : baseR;
-
-        ImU32 fillCol;
-        if (isSnapTarget) {
-            fillCol = IM_COL32(255, 140, 20, 255); // Glowing Orange (Snap target)
-        } else if (i == 0) {
-            fillCol = IM_COL32(40, 220, 90, 255); // Green (Start)
-        } else if (i == m_spline.getPointCount() - 1) {
-            fillCol = IM_COL32(240, 60, 60, 255); // Red (End/Tip)
-        } else {
-            fillCol = IM_COL32(0, 200, 230, 255); // Cyan
-        }
-
-        // Highlight ring if snap target
-        if (isSnapTarget) {
-            drawList->AddCircle(p, r + 7.0f, IM_COL32(255, 140, 0, 255), 0, 3.0f);
-            drawList->AddCircleFilled(p, r + 5.0f, IM_COL32(255, 160, 40, 90));
-            drawList->AddText(ImVec2(p.x + r + 8.0f, p.y + 6.0f), IM_COL32(255, 180, 50, 255), "Snap & Merge");
-        }
-
-        // Drop shadow & Fill: Square for sharp corner point, Circle for smooth point
-        if (pt.isCorner) {
-            drawList->AddRectFilled(ImVec2(p.x - r - 1.5f, p.y - r - 1.5f), ImVec2(p.x + r + 1.5f, p.y + r + 1.5f), IM_COL32(0, 0, 0, 180), 2.0f);
-            drawList->AddRectFilled(ImVec2(p.x - r, p.y - r), ImVec2(p.x + r, p.y + r), fillCol, 2.0f);
-            drawList->AddRect(ImVec2(p.x - r, p.y - r), ImVec2(p.x + r, p.y + r), isSelected ? IM_COL32(255, 230, 40, 255) : IM_COL32(255, 255, 255, 255), 2.0f, 0, isSelected ? 2.5f : 1.5f);
-        } else {
-            drawList->AddCircleFilled(p, r + 1.5f, IM_COL32(0, 0, 0, 180));
-            drawList->AddCircleFilled(p, r, fillCol);
-            drawList->AddCircle(p, r, isSelected ? IM_COL32(255, 230, 40, 255) : IM_COL32(255, 255, 255, 255), 0, isSelected ? 2.5f : 1.5f);
-        }
-
-        // Hover hint to inform user about click-to-toggle or Alt-extrude (ONLY in Tube Tool)
-        if (isTubeTool && isPointHovered && !m_isDraggingPoint && !m_isDraggingRadius) {
-            bool isEndPoint = (i == 0 || i == m_spline.getPointCount() - 1);
-            if (isEndPoint) {
-                const char* tip = pt.isCorner ? "Corner (Click: Smooth | Alt+Drag: Extrude)" : "Smooth (Click: Break Angle | Alt+Drag: Extrude)";
-                drawList->AddText(ImVec2(p.x + r + 6.0f, p.y + 8.0f), IM_COL32(255, 230, 120, 255), tip);
-            } else {
-                const char* tip = pt.isCorner ? "Corner (Click: Smooth | Alt+Click: Delete)" : "Smooth (Click: Break Angle | Alt+Click: Delete)";
-                drawList->AddText(ImVec2(p.x + r + 6.0f, p.y + 8.0f), IM_COL32(255, 230, 120, 255), tip);
             }
         }
     }
