@@ -621,6 +621,11 @@ private:
     uint32_t m_strokeTargetPolyGroup = 0;
     void filterPolyGroupVertices(std::vector<uint32_t>& pickedVertices, const Mesh* mesh, uint32_t targetGroupId);
 
+    // Tube Curve Move interaction
+    bool m_isTubeMoveStroke = false;
+    int m_tubeMoveHitPointIdx = -1;
+    std::vector<glm::vec3> m_tubeMoveOrigPoints;
+
     HotkeyManager* m_hotkeyManager = nullptr;
 
     int doStrokePass(

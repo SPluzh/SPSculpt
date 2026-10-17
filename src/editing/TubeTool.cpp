@@ -18,6 +18,8 @@
 
 TubeTool::TubeTool(SculptManager& sm)
     : m_sculpt(sm) {
+    resetRadiusProfile();
+    resetCrossSectionProfile();
 }
 
 TubeTool::~TubeTool() {
@@ -27,27 +29,24 @@ void TubeTool::onActivate(Scene& scene) {
     Mesh* sel = scene.getSelected();
     if (sel && sel->isTube && sel->tubeData) {
         loadFromMesh(sel);
-    } else if (sel && sel != m_activeTubeMesh) {
+    } else {
         m_baseMesh = sel;
         if (m_activeTubeMesh) {
             syncToActiveMesh();
             m_activeTubeMesh = nullptr;
             m_spline.clear();
         }
-    } else if (!m_activeTubeMesh) {
-        for (Mesh* m : scene.getMeshes()) {
-            if (m && m->isTube && m->tubeData) {
-                scene.selectMesh(m);
-                loadFromMesh(m);
-                break;
-            }
-        }
     }
     m_hoveredPointIdx = -1;
     m_selectedPointIdx = -1;
+    m_hoveredProfilePtIdx = -1;
+    m_selectedProfilePtIdx = -1;
+    m_snapTargetProfilePtIdx = -1;
+    m_hoveredProfileSeg = -1;
     m_isDraggingPoint = false;
     m_isDraggingRadius = false;
     m_isDrawingStroke = false;
+    m_isDraggingProfilePoint = false;
 }
 
 void TubeTool::onDeactivate() {
@@ -55,7 +54,11 @@ void TubeTool::onDeactivate() {
     m_isDrawingStroke = false;
     m_isDraggingPoint = false;
     m_isDraggingRadius = false;
+    m_isDraggingProfilePoint = false;
     m_hoveredPointIdx = -1;
+    m_hoveredProfilePtIdx = -1;
+    m_hoveredProfileSeg = -1;
+    m_snapTargetProfilePtIdx = -1;
 }
 
 void TubeTool::syncToActiveMesh() {
@@ -82,6 +85,12 @@ void TubeTool::syncToActiveMesh() {
     td.twistDegrees = twistDegrees;
     td.snapToSurface = snapToSurface;
     td.surfaceOffset = surfaceOffset;
+    td.useRadiusProfile = useRadiusProfile;
+    td.radiusProfile = radiusProfile;
+    td.radiusProfileSmooth = radiusProfileSmooth;
+    td.crossSectionProfile = crossSectionProfile;
+    td.crossSectionSmooth = crossSectionSmooth;
+    td.showProfileAtEnd = showProfileAtEnd;
 }
 
 bool TubeTool::loadFromMesh(Mesh* mesh) {
@@ -112,16 +121,30 @@ bool TubeTool::loadFromMesh(Mesh* mesh) {
     twistDegrees = td.twistDegrees;
     snapToSurface = td.snapToSurface;
     surfaceOffset = td.surfaceOffset;
+    useRadiusProfile = td.useRadiusProfile;
+    radiusProfile = td.radiusProfile;
+    if (radiusProfile.empty()) resetRadiusProfile();
+    radiusProfileSmooth = td.radiusProfileSmooth;
+    crossSectionProfile = td.crossSectionProfile;
+    if (crossSectionProfile.empty()) resetCrossSectionProfile();
+    crossSectionSmooth = td.crossSectionSmooth;
+    showProfileAtEnd = td.showProfileAtEnd;
 
     m_selectedPointIdx = -1;
     m_hoveredPointIdx = -1;
     m_snapTargetPointIdx = -1;
     m_hoveredCurveSeg = -1;
+    m_hoveredProfilePtIdx = -1;
+    m_selectedProfilePtIdx = -1;
+    m_snapTargetProfilePtIdx = -1;
+    m_hoveredProfileSeg = -1;
     m_isDraggingPoint = false;
     m_isDraggingRadius = false;
     m_isDrawingStroke = false;
     m_isExtrudingPoint = false;
     m_extrudeEndIdx = -1;
+    m_isDraggingProfilePoint = false;
+    m_profilePointWasMoved = false;
     m_geometryDirty = false;
 
     return true;
@@ -134,19 +157,29 @@ void TubeTool::startNewTube(Scene& scene) {
     }
     m_spline.clear();
     m_rawStroke.clear();
+    m_strokeStartHitMesh = nullptr;
     m_selectedPointIdx = -1;
     m_hoveredPointIdx = -1;
     m_snapTargetPointIdx = -1;
     m_hoveredCurveSeg = -1;
+    m_hoveredProfilePtIdx = -1;
+    m_selectedProfilePtIdx = -1;
+    m_snapTargetProfilePtIdx = -1;
+    m_hoveredProfileSeg = -1;
     m_isDraggingPoint = false;
     m_isDraggingRadius = false;
     m_isDrawingStroke = false;
     m_isExtrudingPoint = false;
     m_extrudeEndIdx = -1;
+    m_isDraggingProfilePoint = false;
+    m_profilePointWasMoved = false;
     m_geometryDirty = false;
 }
 
 void TubeTool::notifyMeshDeleted(Mesh* mesh) {
+    if (m_strokeStartHitMesh == mesh) {
+        m_strokeStartHitMesh = nullptr;
+    }
     if (m_activeTubeMesh == mesh) {
         m_activeTubeMesh = nullptr;
         m_spline.clear();
@@ -155,11 +188,17 @@ void TubeTool::notifyMeshDeleted(Mesh* mesh) {
         m_hoveredPointIdx = -1;
         m_snapTargetPointIdx = -1;
         m_hoveredCurveSeg = -1;
+        m_hoveredProfilePtIdx = -1;
+        m_selectedProfilePtIdx = -1;
+        m_snapTargetProfilePtIdx = -1;
+        m_hoveredProfileSeg = -1;
         m_isDraggingPoint = false;
         m_isDraggingRadius = false;
         m_isDrawingStroke = false;
         m_isExtrudingPoint = false;
         m_extrudeEndIdx = -1;
+        m_isDraggingProfilePoint = false;
+        m_profilePointWasMoved = false;
         m_geometryDirty = false;
     }
     if (m_baseMesh == mesh) {
@@ -170,15 +209,22 @@ void TubeTool::notifyMeshDeleted(Mesh* mesh) {
 void TubeTool::clearCurve(Scene* scene) {
     m_spline.clear();
     m_rawStroke.clear();
+    m_strokeStartHitMesh = nullptr;
     m_hoveredPointIdx = -1;
     m_selectedPointIdx = -1;
     m_snapTargetPointIdx = -1;
     m_hoveredCurveSeg = -1;
+    m_hoveredProfilePtIdx = -1;
+    m_selectedProfilePtIdx = -1;
+    m_snapTargetProfilePtIdx = -1;
+    m_hoveredProfileSeg = -1;
     m_isDraggingPoint = false;
     m_isDraggingRadius = false;
     m_isDrawingStroke = false;
     m_isExtrudingPoint = false;
     m_extrudeEndIdx = -1;
+    m_isDraggingProfilePoint = false;
+    m_profilePointWasMoved = false;
     m_geometryDirty = false;
 
     if (m_activeTubeMesh) {
@@ -514,6 +560,157 @@ int TubeTool::findClosestSegmentOnCurve(
     return bestSeg;
 }
 
+bool TubeTool::getEndProfileFrame(EvaluatedFrame& outFrame, int* outPointIdx) const {
+    if (!showProfileAtEnd || profileType != TubeProfileType::CustomGraph) return false;
+    if (m_spline.getPointCount() < 2) return false;
+
+    bool useStart = (m_selectedPointIdx == 0);
+    int ptIdx = useStart ? 0 : (static_cast<int>(m_spline.getPointCount()) - 1);
+    if (outPointIdx) *outPointIdx = ptIdx;
+
+    int numSamples = std::clamp(curveSegments, 16, 256);
+    std::vector<EvaluatedFrame> frames = m_spline.evaluateFrames(
+        numSamples, startRadiusScale, endRadiusScale, 0.0f, twistDegrees, cornerSegments,
+        useRadiusProfile, radiusProfile, radiusProfileSmooth
+    );
+    if (frames.size() < 2) return false;
+
+    if (useStart) {
+        outFrame = frames.front();
+    } else {
+        outFrame = frames.back();
+    }
+    return true;
+}
+
+glm::vec2 TubeTool::evaluateCrossSectionContour(float u) const {
+    if (crossSectionProfile.empty()) return glm::vec2(0.0f);
+    int N = static_cast<int>(crossSectionProfile.size());
+    if (N == 1) return crossSectionProfile[0].pos;
+    if (N == 2) {
+        float t = glm::fract(u);
+        if (t < 0.0f) t += 1.0f;
+        return glm::mix(crossSectionProfile[0].pos, crossSectionProfile[1].pos, t);
+    }
+    float uNorm = glm::fract(u);
+    if (uNorm < 0.0f) uNorm += 1.0f;
+    float globalU = uNorm * static_cast<float>(N);
+    int seg = static_cast<int>(std::floor(globalU));
+    float t = globalU - static_cast<float>(seg);
+    seg = (seg % N + N) % N;
+
+    int i1 = seg;
+    int i2 = (seg + 1) % N;
+    const auto& pt1 = crossSectionProfile[i1];
+    const auto& pt2 = crossSectionProfile[i2];
+
+    if (!crossSectionSmooth || (pt1.isCorner && pt2.isCorner)) {
+        return glm::mix(pt1.pos, pt2.pos, t);
+    }
+
+    glm::vec2 p1 = pt1.pos;
+    glm::vec2 p2 = pt2.pos;
+    glm::vec2 p0 = pt1.isCorner ? (p1 - (p2 - p1)) : crossSectionProfile[(i1 - 1 + N) % N].pos;
+    glm::vec2 p3 = pt2.isCorner ? (p2 + (p2 - p1)) : crossSectionProfile[(i2 + 1) % N].pos;
+
+    float t2 = t * t;
+    float t3 = t2 * t;
+
+    return 0.5f * (
+        2.0f * p1 +
+        (-p0 + p2) * t +
+        (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t2 +
+        (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t3
+    );
+}
+
+int TubeTool::hitTestEndProfilePoint(const Camera& camera, float mouseX, float mouseY, float thresholdPx) const {
+    EvaluatedFrame frame;
+    if (!getEndProfileFrame(frame)) return -1;
+    if (crossSectionProfile.empty()) return -1;
+
+    glm::vec2 mousePos(mouseX, mouseY);
+    int bestIdx = -1;
+    float bestDist = thresholdPx;
+    float r = std::max(frame.radius, 0.001f);
+
+    for (int i = 0; i < static_cast<int>(crossSectionProfile.size()); ++i) {
+        const auto& pt = crossSectionProfile[i];
+        glm::vec3 worldPos = frame.position + (frame.normal * pt.pos.x + frame.binormal * pt.pos.y) * r;
+        glm::vec3 screenPos = camera.project(worldPos);
+        if (screenPos.z < 0.0f || screenPos.z > 1.0f) continue;
+
+        float d = glm::distance(mousePos, glm::vec2(screenPos.x, screenPos.y));
+        if (d < bestDist) {
+            bestDist = d;
+            bestIdx = i;
+        }
+    }
+    return bestIdx;
+}
+
+bool TubeTool::hitTestEndProfileContour(
+    const Camera& camera, float mouseX, float mouseY, float thresholdPx,
+    int* outSeg, glm::vec2* out2DPos, glm::vec2* outScreenPos
+) const {
+    EvaluatedFrame frame;
+    if (!getEndProfileFrame(frame)) return false;
+    int N = static_cast<int>(crossSectionProfile.size());
+    if (N < 2) return false;
+
+    glm::vec2 mousePos(mouseX, mouseY);
+    float r = std::max(frame.radius, 0.001f);
+
+    int numSamples = std::max(64, N * 16);
+    float bestDist = thresholdPx;
+    float bestU = 0.0f;
+    glm::vec2 bestScreenPos(0.0f);
+    bool found = false;
+
+    glm::vec2 p0_2D = evaluateCrossSectionContour(0.0f);
+    glm::vec3 prevWorld = frame.position + (frame.normal * p0_2D.x + frame.binormal * p0_2D.y) * r;
+    glm::vec3 prevScreen = camera.project(prevWorld);
+
+    for (int k = 1; k <= numSamples; ++k) {
+        float u = static_cast<float>(k) / static_cast<float>(numSamples);
+        glm::vec2 p2D = evaluateCrossSectionContour(u);
+        glm::vec3 currWorld = frame.position + (frame.normal * p2D.x + frame.binormal * p2D.y) * r;
+        glm::vec3 currScreen = camera.project(currWorld);
+
+        if (prevScreen.z >= 0.0f && prevScreen.z <= 1.0f && currScreen.z >= 0.0f && currScreen.z <= 1.0f) {
+            glm::vec2 a(prevScreen.x, prevScreen.y);
+            glm::vec2 b(currScreen.x, currScreen.y);
+            glm::vec2 ab = b - a;
+            float len2 = glm::dot(ab, ab);
+            float t = (len2 > 1e-6f) ? std::clamp(glm::dot(mousePos - a, ab) / len2, 0.0f, 1.0f) : 0.0f;
+            glm::vec2 proj = a + t * ab;
+            float d = glm::distance(mousePos, proj);
+            if (d < bestDist) {
+                bestDist = d;
+                float uPrev = static_cast<float>(k - 1) / static_cast<float>(numSamples);
+                bestU = uPrev + t * (u - uPrev);
+                bestScreenPos = proj;
+                found = true;
+            }
+        }
+        prevScreen = currScreen;
+    }
+
+    if (found) {
+        float normU = glm::fract(bestU);
+        if (normU < 0.0f) normU += 1.0f;
+        float globalU = normU * static_cast<float>(N);
+        int seg = static_cast<int>(std::floor(globalU));
+        seg = (seg % N + N) % N;
+        if (outSeg) *outSeg = seg;
+        glm::vec2 p2D = evaluateCrossSectionContour(bestU);
+        if (out2DPos) *out2DPos = p2D;
+        if (outScreenPos) *outScreenPos = bestScreenPos;
+        return true;
+    }
+    return false;
+}
+
 bool TubeTool::handleMouseDown(
     Scene& scene, const Camera& camera,
     float mouseX, float mouseY,
@@ -522,6 +719,80 @@ bool TubeTool::handleMouseDown(
     if (m_baseMesh == nullptr) {
         m_baseMesh = scene.getSelected();
     }
+
+    // 0. Check hit on end profile points or contour if CustomGraph is active and shown
+    if (showProfileAtEnd && profileType == TubeProfileType::CustomGraph) {
+        int hitProfPt = hitTestEndProfilePoint(camera, mouseX, mouseY, 14.0f);
+        if (hitProfPt != -1) {
+            // If also near the spline center point, pick whichever screen distance is closer
+            int hitSplinePt = hitTestControlPoints(camera, mouseX, mouseY, 14.0f);
+            if (hitSplinePt != -1) {
+                glm::vec3 sSpline = camera.project(m_spline.getPoint(hitSplinePt).position);
+                EvaluatedFrame f;
+                if (getEndProfileFrame(f)) {
+                    glm::vec3 sProf = camera.project(f.position + (f.normal * crossSectionProfile[hitProfPt].pos.x + f.binormal * crossSectionProfile[hitProfPt].pos.y) * f.radius);
+                    float dSpline = glm::distance(glm::vec2(mouseX, mouseY), glm::vec2(sSpline.x, sSpline.y));
+                    float dProf = glm::distance(glm::vec2(mouseX, mouseY), glm::vec2(sProf.x, sProf.y));
+                    if (dSpline < dProf) {
+                        hitProfPt = -1; // Spline point is closer, let spline handle it
+                    }
+                }
+            }
+        }
+
+        if (hitProfPt != -1) {
+            if (isAlt) {
+                if (crossSectionProfile.size() > 3) {
+                    crossSectionProfile.erase(crossSectionProfile.begin() + hitProfPt);
+                    m_selectedProfilePtIdx = -1;
+                    m_hoveredProfilePtIdx = -1;
+                    m_snapTargetProfilePtIdx = -1;
+                    rebuildMeshGeometry(scene);
+                    scene.pushHistoryState();
+                    GuiManager::showToast("Profile Point Deleted", 1.2f);
+                } else {
+                    GuiManager::showToast("Profile requires at least 3 points", 1.5f);
+                }
+                return true;
+            }
+
+            m_selectedProfilePtIdx = hitProfPt;
+            m_hoveredProfilePtIdx = hitProfPt;
+            m_isDraggingProfilePoint = true;
+            m_profilePointWasMoved = false;
+            m_snapTargetProfilePtIdx = -1;
+            m_dragProfileStartMouse = glm::vec2(mouseX, mouseY);
+            return true;
+        }
+
+        // Check hit on profile contour ring (to insert a point)
+        int seg = -1;
+        glm::vec2 p2D(0.0f), screenPos(0.0f);
+        if (hitTestEndProfileContour(camera, mouseX, mouseY, 14.0f, &seg, &p2D, &screenPos)) {
+            ProfilePoint2D newPt;
+            newPt.pos = p2D;
+            newPt.isCorner = isCtrl; // Ctrl-click creates a corner point
+            int insertIdx = seg + 1;
+            if (insertIdx >= static_cast<int>(crossSectionProfile.size())) {
+                crossSectionProfile.push_back(newPt);
+                m_selectedProfilePtIdx = static_cast<int>(crossSectionProfile.size()) - 1;
+            } else {
+                crossSectionProfile.insert(crossSectionProfile.begin() + insertIdx, newPt);
+                m_selectedProfilePtIdx = insertIdx;
+            }
+            m_hoveredProfilePtIdx = m_selectedProfilePtIdx;
+            m_isDraggingProfilePoint = true;
+            m_profilePointWasMoved = true;
+            m_snapTargetProfilePtIdx = -1;
+            m_dragProfileStartMouse = glm::vec2(mouseX, mouseY);
+            rebuildMeshGeometry(scene);
+            scene.pushHistoryState();
+            GuiManager::showToast(isCtrl ? "Added Corner Point" : "Added Profile Point", 1.2f);
+            return true;
+        }
+    }
+
+    m_selectedProfilePtIdx = -1;
 
     // 1. Check if clicking on control point or radius handle
     int hitPoint = hitTestControlPoints(camera, mouseX, mouseY);
@@ -676,16 +947,23 @@ bool TubeTool::handleMouseDown(
 
     // 5. Freehand stroke mode: begin stroke
     if (creationMode == TubeCreationMode::FreehandStroke) {
-        if (m_activeTubeMesh && m_spline.getPointCount() >= 2) {
-            // User is drawing a new tube! Preserve the current tube and start fresh
-            startNewTube(scene);
+        if (isAlt) {
+            return false;
         }
 
         m_isDrawingStroke = true;
+        m_dragStartMouse = glm::vec2(mouseX, mouseY);
         m_rawStroke.clear();
+        m_strokeStartHitMesh = nullptr;
 
         glm::vec3 hitPos, hitNorm;
-        if (snapToSurface && raycastSurface(scene, camera, mouseX, mouseY, hitPos, hitNorm)) {
+        Mesh* hitMesh = nullptr;
+        bool hasHit = raycastSurface(scene, camera, mouseX, mouseY, hitPos, hitNorm, &hitMesh);
+        if (hasHit && hitMesh) {
+            m_strokeStartHitMesh = hitMesh;
+        }
+
+        if (snapToSurface && hasHit) {
             glm::vec3 ptPos = hitPos + hitNorm * (baseRadius + surfaceOffset);
             m_rawStroke.emplace_back(ptPos, baseRadius, hitNorm, true);
         } else {
@@ -715,8 +993,85 @@ bool TubeTool::handleMouseMove(Scene& scene, const Camera& camera, float mouseX,
             ptPos = intersectRayPlane(camera, mouseX, mouseY, planePt, planeNorm);
         }
 
-        if (m_rawStroke.empty() || glm::distance(m_rawStroke.back().position, ptPos) > 0.4f) {
-            m_rawStroke.emplace_back(ptPos, baseRadius, hitNorm, hasNorm);
+        float mouseDist = glm::distance(glm::vec2(mouseX, mouseY), m_dragStartMouse);
+        float worldDist = m_rawStroke.empty() ? 999.0f : glm::distance(m_rawStroke.back().position, ptPos);
+
+        // Responsive stroke sampling: register drag once mouse moved >= 4px or world dist >= 0.05f
+        if (m_rawStroke.size() == 1) {
+            if (mouseDist > 4.0f || worldDist > 0.05f) {
+                // Dragging across clean space: detach previous active tube (preserving its mesh & data)
+                // so this stroke authors a fresh new tube automatically!
+                if (m_activeTubeMesh) {
+                    syncToActiveMesh();
+                    m_activeTubeMesh = nullptr;
+                    m_spline.clear();
+                }
+                m_rawStroke.emplace_back(ptPos, baseRadius, hitNorm, hasNorm);
+            }
+        } else if (m_rawStroke.size() >= 2) {
+            // Once dragging has commenced, add points along stroke
+            if (worldDist > 0.05f || mouseDist > 6.0f) {
+                if (worldDist > 0.02f) {
+                    m_rawStroke.emplace_back(ptPos, baseRadius, hitNorm, hasNorm);
+                }
+            }
+        }
+        return true;
+    }
+
+    if (m_isDraggingProfilePoint && m_selectedProfilePtIdx >= 0 && m_selectedProfilePtIdx < static_cast<int>(crossSectionProfile.size())) {
+        EvaluatedFrame frame;
+        if (getEndProfileFrame(frame)) {
+            Ray ray = camera.getRay(mouseX, mouseY);
+            glm::vec3 planeNorm = frame.tangent;
+            if (std::abs(glm::dot(frame.tangent, ray.dir)) < 0.12f) {
+                planeNorm = -ray.dir;
+            }
+            glm::vec3 hitWorld = intersectRayPlane(camera, mouseX, mouseY, frame.position, planeNorm);
+            glm::vec3 offset = hitWorld - frame.position;
+            float r = std::max(frame.radius, 0.001f);
+            float x2D = glm::dot(offset, frame.normal) / r;
+            float y2D = glm::dot(offset, frame.binormal) / r;
+
+            // Clamp coordinate distance to reasonable range (<= 3.0f)
+            float dist2D = std::sqrt(x2D * x2D + y2D * y2D);
+            if (dist2D > 3.0f) {
+                x2D = (x2D / dist2D) * 3.0f;
+                y2D = (y2D / dist2D) * 3.0f;
+            }
+
+            crossSectionProfile[m_selectedProfilePtIdx].pos = glm::vec2(x2D, y2D);
+
+            if (glm::distance(glm::vec2(mouseX, mouseY), m_dragProfileStartMouse) > 3.0f) {
+                m_profilePointWasMoved = true;
+            }
+
+            // Proximity snap with immediate neighbors in closed loop
+            m_snapTargetProfilePtIdx = -1;
+            int N = static_cast<int>(crossSectionProfile.size());
+            if (N > 3) {
+                int curIdx = m_selectedProfilePtIdx;
+                glm::vec3 curWorld = frame.position + (frame.normal * x2D + frame.binormal * y2D) * r;
+                glm::vec3 curScreen = camera.project(curWorld);
+                float bestSnapDist = 20.0f;
+
+                int candidateNeighbors[2] = { (curIdx - 1 + N) % N, (curIdx + 1) % N };
+                for (int neighborIdx : candidateNeighbors) {
+                    const auto& otherPt = crossSectionProfile[neighborIdx];
+                    glm::vec3 otherWorld = frame.position + (frame.normal * otherPt.pos.x + frame.binormal * otherPt.pos.y) * r;
+                    glm::vec3 otherScreen = camera.project(otherWorld);
+                    if (otherScreen.z < 0.0f || otherScreen.z > 1.0f) continue;
+
+                    float dPx = glm::distance(glm::vec2(curScreen.x, curScreen.y), glm::vec2(otherScreen.x, otherScreen.y));
+                    float d2D = glm::distance(glm::vec2(x2D, y2D), otherPt.pos);
+                    if (dPx < bestSnapDist || d2D < 0.15f) {
+                        bestSnapDist = dPx;
+                        m_snapTargetProfilePtIdx = neighborIdx;
+                    }
+                }
+            }
+
+            rebuildMeshGeometry(scene);
         }
         return true;
     }
@@ -834,6 +1189,41 @@ bool TubeTool::handleMouseMove(Scene& scene, const Camera& camera, float mouseX,
         return true;
     }
 
+    bool isTubeTool = (m_sculpt.getBrush() == BRUSH_TUBE);
+    if (!isTubeTool) {
+        m_hoveredProfilePtIdx = -1;
+        m_hoveredProfileSeg = -1;
+        m_hoveredRadiusHandleIdx = -1;
+        m_hoveredRadiusRing = false;
+        m_hoveredCurveSeg = -1;
+        m_hoveredPointIdx = hitTestControlPoints(camera, mouseX, mouseY);
+        return false;
+    }
+
+    // Hover detection on end profile points and profile contour ring
+    m_hoveredProfilePtIdx = -1;
+    m_hoveredProfileSeg = -1;
+    if (showProfileAtEnd && profileType == TubeProfileType::CustomGraph) {
+        m_hoveredProfilePtIdx = hitTestEndProfilePoint(camera, mouseX, mouseY, 14.0f);
+        if (m_hoveredProfilePtIdx == -1) {
+            glm::vec2 p2D(0.0f), sPos(0.0f);
+            int seg = -1;
+            if (hitTestEndProfileContour(camera, mouseX, mouseY, 14.0f, &seg, &p2D, &sPos)) {
+                m_hoveredProfileSeg = seg;
+                m_hoveredProfile2DPos = p2D;
+                m_hoveredProfileScreenPos = sPos;
+            }
+        }
+    }
+
+    if (m_hoveredProfilePtIdx != -1 || m_hoveredProfileSeg != -1) {
+        m_hoveredPointIdx = -1;
+        m_hoveredRadiusHandleIdx = -1;
+        m_hoveredRadiusRing = false;
+        m_hoveredCurveSeg = -1;
+        return true;
+    }
+
     // Hover detection on control points and radius handles
     m_hoveredPointIdx = hitTestControlPoints(camera, mouseX, mouseY);
     m_hoveredRadiusHandleIdx = hitTestRadiusHandle(camera, mouseX, mouseY);
@@ -865,6 +1255,13 @@ bool TubeTool::handleMouseUp(Scene& scene) {
     if (m_isDrawingStroke) {
         m_isDrawingStroke = false;
         if (m_rawStroke.size() >= 2) {
+            // Freehand drag occurred: automatically finalize/preserve prior tube and create the new tube!
+            if (m_activeTubeMesh) {
+                syncToActiveMesh();
+                m_activeTubeMesh = nullptr;
+                m_spline.clear();
+            }
+
             // Average / smooth stroke slightly and extract natural control points to describe curve
             std::vector<CurvePoint> simplified = CurveSpline::simplifyStrokeAdaptive(
                 m_rawStroke,
@@ -883,8 +1280,72 @@ bool TubeTool::handleMouseUp(Scene& scene) {
             m_snapTargetPointIdx = -1;
             rebuildMeshGeometry(scene);
             scene.pushHistoryState();
+            GuiManager::showToast("New Tube Created", 1.5f);
+        } else {
+            // User merely clicked on clean space without dragging:
+            if (m_strokeStartHitMesh && m_strokeStartHitMesh->isTube && m_strokeStartHitMesh->tubeData) {
+                // Tapped on another unfinalized tube: switch active selection to that tube!
+                if (m_activeTubeMesh && m_activeTubeMesh != m_strokeStartHitMesh) {
+                    syncToActiveMesh();
+                }
+                scene.selectMesh(m_strokeStartHitMesh);
+                loadFromMesh(m_strokeStartHitMesh);
+                GuiManager::showToast("Loaded tube for editing", 1.2f);
+            } else {
+                // Tapped on empty viewport or base mesh away from active tube:
+                // Deselect active tube so its curve overlay hides, preserving the tube!
+                if (m_activeTubeMesh) {
+                    syncToActiveMesh();
+                    m_activeTubeMesh = nullptr;
+                    m_spline.clear();
+                    scene.selectMesh(nullptr);
+                }
+            }
         }
         m_rawStroke.clear();
+        m_strokeStartHitMesh = nullptr;
+        return true;
+    }
+
+    if (m_isDraggingProfilePoint) {
+        bool shouldPushHistory = true;
+        int N = static_cast<int>(crossSectionProfile.size());
+
+        if (m_snapTargetProfilePtIdx != -1 && N > 3 && m_selectedProfilePtIdx >= 0 && m_selectedProfilePtIdx < N) {
+            int targetIdx = m_snapTargetProfilePtIdx;
+            int dragIdx = m_selectedProfilePtIdx;
+
+            int diff = std::abs(targetIdx - dragIdx);
+            bool isAdjacent = (diff == 1) || (diff == N - 1);
+            if (isAdjacent && targetIdx >= 0 && targetIdx < N) {
+                crossSectionProfile[targetIdx].pos = 0.5f * (crossSectionProfile[dragIdx].pos + crossSectionProfile[targetIdx].pos);
+                crossSectionProfile[targetIdx].isCorner = crossSectionProfile[dragIdx].isCorner || crossSectionProfile[targetIdx].isCorner;
+
+                crossSectionProfile.erase(crossSectionProfile.begin() + dragIdx);
+                m_selectedProfilePtIdx = (targetIdx > dragIdx) ? (targetIdx - 1) : targetIdx;
+                m_snapTargetProfilePtIdx = -1;
+
+                rebuildMeshGeometry(scene);
+                GuiManager::showToast("Profile points collapsed / merged", 1.8f);
+            }
+        } else if (!m_profilePointWasMoved && m_selectedProfilePtIdx >= 0 && m_selectedProfilePtIdx < N) {
+            auto& pt = crossSectionProfile[m_selectedProfilePtIdx];
+            pt.isCorner = !pt.isCorner;
+            rebuildMeshGeometry(scene);
+            if (pt.isCorner) {
+                GuiManager::showToast("Profile Corner Point (Sharp)", 1.5f);
+            } else {
+                GuiManager::showToast("Profile Smooth Point", 1.5f);
+            }
+        }
+
+        m_isDraggingProfilePoint = false;
+        m_profilePointWasMoved = false;
+        m_snapTargetProfilePtIdx = -1;
+
+        if (shouldPushHistory) {
+            scene.pushHistoryState();
+        }
         return true;
     }
 
@@ -964,12 +1425,331 @@ void TubeTool::setBaseRadius(float newRadius) {
     m_geometryDirty = true;
 }
 
+void TubeTool::resetRadiusProfile() {
+    radiusProfile = { {0.0f, 1.0f, false}, {1.0f, 1.0f, false} };
+    radiusProfileSmooth = true;
+}
+
+void TubeTool::setRadiusProfilePreset(int presetIdx) {
+    switch (presetIdx) {
+        case 1: // Uniform (Flat)
+            radiusProfile = { {0.0f, 1.0f, false}, {1.0f, 1.0f, false} };
+            break;
+        case 2: // Linear Taper Down (Spike/Claw)
+            radiusProfile = { {0.0f, 1.0f, false}, {0.7f, 0.5f, false}, {1.0f, 0.05f, false} };
+            break;
+        case 3: // Linear Taper Up (Funnel)
+            radiusProfile = { {0.0f, 0.05f, false}, {0.3f, 0.5f, false}, {1.0f, 1.0f, false} };
+            break;
+        case 4: // Bulb / Tentacle Bead
+            radiusProfile = { {0.0f, 0.35f, false}, {0.5f, 1.6f, false}, {1.0f, 0.35f, false} };
+            break;
+        case 5: // Double Swell (Handle/Bone)
+            radiusProfile = { {0.0f, 0.8f, false}, {0.25f, 1.4f, false}, {0.5f, 0.65f, false}, {0.75f, 1.4f, false}, {1.0f, 0.8f, false} };
+            break;
+        case 6: // Sharp Spike
+            radiusProfile = { {0.0f, 1.0f, false}, {0.85f, 0.95f, true}, {1.0f, 0.0f, true} };
+            break;
+        case 7: // Horn Ridges / Waves
+            radiusProfile = {
+                {0.0f, 0.7f, false}, {0.15f, 1.35f, false}, {0.3f, 0.75f, false}, {0.45f, 1.3f, false},
+                {0.6f, 0.7f, false}, {0.75f, 1.25f, false}, {0.9f, 0.65f, false}, {1.0f, 0.2f, false}
+            };
+            break;
+        case 8: // Bell / Flare
+            radiusProfile = { {0.0f, 0.3f, false}, {0.6f, 0.45f, false}, {0.85f, 0.9f, false}, {1.0f, 1.6f, false} };
+            break;
+        default:
+            break;
+    }
+}
+
+void TubeTool::resetCrossSectionProfile() {
+    crossSectionProfile.clear();
+    const int n = 8;
+    crossSectionProfile.reserve(n);
+    for (int i = 0; i < n; ++i) {
+        float angle = 2.0f * (float)M_PI * static_cast<float>(i) / static_cast<float>(n);
+        crossSectionProfile.emplace_back(std::cos(angle), std::sin(angle), false);
+    }
+    crossSectionSmooth = true;
+}
+
+void TubeTool::setCrossSectionPreset(int presetIdx) {
+    crossSectionProfile.clear();
+    switch (presetIdx) {
+        case 1: // Circle
+            resetCrossSectionProfile();
+            break;
+        case 2: { // Star 5-Point
+            const int n = 10;
+            crossSectionProfile.reserve(n);
+            for (int i = 0; i < n; ++i) {
+                float angle = 2.0f * (float)M_PI * static_cast<float>(i) / static_cast<float>(n) - (float)M_PI * 0.5f;
+                float r = (i % 2 == 0) ? 1.0f : 0.42f;
+                crossSectionProfile.emplace_back(std::cos(angle) * r, std::sin(angle) * r, true);
+            }
+            crossSectionSmooth = true;
+            break;
+        }
+        case 3: { // Star 6-Point
+            const int n = 12;
+            crossSectionProfile.reserve(n);
+            for (int i = 0; i < n; ++i) {
+                float angle = 2.0f * (float)M_PI * static_cast<float>(i) / static_cast<float>(n);
+                float r = (i % 2 == 0) ? 1.0f : 0.45f;
+                crossSectionProfile.emplace_back(std::cos(angle) * r, std::sin(angle) * r, true);
+            }
+            crossSectionSmooth = true;
+            break;
+        }
+        case 4: { // Oval / Ellipse
+            const int n = 8;
+            crossSectionProfile.reserve(n);
+            for (int i = 0; i < n; ++i) {
+                float angle = 2.0f * (float)M_PI * static_cast<float>(i) / static_cast<float>(n);
+                crossSectionProfile.emplace_back(std::cos(angle) * 1.35f, std::sin(angle) * 0.65f, false);
+            }
+            crossSectionSmooth = true;
+            break;
+        }
+        case 5: { // Chamfered Box / Rounded Square
+            crossSectionProfile = {
+                { -0.85f, -0.4f, true }, { -0.85f,  0.4f, true },
+                { -0.4f,  0.85f, true }, {  0.4f,  0.85f, true },
+                {  0.85f,  0.4f, true }, {  0.85f, -0.4f, true },
+                {  0.4f, -0.85f, true }, { -0.4f, -0.85f, true }
+            };
+            crossSectionSmooth = true;
+            break;
+        }
+        case 6: { // Heart / Teardrop
+            crossSectionProfile = {
+                {  0.0f,  0.35f, true },
+                {  0.5f,  0.9f,  false },
+                {  0.9f,  0.4f,  false },
+                {  0.55f, -0.4f, false },
+                {  0.0f, -0.95f, true },
+                { -0.55f, -0.4f, false },
+                { -0.9f,  0.4f,  false },
+                { -0.5f,  0.9f,  false }
+            };
+            crossSectionSmooth = true;
+            break;
+        }
+        case 7: { // Crescent / C-Gutter (indented on left)
+            crossSectionProfile = {
+                {  0.85f,  0.0f, false },
+                {  0.6f,   0.7f, false },
+                {  0.0f,   0.9f, true },
+                { -0.6f,   0.7f, false },
+                { -0.35f,  0.0f, false },
+                { -0.6f,  -0.7f, false },
+                {  0.0f,  -0.9f, true },
+                {  0.6f,  -0.7f, false }
+            };
+            crossSectionSmooth = true;
+            break;
+        }
+        case 8: { // Cross / Plus
+            crossSectionProfile = {
+                { -0.3f, -0.9f, true }, {  0.3f, -0.9f, true },
+                {  0.3f, -0.3f, true }, {  0.9f, -0.3f, true },
+                {  0.9f,  0.3f, true }, {  0.3f,  0.3f, true },
+                {  0.3f,  0.9f, true }, { -0.3f,  0.9f, true },
+                { -0.3f,  0.3f, true }, { -0.9f,  0.3f, true },
+                { -0.9f, -0.3f, true }, { -0.3f, -0.3f, true }
+            };
+            crossSectionSmooth = true;
+            break;
+        }
+        default:
+            resetCrossSectionProfile();
+            break;
+    }
+}
+
+static void generateCrossSectionRing(
+    TubeProfileType profileType,
+    int radialSegments,
+    float ribbonThickness,
+    const std::vector<ProfilePoint2D>& customProfile,
+    bool customSmooth,
+    std::vector<glm::vec2>& outPts,
+    std::vector<glm::vec2>& outNorms,
+    bool& outIsCCW
+) {
+    outPts.clear();
+    outNorms.clear();
+    outIsCCW = true;
+
+    if (profileType == TubeProfileType::CustomGraph) {
+        if (customProfile.size() < 3) {
+            int sides = std::max(8, radialSegments);
+            outPts.reserve(sides);
+            outNorms.reserve(sides);
+            for (int j = 0; j < sides; ++j) {
+                float phi = 2.0f * (float)M_PI * static_cast<float>(j) / static_cast<float>(sides);
+                float c = std::cos(phi);
+                float s = std::sin(phi);
+                outPts.emplace_back(c, s);
+                outNorms.emplace_back(c, s);
+            }
+            return;
+        }
+
+        int N = static_cast<int>(customProfile.size());
+
+        // Signed area to determine CCW orientation
+        float signedArea = 0.0f;
+        for (int i = 0; i < N; ++i) {
+            int next = (i + 1) % N;
+            signedArea += (customProfile[i].pos.x * customProfile[next].pos.y - customProfile[next].pos.x * customProfile[i].pos.y);
+        }
+        outIsCCW = (signedArea >= 0.0f);
+
+        if (customSmooth) {
+            int sides = std::max(8, radialSegments);
+            outPts.reserve(sides);
+            outNorms.reserve(sides);
+
+            for (int k = 0; k < sides; ++k) {
+                float u = static_cast<float>(k) / static_cast<float>(sides);
+                float globalU = u * static_cast<float>(N);
+                int seg = static_cast<int>(std::floor(globalU));
+                float t = globalU - static_cast<float>(seg);
+                seg = (seg % N + N) % N;
+
+                int i1 = seg;
+                int i2 = (seg + 1) % N;
+
+                const auto& pt1 = customProfile[i1];
+                const auto& pt2 = customProfile[i2];
+
+                glm::vec2 pos(0.0f);
+                glm::vec2 tan(0.0f);
+
+                if (pt1.isCorner && pt2.isCorner) {
+                    // Straight linear segment between two sharp corners
+                    pos = glm::mix(pt1.pos, pt2.pos, t);
+                    glm::vec2 chord = pt2.pos - pt1.pos;
+                    float cLen = glm::length(chord);
+                    tan = (cLen > 1e-6f) ? (chord / cLen) : glm::vec2(0.0f, 1.0f);
+                } else {
+                    // Catmull-Rom with corner phantom reflection
+                    glm::vec2 p1 = pt1.pos;
+                    glm::vec2 p2 = pt2.pos;
+                    glm::vec2 p0 = pt1.isCorner ? (p1 - (p2 - p1)) : customProfile[(i1 - 1 + N) % N].pos;
+                    glm::vec2 p3 = pt2.isCorner ? (p2 + (p2 - p1)) : customProfile[(i2 + 1) % N].pos;
+
+                    float t2 = t * t;
+                    float t3 = t2 * t;
+
+                    pos = 0.5f * (
+                        2.0f * p1 +
+                        (-p0 + p2) * t +
+                        (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t2 +
+                        (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t3
+                    );
+
+                    tan = 0.5f * (
+                        (-p0 + p2) +
+                        2.0f * (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t +
+                        3.0f * (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t2
+                    );
+                }
+
+                float tLen = glm::length(tan);
+                if (tLen < 1e-5f) {
+                    glm::vec2 chord = pt2.pos - pt1.pos;
+                    tLen = glm::length(chord);
+                    if (tLen > 1e-5f) tan = chord / tLen;
+                    else tan = glm::vec2(0.0f, 1.0f);
+                } else {
+                    tan /= tLen;
+                }
+
+                glm::vec2 norm = outIsCCW ? glm::vec2(tan.y, -tan.x) : glm::vec2(-tan.y, tan.x);
+                float nLen = glm::length(norm);
+                if (nLen > 1e-5f) norm /= nLen;
+                else norm = (glm::length(pos) > 1e-4f) ? glm::normalize(pos) : glm::vec2(1.0f, 0.0f);
+
+                outPts.push_back(pos);
+                outNorms.push_back(norm);
+            }
+        } else {
+            // Sharp polygon without spline subdivision
+            outPts.reserve(N);
+            outNorms.resize(N);
+
+            for (int i = 0; i < N; ++i) {
+                outPts.push_back(customProfile[i].pos);
+            }
+
+            for (int i = 0; i < N; ++i) {
+                int prev = (i - 1 + N) % N;
+                int next = (i + 1) % N;
+                glm::vec2 tan = customProfile[next].pos - customProfile[prev].pos;
+                float tLen = glm::length(tan);
+                if (tLen > 1e-5f) tan /= tLen;
+                else tan = glm::vec2(0.0f, 1.0f);
+
+                glm::vec2 norm = outIsCCW ? glm::vec2(tan.y, -tan.x) : glm::vec2(-tan.y, tan.x);
+                float nLen = glm::length(norm);
+                if (nLen > 1e-5f) norm /= nLen;
+                else norm = (glm::length(customProfile[i].pos) > 1e-4f) ? glm::normalize(customProfile[i].pos) : glm::vec2(1.0f, 0.0f);
+                outNorms[i] = norm;
+            }
+        }
+    } else if (profileType == TubeProfileType::FlatRibbon) {
+        outPts = {
+            { -1.5f,  ribbonThickness },
+            {  1.5f,  ribbonThickness },
+            {  1.5f, -ribbonThickness },
+            { -1.5f, -ribbonThickness }
+        };
+        outNorms = {
+            glm::normalize(glm::vec2(-1.0f,  1.0f)),
+            glm::normalize(glm::vec2( 1.0f,  1.0f)),
+            glm::normalize(glm::vec2( 1.0f, -1.0f)),
+            glm::normalize(glm::vec2(-1.0f, -1.0f))
+        };
+        outIsCCW = false;
+    } else if (profileType == TubeProfileType::Square) {
+        outPts.reserve(4);
+        outNorms.reserve(4);
+        for (int j = 0; j < 4; ++j) {
+            float phi45 = 2.0f * (float)M_PI * static_cast<float>(j) / 4.0f + (float)M_PI * 0.25f;
+            float c = std::cos(phi45);
+            float s = std::sin(phi45);
+            outPts.emplace_back(c * 1.4142f, s * 1.4142f);
+            outNorms.emplace_back(c, s);
+        }
+        outIsCCW = true;
+    } else {
+        // Round / Polygon
+        int sides = std::max(3, radialSegments);
+        outPts.reserve(sides);
+        outNorms.reserve(sides);
+        for (int j = 0; j < sides; ++j) {
+            float phi = 2.0f * (float)M_PI * static_cast<float>(j) / static_cast<float>(sides);
+            float c = std::cos(phi);
+            float s = std::sin(phi);
+            outPts.emplace_back(c, s);
+            outNorms.emplace_back(c, s);
+        }
+        outIsCCW = true;
+    }
+}
+
 static void buildTubeGeometry(
     const std::vector<EvaluatedFrame>& frames,
     TubeProfileType profileType,
     TubeCapType capType,
     int radialSegments,
     float ribbonThickness,
+    const std::vector<ProfilePoint2D>& customProfile,
+    bool customSmooth,
     std::vector<float>& outVerts,
     std::vector<float>& outNormals,
     std::vector<float>& outColors,
@@ -978,12 +1758,18 @@ static void buildTubeGeometry(
 ) {
     if (frames.size() < 2) return;
 
-    int radSides = radialSegments;
-    if (profileType == TubeProfileType::FlatRibbon || profileType == TubeProfileType::Square) {
-        radSides = 4;
-    } else if (radSides < 3) {
-        radSides = 3;
-    }
+    std::vector<glm::vec2> ringPts;
+    std::vector<glm::vec2> ringNorms;
+    bool isCCW = true;
+    generateCrossSectionRing(
+        profileType, radialSegments, ribbonThickness, customProfile, customSmooth,
+        ringPts, ringNorms, isCCW
+    );
+
+    int radSides = static_cast<int>(ringPts.size());
+    if (radSides < 3) return;
+
+    bool effectiveFlip = (isCCW ? flipWinding : !flipWinding);
 
     int numFrames = static_cast<int>(frames.size());
     uint32_t vertOffset = static_cast<uint32_t>(outVerts.size() / 3);
@@ -1010,32 +1796,12 @@ static void buildTubeGeometry(
         dr_ds = std::clamp(dr_ds, -3.0f, 3.0f);
 
         for (int j = 0; j < radSides; ++j) {
-            float phi = 2.0f * (float)M_PI * static_cast<float>(j) / static_cast<float>(radSides);
-            glm::vec3 pos;
-            glm::vec3 norm;
+            const glm::vec2& p2D = ringPts[j];
+            const glm::vec2& n2D = ringNorms[j];
 
-            if (profileType == TubeProfileType::FlatRibbon) {
-                // 4 corners of ribbon: top-left, top-right, bottom-right, bottom-left
-                float w = r * 1.5f;
-                float h = r * ribbonThickness;
-                float signW = (j == 0 || j == 3) ? -1.0f : 1.0f;
-                float signH = (j == 0 || j == 1) ? 1.0f : -1.0f;
-                pos = f.position + f.normal * (signW * w) + f.binormal * (signH * h);
-                norm = glm::normalize(f.normal * signW + f.binormal * signH - f.tangent * dr_ds);
-            } else if (profileType == TubeProfileType::Square) {
-                float phi45 = phi + (float)M_PI * 0.25f;
-                float c = std::cos(phi45);
-                float s = std::sin(phi45);
-                pos = f.position + (f.normal * c + f.binormal * s) * (r * 1.4142f);
-                norm = glm::normalize((f.normal * c + f.binormal * s) - f.tangent * dr_ds);
-            } else {
-                // Round / Polygon
-                float c = std::cos(phi);
-                float s = std::sin(phi);
-                glm::vec3 dir = f.normal * c + f.binormal * s;
-                pos = f.position + dir * r;
-                norm = glm::normalize(dir - f.tangent * dr_ds);
-            }
+            glm::vec3 pos = f.position + (f.normal * p2D.x + f.binormal * p2D.y) * r;
+            glm::vec3 dir = glm::normalize(f.normal * n2D.x + f.binormal * n2D.y);
+            glm::vec3 norm = glm::normalize(dir - f.tangent * dr_ds);
 
             outVerts.push_back(pos.x);
             outVerts.push_back(pos.y);
@@ -1060,7 +1826,7 @@ static void buildTubeGeometry(
             uint32_t v2 = vertOffset + (i + 1) * radSides + nextJ;
             uint32_t v3 = vertOffset + (i + 1) * radSides + j;
 
-            if (flipWinding) {
+            if (effectiveFlip) {
                 outFaces.push_back(v0);
                 outFaces.push_back(v3);
                 outFaces.push_back(v2);
@@ -1091,7 +1857,7 @@ static void buildTubeGeometry(
         for (int j = 0; j < radSides; ++j) {
             int nextJ = (j + 1) % radSides;
             outFaces.push_back(centerStartIdx);
-            if (flipWinding) {
+            if (effectiveFlip) {
                 outFaces.push_back(vertOffset + nextJ);
                 outFaces.push_back(vertOffset + j);
             } else {
@@ -1117,7 +1883,7 @@ static void buildTubeGeometry(
         for (int j = 0; j < radSides; ++j) {
             int nextJ = (j + 1) % radSides;
             outFaces.push_back(centerEndIdx);
-            if (flipWinding) {
+            if (effectiveFlip) {
                 outFaces.push_back(lastRingOffset + j);
                 outFaces.push_back(lastRingOffset + nextJ);
             } else {
@@ -1127,7 +1893,7 @@ static void buildTubeGeometry(
             outFaces.push_back(0xffffffff);
         }
     } else if (capType == TubeCapType::Rounded) {
-        // Rounded dome cap for start and end
+        // Rounded dome cap for start and end conforming to cross-section profile
         auto addDomeCap = [&](const EvaluatedFrame& f, bool isStart, uint32_t ringOffset) {
             int domeRings = std::max(2, radSides / 4);
             glm::vec3 axis = isStart ? -f.tangent : f.tangent;
@@ -1151,7 +1917,7 @@ static void buildTubeGeometry(
                         int nextJ = (j + 1) % radSides;
                         outFaces.push_back(poleIdx);
                         if (isStart) {
-                            if (flipWinding) {
+                            if (effectiveFlip) {
                                 outFaces.push_back(prevRing + nextJ);
                                 outFaces.push_back(prevRing + j);
                             } else {
@@ -1159,7 +1925,7 @@ static void buildTubeGeometry(
                                 outFaces.push_back(prevRing + nextJ);
                             }
                         } else {
-                            if (flipWinding) {
+                            if (effectiveFlip) {
                                 outFaces.push_back(prevRing + j);
                                 outFaces.push_back(prevRing + nextJ);
                             } else {
@@ -1175,10 +1941,12 @@ static void buildTubeGeometry(
                     float curH = r * sinTheta;
 
                     for (int j = 0; j < radSides; ++j) {
-                        float phi = 2.0f * (float)M_PI * static_cast<float>(j) / static_cast<float>(radSides);
-                        glm::vec3 dir = f.normal * std::cos(phi) + f.binormal * std::sin(phi);
+                        const glm::vec2& p2D = ringPts[j];
+                        const glm::vec2& n2D = ringNorms[j];
+                        glm::vec3 dir = f.normal * p2D.x + f.binormal * p2D.y;
+                        glm::vec3 normDir = glm::normalize(f.normal * n2D.x + f.binormal * n2D.y);
                         glm::vec3 pos = f.position + axis * curH + dir * curR;
-                        glm::vec3 norm = glm::normalize(axis * sinTheta + dir * cosTheta);
+                        glm::vec3 norm = glm::normalize(axis * sinTheta + normDir * cosTheta);
 
                         outVerts.push_back(pos.x); outVerts.push_back(pos.y); outVerts.push_back(pos.z);
                         outNormals.push_back(norm.x); outNormals.push_back(norm.y); outNormals.push_back(norm.z);
@@ -1188,7 +1956,7 @@ static void buildTubeGeometry(
                     for (int j = 0; j < radSides; ++j) {
                         int nextJ = (j + 1) % radSides;
                         if (isStart) {
-                            if (flipWinding) {
+                            if (effectiveFlip) {
                                 outFaces.push_back(prevRing + nextJ);
                                 outFaces.push_back(prevRing + j);
                                 outFaces.push_back(curRing + j);
@@ -1200,7 +1968,7 @@ static void buildTubeGeometry(
                                 outFaces.push_back(prevRing + nextJ);
                             }
                         } else {
-                            if (flipWinding) {
+                            if (effectiveFlip) {
                                 outFaces.push_back(prevRing + j);
                                 outFaces.push_back(curRing + j);
                                 outFaces.push_back(curRing + nextJ);
@@ -1266,7 +2034,8 @@ void TubeTool::rebuildMeshGeometry(Scene& scene) {
     }
 
     std::vector<EvaluatedFrame> frames = splineToUse->evaluateFrames(
-        numSamples, startRadiusScale, endRadiusScale, 0.0f, twistDegrees, cornerSegments
+        numSamples, startRadiusScale, endRadiusScale, 0.0f, twistDegrees, cornerSegments,
+        useRadiusProfile, radiusProfile, radiusProfileSmooth
     );
 
     if (frames.size() < 2) return;
@@ -1279,6 +2048,7 @@ void TubeTool::rebuildMeshGeometry(Scene& scene) {
     // 1. Build primary tube
     buildTubeGeometry(
         frames, profileType, capType, radialSegments, ribbonThickness,
+        crossSectionProfile, crossSectionSmooth,
         verts, normals, colors, faces, false
     );
 
@@ -1299,6 +2069,7 @@ void TubeTool::rebuildMeshGeometry(Scene& scene) {
 
         buildTubeGeometry(
             symFrames, profileType, capType, radialSegments, ribbonThickness,
+            crossSectionProfile, crossSectionSmooth,
             verts, normals, colors, faces, flipSym
         );
     }
@@ -1372,6 +2143,12 @@ Mesh* TubeTool::bakeMesh(Scene& scene, Mesh* mesh) {
         m_hoveredPointIdx = -1;
         m_snapTargetPointIdx = -1;
         m_hoveredCurveSeg = -1;
+        m_hoveredProfilePtIdx = -1;
+        m_selectedProfilePtIdx = -1;
+        m_snapTargetProfilePtIdx = -1;
+        m_hoveredProfileSeg = -1;
+        m_isDraggingProfilePoint = false;
+        m_profilePointWasMoved = false;
     }
 
     mesh->isTube = false;
@@ -1400,6 +2177,12 @@ void TubeTool::bakeAllTubes(Scene& scene) {
         m_hoveredPointIdx = -1;
         m_snapTargetPointIdx = -1;
         m_hoveredCurveSeg = -1;
+        m_hoveredProfilePtIdx = -1;
+        m_selectedProfilePtIdx = -1;
+        m_snapTargetProfilePtIdx = -1;
+        m_hoveredProfileSeg = -1;
+        m_isDraggingProfilePoint = false;
+        m_profilePointWasMoved = false;
     }
     if (count > 0) {
         scene.pushHistoryState();
@@ -1427,7 +2210,15 @@ void TubeTool::renderOverlay(
         return;
     }
 
+    // Only render curve overlay if the tube mesh is currently active and selected
+    Mesh* selMesh = scene.getSelected();
+    if (!selMesh || !selMesh->isTube || selMesh->tubeData == nullptr || m_activeTubeMesh != selMesh) {
+        return;
+    }
+
     if (m_spline.getPointCount() < 2) return;
+
+    bool isTubeTool = (m_sculpt.getBrush() == BRUSH_TUBE);
 
     // 2. Draw smooth spline centerline (dense sampling to look smooth on screen)
     int numSamples = std::clamp(static_cast<int>(m_spline.getPointCount() * 32), 64, 512);
@@ -1454,8 +2245,8 @@ void TubeTool::renderOverlay(
         }
     }
 
-    // Hover dot along curve indicating click to insert point
-    if (m_hoveredCurveSeg != -1 && m_hoveredPointIdx == -1 && !m_isDraggingPoint && !m_isDrawingStroke) {
+    // Hover dot along curve indicating click to insert point (ONLY in Tube Tool)
+    if (isTubeTool && m_hoveredCurveSeg != -1 && m_hoveredPointIdx == -1 && !m_isDraggingPoint && !m_isDrawingStroke) {
         ImVec2 hPos(m_hoveredCurveScreenPos.x, m_hoveredCurveScreenPos.y);
         drawList->AddCircleFilled(hPos, 6.0f, IM_COL32(0, 0, 0, 180));
         drawList->AddCircleFilled(hPos, 4.5f, IM_COL32(255, 255, 255, 255));
@@ -1466,8 +2257,8 @@ void TubeTool::renderOverlay(
         drawList->AddText(ImVec2(hPos.x + 8.0f, hPos.y - 8.0f), bothSharp ? IM_COL32(255, 220, 100, 230) : IM_COL32(255, 255, 255, 230), addTip);
     }
 
-    // Draw snap guide line when point is magnetically attracted to adjacent neighbor
-    if (m_isDraggingPoint && !m_isExtrudingPoint && m_snapTargetPointIdx >= 0 && m_snapTargetPointIdx < static_cast<int>(m_spline.getPointCount()) &&
+    // Draw snap guide line when point is magnetically attracted to adjacent neighbor (ONLY in Tube Tool)
+    if (isTubeTool && m_isDraggingPoint && !m_isExtrudingPoint && m_snapTargetPointIdx >= 0 && m_snapTargetPointIdx < static_cast<int>(m_spline.getPointCount()) &&
         m_selectedPointIdx >= 0 && m_selectedPointIdx < static_cast<int>(m_spline.getPointCount()) &&
         std::abs(m_snapTargetPointIdx - m_selectedPointIdx) == 1) {
         glm::vec3 sDrag = camera.project(m_spline.getPoint(m_selectedPointIdx).position);
@@ -1477,7 +2268,7 @@ void TubeTool::renderOverlay(
         }
     }
 
-    // 3. Draw Control Points & Thickness Handles (always visible on all points)
+    // 3. Draw Control Points & Thickness Handles
     float baseR = 7.0f;
     for (size_t i = 0; i < m_spline.getPointCount(); ++i) {
         const auto& pt = m_spline.getPoint(i);
@@ -1487,16 +2278,17 @@ void TubeTool::renderOverlay(
         ImVec2 p(sPos.x, sPos.y);
         bool isPointHovered = (static_cast<int>(i) == m_hoveredPointIdx);
         bool isSelected = (static_cast<int>(i) == m_selectedPointIdx);
-        bool isSnapTarget = (!m_isExtrudingPoint && static_cast<int>(i) == m_snapTargetPointIdx);
-        bool isHandleHovered = (static_cast<int>(i) == m_hoveredRadiusHandleIdx);
-        bool isHandleDragging = (m_isDraggingRadius && static_cast<int>(i) == m_selectedPointIdx);
+        bool isSnapTarget = isTubeTool && (!m_isExtrudingPoint && static_cast<int>(i) == m_snapTargetPointIdx);
+        bool isHandleHovered = isTubeTool && (static_cast<int>(i) == m_hoveredRadiusHandleIdx);
+        bool isHandleDragging = isTubeTool && (m_isDraggingRadius && static_cast<int>(i) == m_selectedPointIdx);
 
-        // Compute thickness stick and square handle
-        glm::vec3 cWorld, hWorld, sideDir;
-        glm::vec2 cScreen, hScreen;
-        bool hasHandle = getPointHandleInfo(camera, static_cast<int>(i), cWorld, hWorld, cScreen, hScreen, sideDir);
+        // Compute thickness stick and square handle (ONLY in Tube Tool)
+        if (isTubeTool) {
+            glm::vec3 cWorld, hWorld, sideDir;
+            glm::vec2 cScreen, hScreen;
+            bool hasHandle = getPointHandleInfo(camera, static_cast<int>(i), cWorld, hWorld, cScreen, hScreen, sideDir);
 
-        if (hasHandle) {
+            if (hasHandle) {
             // Optional faint cross-section ring if handle or point is hovered/dragged/selected
             if (isSelected || isPointHovered || isHandleHovered || isHandleDragging) {
                 glm::vec3 viewDir = glm::normalize(camera.getPivot() - camera.computePosition());
@@ -1565,6 +2357,7 @@ void TubeTool::renderOverlay(
                 drawList->AddText(ImVec2(sqMax.x + 5.0f, hScreen.y - 7.0f), (isHandleHovered || isHandleDragging) ? IM_COL32(255, 240, 100, 255) : IM_COL32(255, 255, 255, 220), rText);
             }
         }
+    }
 
         // Draw Center Control Point
         float r = (isPointHovered || isSnapTarget) ? (baseR + 2.5f) : baseR;
@@ -1598,8 +2391,8 @@ void TubeTool::renderOverlay(
             drawList->AddCircle(p, r, isSelected ? IM_COL32(255, 230, 40, 255) : IM_COL32(255, 255, 255, 255), 0, isSelected ? 2.5f : 1.5f);
         }
 
-        // Hover hint to inform user about click-to-toggle or Alt-extrude
-        if (isPointHovered && !m_isDraggingPoint && !m_isDraggingRadius) {
+        // Hover hint to inform user about click-to-toggle or Alt-extrude (ONLY in Tube Tool)
+        if (isTubeTool && isPointHovered && !m_isDraggingPoint && !m_isDraggingRadius) {
             bool isEndPoint = (i == 0 || i == m_spline.getPointCount() - 1);
             if (isEndPoint) {
                 const char* tip = pt.isCorner ? "Corner (Click: Smooth | Alt+Drag: Extrude)" : "Smooth (Click: Break Angle | Alt+Drag: Extrude)";
@@ -1607,6 +2400,178 @@ void TubeTool::renderOverlay(
             } else {
                 const char* tip = pt.isCorner ? "Corner (Click: Smooth | Alt+Click: Delete)" : "Smooth (Click: Break Angle | Alt+Click: Delete)";
                 drawList->AddText(ImVec2(p.x + r + 6.0f, p.y + 8.0f), IM_COL32(255, 230, 120, 255), tip);
+            }
+        }
+    }
+
+    // 4. Render Cross-Section Profile Graph directly on tube end cross-section (ONLY in Tube Tool)
+    if (isTubeTool && showProfileAtEnd && profileType == TubeProfileType::CustomGraph && !crossSectionProfile.empty()) {
+        EvaluatedFrame frame;
+        int ptIdx = -1;
+        if (getEndProfileFrame(frame, &ptIdx)) {
+            float r = std::max(frame.radius, 0.001f);
+            glm::vec3 cWorld = frame.position;
+            glm::vec3 cProj = camera.project(cWorld);
+
+            if (cProj.z >= 0.0f && cProj.z <= 1.0f) {
+                ImVec2 centerScreen(cProj.x, cProj.y);
+
+                // A. Local coordinate axes (Normal = X in red, Binormal = Y in green)
+                glm::vec3 xWorld = cWorld + frame.normal * (r * 1.35f);
+                glm::vec3 yWorld = cWorld + frame.binormal * (r * 1.35f);
+                glm::vec3 xProj = camera.project(xWorld);
+                glm::vec3 yProj = camera.project(yWorld);
+
+                if (xProj.z >= 0.0f && xProj.z <= 1.0f) {
+                    drawList->AddLine(centerScreen, ImVec2(xProj.x, xProj.y), IM_COL32(255, 90, 90, 180), 1.5f);
+                    drawList->AddText(ImVec2(xProj.x + 3.0f, xProj.y - 7.0f), IM_COL32(255, 120, 120, 220), "X");
+                }
+                if (yProj.z >= 0.0f && yProj.z <= 1.0f) {
+                    drawList->AddLine(centerScreen, ImVec2(yProj.x, yProj.y), IM_COL32(90, 230, 120, 180), 1.5f);
+                    drawList->AddText(ImVec2(yProj.x + 3.0f, yProj.y - 7.0f), IM_COL32(120, 255, 150, 220), "Y");
+                }
+
+                // B. Reference Unit Circle (radius = 1.0)
+                const int circleSteps = 32;
+                std::vector<ImVec2> unitCirclePts;
+                unitCirclePts.reserve(circleSteps + 1);
+                for (int k = 0; k <= circleSteps; ++k) {
+                    float phi = 2.0f * (float)M_PI * static_cast<float>(k) / static_cast<float>(circleSteps);
+                    glm::vec3 circWorld = cWorld + (frame.normal * std::cos(phi) + frame.binormal * std::sin(phi)) * r;
+                    glm::vec3 circProj = camera.project(circWorld);
+                    if (circProj.z >= 0.0f && circProj.z <= 1.0f) {
+                        unitCirclePts.emplace_back(circProj.x, circProj.y);
+                    }
+                }
+                if (unitCirclePts.size() >= 2) {
+                    for (size_t k = 1; k < unitCirclePts.size(); ++k) {
+                        drawList->AddLine(unitCirclePts[k - 1], unitCirclePts[k], IM_COL32(255, 255, 255, 55), 1.0f);
+                    }
+                }
+
+                // C. Profile Contour Loop
+                int N = static_cast<int>(crossSectionProfile.size());
+                int contourSamples = std::max(64, N * 16);
+                std::vector<ImVec2> contourScreenPts;
+                contourScreenPts.reserve(contourSamples + 1);
+
+                for (int k = 0; k <= contourSamples; ++k) {
+                    float u = static_cast<float>(k) / static_cast<float>(contourSamples);
+                    glm::vec2 p2D = evaluateCrossSectionContour(u);
+                    glm::vec3 loopWorld = cWorld + (frame.normal * p2D.x + frame.binormal * p2D.y) * r;
+                    glm::vec3 loopProj = camera.project(loopWorld);
+                    if (loopProj.z >= 0.0f && loopProj.z <= 1.0f) {
+                        contourScreenPts.emplace_back(loopProj.x, loopProj.y);
+                    }
+                }
+
+                if (contourScreenPts.size() >= 2) {
+                    // Shadow line
+                    for (size_t k = 1; k < contourScreenPts.size(); ++k) {
+                        drawList->AddLine(contourScreenPts[k - 1], contourScreenPts[k], IM_COL32(0, 0, 0, 180), 4.0f);
+                    }
+                    // Glowing Magenta/Violet contour line
+                    ImU32 contourCol = (m_isDraggingProfilePoint || m_hoveredProfileSeg != -1) ?
+                        IM_COL32(255, 140, 230, 255) : IM_COL32(225, 70, 200, 230);
+                    for (size_t k = 1; k < contourScreenPts.size(); ++k) {
+                        drawList->AddLine(contourScreenPts[k - 1], contourScreenPts[k], contourCol, 2.2f);
+                    }
+                }
+
+                // D. Hover indicator dot on contour to add point
+                if (m_hoveredProfileSeg != -1 && m_hoveredProfilePtIdx == -1 && !m_isDraggingProfilePoint) {
+                    ImVec2 hPos(m_hoveredProfileScreenPos.x, m_hoveredProfileScreenPos.y);
+                    drawList->AddCircleFilled(hPos, 6.0f, IM_COL32(0, 0, 0, 180));
+                    drawList->AddCircleFilled(hPos, 4.5f, IM_COL32(255, 255, 255, 255));
+                    drawList->AddCircle(hPos, 4.5f, IM_COL32(255, 70, 200, 255), 0, 2.0f);
+
+                    int i1 = m_hoveredProfileSeg;
+                    int i2 = (m_hoveredProfileSeg + 1) % N;
+                    bool bothCorners = crossSectionProfile[i1].isCorner && crossSectionProfile[i2].isCorner;
+                    const char* tip = bothCorners ? "+ Add Corner Point" : "+ Add Profile Point";
+                    drawList->AddText(ImVec2(hPos.x + 8.0f, hPos.y - 8.0f),
+                        bothCorners ? IM_COL32(255, 220, 100, 240) : IM_COL32(255, 255, 255, 240), tip);
+                }
+
+                // E. Snap guide line during profile point dragging
+                if (m_isDraggingProfilePoint && m_snapTargetProfilePtIdx >= 0 && m_snapTargetProfilePtIdx < N &&
+                    m_selectedProfilePtIdx >= 0 && m_selectedProfilePtIdx < N) {
+                    const auto& dragPt = crossSectionProfile[m_selectedProfilePtIdx];
+                    const auto& targetPt = crossSectionProfile[m_snapTargetProfilePtIdx];
+                    glm::vec3 wDrag = cWorld + (frame.normal * dragPt.pos.x + frame.binormal * dragPt.pos.y) * r;
+                    glm::vec3 wTarget = cWorld + (frame.normal * targetPt.pos.x + frame.binormal * targetPt.pos.y) * r;
+                    glm::vec3 sDrag = camera.project(wDrag);
+                    glm::vec3 sTarget = camera.project(wTarget);
+                    if (sDrag.z >= 0.0f && sDrag.z <= 1.0f && sTarget.z >= 0.0f && sTarget.z <= 1.0f) {
+                        drawList->AddLine(ImVec2(sDrag.x, sDrag.y), ImVec2(sTarget.x, sTarget.y), IM_COL32(255, 140, 0, 230), 2.5f);
+                    }
+                }
+
+                // F. Profile Control Points
+                float profPtR = 6.0f;
+                for (int i = 0; i < N; ++i) {
+                    const auto& pt = crossSectionProfile[i];
+                    glm::vec3 ptWorld = cWorld + (frame.normal * pt.pos.x + frame.binormal * pt.pos.y) * r;
+                    glm::vec3 sPos = camera.project(ptWorld);
+                    if (sPos.z < 0.0f || sPos.z > 1.0f) continue;
+
+                    ImVec2 p(sPos.x, sPos.y);
+                    bool isHovered = (i == m_hoveredProfilePtIdx);
+                    bool isSelected = (i == m_selectedProfilePtIdx);
+                    bool isSnapTarget = (i == m_snapTargetProfilePtIdx);
+
+                    float curR = (isHovered || isSnapTarget) ? (profPtR + 2.5f) : profPtR;
+
+                    ImU32 fillCol;
+                    if (isSnapTarget) {
+                        fillCol = IM_COL32(255, 140, 20, 255); // Orange
+                    } else if (isSelected) {
+                        fillCol = IM_COL32(255, 215, 30, 255); // Amber / Gold
+                    } else if (pt.isCorner) {
+                        fillCol = IM_COL32(255, 80, 150, 255); // Vivid Pink
+                    } else {
+                        fillCol = IM_COL32(200, 60, 220, 255); // Violet
+                    }
+
+                    // Snap target highlight
+                    if (isSnapTarget) {
+                        drawList->AddCircle(p, curR + 6.0f, IM_COL32(255, 140, 0, 255), 0, 3.0f);
+                        drawList->AddCircleFilled(p, curR + 4.0f, IM_COL32(255, 160, 40, 90));
+                        drawList->AddText(ImVec2(p.x + curR + 6.0f, p.y + 4.0f), IM_COL32(255, 180, 50, 255), "Snap & Merge");
+                    }
+
+                    // Shadow and shape: Square for sharp corner, Circle for smooth point
+                    if (pt.isCorner) {
+                        drawList->AddRectFilled(ImVec2(p.x - curR - 1.5f, p.y - curR - 1.5f), ImVec2(p.x + curR + 1.5f, p.y + curR + 1.5f), IM_COL32(0, 0, 0, 180), 2.0f);
+                        drawList->AddRectFilled(ImVec2(p.x - curR, p.y - curR), ImVec2(p.x + curR, p.y + curR), fillCol, 2.0f);
+                        drawList->AddRect(ImVec2(p.x - curR, p.y - curR), ImVec2(p.x + curR, p.y + curR),
+                            isSelected ? IM_COL32(255, 255, 255, 255) : IM_COL32(230, 230, 250, 220), 2.0f, 0, isSelected ? 2.2f : 1.5f);
+                    } else {
+                        drawList->AddCircleFilled(p, curR + 1.5f, IM_COL32(0, 0, 0, 180));
+                        drawList->AddCircleFilled(p, curR, fillCol);
+                        drawList->AddCircle(p, curR,
+                            isSelected ? IM_COL32(255, 255, 255, 255) : IM_COL32(230, 230, 250, 220), 0, isSelected ? 2.2f : 1.5f);
+                    }
+
+                    // Tooltip on hovered point
+                    if (isHovered && !m_isDraggingProfilePoint) {
+                        const char* tip = pt.isCorner ?
+                            "Profile Corner (Click: Smooth | Alt+Click: Delete)" :
+                            "Profile Smooth (Click: Sharp Corner | Alt+Click: Delete)";
+                        drawList->AddText(ImVec2(p.x + curR + 6.0f, p.y + 6.0f), IM_COL32(255, 220, 140, 255), tip);
+                    }
+                }
+
+                // G. Header Badge "Profile Graph (End)" / "Profile Graph (Start)"
+                const char* badgeText = (ptIdx == 0) ? "Profile Graph [Start]" : "Profile Graph [End]";
+                ImVec2 badgePos(centerScreen.x - 50.0f, centerScreen.y - (r * 30.0f + 25.0f));
+                badgePos.y = std::clamp(badgePos.y, centerScreen.y - 70.0f, centerScreen.y - 20.0f);
+                ImVec2 badgeTextSize = ImGui::CalcTextSize(badgeText);
+                ImVec2 bMin(badgePos.x - 6.0f, badgePos.y - 2.0f);
+                ImVec2 bMax(badgePos.x + badgeTextSize.x + 6.0f, badgePos.y + badgeTextSize.y + 2.0f);
+                drawList->AddRectFilled(bMin, bMax, IM_COL32(20, 20, 30, 200), 4.0f);
+                drawList->AddRect(bMin, bMax, IM_COL32(220, 80, 200, 220), 4.0f, 0, 1.2f);
+                drawList->AddText(badgePos, IM_COL32(255, 220, 255, 240), badgeText);
             }
         }
     }

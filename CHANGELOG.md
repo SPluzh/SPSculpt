@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.6]
+- **Profile Graphs**: Shape tube thickness along length and create custom 2D cross-sections with built-in presets.
+- **Viewport Editing**: Display and edit the cross-section profile directly at the tube end in the 3D viewport.
+- **Move Brush on Curves**: Select an unbaked tube to view its curve and move spline points with brush falloff. Radius handles, insertion, and deletion are hidden and locked.
+- **Auto-Hide Inactive Curves**: Curve overlays automatically hide when a tube is unselected or another mesh is active.
+- **Seamless Freehand Tubes**: Dragging across clean space in freehand mode automatically authors a new tube; clicking clean space deselects the active tube.
+- **Intuitive Controls**: Add, delete (Alt+Click), toggle Sharp/Smooth, and drag to snap & merge points.
+
+
 ## [0.3.5]
 - **Tube & Curve Tool**: Create 3D curves and tubes by freehand drawing directly on surfaces or in space, or placing points manually.
 - **Interactive Editing**: Move control points in 3D, extrude ends with Alt+Drag, click points to toggle sharp right-angle corners, and adjust thickness with dedicated handles.

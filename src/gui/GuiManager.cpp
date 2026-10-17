@@ -1276,6 +1276,313 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     ImGui::SetTooltip("Taper to 0.0 for sharp tips (horns, tentacles, spikes, claws)");
                 }
 
+                if (ImGui::Checkbox("Use Radius Profile Graph", &tubeTool->useRadiusProfile)) {
+                    tubeTool->markGeometryDirty();
+                    scene.pushHistoryState();
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Shape radius and thickness along the length of the curve using an interactive 2D graph.");
+                }
+
+                if (tubeTool->useRadiusProfile) {
+                    ImGui::Indent(10.0f);
+                    static int radPreset = 0;
+                    const char* radPresets[] = {
+                        "Presets...", "Uniform (Flat)", "Linear Taper Down", "Linear Taper Up",
+                        "Bulb / Tentacle Bead", "Double Swell", "Sharp Spike", "Horn Ridges / Waves", "Bell / Flare"
+                    };
+                    ImGui::SetNextItemWidth(150.0f * scale);
+                    if (ImGui::Combo("##RadPreset", &radPreset, radPresets, IM_ARRAYSIZE(radPresets))) {
+                        if (radPreset > 0) {
+                            tubeTool->setRadiusProfilePreset(radPreset);
+                            tubeTool->markGeometryDirty();
+                            scene.pushHistoryState();
+                            radPreset = 0;
+                        }
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Reset##RadProfile")) {
+                        tubeTool->resetRadiusProfile();
+                        tubeTool->markGeometryDirty();
+                        scene.pushHistoryState();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Checkbox("Smooth##RadSmooth", &tubeTool->radiusProfileSmooth)) {
+                        tubeTool->markGeometryDirty();
+                        scene.pushHistoryState();
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Smooth monotonic spline vs sharp linear segments.");
+                    }
+
+                    ImGui::TextDisabled("Click point: Sharp/Smooth. Drag: Move / Snap & Merge. Click curve: +Add. Alt+Click: Delete.");
+
+                    float availW = ImGui::GetContentRegionAvail().x;
+                    float canvasW = std::clamp(availW, 200.0f * scale, 320.0f * scale);
+                    ImVec2 radCanvasSize = ImVec2(canvasW, 140.0f * scale);
+                    ImVec2 radCanvasPos = ImGui::GetCursorScreenPos();
+                    ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+                    // Background & border
+                    drawList->AddRectFilled(radCanvasPos, ImVec2(radCanvasPos.x + radCanvasSize.x, radCanvasPos.y + radCanvasSize.y), IM_COL32(18, 18, 22, 255), 4.0f);
+                    drawList->AddRect(radCanvasPos, ImVec2(radCanvasPos.x + radCanvasSize.x, radCanvasPos.y + radCanvasSize.y), IM_COL32(75, 75, 85, 255), 4.0f);
+
+                    const float maxY = 2.5f;
+
+                    auto radToScreen = [&](const glm::vec2& p) -> ImVec2 {
+                        float sx = radCanvasPos.x + p.x * radCanvasSize.x;
+                        float sy = radCanvasPos.y + (1.0f - std::clamp(p.y / maxY, 0.0f, 1.0f)) * radCanvasSize.y;
+                        return ImVec2(sx, sy);
+                    };
+
+                    auto radToNorm = [&](const ImVec2& sp) -> glm::vec2 {
+                        float nx = (sp.x - radCanvasPos.x) / radCanvasSize.x;
+                        float ny = (1.0f - (sp.y - radCanvasPos.y) / radCanvasSize.y) * maxY;
+                        return glm::vec2(std::clamp(nx, 0.0f, 1.0f), std::clamp(ny, 0.0f, maxY));
+                    };
+
+                    // Grid lines
+                    for (int i = 1; i < 4; ++i) {
+                        float gx = radCanvasPos.x + radCanvasSize.x * (0.25f * i);
+                        drawList->AddLine(ImVec2(gx, radCanvasPos.y), ImVec2(gx, radCanvasPos.y + radCanvasSize.y), IM_COL32(40, 40, 50, 255), 1.0f);
+                    }
+                    // Horizontal 1.0x base line
+                    float y1_0 = radCanvasPos.y + (1.0f - 1.0f / maxY) * radCanvasSize.y;
+                    drawList->AddLine(ImVec2(radCanvasPos.x, y1_0), ImVec2(radCanvasPos.x + radCanvasSize.x, y1_0), IM_COL32(0, 180, 210, 80), 1.0f);
+                    drawList->AddText(ImVec2(radCanvasPos.x + 6.0f, y1_0 - 14.0f), IM_COL32(0, 210, 230, 140), "1.0x");
+                    drawList->AddText(ImVec2(radCanvasPos.x + 6.0f, radCanvasPos.y + 4.0f), IM_COL32(255, 255, 255, 90), "2.5x");
+                    drawList->AddText(ImVec2(radCanvasPos.x + 6.0f, radCanvasPos.y + radCanvasSize.y - 18.0f), IM_COL32(255, 255, 255, 90), "0.0 (Start)");
+                    drawList->AddText(ImVec2(radCanvasPos.x + radCanvasSize.x - 65.0f * scale, radCanvasPos.y + radCanvasSize.y - 18.0f), IM_COL32(255, 255, 255, 90), "1.0 (End)");
+
+                    ImGui::InvisibleButton("radius_profile_canvas", radCanvasSize);
+                    bool radCanvasHovered = ImGui::IsItemHovered();
+                    bool radCanvasActive = ImGui::IsItemActive();
+                    static int radDraggedIdx = -1;
+                    static int radSnapTargetIdx = -1;
+                    static bool radPointWasMoved = false;
+                    static ImVec2 radDragStartMouse(0, 0);
+
+                    auto& pts = tubeTool->radiusProfile;
+                    if (pts.size() < 2) tubeTool->resetRadiusProfile();
+
+                    ImVec2 mPos = ImGui::GetIO().MousePos;
+
+                    // Hover test on control points
+                    int hitPtIdx = -1;
+                    for (int i = 0; i < (int)pts.size(); ++i) {
+                        ImVec2 sPt = radToScreen(pts[i].pos);
+                        float dx = mPos.x - sPt.x;
+                        float dy = mPos.y - sPt.y;
+                        if (dx * dx + dy * dy < (10.0f * scale) * (10.0f * scale)) {
+                            hitPtIdx = i;
+                            break;
+                        }
+                    }
+
+                    // Hover test on curve (click-to-add detection)
+                    float bestCurveDist = 14.0f * scale;
+                    float bestCurveU = -1.0f;
+                    float bestCurveY = 0.0f;
+                    ImVec2 bestCurveScreen(0, 0);
+                    if (hitPtIdx == -1 && radCanvasHovered && radDraggedIdx == -1) {
+                        const int detectSteps = 96;
+                        for (int s = 0; s <= detectSteps; ++s) {
+                            float u = static_cast<float>(s) / static_cast<float>(detectSteps);
+                            float yVal = CurveSpline::evaluateRadiusProfile(u, pts, tubeTool->radiusProfileSmooth);
+                            ImVec2 sPos = radToScreen(glm::vec2(u, yVal));
+                            float d = std::hypot(mPos.x - sPos.x, mPos.y - sPos.y);
+                            if (d < bestCurveDist) {
+                                bestCurveDist = d;
+                                bestCurveU = u;
+                                bestCurveY = yVal;
+                                bestCurveScreen = sPos;
+                            }
+                        }
+                    }
+
+                    // Mouse down handling
+                    if (radCanvasActive && ImGui::IsMouseClicked(0)) {
+                        if (hitPtIdx != -1) {
+                            if (ImGui::GetIO().KeyAlt) {
+                                // Alt+Click deletes interior point
+                                if (hitPtIdx > 0 && hitPtIdx < (int)pts.size() - 1) {
+                                    pts.erase(pts.begin() + hitPtIdx);
+                                    tubeTool->markGeometryDirty();
+                                    scene.pushHistoryState();
+                                    GuiManager::showToast("Point deleted", 1.2f);
+                                }
+                            } else {
+                                radDraggedIdx = hitPtIdx;
+                                radDragStartMouse = mPos;
+                                radPointWasMoved = false;
+                                radSnapTargetIdx = -1;
+                            }
+                        } else if (bestCurveU >= 0.0f) {
+                            // Click on curve inserts new control point!
+                            ProfilePoint2D newPt(bestCurveU, bestCurveY, false);
+                            auto it = std::lower_bound(pts.begin(), pts.end(), newPt, [](const ProfilePoint2D& a, const ProfilePoint2D& b) {
+                                return a.pos.x < b.pos.x;
+                            });
+                            int newIdx = static_cast<int>(it - pts.begin());
+                            pts.insert(it, newPt);
+                            radDraggedIdx = newIdx;
+                            radDragStartMouse = mPos;
+                            radPointWasMoved = true;
+                            radSnapTargetIdx = -1;
+                            tubeTool->markGeometryDirty();
+                            scene.pushHistoryState();
+                            GuiManager::showToast("+ Point added", 1.2f);
+                        }
+                    }
+
+                    // Right-click to delete interior point
+                    if (radCanvasHovered && ImGui::IsMouseClicked(1) && hitPtIdx > 0 && hitPtIdx < (int)pts.size() - 1) {
+                        pts.erase(pts.begin() + hitPtIdx);
+                        tubeTool->markGeometryDirty();
+                        scene.pushHistoryState();
+                        GuiManager::showToast("Point deleted", 1.2f);
+                    }
+
+                    // Mouse drag handling
+                    if (radCanvasActive && ImGui::IsMouseDown(0) && radDraggedIdx >= 0 && radDraggedIdx < (int)pts.size()) {
+                        if (std::hypot(mPos.x - radDragStartMouse.x, mPos.y - radDragStartMouse.y) > 4.0f) {
+                            radPointWasMoved = true;
+                        }
+                        glm::vec2 np = radToNorm(mPos);
+
+                        if (radDraggedIdx == 0) {
+                            pts[0].pos.x = 0.0f;
+                            pts[0].pos.y = np.y;
+                            radSnapTargetIdx = -1;
+                        } else if (radDraggedIdx == (int)pts.size() - 1) {
+                            pts[pts.size() - 1].pos.x = 1.0f;
+                            pts[pts.size() - 1].pos.y = np.y;
+                            radSnapTargetIdx = -1;
+                        } else {
+                            pts[radDraggedIdx].pos.y = np.y;
+
+                            // Proximity detection for collapsing / merging with adjacent neighbors (< 18px threshold)
+                            radSnapTargetIdx = -1;
+                            int prevIdx = radDraggedIdx - 1;
+                            int nextIdx = radDraggedIdx + 1;
+                            ImVec2 sPrev = radToScreen(pts[prevIdx].pos);
+                            ImVec2 sNext = radToScreen(pts[nextIdx].pos);
+                            float dPrev = std::hypot(mPos.x - sPrev.x, mPos.y - sPrev.y);
+                            float dNext = std::hypot(mPos.x - sNext.x, mPos.y - sNext.y);
+                            float snapThresh = 18.0f * scale;
+
+                            if (dPrev < snapThresh && dPrev <= dNext && pts.size() > 2) {
+                                radSnapTargetIdx = prevIdx;
+                            } else if (dNext < snapThresh && pts.size() > 2) {
+                                radSnapTargetIdx = nextIdx;
+                            }
+
+                            // Keep x in order between neighbors if not snapped
+                            float minX = pts[radDraggedIdx - 1].pos.x + 0.005f;
+                            float maxX = pts[radDraggedIdx + 1].pos.x - 0.005f;
+                            pts[radDraggedIdx].pos.x = std::clamp(np.x, minX, maxX);
+                        }
+                        tubeTool->markGeometryDirty();
+                    } else if (radDraggedIdx != -1) {
+                        // Mouse released
+                        if (radSnapTargetIdx != -1 && pts.size() > 2 && radDraggedIdx >= 0 && radDraggedIdx < (int)pts.size()) {
+                            // Merge with neighbor
+                            pts.erase(pts.begin() + radDraggedIdx);
+                            tubeTool->markGeometryDirty();
+                            scene.pushHistoryState();
+                            GuiManager::showToast("Points snapped & merged", 1.5f);
+                        } else if (!radPointWasMoved && radDraggedIdx >= 0 && radDraggedIdx < (int)pts.size()) {
+                            // Single click on point without dragging -> Toggle Sharp / Corner vs Smooth!
+                            pts[radDraggedIdx].isCorner = !pts[radDraggedIdx].isCorner;
+                            tubeTool->markGeometryDirty();
+                            scene.pushHistoryState();
+                            if (pts[radDraggedIdx].isCorner) {
+                                GuiManager::showToast("Corner Point (Sharp Step)", 1.5f);
+                            } else {
+                                GuiManager::showToast("Smooth Point", 1.5f);
+                            }
+                        } else {
+                            scene.pushHistoryState();
+                        }
+                        radDraggedIdx = -1;
+                        radSnapTargetIdx = -1;
+                        radPointWasMoved = false;
+                    }
+
+                    // Draw curve line
+                    const int curveSteps = 96;
+                    ImVec2 prevScreen = radToScreen(glm::vec2(0.0f, CurveSpline::evaluateRadiusProfile(0.0f, pts, tubeTool->radiusProfileSmooth)));
+                    for (int s = 1; s <= curveSteps; ++s) {
+                        float u = static_cast<float>(s) / static_cast<float>(curveSteps);
+                        float valY = CurveSpline::evaluateRadiusProfile(u, pts, tubeTool->radiusProfileSmooth);
+                        ImVec2 nextScreen = radToScreen(glm::vec2(u, valY));
+                        drawList->AddLine(prevScreen, nextScreen, IM_COL32(0, 220, 200, 255), 2.2f);
+                        prevScreen = nextScreen;
+                    }
+
+                    // Hover dot along curve indicating click to insert point
+                    if (bestCurveU >= 0.0f && hitPtIdx == -1 && radDraggedIdx == -1) {
+                        drawList->AddCircleFilled(bestCurveScreen, 5.5f, IM_COL32(0, 0, 0, 180));
+                        drawList->AddCircleFilled(bestCurveScreen, 4.0f, IM_COL32(255, 255, 255, 255));
+                        drawList->AddCircle(bestCurveScreen, 4.0f, IM_COL32(0, 220, 200, 255), 0, 1.8f);
+                        drawList->AddText(ImVec2(bestCurveScreen.x + 7.0f, bestCurveScreen.y - 8.0f), IM_COL32(255, 255, 255, 230), "+ Add Point");
+                    }
+
+                    // Snap guide line & highlight when dragging near adjacent neighbor
+                    if (radSnapTargetIdx >= 0 && radSnapTargetIdx < (int)pts.size() &&
+                        radDraggedIdx >= 0 && radDraggedIdx < (int)pts.size()) {
+                        ImVec2 sDrag = radToScreen(pts[radDraggedIdx].pos);
+                        ImVec2 sTarget = radToScreen(pts[radSnapTargetIdx].pos);
+                        drawList->AddLine(sDrag, sTarget, IM_COL32(255, 140, 0, 240), 2.5f);
+                        drawList->AddCircle(sTarget, 11.0f, IM_COL32(255, 140, 0, 255), 0, 2.5f);
+                        drawList->AddText(ImVec2(sTarget.x + 8.0f, sTarget.y - 14.0f), IM_COL32(255, 180, 50, 255), "Snap & Merge");
+                    }
+
+                    // Draw control points
+                    for (int i = 0; i < (int)pts.size(); ++i) {
+                        ImVec2 sPt = radToScreen(pts[i].pos);
+                        float dx = mPos.x - sPt.x;
+                        float dy = mPos.y - sPt.y;
+                        bool pHov = (dx * dx + dy * dy < 8.0f * 8.0f) && radCanvasHovered;
+                        bool pDrag = (radDraggedIdx == i);
+                        bool isSnap = (radSnapTargetIdx == i);
+
+                        ImU32 col;
+                        if (isSnap) {
+                            col = IM_COL32(255, 140, 20, 255); // Orange snap target
+                        } else if (pDrag || pHov) {
+                            col = IM_COL32(255, 230, 50, 255); // Glowing yellow
+                        } else if (i == 0) {
+                            col = IM_COL32(40, 220, 90, 255); // Green (Start)
+                        } else if (i == (int)pts.size() - 1) {
+                            col = IM_COL32(240, 60, 60, 255); // Red (End)
+                        } else {
+                            col = IM_COL32(0, 220, 200, 255); // Cyan
+                        }
+
+                        float rad = (pDrag || pHov || isSnap) ? 6.5f : 4.5f;
+
+                        // Square for sharp corner, Circle for smooth point
+                        if (pts[i].isCorner) {
+                            drawList->AddRectFilled(ImVec2(sPt.x - rad - 1.5f, sPt.y - rad - 1.5f), ImVec2(sPt.x + rad + 1.5f, sPt.y + rad + 1.5f), IM_COL32(0, 0, 0, 180), 2.0f);
+                            drawList->AddRectFilled(ImVec2(sPt.x - rad, sPt.y - rad), ImVec2(sPt.x + rad, sPt.y + rad), col, 2.0f);
+                            drawList->AddRect(ImVec2(sPt.x - rad, sPt.y - rad), ImVec2(sPt.x + rad, sPt.y + rad), IM_COL32(255, 255, 255, 230), 2.0f, 0, 1.2f);
+                        } else {
+                            drawList->AddCircleFilled(sPt, rad + 1.5f, IM_COL32(0, 0, 0, 180));
+                            drawList->AddCircleFilled(sPt, rad, col);
+                            drawList->AddCircle(sPt, rad, IM_COL32(255, 255, 255, 230), 0, 1.2f);
+                        }
+
+                        if (pHov || pDrag) {
+                            char tip[64];
+                            const char* typeDesc = pts[i].isCorner ? "Sharp" : "Smooth";
+                            snprintf(tip, sizeof(tip), "[%d] u:%.2f  R:%.2f (%s)", i, pts[i].pos.x, pts[i].pos.y, typeDesc);
+                            drawList->AddText(ImVec2(sPt.x + 8.0f, sPt.y - 12.0f), IM_COL32(255, 235, 120, 255), tip);
+                        }
+                    }
+                    ImGui::Unindent(10.0f);
+                }
+
                 ImGui::Separator();
                 ImGui::TextUnformatted("Cross-Section Profile");
                 int prof = static_cast<int>(tubeTool->profileType);
@@ -1292,6 +1599,333 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 if (ImGui::RadioButton("Square", &prof, 2)) {
                     tubeTool->profileType = TubeProfileType::Square;
                     tubeTool->markGeometryDirty();
+                }
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Custom Graph", &prof, 4)) {
+                    tubeTool->profileType = TubeProfileType::CustomGraph;
+                    tubeTool->markGeometryDirty();
+                }
+
+                if (tubeTool->profileType == TubeProfileType::CustomGraph) {
+                    ImGui::Indent(10.0f);
+                    static int csPreset = 0;
+                    const char* csPresets[] = {
+                        "Presets...", "Circle", "Star (5-pt)", "Star (6-pt)",
+                        "Oval / Ellipse", "Chamfered Box", "Heart / Teardrop", "Crescent / Gutter", "Cross / Plus"
+                    };
+                    ImGui::SetNextItemWidth(150.0f * scale);
+                    if (ImGui::Combo("##CSPreset", &csPreset, csPresets, IM_ARRAYSIZE(csPresets))) {
+                        if (csPreset > 0) {
+                            tubeTool->setCrossSectionPreset(csPreset);
+                            tubeTool->markGeometryDirty();
+                            scene.pushHistoryState();
+                            csPreset = 0;
+                        }
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Reset##CSProfile")) {
+                        tubeTool->resetCrossSectionProfile();
+                        tubeTool->markGeometryDirty();
+                        scene.pushHistoryState();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Checkbox("Smooth##CSSmooth", &tubeTool->crossSectionSmooth)) {
+                        tubeTool->markGeometryDirty();
+                        scene.pushHistoryState();
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Smooth Catmull-Rom contour vs sharp polygon.");
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Checkbox("Edit in Viewport##ShowProfEnd", &tubeTool->showProfileAtEnd)) {
+                        tubeTool->syncToActiveMesh();
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Display and interactively edit cross-section profile graph directly at the tube end in the 3D viewport.");
+                    }
+
+                    if (tubeTool->crossSectionSmooth) {
+                        if (ImGui::SliderInt("Profile Density", &tubeTool->radialSegments, 8, 64)) {
+                            tubeTool->markGeometryDirty();
+                        }
+                    } else {
+                        ImGui::TextDisabled("Sharp polygon: %d vertices", (int)tubeTool->crossSectionProfile.size());
+                    }
+
+                    ImGui::TextDisabled("Click point: Sharp/Smooth. Drag: Move / Snap & Merge. Click contour: +Add. Alt+Click: Delete.");
+
+                    float canvasSide = 220.0f * scale;
+                    ImVec2 csCanvasSize = ImVec2(canvasSide, canvasSide);
+                    ImVec2 csCanvasPos = ImGui::GetCursorScreenPos();
+                    ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+                    drawList->AddRectFilled(csCanvasPos, ImVec2(csCanvasPos.x + csCanvasSize.x, csCanvasPos.y + csCanvasSize.y), IM_COL32(18, 18, 22, 255), 4.0f);
+                    drawList->AddRect(csCanvasPos, ImVec2(csCanvasPos.x + csCanvasSize.x, csCanvasPos.y + csCanvasSize.y), IM_COL32(75, 75, 85, 255), 4.0f);
+
+                    ImVec2 center = ImVec2(csCanvasPos.x + csCanvasSize.x * 0.5f, csCanvasPos.y + csCanvasSize.y * 0.5f);
+                    float unitPx = csCanvasSize.x * 0.40f;
+
+                    auto csToScreen = [&](const glm::vec2& p) -> ImVec2 {
+                        return ImVec2(center.x + p.x * unitPx, center.y - p.y * unitPx);
+                    };
+
+                    auto csToNorm = [&](const ImVec2& sp) -> glm::vec2 {
+                        return glm::vec2((sp.x - center.x) / unitPx, -(sp.y - center.y) / unitPx);
+                    };
+
+                    // Axes & unit circle reference
+                    drawList->AddLine(ImVec2(csCanvasPos.x + 8.0f, center.y), ImVec2(csCanvasPos.x + csCanvasSize.x - 8.0f, center.y), IM_COL32(50, 50, 60, 255), 1.0f);
+                    drawList->AddLine(ImVec2(center.x, csCanvasPos.y + 8.0f), ImVec2(center.x, csCanvasPos.y + csCanvasSize.y - 8.0f), IM_COL32(50, 50, 60, 255), 1.0f);
+                    drawList->AddCircle(center, unitPx, IM_COL32(255, 255, 255, 30), 48, 1.0f);
+                    drawList->AddText(ImVec2(center.x + unitPx - 30.0f, center.y + 4.0f), IM_COL32(255, 255, 255, 60), "R=1");
+
+                    ImGui::InvisibleButton("cross_section_canvas", csCanvasSize);
+                    bool csCanvasHovered = ImGui::IsItemHovered();
+                    bool csCanvasActive = ImGui::IsItemActive();
+                    static int csDraggedIdx = -1;
+                    static int csSnapTargetIdx = -1;
+                    static bool csPointWasMoved = false;
+                    static ImVec2 csDragStartMouse(0, 0);
+
+                    auto& csPts = tubeTool->crossSectionProfile;
+                    if (csPts.empty()) tubeTool->resetCrossSectionProfile();
+
+                    int N = static_cast<int>(csPts.size());
+                    ImVec2 mPos = ImGui::GetIO().MousePos;
+
+                    // Evaluator for closed contour point at normalized loop parameter u in [0, 1]
+                    auto evalContour = [&](float u) -> glm::vec2 {
+                        if (N == 0) return glm::vec2(0.0f);
+                        if (N == 1) return csPts[0].pos;
+                        float gu = u * static_cast<float>(N);
+                        int seg = static_cast<int>(std::floor(gu)) % N;
+                        float t = gu - std::floor(gu);
+                        int i1 = seg;
+                        int i2 = (seg + 1) % N;
+
+                        if (!tubeTool->crossSectionSmooth || (csPts[i1].isCorner && csPts[i2].isCorner)) {
+                            return glm::mix(csPts[i1].pos, csPts[i2].pos, t);
+                        }
+
+                        glm::vec2 p1 = csPts[i1].pos;
+                        glm::vec2 p2 = csPts[i2].pos;
+                        glm::vec2 p0 = csPts[i1].isCorner ? (p1 - (p2 - p1)) : csPts[(i1 - 1 + N) % N].pos;
+                        glm::vec2 p3 = csPts[i2].isCorner ? (p2 + (p2 - p1)) : csPts[(i2 + 1) % N].pos;
+
+                        float t2 = t * t;
+                        float t3 = t2 * t;
+                        return 0.5f * (
+                            2.0f * p1 +
+                            (-p0 + p2) * t +
+                            (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t2 +
+                            (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t3
+                        );
+                    };
+
+                    // Hit test on control points
+                    int csHitPtIdx = -1;
+                    for (int i = 0; i < N; ++i) {
+                        ImVec2 sPt = csToScreen(csPts[i].pos);
+                        float dx = mPos.x - sPt.x;
+                        float dy = mPos.y - sPt.y;
+                        if (dx * dx + dy * dy < (10.0f * scale) * (10.0f * scale)) {
+                            csHitPtIdx = i;
+                            break;
+                        }
+                    }
+
+                    // Hover test on contour curve (click-to-add detection)
+                    int csHoverSeg = -1;
+                    glm::vec2 csHoverPos(0.0f);
+                    ImVec2 csHoverScreen(0.0f, 0.0f);
+                    bool csHoverBothSharp = false;
+
+                    if (csHitPtIdx == -1 && csCanvasHovered && csDraggedIdx == -1 && N >= 2) {
+                        float bestDist = 14.0f * scale;
+                        const int testSteps = 128;
+                        for (int k = 0; k < testSteps; ++k) {
+                            float u = static_cast<float>(k) / static_cast<float>(testSteps);
+                            glm::vec2 pos = evalContour(u);
+                            ImVec2 sPos = csToScreen(pos);
+                            float d = std::hypot(mPos.x - sPos.x, mPos.y - sPos.y);
+                            if (d < bestDist) {
+                                bestDist = d;
+                                float gu = u * static_cast<float>(N);
+                                csHoverSeg = static_cast<int>(std::floor(gu)) % N;
+                                csHoverPos = pos;
+                                csHoverScreen = sPos;
+                                csHoverBothSharp = (csPts[csHoverSeg].isCorner && csPts[(csHoverSeg + 1) % N].isCorner);
+                            }
+                        }
+                    }
+
+                    // Mouse down handling
+                    if (csCanvasActive && ImGui::IsMouseClicked(0)) {
+                        if (csHitPtIdx != -1) {
+                            if (ImGui::GetIO().KeyAlt) {
+                                // Alt+Click deletes point
+                                if (N > 3) {
+                                    csPts.erase(csPts.begin() + csHitPtIdx);
+                                    tubeTool->markGeometryDirty();
+                                    scene.pushHistoryState();
+                                    GuiManager::showToast("Point deleted", 1.2f);
+                                }
+                            } else {
+                                csDraggedIdx = csHitPtIdx;
+                                csDragStartMouse = mPos;
+                                csPointWasMoved = false;
+                                csSnapTargetIdx = -1;
+                            }
+                        } else if (csHoverSeg != -1) {
+                            // Click on contour inserts new control point!
+                            csPts.insert(csPts.begin() + csHoverSeg + 1, ProfilePoint2D(csHoverPos, csHoverBothSharp));
+                            csDraggedIdx = csHoverSeg + 1;
+                            csDragStartMouse = mPos;
+                            csPointWasMoved = true;
+                            csSnapTargetIdx = -1;
+                            tubeTool->markGeometryDirty();
+                            scene.pushHistoryState();
+                            GuiManager::showToast(csHoverBothSharp ? "+ Corner Point added" : "+ Point added", 1.2f);
+                        }
+                    }
+
+                    // Right-click to delete
+                    if (csCanvasHovered && ImGui::IsMouseClicked(1) && csHitPtIdx != -1 && N > 3) {
+                        csPts.erase(csPts.begin() + csHitPtIdx);
+                        tubeTool->markGeometryDirty();
+                        scene.pushHistoryState();
+                        GuiManager::showToast("Point deleted", 1.2f);
+                    }
+
+                    // Drag handling
+                    if (csCanvasActive && ImGui::IsMouseDown(0) && csDraggedIdx >= 0 && csDraggedIdx < (int)csPts.size()) {
+                        if (std::hypot(mPos.x - csDragStartMouse.x, mPos.y - csDragStartMouse.y) > 4.0f) {
+                            csPointWasMoved = true;
+                        }
+                        glm::vec2 np = csToNorm(mPos);
+                        float len = glm::length(np);
+                        if (len > 2.2f) np = (np / len) * 2.2f;
+                        csPts[csDraggedIdx].pos = np;
+
+                        // Proximity snap & merge with adjacent neighbors (< 18px threshold)
+                        csSnapTargetIdx = -1;
+                        if (csPts.size() > 3) {
+                            int count = static_cast<int>(csPts.size());
+                            int prevIdx = (csDraggedIdx - 1 + count) % count;
+                            int nextIdx = (csDraggedIdx + 1) % count;
+                            ImVec2 sPrev = csToScreen(csPts[prevIdx].pos);
+                            ImVec2 sNext = csToScreen(csPts[nextIdx].pos);
+                            float dPrev = std::hypot(mPos.x - sPrev.x, mPos.y - sPrev.y);
+                            float dNext = std::hypot(mPos.x - sNext.x, mPos.y - sNext.y);
+                            float snapThresh = 18.0f * scale;
+
+                            if (dPrev < snapThresh && dPrev <= dNext) {
+                                csSnapTargetIdx = prevIdx;
+                            } else if (dNext < snapThresh) {
+                                csSnapTargetIdx = nextIdx;
+                            }
+                        }
+                        tubeTool->markGeometryDirty();
+                    } else if (csDraggedIdx != -1) {
+                        // Mouse released
+                        if (csSnapTargetIdx != -1 && csPts.size() > 3 && csDraggedIdx >= 0 && csDraggedIdx < (int)csPts.size()) {
+                            // Merge with neighbor
+                            csPts.erase(csPts.begin() + csDraggedIdx);
+                            tubeTool->markGeometryDirty();
+                            scene.pushHistoryState();
+                            GuiManager::showToast("Points snapped & merged", 1.5f);
+                        } else if (!csPointWasMoved && csDraggedIdx >= 0 && csDraggedIdx < (int)csPts.size()) {
+                            // Single click on point without dragging -> Toggle Sharp / Corner vs Smooth!
+                            csPts[csDraggedIdx].isCorner = !csPts[csDraggedIdx].isCorner;
+                            tubeTool->markGeometryDirty();
+                            scene.pushHistoryState();
+                            if (csPts[csDraggedIdx].isCorner) {
+                                GuiManager::showToast("Corner Point (Sharp)", 1.5f);
+                            } else {
+                                GuiManager::showToast("Smooth Point", 1.5f);
+                            }
+                        } else {
+                            scene.pushHistoryState();
+                        }
+                        csDraggedIdx = -1;
+                        csSnapTargetIdx = -1;
+                        csPointWasMoved = false;
+                    }
+
+                    // Draw closed contour
+                    N = static_cast<int>(csPts.size());
+                    if (N >= 2) {
+                        const int loopSteps = 128;
+                        std::vector<ImVec2> polyScreen;
+                        polyScreen.reserve(loopSteps + 1);
+
+                        for (int k = 0; k <= loopSteps; ++k) {
+                            float u = static_cast<float>(k) / static_cast<float>(loopSteps);
+                            polyScreen.push_back(csToScreen(evalContour(u)));
+                        }
+                        for (size_t k = 1; k < polyScreen.size(); ++k) {
+                            drawList->AddLine(polyScreen[k - 1], polyScreen[k], IM_COL32(255, 205, 50, 255), 2.2f);
+                        }
+                    }
+
+                    // Hover dot along contour indicating click to insert point
+                    if (csHoverSeg != -1 && csHitPtIdx == -1 && csDraggedIdx == -1) {
+                        drawList->AddCircleFilled(csHoverScreen, 5.5f, IM_COL32(0, 0, 0, 180));
+                        drawList->AddCircleFilled(csHoverScreen, 4.0f, IM_COL32(255, 255, 255, 255));
+                        drawList->AddCircle(csHoverScreen, 4.0f, csHoverBothSharp ? IM_COL32(255, 220, 50, 255) : IM_COL32(0, 220, 200, 255), 0, 1.8f);
+                        const char* tip = csHoverBothSharp ? "+ Add Corner Point" : "+ Add Point";
+                        drawList->AddText(ImVec2(csHoverScreen.x + 7.0f, csHoverScreen.y - 8.0f), csHoverBothSharp ? IM_COL32(255, 220, 100, 230) : IM_COL32(255, 255, 255, 230), tip);
+                    }
+
+                    // Snap guide line & highlight when dragging near adjacent neighbor
+                    if (csSnapTargetIdx >= 0 && csSnapTargetIdx < (int)csPts.size() &&
+                        csDraggedIdx >= 0 && csDraggedIdx < (int)csPts.size()) {
+                        ImVec2 sDrag = csToScreen(csPts[csDraggedIdx].pos);
+                        ImVec2 sTarget = csToScreen(csPts[csSnapTargetIdx].pos);
+                        drawList->AddLine(sDrag, sTarget, IM_COL32(255, 140, 0, 240), 2.5f);
+                        drawList->AddCircle(sTarget, 11.0f, IM_COL32(255, 140, 0, 255), 0, 2.5f);
+                        drawList->AddText(ImVec2(sTarget.x + 8.0f, sTarget.y - 14.0f), IM_COL32(255, 180, 50, 255), "Snap & Merge");
+                    }
+
+                    // Draw control points
+                    for (int i = 0; i < N; ++i) {
+                        ImVec2 sPt = csToScreen(csPts[i].pos);
+                        float dx = mPos.x - sPt.x;
+                        float dy = mPos.y - sPt.y;
+                        bool pHov = (dx * dx + dy * dy < 8.0f * 8.0f) && csCanvasHovered;
+                        bool pDrag = (csDraggedIdx == i);
+                        bool isSnap = (csSnapTargetIdx == i);
+
+                        ImU32 col;
+                        if (isSnap) {
+                            col = IM_COL32(255, 140, 20, 255); // Orange snap target
+                        } else if (pDrag || pHov) {
+                            col = IM_COL32(255, 255, 255, 255); // White highlight
+                        } else {
+                            col = IM_COL32(255, 210, 50, 240); // Yellow gold
+                        }
+
+                        float rad = (pDrag || pHov || isSnap) ? 6.5f : 4.5f;
+
+                        // Square for sharp corner, Circle for smooth point
+                        if (csPts[i].isCorner) {
+                            drawList->AddRectFilled(ImVec2(sPt.x - rad - 1.5f, sPt.y - rad - 1.5f), ImVec2(sPt.x + rad + 1.5f, sPt.y + rad + 1.5f), IM_COL32(0, 0, 0, 180), 2.0f);
+                            drawList->AddRectFilled(ImVec2(sPt.x - rad, sPt.y - rad), ImVec2(sPt.x + rad, sPt.y + rad), col, 2.0f);
+                            drawList->AddRect(ImVec2(sPt.x - rad, sPt.y - rad), ImVec2(sPt.x + rad, sPt.y + rad), IM_COL32(20, 20, 25, 255), 2.0f, 0, 1.2f);
+                        } else {
+                            drawList->AddCircleFilled(sPt, rad + 1.5f, IM_COL32(0, 0, 0, 180));
+                            drawList->AddCircleFilled(sPt, rad, col);
+                            drawList->AddCircle(sPt, rad, IM_COL32(20, 20, 25, 255), 0, 1.2f);
+                        }
+
+                        if (pHov || pDrag) {
+                            char tip[64];
+                            const char* typeDesc = csPts[i].isCorner ? "Sharp" : "Smooth";
+                            snprintf(tip, sizeof(tip), "[%d] (%.2f, %.2f) %s", i, csPts[i].pos.x, csPts[i].pos.y, typeDesc);
+                            drawList->AddText(ImVec2(sPt.x + 8.0f, sPt.y - 12.0f), IM_COL32(255, 235, 120, 255), tip);
+                        }
+                    }
+                    ImGui::Unindent(10.0f);
                 }
 
                 if (tubeTool->profileType == TubeProfileType::FlatRibbon) {
@@ -1408,16 +2042,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     ImGui::TextColored(ImVec4(0.2f, 0.95f, 0.85f, 1.0f), ICON_LC_CYLINDER " Active: %s", tubeTool->getActiveTubeMesh()->outlinerName.c_str());
                 } else {
                     ImGui::TextDisabled(ICON_LC_CYLINDER " Ready to draw new tube");
-                }
-
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.50f, 0.35f, 0.85f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.65f, 0.45f, 1.0f));
-                if (ImGui::Button(ICON_LC_PLUS " Start New Tube", ImVec2(-1, 26))) {
-                    tubeTool->startNewTube(scene);
-                }
-                ImGui::PopStyleColor(2);
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Preserve current tube and begin a fresh tube");
                 }
 
                 ImGui::BeginDisabled(!hasActiveTube);
@@ -4838,9 +5462,14 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         }
     }
 
-    // Tube Tool Overlay
-    if (sculpt.getBrush() == BRUSH_TUBE) {
+    // Tube Tool Overlay: show whenever BRUSH_TUBE is active OR any unfinalized tube mesh is selected
+    Mesh* selMesh = scene.getSelected();
+    bool isTubeSelected = (selMesh && selMesh->isTube && selMesh->tubeData != nullptr);
+    if (sculpt.getBrush() == BRUSH_TUBE || isTubeSelected) {
         if (auto* tubeTool = sculpt.getTubeTool()) {
+            if (isTubeSelected && tubeTool->getActiveTubeMesh() != selMesh) {
+                tubeTool->loadFromMesh(selMesh);
+            }
             const Camera& camera = scene.getCamera();
             float vW = (float)camera.getWidth();
             float vH = (float)camera.getHeight();

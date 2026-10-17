@@ -231,13 +231,94 @@ struct CornerElbow {
     float radius = 1.0f;
 };
 
+float CurveSpline::evaluateRadiusProfile(float u, const std::vector<ProfilePoint2D>& points, bool smooth) {
+    if (points.empty()) return 1.0f;
+    if (points.size() == 1) return points[0].pos.y;
+    u = std::clamp(u, 0.0f, 1.0f);
+    if (u <= points.front().pos.x) return points.front().pos.y;
+    if (u >= points.back().pos.x) return points.back().pos.y;
+
+    int seg = 0;
+    for (size_t i = 0; i + 1 < points.size(); ++i) {
+        if (u >= points[i].pos.x && u <= points[i + 1].pos.x) {
+            seg = static_cast<int>(i);
+            break;
+        }
+    }
+
+    float x0 = points[seg].pos.x;
+    float x1 = points[seg + 1].pos.x;
+    float dx = x1 - x0;
+    if (dx < 1e-6f) return points[seg].pos.y;
+
+    float t = (u - x0) / dx;
+    float y0 = points[seg].pos.y;
+    float y1 = points[seg + 1].pos.y;
+
+    bool p0Corner = points[seg].isCorner;
+    bool p1Corner = points[seg + 1].isCorner;
+
+    if (!smooth || (p0Corner && p1Corner) || points.size() < 3) {
+        return glm::mix(y0, y1, t);
+    }
+
+    // Monotonic cubic Hermite interpolation
+    float delta = (y1 - y0) / dx;
+    float m0 = delta;
+    float m1 = delta;
+
+    if (!p0Corner && seg > 0) {
+        float dxPrev = points[seg].pos.x - points[seg - 1].pos.x;
+        if (dxPrev > 1e-6f) {
+            float deltaPrev = (points[seg].pos.y - points[seg - 1].pos.y) / dxPrev;
+            m0 = 0.5f * (deltaPrev + delta);
+        }
+    }
+    if (!p1Corner && seg + 2 < static_cast<int>(points.size())) {
+        float dxNext = points[seg + 2].pos.x - points[seg + 1].pos.x;
+        if (dxNext > 1e-6f) {
+            float deltaNext = (points[seg + 2].pos.y - points[seg + 1].pos.y) / dxNext;
+            m1 = 0.5f * (delta + deltaNext);
+        }
+    }
+
+    if (std::abs(delta) < 1e-6f) {
+        m0 = 0.0f;
+        m1 = 0.0f;
+    } else {
+        float alpha = m0 / delta;
+        float beta = m1 / delta;
+        if (alpha < 0.0f) m0 = 0.0f;
+        if (beta < 0.0f) m1 = 0.0f;
+        float dist = alpha * alpha + beta * beta;
+        if (dist > 9.0f) {
+            float tau = 3.0f / std::sqrt(dist);
+            m0 = tau * alpha * delta;
+            m1 = tau * beta * delta;
+        }
+    }
+
+    float t2 = t * t;
+    float t3 = t2 * t;
+    float h00 = 2.0f * t3 - 3.0f * t2 + 1.0f;
+    float h10 = t3 - 2.0f * t2 + t;
+    float h01 = -2.0f * t3 + 3.0f * t2;
+    float h11 = t3 - t2;
+
+    float val = h00 * y0 + h10 * (m0 * dx) + h01 * y1 + h11 * (m1 * dx);
+    return std::max(0.0f, val);
+}
+
 std::vector<EvaluatedFrame> CurveSpline::evaluateFrames(
     int numSamples,
     float startRadiusScale,
     float endRadiusScale,
     float twistStartDeg,
     float twistEndDeg,
-    int cornerSegments
+    int cornerSegments,
+    bool useRadiusProfile,
+    const std::vector<ProfilePoint2D>& radiusProfile,
+    bool radiusProfileSmooth
 ) const {
     std::vector<EvaluatedFrame> frames;
     if (m_points.size() < 2 || numSamples < 2) return frames;
@@ -531,8 +612,12 @@ std::vector<EvaluatedFrame> CurveSpline::evaluateFrames(
             }
         }
 
-        // Apply tapering (startRadiusScale -> endRadiusScale)
-        float taperScale = glm::mix(startRadiusScale, endRadiusScale, uTarget);
+        // Apply tapering (startRadiusScale -> endRadiusScale) and optional longitudinal radius profile graph
+        float profileScale = 1.0f;
+        if (useRadiusProfile && !radiusProfile.empty()) {
+            profileScale = evaluateRadiusProfile(uTarget, radiusProfile, radiusProfileSmooth);
+        }
+        float taperScale = glm::mix(startRadiusScale, endRadiusScale, uTarget) * profileScale;
         frame.radius *= taperScale;
 
         frames.push_back(frame);

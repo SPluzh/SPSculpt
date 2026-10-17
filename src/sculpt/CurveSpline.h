@@ -25,6 +25,15 @@ struct EvaluatedFrame {
     float u = 0.0f; // 0.0f at start, 1.0f at end
 };
 
+struct ProfilePoint2D {
+    glm::vec2 pos{0.0f, 0.0f};
+    bool isCorner = false; // Sharp corner / vertex if true, smooth curve if false
+
+    ProfilePoint2D() = default;
+    ProfilePoint2D(float x, float y, bool corner = false) : pos(x, y), isCorner(corner) {}
+    ProfilePoint2D(const glm::vec2& p, bool corner = false) : pos(p), isCorner(corner) {}
+};
+
 class CurveSpline {
 public:
     CurveSpline() = default;
@@ -49,8 +58,14 @@ public:
         float endRadiusScale = 1.0f,
         float twistStartDeg = 0.0f,
         float twistEndDeg = 0.0f,
-        int cornerSegments = 8
+        int cornerSegments = 8,
+        bool useRadiusProfile = false,
+        const std::vector<ProfilePoint2D>& radiusProfile = {},
+        bool radiusProfileSmooth = true
     ) const;
+
+    // Evaluates smooth monotonic cubic Hermite or linear radius at normalized arc-length u in [0, 1]
+    static float evaluateRadiusProfile(float u, const std::vector<ProfilePoint2D>& points, bool smooth = true);
 
     // Evaluates Catmull-Rom point at t in segment
     glm::vec3 evaluatePosition(float globalU) const;

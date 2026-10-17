@@ -1423,6 +1423,80 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     }
     float radius2 = localRadius * localRadius;
 
+    if (m_isTubeMoveStroke && m_tubeTool) {
+        auto& spline = m_tubeTool->getSpline();
+        size_t ptCount = spline.getPointCount();
+        if (m_tubeMoveOrigPoints.size() == ptCount && ptCount > 0) {
+            bool isMayaNav = m_hotkeyManager ? m_hotkeyManager->getModifierBehavior().ctrlAltInvertsBrush : (camera.getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
+            bool isCtrl = (SDL_GetModState() & KMOD_CTRL) != 0;
+            bool isAlt = (SDL_GetModState() & KMOD_ALT) != 0;
+            bool invertModifier = isMayaNav ? (isCtrl && isAlt) : isAlt;
+            bool negative = getSettings(activeBrush).negative ^ invertModifier;
+
+            glm::vec3 localDrag;
+            if (negative) {
+                glm::vec3 norm = (glm::length(m_currentIntersectionNormal) > 1e-6f) ? glm::normalize(m_currentIntersectionNormal) : glm::vec3(0.0f, 1.0f, 0.0f);
+                glm::mat4 localToView = scene.getCamera().getViewMatrix() * mesh->matrix;
+                glm::vec3 dragVec = m_currentIntersection - m_initialIntersection;
+                glm::vec3 dragView = glm::vec3(localToView * glm::vec4(dragVec, 0.0f));
+                glm::vec3 normView = glm::vec3(localToView * glm::vec4(norm, 0.0f));
+                if (glm::length(normView) > 1e-6f) {
+                    normView = glm::normalize(normView);
+                }
+                float amount2D = dragView.x * normView.x + dragView.y * normView.y;
+                float amountDepth = (dragView.x + dragView.y) * 0.7071f * std::abs(normView.z);
+                float amount = amount2D + amountDepth;
+
+                float localAmount = amount / scale;
+                localDrag = norm * (localAmount * intensity);
+            } else {
+                localDrag = (m_currentIntersection - m_initialIntersection) * intensity;
+            }
+
+            glm::vec3 worldDrag = glm::vec3(mesh->matrix * glm::vec4(localDrag, 0.0f));
+            glm::vec3 worldCenter = glm::vec3(mesh->matrix * glm::vec4(m_initialIntersection, 1.0f));
+            float worldRad = localRadius * scale;
+
+            float focalShift = getCurrentSettings().focalShift;
+            float exponent = std::pow(2.0f, (focalShift - 0.6f) * 2.0f) * 3.0f;
+
+            float minD = std::numeric_limits<float>::max();
+            for (size_t i = 0; i < ptCount; ++i) {
+                float d = glm::distance(m_tubeMoveOrigPoints[i], worldCenter);
+                if (d < minD) minD = d;
+            }
+
+            float effectiveRad = worldRad;
+            if (m_tubeMoveHitPointIdx < 0 && minD >= effectiveRad && minD < 1e8f) {
+                effectiveRad = minD * 1.5f;
+            }
+
+            for (size_t i = 0; i < ptCount; ++i) {
+                float falloff = 0.0f;
+                if (m_tubeMoveHitPointIdx >= 0 && static_cast<int>(i) == m_tubeMoveHitPointIdx) {
+                    falloff = 1.0f;
+                } else if (effectiveRad > 1e-5f) {
+                    float d = glm::distance(m_tubeMoveOrigPoints[i], worldCenter);
+                    float dist = d / effectiveRad;
+                    if (dist < 1.0f) {
+                        float base = 1.0f - dist * dist;
+                        falloff = std::pow(std::max(0.0f, base), exponent);
+                    }
+                }
+
+                if (falloff > 0.0f) {
+                    spline.getPoint(i).position = m_tubeMoveOrigPoints[i] + worldDrag * falloff;
+                } else {
+                    spline.getPoint(i).position = m_tubeMoveOrigPoints[i];
+                }
+            }
+
+            m_tubeTool->rebuildMeshGeometry(scene);
+        }
+        m_firstStrokeFrame = false;
+        return;
+    }
+
     // --- Stage 2: Pick Vertices ---
     tStage = std::chrono::high_resolution_clock::now();
     std::vector<uint32_t> pickedVertices;
@@ -2507,6 +2581,11 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 return;
             }
 
+            bool isTubeSelected = (mesh && mesh->isTube && mesh->tubeData != nullptr && m_tubeTool != nullptr);
+            if (isTubeSelected && m_tubeTool->getActiveTubeMesh() != mesh) {
+                m_tubeTool->loadFromMesh(mesh);
+            }
+
             // Perform picking intersection test to see if we hit the mesh
             bool hitMesh = false;
             float minT = std::numeric_limits<float>::infinity();
@@ -2563,6 +2642,49 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 }
             }
 
+            m_isTubeMoveStroke = false;
+            m_tubeMoveHitPointIdx = -1;
+            m_tubeMoveOrigPoints.clear();
+
+            if (isTubeSelected && (m_currentBrush == BRUSH_MOVE || m_currentBrush == BRUSH_DRAG)) {
+                int hitPoint = m_tubeTool->hitTestControlPoints(camera, (float)mouseX, (float)mouseY, 18.0f);
+                float segT = 0.5f;
+                int hitSeg = (hitPoint == -1 && !hitMesh) ? m_tubeTool->findClosestSegmentOnCurve(camera, (float)mouseX, (float)mouseY, 18.0f, &segT) : -1;
+
+                if (hitPoint != -1 || hitMesh || hitSeg != -1) {
+                    m_isTubeMoveStroke = true;
+                    m_tubeMoveHitPointIdx = hitPoint;
+                    m_tubeMoveOrigPoints.clear();
+                    const auto& spl = m_tubeTool->getSpline();
+                    for (size_t i = 0; i < spl.getPointCount(); ++i) {
+                        m_tubeMoveOrigPoints.push_back(spl.getPoint(i).position);
+                    }
+
+                    Ray ray = camera.getRay((float)mouseX, (float)mouseY);
+                    glm::vec3 camFacingNormal = (glm::length(ray.dir) > 1e-6f) ? -glm::normalize(ray.dir) : glm::vec3(0.0f, 0.0f, 1.0f);
+
+                    if (hitPoint != -1) {
+                        m_tubeTool->setSelectedPointIndex(hitPoint);
+                        glm::vec3 ptWorld = spl.getPoint(hitPoint).position;
+                        m_initialIntersection = glm::vec3(glm::inverse(mesh->matrix) * glm::vec4(ptWorld, 1.0f));
+                        m_initialIntersectionNormal = camFacingNormal;
+                    } else if (hitMesh) {
+                        m_initialIntersection = localRayOrigin + minT * localRayDir;
+                        m_initialIntersectionNormal = (intersectFaceId != 0xffffffff) ? glm::vec3(
+                            mesh->faceNormals[intersectFaceId * 3],
+                            mesh->faceNormals[intersectFaceId * 3 + 1],
+                            mesh->faceNormals[intersectFaceId * 3 + 2]
+                        ) : camFacingNormal;
+                    } else {
+                        float globalU = (static_cast<float>(hitSeg) + segT) / static_cast<float>(std::max(1, (int)spl.getPointCount() - 1));
+                        glm::vec3 curveWorld = spl.evaluatePosition(globalU);
+                        m_initialIntersection = glm::vec3(glm::inverse(mesh->matrix) * glm::vec4(curveWorld, 1.0f));
+                        m_initialIntersectionNormal = camFacingNormal;
+                    }
+                    hitMesh = true;
+                }
+            }
+
             // Dynamic tool activation:
             // If Ctrl is held and click starts on empty space (no mesh intersection), trigger Masking Lasso
             if ((mod & KMOD_CTRL) && !hitMesh) {
@@ -2592,22 +2714,26 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     return;
                 }
 
-                bool strokeAffectsColors = (m_currentBrush == BRUSH_PAINT && getCurrentSettings().writeAlbedo);
-                bool strokeAffectsMaterials = (m_currentBrush == BRUSH_PAINT && (getCurrentSettings().writeRoughness || getCurrentSettings().writeMetalness)) ||
-                                               (m_currentBrush == BRUSH_MASK || m_currentBrush == BRUSH_MASK_GRADIENT_BLUR);
-                g_undoManager.beginSculptStroke(scene, mesh->m_id, {}, strokeAffectsColors, strokeAffectsMaterials, "Sculpt Stroke");
+                if (!m_isTubeMoveStroke) {
+                    bool strokeAffectsColors = (m_currentBrush == BRUSH_PAINT && getCurrentSettings().writeAlbedo);
+                    bool strokeAffectsMaterials = (m_currentBrush == BRUSH_PAINT && (getCurrentSettings().writeRoughness || getCurrentSettings().writeMetalness)) ||
+                                                   (m_currentBrush == BRUSH_MASK || m_currentBrush == BRUSH_MASK_GRADIENT_BLUR);
+                    g_undoManager.beginSculptStroke(scene, mesh->m_id, {}, strokeAffectsColors, strokeAffectsMaterials, "Sculpt Stroke");
+                }
 
                 m_isSculpting = true;
                 m_currentIntersectionValid = true;
                 m_firstStrokeFrame = true;
                 m_pendingOctreeUpdate = false;
                 m_hasAlphaOrigin = false;
-                m_initialIntersection = localRayOrigin + minT * localRayDir;
-                m_initialIntersectionNormal = glm::vec3(
-                    mesh->faceNormals[intersectFaceId * 3],
-                    mesh->faceNormals[intersectFaceId * 3 + 1],
-                    mesh->faceNormals[intersectFaceId * 3 + 2]
-                );
+                if (!m_isTubeMoveStroke) {
+                    m_initialIntersection = localRayOrigin + minT * localRayDir;
+                    m_initialIntersectionNormal = glm::vec3(
+                        mesh->faceNormals[intersectFaceId * 3],
+                        mesh->faceNormals[intersectFaceId * 3 + 1],
+                        mesh->faceNormals[intersectFaceId * 3 + 2]
+                    );
+                }
                 m_currentIntersection = m_initialIntersection;
                 m_currentIntersectionNormal = m_initialIntersectionNormal;
                 if (intersectFaceId != 0xffffffff && !mesh->faceGroups.empty() && intersectFaceId < (uint32_t)mesh->nbFaces) {
@@ -3274,6 +3400,17 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             m_snakeActiveVerts.clear();
             m_snakeActiveVertsSyms.clear();
             m_snakePrevTipPosSyms.clear();
+
+            if (m_isTubeMoveStroke) {
+                m_isTubeMoveStroke = false;
+                m_tubeMoveHitPointIdx = -1;
+                m_tubeMoveOrigPoints.clear();
+                if (m_tubeTool) {
+                    m_tubeTool->syncToActiveMesh();
+                }
+                scene.pushHistoryState();
+                return;
+            }
             int dragDistX = std::abs(event.button.x - m_mouseDownX);
             int dragDistY = std::abs(event.button.y - m_mouseDownY);
             bool wasClick = (dragDistX <= 12 && dragDistY <= 12);
@@ -3514,6 +3651,13 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 m_tubeTool->handleMouseMove(scene, camera, (float)mouseX, (float)mouseY);
             }
             return;
+        }
+
+        if (mesh && mesh->isTube && mesh->tubeData != nullptr && m_tubeTool && !m_isSculpting && !m_cameraController.isDragging()) {
+            if (m_tubeTool->getActiveTubeMesh() != mesh) {
+                m_tubeTool->loadFromMesh(mesh);
+            }
+            m_tubeTool->handleMouseMove(scene, camera, (float)mouseX, (float)mouseY);
         }
 
         if (m_currentBrush == BRUSH_MASK_GRADIENT_BLUR && mesh && m_gradActive && m_gradActivePoint != '\0') {
@@ -3759,10 +3903,24 @@ void SculptManager::processFrame(Scene& scene) {
     if (activeMeshSelected != m_lastActiveMesh) {
         if (m_lastActiveMesh != nullptr) {
             saveSymmetryToMesh(m_lastActiveMesh);
+            if (m_tubeTool && m_tubeTool->getActiveTubeMesh() == m_lastActiveMesh) {
+                m_tubeTool->syncToActiveMesh();
+            }
         }
         m_lastActiveMesh = activeMeshSelected;
         if (m_lastActiveMesh != nullptr) {
             loadSymmetryFromMesh(m_lastActiveMesh);
+            if (m_tubeTool) {
+                if (m_lastActiveMesh->isTube && m_lastActiveMesh->tubeData != nullptr) {
+                    m_tubeTool->loadFromMesh(m_lastActiveMesh);
+                } else if (m_tubeTool->getActiveTubeMesh() != nullptr) {
+                    m_tubeTool->resetActiveTube();
+                }
+            }
+        } else {
+            if (m_tubeTool) {
+                m_tubeTool->resetActiveTube();
+            }
         }
     }
 

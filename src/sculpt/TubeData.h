@@ -6,7 +6,8 @@ enum class TubeProfileType {
     Round = 0,
     FlatRibbon = 1,
     Square = 2,
-    Polygon = 3
+    Polygon = 3,
+    CustomGraph = 4
 };
 
 enum class TubeCapType {
@@ -38,4 +39,15 @@ struct TubeData {
     float twistDegrees = 0.0f;
     bool snapToSurface = true;
     float surfaceOffset = 0.0f;
+
+    // Longitudinal Radius Profile Graph (taper/radius curve along tube length)
+    bool useRadiusProfile = false;
+    std::vector<ProfilePoint2D> radiusProfile = { {0.0f, 1.0f, false}, {1.0f, 1.0f, false} };
+    bool radiusProfileSmooth = true;
+
+    // Cross-Section 2D Profile (2D custom contour)
+    std::vector<ProfilePoint2D> crossSectionProfile;
+    bool crossSectionSmooth = true;
+    bool showProfileAtEnd = true;
 };
+
