@@ -20,6 +20,7 @@
 #include "editing/ArmatureTool.h"
 #include "editing/PoseTool.h"
 #include "editing/TubeTool.h"
+#include "editing/PrimitiveTool.h"
 #include "editing/BooleanTool.h"
 #include "editing/undo/UndoManager.h"
 #include <imgui.h>
@@ -1210,13 +1211,25 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         ImGui::SetNextWindowSize({300.0f * scale, 400.0f * scale}, ImGuiCond_FirstUseEver);
 
         BrushType brushType = sculpt.getBrush();
-        const char* winTitle = (brushType == BRUSH_TUBE) ? "Tube & Curve Settings###SculptingPanel" : "Sculpting Settings###SculptingPanel";
+        Mesh* selMesh = scene.getSelected();
+        bool isPrimActive = (selMesh && selMesh->isPrimitive && selMesh->primitiveData != nullptr);
+
+        const char* winTitle = "Sculpting Settings###SculptingPanel";
+        if (brushType == BRUSH_TUBE) {
+            winTitle = "Tube & Curve Settings###SculptingPanel";
+        } else if (isPrimActive) {
+            winTitle = "Primitive Settings###SculptingPanel";
+        }
         ImGui::Begin(winTitle, &m_showSculptingPanel, ImGuiWindowFlags_AlwaysAutoResize);
 
         BrushSettings& settings = sculpt.getCurrentSettings();
 
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.9f, 1.0f, 1.0f));
-        ImGui::Text("Active Tool: %s", getBrushNameLocal(brushType));
+        if (isPrimActive) {
+            ImGui::Text("Active Primitive: %s", getPrimitiveTypeName(selMesh->primitiveData->type));
+        } else {
+            ImGui::Text("Active Tool: %s", getBrushNameLocal(brushType));
+        }
         ImGui::PopStyleColor();
         ImGui::Separator();
 
@@ -2083,6 +2096,158 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 }
 
                 tubeTool->updateGeometryIfNeeded(scene);
+            }
+        } else if (isPrimActive) {
+            PrimitiveTool* primTool = sculpt.getPrimitiveTool();
+            if (primTool) {
+                PrimitiveData& p = *selMesh->primitiveData;
+
+                ImGui::TextColored(ImVec4(0.0f, 0.85f, 0.8f, 1.0f), ICON_LC_BOX " Procedural %s", getPrimitiveTypeName(p.type));
+                ImGui::Separator();
+
+                // Bake button
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.48f, 0.72f, 0.85f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.58f, 0.85f, 1.0f));
+                if (ImGui::Button(ICON_LC_CHECK " Bake to Editable Mesh", ImVec2(-1, 28))) {
+                    primTool->bakeToMesh(scene, selMesh);
+                }
+                ImGui::PopStyleColor(2);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Convert procedural primitive into standard editable sculpt mesh");
+                }
+
+                // Bake All if multiple
+                int primCount = 0;
+                for (Mesh* m : scene.getMeshes()) {
+                    if (m && m->isPrimitive) primCount++;
+                }
+                if (primCount > 1) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.38f, 0.62f, 0.85f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.28f, 0.48f, 0.75f, 1.0f));
+                    std::string bakeAllStr = ICON_LC_CHECK_CHECK " Bake All Primitives (" + std::to_string(primCount) + ")";
+                    if (ImGui::Button(bakeAllStr.c_str(), ImVec2(-1, 26))) {
+                        primTool->bakeAllPrimitives(scene);
+                    }
+                    ImGui::PopStyleColor(2);
+                }
+
+                ImGui::Separator();
+                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Interactive 3D Handles Active");
+                ImGui::TextDisabled("Drag colored handles directly in 3D viewport\nor adjust sliders below:");
+                ImGui::Spacing();
+
+                bool changed = false;
+
+                // Wireframe Display Toggle
+                bool showWf = renderer.getShowWireframe() || p.showWireframe;
+                if (ImGui::Checkbox(ICON_LC_TRIANGLE " Wireframe", &showWf)) {
+                    p.showWireframe = showWf;
+                    renderer.setShowWireframe(showWf);
+                }
+                ImGui::SameLine();
+                // Auto Density Checkbox
+                if (ImGui::Checkbox("Auto Density", &p.autoDensity)) {
+                    if (p.autoDensity) {
+                        p.recomputeAutoDensity();
+                        changed = true;
+                    }
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Automatically adjust subdivisions proportionally to keep quad polygon density constant.");
+                }
+                ImGui::Spacing();
+
+                switch (p.type) {
+                    case PrimitiveType::Sphere:
+                        changed |= ImGui::SliderFloat("Radius", &p.radius, 0.5f, 250.0f, "%.1f");
+                        if (p.autoDensity) ImGui::BeginDisabled();
+                        changed |= ImGui::SliderInt(p.autoDensity ? "Rings (Auto)" : "Rings (Latitude)", &p.heightSegments, 4, 128);
+                        changed |= ImGui::SliderInt(p.autoDensity ? "Sectors (Auto)" : "Sectors (Longitude)", &p.radialSegments, 6, 128);
+                        if (p.autoDensity) ImGui::EndDisabled();
+                        break;
+                    case PrimitiveType::Geosphere:
+                        changed |= ImGui::SliderFloat("Radius", &p.radius, 0.5f, 250.0f, "%.1f");
+                        if (p.autoDensity) ImGui::BeginDisabled();
+                        changed |= ImGui::SliderInt(p.autoDensity ? "Subdivisions (Auto)" : "Subdivisions", &p.subdivisionLevel, 1, 6);
+                        if (p.autoDensity) ImGui::EndDisabled();
+                        break;
+                    case PrimitiveType::Cube: {
+                        changed |= ImGui::SliderFloat3("Size (X, Y, Z)", &p.size.x, 0.5f, 300.0f, "%.1f");
+                        if (p.autoDensity) ImGui::BeginDisabled();
+                        changed |= ImGui::SliderInt3(p.autoDensity ? "Subdivisions (Auto)" : "Subdivisions", &p.segmentsX, 1, 128);
+                        if (p.autoDensity) ImGui::EndDisabled();
+                        float maxCr = 0.5f * std::min({p.size.x, p.size.y, p.size.z});
+                        changed |= ImGui::SliderFloat("Corner Fillet", &p.cornerRadius, 0.0f, maxCr, "%.1f");
+                        break;
+                    }
+                    case PrimitiveType::Cylinder: {
+                        changed |= ImGui::SliderFloat("Height", &p.height, 0.5f, 300.0f, "%.1f");
+                        changed |= ImGui::SliderFloat("Top Radius", &p.radiusTop, 0.0f, 200.0f, "%.1f");
+                        changed |= ImGui::SliderFloat("Bottom Radius", &p.radiusBottom, 0.1f, 200.0f, "%.1f");
+                        float maxInner = std::min(p.radiusTop, p.radiusBottom) - 0.2f;
+                        if (maxInner > 0.0f) {
+                            changed |= ImGui::SliderFloat("Inner Radius (Hole)", &p.innerRadius, 0.0f, maxInner, "%.1f");
+                        }
+                        if (p.autoDensity) ImGui::BeginDisabled();
+                        changed |= ImGui::SliderInt(p.autoDensity ? "Radial Segments (Auto)" : "Radial Segments", &p.radialSegments, 6, 128);
+                        changed |= ImGui::SliderInt(p.autoDensity ? "Height Segments (Auto)" : "Height Segments", &p.heightSegments, 1, 64);
+                        changed |= ImGui::SliderInt(p.autoDensity ? "Cap Rings (Auto)" : "Cap Rings", &p.capRings, 1, 16);
+                        if (p.autoDensity) ImGui::EndDisabled();
+                        changed |= ImGui::Checkbox("Top Cap", &p.topCap);
+                        ImGui::SameLine();
+                        changed |= ImGui::Checkbox("Bottom Cap", &p.bottomCap);
+                        break;
+                    }
+                    case PrimitiveType::Cone:
+                        changed |= ImGui::SliderFloat("Height", &p.height, 0.5f, 300.0f, "%.1f");
+                        changed |= ImGui::SliderFloat("Base Radius", &p.radiusBottom, 0.1f, 200.0f, "%.1f");
+                        changed |= ImGui::SliderFloat("Top Radius", &p.radiusTop, 0.0f, 200.0f, "%.1f");
+                        if (p.autoDensity) ImGui::BeginDisabled();
+                        changed |= ImGui::SliderInt(p.autoDensity ? "Radial Segments (Auto)" : "Radial Segments", &p.radialSegments, 6, 128);
+                        changed |= ImGui::SliderInt(p.autoDensity ? "Height Segments (Auto)" : "Height Segments", &p.heightSegments, 1, 64);
+                        changed |= ImGui::SliderInt(p.autoDensity ? "Base Cap Rings (Auto)" : "Base Cap Rings", &p.capRings, 1, 16);
+                        if (p.autoDensity) ImGui::EndDisabled();
+                        changed |= ImGui::Checkbox("Bottom Cap", &p.bottomCap);
+                        break;
+                    case PrimitiveType::Torus:
+                        changed |= ImGui::SliderFloat("Major Radius", &p.torusMajorRadius, 1.0f, 250.0f, "%.1f");
+                        changed |= ImGui::SliderFloat("Tube Radius", &p.torusTubeRadius, 0.1f, 100.0f, "%.1f");
+                        changed |= ImGui::SliderFloat("Arc Degrees", &p.arcDegrees, 10.0f, 360.0f, "%.0f°");
+                        if (p.autoDensity) ImGui::BeginDisabled();
+                        changed |= ImGui::SliderInt(p.autoDensity ? "Radial Segments (Auto)" : "Radial Segments", &p.radialSegments, 6, 64);
+                        changed |= ImGui::SliderInt(p.autoDensity ? "Tubular Segments (Auto)" : "Tubular Segments", &p.heightSegments, 8, 128);
+                        if (p.autoDensity) ImGui::EndDisabled();
+                        break;
+                    case PrimitiveType::Plane:
+                        changed |= ImGui::SliderFloat("Width (X)", &p.size.x, 0.5f, 400.0f, "%.1f");
+                        changed |= ImGui::SliderFloat("Length (Z)", &p.size.z, 0.5f, 400.0f, "%.1f");
+                        if (p.autoDensity) ImGui::BeginDisabled();
+                        changed |= ImGui::SliderInt(p.autoDensity ? "Subdivisions X (Auto)" : "Subdivisions X", &p.segmentsX, 1, 128);
+                        changed |= ImGui::SliderInt(p.autoDensity ? "Subdivisions Z (Auto)" : "Subdivisions Z", &p.segmentsZ, 1, 128);
+                        if (p.autoDensity) ImGui::EndDisabled();
+                        break;
+                    case PrimitiveType::Capsule:
+                        changed |= ImGui::SliderFloat("Radius", &p.radius, 0.5f, 200.0f, "%.1f");
+                        changed |= ImGui::SliderFloat("Cylinder Height", &p.height, 0.0f, 300.0f, "%.1f");
+                        if (p.autoDensity) ImGui::BeginDisabled();
+                        changed |= ImGui::SliderInt(p.autoDensity ? "Radial Segments (Auto)" : "Radial Segments", &p.radialSegments, 6, 64);
+                        changed |= ImGui::SliderInt(p.autoDensity ? "Height Segments (Auto)" : "Height Segments", &p.heightSegments, 1, 32);
+                        changed |= ImGui::SliderInt(p.autoDensity ? "Cap Rings (Auto)" : "Cap Rings", &p.capRings, 4, 32);
+                        if (p.autoDensity) ImGui::EndDisabled();
+                        break;
+                }
+
+                if (changed) {
+                    if (p.autoDensity) {
+                        p.recomputeAutoDensity();
+                    }
+                    primTool->updateMeshGeometry(selMesh);
+                    scene.setModified(true);
+                }
+
+                if (ImGui::IsItemDeactivatedAfterEdit()) {
+                    scene.pushHistoryState();
+                }
             }
         } else {
 
@@ -3407,7 +3572,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
             float availW = ImGui::GetContentRegionAvail().x;
             float spacing = ImGui::GetStyle().ItemSpacing.x;
-            float btnW = (availW - spacing * 7.0f) / 8.0f;
+            float btnW = (availW - spacing * 8.0f) / 9.0f;
             float btnH = 24.0f * scale;
 
             if (ImGui::Button(ICON_LC_CIRCLE "##AddSphere", ImVec2(btnW, btnH))) {
@@ -3416,6 +3581,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 } else {
                     scene.addSphere();
                 }
+                m_showSculptingPanel = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sphere");
 
@@ -3426,6 +3592,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 } else {
                     scene.addGeosphere();
                 }
+                m_showSculptingPanel = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Geosphere");
 
@@ -3436,6 +3603,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 } else {
                     scene.addCube();
                 }
+                m_showSculptingPanel = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cube");
 
@@ -3446,8 +3614,20 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 } else {
                     scene.addCylinder();
                 }
+                m_showSculptingPanel = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cylinder");
+
+            ImGui::SameLine();
+            if (ImGui::Button(ICON_LC_CONE "##AddCone", ImVec2(btnW, btnH))) {
+                if (spawnAtMask) {
+                    scene.addPrimitiveAtMask("cone", spawnMirror, sculpt.getSymX(), sculpt.getSymY(), sculpt.getSymZ());
+                } else {
+                    scene.addCone();
+                }
+                m_showSculptingPanel = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cone");
 
             ImGui::SameLine();
             if (ImGui::Button(ICON_LC_DONUT "##AddTorus", ImVec2(btnW, btnH))) {
@@ -3456,8 +3636,31 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 } else {
                     scene.addTorus();
                 }
+                m_showSculptingPanel = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Torus");
+
+            ImGui::SameLine();
+            if (ImGui::Button(ICON_LC_GRID_3X3 "##AddPlane", ImVec2(btnW, btnH))) {
+                if (spawnAtMask) {
+                    scene.addPrimitiveAtMask("plane", spawnMirror, sculpt.getSymX(), sculpt.getSymY(), sculpt.getSymZ());
+                } else {
+                    scene.addPlane();
+                }
+                m_showSculptingPanel = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Plane / Grid");
+
+            ImGui::SameLine();
+            if (ImGui::Button(ICON_LC_PILL "##AddCapsule", ImVec2(btnW, btnH))) {
+                if (spawnAtMask) {
+                    scene.addPrimitiveAtMask("capsule", spawnMirror, sculpt.getSymX(), sculpt.getSymY(), sculpt.getSymZ());
+                } else {
+                    scene.addCapsule();
+                }
+                m_showSculptingPanel = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Capsule");
 
             ImGui::SameLine();
 
@@ -3615,6 +3818,9 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     // Row 2: Badges & Info Subtext
                     std::string infoStr = formatCount(mesh->nbVerts) + " verts";
                     if (mesh->isTube) infoStr += "  " ICON_LC_CYLINDER " [Procedural Tube]";
+                    if (mesh->isPrimitive && mesh->primitiveData) {
+                        infoStr += "  " ICON_LC_BOX " [Procedural " + std::string(getPrimitiveTypeName(mesh->primitiveData->type)) + "]";
+                    }
                     if (isActive) infoStr += "  " ICON_LC_CHECK " Active";
                     ImGui::TextDisabled("%s", infoStr.c_str());
 
@@ -3698,6 +3904,19 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bake procedural tube into standard editable sculpt mesh");
                     }
 
+                    if (mesh->isPrimitive) {
+                        ImGui::SameLine();
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.48f, 0.72f, 0.85f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.58f, 0.85f, 1.0f));
+                        if (ImGui::Button(ICON_LC_CHECK " Bake##cardPrim", ImVec2(btnSz * 2.5f, btnSz))) {
+                            if (auto* pt = sculpt.getPrimitiveTool()) {
+                                pt->bakeToMesh(scene, mesh);
+                            }
+                        }
+                        ImGui::PopStyleColor(2);
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bake procedural primitive into standard editable sculpt mesh");
+                    }
+
                     ImGui::SameLine();
 
                     // Delete Mesh Button
@@ -3760,6 +3979,15 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             if (ImGui::MenuItem(ICON_LC_CHECK " Bake to Editable Mesh")) {
                                 if (auto* tt = sculpt.getTubeTool()) {
                                     tt->bakeMesh(scene, mesh);
+                                }
+                            }
+                            ImGui::Separator();
+                        }
+
+                        if (mesh->isPrimitive) {
+                            if (ImGui::MenuItem(ICON_LC_CHECK " Bake to Editable Mesh")) {
+                                if (auto* pt = sculpt.getPrimitiveTool()) {
+                                    pt->bakeToMesh(scene, mesh);
                                 }
                             }
                             ImGui::Separator();
@@ -5495,6 +5723,17 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             float vW = (float)camera.getWidth();
             float vH = (float)camera.getHeight();
             tubeTool->renderOverlay(scene, camera, vW, vH);
+        }
+    }
+
+    // Primitive Tool Overlay: show whenever any unfinalized primitive mesh is selected
+    if (auto* primTool = sculpt.getPrimitiveTool()) {
+        Mesh* sel = scene.getSelected();
+        if (sel && sel->isPrimitive && sel->primitiveData != nullptr) {
+            const Camera& camera = scene.getCamera();
+            float vW = (float)camera.getWidth();
+            float vH = (float)camera.getHeight();
+            primTool->renderOverlay(scene, camera, vW, vH);
         }
     }
 

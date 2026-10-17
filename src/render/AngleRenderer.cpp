@@ -1457,13 +1457,18 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
         }
 
         // Render wireframe overlay into transparent buffer over solid depth
-        if (m_showWireframe) {
-            for (auto* mesh : scene.getMeshes()) {
-                if (scene.isMeshRenderVisible(mesh, viewportIdx) && (!mesh->isArmature || !mesh->armatureGraph)) {
+        for (auto* mesh : scene.getMeshes()) {
+            if (scene.isMeshRenderVisible(mesh, viewportIdx) && (!mesh->isArmature || !mesh->armatureGraph)) {
+                bool showMeshWire = m_showWireframe;
+                if (mesh->isPrimitive && mesh->primitiveData && mesh->primitiveData->showWireframe) {
+                    showMeshWire = true;
+                }
+                if (showMeshWire) {
                     drawWireframe(mesh, scene, camera);
                 }
             }
         }
+
     } else if (passType == 4) {
         // Bevel pre-pass
         for (auto* mesh : scene.getMeshes()) {
@@ -2092,8 +2097,9 @@ void AngleRenderer::drawWireframe(Mesh* mesh, const Scene& scene, const Camera& 
     glUniformMatrix3fv(glGetUniformLocation(m_wireframeProgram, "uN"), 1, GL_FALSE, glm::value_ptr(mesh->nMatrix));
     glUniformMatrix4fv(glGetUniformLocation(m_wireframeProgram, "uEM"), 1, GL_FALSE, glm::value_ptr(mesh->editMatrix));
     glUniformMatrix3fv(glGetUniformLocation(m_wireframeProgram, "uEN"), 1, GL_FALSE, glm::value_ptr(mesh->enMatrix));
-    glUniform1i(glGetUniformLocation(m_wireframeProgram, "uIsOrtho"), camera.isOrthographic() ? 1 : 0);
-    glUniform1i(glGetUniformLocation(m_wireframeProgram, "uCullBackfaces"), isXRay ? 0 : 1);
+    bool isPlane = (mesh->isPrimitive && mesh->primitiveData && mesh->primitiveData->type == PrimitiveType::Plane);
+    glUniform1i(glGetUniformLocation(m_wireframeProgram, "uCullBackfaces"), (isXRay || isPlane) ? 0 : 1);
+
 
     float alpha = std::clamp(m_wireframeColor.a * m_wireframeOpacity, 0.0f, 1.0f);
     glUniform4f(glGetUniformLocation(m_wireframeProgram, "uWireColor"),

@@ -13,6 +13,7 @@
 #include "gui/GuiManager.h"
 #include "editing/SculptManager.h"
 #include "editing/TubeTool.h"
+#include "editing/PrimitiveTool.h"
 
 
 Scene::Scene() {
@@ -196,6 +197,12 @@ HistoryState Scene::saveCurrentState(bool includeTopology) const {
         } else {
             ms.tubeData = nullptr;
         }
+        ms.isPrimitive = m->isPrimitive;
+        if (m->primitiveData) {
+            ms.primitiveData = std::make_unique<PrimitiveData>(*m->primitiveData);
+        } else {
+            ms.primitiveData = nullptr;
+        }
         ms.symEnabled = m->symEnabled;
         ms.symX = m->symX;
         ms.symY = m->symY;
@@ -290,6 +297,12 @@ void Scene::restoreState(const HistoryState& hs) {
             m->tubeData = std::make_unique<TubeData>(*ms.tubeData);
         } else {
             m->tubeData = nullptr;
+        }
+        m->isPrimitive = ms.isPrimitive;
+        if (ms.primitiveData) {
+            m->primitiveData = std::make_unique<PrimitiveData>(*ms.primitiveData);
+        } else {
+            m->primitiveData = nullptr;
         }
         m->symEnabled = ms.symEnabled;
         m->symX = ms.symX;
@@ -1333,193 +1346,51 @@ static void generateTorus(
 }
 
 void Scene::addSphere() {
-    std::vector<float> vertices;
-    std::vector<uint32_t> faces;
-    std::vector<float> colors;
-    std::vector<float> normals;
-
-    generateUVSphere(50.0f, 100, 100, vertices, faces, colors, normals);
-    int nbVerts = vertices.size() / 3;
-    int nbFaces = faces.size() / 4;
-
-    std::vector<uint32_t> vrvStartCount;
-    std::vector<uint32_t> vertRingVert;
-    std::vector<uint32_t> vrfStartCount;
-    std::vector<uint32_t> vertRingFace;
-    std::vector<uint8_t> vertOnEdge;
-    computeTopology(nbVerts, faces.data(), nbFaces, vrfStartCount, vertRingFace, vrvStartCount, vertRingVert, vertOnEdge);
-
-    Mesh* mesh = new Mesh();
-    mesh->verts = vertices;
-    mesh->faces = faces;
-    mesh->colors = colors;
-    mesh->normals = normals;
-    mesh->nbVerts = nbVerts;
-    mesh->nbFaces = nbFaces;
-    mesh->vrfStartCount = vrfStartCount;
-    mesh->vertRingFace = vertRingFace;
-    mesh->vrvStartCount = vrvStartCount;
-    mesh->vertRingVert = vertRingVert;
-    mesh->vertOnEdge = vertOnEdge;
-    mesh->outlinerName = "Sphere " + std::to_string(mesh->m_id);
-    mesh->initFaceGroups(getNextFreePolyGroupID());
-    mesh->postInit();
-
-    pushHistoryState();
-    addMesh(mesh);
-    selectMesh(mesh);
+    if (m_sculptManager && m_sculptManager->getPrimitiveTool()) {
+        m_sculptManager->getPrimitiveTool()->spawnPrimitive(*this, PrimitiveType::Sphere);
+    }
 }
 
 void Scene::addGeosphere() {
-    std::vector<float> vertices;
-    std::vector<uint32_t> faces;
-    std::vector<float> colors;
-    std::vector<float> normals;
-
-    generateGeosphere(50.0f, 4, vertices, faces, colors, normals);
-    int nbVerts = vertices.size() / 3;
-    int nbFaces = faces.size() / 4;
-
-    std::vector<uint32_t> vrvStartCount;
-    std::vector<uint32_t> vertRingVert;
-    std::vector<uint32_t> vrfStartCount;
-    std::vector<uint32_t> vertRingFace;
-    std::vector<uint8_t> vertOnEdge;
-    computeTopology(nbVerts, faces.data(), nbFaces, vrfStartCount, vertRingFace, vrvStartCount, vertRingVert, vertOnEdge);
-
-    Mesh* mesh = new Mesh();
-    mesh->verts = vertices;
-    mesh->faces = faces;
-    mesh->colors = colors;
-    mesh->normals = normals;
-    mesh->nbVerts = nbVerts;
-    mesh->nbFaces = nbFaces;
-    mesh->vrfStartCount = vrfStartCount;
-    mesh->vertRingFace = vertRingFace;
-    mesh->vrvStartCount = vrvStartCount;
-    mesh->vertRingVert = vertRingVert;
-    mesh->vertOnEdge = vertOnEdge;
-    mesh->outlinerName = "Geosphere " + std::to_string(mesh->m_id);
-    mesh->initFaceGroups(getNextFreePolyGroupID());
-    mesh->postInit();
-
-    pushHistoryState();
-    addMesh(mesh);
-    selectMesh(mesh);
+    if (m_sculptManager && m_sculptManager->getPrimitiveTool()) {
+        m_sculptManager->getPrimitiveTool()->spawnPrimitive(*this, PrimitiveType::Geosphere);
+    }
 }
 
 void Scene::addCube() {
-    std::vector<float> vertices;
-    std::vector<uint32_t> faces;
-    std::vector<float> colors;
-    std::vector<float> normals;
-
-    generateSubdividedCube(70.0f, 50, vertices, faces, colors, normals);
-    int nbVerts = vertices.size() / 3;
-    int nbFaces = faces.size() / 4;
-
-    std::vector<uint32_t> vrvStartCount;
-    std::vector<uint32_t> vertRingVert;
-    std::vector<uint32_t> vrfStartCount;
-    std::vector<uint32_t> vertRingFace;
-    std::vector<uint8_t> vertOnEdge;
-    computeTopology(nbVerts, faces.data(), nbFaces, vrfStartCount, vertRingFace, vrvStartCount, vertRingVert, vertOnEdge);
-
-    Mesh* mesh = new Mesh();
-    mesh->verts = vertices;
-    mesh->faces = faces;
-    mesh->colors = colors;
-    mesh->normals = normals;
-    mesh->nbVerts = nbVerts;
-    mesh->nbFaces = nbFaces;
-    mesh->vrfStartCount = vrfStartCount;
-    mesh->vertRingFace = vertRingFace;
-    mesh->vrvStartCount = vrvStartCount;
-    mesh->vertRingVert = vertRingVert;
-    mesh->vertOnEdge = vertOnEdge;
-    mesh->outlinerName = "Cube " + std::to_string(mesh->m_id);
-    mesh->initFaceGroups(getNextFreePolyGroupID());
-    mesh->postInit();
-
-    pushHistoryState();
-    addMesh(mesh);
-    selectMesh(mesh);
+    if (m_sculptManager && m_sculptManager->getPrimitiveTool()) {
+        m_sculptManager->getPrimitiveTool()->spawnPrimitive(*this, PrimitiveType::Cube);
+    }
 }
 
 void Scene::addCylinder() {
-    std::vector<float> vertices;
-    std::vector<uint32_t> faces;
-    std::vector<float> colors;
-    std::vector<float> normals;
+    if (m_sculptManager && m_sculptManager->getPrimitiveTool()) {
+        m_sculptManager->getPrimitiveTool()->spawnPrimitive(*this, PrimitiveType::Cylinder);
+    }
+}
 
-    generateCylinder(25.0f, 25.0f, 70.0f, 80, 80, true, true, vertices, faces, colors, normals);
-    int nbVerts = vertices.size() / 3;
-    int nbFaces = faces.size() / 4;
-
-    std::vector<uint32_t> vrvStartCount;
-    std::vector<uint32_t> vertRingVert;
-    std::vector<uint32_t> vrfStartCount;
-    std::vector<uint32_t> vertRingFace;
-    std::vector<uint8_t> vertOnEdge;
-    computeTopology(nbVerts, faces.data(), nbFaces, vrfStartCount, vertRingFace, vrvStartCount, vertRingVert, vertOnEdge);
-
-    Mesh* mesh = new Mesh();
-    mesh->verts = vertices;
-    mesh->faces = faces;
-    mesh->colors = colors;
-    mesh->normals = normals;
-    mesh->nbVerts = nbVerts;
-    mesh->nbFaces = nbFaces;
-    mesh->vrfStartCount = vrfStartCount;
-    mesh->vertRingFace = vertRingFace;
-    mesh->vrvStartCount = vrvStartCount;
-    mesh->vertRingVert = vertRingVert;
-    mesh->vertOnEdge = vertOnEdge;
-    mesh->outlinerName = "Cylinder " + std::to_string(mesh->m_id);
-    mesh->initFaceGroups(getNextFreePolyGroupID());
-    mesh->postInit();
-
-    pushHistoryState();
-    addMesh(mesh);
-    selectMesh(mesh);
+void Scene::addCone() {
+    if (m_sculptManager && m_sculptManager->getPrimitiveTool()) {
+        m_sculptManager->getPrimitiveTool()->spawnPrimitive(*this, PrimitiveType::Cone);
+    }
 }
 
 void Scene::addTorus() {
-    std::vector<float> vertices;
-    std::vector<uint32_t> faces;
-    std::vector<float> colors;
-    std::vector<float> normals;
+    if (m_sculptManager && m_sculptManager->getPrimitiveTool()) {
+        m_sculptManager->getPrimitiveTool()->spawnPrimitive(*this, PrimitiveType::Torus);
+    }
+}
 
-    generateTorus(35.0f, 10.0f, 2.0f * (float)M_PI, 32, 128, vertices, faces, colors, normals);
-    int nbVerts = vertices.size() / 3;
-    int nbFaces = faces.size() / 4;
+void Scene::addPlane() {
+    if (m_sculptManager && m_sculptManager->getPrimitiveTool()) {
+        m_sculptManager->getPrimitiveTool()->spawnPrimitive(*this, PrimitiveType::Plane);
+    }
+}
 
-    std::vector<uint32_t> vrvStartCount;
-    std::vector<uint32_t> vertRingVert;
-    std::vector<uint32_t> vrfStartCount;
-    std::vector<uint32_t> vertRingFace;
-    std::vector<uint8_t> vertOnEdge;
-    computeTopology(nbVerts, faces.data(), nbFaces, vrfStartCount, vertRingFace, vrvStartCount, vertRingVert, vertOnEdge);
-
-    Mesh* mesh = new Mesh();
-    mesh->verts = vertices;
-    mesh->faces = faces;
-    mesh->colors = colors;
-    mesh->normals = normals;
-    mesh->nbVerts = nbVerts;
-    mesh->nbFaces = nbFaces;
-    mesh->vrfStartCount = vrfStartCount;
-    mesh->vertRingFace = vertRingFace;
-    mesh->vrvStartCount = vrvStartCount;
-    mesh->vertRingVert = vertRingVert;
-    mesh->vertOnEdge = vertOnEdge;
-    mesh->outlinerName = "Torus " + std::to_string(mesh->m_id);
-    mesh->initFaceGroups(getNextFreePolyGroupID());
-    mesh->postInit();
-
-    pushHistoryState();
-    addMesh(mesh);
-    selectMesh(mesh);
+void Scene::addCapsule() {
+    if (m_sculptManager && m_sculptManager->getPrimitiveTool()) {
+        m_sculptManager->getPrimitiveTool()->spawnPrimitive(*this, PrimitiveType::Capsule);
+    }
 }
 
 void Scene::addPrimitiveAtMask(const std::string& type, bool useSym, bool symX, bool symY, bool symZ) {
@@ -1544,7 +1415,10 @@ void Scene::addPrimitiveAtMask(const std::string& type, bool useSym, bool symX, 
         else if (type == "geosphere") addGeosphere();
         else if (type == "cube") addCube();
         else if (type == "cylinder") addCylinder();
+        else if (type == "cone") addCone();
         else if (type == "torus") addTorus();
+        else if (type == "plane") addPlane();
+        else if (type == "capsule") addCapsule();
         return;
     }
 
@@ -1553,69 +1427,30 @@ void Scene::addPrimitiveAtMask(const std::string& type, bool useSym, bool symX, 
     glm::vec3 localCenter = (minBound + maxBound) * 0.5f;
     glm::vec3 localSize = maxBound - minBound;
 
-    auto spawnPrimitive = [&](glm::vec3 locCenter, std::string suffix) {
-        std::vector<float> vertices;
-        std::vector<uint32_t> faces;
-        std::vector<float> colors;
-        std::vector<float> normals;
-
-        Mesh* mesh = nullptr;
-        if (type == "sphere") {
-            generateUVSphere(50.0f, 100, 100, vertices, faces, colors, normals);
-            mesh = new Mesh();
-            mesh->outlinerName = "Sphere " + suffix;
-        } else if (type == "geosphere") {
-            generateGeosphere(50.0f, 4, vertices, faces, colors, normals);
-            mesh = new Mesh();
-            mesh->outlinerName = "Geosphere " + suffix;
-        } else if (type == "cube") {
-            generateSubdividedCube(70.0f, 50, vertices, faces, colors, normals);
-            mesh = new Mesh();
-            mesh->outlinerName = "Cube " + suffix;
-        } else if (type == "cylinder") {
-            generateCylinder(25.0f, 25.0f, 70.0f, 80, 80, true, true, vertices, faces, colors, normals);
-            mesh = new Mesh();
-            mesh->outlinerName = "Cylinder " + suffix;
-        } else if (type == "torus") {
-            generateTorus(35.0f, 10.0f, 2.0f * (float)M_PI, 32, 128, vertices, faces, colors, normals);
-            mesh = new Mesh();
-            mesh->outlinerName = "Torus " + suffix;
-        }
-
-        if (!mesh) return (Mesh*)nullptr;
-
-        int nbVerts = vertices.size() / 3;
-        int nbFaces = faces.size() / 4;
-
-        std::vector<uint32_t> vrvStartCount;
-        std::vector<uint32_t> vertRingVert;
-        std::vector<uint32_t> vrfStartCount;
-        std::vector<uint32_t> vertRingFace;
-        std::vector<uint8_t> vertOnEdge;
-        computeTopology(nbVerts, faces.data(), nbFaces, vrfStartCount, vertRingFace, vrvStartCount, vertRingVert, vertOnEdge);
-
-        mesh->verts = vertices;
-        mesh->faces = faces;
-        mesh->colors = colors;
-        mesh->normals = normals;
-        mesh->nbVerts = nbVerts;
-        mesh->nbFaces = nbFaces;
-        mesh->vrfStartCount = vrfStartCount;
-        mesh->vertRingFace = vertRingFace;
-        mesh->vrvStartCount = vrvStartCount;
-        mesh->vertRingVert = vertRingVert;
-        mesh->vertOnEdge = vertOnEdge;
-        mesh->initFaceGroups(getNextFreePolyGroupID());
-        mesh->postInit();
-
+    auto spawnPrimitive = [&](glm::vec3 locCenter, std::string suffix) -> Mesh* {
         glm::vec3 worldCenter = glm::vec3(activeMesh->matrix * glm::vec4(locCenter, 1.0f));
         float maxDim = glm::max(localSize.x, glm::max(localSize.y, localSize.z));
         float sourceMeshScale = glm::length(glm::vec3(activeMesh->matrix[0]));
         float s = (maxDim / 100.0f) * sourceMeshScale;
         s = glm::max(s, 0.01f);
 
-        mesh->matrix = glm::translate(glm::mat4(1.0f), worldCenter) * glm::scale(glm::mat4(1.0f), glm::vec3(s));
-        addMesh(mesh);
+        PrimitiveType pType = PrimitiveType::Sphere;
+        if (type == "sphere") pType = PrimitiveType::Sphere;
+        else if (type == "geosphere") pType = PrimitiveType::Geosphere;
+        else if (type == "cube") pType = PrimitiveType::Cube;
+        else if (type == "cylinder") pType = PrimitiveType::Cylinder;
+        else if (type == "cone") pType = PrimitiveType::Cone;
+        else if (type == "torus") pType = PrimitiveType::Torus;
+        else if (type == "plane") pType = PrimitiveType::Plane;
+        else if (type == "capsule") pType = PrimitiveType::Capsule;
+
+        Mesh* mesh = nullptr;
+        if (m_sculptManager && m_sculptManager->getPrimitiveTool()) {
+            mesh = m_sculptManager->getPrimitiveTool()->spawnPrimitive(*this, pType, worldCenter, s);
+            if (mesh) {
+                mesh->outlinerName = std::string(getPrimitiveTypeName(pType)) + " " + suffix;
+            }
+        }
         return mesh;
     };
 

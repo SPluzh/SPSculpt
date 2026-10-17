@@ -40,6 +40,8 @@ struct MeshState {
     bool isArmature = false;
     bool isTube = false;
     std::unique_ptr<TubeData> tubeData;
+    bool isPrimitive = false;
+    std::unique_ptr<PrimitiveData> primitiveData;
     bool symEnabled = false;
     bool symX = true;
     bool symY = false;
@@ -73,6 +75,10 @@ struct MeshState {
         isTube = o.isTube;
         if (o.tubeData) {
             tubeData = std::make_unique<TubeData>(*o.tubeData);
+        }
+        isPrimitive = o.isPrimitive;
+        if (o.primitiveData) {
+            primitiveData = std::make_unique<PrimitiveData>(*o.primitiveData);
         }
         symEnabled = o.symEnabled;
         symX = o.symX;
@@ -110,6 +116,12 @@ struct MeshState {
                 tubeData = std::make_unique<TubeData>(*o.tubeData);
             } else {
                 tubeData = nullptr;
+            }
+            isPrimitive = o.isPrimitive;
+            if (o.primitiveData) {
+                primitiveData = std::make_unique<PrimitiveData>(*o.primitiveData);
+            } else {
+                primitiveData = nullptr;
             }
             symEnabled = o.symEnabled;
             symX = o.symX;
@@ -178,7 +190,10 @@ public:
     void addGeosphere();
     void addCube();
     void addCylinder();
+    void addCone();
     void addTorus();
+    void addPlane();
+    void addCapsule();
     void addPrimitiveAtMask(const std::string& type, bool useSym, bool symX, bool symY, bool symZ);
     void duplicateSelection();
     void mergeSelection();

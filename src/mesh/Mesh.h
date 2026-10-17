@@ -12,6 +12,7 @@
 
 #include "sculpt/ArmatureGraph.h"
 #include "sculpt/TubeData.h"
+#include "sculpt/PrimitiveData.h"
 
 #include "common/Enums.h"
 
@@ -26,6 +27,10 @@ public:
     // Procedural Tube support
     bool isTube = false;
     std::unique_ptr<TubeData> tubeData;
+
+    // Procedural Primitive support
+    bool isPrimitive = false;
+    std::unique_ptr<PrimitiveData> primitiveData;
 
     // Per-mesh normal map (loaded from glTF, never a ReferenceImage)
     GLuint normalMapTexId = 0;
@@ -145,6 +150,12 @@ public:
             tubeData = std::make_unique<TubeData>(*other.tubeData);
         } else {
             tubeData = nullptr;
+        }
+        isPrimitive = other.isPrimitive;
+        if (other.primitiveData) {
+            primitiveData = std::make_unique<PrimitiveData>(*other.primitiveData);
+        } else {
+            primitiveData = nullptr;
         }
         normalMapTexId = other.normalMapTexId;
         verts = other.verts;

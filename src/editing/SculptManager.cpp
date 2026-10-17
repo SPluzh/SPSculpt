@@ -7,6 +7,7 @@
 #include "editing/ArmatureTool.h"
 #include "editing/PoseTool.h"
 #include "editing/TubeTool.h"
+#include "editing/PrimitiveTool.h"
 #include "editing/ClipCurveTool.h"
 #include "editing/TrimTool.h"
 #include "editing/SplitTool.h"
@@ -199,6 +200,7 @@ SculptManager::SculptManager() {
     m_armatureTool = std::make_unique<ArmatureTool>(*this);
     m_poseTool = std::make_unique<PoseTool>(*this);
     m_tubeTool = std::make_unique<TubeTool>(*this);
+    m_primitiveTool = std::make_unique<PrimitiveTool>(*this);
     // Initialise all brushes with baseline defaults
     for (int i = 0; i < BRUSH_COUNT; ++i) {
         m_brushSettings[i].radius = 50.0f;
@@ -2698,6 +2700,10 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 return;
             }
 
+            if (m_primitiveTool && m_primitiveTool->handleMouseDown(scene, camera, (float)mouseX, (float)mouseY, (mod & KMOD_CTRL) != 0, (mod & KMOD_ALT) != 0, (mod & KMOD_SHIFT) != 0)) {
+                return;
+            }
+
             bool isVisibilityTool = (m_currentBrush == BRUSH_VISIBILITY);
             bool isLassoMode = (mod & KMOD_CTRL) && (mod & KMOD_SHIFT);
 
@@ -3103,6 +3109,12 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     return;
                 }
 
+                if (mesh && mesh->isPrimitive) {
+                    // Procedural primitive: do NOT auto-bake on brush click!
+                    // Keeps handles and procedural editing active until user explicitly clicks Bake.
+                    return;
+                }
+
                 if (!m_isTubeMoveStroke) {
                     bool strokeAffectsColors = (m_currentBrush == BRUSH_PAINT && getCurrentSettings().writeAlbedo);
                     bool strokeAffectsMaterials = (m_currentBrush == BRUSH_PAINT && (getCurrentSettings().writeRoughness || getCurrentSettings().writeMetalness)) ||
@@ -3260,6 +3272,13 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
         if (m_currentBrush == BRUSH_TUBE && !m_isTubeMoveStroke) {
             if (event.button.button == SDL_BUTTON_LEFT && m_tubeTool) {
                 m_tubeTool->handleMouseUp(scene);
+            }
+            return;
+        }
+
+        if (m_primitiveTool && m_primitiveTool->isInteracting()) {
+            if (event.button.button == SDL_BUTTON_LEFT) {
+                m_primitiveTool->handleMouseUp(scene);
             }
             return;
         }
@@ -4051,6 +4070,10 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 m_tubeTool->loadFromMesh(mesh);
             }
             m_tubeTool->handleMouseMove(scene, camera, (float)mouseX, (float)mouseY);
+        }
+
+        if (mesh && mesh->isPrimitive && mesh->primitiveData != nullptr && m_primitiveTool && !m_isSculpting && !m_cameraController.isDragging()) {
+            m_primitiveTool->handleMouseMove(scene, camera, (float)mouseX, (float)mouseY);
         }
 
         if (m_currentBrush == BRUSH_MASK_GRADIENT_BLUR && mesh && m_gradActive && m_gradActivePoint != '\0') {

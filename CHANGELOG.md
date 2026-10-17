@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.7]
+- **Interactive Primitives**: 3D viewport handles to drag size, radius, height, and bevels directly on the mesh.
+- **New Shapes**: Added Cone, Plane, and Capsule primitives.
+- **Auto Density**: Mesh resolution automatically recalculates on resize to keep polygon size constant.
+- **Explicit Bake**: Primitives stay procedural until clicking Bake — brush clicks no longer trigger auto-bake.
+- **Wireframe Support**: Viewport wireframe display now works on procedural primitives.
+
 ## [0.3.6]
 - **Profile Graphs & Viewport Editing**: Custom cross-sections and thickness profiles with interactive editing at the tube tip.
 - **Move & Smooth on Curves**: Move and relax curves of selected tubes using standard Move and Smooth brushes with natural falloff.

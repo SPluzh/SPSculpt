@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(SPSculpt VERSION 0.3.6 LANGUAGES C CXX)
+project(SPSculpt VERSION 0.3.7 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 
 add_library(ufbx STATIC third_party/ufbx/ufbx.c)
@@ -112,6 +112,7 @@ add_executable(SPSculpt
     src/sculpt/SculptEngine.cpp
     src/sculpt/Remesh.cpp
     src/sculpt/RelaxEngine.cpp
+    src/sculpt/PrimitiveGenerator.cpp
     src/editing/Subdivision.cpp
     src/editing/Reversion.cpp
     # render
@@ -147,6 +148,7 @@ add_executable(SPSculpt
     src/editing/ArmatureTool.cpp
     src/editing/PoseTool.cpp
     src/editing/TubeTool.cpp
+    src/editing/PrimitiveTool.cpp
     src/editing/PolyGroupTool.cpp
     src/editing/undo/UndoManager.cpp
     src/sculpt/ArmatureGraph.cpp
