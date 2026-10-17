@@ -146,6 +146,10 @@ bool TrimTool::execute(
     // 6. Convert Manifold result back to Mesh
     mesh->hasCustomNormals = false;
     sculpt::ManifoldBridge::toMesh(result, *mesh, true, cutterOrigID, newCapGid);
+    mesh->isTube = false;
+    mesh->tubeData = nullptr;
+    mesh->isPrimitive = false;
+    mesh->primitiveData = nullptr;
 
     // 7. Generate Nomad Sculpt-style regular quad cap with CDT transition belt
     sculpt::QuadCapResult capRes = sculpt::QuadCapGenerator::generateQuadCap(*mesh, newCapGid, targetEdgeLen);

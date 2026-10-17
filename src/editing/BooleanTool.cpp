@@ -143,6 +143,12 @@ bool BooleanTool::executeMultiple(
     // 5. Update targetMesh with result, restoring original quads everywhere except intersection seam
     ManifoldBridge::toMeshBooleanMultiple(result, *targetMesh, sourceMeshesList, sourceOrigIdsList, true);
 
+    // Boolean result is a standard sculpted mesh; clear procedural flags
+    targetMesh->isTube = false;
+    targetMesh->tubeData = nullptr;
+    targetMesh->isPrimitive = false;
+    targetMesh->primitiveData = nullptr;
+
     // 6. Remove operand meshes from scene
     for (Mesh* om : validOthers) {
         scene.removeMesh(om);

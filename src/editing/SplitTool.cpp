@@ -156,12 +156,20 @@ bool SplitTool::sliceByLine(
     mesh->hasCustomNormals = false;
     ManifoldBridge::toMesh(part1, *mesh, false, cutterOrigID, gid1);
     QuadCapGenerator::generateQuadCap(*mesh, gid1, targetEdgeLen);
+    mesh->isTube = false;
+    mesh->tubeData = nullptr;
+    mesh->isPrimitive = false;
+    mesh->primitiveData = nullptr;
 
     // 6. Create second subtool with Part 2 (runPostInit=false, QuadCap will postInit)
     Mesh* cutMesh = new Mesh();
     copyMeshMetadata(mesh, cutMesh, "_Cut");
     ManifoldBridge::toMesh(part2, *cutMesh, false, cutterOrigID, gid2);
     QuadCapGenerator::generateQuadCap(*cutMesh, gid2, targetEdgeLen);
+    cutMesh->isTube = false;
+    cutMesh->tubeData = nullptr;
+    cutMesh->isPrimitive = false;
+    cutMesh->primitiveData = nullptr;
 
     scene.addMesh(cutMesh);
     scene.setModified(true);
@@ -274,12 +282,20 @@ bool SplitTool::splitByLasso(
     mesh->hasCustomNormals = false;
     ManifoldBridge::toMesh(keepPart, *mesh, false, cutterOrigID, gid1);
     QuadCapGenerator::generateQuadCap(*mesh, gid1, targetEdgeLen);
+    mesh->isTube = false;
+    mesh->tubeData = nullptr;
+    mesh->isPrimitive = false;
+    mesh->primitiveData = nullptr;
 
     // 2. Create new subtool with cutPart (runPostInit=false, QuadCap will postInit)
     Mesh* cutMesh = new Mesh();
     copyMeshMetadata(mesh, cutMesh, "_Cut");
     ManifoldBridge::toMesh(cutPart, *cutMesh, false, cutterOrigID, gid2);
     QuadCapGenerator::generateQuadCap(*cutMesh, gid2, targetEdgeLen);
+    cutMesh->isTube = false;
+    cutMesh->tubeData = nullptr;
+    cutMesh->isPrimitive = false;
+    cutMesh->primitiveData = nullptr;
 
     scene.addMesh(cutMesh);
     scene.setModified(true);

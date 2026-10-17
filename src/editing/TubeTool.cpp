@@ -1828,6 +1828,33 @@ static void buildTubeGeometry(
         }
     }
 
+    auto pushQuad = [&](uint32_t a, uint32_t b, uint32_t c, uint32_t d) {
+        if (effectiveFlip) {
+            outFaces.push_back(a);
+            outFaces.push_back(d);
+            outFaces.push_back(c);
+            outFaces.push_back(b);
+        } else {
+            outFaces.push_back(a);
+            outFaces.push_back(b);
+            outFaces.push_back(c);
+            outFaces.push_back(d);
+        }
+    };
+
+    auto pushTri = [&](uint32_t a, uint32_t b, uint32_t c) {
+        if (effectiveFlip) {
+            outFaces.push_back(a);
+            outFaces.push_back(c);
+            outFaces.push_back(b);
+        } else {
+            outFaces.push_back(a);
+            outFaces.push_back(b);
+            outFaces.push_back(c);
+        }
+        outFaces.push_back(0xffffffff);
+    };
+
     // 2. Tube Body Quad Faces (CCW outward winding)
     for (int i = 0; i < numFrames - 1; ++i) {
         for (int j = 0; j < radSides; ++j) {
@@ -1837,23 +1864,13 @@ static void buildTubeGeometry(
             uint32_t v2 = vertOffset + (i + 1) * radSides + nextJ;
             uint32_t v3 = vertOffset + (i + 1) * radSides + j;
 
-            if (effectiveFlip) {
-                outFaces.push_back(v0);
-                outFaces.push_back(v3);
-                outFaces.push_back(v2);
-                outFaces.push_back(v1);
-            } else {
-                outFaces.push_back(v0);
-                outFaces.push_back(v1);
-                outFaces.push_back(v2);
-                outFaces.push_back(v3);
-            }
+            pushQuad(v0, v1, v2, v3);
         }
     }
 
     // 3. Caps (CCW outward winding)
     if (capType == TubeCapType::Flat) {
-        // Start cap (outward normal = -tangent)
+        // Start cap (outward normal = -tangent, opposing body edge j -> nextJ)
         uint32_t centerStartIdx = static_cast<uint32_t>(outVerts.size() / 3);
         const auto& f0 = frames.front();
         glm::vec3 nStart = -f0.tangent;
@@ -1867,18 +1884,10 @@ static void buildTubeGeometry(
 
         for (int j = 0; j < radSides; ++j) {
             int nextJ = (j + 1) % radSides;
-            outFaces.push_back(centerStartIdx);
-            if (effectiveFlip) {
-                outFaces.push_back(vertOffset + nextJ);
-                outFaces.push_back(vertOffset + j);
-            } else {
-                outFaces.push_back(vertOffset + j);
-                outFaces.push_back(vertOffset + nextJ);
-            }
-            outFaces.push_back(0xffffffff);
+            pushTri(centerStartIdx, vertOffset + nextJ, vertOffset + j);
         }
 
-        // End cap (outward normal = +tangent)
+        // End cap (outward normal = +tangent, opposing body edge nextJ -> j)
         uint32_t centerEndIdx = static_cast<uint32_t>(outVerts.size() / 3);
         const auto& fEnd = frames.back();
         glm::vec3 nEnd = fEnd.tangent;
@@ -1893,15 +1902,7 @@ static void buildTubeGeometry(
         uint32_t lastRingOffset = vertOffset + (numFrames - 1) * radSides;
         for (int j = 0; j < radSides; ++j) {
             int nextJ = (j + 1) % radSides;
-            outFaces.push_back(centerEndIdx);
-            if (effectiveFlip) {
-                outFaces.push_back(lastRingOffset + j);
-                outFaces.push_back(lastRingOffset + nextJ);
-            } else {
-                outFaces.push_back(lastRingOffset + nextJ);
-                outFaces.push_back(lastRingOffset + j);
-            }
-            outFaces.push_back(0xffffffff);
+            pushTri(centerEndIdx, lastRingOffset + j, lastRingOffset + nextJ);
         }
     } else if (capType == TubeCapType::Rounded) {
         // Rounded dome cap for start and end conforming to cross-section profile
@@ -1926,25 +1927,11 @@ static void buildTubeGeometry(
 
                     for (int j = 0; j < radSides; ++j) {
                         int nextJ = (j + 1) % radSides;
-                        outFaces.push_back(poleIdx);
                         if (isStart) {
-                            if (effectiveFlip) {
-                                outFaces.push_back(prevRing + nextJ);
-                                outFaces.push_back(prevRing + j);
-                            } else {
-                                outFaces.push_back(prevRing + j);
-                                outFaces.push_back(prevRing + nextJ);
-                            }
+                            pushTri(poleIdx, prevRing + nextJ, prevRing + j);
                         } else {
-                            if (effectiveFlip) {
-                                outFaces.push_back(prevRing + j);
-                                outFaces.push_back(prevRing + nextJ);
-                            } else {
-                                outFaces.push_back(prevRing + nextJ);
-                                outFaces.push_back(prevRing + j);
-                            }
+                            pushTri(poleIdx, prevRing + j, prevRing + nextJ);
                         }
-                        outFaces.push_back(0xffffffff);
                     }
                 } else {
                     uint32_t curRing = static_cast<uint32_t>(outVerts.size() / 3);
@@ -1967,29 +1954,9 @@ static void buildTubeGeometry(
                     for (int j = 0; j < radSides; ++j) {
                         int nextJ = (j + 1) % radSides;
                         if (isStart) {
-                            if (effectiveFlip) {
-                                outFaces.push_back(prevRing + nextJ);
-                                outFaces.push_back(prevRing + j);
-                                outFaces.push_back(curRing + j);
-                                outFaces.push_back(curRing + nextJ);
-                            } else {
-                                outFaces.push_back(prevRing + j);
-                                outFaces.push_back(curRing + j);
-                                outFaces.push_back(curRing + nextJ);
-                                outFaces.push_back(prevRing + nextJ);
-                            }
+                            pushQuad(prevRing + j, curRing + j, curRing + nextJ, prevRing + nextJ);
                         } else {
-                            if (effectiveFlip) {
-                                outFaces.push_back(prevRing + j);
-                                outFaces.push_back(curRing + j);
-                                outFaces.push_back(curRing + nextJ);
-                                outFaces.push_back(prevRing + nextJ);
-                            } else {
-                                outFaces.push_back(prevRing + j);
-                                outFaces.push_back(prevRing + nextJ);
-                                outFaces.push_back(curRing + nextJ);
-                                outFaces.push_back(curRing + j);
-                            }
+                            pushQuad(prevRing + j, prevRing + nextJ, curRing + nextJ, curRing + j);
                         }
                     }
                     prevRing = curRing;
@@ -2217,6 +2184,10 @@ Mesh* TubeTool::bakeMesh(Scene& scene, Mesh* mesh) {
 }
 
 void TubeTool::bakeAllTubes(Scene& scene) {
+    if (m_activeTubeMesh) {
+        syncToActiveMesh();
+        rebuildTubeMesh(scene, m_activeTubeMesh);
+    }
     int count = 0;
     for (Mesh* m : scene.getMeshes()) {
         if (m && m->isTube) {
