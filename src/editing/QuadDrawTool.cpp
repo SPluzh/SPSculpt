@@ -139,8 +139,11 @@ void QuadDrawTool::onSceneTopologyRestored(Scene& scene) {
     m_weldTargetVertex = -1;
     m_extrudeWeldTarget0 = -1;
     m_extrudeWeldTarget1 = -1;
+    m_extrudeVertexWeldTarget = -1;
     m_multiCutPoints.clear();
     m_grabbedVerts.clear();
+    m_extrudedVerts.clear();
+    m_extrudedFrontEdges.clear();
     m_snapper.ClearCache();
 
     ensureTargetAndRetopo(scene, false);
@@ -153,8 +156,10 @@ void QuadDrawTool::onSceneTopologyRestored(Scene& scene) {
             }
         }
         m_pinnedVertices = std::move(validPins);
+        pruneSelectedEdges();
     } else {
         m_pinnedVertices.clear();
+        m_selectedEdges.clear();
     }
 }
 
@@ -166,6 +171,7 @@ void QuadDrawTool::notifyMeshDeleted(Mesh* mesh) {
     if (m_retopoMesh == mesh) {
         m_retopoMesh = nullptr;
         m_pinnedVertices.clear();
+        m_selectedEdges.clear();
     }
     m_dragMode = DragMode::None;
     m_hoverQuad.valid = false;
@@ -174,11 +180,15 @@ void QuadDrawTool::notifyMeshDeleted(Mesh* mesh) {
     m_hoverEdgeLoop.edges.clear();
     m_hoverPolyLoop.clear();
     m_hoverVertex = -1;
+    m_hoverPoly = -1;
     m_weldTargetVertex = -1;
     m_extrudeWeldTarget0 = -1;
     m_extrudeWeldTarget1 = -1;
+    m_extrudeVertexWeldTarget = -1;
     m_multiCutPoints.clear();
     m_grabbedVerts.clear();
+    m_extrudedVerts.clear();
+    m_extrudedFrontEdges.clear();
 }
 
 void QuadDrawTool::onActivate(Scene& scene) {
@@ -192,6 +202,8 @@ void QuadDrawTool::onDeactivate() {
     m_hoverQuad.valid = false;
     m_hoverCut.valid = false;
     m_multiCutPoints.clear();
+    m_extrudedVerts.clear();
+    m_extrudedFrontEdges.clear();
 }
 
 void QuadDrawTool::snapAllPointsToTarget(Scene& scene) {
@@ -261,11 +273,84 @@ void QuadDrawTool::invertPins() {
     m_pinnedVertices = std::move(inverted);
 }
 
+bool QuadDrawTool::isEdgeSelected(int32_t v0, int32_t v1) const {
+    int32_t u = std::min(v0, v1);
+    int32_t v = std::max(v0, v1);
+    for (const auto& e : m_selectedEdges) {
+        if (e.first == u && e.second == v) return true;
+    }
+    return false;
+}
+
+void QuadDrawTool::selectEdge(int32_t v0, int32_t v1) {
+    int32_t u = std::min(v0, v1);
+    int32_t v = std::max(v0, v1);
+    if (!isEdgeSelected(u, v)) {
+        m_selectedEdges.push_back({u, v});
+    }
+}
+
+void QuadDrawTool::deselectEdge(int32_t v0, int32_t v1) {
+    int32_t u = std::min(v0, v1);
+    int32_t v = std::max(v0, v1);
+    auto it = std::find_if(m_selectedEdges.begin(), m_selectedEdges.end(), [&](const std::pair<int32_t, int32_t>& e) {
+        return e.first == u && e.second == v;
+    });
+    if (it != m_selectedEdges.end()) {
+        m_selectedEdges.erase(it);
+    }
+}
+
+void QuadDrawTool::toggleEdgeSelection(int32_t v0, int32_t v1) {
+    if (isEdgeSelected(v0, v1)) deselectEdge(v0, v1);
+    else selectEdge(v0, v1);
+}
+
+void QuadDrawTool::clearSelectedEdges() {
+    m_selectedEdges.clear();
+}
+
+void QuadDrawTool::pruneSelectedEdges() {
+    if (!m_retopoMesh || m_retopoMesh->nbVerts == 0) {
+        m_selectedEdges.clear();
+        return;
+    }
+    int32_t ptCount = m_retopoMesh->nbVerts;
+    int32_t polyCount = m_retopoMesh->nbFaces;
+
+    std::vector<std::pair<int32_t, int32_t>> valid;
+    for (const auto& e : m_selectedEdges) {
+        if (e.first >= 0 && e.first < ptCount && e.second >= 0 && e.second < ptCount && e.first != e.second) {
+            bool exists = false;
+            for (int32_t p = 0; p < polyCount; ++p) {
+                if (PolygonHasEdge(m_retopoMesh->faces, p, e.first, e.second)) {
+                    exists = true;
+                    break;
+                }
+            }
+            if (exists) valid.push_back(e);
+        }
+    }
+    m_selectedEdges = std::move(valid);
+}
+
+void QuadDrawTool::deleteSelectedEdges(Scene& scene) {
+    if (!m_retopoMesh || m_selectedEdges.empty()) return;
+    g_undoManager.pushTopologyChange(scene, "Delete Selected Edges", [&]() {
+        m_builder.DeleteEdges(m_retopoMesh, m_selectedEdges, &m_pinnedVertices);
+    });
+    m_selectedEdges.clear();
+    m_hoverEdge.valid = false;
+    m_hoverVertex = -1;
+    m_hoverPoly = -1;
+}
+
 void QuadDrawTool::updateHoverState(
     const Camera& camera, float mouseX, float mouseY, bool ctrl, bool alt, bool shift
 ) {
     m_hoverSnap = m_snapper.RaycastSurface(camera, m_targetMesh, mouseX, mouseY);
     m_hoverVertex = -1;
+    m_hoverPoly = -1;
     m_hoverEdge.valid = false;
     m_hoverQuad.valid = false;
     m_hoverCut.valid = false;
@@ -285,14 +370,22 @@ void QuadDrawTool::updateHoverState(
 
     // Check edge hover
     bool borderOnly = (m_subTool == QuadDrawSubTool::Extrude && !ctrl);
+    float edgeRadius = (m_subTool == QuadDrawSubTool::Select) ? 18.0f : 14.0f;
     m_hoverEdge = m_snapper.FindNearestRetopoEdge(
-        camera, m_retopoMesh, mouseX, mouseY, 14.0f, m_targetMesh, &m_hoverSnap, borderOnly
+        camera, m_retopoMesh, mouseX, mouseY, edgeRadius, m_targetMesh, &m_hoverSnap, borderOnly
     );
 
-    if (m_hoverVertex != -1 && m_hoverEdge.valid) {
-        if (m_hoverVertex == m_hoverEdge.v0 || m_hoverVertex == m_hoverEdge.v1) {
-            m_hoverEdge.valid = false;
+    if (m_subTool != QuadDrawSubTool::Select) {
+        if (m_hoverVertex != -1 && m_hoverEdge.valid) {
+            if (m_hoverVertex == m_hoverEdge.v0 || m_hoverVertex == m_hoverEdge.v1) {
+                m_hoverEdge.valid = false;
+            }
         }
+    }
+
+    // Check face hover (for Delete and Select tools)
+    if ((m_subTool == QuadDrawSubTool::Delete || (ctrl && shift) || m_subTool == QuadDrawSubTool::Select) && m_hoverVertex == -1 && !m_hoverEdge.valid) {
+        m_hoverPoly = m_builder.FindPolygonUnderScreen(camera, m_retopoMesh, mouseX, mouseY, m_targetMesh, &m_snapper);
     }
 
     // Subtool specific hovers
@@ -348,6 +441,54 @@ bool QuadDrawTool::handleMouseDown(
 
     if (button != SDL_BUTTON_LEFT) return false;
 
+    // 0. Select Mode (Click to select edge/face, Alt+Click to deselect)
+    if (m_subTool == QuadDrawSubTool::Select) {
+        if (m_hoverEdge.valid) {
+            if (ctrl) {
+                EdgeLoopResult loop = m_builder.FindEdgeLoop(m_retopoMesh, m_hoverEdge.v0, m_hoverEdge.v1);
+                if (!loop.edges.empty()) {
+                    for (const auto& le : loop.edges) {
+                        if (alt) deselectEdge(le.v0, le.v1);
+                        else selectEdge(le.v0, le.v1);
+                    }
+                } else {
+                    if (alt) deselectEdge(m_hoverEdge.v0, m_hoverEdge.v1);
+                    else selectEdge(m_hoverEdge.v0, m_hoverEdge.v1);
+                }
+            } else {
+                if (alt) {
+                    deselectEdge(m_hoverEdge.v0, m_hoverEdge.v1);
+                    sculpt_log("[QuadDrawTool] Deselected edge (%d, %d). Remaining: %zu\n",
+                        m_hoverEdge.v0, m_hoverEdge.v1, m_selectedEdges.size());
+                } else {
+                    selectEdge(m_hoverEdge.v0, m_hoverEdge.v1);
+                    sculpt_log("[QuadDrawTool] Selected edge (%d, %d). Total: %zu\n",
+                        m_hoverEdge.v0, m_hoverEdge.v1, m_selectedEdges.size());
+                }
+            }
+            updateHoverState(camera, mouseX, mouseY, ctrl, alt, shift);
+            return true;
+        } else if (m_hoverPoly != -1 && m_retopoMesh && m_hoverPoly < m_retopoMesh->nbFaces) {
+            // Click inside a face: select/deselect all edges of this face
+            uint32_t q[4] = {
+                m_retopoMesh->faces[m_hoverPoly * 4 + 0],
+                m_retopoMesh->faces[m_hoverPoly * 4 + 1],
+                m_retopoMesh->faces[m_hoverPoly * 4 + 2],
+                m_retopoMesh->faces[m_hoverPoly * 4 + 3]
+            };
+            int numE = (q[3] != TRI_INDEX) ? 4 : 3;
+            for (int e = 0; e < numE; ++e) {
+                int32_t u = (int32_t)q[e];
+                int32_t v = (int32_t)q[(e + 1) % numE];
+                if (alt) deselectEdge(u, v);
+                else selectEdge(u, v);
+            }
+            updateHoverState(camera, mouseX, mouseY, ctrl, alt, shift);
+            return true;
+        }
+        return false;
+    }
+
     // 1. Create Polygon Mode (Click to create quad)
     if (m_subTool == QuadDrawSubTool::CreatePolygon) {
         if (m_hoverQuad.valid) {
@@ -383,17 +524,55 @@ bool QuadDrawTool::handleMouseDown(
 
     // 2. Delete Mode or Ctrl+Shift+LMB: deletion
     if (m_subTool == QuadDrawSubTool::Delete || (ctrl && shift)) {
+        if (!m_selectedEdges.empty()) {
+            bool hitSelection = false;
+            if (m_hoverEdge.valid && isEdgeSelected(m_hoverEdge.v0, m_hoverEdge.v1)) {
+                hitSelection = true;
+            } else if (m_hoverVertex != -1) {
+                for (const auto& e : m_selectedEdges) {
+                    if (e.first == m_hoverVertex || e.second == m_hoverVertex) {
+                        hitSelection = true;
+                        break;
+                    }
+                }
+            } else if (m_hoverPoly != -1 && m_hoverPoly < m_retopoMesh->nbFaces) {
+                for (const auto& e : m_selectedEdges) {
+                    if (PolygonHasEdge(m_retopoMesh->faces, m_hoverPoly, e.first, e.second)) {
+                        hitSelection = true;
+                        break;
+                    }
+                }
+            }
+            if (hitSelection) {
+                deleteSelectedEdges(scene);
+                updateHoverState(camera, mouseX, mouseY, ctrl, alt, shift);
+                return true;
+            }
+        }
+
         if (m_hoverVertex != -1) {
             g_undoManager.pushTopologyChange(scene, "Delete Vertex", [&]() {
                 m_builder.DeleteVertex(m_retopoMesh, m_hoverVertex, &m_pinnedVertices);
             });
             m_hoverVertex = -1;
+            pruneSelectedEdges();
+            updateHoverState(camera, mouseX, mouseY, ctrl, alt, shift);
             return true;
         } else if (m_hoverEdge.valid) {
             g_undoManager.pushTopologyChange(scene, "Delete Edge", [&]() {
                 m_builder.DeleteEdge(m_retopoMesh, m_hoverEdge.v0, m_hoverEdge.v1, &m_pinnedVertices);
             });
             m_hoverEdge.valid = false;
+            pruneSelectedEdges();
+            updateHoverState(camera, mouseX, mouseY, ctrl, alt, shift);
+            return true;
+        } else if (m_hoverPoly != -1 && m_hoverPoly < m_retopoMesh->nbFaces) {
+            g_undoManager.pushTopologyChange(scene, "Delete Polygon", [&]() {
+                m_builder.DeletePolygon(m_retopoMesh, m_hoverPoly, &m_pinnedVertices);
+            });
+            m_hoverPoly = -1;
+            pruneSelectedEdges();
+            updateHoverState(camera, mouseX, mouseY, ctrl, alt, shift);
             return true;
         }
         return false;
@@ -528,6 +707,16 @@ bool QuadDrawTool::handleMouseDown(
 
     if (m_hoverEdge.valid && m_subTool == QuadDrawSubTool::Extrude) {
         // Border Edge Extrude Drag
+        std::vector<std::pair<int32_t, int32_t>> edgesToExtrude;
+
+        // If hovered edge is part of existing selection, extrude all selected edges!
+        if (!m_selectedEdges.empty() && isEdgeSelected(m_hoverEdge.v0, m_hoverEdge.v1)) {
+            edgesToExtrude = m_selectedEdges;
+        } else {
+            m_selectedEdges.clear();
+            edgesToExtrude.push_back({std::min(m_hoverEdge.v0, m_hoverEdge.v1), std::max(m_hoverEdge.v0, m_hoverEdge.v1)});
+        }
+
         m_dragEdgeV0 = m_hoverEdge.v0;
         m_dragEdgeV1 = m_hoverEdge.v1;
         m_dragEdgeInitialPos0 = m_hoverEdge.worldPos0;
@@ -540,15 +729,32 @@ bool QuadDrawTool::handleMouseDown(
 
         glm::vec3 targetNorm = m_hoverSnap.valid ? m_hoverSnap.normal : glm::vec3(0, 1, 0);
 
-        g_undoManager.pushTopologyChange(scene, "Extrude Border Edge", [&]() {
-            ExtrudeEdgeResult res = m_builder.ExtrudeEdge(
-                m_retopoMesh, m_dragEdgeV0, m_dragEdgeV1,
-                m_dragEdgeInitialPos0, m_dragEdgeInitialPos1, targetNorm
+        m_extrudedVerts.clear();
+        m_extrudedFrontEdges.clear();
+
+        auto getVertWorld = [&](int32_t idx) -> glm::vec3 {
+            glm::vec3 p(m_retopoMesh->verts[idx * 3], m_retopoMesh->verts[idx * 3 + 1], m_retopoMesh->verts[idx * 3 + 2]);
+            return (m_retopoMesh->matrix != glm::mat4(1.0f)) ? glm::vec3(m_retopoMesh->matrix * glm::vec4(p, 1.0f)) : p;
+        };
+
+        const char* undoName = edgesToExtrude.size() > 1 ? "Extrude Selected Edges" : "Extrude Border Edge";
+        g_undoManager.pushTopologyChange(scene, undoName, [&]() {
+            ExtrudeEdgesResult res = m_builder.ExtrudeEdges(
+                m_retopoMesh, edgesToExtrude, targetNorm
             );
             if (res.valid) {
                 m_dragMode = DragMode::ExtrudeDrag;
-                m_extrudedV0 = res.newV0;
-                m_extrudedV1 = res.newV1;
+                m_extrudedFrontEdges = res.newFrontEdges;
+                for (const auto& kv : res.origToNew) {
+                    ExtrudedVertexDragInfo info;
+                    info.origV = kv.first;
+                    info.newV = kv.second;
+                    info.initialWorldPos = getVertWorld(kv.first);
+                    info.weldTarget = -1;
+                    m_extrudedVerts.push_back(info);
+                }
+                if (res.origToNew.count(m_dragEdgeV0)) m_extrudedV0 = res.origToNew[m_dragEdgeV0];
+                if (res.origToNew.count(m_dragEdgeV1)) m_extrudedV1 = res.origToNew[m_dragEdgeV1];
             } else {
                 m_dragMode = DragMode::None;
             }
@@ -695,87 +901,101 @@ bool QuadDrawTool::handleMouseMove(
         return true;
     }
 
-    if (m_dragMode == DragMode::ExtrudeDrag && m_retopoMesh && m_extrudedV0 != -1 && m_extrudedV1 != -1) {
+    if (m_dragMode == DragMode::ExtrudeDrag && m_retopoMesh && !m_extrudedVerts.empty()) {
         SnapResult snap = m_snapper.RaycastSurface(camera, m_targetMesh, mouseX, mouseY);
         glm::vec3 targetPos = snap.valid ? snap.worldPos : camera.unproject(mouseX, mouseY, m_dragEdgeScreenZ);
-
         glm::vec3 offset = targetPos - m_dragStartWorldPos;
 
-        glm::vec3 newPos0 = m_dragEdgeInitialPos0 + offset;
-        glm::vec3 newPos1 = m_dragEdgeInitialPos1 + offset;
-
-        if (m_targetMesh && m_targetMesh->nbFaces > 0) {
-            // Snap newPos0 to target surface: camera line-of-sight first, then closest 3D point
-            glm::vec3 s0 = camera.project(newPos0);
-            SnapResult snap0;
-            if (s0.z > 0.0f && s0.z < 1.0f) {
-                snap0 = m_snapper.RaycastSurface(camera, m_targetMesh, s0.x, s0.y);
-            }
-            if (snap0.valid && glm::distance(snap0.worldPos, newPos0) < 100.0f) {
-                newPos0 = snap0.worldPos;
-            } else {
-                SnapResult sc0 = m_snapper.SnapClosestPoint(m_targetMesh, newPos0, 500.0f);
-                if (sc0.valid) newPos0 = sc0.worldPos;
-            }
-
-            // Snap newPos1 to target surface: camera line-of-sight first, then closest 3D point
-            glm::vec3 s1 = camera.project(newPos1);
-            SnapResult snap1;
-            if (s1.z > 0.0f && s1.z < 1.0f) {
-                snap1 = m_snapper.RaycastSurface(camera, m_targetMesh, s1.x, s1.y);
-            }
-            if (snap1.valid && glm::distance(snap1.worldPos, newPos1) < 100.0f) {
-                newPos1 = snap1.worldPos;
-            } else {
-                SnapResult sc1 = m_snapper.SnapClosestPoint(m_targetMesh, newPos1, 500.0f);
-                if (sc1.valid) newPos1 = sc1.worldPos;
-            }
+        std::unordered_set<int32_t> excludedWeldVerts;
+        for (const auto& ev : m_extrudedVerts) {
+            excludedWeldVerts.insert(ev.origV);
+            excludedWeldVerts.insert(ev.newV);
         }
 
-        m_builder.SetVertexPosition(m_retopoMesh, m_extrudedV0, newPos0);
-        m_builder.SetVertexPosition(m_retopoMesh, m_extrudedV1, newPos1);
+        // 1. Move vertices and snap to surface
+        for (auto& ev : m_extrudedVerts) {
+            glm::vec3 newPos = ev.initialWorldPos + offset;
 
-        // Check weld candidates
-        glm::vec3 sPos0 = camera.project(newPos0);
-        glm::vec3 sPos1 = camera.project(newPos1);
-        int32_t weld0 = m_snapper.FindNearestRetopoVertex(
-            camera, m_retopoMesh, sPos0.x, sPos0.y, m_weldRadiusPixels, m_extrudedV0, m_targetMesh
-        );
-        if (weld0 == m_dragEdgeV0 || weld0 == m_dragEdgeV1 || weld0 == m_extrudedV1) {
-            weld0 = -1;
+            if (m_targetMesh && m_targetMesh->nbFaces > 0) {
+                glm::vec3 s = camera.project(newPos);
+                SnapResult snapV;
+                if (s.z > 0.0f && s.z < 1.0f) {
+                    snapV = m_snapper.RaycastSurface(camera, m_targetMesh, s.x, s.y);
+                }
+                if (snapV.valid && glm::distance(snapV.worldPos, newPos) < 100.0f) {
+                    newPos = snapV.worldPos;
+                } else {
+                    SnapResult sc = m_snapper.SnapClosestPoint(m_targetMesh, newPos, 500.0f);
+                    if (sc.valid) newPos = sc.worldPos;
+                }
+            }
+
+            m_builder.SetVertexPosition(m_retopoMesh, ev.newV, newPos);
         }
-
-        int32_t weld1 = m_snapper.FindNearestRetopoVertex(
-            camera, m_retopoMesh, sPos1.x, sPos1.y, m_weldRadiusPixels, m_extrudedV1, m_targetMesh
-        );
-        if (weld1 == m_dragEdgeV0 || weld1 == m_dragEdgeV1 || weld1 == m_extrudedV0) {
-            weld1 = -1;
-        }
-
-        if (weld0 != -1 && weld0 == weld1) {
-            float d0 = (sPos0.x - mouseX) * (sPos0.x - mouseX) + (sPos0.y - mouseY) * (sPos0.y - mouseY);
-            float d1 = (sPos1.x - mouseX) * (sPos1.x - mouseX) + (sPos1.y - mouseY) * (sPos1.y - mouseY);
-            if (d0 < d1) weld1 = -1; else weld0 = -1;
-        }
-
-        m_extrudeWeldTarget0 = weld0;
-        m_extrudeWeldTarget1 = weld1;
 
         auto getVertWorld = [&](int32_t idx) -> glm::vec3 {
             glm::vec3 p(m_retopoMesh->verts[idx * 3], m_retopoMesh->verts[idx * 3 + 1], m_retopoMesh->verts[idx * 3 + 2]);
             return (m_retopoMesh->matrix != glm::mat4(1.0f)) ? glm::vec3(m_retopoMesh->matrix * glm::vec4(p, 1.0f)) : p;
         };
 
-        // Magnetic visual snap when near a weld candidate
-        if (m_extrudeWeldTarget0 != -1) {
-            newPos0 = getVertWorld(m_extrudeWeldTarget0);
-        }
-        if (m_extrudeWeldTarget1 != -1) {
-            newPos1 = getVertWorld(m_extrudeWeldTarget1);
+        // 2. Check weld candidates
+        std::unordered_map<int32_t, int> weldTargetToEvIdx;
+
+        for (size_t i = 0; i < m_extrudedVerts.size(); ++i) {
+            auto& ev = m_extrudedVerts[i];
+            glm::vec3 curPos(
+                m_retopoMesh->verts[ev.newV * 3 + 0],
+                m_retopoMesh->verts[ev.newV * 3 + 1],
+                m_retopoMesh->verts[ev.newV * 3 + 2]
+            );
+            glm::vec3 sPos = camera.project(curPos);
+
+            int32_t weld = m_snapper.FindNearestRetopoVertex(
+                camera, m_retopoMesh, sPos.x, sPos.y, m_weldRadiusPixels, ev.newV, m_targetMesh
+            );
+
+            if (weld != -1 && excludedWeldVerts.count(weld)) {
+                weld = -1;
+            }
+
+            ev.weldTarget = weld;
+
+            if (weld != -1) {
+                auto it = weldTargetToEvIdx.find(weld);
+                if (it != weldTargetToEvIdx.end()) {
+                    int otherIdx = it->second;
+                    glm::vec3 otherPos(
+                        m_retopoMesh->verts[m_extrudedVerts[otherIdx].newV * 3 + 0],
+                        m_retopoMesh->verts[m_extrudedVerts[otherIdx].newV * 3 + 1],
+                        m_retopoMesh->verts[m_extrudedVerts[otherIdx].newV * 3 + 2]
+                    );
+                    glm::vec3 targetWorld = getVertWorld(weld);
+                    if (glm::distance(curPos, targetWorld) < glm::distance(otherPos, targetWorld)) {
+                        m_extrudedVerts[otherIdx].weldTarget = -1;
+                        it->second = (int)i;
+                    } else {
+                        ev.weldTarget = -1;
+                    }
+                } else {
+                    weldTargetToEvIdx[weld] = (int)i;
+                }
+            }
         }
 
-        m_builder.SetVertexPosition(m_retopoMesh, m_extrudedV0, newPos0);
-        m_builder.SetVertexPosition(m_retopoMesh, m_extrudedV1, newPos1);
+        // 3. Magnetic visual snap to weld targets
+        for (auto& ev : m_extrudedVerts) {
+            if (ev.weldTarget != -1) {
+                glm::vec3 targetWorld = getVertWorld(ev.weldTarget);
+                m_builder.SetVertexPosition(m_retopoMesh, ev.newV, targetWorld);
+            }
+        }
+
+        m_extrudeWeldTarget0 = -1;
+        m_extrudeWeldTarget1 = -1;
+        for (const auto& ev : m_extrudedVerts) {
+            if (ev.newV == m_extrudedV0) m_extrudeWeldTarget0 = ev.weldTarget;
+            if (ev.newV == m_extrudedV1) m_extrudeWeldTarget1 = ev.weldTarget;
+        }
 
         m_lastMouseX = mouseX;
         m_lastMouseY = mouseY;
@@ -803,16 +1023,33 @@ bool QuadDrawTool::handleMouseUp(Scene& scene, const Camera& camera, int button)
                 m_builder.WeldVertices(m_retopoMesh, m_dragVertex, m_weldTargetVertex, &m_pinnedVertices);
             });
         }
-    } else if (m_dragMode == DragMode::ExtrudeDrag && m_retopoMesh && m_extrudedV0 != -1 && m_extrudedV1 != -1) {
-        if (m_extrudeWeldTarget0 != -1 || m_extrudeWeldTarget1 != -1) {
-            int32_t src0 = (m_extrudeWeldTarget0 != -1) ? m_extrudedV0 : -1;
-            int32_t tgt0 = m_extrudeWeldTarget0;
-            int32_t src1 = (m_extrudeWeldTarget1 != -1) ? m_extrudedV1 : -1;
-            int32_t tgt1 = m_extrudeWeldTarget1;
+    } else if (m_dragMode == DragMode::ExtrudeDrag && m_retopoMesh && !m_extrudedVerts.empty()) {
+        std::vector<std::pair<int32_t, int32_t>> welds;
+        for (const auto& ev : m_extrudedVerts) {
+            if (ev.weldTarget != -1 && ev.weldTarget != ev.newV) {
+                welds.push_back({ev.newV, ev.weldTarget});
+            }
+        }
 
-            g_undoManager.pushTopologyChange(scene, "Weld Extruded Vertex", [&]() {
-                m_builder.WeldVerticesPair(m_retopoMesh, src0, tgt0, src1, tgt1, &m_pinnedVertices);
+        std::vector<int32_t> outRemap;
+        if (!welds.empty()) {
+            g_undoManager.pushTopologyChange(scene, "Weld Extruded Vertices", [&]() {
+                m_builder.WeldVerticesMultiple(m_retopoMesh, welds, &m_pinnedVertices, &outRemap);
             });
+        }
+
+        // Update m_selectedEdges to the new front edges
+        m_selectedEdges.clear();
+        for (const auto& fe : m_extrudedFrontEdges) {
+            int32_t u = fe.first;
+            int32_t v = fe.second;
+            if (!outRemap.empty()) {
+                if (u >= 0 && u < (int32_t)outRemap.size()) u = outRemap[u];
+                if (v >= 0 && v < (int32_t)outRemap.size()) v = outRemap[v];
+            }
+            if (u != -1 && v != -1 && u != v) {
+                selectEdge(u, v);
+            }
         }
     } else if (m_dragMode == DragMode::ExtrudeVertexDrag && m_retopoMesh && m_extrudedSingleV != -1) {
         if (m_extrudeVertexWeldTarget != -1 && m_extrudeVertexWeldTarget != m_extrudedSingleV) {
@@ -848,6 +1085,8 @@ bool QuadDrawTool::handleMouseUp(Scene& scene, const Camera& camera, int button)
     m_extrudeWeldTarget1 = -1;
     m_extrudeVertexWeldTarget = -1;
     m_grabbedVerts.clear();
+    m_extrudedVerts.clear();
+    m_extrudedFrontEdges.clear();
     return true;
 }
 
@@ -869,13 +1108,21 @@ bool QuadDrawTool::handleKeyDown(Scene& scene, int keycode) {
         commitMultiCut(scene);
         return true;
     }
-    if (keycode == SDLK_BACKSPACE) {
+    if (keycode == SDLK_DELETE || keycode == SDLK_BACKSPACE) {
         if (!m_multiCutPoints.empty()) {
             m_multiCutPoints.pop_back();
             return true;
         }
+        if (!m_selectedEdges.empty()) {
+            deleteSelectedEdges(scene);
+            return true;
+        }
     }
     if (keycode == SDLK_ESCAPE) {
+        if (!m_selectedEdges.empty()) {
+            m_selectedEdges.clear();
+            return true;
+        }
         m_multiCutPoints.clear();
         m_hoverQuad.valid = false;
         m_hoverCut.valid = false;
@@ -956,7 +1203,12 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
             if (screenPts[i].z < 0.0f || screenPts[i].z > 1.0f) continue;
             ImVec2 p(screenPts[i].x, screenPts[i].y);
 
-            if (i == m_weldTargetVertex || i == m_extrudeWeldTarget0 || i == m_extrudeWeldTarget1 || i == m_extrudeVertexWeldTarget) {
+            bool isExtrudeWeld = false;
+            for (const auto& ev : m_extrudedVerts) {
+                if (ev.weldTarget == i) { isExtrudeWeld = true; break; }
+            }
+
+            if (i == m_weldTargetVertex || i == m_extrudeWeldTarget0 || i == m_extrudeWeldTarget1 || i == m_extrudeVertexWeldTarget || isExtrudeWeld) {
                 // Weld Target highlight: Pulsing red
                 drawList->AddCircleFilled(p, m_pointSize * 1.6f, IM_COL32(255, 30, 30, 240));
                 drawList->AddCircle(p, m_pointSize * 2.2f, IM_COL32(255, 255, 255, 220), 16, 2.0f);
@@ -965,6 +1217,10 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
                     // Extrudable corner vertex: Green highlight ring
                     drawList->AddCircleFilled(p, m_pointSize * 1.5f, IM_COL32(50, 255, 100, 255));
                     drawList->AddCircle(p, m_pointSize * 2.2f, IM_COL32(255, 255, 255, 220), 16, 2.0f);
+                } else if (m_subTool == QuadDrawSubTool::Delete || (ImGui::GetIO().KeyCtrl && ImGui::GetIO().KeyShift)) {
+                    // Hovered vertex in Delete mode: Red
+                    drawList->AddCircleFilled(p, m_pointSize * 1.5f, IM_COL32(255, 40, 40, 255));
+                    drawList->AddCircle(p, m_pointSize * 2.0f, IM_COL32(255, 255, 255, 200), 16, 1.5f);
                 } else {
                     // Hovered vertex: Yellow
                     drawList->AddCircleFilled(p, m_pointSize * 1.4f, IM_COL32(255, 230, 40, 255));
@@ -981,14 +1237,106 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
             }
         }
 
-        // Draw Highlighted Border Edge
-        if (m_hoverEdge.valid && m_subTool == QuadDrawSubTool::Extrude) {
+        const bool isDeleteMode = (m_subTool == QuadDrawSubTool::Delete || (ImGui::GetIO().KeyCtrl && ImGui::GetIO().KeyShift));
+
+        // Draw Selected Edges
+        if (!m_selectedEdges.empty()) {
+            bool isExtrudeHover = (!isDeleteMode && m_hoverEdge.valid && m_subTool == QuadDrawSubTool::Extrude && isEdgeSelected(m_hoverEdge.v0, m_hoverEdge.v1));
+
+            bool isDeleteHover = false;
+            if (isDeleteMode) {
+                if (m_hoverEdge.valid && isEdgeSelected(m_hoverEdge.v0, m_hoverEdge.v1)) {
+                    isDeleteHover = true;
+                } else if (m_hoverVertex != -1) {
+                    for (const auto& e : m_selectedEdges) {
+                        if (e.first == m_hoverVertex || e.second == m_hoverVertex) {
+                            isDeleteHover = true;
+                            break;
+                        }
+                    }
+                } else if (m_hoverPoly != -1 && m_hoverPoly < polyCount) {
+                    for (const auto& e : m_selectedEdges) {
+                        if (PolygonHasEdge(faces, m_hoverPoly, e.first, e.second)) {
+                            isDeleteHover = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            ImU32 selColor = IM_COL32(255, 150, 0, 255);
+            float selWidth = m_lineWidth * 2.8f;
+            if (isDeleteMode) {
+                if (isDeleteHover) {
+                    selColor = IM_COL32(255, 30, 30, 255);
+                    selWidth = m_lineWidth * 3.8f;
+                } else {
+                    selColor = IM_COL32(230, 60, 60, 240);
+                    selWidth = m_lineWidth * 3.0f;
+                }
+            } else if (isExtrudeHover) {
+                selColor = IM_COL32(255, 255, 120, 255);
+                selWidth = m_lineWidth * 3.5f;
+            }
+
+            for (const auto& e : m_selectedEdges) {
+                if (e.first < 0 || e.first >= ptCount || e.second < 0 || e.second >= ptCount) continue;
+                glm::vec3 s0 = screenPts[e.first];
+                glm::vec3 s1 = screenPts[e.second];
+                if (s0.z > 0.0f && s0.z < 1.0f && s1.z > 0.0f && s1.z < 1.0f) {
+                    drawList->AddLine(
+                        ImVec2(s0.x, s0.y), ImVec2(s1.x, s1.y),
+                        selColor, selWidth
+                    );
+                    drawList->AddCircleFilled(ImVec2(s0.x, s0.y), m_pointSize * 1.1f, selColor);
+                    drawList->AddCircleFilled(ImVec2(s1.x, s1.y), m_pointSize * 1.1f, selColor);
+                }
+            }
+        }
+
+        // Draw Highlighted Face (in Select or Delete mode)
+        if (m_hoverPoly != -1 && m_hoverPoly < polyCount && !m_hoverEdge.valid && m_hoverVertex == -1) {
+            uint32_t q[4] = { faces[m_hoverPoly * 4 + 0], faces[m_hoverPoly * 4 + 1], faces[m_hoverPoly * 4 + 2], faces[m_hoverPoly * 4 + 3] };
+            int numE = (q[3] != TRI_INDEX) ? 4 : 3;
+            ImVec2 polyScreen[4];
+            bool allFront = true;
+            for (int e = 0; e < numE; ++e) {
+                if (screenPts[q[e]].z < 0.0f || screenPts[q[e]].z > 1.0f) { allFront = false; break; }
+                polyScreen[e] = ImVec2(screenPts[q[e]].x, screenPts[q[e]].y);
+            }
+            if (allFront) {
+                if (m_subTool == QuadDrawSubTool::Select) {
+                    ImU32 fillCol = ImGui::GetIO().KeyAlt ? IM_COL32(255, 60, 60, 80) : IM_COL32(50, 220, 255, 80);
+                    ImU32 lineCol = ImGui::GetIO().KeyAlt ? IM_COL32(255, 80, 80, 220) : IM_COL32(80, 240, 255, 220);
+                    drawList->AddConvexPolyFilled(polyScreen, numE, fillCol);
+                    drawList->AddPolyline(polyScreen, numE, lineCol, ImDrawFlags_Closed, 2.0f);
+                } else if (isDeleteMode) {
+                    drawList->AddConvexPolyFilled(polyScreen, numE, IM_COL32(255, 40, 40, 90));
+                    drawList->AddPolyline(polyScreen, numE, IM_COL32(255, 60, 60, 220), ImDrawFlags_Closed, 2.5f);
+                }
+            }
+        }
+
+        // Draw Highlighted Edge
+        if (m_hoverEdge.valid && (m_subTool == QuadDrawSubTool::Extrude || m_subTool == QuadDrawSubTool::Select || isDeleteMode)) {
             glm::vec3 s0 = camera.project(m_hoverEdge.worldPos0);
             glm::vec3 s1 = camera.project(m_hoverEdge.worldPos1);
             if (s0.z > 0.0f && s1.z > 0.0f) {
+                ImU32 edgeColor = IM_COL32(255, 230, 40, 255);
+                if (m_subTool == QuadDrawSubTool::Select) {
+                    if (ImGui::GetIO().KeyAlt) {
+                        edgeColor = IM_COL32(255, 60, 60, 255);
+                    } else if (isEdgeSelected(m_hoverEdge.v0, m_hoverEdge.v1)) {
+                        edgeColor = IM_COL32(255, 200, 50, 255);
+                    } else {
+                        edgeColor = IM_COL32(50, 230, 255, 255);
+                    }
+                } else if (isDeleteMode) {
+                    edgeColor = IM_COL32(255, 40, 40, 255);
+                }
                 drawList->AddLine(
                     ImVec2(s0.x, s0.y), ImVec2(s1.x, s1.y),
-                    IM_COL32(255, 230, 40, 255), m_lineWidth * 2.5f
+                    edgeColor, m_lineWidth * 2.8f
                 );
             }
         }

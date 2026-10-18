@@ -24,7 +24,8 @@ enum class QuadDrawSubTool {
     MultiCut,           // Point-to-point and screen slice cut
     Delete,             // Component & loop deletion
     Grab,               // Soft move brush
-    Pin                 // Lock/freeze components
+    Pin,                // Lock/freeze components
+    Select              // Select border edges for extrude
 };
 
 enum class DragMode {
@@ -113,6 +114,17 @@ public:
     size_t getPinnedCount() const { return m_pinnedVertices.size(); }
     const std::unordered_set<uint32_t>& getPinnedVertices() const { return m_pinnedVertices; }
 
+    // Edge Selection
+    bool isEdgeSelected(int32_t v0, int32_t v1) const;
+    void selectEdge(int32_t v0, int32_t v1);
+    void deselectEdge(int32_t v0, int32_t v1);
+    void toggleEdgeSelection(int32_t v0, int32_t v1);
+    void clearSelectedEdges();
+    size_t getSelectedEdgeCount() const { return m_selectedEdges.size(); }
+    const std::vector<std::pair<int32_t, int32_t>>& getSelectedEdges() const { return m_selectedEdges; }
+    void pruneSelectedEdges();
+    void deleteSelectedEdges(Scene& scene);
+
     QuadDrawMeshBuilder& getBuilder() { return m_builder; }
     SurfaceSnapper& getSnapper() { return m_snapper; }
 
@@ -154,6 +166,7 @@ private:
     EdgeLoopResult m_hoverEdgeLoop;
     std::vector<int32_t> m_hoverPolyLoop;
     int32_t m_hoverVertex = -1;
+    int32_t m_hoverPoly = -1;
     int32_t m_weldTargetVertex = -1;
     int32_t m_extrudeWeldTarget0 = -1;
     int32_t m_extrudeWeldTarget1 = -1;
@@ -177,6 +190,16 @@ private:
     int32_t m_extrudeCornerV = -1;
     int32_t m_extrudeCornerVA = -1;
     int32_t m_extrudeCornerVB = -1;
+
+    struct ExtrudedVertexDragInfo {
+        int32_t origV = -1;
+        int32_t newV = -1;
+        glm::vec3 initialWorldPos{0.0f};
+        int32_t weldTarget = -1;
+    };
+    std::vector<ExtrudedVertexDragInfo> m_extrudedVerts;
+    std::vector<std::pair<int32_t, int32_t>> m_extrudedFrontEdges;
+    std::vector<std::pair<int32_t, int32_t>> m_selectedEdges;
 
     std::vector<GrabVertexInfo> m_grabbedVerts;
     glm::vec3 m_grabCenterWorld{0.0f};

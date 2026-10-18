@@ -222,86 +222,56 @@ bool QuadDrawMeshBuilder::SetVertexPosition(Mesh* mesh, int32_t index, const glm
 bool QuadDrawMeshBuilder::WeldVertices(
     Mesh* mesh, int32_t vSource, int32_t vTarget, std::unordered_set<uint32_t>* pinnedVertices
 ) {
-    if (!mesh || vSource == vTarget) return false;
-    int32_t ptCount = (int32_t)(mesh->verts.size() / 3);
-    int32_t polyCount = (int32_t)(mesh->faces.size() / 4);
-    if (vSource < 0 || vSource >= ptCount || vTarget < 0 || vTarget >= ptCount) return false;
-
-    // 1. Remap all polygon vertex indices from vSource to vTarget
-    for (int32_t i = 0; i < polyCount; ++i) {
-        for (int k = 0; k < 4; ++k) {
-            if (mesh->faces[i * 4 + k] == (uint32_t)vSource) {
-                mesh->faces[i * 4 + k] = (uint32_t)vTarget;
-            }
-        }
-    }
-
-    // 2. Clean degenerate polygons
-    std::vector<uint32_t> validFaces;
-    validFaces.reserve(mesh->faces.size());
-
-    for (int32_t i = 0; i < polyCount; ++i) {
-        uint32_t a = mesh->faces[i * 4 + 0];
-        uint32_t b = mesh->faces[i * 4 + 1];
-        uint32_t c = mesh->faces[i * 4 + 2];
-        uint32_t d = mesh->faces[i * 4 + 3];
-
-        if (d != TRI_INDEX) {
-            if (a == b) { a = b; b = c; c = d; d = TRI_INDEX; }
-            else if (b == c) { b = c; c = d; d = TRI_INDEX; }
-            else if (c == d) { d = TRI_INDEX; }
-            else if (d == a) { d = TRI_INDEX; }
-        }
-
-        if (d == TRI_INDEX) {
-            if (a == b || b == c || a == c) continue; // Degenerate triangle collapsed to edge/point
-        }
-
-        // Avoid duplicate faces
-        bool isDuplicate = false;
-        size_t numValid = validFaces.size() / 4;
-        for (size_t j = 0; j < numValid; ++j) {
-            if (validFaces[j * 4 + 0] == a && validFaces[j * 4 + 1] == b &&
-                validFaces[j * 4 + 2] == c && validFaces[j * 4 + 3] == d) {
-                isDuplicate = true;
-                break;
-            }
-        }
-        if (!isDuplicate) {
-            validFaces.push_back(a);
-            validFaces.push_back(b);
-            validFaces.push_back(c);
-            validFaces.push_back(d);
-        }
-    }
-    mesh->faces = std::move(validFaces);
-
-    if (pinnedVertices && pinnedVertices->count((uint32_t)vSource)) {
-        pinnedVertices->insert((uint32_t)vTarget);
-    }
-
-    return DeleteVertex(mesh, vSource, pinnedVertices);
+    if (!mesh || vSource == vTarget || vSource < 0 || vTarget < 0) return false;
+    return WeldVerticesMultiple(mesh, {{vSource, vTarget}}, pinnedVertices);
 }
 
-bool QuadDrawMeshBuilder::WeldVerticesPair(
-    Mesh* mesh, int32_t src0, int32_t tgt0, int32_t src1, int32_t tgt1, std::unordered_set<uint32_t>* pinnedVertices
+bool QuadDrawMeshBuilder::WeldVerticesMultiple(
+    Mesh* mesh,
+    const std::vector<std::pair<int32_t, int32_t>>& welds,
+    std::unordered_set<uint32_t>* pinnedVertices,
+    std::vector<int32_t>* outRemap
 ) {
-    if (!mesh) return false;
-    if (src0 == -1 && src1 == -1) return false;
-    if (src0 != -1 && src1 == -1) return WeldVertices(mesh, src0, tgt0, pinnedVertices);
-    if (src0 == -1 && src1 != -1) return WeldVertices(mesh, src1, tgt1, pinnedVertices);
-    if (src0 == src1 || tgt0 == src0 || tgt1 == src1) return false;
-
+    if (!mesh || welds.empty()) return false;
     int32_t ptCount = (int32_t)(mesh->verts.size() / 3);
     int32_t polyCount = (int32_t)(mesh->faces.size() / 4);
-    if (src0 < 0 || src0 >= ptCount || tgt0 < 0 || tgt0 >= ptCount) return false;
-    if (src1 < 0 || src1 >= ptCount || tgt1 < 0 || tgt1 >= ptCount) return false;
 
-    // 1. Remap both sources to targets
+    std::unordered_map<int32_t, int32_t> remap;
+    auto findRoot = [&](int32_t x) -> int32_t {
+        int32_t r = x;
+        while (remap.count(r)) {
+            r = remap[r];
+        }
+        int32_t curr = x;
+        while (remap.count(curr)) {
+            int32_t nxt = remap[curr];
+            remap[curr] = r;
+            curr = nxt;
+        }
+        return r;
+    };
+
+    for (const auto& w : welds) {
+        int32_t src = w.first;
+        int32_t tgt = w.second;
+        if (src < 0 || src >= ptCount || tgt < 0 || tgt >= ptCount) continue;
+        if (src == tgt) continue;
+        int32_t rSrc = findRoot(src);
+        int32_t rTgt = findRoot(tgt);
+        if (rSrc != rTgt) {
+            remap[rSrc] = rTgt;
+        }
+    }
+
+    if (remap.empty()) return false;
+
+    // 1. Remap all polygon vertices
     for (int32_t i = 0; i < polyCount; ++i) {
         for (int k = 0; k < 4; ++k) {
-            if (mesh->faces[i * 4 + k] == (uint32_t)src0) mesh->faces[i * 4 + k] = (uint32_t)tgt0;
-            if (mesh->faces[i * 4 + k] == (uint32_t)src1) mesh->faces[i * 4 + k] = (uint32_t)tgt1;
+            int32_t v = (int32_t)mesh->faces[i * 4 + k];
+            if (v != (int32_t)TRI_INDEX && remap.count(v)) {
+                mesh->faces[i * 4 + k] = (uint32_t)findRoot(v);
+            }
         }
     }
 
@@ -345,16 +315,55 @@ bool QuadDrawMeshBuilder::WeldVerticesPair(
     mesh->faces = std::move(validFaces);
 
     if (pinnedVertices) {
-        if (pinnedVertices->count((uint32_t)src0)) pinnedVertices->insert((uint32_t)tgt0);
-        if (pinnedVertices->count((uint32_t)src1)) pinnedVertices->insert((uint32_t)tgt1);
+        for (const auto& kv : remap) {
+            int32_t src = kv.first;
+            int32_t tgt = findRoot(src);
+            if (pinnedVertices->count((uint32_t)src)) {
+                pinnedVertices->insert((uint32_t)tgt);
+            }
+        }
     }
 
-    // Delete both vertices (delete higher index first so lower index doesn't shift!)
-    int32_t firstDel = std::max(src0, src1);
-    int32_t secondDel = std::min(src0, src1);
-    DeleteVertex(mesh, firstDel, pinnedVertices);
-    DeleteVertex(mesh, secondDel, pinnedVertices);
+    // 3. Delete all unique welded sources in descending order
+    std::vector<int32_t> toDelete;
+    for (const auto& kv : remap) {
+        toDelete.push_back(kv.first);
+    }
+    std::sort(toDelete.begin(), toDelete.end(), std::greater<int32_t>());
+    toDelete.erase(std::unique(toDelete.begin(), toDelete.end()), toDelete.end());
+
+    std::vector<int32_t> currentMap(ptCount);
+    for (int32_t i = 0; i < ptCount; ++i) {
+        currentMap[i] = remap.count(i) ? findRoot(i) : i;
+    }
+
+    for (int32_t delIdx : toDelete) {
+        DeleteVertex(mesh, delIdx, pinnedVertices);
+        for (int32_t& m : currentMap) {
+            if (m > delIdx) {
+                m--;
+            } else if (m == delIdx) {
+                m = -1;
+            }
+        }
+    }
+
+    if (outRemap) {
+        *outRemap = std::move(currentMap);
+    }
+
+    NotifyMeshUpdated(mesh);
     return true;
+}
+
+bool QuadDrawMeshBuilder::WeldVerticesPair(
+    Mesh* mesh, int32_t src0, int32_t tgt0, int32_t src1, int32_t tgt1, std::unordered_set<uint32_t>* pinnedVertices
+) {
+    std::vector<std::pair<int32_t, int32_t>> welds;
+    if (src0 != -1 && tgt0 != -1 && src0 != tgt0) welds.push_back({src0, tgt0});
+    if (src1 != -1 && tgt1 != -1 && src1 != tgt1) welds.push_back({src1, tgt1});
+    if (welds.empty()) return false;
+    return WeldVerticesMultiple(mesh, welds, pinnedVertices);
 }
 
 bool QuadDrawMeshBuilder::DeleteVertex(
@@ -500,6 +509,40 @@ bool QuadDrawMeshBuilder::DeleteSingleEdge(
     Mesh* mesh, int32_t v0, int32_t v1, std::unordered_set<uint32_t>* pinnedVertices
 ) {
     return DeleteEdge(mesh, v0, v1, pinnedVertices);
+}
+
+bool QuadDrawMeshBuilder::DeleteEdges(
+    Mesh* mesh, const std::vector<std::pair<int32_t, int32_t>>& edges, std::unordered_set<uint32_t>* pinnedVertices
+) {
+    if (!mesh || edges.empty()) return false;
+    int32_t polyCount = (int32_t)(mesh->faces.size() / 4);
+
+    std::unordered_set<int32_t> adjPolys;
+    for (const auto& e : edges) {
+        for (int32_t i = 0; i < polyCount; ++i) {
+            if (PolygonHasEdge(mesh->faces, i, e.first, e.second)) {
+                adjPolys.insert(i);
+            }
+        }
+    }
+
+    if (!adjPolys.empty()) {
+        std::vector<int32_t> polyList(adjPolys.begin(), adjPolys.end());
+        return DeletePolygons(mesh, polyList, pinnedVertices);
+    }
+
+    // Fallback if edges were unconnected: delete their vertices
+    std::unordered_set<int32_t> verts;
+    for (const auto& e : edges) {
+        verts.insert(e.first);
+        verts.insert(e.second);
+    }
+    std::vector<int32_t> vertList(verts.begin(), verts.end());
+    std::sort(vertList.begin(), vertList.end(), std::greater<int32_t>());
+    for (int32_t v : vertList) {
+        DeleteVertex(mesh, v, pinnedVertices);
+    }
+    return true;
 }
 
 bool QuadDrawMeshBuilder::DeletePolygon(
@@ -1379,6 +1422,134 @@ ExtrudeEdgeResult QuadDrawMeshBuilder::ExtrudeEdge(
     result.newV0 = newV0;
     result.newV1 = newV1;
     result.newPoly = (int32_t)(mesh->faces.size() / 4) - 1;
+    return result;
+}
+
+ExtrudeEdgesResult QuadDrawMeshBuilder::ExtrudeEdges(
+    Mesh* mesh, const std::vector<std::pair<int32_t, int32_t>>& edges, const glm::vec3& targetNormal
+) {
+    ExtrudeEdgesResult result;
+    if (!mesh || edges.empty()) return result;
+
+    int32_t ptCount = (int32_t)(mesh->verts.size() / 3);
+    int32_t polyCount = (int32_t)(mesh->faces.size() / 4);
+
+    auto getVertWorld = [&](int32_t idx) -> glm::vec3 {
+        glm::vec3 p(mesh->verts[idx * 3], mesh->verts[idx * 3 + 1], mesh->verts[idx * 3 + 2]);
+        return (mesh->matrix != glm::mat4(1.0f)) ? glm::vec3(mesh->matrix * glm::vec4(p, 1.0f)) : p;
+    };
+
+    // 1. Filter valid border edges and deduplicate
+    std::vector<std::pair<int32_t, int32_t>> validEdges;
+    std::unordered_set<uint64_t> seenKeys;
+    auto makeKey = [](int32_t a, int32_t b) -> uint64_t {
+        uint32_t u = (uint32_t)std::min(a, b);
+        uint32_t v = (uint32_t)std::max(a, b);
+        return ((uint64_t)u << 32) | (uint64_t)v;
+    };
+
+    for (const auto& e : edges) {
+        int32_t v0 = e.first;
+        int32_t v1 = e.second;
+        if (v0 < 0 || v0 >= ptCount || v1 < 0 || v1 >= ptCount || v0 == v1) continue;
+        uint64_t key = makeKey(v0, v1);
+        if (seenKeys.count(key)) continue;
+
+        int32_t count = 0;
+        for (int32_t p = 0; p < polyCount; ++p) {
+            if (PolygonHasEdge(mesh->faces, p, v0, v1)) count++;
+        }
+        if (count >= 2) continue; // Only border edges can be extruded
+
+        seenKeys.insert(key);
+        validEdges.push_back({v0, v1});
+    }
+
+    if (validEdges.empty()) return result;
+
+    // 2. Identify unique vertices among valid edges
+    std::vector<int32_t> uniqueOrigVerts;
+    std::unordered_set<int32_t> seenVerts;
+    for (const auto& e : validEdges) {
+        if (!seenVerts.count(e.first)) {
+            seenVerts.insert(e.first);
+            uniqueOrigVerts.push_back(e.first);
+        }
+        if (!seenVerts.count(e.second)) {
+            seenVerts.insert(e.second);
+            uniqueOrigVerts.push_back(e.second);
+        }
+    }
+
+    // 3. Add new vertices at initial positions
+    for (int32_t v : uniqueOrigVerts) {
+        glm::vec3 pos = getVertWorld(v);
+        int32_t newV = AddVertex(mesh, pos);
+        if (newV == -1) {
+            for (int32_t added : result.newVertices) {
+                DeleteVertex(mesh, added);
+            }
+            return ExtrudeEdgesResult();
+        }
+        result.origToNew[v] = newV;
+        result.newVertices.push_back(newV);
+    }
+
+    // 4. Create quad for each edge
+    for (const auto& e : validEdges) {
+        int32_t v0 = e.first;
+        int32_t v1 = e.second;
+        int32_t newV0 = result.origToNew[v0];
+        int32_t newV1 = result.origToNew[v1];
+
+        int32_t edgePolyCount = 0;
+        bool adjReversed = false;
+
+        for (int32_t i = 0; i < polyCount; ++i) {
+            if (PolygonHasEdge(mesh->faces, i, v0, v1)) {
+                edgePolyCount++;
+                uint32_t a = mesh->faces[i * 4 + 0];
+                uint32_t b = mesh->faces[i * 4 + 1];
+                uint32_t c = mesh->faces[i * 4 + 2];
+                uint32_t d = mesh->faces[i * 4 + 3];
+                bool isQuad = (d != TRI_INDEX);
+
+                if ((a == (uint32_t)v1 && b == (uint32_t)v0) ||
+                    (b == (uint32_t)v1 && c == (uint32_t)v0) ||
+                    (isQuad && c == (uint32_t)v1 && d == (uint32_t)v0) ||
+                    (isQuad && d == (uint32_t)v1 && a == (uint32_t)v0) ||
+                    (!isQuad && c == (uint32_t)v1 && a == (uint32_t)v0)) {
+                    adjReversed = true;
+                }
+            }
+        }
+
+        int32_t q0, q1, q2, q3;
+        if (edgePolyCount == 1) {
+            if (adjReversed) {
+                q0 = v0; q1 = v1; q2 = newV1; q3 = newV0;
+            } else {
+                q0 = v1; q1 = v0; q2 = newV0; q3 = newV1;
+            }
+        } else {
+            q0 = v0; q1 = v1; q2 = newV1; q3 = newV0;
+        }
+
+        if (AddQuad(mesh, q0, q1, q2, q3, targetNormal)) {
+            result.newPolygons.push_back((int32_t)(mesh->faces.size() / 4) - 1);
+            result.newFrontEdges.push_back({std::min(newV0, newV1), std::max(newV0, newV1)});
+        }
+    }
+
+    if (result.newPolygons.empty()) {
+        for (int32_t added : result.newVertices) {
+            DeleteVertex(mesh, added);
+        }
+        return ExtrudeEdgesResult();
+    }
+
+    result.valid = true;
+    NotifyMeshUpdated(mesh);
     return result;
 }
 

@@ -159,6 +159,14 @@ struct ExtrudeEdgeResult {
     int32_t newPoly = -1;
 };
 
+struct ExtrudeEdgesResult {
+    bool valid = false;
+    std::unordered_map<int32_t, int32_t> origToNew;
+    std::vector<int32_t> newVertices;
+    std::vector<int32_t> newPolygons;
+    std::vector<std::pair<int32_t, int32_t>> newFrontEdges;
+};
+
 struct ExtrudeVertexResult {
     bool valid = false;
     int32_t newVertex = -1;
@@ -191,12 +199,14 @@ public:
     bool SetVertexPosition(Mesh* mesh, int32_t index, const glm::vec3& worldPos);
     bool WeldVertices(Mesh* mesh, int32_t vSource, int32_t vTarget, std::unordered_set<uint32_t>* pinnedVertices = nullptr);
     bool WeldVerticesPair(Mesh* mesh, int32_t src0, int32_t tgt0, int32_t src1, int32_t tgt1, std::unordered_set<uint32_t>* pinnedVertices = nullptr);
+    bool WeldVerticesMultiple(Mesh* mesh, const std::vector<std::pair<int32_t, int32_t>>& welds, std::unordered_set<uint32_t>* pinnedVertices = nullptr, std::vector<int32_t>* outRemap = nullptr);
 
     // Deletion Operations
     bool DeleteVertex(Mesh* mesh, int32_t ptIndex, std::unordered_set<uint32_t>* pinnedVertices = nullptr);
     bool DeleteVertices(Mesh* mesh, const std::vector<int32_t>& ptIndices, std::unordered_set<uint32_t>* pinnedVertices = nullptr);
     bool DeleteEdge(Mesh* mesh, int32_t v0, int32_t v1, std::unordered_set<uint32_t>* pinnedVertices = nullptr);
     bool DeleteSingleEdge(Mesh* mesh, int32_t v0, int32_t v1, std::unordered_set<uint32_t>* pinnedVertices = nullptr);
+    bool DeleteEdges(Mesh* mesh, const std::vector<std::pair<int32_t, int32_t>>& edges, std::unordered_set<uint32_t>* pinnedVertices = nullptr);
     bool DeleteEdgeLoop(Mesh* mesh, const std::vector<LoopEdge>& loopEdges, std::unordered_set<uint32_t>* pinnedVertices = nullptr);
     bool DeletePolygon(Mesh* mesh, int32_t polyIndex, std::unordered_set<uint32_t>* pinnedVertices = nullptr);
     bool DeletePolygons(Mesh* mesh, const std::vector<int32_t>& polyIndices, std::unordered_set<uint32_t>* pinnedVertices = nullptr);
@@ -240,6 +250,7 @@ public:
 
     // Extrusion
     ExtrudeEdgeResult ExtrudeEdge(Mesh* mesh, int32_t v0, int32_t v1, const glm::vec3& pos0, const glm::vec3& pos1, const glm::vec3& targetNormal);
+    ExtrudeEdgesResult ExtrudeEdges(Mesh* mesh, const std::vector<std::pair<int32_t, int32_t>>& edges, const glm::vec3& targetNormal);
     bool CanExtrudeVertex(const Mesh* mesh, int32_t vCorner, int32_t* outNeighA = nullptr, int32_t* outNeighB = nullptr);
     ExtrudeVertexResult ExtrudeVertex(Mesh* mesh, int32_t vCorner, const glm::vec3& targetNormal, const glm::vec3& initialPos);
 

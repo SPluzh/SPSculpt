@@ -3199,7 +3199,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             "Multi-Cut",
                             "Delete",
                             "Grab Brush",
-                            "Pin Tool"
+                            "Pin Tool",
+                            "Select Edges"
                         };
                         int subToolIdx = (int)qd->getSubTool();
                         if (ImGui::Combo("SubTool", &subToolIdx, subTools, IM_ARRAYSIZE(subTools))) {
@@ -3209,7 +3210,43 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         if (qd->getSubTool() == retopo::QuadDrawSubTool::CreatePolygon) {
                             ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.5f, 1.0f), "Hover near 4 vertices to preview quad, LMB to create.");
                         } else if (qd->getSubTool() == retopo::QuadDrawSubTool::Extrude) {
-                            ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "LMB to place vertex. Drag border edge to extrude.");
+                            if (qd->getSelectedEdgeCount() > 0) {
+                                ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f), "%zu edge(s) selected: Drag any selected edge to extrude all.", qd->getSelectedEdgeCount());
+                                ImGui::SameLine();
+                                if (ImGui::SmallButton("Clear")) {
+                                    qd->clearSelectedEdges();
+                                }
+                            } else {
+                                ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "LMB to place vertex. Drag border edge to extrude.");
+                            }
+                        } else if (qd->getSubTool() == retopo::QuadDrawSubTool::Delete) {
+                            if (qd->getSelectedEdgeCount() > 0) {
+                                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%zu edge(s) selected: Click selection or press Delete button.", qd->getSelectedEdgeCount());
+                                if (ImGui::Button("Delete Selected Edges", ImVec2(-1, 0))) {
+                                    qd->deleteSelectedEdges(scene);
+                                }
+                                if (ImGui::Button("Clear Selection", ImVec2(-1, 0))) {
+                                    qd->clearSelectedEdges();
+                                }
+                            } else {
+                                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "LMB: Click edge, vertex or face to delete. Ctrl+Shift+LMB anywhere.");
+                            }
+                        } else if (qd->getSubTool() == retopo::QuadDrawSubTool::Select) {
+                            ImGui::TextColored(ImVec4(0.2f, 0.9f, 1.0f, 1.0f), "LMB: Select edge/face | Alt+LMB: Deselect | Ctrl+LMB: Loop");
+                            ImGui::Text("Selected edges: %zu", qd->getSelectedEdgeCount());
+                            if (qd->getSelectedEdgeCount() > 0) {
+                                if (ImGui::Button("Clear Selection")) {
+                                    qd->clearSelectedEdges();
+                                }
+                                ImGui::SameLine();
+                                if (ImGui::Button("Extrude Selection")) {
+                                    qd->setSubTool(retopo::QuadDrawSubTool::Extrude);
+                                }
+                                ImGui::SameLine();
+                                if (ImGui::Button("Delete Selection")) {
+                                    qd->deleteSelectedEdges(scene);
+                                }
+                            }
                         }
 
                         ImGui::Separator();
