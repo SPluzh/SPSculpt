@@ -128,6 +128,9 @@ public:
     const std::vector<std::pair<int32_t, int32_t>>& getSelectedEdges() const { return m_selectedEdges; }
     void pruneSelectedEdges();
     void deleteSelectedEdges(Scene& scene);
+    bool isVertexInSelectedEdges(int32_t v) const;
+    bool isPolygonInSelectedEdges(int32_t polyIdx) const;
+    bool isSelectionHovered() const;
 
     QuadDrawMeshBuilder& getBuilder() { return m_builder; }
     SurfaceSnapper& getSnapper() { return m_snapper; }
@@ -216,6 +219,24 @@ private:
     std::vector<ExtrudedVertexDragInfo> m_extrudedVerts;
     std::vector<std::pair<int32_t, int32_t>> m_extrudedFrontEdges;
     std::vector<std::pair<int32_t, int32_t>> m_selectedEdges;
+
+    struct TweakVertexInfo {
+        int32_t vertexIdx = -1;
+        glm::vec3 initialWorldPos{0.0f};
+        int32_t weldTarget = -1;
+    };
+    enum class TweakSource {
+        None = 0,
+        Selection,
+        Vertex,
+        Edge,
+        Polygon
+    };
+    TweakSource m_tweakSource = TweakSource::None;
+    int32_t m_tweakPoly = -1;
+    int32_t m_tweakEdgeV0 = -1;
+    int32_t m_tweakEdgeV1 = -1;
+    std::vector<TweakVertexInfo> m_tweakVerts;
 
     std::vector<GrabVertexInfo> m_grabbedVerts;
     glm::vec3 m_grabCenterWorld{0.0f};

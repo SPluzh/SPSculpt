@@ -3221,6 +3221,16 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             } else {
                                 ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "LMB to place vertex. Drag border edge to extrude.");
                             }
+                        } else if (qd->getSubTool() == retopo::QuadDrawSubTool::Tweak) {
+                            if (qd->getSelectedEdgeCount() > 0) {
+                                ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f), "%zu edge(s) selected: Drag selection, or drag any vertex/edge/face to move.", qd->getSelectedEdgeCount());
+                                ImGui::SameLine();
+                                if (ImGui::SmallButton("Clear")) {
+                                    qd->clearSelectedEdges();
+                                }
+                            } else {
+                                ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "LMB Drag: Move selection, edge, polygon, or vertex with auto-weld.");
+                            }
                         } else if (qd->getSubTool() == retopo::QuadDrawSubTool::Delete) {
                             if (qd->getSelectedEdgeCount() > 0) {
                                 ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%zu edge(s) selected: Click selection or press Delete button.", qd->getSelectedEdgeCount());
@@ -3243,6 +3253,10 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                 ImGui::SameLine();
                                 if (ImGui::Button("Extrude Selection")) {
                                     qd->setSubTool(retopo::QuadDrawSubTool::Extrude);
+                                }
+                                ImGui::SameLine();
+                                if (ImGui::Button("Move Selection")) {
+                                    qd->setSubTool(retopo::QuadDrawSubTool::Tweak);
                                 }
                                 ImGui::SameLine();
                                 if (ImGui::Button("Delete Selection")) {
