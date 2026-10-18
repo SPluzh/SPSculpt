@@ -36,22 +36,68 @@ bool TrimTool::execute(
     sculpt_log("[MANIFOLD CSG] Start Operation: %s on Mesh (verts: %d, faces: %d, lasso: %zu pts, sym: %d)\n",
                isAlt ? "TRIM_KEEP_INSIDE" : "TRIM_CUT_OUT", inVerts, inFaces, lassoPoints.size(), useSym ? 1 : 0);
 
-    // 1. Allocate a new unique PolyGroup ID for cut cap faces
-    uint32_t newCapGid = mesh->getNextFreeGroupID();
-    if (newCapGid == 0) newCapGid = 1;
-
-    // 2. Convert source mesh to Manifold
-    manifold::Manifold target = sculpt::ManifoldBridge::fromMesh(*mesh);
-    if (target.IsEmpty() || target.Status() != manifold::Manifold::Error::NoError) {
-        sculpt_log("[TrimTool] Failed to convert mesh to valid Manifold. Status: %d\n", (int)target.Status());
-        return false;
-    }
-
-    // 3. Compute local bounding box and average edge length for regular cutter grid
+    // 1. Compute local bounding box and average edge length for regular cutter grid
     float bbox[6] = {0};
     mesh->computeBbox(bbox);
     glm::vec3 bMin(bbox[0], bbox[1], bbox[2]);
     glm::vec3 bMax(bbox[3], bbox[4], bbox[5]);
+
+    // Fast screen AABB early-out check before expensive fromMesh conversion
+    float lassoMinX = 1e9f, lassoMinY = 1e9f, lassoMaxX = -1e9f, lassoMaxY = -1e9f;
+    for (const auto& pt : lassoPoints) {
+        lassoMinX = std::min(lassoMinX, pt.x);
+        lassoMinY = std::min(lassoMinY, pt.y);
+        lassoMaxX = std::max(lassoMaxX, pt.x);
+        lassoMaxY = std::max(lassoMaxY, pt.y);
+    }
+
+    glm::vec3 corners[8] = {
+        {bMin.x, bMin.y, bMin.z}, {bMax.x, bMin.y, bMin.z},
+        {bMax.x, bMax.y, bMin.z}, {bMin.x, bMax.y, bMin.z},
+        {bMin.x, bMin.y, bMax.z}, {bMax.x, bMin.y, bMax.z},
+        {bMax.x, bMax.y, bMax.z}, {bMin.x, bMax.y, bMax.z}
+    };
+
+    std::vector<glm::vec3> scaleList = {{1.0f, 1.0f, 1.0f}};
+    if (useSym && !symScales.empty()) {
+        for (const auto& s : symScales) {
+            scaleList.push_back(s);
+        }
+    }
+
+    bool anyBehindCamera = false;
+    float meshScrMinX = 1e9f, meshScrMinY = 1e9f, meshScrMaxX = -1e9f, meshScrMaxY = -1e9f;
+    glm::mat4 w2s = camera.computeWorldToScreenMatrix();
+    float camH = (float)camera.getHeight();
+
+    for (const auto& s : scaleList) {
+        glm::mat4 modelMat = mesh->matrix * glm::scale(glm::mat4(1.0f), s);
+        for (int k = 0; k < 8; ++k) {
+            glm::vec4 wPos = modelMat * glm::vec4(corners[k], 1.0f);
+            glm::vec4 scr = w2s * wPos;
+            if (scr.w <= 0.001f) {
+                anyBehindCamera = true;
+                break;
+            }
+            float sx = scr.x / scr.w;
+            float sy = camH - (scr.y / scr.w);
+            meshScrMinX = std::min(meshScrMinX, sx);
+            meshScrMaxX = std::max(meshScrMaxX, sx);
+            meshScrMinY = std::min(meshScrMinY, sy);
+            meshScrMaxY = std::max(meshScrMaxY, sy);
+        }
+        if (anyBehindCamera) break;
+    }
+
+    if (!anyBehindCamera) {
+        const float marginPx = 5.0f;
+        if (lassoMaxX < meshScrMinX - marginPx || lassoMinX > meshScrMaxX + marginPx ||
+            lassoMaxY < meshScrMinY - marginPx || lassoMinY > meshScrMaxY + marginPx) {
+            sculpt_log("[TrimTool] Early out: Lasso Screen AABB [%.1f, %.1f - %.1f, %.1f] does not intersect Mesh Screen AABB [%.1f, %.1f - %.1f, %.1f]\n",
+                       lassoMinX, lassoMinY, lassoMaxX, lassoMaxY, meshScrMinX, meshScrMinY, meshScrMaxX, meshScrMaxY);
+            return false;
+        }
+    }
 
     float sumEdgeLen = 0.0f;
     int edgeSampleCount = 0;
@@ -82,6 +128,17 @@ bool TrimTool::execute(
     sculpt_log("[TrimTool] Mesh BBox: [%.2f, %.2f, %.2f] to [%.2f, %.2f, %.2f] (size: [%.2f, %.2f, %.2f]), targetEdgeLen: %.3f mm\n",
                bMin.x, bMin.y, bMin.z, bMax.x, bMax.y, bMax.z,
                bMax.x - bMin.x, bMax.y - bMin.y, bMax.z - bMin.z, targetEdgeLen);
+
+    // 2. Allocate a new unique PolyGroup ID for cut cap faces
+    uint32_t newCapGid = mesh->getNextFreeGroupID();
+    if (newCapGid == 0) newCapGid = 1;
+
+    // 3. Convert source mesh to Manifold
+    manifold::Manifold target = sculpt::ManifoldBridge::fromMesh(*mesh);
+    if (target.IsEmpty() || target.Status() != manifold::Manifold::Error::NoError) {
+        sculpt_log("[TrimTool] Failed to convert mesh to valid Manifold. Status: %d\n", (int)target.Status());
+        return false;
+    }
 
     // 4. Build 3D cutter prism in mesh local space with regular quad grid
     glm::mat4 invMeshMatrix = glm::inverse(mesh->matrix);
@@ -143,9 +200,9 @@ bool TrimTool::execute(
     sculpt_log("[MANIFOLD CSG] Boolean %s completed in %.2f ms: %d -> %d verts, %d -> %d tris (status: %d)\n",
                isAlt ? "Intersection (Alt)" : "Difference", csgMs, inVerts, outVerts, inFaces, outTris, (int)result.Status());
 
-    // 6. Convert Manifold result back to Mesh
+    // 6. Convert Manifold result back to Mesh (skip postInit, QuadCapGenerator will do final postInit)
     mesh->hasCustomNormals = false;
-    sculpt::ManifoldBridge::toMesh(result, *mesh, true, cutterOrigID, newCapGid);
+    sculpt::ManifoldBridge::toMesh(result, *mesh, false, cutterOrigID, newCapGid);
     mesh->isTube = false;
     mesh->tubeData = nullptr;
     mesh->isPrimitive = false;
@@ -153,6 +210,9 @@ bool TrimTool::execute(
 
     // 7. Generate Nomad Sculpt-style regular quad cap with CDT transition belt
     sculpt::QuadCapResult capRes = sculpt::QuadCapGenerator::generateQuadCap(*mesh, newCapGid, targetEdgeLen);
+
+    // 8. Synchronize sculpt layer stack with the new vertex count
+    mesh->layerStack.onRemesh(mesh->verts);
 
     auto tTotalEnd = std::chrono::high_resolution_clock::now();
     double totalMs = std::chrono::duration<double, std::milli>(tTotalEnd - tTotalStart).count();

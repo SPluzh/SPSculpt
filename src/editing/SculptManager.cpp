@@ -3728,7 +3728,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                            m_trimLassoPoints.front().x, m_trimLassoPoints.front().y,
                            m_trimLassoPoints.back().x, m_trimLassoPoints.back().y);
 
-                scene.pushHistoryState();
+                HistoryState beforeState = scene.saveCurrentState(true);
                 TrimConfig config;
                 bool modified = TrimTool::execute(
                     mesh,
@@ -3742,6 +3742,8 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 );
 
                 if (modified) {
+                    HistoryState afterState = scene.saveCurrentState(true);
+                    g_undoManager.pushTopologyChange(scene, "Trim", std::move(beforeState), std::move(afterState));
                     scene.setModified(true);
                     sculpt_log("[TrimLasso] TrimTool execution modified the mesh successfully.\n");
                 } else {

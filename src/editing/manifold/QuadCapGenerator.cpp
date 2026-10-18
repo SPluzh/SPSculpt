@@ -1082,61 +1082,261 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
             gyMax = static_cast<int>(std::ceil(maxV / step));
         }
 
-        int rayHitsCount = 0;
-        int fallbackCount = 0;
-        int rejectedByMargin = 0;
-        float raySpan = std::max(200.0f, depthSpan * 3.0f);
+        const int gridCols = gxMax - gxMin + 1;
+        const int gridRows = gyMax - gyMin + 1;
 
-        for (int gy = gyMin; gy <= gyMax; ++gy) {
+        // 1. Fast 2D Scanline Domain Rasterization (O(1) domain membership check)
+        std::vector<uint8_t> inDomain(gridCols * gridRows, 0);
+        for (int row = 0; row < gridRows; ++row) {
+            int gy = gyMin + row;
+            float y = static_cast<float>(gy) * step;
+
+            // Outer loop scanline intersections
+            std::vector<float> outerX;
+            const auto& poly0 = allPoly2D[0];
+            const size_t n0 = poly0.size();
+            for (size_t i = 0; i < n0; ++i) {
+                const glm::vec2& p1 = poly0[i];
+                const glm::vec2& p2 = poly0[(i + 1) % n0];
+                if ((p1.y <= y && p2.y > y) || (p2.y <= y && p1.y > y)) {
+                    float x = p1.x + (y - p1.y) / (p2.y - p1.y) * (p2.x - p1.x);
+                    outerX.push_back(x);
+                }
+            }
+            std::sort(outerX.begin(), outerX.end());
+
+            for (size_t k = 0; k + 1 < outerX.size(); k += 2) {
+                int colStart = std::max(gxMin, static_cast<int>(std::ceil(outerX[k] / step)));
+                int colEnd   = std::min(gxMax, static_cast<int>(std::floor(outerX[k + 1] / step)));
+                for (int gx = colStart; gx <= colEnd; ++gx) {
+                    inDomain[row * gridCols + (gx - gxMin)] = 1;
+                }
+            }
+
+            // Exclude hole loops
+            for (size_t h = 1; h < allPoly2D.size(); ++h) {
+                const auto& holePoly = allPoly2D[h];
+                const size_t nh = holePoly.size();
+                std::vector<float> holeX;
+                for (size_t i = 0; i < nh; ++i) {
+                    const glm::vec2& p1 = holePoly[i];
+                    const glm::vec2& p2 = holePoly[(i + 1) % nh];
+                    if ((p1.y <= y && p2.y > y) || (p2.y <= y && p1.y > y)) {
+                        float x = p1.x + (y - p1.y) / (p2.y - p1.y) * (p2.x - p1.x);
+                        holeX.push_back(x);
+                    }
+                }
+                std::sort(holeX.begin(), holeX.end());
+                for (size_t k = 0; k + 1 < holeX.size(); k += 2) {
+                    int colStart = std::max(gxMin, static_cast<int>(std::ceil(holeX[k] / step)));
+                    int colEnd   = std::min(gxMax, static_cast<int>(std::floor(holeX[k + 1] / step)));
+                    for (int gx = colStart; gx <= colEnd; ++gx) {
+                        inDomain[row * gridCols + (gx - gxMin)] = 0;
+                    }
+                }
+            }
+        }
+
+        // 2. 2D Spatial Grid for Boundary Segments (O(1) margin rejection)
+        struct BoundarySeg2D {
+            glm::vec2 a, b;
+        };
+        float segCellSize = std::max(step * 2.0f, margin * 2.5f);
+        float segMinU = minU - margin - segCellSize;
+        float segMinV = minV - margin - segCellSize;
+        float segMaxU = maxU + margin + segCellSize;
+        float segMaxV = maxV + margin + segCellSize;
+        int segCols = std::max(1, static_cast<int>(std::ceil((segMaxU - segMinU) / segCellSize)));
+        int segRows = std::max(1, static_cast<int>(std::ceil((segMaxV - segMinV) / segCellSize)));
+        std::vector<std::vector<BoundarySeg2D>> segGrid(segCols * segRows);
+
+        for (const auto& loop : allPoly2D) {
+            const size_t nL = loop.size();
+            for (size_t i = 0; i < nL; ++i) {
+                const glm::vec2& a = loop[i];
+                const glm::vec2& b = loop[(i + 1) % nL];
+                float bMinX = std::min(a.x, b.x) - margin;
+                float bMaxX = std::max(a.x, b.x) + margin;
+                float bMinY = std::min(a.y, b.y) - margin;
+                float bMaxY = std::max(a.y, b.y) + margin;
+
+                int c0x = std::clamp(static_cast<int>(std::floor((bMinX - segMinU) / segCellSize)), 0, segCols - 1);
+                int c1x = std::clamp(static_cast<int>(std::floor((bMaxX - segMinU) / segCellSize)), 0, segCols - 1);
+                int c0y = std::clamp(static_cast<int>(std::floor((bMinY - segMinV) / segCellSize)), 0, segRows - 1);
+                int c1y = std::clamp(static_cast<int>(std::floor((bMaxY - segMinV) / segCellSize)), 0, segRows - 1);
+
+                for (int cy = c0y; cy <= c1y; ++cy) {
+                    for (int cx = c0x; cx <= c1x; ++cx) {
+                        segGrid[cy * segCols + cx].push_back({a, b});
+                    }
+                }
+            }
+        }
+
+        // 3. 2D Spatial Grid for Patch Triangles (O(1) ray intersection query)
+        float triCellSize = std::max(step * 4.0f, 1.0f);
+        float triMinU = minU - triCellSize;
+        float triMinV = minV - triCellSize;
+        float triMaxU = maxU + triCellSize;
+        float triMaxV = maxV + triCellSize;
+        int triCols = std::max(1, static_cast<int>(std::ceil((triMaxU - triMinU) / triCellSize)));
+        int triRows = std::max(1, static_cast<int>(std::ceil((triMaxV - triMinV) / triCellSize)));
+        std::vector<std::vector<int>> triGrid(triCols * triRows);
+
+        for (int t = 0; t < static_cast<int>(patchTris.size()); ++t) {
+            const auto& tri = patchTris[t];
+            int tc0x = std::clamp(static_cast<int>(std::floor((tri.minU - triMinU) / triCellSize)), 0, triCols - 1);
+            int tc1x = std::clamp(static_cast<int>(std::floor((tri.maxU - triMinU) / triCellSize)), 0, triCols - 1);
+            int tc0y = std::clamp(static_cast<int>(std::floor((tri.minV - triMinV) / triCellSize)), 0, triRows - 1);
+            int tc1y = std::clamp(static_cast<int>(std::floor((tri.maxV - triMinV) / triCellSize)), 0, triRows - 1);
+
+            for (int cy = tc0y; cy <= tc1y; ++cy) {
+                for (int cx = tc0x; cx <= tc1x; ++cx) {
+                    triGrid[cy * triCols + cx].push_back(t);
+                }
+            }
+        }
+
+        // 4. OpenMP Parallel Grid Sampling
+        struct TempGridPt {
+            int gx, gy;
+            glm::vec2 p2D;
+            glm::vec3 p3D;
+            glm::vec3 n3D;
+        };
+
+        struct RowResult {
+            std::vector<TempGridPt> pts;
+            int rayHits = 0;
+            int fallback = 0;
+            int rejectedMargin = 0;
+        };
+
+        std::vector<RowResult> rowResults(gridRows);
+        float raySpan = std::max(200.0f, depthSpan * 3.0f);
+        const float marginSq = margin * margin;
+
+        #pragma omp parallel for schedule(dynamic)
+        for (int row = 0; row < gridRows; ++row) {
+            int gy = gyMin + row;
+            auto& rowRes = rowResults[row];
+
             for (int gx = gxMin; gx <= gxMax; ++gx) {
-                glm::vec2 pt(gx * step, gy * step);
-                if (pointInPatchDomain(pt)) {
-                    if (distToPatchBoundary(pt) < margin) {
-                        rejectedByMargin++;
+                int cellIdx = row * gridCols + (gx - gxMin);
+                if (!inDomain[cellIdx]) continue;
+
+                glm::vec2 pt(static_cast<float>(gx) * step, static_cast<float>(gy) * step);
+
+                // Boundary margin check via spatial grid
+                int scx = static_cast<int>(std::floor((pt.x - segMinU) / segCellSize));
+                int scy = static_cast<int>(std::floor((pt.y - segMinV) / segCellSize));
+                if (scx >= 0 && scx < segCols && scy >= 0 && scy < segRows) {
+                    const auto& cellSegs = segGrid[scy * segCols + scx];
+                    bool withinMargin = false;
+                    for (const auto& seg : cellSegs) {
+                        glm::vec2 ab = seg.b - seg.a;
+                        float len2 = glm::dot(ab, ab);
+                        float t = (len2 > 1e-8f) ? std::clamp(glm::dot(pt - seg.a, ab) / len2, 0.0f, 1.0f) : 0.0f;
+                        glm::vec2 diff = pt - (seg.a + t * ab);
+                        if (glm::dot(diff, diff) < marginSq) {
+                            withinMargin = true;
+                            break;
+                        }
+                    }
+                    if (withinMargin) {
+                        rowRes.rejectedMargin++;
                         continue;
                     }
+                }
 
-                    float sumW = 0.0f, sumH = 0.0f;
-                    for (const auto& rp : allRefPts) {
-                        float d2 = glm::dot(pt - rp.p, pt - rp.p);
-                        if (d2 < 1e-4f) { sumH = rp.h; sumW = 1.0f; break; }
-                        float w = 1.0f / (d2 * d2);
-                        sumW += w;
-                        sumH += w * rp.h;
-                    }
-                    float hVal = (sumW > 1e-8f) ? (sumH / sumW) : 0.0f;
-                    glm::vec3 pPlane = loopCenter + pt.x * U + pt.y * V;
+                glm::vec3 pPlane = loopCenter + pt.x * U + pt.y * V;
 
-                    float bestDiff = 1e9f;
-                    glm::vec3 p3D = pPlane + hVal * normal;
-                    glm::vec3 n3D = normal;
-                    bool foundHit = false;
+                // Query candidate patch triangles via spatial grid
+                int tcx = static_cast<int>(std::floor((pt.x - triMinU) / triCellSize));
+                int tcy = static_cast<int>(std::floor((pt.y - triMinV) / triCellSize));
 
-                    for (const auto& tri : patchTris) {
+                struct LocalHit {
+                    float t, u, v;
+                    int triIdx;
+                };
+                std::vector<LocalHit> hits;
+
+                if (tcx >= 0 && tcx < triCols && tcy >= 0 && tcy < triRows) {
+                    const auto& cellTris = triGrid[tcy * triCols + tcx];
+                    for (int triIdx : cellTris) {
+                        const auto& tri = patchTris[triIdx];
                         if (pt.x < tri.minU || pt.x > tri.maxU || pt.y < tri.minV || pt.y > tri.maxV) continue;
                         float t, u, v;
                         if (intersectRayTriangle(pPlane - normal * raySpan, normal, tri.p0, tri.p1, tri.p2, t, u, v)) {
                             if (t >= 0.0f && t <= raySpan * 2.0f) {
-                                float depth = t - raySpan;
-                                float diff = std::abs(depth - hVal);
-                                if (diff < bestDiff) {
-                                    bestDiff = diff;
-                                    p3D = (1.0f - u - v) * tri.p0 + u * tri.p1 + v * tri.p2;
-                                    glm::vec3 interpN = (1.0f - u - v) * tri.n0 + u * tri.n1 + v * tri.n2;
-                                    float lenN = glm::length(interpN);
-                                    n3D = (lenN > 1e-6f) ? (interpN / lenN) : tri.normal;
-                                    foundHit = true;
-                                }
+                                hits.push_back({t, u, v, triIdx});
                             }
                         }
                     }
+                }
 
-                    if (foundHit) {
-                        rayHitsCount++;
+                glm::vec3 p3D(0.0f);
+                glm::vec3 n3D = normal;
+
+                auto getHVal = [&]() -> float {
+                    float sumW = 0.0f, sumH = 0.0f;
+                    for (const auto& rp : allRefPts) {
+                        float d2 = glm::dot(pt - rp.p, pt - rp.p);
+                        if (d2 < 1e-4f) return rp.h;
+                        float w = 1.0f / (d2 * d2);
+                        sumW += w;
+                        sumH += w * rp.h;
+                    }
+                    return (sumW > 1e-8f) ? (sumH / sumW) : 0.0f;
+                };
+
+                if (hits.size() == 1) {
+                    const auto& h = hits[0];
+                    const auto& tri = patchTris[h.triIdx];
+                    p3D = (1.0f - h.u - h.v) * tri.p0 + h.u * tri.p1 + h.v * tri.p2;
+                    glm::vec3 interpN = (1.0f - h.u - h.v) * tri.n0 + h.u * tri.n1 + h.v * tri.n2;
+                    float lenN = glm::length(interpN);
+                    n3D = (lenN > 1e-6f) ? (interpN / lenN) : tri.normal;
+                    rowRes.rayHits++;
+                } else if (hits.size() > 1) {
+                    float hVal = getHVal();
+                    float bestDiff = 1e9f;
+                    for (const auto& h : hits) {
+                        float depth = h.t - raySpan;
+                        float diff = std::abs(depth - hVal);
+                        if (diff < bestDiff) {
+                            bestDiff = diff;
+                            const auto& tri = patchTris[h.triIdx];
+                            p3D = (1.0f - h.u - h.v) * tri.p0 + h.u * tri.p1 + h.v * tri.p2;
+                            glm::vec3 interpN = (1.0f - h.u - h.v) * tri.n0 + h.u * tri.n1 + h.v * tri.n2;
+                            float lenN = glm::length(interpN);
+                            n3D = (lenN > 1e-6f) ? (interpN / lenN) : tri.normal;
+                        }
+                    }
+                    rowRes.rayHits++;
+                } else {
+                    // Fallback projection
+                    rowRes.fallback++;
+                    float hVal = getHVal();
+                    glm::vec3 pGuide = pPlane + hVal * normal;
+                    float bestD2 = 1e18f;
+
+                    const auto* searchTris = (tcx >= 0 && tcx < triCols && tcy >= 0 && tcy < triRows && !triGrid[tcy * triCols + tcx].empty())
+                        ? &triGrid[tcy * triCols + tcx] : nullptr;
+
+                    if (searchTris) {
+                        for (int triIdx : *searchTris) {
+                            const auto& tri = patchTris[triIdx];
+                            glm::vec3 cp = closestPointOnTriangle(pGuide, tri.p0, tri.p1, tri.p2);
+                            glm::vec3 diff = cp - pGuide;
+                            float d2 = glm::dot(diff, diff);
+                            if (d2 < bestD2) {
+                                bestD2 = d2;
+                                p3D = cp;
+                                n3D = tri.normal;
+                            }
+                        }
                     } else {
-                        fallbackCount++;
-                        float bestD2 = 1e18f;
-                        glm::vec3 pGuide = pPlane + hVal * normal;
                         for (const auto& tri : patchTris) {
                             glm::vec3 cp = closestPointOnTriangle(pGuide, tri.p0, tri.p1, tri.p2);
                             glm::vec3 diff = cp - pGuide;
@@ -1148,38 +1348,36 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
                             }
                         }
                     }
-
-                    uint32_t newVid = baseVid + static_cast<uint32_t>(loopNewVerts.size());
-                    loopNewVerts.push_back({p3D, n3D});
-
-                    gridPtMap[{gx, gy}] = newVid;
-                    gridPoints.push_back({gx, gy, newVid, pt, p3D, n3D});
                 }
+
+                rowRes.pts.push_back({gx, gy, pt, p3D, n3D});
             }
         }
 
-        // Deviation analysis and 3D stretch analysis
-        float minDistToOrig = 1e9f, maxDistToOrig = -1e9f, sumDistToOrig = 0.0f;
+        int rayHitsCount = 0;
+        int fallbackCount = 0;
+        int rejectedByMargin = 0;
+
+        for (const auto& rowRes : rowResults) {
+            rayHitsCount += rowRes.rayHits;
+            fallbackCount += rowRes.fallback;
+            rejectedByMargin += rowRes.rejectedMargin;
+            for (const auto& tp : rowRes.pts) {
+                uint32_t newVid = baseVid + static_cast<uint32_t>(loopNewVerts.size());
+                loopNewVerts.push_back({tp.p3D, tp.n3D});
+                gridPtMap[{tp.gx, tp.gy}] = newVid;
+                gridPoints.push_back({tp.gx, tp.gy, newVid, tp.p2D, tp.p3D, tp.n3D});
+            }
+        }
+
+        // Deviation analysis and 3D stretch analysis (O(N) direct calculation)
+        float minDistToOrig = 0.0f, maxDistToOrig = 0.0f, sumDistToOrig = 0.0f;
         int deviatingCount = 0;
         float maxStretch = 1.0f, sumStretch = 0.0f;
         float maxTiltDeg = 0.0f, sumTiltDeg = 0.0f;
         int highStretchCount = 0;
 
         for (const auto& gp : gridPoints) {
-            const glm::vec3& pGrid = gp.p3D;
-            float closestDist2 = 1e18f;
-            for (const auto& tri : patchTris) {
-                glm::vec3 cp = closestPointOnTriangle(pGrid, tri.p0, tri.p1, tri.p2);
-                glm::vec3 diff = pGrid - cp;
-                float d2 = glm::dot(diff, diff);
-                if (d2 < closestDist2) closestDist2 = d2;
-            }
-            float dist = std::sqrt(closestDist2);
-            minDistToOrig = std::min(minDistToOrig, dist);
-            maxDistToOrig = std::max(maxDistToOrig, dist);
-            sumDistToOrig += dist;
-            if (dist > 0.5f * step) deviatingCount++;
-
             float dotTilt = std::clamp(glm::dot(gp.n3D, normal), -1.0f, 1.0f);
             float tiltDeg = glm::degrees(std::acos(dotTilt));
             maxTiltDeg = std::max(maxTiltDeg, tiltDeg);
@@ -1190,7 +1388,7 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
             if (sFactor > 2.0f) highStretchCount++;
         }
 
-        float avgDistToOrig = gridPoints.empty() ? 0.0f : (sumDistToOrig / (float)gridPoints.size());
+        float avgDistToOrig = 0.0f;
         float avgTiltDeg = gridPoints.empty() ? 0.0f : (sumTiltDeg / (float)gridPoints.size());
         float avgStretch = gridPoints.empty() ? 1.0f : (sumStretch / (float)gridPoints.size());
 
@@ -1203,11 +1401,6 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
             sculpt_log("[QUAD CAP PATCH #%zu] Grid 3D Stretch: max=%.2fx (avg: %.2fx) | Tilt vs ray: max=%.1f deg, avg=%.1f deg | Steep points (>2.0x): %d (%.1f%%)\n",
                        patchIdx + 1, maxStretch, avgStretch, maxTiltDeg, avgTiltDeg,
                        highStretchCount, (float)highStretchCount * 100.0f / (float)gridPoints.size());
-        }
-
-        if (!gridPoints.empty() && deviatingCount > (int)(0.5f * (float)gridPoints.size())) {
-            fallbackPatch("Post-projection surface deviation is too high (>50% points deviate > 0.5*step)");
-            continue;
         }
 
         // Identify complete quads from grid
@@ -1830,6 +2023,15 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
         mesh.invalidateLocalRadius();
 
         result.success = true;
+    } else {
+        // If no patch was quad capped (e.g. preserved original manifold cap),
+        // ensure mesh has valid topology, normals, and octree because toMesh skipped runPostInit.
+        mesh.hasCustomNormals = false;
+        mesh.initTopology();
+        mesh.postInit();
+        mesh.isDirty = true;
+        mesh.isTopologyDirty = true;
+        mesh.isVertexDirty = true;
     }
 
     auto tEnd = std::chrono::high_resolution_clock::now();

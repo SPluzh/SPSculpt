@@ -341,6 +341,10 @@ void ManifoldBridge::toMesh(
         int tB = hB.triIdx;
         if (validTris[tA].gid != validTris[tB].gid) continue; // Keep polygroups separate
 
+        // Pruning: skip quadification for cap triangles if capGroupID is specified,
+        // since they will immediately be replaced by QuadCapGenerator.
+        if (capGroupID != 0 && validTris[tA].gid == capGroupID) continue;
+
         float dotN = glm::dot(validTris[tA].normal, validTris[tB].normal);
         if (dotN < 0.80f) continue; // Crease angle > ~36 deg
 
