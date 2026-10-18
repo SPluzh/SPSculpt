@@ -46,6 +46,9 @@ public:
     // Project a 3D point onto target mesh surface strictly along the given normal direction
     SnapResult ProjectPointAlongNormal(const Mesh* targetMesh, const glm::vec3& worldPoint, const glm::vec3& worldNormal, float maxDist = 500.0f);
 
+    // Snap a 3D point directly to the closest point on target surface
+    SnapResult SnapClosestPoint(const Mesh* targetMesh, const glm::vec3& worldPoint, float maxDist = 500.0f);
+
     // Find nearest retopo vertex in screen space (with depth sorting & target occlusion)
     int32_t FindNearestRetopoVertex(
         const Camera& camera, const Mesh* retopoMesh,
@@ -57,9 +60,10 @@ public:
     // Find nearest retopo edge in screen space within pixel distance
     EdgeHit FindNearestRetopoEdge(
         const Camera& camera, const Mesh* retopoMesh,
-        float screenX, float screenY, float maxRadiusPixels = 10.0f,
+        float screenX, float screenY, float maxRadiusPixels = 14.0f,
         const Mesh* targetMesh = nullptr,
-        const SnapResult* precomputedTargetSnap = nullptr
+        const SnapResult* precomputedTargetSnap = nullptr,
+        bool borderOnly = false
     );
 
     // Combined snap: checks retopo vertex first, then raycasts to target surface

@@ -53,7 +53,7 @@ SnapResult SurfaceSnapper::ProjectPointAlongNormal(
         return result;
 
     float normLen = glm::length(worldNormal);
-    if (normLen < 1e-4f) return result;
+    if (normLen < 1e-4f) return SnapClosestPoint(targetMesh, worldPoint, maxDist);
     glm::vec3 norm = worldNormal / normLen;
 
     if (m_bvh.NeedsRebuild(targetMesh)) {
@@ -86,6 +86,20 @@ SnapResult SurfaceSnapper::ProjectPointAlongNormal(
     }
 
     // Fallback: Closest point on mesh within maxDist
+    return SnapClosestPoint(targetMesh, worldPoint, maxDist);
+}
+
+SnapResult SurfaceSnapper::SnapClosestPoint(
+    const Mesh* targetMesh, const glm::vec3& worldPoint, float maxDist
+) {
+    SnapResult result;
+    if (!targetMesh || targetMesh->nbFaces == 0 || targetMesh->nbVerts == 0)
+        return result;
+
+    if (m_bvh.NeedsRebuild(targetMesh)) {
+        if (!m_bvh.Build(targetMesh)) return result;
+    }
+
     glm::vec3 closestPt{0.0f};
     glm::vec3 closestNorm{0.0f, 1.0f, 0.0f};
     if (m_bvh.FindClosestPoint(worldPoint, closestPt, closestNorm, maxDist)) {
@@ -164,7 +178,8 @@ EdgeHit SurfaceSnapper::FindNearestRetopoEdge(
     const Camera& camera, const Mesh* retopoMesh,
     float screenX, float screenY, float maxRadiusPixels,
     const Mesh* targetMesh,
-    const SnapResult* precomputedTargetSnap
+    const SnapResult* precomputedTargetSnap,
+    bool borderOnly
 ) {
     EdgeHit result;
     if (!retopoMesh || retopoMesh->nbFaces == 0 || retopoMesh->nbVerts == 0) return result;
@@ -181,7 +196,25 @@ EdgeHit SurfaceSnapper::FindNearestRetopoEdge(
         return hasTransform ? glm::vec3(mat * glm::vec4(p, 1.0f)) : p;
     };
 
+    // If borderOnly is requested, precompute edge face counts to filter out interior edges
+    std::unordered_map<uint64_t, int32_t> edgeFaceCounts;
+    if (borderOnly) {
+        for (int f = 0; f < numFaces; ++f) {
+            if (!retopoMesh->faceVisible.empty() && !retopoMesh->faceVisible[f]) continue;
+            uint32_t fv[4] = { faces[f * 4 + 0], faces[f * 4 + 1], faces[f * 4 + 2], faces[f * 4 + 3] };
+            int numE = (fv[3] != TRI_INDEX) ? 4 : 3;
+            for (int e = 0; e < numE; ++e) {
+                uint32_t eu = fv[e];
+                uint32_t ev = fv[(e + 1) % numE];
+                if (eu >= (uint32_t)numVerts || ev >= (uint32_t)numVerts) continue;
+                uint64_t k = (static_cast<uint64_t>(std::min(eu, ev)) << 32) | static_cast<uint64_t>(std::max(eu, ev));
+                edgeFaceCounts[k]++;
+            }
+        }
+    }
+
     float bestDist = maxRadiusPixels;
+    std::unordered_set<uint64_t> visitedEdges;
 
     for (int f = 0; f < numFaces; ++f) {
         if (!retopoMesh->faceVisible.empty() && !retopoMesh->faceVisible[f]) continue;
@@ -198,7 +231,16 @@ EdgeHit SurfaceSnapper::FindNearestRetopoEdge(
             uint32_t u = fv[e];
             uint32_t v = fv[(e + 1) % numEdges];
             if (u >= (uint32_t)numVerts || v >= (uint32_t)numVerts) continue;
-            if (u > v) continue; // Each undirected edge checked once
+
+            uint64_t edgeKey = (static_cast<uint64_t>(std::min(u, v)) << 32) | static_cast<uint64_t>(std::max(u, v));
+            if (!visitedEdges.insert(edgeKey).second) continue; // Each unique edge checked once
+
+            if (borderOnly) {
+                auto it = edgeFaceCounts.find(edgeKey);
+                if (it != edgeFaceCounts.end() && it->second > 1) {
+                    continue; // Skip interior edges!
+                }
+            }
 
             glm::vec3 w0 = getVertWorld(u);
             glm::vec3 w1 = getVertWorld(v);
@@ -242,9 +284,10 @@ EdgeHit SurfaceSnapper::FindNearestRetopoEdge(
                     }
 
                     if (tSnap.valid) {
-                        float tZ = tSnap.screenPos.z;
-                        if (edgeScreenMid.z > tZ + 0.005f) {
-                            continue; // Edge is occluded
+                        Ray camRay = camera.getRay(edgeScreenMid.x, edgeScreenMid.y);
+                        float depthBehind = glm::dot(edgeWorldMid - tSnap.worldPos, camRay.dir);
+                        if (depthBehind > 15.0f) {
+                            continue; // Edge is occluded on back of mesh
                         }
                     }
                 }

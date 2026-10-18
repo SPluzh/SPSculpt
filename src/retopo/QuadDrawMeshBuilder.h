@@ -159,6 +159,14 @@ struct ExtrudeEdgeResult {
     int32_t newPoly = -1;
 };
 
+struct ExtrudeVertexResult {
+    bool valid = false;
+    int32_t newVertex = -1;
+    int32_t newPoly = -1;
+    int32_t neighA = -1;
+    int32_t neighB = -1;
+};
+
 struct GrabVertexInfo {
     int32_t index = -1;
     glm::vec3 initLocalPos{0.0f};
@@ -182,6 +190,7 @@ public:
     bool AddTriangle(Mesh* mesh, int32_t a, int32_t b, int32_t c, const glm::vec3& targetNormal);
     bool SetVertexPosition(Mesh* mesh, int32_t index, const glm::vec3& worldPos);
     bool WeldVertices(Mesh* mesh, int32_t vSource, int32_t vTarget, std::unordered_set<uint32_t>* pinnedVertices = nullptr);
+    bool WeldVerticesPair(Mesh* mesh, int32_t src0, int32_t tgt0, int32_t src1, int32_t tgt1, std::unordered_set<uint32_t>* pinnedVertices = nullptr);
 
     // Deletion Operations
     bool DeleteVertex(Mesh* mesh, int32_t ptIndex, std::unordered_set<uint32_t>* pinnedVertices = nullptr);
@@ -231,6 +240,8 @@ public:
 
     // Extrusion
     ExtrudeEdgeResult ExtrudeEdge(Mesh* mesh, int32_t v0, int32_t v1, const glm::vec3& pos0, const glm::vec3& pos1, const glm::vec3& targetNormal);
+    bool CanExtrudeVertex(const Mesh* mesh, int32_t vCorner, int32_t* outNeighA = nullptr, int32_t* outNeighB = nullptr);
+    ExtrudeVertexResult ExtrudeVertex(Mesh* mesh, int32_t vCorner, const glm::vec3& targetNormal, const glm::vec3& initialPos);
 
     // Brushes (Relax & Grab)
     bool IsBoundaryOrIsolatedVertex(const Mesh* mesh, int32_t ptIndex);

@@ -116,8 +116,10 @@ bool QuadDrawMeshBuilder::AddQuad(
         if (pc == (uint32_t)a || pc == (uint32_t)b || pc == (uint32_t)c || pc == (uint32_t)d) match++;
         if (pd != TRI_INDEX) {
             if (pd == (uint32_t)a || pd == (uint32_t)b || pd == (uint32_t)c || pd == (uint32_t)d) match++;
+            if (match >= 4) return false;
+        } else {
+            if (match >= 3) return false;
         }
-        if (match >= 3) return false;
     }
 
     auto countEdgePolys = [&](int32_t u, int32_t v) -> int32_t {
@@ -279,6 +281,80 @@ bool QuadDrawMeshBuilder::WeldVertices(
     }
 
     return DeleteVertex(mesh, vSource, pinnedVertices);
+}
+
+bool QuadDrawMeshBuilder::WeldVerticesPair(
+    Mesh* mesh, int32_t src0, int32_t tgt0, int32_t src1, int32_t tgt1, std::unordered_set<uint32_t>* pinnedVertices
+) {
+    if (!mesh) return false;
+    if (src0 == -1 && src1 == -1) return false;
+    if (src0 != -1 && src1 == -1) return WeldVertices(mesh, src0, tgt0, pinnedVertices);
+    if (src0 == -1 && src1 != -1) return WeldVertices(mesh, src1, tgt1, pinnedVertices);
+    if (src0 == src1 || tgt0 == src0 || tgt1 == src1) return false;
+
+    int32_t ptCount = (int32_t)(mesh->verts.size() / 3);
+    int32_t polyCount = (int32_t)(mesh->faces.size() / 4);
+    if (src0 < 0 || src0 >= ptCount || tgt0 < 0 || tgt0 >= ptCount) return false;
+    if (src1 < 0 || src1 >= ptCount || tgt1 < 0 || tgt1 >= ptCount) return false;
+
+    // 1. Remap both sources to targets
+    for (int32_t i = 0; i < polyCount; ++i) {
+        for (int k = 0; k < 4; ++k) {
+            if (mesh->faces[i * 4 + k] == (uint32_t)src0) mesh->faces[i * 4 + k] = (uint32_t)tgt0;
+            if (mesh->faces[i * 4 + k] == (uint32_t)src1) mesh->faces[i * 4 + k] = (uint32_t)tgt1;
+        }
+    }
+
+    // 2. Clean degenerate polygons
+    std::vector<uint32_t> validFaces;
+    validFaces.reserve(mesh->faces.size());
+
+    for (int32_t i = 0; i < polyCount; ++i) {
+        uint32_t a = mesh->faces[i * 4 + 0];
+        uint32_t b = mesh->faces[i * 4 + 1];
+        uint32_t c = mesh->faces[i * 4 + 2];
+        uint32_t d = mesh->faces[i * 4 + 3];
+
+        if (d != TRI_INDEX) {
+            if (a == b) { a = b; b = c; c = d; d = TRI_INDEX; }
+            else if (b == c) { b = c; c = d; d = TRI_INDEX; }
+            else if (c == d) { d = TRI_INDEX; }
+            else if (d == a) { d = TRI_INDEX; }
+        }
+
+        if (d == TRI_INDEX) {
+            if (a == b || b == c || a == c) continue;
+        }
+
+        bool isDuplicate = false;
+        size_t numValid = validFaces.size() / 4;
+        for (size_t j = 0; j < numValid; ++j) {
+            if (validFaces[j * 4 + 0] == a && validFaces[j * 4 + 1] == b &&
+                validFaces[j * 4 + 2] == c && validFaces[j * 4 + 3] == d) {
+                isDuplicate = true;
+                break;
+            }
+        }
+        if (!isDuplicate) {
+            validFaces.push_back(a);
+            validFaces.push_back(b);
+            validFaces.push_back(c);
+            validFaces.push_back(d);
+        }
+    }
+    mesh->faces = std::move(validFaces);
+
+    if (pinnedVertices) {
+        if (pinnedVertices->count((uint32_t)src0)) pinnedVertices->insert((uint32_t)tgt0);
+        if (pinnedVertices->count((uint32_t)src1)) pinnedVertices->insert((uint32_t)tgt1);
+    }
+
+    // Delete both vertices (delete higher index first so lower index doesn't shift!)
+    int32_t firstDel = std::max(src0, src1);
+    int32_t secondDel = std::min(src0, src1);
+    DeleteVertex(mesh, firstDel, pinnedVertices);
+    DeleteVertex(mesh, secondDel, pinnedVertices);
+    return true;
 }
 
 bool QuadDrawMeshBuilder::DeleteVertex(
@@ -1105,7 +1181,7 @@ EdgeCutResult QuadDrawMeshBuilder::FindEdgeLoopCut(
     cp.v1 = std::max(startV0, startV1);
     cp.t = (startV0 < startV1) ? t : (1.0f - t);
     glm::vec3 rawPos = glm::mix(getVertWorld(cp.v0), getVertWorld(cp.v1), cp.t);
-    SnapResult snap = snapper.ProjectPointAlongNormal(targetMesh, rawPos, glm::vec3(0, 1, 0), 100.0f);
+    SnapResult snap = snapper.SnapClosestPoint(targetMesh, rawPos, 100.0f);
     cp.worldPos = snap.valid ? snap.worldPos : rawPos;
     result.cutPoints.push_back(cp);
 
@@ -1146,7 +1222,7 @@ EdgeCutResult QuadDrawMeshBuilder::FindEdgeLoopCut(
             cpOpp.v1 = std::max(oppV0, oppV1);
             cpOpp.t = t;
             glm::vec3 rawOpp = glm::mix(getVertWorld(cpOpp.v0), getVertWorld(cpOpp.v1), cpOpp.t);
-            SnapResult snapOpp = snapper.ProjectPointAlongNormal(targetMesh, rawOpp, glm::vec3(0, 1, 0), 100.0f);
+            SnapResult snapOpp = snapper.SnapClosestPoint(targetMesh, rawOpp, 100.0f);
             cpOpp.worldPos = snapOpp.valid ? snapOpp.worldPos : rawOpp;
             result.cutPoints.push_back(cpOpp);
 
@@ -1293,15 +1369,122 @@ ExtrudeEdgeResult QuadDrawMeshBuilder::ExtrudeEdge(
         q0 = v0; q1 = v1; q2 = newV1; q3 = newV0;
     }
 
-    if (AddQuad(mesh, q0, q1, q2, q3, targetNormal)) {
-        result.valid = true;
-        result.newV0 = newV0;
-        result.newV1 = newV1;
-        result.newPoly = (int32_t)(mesh->faces.size() / 4) - 1;
+    if (!AddQuad(mesh, q0, q1, q2, q3, targetNormal)) {
+        DeleteVertex(mesh, newV1);
+        DeleteVertex(mesh, newV0);
+        return result;
     }
 
+    result.valid = true;
+    result.newV0 = newV0;
+    result.newV1 = newV1;
+    result.newPoly = (int32_t)(mesh->faces.size() / 4) - 1;
     return result;
 }
+
+bool QuadDrawMeshBuilder::CanExtrudeVertex(
+    const Mesh* mesh, int32_t vCorner, int32_t* outNeighA, int32_t* outNeighB
+) {
+    if (!mesh || vCorner < 0) return false;
+    int32_t ptCount = (int32_t)(mesh->verts.size() / 3);
+    int32_t polyCount = (int32_t)(mesh->faces.size() / 4);
+    if (vCorner >= ptCount || polyCount == 0) return false;
+
+    // Find all unique neighbors of vCorner
+    std::vector<int32_t> neighbors;
+    for (int32_t i = 0; i < polyCount; ++i) {
+        uint32_t a = mesh->faces[i * 4 + 0];
+        uint32_t b = mesh->faces[i * 4 + 1];
+        uint32_t c = mesh->faces[i * 4 + 2];
+        uint32_t d = mesh->faces[i * 4 + 3];
+        bool isQuad = (d != TRI_INDEX);
+
+        uint32_t v = (uint32_t)vCorner;
+        if (a == v) { neighbors.push_back((int32_t)b); neighbors.push_back((int32_t)(isQuad ? d : c)); }
+        else if (b == v) { neighbors.push_back((int32_t)c); neighbors.push_back((int32_t)a); }
+        else if (c == v) { neighbors.push_back((int32_t)(isQuad ? d : a)); neighbors.push_back((int32_t)b); }
+        else if (isQuad && d == v) { neighbors.push_back((int32_t)a); neighbors.push_back((int32_t)c); }
+    }
+
+    if (neighbors.empty()) return false;
+
+    std::sort(neighbors.begin(), neighbors.end());
+    neighbors.erase(std::unique(neighbors.begin(), neighbors.end()), neighbors.end());
+
+    // Boundary edges are those with exactly 1 adjacent polygon
+    std::vector<int32_t> boundaryNeighbors;
+    for (int32_t n : neighbors) {
+        int32_t edgeCnt = 0;
+        for (int32_t i = 0; i < polyCount; ++i) {
+            if (PolygonHasEdge(mesh->faces, i, vCorner, n)) edgeCnt++;
+        }
+        if (edgeCnt == 1) {
+            boundaryNeighbors.push_back(n);
+        }
+    }
+
+    if (boundaryNeighbors.size() < 2) return false;
+
+    auto countEdgeFaces = [&](int32_t u, int32_t v) -> int32_t {
+        int32_t cnt = 0;
+        for (int32_t i = 0; i < polyCount; ++i) {
+            if (PolygonHasEdge(mesh->faces, i, u, v)) cnt++;
+        }
+        return cnt;
+    };
+
+    // Find a pair (nA, nB) such that edge (nA, nB) does NOT already exist in the mesh
+    int32_t bestA = -1;
+    int32_t bestB = -1;
+
+    for (size_t i = 0; i < boundaryNeighbors.size(); ++i) {
+        for (size_t j = i + 1; j < boundaryNeighbors.size(); ++j) {
+            int32_t nA = boundaryNeighbors[i];
+            int32_t nB = boundaryNeighbors[j];
+            if (countEdgeFaces(nA, nB) == 0) {
+                bestA = nA;
+                bestB = nB;
+                break;
+            }
+        }
+        if (bestA != -1) break;
+    }
+
+    if (bestA == -1) return false;
+
+    if (outNeighA) *outNeighA = bestA;
+    if (outNeighB) *outNeighB = bestB;
+    return true;
+}
+
+ExtrudeVertexResult QuadDrawMeshBuilder::ExtrudeVertex(
+    Mesh* mesh, int32_t vCorner, const glm::vec3& targetNormal, const glm::vec3& initialPos
+) {
+    ExtrudeVertexResult result;
+    if (!mesh) return result;
+
+    int32_t nA = -1;
+    int32_t nB = -1;
+    if (!CanExtrudeVertex(mesh, vCorner, &nA, &nB)) {
+        return result;
+    }
+
+    int32_t newV = AddVertex(mesh, initialPos);
+    if (newV == -1) return result;
+
+    if (!AddQuad(mesh, vCorner, nA, newV, nB, targetNormal)) {
+        DeleteVertex(mesh, newV);
+        return result;
+    }
+
+    result.valid = true;
+    result.newVertex = newV;
+    result.newPoly = (int32_t)(mesh->faces.size() / 4) - 1;
+    result.neighA = nA;
+    result.neighB = nB;
+    return result;
+}
+
 
 bool QuadDrawMeshBuilder::IsBoundaryOrIsolatedVertex(const Mesh* mesh, int32_t ptIndex) {
     if (!mesh || ptIndex < 0 || (size_t)ptIndex * 3 + 2 >= mesh->verts.size()) return false;
@@ -1439,7 +1622,7 @@ bool QuadDrawMeshBuilder::RelaxVertices(
 
         // Snap back to reference target surface
         if (target && target->nbFaces > 0) {
-            SnapResult snap = snapper.ProjectPointAlongNormal(target, smoothed, glm::vec3(0, 1, 0), 100.0f);
+            SnapResult snap = snapper.SnapClosestPoint(target, smoothed, 100.0f);
             if (snap.valid) smoothed = snap.worldPos;
         }
 

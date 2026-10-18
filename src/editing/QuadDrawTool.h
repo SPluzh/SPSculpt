@@ -30,6 +30,7 @@ enum class QuadDrawSubTool {
 enum class DragMode {
     None = 0,
     ExtrudeDrag,
+    ExtrudeVertexDrag,
     TweakDrag,
     GrabDrag,
     RelaxDrag,
@@ -154,6 +155,9 @@ private:
     std::vector<int32_t> m_hoverPolyLoop;
     int32_t m_hoverVertex = -1;
     int32_t m_weldTargetVertex = -1;
+    int32_t m_extrudeWeldTarget0 = -1;
+    int32_t m_extrudeWeldTarget1 = -1;
+    int32_t m_extrudeVertexWeldTarget = -1;
 
     // Dragging state
     float m_dragStartX = 0.0f;
@@ -165,8 +169,14 @@ private:
     int32_t m_dragEdgeV1 = -1;
     glm::vec3 m_dragEdgeInitialPos0{0.0f};
     glm::vec3 m_dragEdgeInitialPos1{0.0f};
+    glm::vec3 m_dragStartWorldPos{0.0f};
+    float m_dragEdgeScreenZ = 0.5f;
     int32_t m_extrudedV0 = -1;
     int32_t m_extrudedV1 = -1;
+    int32_t m_extrudedSingleV = -1;
+    int32_t m_extrudeCornerV = -1;
+    int32_t m_extrudeCornerVA = -1;
+    int32_t m_extrudeCornerVB = -1;
 
     std::vector<GrabVertexInfo> m_grabbedVerts;
     glm::vec3 m_grabCenterWorld{0.0f};

@@ -137,6 +137,8 @@ void QuadDrawTool::onSceneTopologyRestored(Scene& scene) {
     m_hoverPolyLoop.clear();
     m_hoverVertex = -1;
     m_weldTargetVertex = -1;
+    m_extrudeWeldTarget0 = -1;
+    m_extrudeWeldTarget1 = -1;
     m_multiCutPoints.clear();
     m_grabbedVerts.clear();
     m_snapper.ClearCache();
@@ -173,6 +175,8 @@ void QuadDrawTool::notifyMeshDeleted(Mesh* mesh) {
     m_hoverPolyLoop.clear();
     m_hoverVertex = -1;
     m_weldTargetVertex = -1;
+    m_extrudeWeldTarget0 = -1;
+    m_extrudeWeldTarget1 = -1;
     m_multiCutPoints.clear();
     m_grabbedVerts.clear();
 }
@@ -207,7 +211,7 @@ void QuadDrawTool::snapAllPointsToTarget(Scene& scene) {
                 ? glm::vec3(m_retopoMesh->matrix * glm::vec4(localPos, 1.0f))
                 : localPos;
 
-            SnapResult snap = m_snapper.ProjectPointAlongNormal(m_targetMesh, worldPos, glm::vec3(0, 1, 0), 200.0f);
+            SnapResult snap = m_snapper.SnapClosestPoint(m_targetMesh, worldPos, 500.0f);
             if (snap.valid) {
                 m_builder.SetVertexPosition(m_retopoMesh, i, snap.worldPos);
             }
@@ -268,6 +272,9 @@ void QuadDrawTool::updateHoverState(
     m_hoverEdgeLoop.edges.clear();
     m_hoverPolyLoop.clear();
     m_weldTargetVertex = -1;
+    m_extrudeWeldTarget0 = -1;
+    m_extrudeWeldTarget1 = -1;
+    m_extrudeVertexWeldTarget = -1;
 
     if (!m_retopoMesh || m_retopoMesh->nbVerts == 0) return;
 
@@ -277,9 +284,16 @@ void QuadDrawTool::updateHoverState(
     );
 
     // Check edge hover
+    bool borderOnly = (m_subTool == QuadDrawSubTool::Extrude && !ctrl);
     m_hoverEdge = m_snapper.FindNearestRetopoEdge(
-        camera, m_retopoMesh, mouseX, mouseY, 10.0f, m_targetMesh, &m_hoverSnap
+        camera, m_retopoMesh, mouseX, mouseY, 14.0f, m_targetMesh, &m_hoverSnap, borderOnly
     );
+
+    if (m_hoverVertex != -1 && m_hoverEdge.valid) {
+        if (m_hoverVertex == m_hoverEdge.v0 || m_hoverVertex == m_hoverEdge.v1) {
+            m_hoverEdge.valid = false;
+        }
+    }
 
     // Subtool specific hovers
     if (m_subTool == QuadDrawSubTool::CreatePolygon) {
@@ -458,21 +472,71 @@ bool QuadDrawTool::handleMouseDown(
 
     // 8. Tweak / Extrude Mode
     if (m_hoverVertex != -1) {
+        if (m_subTool == QuadDrawSubTool::Extrude && m_retopoMesh) {
+            int32_t neighA = -1, neighB = -1;
+            if (m_builder.CanExtrudeVertex(m_retopoMesh, m_hoverVertex, &neighA, &neighB)) {
+                auto getVertWorld = [&](int32_t idx) -> glm::vec3 {
+                    glm::vec3 p(m_retopoMesh->verts[idx * 3], m_retopoMesh->verts[idx * 3 + 1], m_retopoMesh->verts[idx * 3 + 2]);
+                    return (m_retopoMesh->matrix != glm::mat4(1.0f)) ? glm::vec3(m_retopoMesh->matrix * glm::vec4(p, 1.0f)) : p;
+                };
+
+                glm::vec3 pCorner = getVertWorld(m_hoverVertex);
+                glm::vec3 pA = getVertWorld(neighA);
+                glm::vec3 pB = getVertWorld(neighB);
+                glm::vec3 initialPos = pA + pB - pCorner;
+
+                if (m_targetMesh && m_targetMesh->nbFaces > 0) {
+                    SnapResult sc = m_snapper.SnapClosestPoint(m_targetMesh, initialPos, 500.0f);
+                    if (sc.valid) initialPos = sc.worldPos;
+                }
+
+                glm::vec3 targetNorm = m_hoverSnap.valid ? m_hoverSnap.normal : -camera.getRay(mouseX, mouseY).dir;
+                if (glm::length(targetNorm) < 1e-4f) targetNorm = glm::vec3(0, 1, 0);
+
+                m_extrudeCornerV = m_hoverVertex;
+                m_extrudeCornerVA = neighA;
+                m_extrudeCornerVB = neighB;
+                m_extrudeVertexWeldTarget = -1;
+
+                glm::vec3 sCorner = camera.project(initialPos);
+                m_dragEdgeScreenZ = (sCorner.z > 0.0f && sCorner.z < 1.0f) ? sCorner.z : 0.95f;
+                m_dragStartWorldPos = initialPos;
+
+                g_undoManager.pushTopologyChange(scene, "Extrude Corner Vertex", [&]() {
+                    ExtrudeVertexResult res = m_builder.ExtrudeVertex(
+                        m_retopoMesh, m_hoverVertex, targetNorm, initialPos
+                    );
+                    if (res.valid) {
+                        m_dragMode = DragMode::ExtrudeVertexDrag;
+                        m_extrudedSingleV = res.newVertex;
+                    } else {
+                        m_dragMode = DragMode::None;
+                    }
+                });
+
+                if (m_dragMode == DragMode::ExtrudeVertexDrag) {
+                    return true;
+                }
+            }
+        }
+
         // Tweak Vertex Drag
         m_dragMode = DragMode::TweakDrag;
         m_dragVertex = m_hoverVertex;
         return true;
     }
 
-    if (m_hoverEdge.valid && m_builder.IsBoundaryOrIsolatedVertex(m_retopoMesh, m_hoverEdge.v0) &&
-        m_builder.IsBoundaryOrIsolatedVertex(m_retopoMesh, m_hoverEdge.v1) &&
-        m_subTool == QuadDrawSubTool::Extrude) {
+    if (m_hoverEdge.valid && m_subTool == QuadDrawSubTool::Extrude) {
         // Border Edge Extrude Drag
-        m_dragMode = DragMode::ExtrudeDrag;
         m_dragEdgeV0 = m_hoverEdge.v0;
         m_dragEdgeV1 = m_hoverEdge.v1;
         m_dragEdgeInitialPos0 = m_hoverEdge.worldPos0;
         m_dragEdgeInitialPos1 = m_hoverEdge.worldPos1;
+
+        glm::vec3 edgeMid = (m_dragEdgeInitialPos0 + m_dragEdgeInitialPos1) * 0.5f;
+        glm::vec3 sMid = camera.project(edgeMid);
+        m_dragEdgeScreenZ = (sMid.z > 0.0f && sMid.z < 1.0f) ? sMid.z : 0.95f;
+        m_dragStartWorldPos = m_hoverSnap.valid ? m_hoverSnap.worldPos : edgeMid;
 
         glm::vec3 targetNorm = m_hoverSnap.valid ? m_hoverSnap.normal : glm::vec3(0, 1, 0);
 
@@ -482,11 +546,16 @@ bool QuadDrawTool::handleMouseDown(
                 m_dragEdgeInitialPos0, m_dragEdgeInitialPos1, targetNorm
             );
             if (res.valid) {
+                m_dragMode = DragMode::ExtrudeDrag;
                 m_extrudedV0 = res.newV0;
                 m_extrudedV1 = res.newV1;
+            } else {
+                m_dragMode = DragMode::None;
             }
         });
-        return true;
+        if (m_dragMode == DragMode::ExtrudeDrag) {
+            return true;
+        }
     }
 
     // Click on empty target surface -> place vertex
@@ -590,21 +659,77 @@ bool QuadDrawTool::handleMouseMove(
         return true;
     }
 
+    if (m_dragMode == DragMode::ExtrudeVertexDrag && m_retopoMesh && m_extrudedSingleV != -1) {
+        SnapResult snap = m_snapper.RaycastSurface(camera, m_targetMesh, mouseX, mouseY);
+        glm::vec3 targetPos = snap.valid ? snap.worldPos : camera.unproject(mouseX, mouseY, m_dragEdgeScreenZ);
+
+        if (!snap.valid && m_targetMesh && m_targetMesh->nbFaces > 0) {
+            SnapResult sc = m_snapper.SnapClosestPoint(m_targetMesh, targetPos, 500.0f);
+            if (sc.valid) targetPos = sc.worldPos;
+        }
+
+        m_builder.SetVertexPosition(m_retopoMesh, m_extrudedSingleV, targetPos);
+
+        // Check weld candidate
+        int32_t weld = m_snapper.FindNearestRetopoVertex(
+            camera, m_retopoMesh, mouseX, mouseY, m_weldRadiusPixels, m_extrudedSingleV, m_targetMesh, snap.valid ? &snap : nullptr
+        );
+
+        if (weld == m_extrudeCornerV || weld == m_extrudeCornerVA || weld == m_extrudeCornerVB) {
+            weld = -1;
+        }
+
+        m_extrudeVertexWeldTarget = weld;
+
+        if (m_extrudeVertexWeldTarget != -1) {
+            auto getVertWorld = [&](int32_t idx) -> glm::vec3 {
+                glm::vec3 p(m_retopoMesh->verts[idx * 3], m_retopoMesh->verts[idx * 3 + 1], m_retopoMesh->verts[idx * 3 + 2]);
+                return (m_retopoMesh->matrix != glm::mat4(1.0f)) ? glm::vec3(m_retopoMesh->matrix * glm::vec4(p, 1.0f)) : p;
+            };
+            targetPos = getVertWorld(m_extrudeVertexWeldTarget);
+            m_builder.SetVertexPosition(m_retopoMesh, m_extrudedSingleV, targetPos);
+        }
+
+        m_lastMouseX = mouseX;
+        m_lastMouseY = mouseY;
+        return true;
+    }
+
     if (m_dragMode == DragMode::ExtrudeDrag && m_retopoMesh && m_extrudedV0 != -1 && m_extrudedV1 != -1) {
         SnapResult snap = m_snapper.RaycastSurface(camera, m_targetMesh, mouseX, mouseY);
-        glm::vec3 targetPos = snap.valid ? snap.worldPos : camera.unproject(mouseX, mouseY, 0.5f);
+        glm::vec3 targetPos = snap.valid ? snap.worldPos : camera.unproject(mouseX, mouseY, m_dragEdgeScreenZ);
 
-        glm::vec3 edgeMid = (m_dragEdgeInitialPos0 + m_dragEdgeInitialPos1) * 0.5f;
-        glm::vec3 offset = targetPos - edgeMid;
+        glm::vec3 offset = targetPos - m_dragStartWorldPos;
 
         glm::vec3 newPos0 = m_dragEdgeInitialPos0 + offset;
         glm::vec3 newPos1 = m_dragEdgeInitialPos1 + offset;
 
-        if (m_targetMesh) {
-            SnapResult s0 = m_snapper.ProjectPointAlongNormal(m_targetMesh, newPos0, glm::vec3(0, 1, 0), 100.0f);
-            if (s0.valid) newPos0 = s0.worldPos;
-            SnapResult s1 = m_snapper.ProjectPointAlongNormal(m_targetMesh, newPos1, glm::vec3(0, 1, 0), 100.0f);
-            if (s1.valid) newPos1 = s1.worldPos;
+        if (m_targetMesh && m_targetMesh->nbFaces > 0) {
+            // Snap newPos0 to target surface: camera line-of-sight first, then closest 3D point
+            glm::vec3 s0 = camera.project(newPos0);
+            SnapResult snap0;
+            if (s0.z > 0.0f && s0.z < 1.0f) {
+                snap0 = m_snapper.RaycastSurface(camera, m_targetMesh, s0.x, s0.y);
+            }
+            if (snap0.valid && glm::distance(snap0.worldPos, newPos0) < 100.0f) {
+                newPos0 = snap0.worldPos;
+            } else {
+                SnapResult sc0 = m_snapper.SnapClosestPoint(m_targetMesh, newPos0, 500.0f);
+                if (sc0.valid) newPos0 = sc0.worldPos;
+            }
+
+            // Snap newPos1 to target surface: camera line-of-sight first, then closest 3D point
+            glm::vec3 s1 = camera.project(newPos1);
+            SnapResult snap1;
+            if (s1.z > 0.0f && s1.z < 1.0f) {
+                snap1 = m_snapper.RaycastSurface(camera, m_targetMesh, s1.x, s1.y);
+            }
+            if (snap1.valid && glm::distance(snap1.worldPos, newPos1) < 100.0f) {
+                newPos1 = snap1.worldPos;
+            } else {
+                SnapResult sc1 = m_snapper.SnapClosestPoint(m_targetMesh, newPos1, 500.0f);
+                if (sc1.valid) newPos1 = sc1.worldPos;
+            }
         }
 
         m_builder.SetVertexPosition(m_retopoMesh, m_extrudedV0, newPos0);
@@ -616,11 +741,41 @@ bool QuadDrawTool::handleMouseMove(
         int32_t weld0 = m_snapper.FindNearestRetopoVertex(
             camera, m_retopoMesh, sPos0.x, sPos0.y, m_weldRadiusPixels, m_extrudedV0, m_targetMesh
         );
+        if (weld0 == m_dragEdgeV0 || weld0 == m_dragEdgeV1 || weld0 == m_extrudedV1) {
+            weld0 = -1;
+        }
+
         int32_t weld1 = m_snapper.FindNearestRetopoVertex(
             camera, m_retopoMesh, sPos1.x, sPos1.y, m_weldRadiusPixels, m_extrudedV1, m_targetMesh
         );
+        if (weld1 == m_dragEdgeV0 || weld1 == m_dragEdgeV1 || weld1 == m_extrudedV0) {
+            weld1 = -1;
+        }
 
-        m_weldTargetVertex = (weld0 != -1) ? weld0 : weld1;
+        if (weld0 != -1 && weld0 == weld1) {
+            float d0 = (sPos0.x - mouseX) * (sPos0.x - mouseX) + (sPos0.y - mouseY) * (sPos0.y - mouseY);
+            float d1 = (sPos1.x - mouseX) * (sPos1.x - mouseX) + (sPos1.y - mouseY) * (sPos1.y - mouseY);
+            if (d0 < d1) weld1 = -1; else weld0 = -1;
+        }
+
+        m_extrudeWeldTarget0 = weld0;
+        m_extrudeWeldTarget1 = weld1;
+
+        auto getVertWorld = [&](int32_t idx) -> glm::vec3 {
+            glm::vec3 p(m_retopoMesh->verts[idx * 3], m_retopoMesh->verts[idx * 3 + 1], m_retopoMesh->verts[idx * 3 + 2]);
+            return (m_retopoMesh->matrix != glm::mat4(1.0f)) ? glm::vec3(m_retopoMesh->matrix * glm::vec4(p, 1.0f)) : p;
+        };
+
+        // Magnetic visual snap when near a weld candidate
+        if (m_extrudeWeldTarget0 != -1) {
+            newPos0 = getVertWorld(m_extrudeWeldTarget0);
+        }
+        if (m_extrudeWeldTarget1 != -1) {
+            newPos1 = getVertWorld(m_extrudeWeldTarget1);
+        }
+
+        m_builder.SetVertexPosition(m_retopoMesh, m_extrudedV0, newPos0);
+        m_builder.SetVertexPosition(m_retopoMesh, m_extrudedV1, newPos1);
 
         m_lastMouseX = mouseX;
         m_lastMouseY = mouseY;
@@ -649,10 +804,22 @@ bool QuadDrawTool::handleMouseUp(Scene& scene, const Camera& camera, int button)
             });
         }
     } else if (m_dragMode == DragMode::ExtrudeDrag && m_retopoMesh && m_extrudedV0 != -1 && m_extrudedV1 != -1) {
-        if (m_weldTargetVertex != -1) {
-            int32_t vSource = (m_weldTargetVertex == m_extrudedV0) ? m_extrudedV1 : m_extrudedV0;
+        if (m_extrudeWeldTarget0 != -1 || m_extrudeWeldTarget1 != -1) {
+            int32_t src0 = (m_extrudeWeldTarget0 != -1) ? m_extrudedV0 : -1;
+            int32_t tgt0 = m_extrudeWeldTarget0;
+            int32_t src1 = (m_extrudeWeldTarget1 != -1) ? m_extrudedV1 : -1;
+            int32_t tgt1 = m_extrudeWeldTarget1;
+
             g_undoManager.pushTopologyChange(scene, "Weld Extruded Vertex", [&]() {
-                m_builder.WeldVertices(m_retopoMesh, vSource, m_weldTargetVertex, &m_pinnedVertices);
+                m_builder.WeldVerticesPair(m_retopoMesh, src0, tgt0, src1, tgt1, &m_pinnedVertices);
+            });
+        }
+    } else if (m_dragMode == DragMode::ExtrudeVertexDrag && m_retopoMesh && m_extrudedSingleV != -1) {
+        if (m_extrudeVertexWeldTarget != -1 && m_extrudeVertexWeldTarget != m_extrudedSingleV) {
+            int32_t src = m_extrudedSingleV;
+            int32_t tgt = m_extrudeVertexWeldTarget;
+            g_undoManager.pushTopologyChange(scene, "Weld Extruded Vertex", [&]() {
+                m_builder.WeldVertices(m_retopoMesh, src, tgt, &m_pinnedVertices);
             });
         }
     } else if (m_dragMode == DragMode::SliceDrag) {
@@ -672,7 +839,14 @@ bool QuadDrawTool::handleMouseUp(Scene& scene, const Camera& camera, int button)
     m_dragEdgeV1 = -1;
     m_extrudedV0 = -1;
     m_extrudedV1 = -1;
+    m_extrudedSingleV = -1;
+    m_extrudeCornerV = -1;
+    m_extrudeCornerVA = -1;
+    m_extrudeCornerVB = -1;
     m_weldTargetVertex = -1;
+    m_extrudeWeldTarget0 = -1;
+    m_extrudeWeldTarget1 = -1;
+    m_extrudeVertexWeldTarget = -1;
     m_grabbedVerts.clear();
     return true;
 }
@@ -782,14 +956,20 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
             if (screenPts[i].z < 0.0f || screenPts[i].z > 1.0f) continue;
             ImVec2 p(screenPts[i].x, screenPts[i].y);
 
-            if (i == m_weldTargetVertex) {
+            if (i == m_weldTargetVertex || i == m_extrudeWeldTarget0 || i == m_extrudeWeldTarget1 || i == m_extrudeVertexWeldTarget) {
                 // Weld Target highlight: Pulsing red
                 drawList->AddCircleFilled(p, m_pointSize * 1.6f, IM_COL32(255, 30, 30, 240));
                 drawList->AddCircle(p, m_pointSize * 2.2f, IM_COL32(255, 255, 255, 220), 16, 2.0f);
             } else if (i == m_hoverVertex) {
-                // Hovered vertex: Yellow
-                drawList->AddCircleFilled(p, m_pointSize * 1.4f, IM_COL32(255, 230, 40, 255));
-                drawList->AddCircle(p, m_pointSize * 1.8f, IM_COL32(0, 0, 0, 180), 16, 1.5f);
+                if (m_subTool == QuadDrawSubTool::Extrude && m_builder.CanExtrudeVertex(m_retopoMesh, i)) {
+                    // Extrudable corner vertex: Green highlight ring
+                    drawList->AddCircleFilled(p, m_pointSize * 1.5f, IM_COL32(50, 255, 100, 255));
+                    drawList->AddCircle(p, m_pointSize * 2.2f, IM_COL32(255, 255, 255, 220), 16, 2.0f);
+                } else {
+                    // Hovered vertex: Yellow
+                    drawList->AddCircleFilled(p, m_pointSize * 1.4f, IM_COL32(255, 230, 40, 255));
+                    drawList->AddCircle(p, m_pointSize * 1.8f, IM_COL32(0, 0, 0, 180), 16, 1.5f);
+                }
             } else if (m_pinnedVertices.count((uint32_t)i)) {
                 // Pinned vertex: Cyan
                 drawList->AddCircleFilled(p, m_pointSize * 1.2f, IM_COL32(30, 220, 255, 240));
