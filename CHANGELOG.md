@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 - **Primitive Gizmo Independence**: Primitive resize handles stay firmly anchored to the object's geometric center and orientation, even when moving, rotating, or aligning the Transform tool pivot.
 - **45° Sphere Radius Handle**: Sphere and Geosphere radius handles are angled at 45° to prevent overlapping with Transform tool axes.
 - **Preserved Transform Scaling**: Scaling primitives with the Transform tool is preserved and no longer resets when tweaking procedural handles.
+- **Boolean & Trim on Primitives**: Fixed cap quad winding order on Cylinders, Cones, and partial Torus so primitives generate watertight 2-manifold geometry compatible with Boolean, Trim, and Split tools.
 - **Boolean & Trim on Tubes**: Fixed tube caps so baked tubes work seamlessly with Boolean, Trim, and Split tools.
 - **Bake All Tubes**: Properly syncs and finalizes all active curves before converting tubes into editable meshes.
 

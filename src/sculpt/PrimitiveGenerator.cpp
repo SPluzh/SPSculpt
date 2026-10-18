@@ -405,7 +405,7 @@ void generateCylinder(
                     uint32_t v1 = capStartIdx + (r + 1) * radSegments + j;
                     uint32_t v2 = capStartIdx + (r + 1) * radSegments + off;
                     uint32_t v3 = capStartIdx + r * radSegments + off;
-                    faces.push_back(v0); faces.push_back(v3); faces.push_back(v2); faces.push_back(v1);
+                    faces.push_back(v0); faces.push_back(v1); faces.push_back(v2); faces.push_back(v3);
                 }
             }
         } else {
@@ -446,10 +446,10 @@ void generateCylinder(
                 uint32_t outerStart = (r + 1 == capRings) ? startIdx : (capRingStart + r * radSegments);
                 for (int j = 0; j < radSegments; ++j) {
                     int next = (j == radSegments - 1) ? 0 : j + 1;
-                    faces.push_back(innerStart + j);
                     faces.push_back(innerStart + next);
-                    faces.push_back(outerStart + next);
+                    faces.push_back(innerStart + j);
                     faces.push_back(outerStart + j);
+                    faces.push_back(outerStart + next);
                 }
             }
         }
@@ -479,7 +479,7 @@ void generateCylinder(
                     uint32_t v1 = capStartIdx + (r + 1) * radSegments + j;
                     uint32_t v2 = capStartIdx + (r + 1) * radSegments + off;
                     uint32_t v3 = capStartIdx + r * radSegments + off;
-                    faces.push_back(v0); faces.push_back(v1); faces.push_back(v2); faces.push_back(v3);
+                    faces.push_back(v0); faces.push_back(v3); faces.push_back(v2); faces.push_back(v1);
                 }
             }
         } else {
@@ -520,9 +520,9 @@ void generateCylinder(
                 for (int j = 0; j < radSegments; ++j) {
                     int next = (j == radSegments - 1) ? 0 : j + 1;
                     faces.push_back(innerStart + j);
-                    faces.push_back(outerStart + j);
-                    faces.push_back(outerStart + next);
                     faces.push_back(innerStart + next);
+                    faces.push_back(outerStart + next);
+                    faces.push_back(outerStart + j);
                 }
             }
         }
@@ -596,8 +596,8 @@ void generateTorus(
         for (int j = 0; j < nbRadial; ++j) {
             int jNext = (j + 1) % nbRadial;
             faces.push_back(cap0Center);
-            faces.push_back(startIdx + jNext);
             faces.push_back(startIdx + j);
+            faces.push_back(startIdx + jNext);
             faces.push_back(TRI_INDEX);
         }
 
@@ -614,8 +614,8 @@ void generateTorus(
         for (int j = 0; j < nbRadial; ++j) {
             int jNext = (j + 1) % nbRadial;
             faces.push_back(cap1Center);
-            faces.push_back(lastRingStart + j);
             faces.push_back(lastRingStart + jNext);
+            faces.push_back(lastRingStart + j);
             faces.push_back(TRI_INDEX);
         }
     }
