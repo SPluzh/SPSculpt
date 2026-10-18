@@ -150,9 +150,13 @@ add_executable(SPSculpt
     src/editing/TubeTool.cpp
     src/editing/PrimitiveTool.cpp
     src/editing/PolyGroupTool.cpp
+    src/editing/QuadDrawTool.cpp
     src/editing/undo/UndoManager.cpp
     src/sculpt/ArmatureGraph.cpp
     src/sculpt/CurveSpline.cpp
+    # retopo
+    src/retopo/SurfaceSnapper.cpp
+    src/retopo/QuadDrawMeshBuilder.cpp
     # timelapse
     src/timelapse/TimelapsePlayer.cpp
     src/timelapse/TimelapseSerializer.cpp

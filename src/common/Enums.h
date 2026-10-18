@@ -36,6 +36,7 @@ enum BrushType {
     BRUSH_POSE,
     BRUSH_SNAKEHOOK,
     BRUSH_TUBE,
+    BRUSH_QUAD_DRAW,
     BRUSH_COUNT
 };
 
@@ -89,6 +90,7 @@ inline const char* getBrushNameStr(BrushType brush) {
         case BRUSH_POSE: return "Pose";
         case BRUSH_SNAKEHOOK: return "SnakeHook";
         case BRUSH_TUBE: return "Tube";
+        case BRUSH_QUAD_DRAW: return "Quad Draw";
         default: return "Unknown";
     }
 }

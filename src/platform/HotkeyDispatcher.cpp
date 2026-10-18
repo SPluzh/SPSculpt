@@ -5,6 +5,7 @@
 #include "render/AngleRenderer.h"
 #include "common/Logger.h"
 #include "editing/TubeTool.h"
+#include "editing/QuadDrawTool.h"
 #include <imgui.h>
 #include <algorithm>
 #include <cmath>
@@ -131,6 +132,7 @@ static BrushType hkActionToBrushType(HKAction act, BrushType fallback) {
         case HKAction::ToolPose: return BRUSH_POSE;
         case HKAction::ToolSnakeHook: return BRUSH_SNAKEHOOK;
         case HKAction::ToolTube: return BRUSH_TUBE;
+        case HKAction::ToolQuadDraw: return BRUSH_QUAD_DRAW;
         default: return fallback;
     }
 }
@@ -302,6 +304,14 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
                 gui.setShowSculptingPanel(true);
                 if (auto* tube = sculpt.getTubeTool()) {
                     tube->onActivate(scene);
+                }
+                break;
+            }
+            case HKAction::ToolQuadDraw: {
+                sculpt.setBrush(BRUSH_QUAD_DRAW);
+                gui.setShowSculptingPanel(true);
+                if (auto* qd = sculpt.getQuadDrawTool()) {
+                    qd->onActivate(scene);
                 }
                 break;
             }

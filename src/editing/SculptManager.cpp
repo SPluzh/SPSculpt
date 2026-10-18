@@ -8,6 +8,7 @@
 #include "editing/PoseTool.h"
 #include "editing/TubeTool.h"
 #include "editing/PrimitiveTool.h"
+#include "editing/QuadDrawTool.h"
 #include "editing/ClipCurveTool.h"
 #include "editing/TrimTool.h"
 #include "editing/SplitTool.h"
@@ -201,6 +202,7 @@ SculptManager::SculptManager() {
     m_poseTool = std::make_unique<PoseTool>(*this);
     m_tubeTool = std::make_unique<TubeTool>(*this);
     m_primitiveTool = std::make_unique<PrimitiveTool>(*this);
+    m_quadDrawTool = std::make_unique<retopo::QuadDrawTool>(*this);
     // Initialise all brushes with baseline defaults
     for (int i = 0; i < BRUSH_COUNT; ++i) {
         m_brushSettings[i].radius = 50.0f;
@@ -2411,6 +2413,14 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                      ? *scene.getCameraRight() 
                      : scene.getCamera();
 
+    if (event.type == SDL_KEYDOWN) {
+        if (m_currentBrush == BRUSH_QUAD_DRAW && m_quadDrawTool) {
+            if (m_quadDrawTool->handleKeyDown(scene, event.key.keysym.sym)) {
+                return;
+            }
+        }
+    }
+
     if (event.type == SDL_MOUSEBUTTONDOWN) {
         int mouseX = event.button.x;
         int mouseY = event.button.y;
@@ -2423,6 +2433,14 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
         // Check if event is handled by camera navigation preset
         if (m_cameraController.isNavigationEvent(event, camera.getRef2DMode())) {
             m_cameraController.handleEvent(event, camera, scene.getMeshes(), true, &scene, m_renderer);
+            return;
+        }
+
+        if (m_currentBrush == BRUSH_QUAD_DRAW) {
+            if (m_quadDrawTool) {
+                SDL_Keymod mod = SDL_GetModState();
+                m_quadDrawTool->handleMouseDown(scene, camera, (float)mouseX, (float)mouseY, (mod & KMOD_CTRL) != 0, (mod & KMOD_ALT) != 0, (mod & KMOD_SHIFT) != 0, event.button.button);
+            }
             return;
         }
 
@@ -3293,6 +3311,11 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             return;
         }
 
+        if (m_currentBrush == BRUSH_QUAD_DRAW && m_quadDrawTool) {
+            m_quadDrawTool->handleMouseUp(scene, camera, event.button.button);
+            return;
+        }
+
         if (m_currentBrush == BRUSH_MASK_GRADIENT_BLUR && mesh && event.button.button == SDL_BUTTON_LEFT) {
             if (m_gradIsDrawing) {
                 float dist = glm::distance(m_gradPointA, m_gradPointB);
@@ -4085,6 +4108,16 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             return;
         }
 
+        if (m_currentBrush == BRUSH_QUAD_DRAW && m_quadDrawTool) {
+            if (m_cameraController.isDragging()) {
+                m_cameraController.handleEvent(event, camera, scene.getMeshes(), true, &scene, m_renderer);
+            } else {
+                SDL_Keymod mod = SDL_GetModState();
+                m_quadDrawTool->handleMouseMove(scene, camera, (float)mouseX, (float)mouseY, (mod & KMOD_CTRL) != 0, (mod & KMOD_ALT) != 0, (mod & KMOD_SHIFT) != 0);
+            }
+            return;
+        }
+
         if (mesh && mesh->isTube && mesh->tubeData != nullptr && m_tubeTool && !m_isSculpting && !m_cameraController.isDragging()) {
             if (!m_tubeTool->isInteracting() && m_tubeTool->getActiveTubeMesh() != mesh) {
                 m_tubeTool->loadFromMesh(mesh);
@@ -4372,7 +4405,7 @@ void SculptManager::processFrame(Scene& scene) {
     }
 
     bool isRefDragMode = (scene.getCamera().getRefDragEnabled() || (scene.getCameraRight() && scene.getCameraRight()->getRefDragEnabled())) && scene.areAnyReferenceImagesVisible();
-    if (isRefDragMode || m_cameraController.isDragging() || m_currentBrush == BRUSH_MEASURE || m_currentBrush == BRUSH_DIVIDER || m_currentBrush == BRUSH_TRANSFORM || m_currentBrush == BRUSH_POSE || m_currentBrush == BRUSH_TUBE) {
+    if (isRefDragMode || m_cameraController.isDragging() || m_currentBrush == BRUSH_MEASURE || m_currentBrush == BRUSH_DIVIDER || m_currentBrush == BRUSH_TRANSFORM || m_currentBrush == BRUSH_POSE || m_currentBrush == BRUSH_TUBE || m_currentBrush == BRUSH_QUAD_DRAW) {
         m_cursor.hide();
     } else {
         // Resolve dynamic brush modifier swap (Shift->Smooth, Ctrl->Mask, Ctrl+Shift->Visibility)
@@ -4383,7 +4416,7 @@ void SculptManager::processFrame(Scene& scene) {
             m_armatureTool->preUpdate(scene, scene.getCamera(), (float)m_rawMouseX, (float)m_rawMouseY, (mod & KMOD_CTRL) != 0, (mod & KMOD_ALT) != 0);
         }
         bool isMayaNav = m_hotkeyManager ? m_hotkeyManager->getModifierBehavior().ctrlAltInvertsBrush : (scene.getCamera().getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
-        if (m_currentBrush != BRUSH_TUBE && m_currentBrush != BRUSH_POSE && m_currentBrush != BRUSH_TRANSFORM) {
+        if (m_currentBrush != BRUSH_TUBE && m_currentBrush != BRUSH_POSE && m_currentBrush != BRUSH_TRANSFORM && m_currentBrush != BRUSH_QUAD_DRAW) {
             if ((mod & KMOD_CTRL) && (mod & KMOD_SHIFT)) {
                 activeBrush = BRUSH_VISIBILITY;
             } else if (mod & KMOD_SHIFT) {

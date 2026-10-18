@@ -15,6 +15,7 @@ void updateFaceNormalsAndBoxes(
     float* faceBoxes,
     float* faceCenters
 ) {
+    if (!verts || !faces || !faceNormals || !faceBoxes || !faceCenters || nbFaces <= 0 || nbVerts <= 0) return;
     bool full = (nbIFaces < 0 || (iFaces == nullptr && nbIFaces != 0));
     int loopCount = full ? nbFaces : nbIFaces;
 
@@ -107,6 +108,7 @@ void updateVertexNormals(
     const float* faceNormals,
     float* outNormals
 ) {
+    if (!vrfStartCount || !outNormals || totalNbVerts <= 0) return;
     bool full = (nbIVerts < 0 || (iVerts == nullptr && nbIVerts != 0));
     int loopCount = full ? totalNbVerts : nbIVerts;
 
@@ -117,7 +119,12 @@ void updateVertexNormals(
 
         uint32_t start = vrfStartCount[ind * 2];
         uint32_t count = vrfStartCount[ind * 2 + 1];
-        if (count == 0) continue;
+        if (count == 0 || !vertRingFace || !faceNormals) {
+            outNormals[ind * 3]     = 0.0f;
+            outNormals[ind * 3 + 1] = 1.0f;
+            outNormals[ind * 3 + 2] = 0.0f;
+            continue;
+        }
 
         if (count == 1) {
             uint32_t id = vertRingFace[start] * 3;

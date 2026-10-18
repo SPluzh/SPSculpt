@@ -17,6 +17,7 @@ class ArmatureTool;
 class PoseTool;
 class TubeTool;
 class PrimitiveTool;
+namespace retopo { class QuadDrawTool; }
 class IniFile;
 class HotkeyManager;
 
@@ -179,6 +180,7 @@ private:
     std::unique_ptr<PoseTool> m_poseTool;
     std::unique_ptr<TubeTool> m_tubeTool;
     std::unique_ptr<PrimitiveTool> m_primitiveTool;
+    std::unique_ptr<retopo::QuadDrawTool> m_quadDrawTool;
 
     CameraController m_cameraController;
     bool m_isSculpting = false;
@@ -531,6 +533,7 @@ public:
     PoseTool* getPoseTool() const { return m_poseTool.get(); }
     TubeTool* getTubeTool() const { return m_tubeTool.get(); }
     PrimitiveTool* getPrimitiveTool() const { return m_primitiveTool.get(); }
+    retopo::QuadDrawTool* getQuadDrawTool() const { return m_quadDrawTool.get(); }
 
 private:
     Mesh* m_lastActiveMesh = nullptr;

@@ -21,6 +21,7 @@
 #include "editing/PoseTool.h"
 #include "editing/TubeTool.h"
 #include "editing/PrimitiveTool.h"
+#include "editing/QuadDrawTool.h"
 #include "editing/BooleanTool.h"
 #include "editing/undo/UndoManager.h"
 #include <imgui.h>
@@ -210,6 +211,7 @@ static const char* getBrushNameLocal(BrushType brush) {
         case BRUSH_POSE:        return "Pose";
         case BRUSH_SNAKEHOOK:   return "SnakeHook";
         case BRUSH_TUBE:        return "Tube";
+        case BRUSH_QUAD_DRAW:   return "Quad Draw";
     }
     return "Unknown";
 }
@@ -255,6 +257,7 @@ static const char* getBrushIconKey(BrushType brush) {
         case BRUSH_POSE:        return "posetool";
         case BRUSH_SNAKEHOOK:   return "snakehook_tool";
         case BRUSH_TUBE:        return "tubetool";
+        case BRUSH_QUAD_DRAW:   return "quaddraw";
         default:                return nullptr;
     }
 }
@@ -1156,15 +1159,11 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         ImGui::SetNextWindowSizeConstraints(ImVec2(160.0f * scale, -1.0f), ImVec2(160.0f * scale, -1.0f));
         ImGui::Begin("Toolbar", &m_showToolbar, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize);
         
-        const char* tools[] = { 
-            "Flatten", "Smooth", "Inflate", "Pinch", "Crease", "V-Tool", "Move", "Drag", "Elastic", 
-            "Mask", "Paint", "Twist", "Local Scale", "Clay", "Clay Buildup", "Dam Standard", "Square Brush", "Visibility", "Mask Gradient Blur",
-            "Measure", "Divider", "Transform", "Armature Spheres", "Brush", "PolyGroup", "Clip Curve", "Trim", "Split", "Delete Layer", "Relax", "Pose", "SnakeHook", "Tube"
-        };
         BrushType current = sculpt.getBrush();
         float btnH = 26.0f * scale;
         for (int i = 0; i < BRUSH_COUNT; i++) {
             BrushType bType = static_cast<BrushType>(i);
+            const char* bName = getBrushNameLocal(bType);
             bool selected = (current == bType);
             if (selected) {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_HeaderActive]);
@@ -1183,10 +1182,10 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 ImU32 tint = selected ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 240);
                 ImGui::GetWindowDrawList()->AddImage((ImTextureID)(uintptr_t)iconTex, imgMin, imgMax, ImVec2(0, 1), ImVec2(1, 0), tint);
                 ImGui::GetWindowDrawList()->AddText(ImVec2(imgMax.x + 6.0f * scale, pMin.y + (btnH - ImGui::GetFontSize()) * 0.5f),
-                    selected ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 255), tools[i]);
+                    selected ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 255), bName);
             } else {
                 ImGui::GetWindowDrawList()->AddText(ImVec2(pMin.x + 8.0f * scale, pMin.y + (btnH - ImGui::GetFontSize()) * 0.5f),
-                    selected ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 255), tools[i]);
+                    selected ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 255), bName);
             }
 
             if (clicked) {
@@ -1195,6 +1194,11 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     m_showSculptingPanel = true;
                     if (auto* tube = sculpt.getTubeTool()) {
                         tube->onActivate(scene);
+                    }
+                } else if (bType == BRUSH_QUAD_DRAW) {
+                    m_showSculptingPanel = true;
+                    if (auto* qd = sculpt.getQuadDrawTool()) {
+                        qd->onActivate(scene);
                     }
                 }
             }
@@ -1217,6 +1221,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         const char* winTitle = "Sculpting Settings###SculptingPanel";
         if (brushType == BRUSH_TUBE) {
             winTitle = "Tube & Curve Settings###SculptingPanel";
+        } else if (brushType == BRUSH_QUAD_DRAW) {
+            winTitle = "Quad Draw Settings###SculptingPanel";
         } else if (isPrimActive) {
             winTitle = "Primitive Settings###SculptingPanel";
         }
@@ -2439,7 +2445,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                  brushType == BRUSH_TRANSFORM || brushType == BRUSH_ARMATURE_SPHERES ||
                                  brushType == BRUSH_BRUSH || brushType == BRUSH_POLYGROUP ||
                                  brushType == BRUSH_TRIM || brushType == BRUSH_SPLIT || brushType == BRUSH_POSE ||
-                                 brushType == BRUSH_SNAKEHOOK);
+                                 brushType == BRUSH_SNAKEHOOK || brushType == BRUSH_QUAD_DRAW);
 
         if (hasSpecialParams) {
             if (ImGui::CollapsingHeader("Tool Specific Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -3148,6 +3154,127 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         ImGui::BulletText("Draw a line across the mesh to slice with plane.");
                     }
                     ImGui::BulletText("Both parts are capped with regular quads.");
+                }
+                else if (brushType == BRUSH_QUAD_DRAW) {
+                    if (auto* qd = sculpt.getQuadDrawTool()) {
+                        ImGui::TextColored(ImVec4(0.2f, 0.9f, 0.4f, 1.0f), "Quad Draw (Retopology)");
+                        ImGui::Separator();
+
+                        // Target mesh combo
+                        Mesh* curTarget = qd->getTargetMesh();
+                        std::string curTargetName = curTarget ? curTarget->outlinerName : "None (Select Target)";
+                        if (ImGui::BeginCombo("Target Mesh", curTargetName.c_str())) {
+                            for (Mesh* m : scene.getMeshes()) {
+                                if (!m || m == qd->getRetopoMesh()) continue;
+                                bool isSel = (m == curTarget);
+                                if (ImGui::Selectable(m->outlinerName.c_str(), isSel)) {
+                                    qd->setTargetMesh(m);
+                                }
+                                if (isSel) ImGui::SetItemDefaultFocus();
+                            }
+                            ImGui::EndCombo();
+                        }
+
+                        // Retopo mesh info & create button
+                        Mesh* retopo = qd->getRetopoMesh();
+                        ImGui::Text("Retopo Mesh: %s", retopo ? retopo->outlinerName.c_str() : "None");
+                        if (retopo) {
+                            ImGui::TextDisabled("Verts: %d | Faces: %d | Pins: %zu",
+                                retopo->nbVerts, retopo->nbFaces, qd->getPinnedCount());
+                        }
+
+                        if (ImGui::Button("Create New Retopo Mesh", ImVec2(-1, 26))) {
+                            Mesh* newM = qd->getBuilder().GetOrCreateRetopoMesh(scene, qd->getTargetMesh());
+                            qd->setRetopoMesh(newM);
+                        }
+
+                        ImGui::Separator();
+                        // SubTools selector
+                        ImGui::TextUnformatted("Active Mode");
+                        const char* subTools[] = {
+                            "Place Points / Extrude",
+                            "Create Polygon",
+                            "Tweak (Move)",
+                            "Knife (Loop)",
+                            "Multi-Cut",
+                            "Delete",
+                            "Grab Brush",
+                            "Pin Tool"
+                        };
+                        int subToolIdx = (int)qd->getSubTool();
+                        if (ImGui::Combo("SubTool", &subToolIdx, subTools, IM_ARRAYSIZE(subTools))) {
+                            qd->setSubTool((retopo::QuadDrawSubTool)subToolIdx);
+                        }
+
+                        if (qd->getSubTool() == retopo::QuadDrawSubTool::CreatePolygon) {
+                            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.5f, 1.0f), "Hover near 4 vertices to preview quad, LMB to create.");
+                        } else if (qd->getSubTool() == retopo::QuadDrawSubTool::Extrude) {
+                            ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "LMB to place vertex. Drag border edge to extrude.");
+                        }
+
+                        ImGui::Separator();
+                        float weldR = qd->getWeldRadiusPixels();
+                        if (ImGui::SliderFloat("Weld Radius (px)", &weldR, 2.0f, 40.0f, "%.1f px")) {
+                            qd->setWeldRadiusPixels(weldR);
+                        }
+
+                        if (qd->getSubTool() == retopo::QuadDrawSubTool::Grab ||
+                            qd->getSubTool() == retopo::QuadDrawSubTool::Pin) {
+                            float bRad = qd->getBrushRadius();
+                            if (ImGui::SliderFloat("Brush Radius", &bRad, 10.0f, 300.0f, "%.1f")) {
+                                qd->setBrushRadius(bRad);
+                            }
+                            float bStr = qd->getBrushStrength();
+                            if (ImGui::SliderFloat("Brush Strength", &bStr, 0.05f, 1.0f, "%.2f")) {
+                                qd->setBrushStrength(bStr);
+                            }
+                            const char* falloffs[] = { "Hermite", "Linear", "Dome", "Spike" };
+                            int falloff = qd->getBrushFalloff();
+                            if (ImGui::Combo("Falloff", &falloff, falloffs, IM_ARRAYSIZE(falloffs))) {
+                                qd->setBrushFalloff(falloff);
+                            }
+                        }
+
+                        ImGui::Separator();
+                        ImGui::TextUnformatted("Relax Brush (Shift+Drag)");
+                        bool lockB = qd->getRelaxLockBorder();
+                        if (ImGui::Checkbox("Lock Border", &lockB)) qd->setRelaxLockBorder(lockB);
+                        ImGui::SameLine();
+                        bool lockI = qd->getRelaxLockInterior();
+                        if (ImGui::Checkbox("Lock Interior", &lockI)) qd->setRelaxLockInterior(lockI);
+
+                        ImGui::Separator();
+                        ImGui::TextUnformatted("Display Options");
+                        bool showWire = qd->getShowWireframe();
+                        if (ImGui::Checkbox("Wireframe", &showWire)) qd->setShowWireframe(showWire);
+                        ImGui::SameLine();
+                        bool xRay = qd->getXRay();
+                        if (ImGui::Checkbox("X-Ray", &xRay)) qd->setXRay(xRay);
+
+                        ImVec4 wireColor = qd->getWireColor();
+                        if (ImGui::ColorEdit4("Wire Color", (float*)&wireColor, ImGuiColorEditFlags_NoInputs)) {
+                            qd->setWireColor(wireColor);
+                        }
+
+                        float ptSize = qd->getPointSize();
+                        if (ImGui::SliderFloat("Point Size", &ptSize, 2.0f, 12.0f, "%.1f")) {
+                            qd->setPointSize(ptSize);
+                        }
+
+                        ImGui::Separator();
+                        if (ImGui::Button("Snap All Points to Nearest", ImVec2(-1, 24))) {
+                            qd->snapAllPointsToTarget(scene);
+                        }
+                        if (ImGui::Button("Delete Unconnected Points", ImVec2(-1, 24))) {
+                            qd->deleteAllUnconnectedPoints(scene);
+                        }
+                        if (ImGui::Button("Pin Border Vertices", ImVec2(-1, 24))) {
+                            qd->pinBorderVertices();
+                        }
+                        if (ImGui::Button("Unpin All", ImVec2(-1, 24))) {
+                            qd->unpinAll();
+                        }
+                    }
                 }
             }
         }
@@ -5752,6 +5879,16 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             float vW = (float)camera.getWidth();
             float vH = (float)camera.getHeight();
             primTool->renderOverlay(scene, camera, vW, vH);
+        }
+    }
+
+    // Quad Draw Tool Overlay: show whenever BRUSH_QUAD_DRAW is active
+    if (sculpt.getBrush() == BRUSH_QUAD_DRAW) {
+        if (auto* qdTool = sculpt.getQuadDrawTool()) {
+            const Camera& camera = scene.getCamera();
+            float vW = (float)camera.getWidth();
+            float vH = (float)camera.getHeight();
+            qdTool->renderOverlay(scene, camera, vW, vH);
         }
     }
 
@@ -8451,7 +8588,8 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::GetWindowDrawList()->AddImage((ImTextureID)(uintptr_t)activeIconTex, imgMin, imgMax, ImVec2(0, 1), ImVec2(1, 0), IM_COL32(255, 255, 255, 255));
         } else {
             ImVec2 pMin = ImGui::GetItemRectMin();
-            const char* label = (activeBrush == BRUSH_TUBE) ? ICON_LC_CYLINDER "\nTube" : activeBrushName;
+            const char* label = (activeBrush == BRUSH_TUBE) ? ICON_LC_CYLINDER "\nTube" :
+                                (activeBrush == BRUSH_QUAD_DRAW) ? ICON_LC_SQUARE "\nQuad" : activeBrushName;
             ImVec2 textSz = ImGui::CalcTextSize(label);
             ImGui::GetWindowDrawList()->AddText(
                 ImVec2(pMin.x + (bigBtnSize - textSz.x) * 0.5f, pMin.y + (bigBtnSize - textSz.y) * 0.5f),
@@ -8492,6 +8630,11 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
                         m_showSculptingPanel = true;
                         if (auto* tube = sculpt.getTubeTool()) {
                             tube->onActivate(scene);
+                        }
+                    } else if (bType == BRUSH_QUAD_DRAW) {
+                        m_showSculptingPanel = true;
+                        if (auto* qd = sculpt.getQuadDrawTool()) {
+                            qd->onActivate(scene);
                         }
                     }
                 }
@@ -8921,6 +9064,44 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         }
 
         if (isTubeActive) {
+            ImGui::PopStyleColor(3);
+        }
+
+        // Quad Draw Tool (Retopology) Button
+        bool isQuadDrawActive = (currentBrush == BRUSH_QUAD_DRAW);
+        if (isQuadDrawActive) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+
+        GLuint qdTex = getIconTexture("quaddraw");
+        bool clickedQD = false;
+        if (qdTex != 0) {
+            clickedQD = ImGui::Button("##hudVertQuadDrawTool", ImVec2(squareSize, squareSize));
+            ImVec2 pMin = ImGui::GetItemRectMin();
+            ImVec2 pMax = ImGui::GetItemRectMax();
+            float pad = 1.0f * scale;
+            ImVec2 imgMin(pMin.x + pad, pMin.y + pad);
+            ImVec2 imgMax(pMax.x - pad, pMax.y - pad);
+            ImU32 tintCol = isQuadDrawActive ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 240);
+            ImGui::GetWindowDrawList()->AddImage((ImTextureID)(uintptr_t)qdTex, imgMin, imgMax, ImVec2(0, 1), ImVec2(1, 0), tintCol);
+        } else {
+            clickedQD = ImGui::Button(ICON_LC_SQUARE "##hudVertQuadDrawTool", ImVec2(squareSize, squareSize));
+        }
+
+        if (clickedQD) {
+            sculpt.setBrush(BRUSH_QUAD_DRAW);
+            m_showSculptingPanel = true;
+            if (auto* qd = sculpt.getQuadDrawTool()) {
+                qd->onActivate(scene);
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Quad Draw Retopology Tool\nInteractive surface retopology tool with snapping, extrude, knife, and relax");
+        }
+
+        if (isQuadDrawActive) {
             ImGui::PopStyleColor(3);
         }
 

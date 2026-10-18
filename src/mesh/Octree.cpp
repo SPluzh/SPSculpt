@@ -44,11 +44,24 @@ void Octree::build(int nbVertsVal, int nbFacesVal,
     faceCentersData = centersPtrVal;
     faceBoxesData = boxesPtrVal;
 
+    if (nbFaces <= 0 || nbVerts <= 0 || !vertsPtrVal || !facesPtrVal) {
+        root = nullptr;
+        faceLeaf.clear();
+        facePosInLeaf.clear();
+        return;
+    }
+
     rebuildInternal();
 }
 
 void Octree::rebuildInternal() {
     poolIndex = 0;
+    if (nbFaces <= 0 || nbVerts <= 0 || !vertsData || !facesData) {
+        root = nullptr;
+        faceLeaf.clear();
+        facePosInLeaf.clear();
+        return;
+    }
     root = getCell();
 
     faceLeaf.assign(nbFaces, nullptr);

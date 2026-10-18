@@ -69,6 +69,10 @@ void Mesh::initTopology() {
 void Mesh::initEdges() {
     faceEdges.resize(nbFaces * 4, 0);
     nbEdges = 0;
+    if (nbVerts <= 0 || vrfStartCount.size() < (size_t)(nbVerts * 2)) {
+        edges.clear();
+        return;
+    }
     std::vector<uint32_t> vertEdgeTemp(nbVerts, 0);
 
     for (int i = 0; i < nbVerts; ++i) {

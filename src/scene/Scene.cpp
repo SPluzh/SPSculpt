@@ -14,6 +14,7 @@
 #include "editing/SculptManager.h"
 #include "editing/TubeTool.h"
 #include "editing/PrimitiveTool.h"
+#include "editing/QuadDrawTool.h"
 
 
 Scene::Scene() {
@@ -445,6 +446,9 @@ void Scene::restoreState(const HistoryState& hs) {
                 tube->notifyMeshDeleted(tube->getActiveTubeMesh());
             }
         }
+        if (auto* qd = m_sculptManager->getQuadDrawTool()) {
+            qd->onSceneTopologyRestored(*this);
+        }
     }
 
     auto tEnd = std::chrono::high_resolution_clock::now();
@@ -541,6 +545,9 @@ void Scene::removeMesh(Mesh* m) {
         if (m_sculptManager) {
             if (auto* tube = m_sculptManager->getTubeTool()) {
                 tube->notifyMeshDeleted(m);
+            }
+            if (auto* qd = m_sculptManager->getQuadDrawTool()) {
+                qd->notifyMeshDeleted(m);
             }
         }
         delete m;
