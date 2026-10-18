@@ -26,7 +26,8 @@ enum class QuadDrawSubTool {
     Grab,               // Soft move brush
     Pin,                // Lock/freeze components
     Select,             // Select border edges for extrude
-    Strip               // Draw stroke opposite selected edges to build quads
+    Strip,              // Draw stroke opposite selected edges to build quads
+    Tube                // Draw across cylindrical mesh to create rings & tubes
 };
 
 enum class DragMode {
@@ -39,7 +40,8 @@ enum class DragMode {
     PinDrag,
     SliceDrag,
     BrushResize,
-    StrokeDrag
+    StrokeDrag,
+    TubeDrag
 };
 
 class QuadDrawTool {
@@ -130,6 +132,18 @@ public:
     QuadDrawMeshBuilder& getBuilder() { return m_builder; }
     SurfaceSnapper& getSnapper() { return m_snapper; }
 
+    // Tube Retopo settings
+    int getTubeRadialSegments() const { return m_tubeRadialSegments; }
+    void setTubeRadialSegments(int s) { m_tubeRadialSegments = std::clamp(s, 4, 32); }
+
+    int getTubeSpans() const { return m_tubeSpans; }
+    void setTubeSpans(int s) { m_tubeSpans = std::clamp(s, 1, 16); }
+
+    bool hasActiveTubeLoop() const { return !m_lastTubeLoop.empty(); }
+    size_t getActiveTubeLoopCount() const { return m_lastTubeLoop.size(); }
+    const std::vector<int32_t>& getActiveTubeLoop() const { return m_lastTubeLoop; }
+    void clearActiveTubeLoop() { m_lastTubeLoop.clear(); }
+
 private:
     SculptManager& m_sculpt;
     QuadDrawMeshBuilder m_builder;
@@ -216,6 +230,14 @@ private:
     std::vector<QuadPreview> m_strokeQuadPreviews;
     bool m_edgeClickCandidate = false;
     EdgeHit m_candidateEdge;
+
+    // Tube Retopo state
+    int m_tubeRadialSegments = 8;
+    int m_tubeSpans = 1;
+    glm::vec2 m_tubeStartScreen{0.0f};
+    glm::vec2 m_tubeEndScreen{0.0f};
+    TubeSliceResult m_tubePreviewResult;
+    std::vector<int32_t> m_lastTubeLoop;
 
     void updateHoverState(const Camera& camera, float mouseX, float mouseY, bool ctrl, bool alt, bool shift);
     void commitMultiCut(Scene& scene);

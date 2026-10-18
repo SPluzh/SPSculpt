@@ -3201,7 +3201,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             "Grab Brush",
                             "Pin Tool",
                             "Select Edges",
-                            "Strip (Draw to Quads)"
+                            "Strip (Draw to Quads)",
+                            "Tube (Contours)"
                         };
                         int subToolIdx = (int)qd->getSubTool();
                         if (ImGui::Combo("SubTool", &subToolIdx, subTools, IM_ARRAYSIZE(subTools))) {
@@ -3261,6 +3262,29 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             ImGui::BulletText("Ctrl+LMB on edge: Select border chain");
                             ImGui::BulletText("LMB Drag on surface: Draw line opposite edges to create quads");
                             ImGui::BulletText("New front edges are automatically selected for chaining!");
+                        } else if (qd->getSubTool() == retopo::QuadDrawSubTool::Tube) {
+                            ImGui::TextColored(ImVec4(0.2f, 0.9f, 1.0f, 1.0f), "Tube Tool: Draw line across limb to slice and build quad tube.");
+                            int radSegs = qd->getTubeRadialSegments();
+                            if (ImGui::SliderInt("Radial Segments", &radSegs, 4, 32)) {
+                                qd->setTubeRadialSegments(radSegs);
+                            }
+                            int spans = qd->getTubeSpans();
+                            if (ImGui::SliderInt("Spans (Rings)", &spans, 1, 16)) {
+                                qd->setTubeSpans(spans);
+                            }
+                            if (qd->hasActiveTubeLoop()) {
+                                ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.5f, 1.0f), "Active Ring: Ready (%zu vertices)", qd->getActiveTubeLoopCount());
+                                ImGui::SameLine();
+                                if (ImGui::SmallButton("End Tube / Reset")) {
+                                    qd->clearActiveTubeLoop();
+                                }
+                            } else {
+                                ImGui::TextDisabled("No active ring. Draw across limb to start tube.");
+                            }
+                            ImGui::TextDisabled("Controls:");
+                            ImGui::BulletText("LMB Drag across mesh: Cut cylinder & create ring");
+                            ImGui::BulletText("Subsequent cuts automatically bridge into a tube");
+                            ImGui::BulletText("Press Esc to finish current tube and start a new one");
                         }
 
                         ImGui::Separator();

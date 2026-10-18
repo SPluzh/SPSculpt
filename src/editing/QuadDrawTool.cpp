@@ -157,9 +157,19 @@ void QuadDrawTool::onSceneTopologyRestored(Scene& scene) {
         }
         m_pinnedVertices = std::move(validPins);
         pruneSelectedEdges();
+
+        bool loopValid = true;
+        for (int32_t v : m_lastTubeLoop) {
+            if (v < 0 || v >= m_retopoMesh->nbVerts) {
+                loopValid = false;
+                break;
+            }
+        }
+        if (!loopValid) m_lastTubeLoop.clear();
     } else {
         m_pinnedVertices.clear();
         m_selectedEdges.clear();
+        m_lastTubeLoop.clear();
     }
 }
 
@@ -172,6 +182,7 @@ void QuadDrawTool::notifyMeshDeleted(Mesh* mesh) {
         m_retopoMesh = nullptr;
         m_pinnedVertices.clear();
         m_selectedEdges.clear();
+        m_lastTubeLoop.clear();
     }
     m_dragMode = DragMode::None;
     m_hoverQuad.valid = false;
@@ -204,6 +215,11 @@ void QuadDrawTool::onDeactivate() {
     m_multiCutPoints.clear();
     m_extrudedVerts.clear();
     m_extrudedFrontEdges.clear();
+    m_strokeScreenPoints.clear();
+    m_strokeWorldPoints.clear();
+    m_strokeQuadPreviews.clear();
+    m_lastTubeLoop.clear();
+    m_tubePreviewResult.valid = false;
 }
 
 void QuadDrawTool::snapAllPointsToTarget(Scene& scene) {
@@ -362,6 +378,7 @@ void QuadDrawTool::updateHoverState(
     m_extrudeVertexWeldTarget = -1;
 
     if (!m_retopoMesh || m_retopoMesh->nbVerts == 0) return;
+    if (m_subTool == QuadDrawSubTool::Tube) return;
 
     // Check vertex hover
     m_hoverVertex = m_snapper.FindNearestRetopoVertex(
@@ -456,6 +473,15 @@ bool QuadDrawTool::handleMouseDown(
     }
 
     if (button != SDL_BUTTON_LEFT) return false;
+
+    // 0. Tube Mode (LMB drag across mesh to slice and build quad tube)
+    if (m_subTool == QuadDrawSubTool::Tube) {
+        m_dragMode = DragMode::TubeDrag;
+        m_tubeStartScreen = glm::vec2(mouseX, mouseY);
+        m_tubeEndScreen = m_tubeStartScreen;
+        m_tubePreviewResult.valid = false;
+        return true;
+    }
 
     // 0. Select Mode (Click to select edge/face, Alt+Click to deselect)
     if (m_subTool == QuadDrawSubTool::Select) {
@@ -1069,6 +1095,21 @@ bool QuadDrawTool::handleMouseMove(
         return true;
     }
 
+    if (m_dragMode == DragMode::TubeDrag) {
+        m_tubeEndScreen = glm::vec2(mouseX, mouseY);
+        if (glm::distance(m_tubeStartScreen, m_tubeEndScreen) >= 6.0f) {
+            m_tubePreviewResult = m_builder.SliceTargetMeshForTube(
+                camera, m_targetMesh, m_snapper,
+                m_tubeStartScreen, m_tubeEndScreen, m_tubeRadialSegments
+            );
+        } else {
+            m_tubePreviewResult.valid = false;
+        }
+        m_lastMouseX = mouseX;
+        m_lastMouseY = mouseY;
+        return true;
+    }
+
     if (m_subTool == QuadDrawSubTool::Strip) {
         if (m_edgeClickCandidate) {
             float dist = glm::distance(glm::vec2(mouseX, mouseY), glm::vec2(m_dragStartX, m_dragStartY));
@@ -1099,6 +1140,39 @@ bool QuadDrawTool::handleMouseMove(
 }
 
 bool QuadDrawTool::handleMouseUp(Scene& scene, const Camera& camera, int button) {
+    if (m_subTool == QuadDrawSubTool::Tube) {
+        if (m_dragMode == DragMode::TubeDrag) {
+            TubeSliceResult slice;
+            if (m_tubePreviewResult.valid && !m_tubePreviewResult.worldPoints.empty()) {
+                slice = std::move(m_tubePreviewResult);
+            } else if (glm::distance(m_tubeStartScreen, m_tubeEndScreen) >= 6.0f) {
+                slice = m_builder.SliceTargetMeshForTube(
+                    camera, m_targetMesh, m_snapper,
+                    m_tubeStartScreen, m_tubeEndScreen, m_tubeRadialSegments
+                );
+            }
+
+            if (slice.valid && !slice.worldPoints.empty()) {
+                ensureTargetAndRetopo(scene, true);
+                if (m_retopoMesh) {
+                    g_undoManager.pushTopologyChange(scene, "Tube Retopo Ring", [&]() {
+                        TubeBuildResult bRes = m_builder.BuildTubeRing(
+                            m_retopoMesh, m_targetMesh, m_snapper,
+                            slice.worldPoints, m_lastTubeLoop, m_tubeSpans
+                        );
+                        if (bRes.valid) {
+                            m_lastTubeLoop = bRes.newLoopVertices;
+                        }
+                    });
+                }
+            }
+            m_dragMode = DragMode::None;
+            m_tubePreviewResult.valid = false;
+            updateHoverState(camera, m_lastMouseX, m_lastMouseY, false, false, false);
+            return true;
+        }
+    }
+
     if (m_subTool == QuadDrawSubTool::Strip) {
         if (m_edgeClickCandidate) {
             if (m_candidateEdge.valid) {
@@ -1223,6 +1297,12 @@ bool QuadDrawTool::handleKeyDown(Scene& scene, int keycode) {
         }
     }
     if (keycode == SDLK_ESCAPE) {
+        if (m_subTool == QuadDrawSubTool::Tube) {
+            m_lastTubeLoop.clear();
+            m_dragMode = DragMode::None;
+            m_tubePreviewResult.valid = false;
+            return true;
+        }
         if (m_dragMode == DragMode::StrokeDrag || m_edgeClickCandidate) {
             cancelStroke();
             return true;
@@ -1568,6 +1648,98 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
         ImVec2 hudPos(20.0f, vH - 35.0f);
         drawList->AddText(ImVec2(hudPos.x + 1, hudPos.y + 1), IM_COL32(0, 0, 0, 220), hudBuf);
         drawList->AddText(hudPos, IM_COL32(255, 220, 60, 240), hudBuf);
+    }
+
+    // 7. Draw Tube Tool Overlay & Preview
+    if (m_subTool == QuadDrawSubTool::Tube) {
+        auto getVertWorld = [&](int32_t idx) -> glm::vec3 {
+            glm::vec3 p(m_retopoMesh->verts[idx * 3], m_retopoMesh->verts[idx * 3 + 1], m_retopoMesh->verts[idx * 3 + 2]);
+            return (m_retopoMesh->matrix != glm::mat4(1.0f)) ? glm::vec3(m_retopoMesh->matrix * glm::vec4(p, 1.0f)) : p;
+        };
+
+        // Highlight active tube ring
+        if (m_retopoMesh && !m_lastTubeLoop.empty()) {
+            int32_t N_prev = (int32_t)m_lastTubeLoop.size();
+            std::vector<ImVec2> activeRingScreen;
+            activeRingScreen.reserve(N_prev);
+            for (int32_t v : m_lastTubeLoop) {
+                if (v >= 0 && v < m_retopoMesh->nbVerts) {
+                    glm::vec3 sp = camera.project(getVertWorld(v));
+                    if (sp.z > 0.0f && sp.z < 1.0f) {
+                        activeRingScreen.push_back(ImVec2(sp.x, sp.y));
+                        drawList->AddCircleFilled(activeRingScreen.back(), m_pointSize * 1.1f, IM_COL32(0, 255, 200, 255));
+                    }
+                }
+            }
+            if (activeRingScreen.size() == (size_t)N_prev && N_prev >= 3) {
+                drawList->AddPolyline(activeRingScreen.data(), N_prev, IM_COL32(0, 255, 200, 220), ImDrawFlags_Closed, 2.5f);
+            }
+        }
+
+        // Draw live cut line & candidate ring during drag
+        if (m_dragMode == DragMode::TubeDrag) {
+            drawList->AddLine(
+                ImVec2(m_tubeStartScreen.x, m_tubeStartScreen.y),
+                ImVec2(m_tubeEndScreen.x, m_tubeEndScreen.y),
+                IM_COL32(0, 220, 255, 240), 2.5f
+            );
+            drawList->AddCircleFilled(ImVec2(m_tubeStartScreen.x, m_tubeStartScreen.y), 4.5f, IM_COL32(0, 255, 180, 255));
+            drawList->AddCircleFilled(ImVec2(m_tubeEndScreen.x, m_tubeEndScreen.y), 4.5f, IM_COL32(255, 200, 0, 255));
+
+            if (m_tubePreviewResult.valid && !m_tubePreviewResult.worldPoints.empty()) {
+                const auto& pts = m_tubePreviewResult.worldPoints;
+                int N_pts = (int)pts.size();
+                std::vector<ImVec2> ringScreen(N_pts);
+                glm::mat4 w2s = camera.computeWorldToScreenMatrix();
+                bool allVisible = true;
+                for (int i = 0; i < N_pts; ++i) {
+                    glm::vec4 clip = w2s * glm::vec4(pts[i], 1.0f);
+                    if (clip.w <= 0.001f) {
+                        allVisible = false;
+                        break;
+                    }
+                    glm::vec3 sp = camera.project(pts[i]);
+                    ringScreen[i] = ImVec2(sp.x, sp.y);
+                }
+
+                if (allVisible) {
+                    if (m_retopoMesh && !m_lastTubeLoop.empty() && (int)m_lastTubeLoop.size() == N_pts) {
+                        std::vector<ImVec2> prevScreen(N_pts);
+                        bool prevVis = true;
+                        for (int i = 0; i < N_pts; ++i) {
+                            glm::vec3 wP = getVertWorld(m_lastTubeLoop[i]);
+                            glm::vec4 clip = w2s * glm::vec4(wP, 1.0f);
+                            if (clip.w <= 0.001f) { prevVis = false; break; }
+                            glm::vec3 sp = camera.project(wP);
+                            prevScreen[i] = ImVec2(sp.x, sp.y);
+                        }
+                        if (prevVis) {
+                            for (int i = 0; i < N_pts; ++i) {
+                                int iNext = (i + 1) % N_pts;
+                                ImVec2 qpts[4] = { prevScreen[i], prevScreen[iNext], ringScreen[iNext], ringScreen[i] };
+                                drawList->AddConvexPolyFilled(qpts, 4, IM_COL32(0, 220, 180, 50));
+                                drawList->AddLine(prevScreen[i], ringScreen[i], IM_COL32(255, 215, 60, 180), 1.5f);
+                            }
+                        }
+                    }
+
+                    drawList->AddPolyline(ringScreen.data(), N_pts, IM_COL32(80, 255, 120, 255), ImDrawFlags_Closed, 2.5f);
+                    for (int i = 0; i < N_pts; ++i) {
+                        drawList->AddCircleFilled(ringScreen[i], m_pointSize, IM_COL32(100, 255, 100, 255));
+                    }
+                }
+            }
+        }
+
+        char hudBuf[256];
+        if (m_lastTubeLoop.empty()) {
+            snprintf(hudBuf, sizeof(hudBuf), "Tube Tool: Draw line across limb to start tube (%d divisions)", m_tubeRadialSegments);
+        } else {
+            snprintf(hudBuf, sizeof(hudBuf), "Tube Tool: Active ring (%zu verts) | Draw next cut to bridge tube | Esc: End tube", m_lastTubeLoop.size());
+        }
+        ImVec2 hudPos(20.0f, vH - 35.0f);
+        drawList->AddText(ImVec2(hudPos.x + 1, hudPos.y + 1), IM_COL32(0, 0, 0, 220), hudBuf);
+        drawList->AddText(hudPos, IM_COL32(0, 230, 255, 240), hudBuf);
     }
 }
 

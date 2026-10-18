@@ -1,6 +1,7 @@
 #include "retopo/QuadDrawMeshBuilder.h"
 #include <algorithm>
 #include <cmath>
+#include <deque>
 #include <unordered_map>
 #include <utility>
 #include "common/Constants.h"
@@ -2289,6 +2290,458 @@ StrokeExtrudeResult QuadDrawMeshBuilder::ExtrudeEdgesToStroke(
 
     result.valid = true;
     NotifyMeshUpdated(mesh);
+    return result;
+}
+
+TubeSliceResult QuadDrawMeshBuilder::SliceTargetMeshForTube(
+    const Camera& camera, const Mesh* targetMesh, SurfaceSnapper& snapper,
+    const glm::vec2& screenP0, const glm::vec2& screenP1, int32_t radialSegments
+) {
+    TubeSliceResult result;
+    if (!targetMesh || targetMesh->nbFaces == 0 || radialSegments < 3) return result;
+
+    float scrDist = glm::distance(screenP0, screenP1);
+    if (scrDist < 6.0f) return result;
+
+    if (!snapper.getBVH().IsBuilt() || snapper.getBVH().GetSourceMesh() != targetMesh) {
+        snapper.getBVH().Build(targetMesh);
+    }
+    if (!snapper.getBVH().IsBuilt()) return result;
+
+    // 1. Densely sample along the screen line to find where it crosses targetMesh
+    const int sampleCount = std::clamp((int)(scrDist / 4.0f), 20, 80);
+    std::vector<glm::vec3> hits;
+    for (int i = 0; i <= sampleCount; ++i) {
+        float t = (float)i / (float)sampleCount;
+        glm::vec2 sp = glm::mix(screenP0, screenP1, t);
+        SnapResult snap = snapper.RaycastSurface(camera, targetMesh, sp.x, sp.y);
+        if (snap.valid) {
+            hits.push_back(snap.worldPos);
+        }
+    }
+
+    // Fallback: check snap with a small radius around midpoint if direct raycasts barely missed
+    if (hits.empty()) {
+        glm::vec2 midScreen = (screenP0 + screenP1) * 0.5f;
+        SnapResult snap = snapper.SnapClosestPoint(targetMesh, camera.unproject(midScreen.x, midScreen.y, 0.5f), 100.0f);
+        if (snap.valid) hits.push_back(snap.worldPos);
+    }
+
+    if (hits.empty()) return result;
+
+    glm::vec3 hitAvg(0.0f);
+    for (const auto& h : hits) hitAvg += h;
+    hitAvg /= (float)hits.size();
+
+    // 2. Define cutting plane: exactly containing the screen stroke line and camera view
+    Ray r0 = camera.getRay(screenP0.x, screenP0.y);
+    Ray r1 = camera.getRay(screenP1.x, screenP1.y);
+
+    glm::vec3 planeNormal(0.0f);
+    glm::vec3 planePoint(0.0f);
+
+    if (camera.isOrthographic()) {
+        glm::vec3 u0 = camera.unproject(screenP0.x, screenP0.y, 0.0f);
+        glm::vec3 u1 = camera.unproject(screenP1.x, screenP1.y, 0.0f);
+        glm::vec3 strokeDir = u1 - u0;
+        glm::vec3 camDir = camera.unproject(screenP0.x, screenP0.y, 1.0f) - u0;
+        if (glm::length(camDir) > 1e-5f) camDir = glm::normalize(camDir);
+        else camDir = r0.dir;
+        planeNormal = glm::cross(strokeDir, camDir);
+        float pLen = glm::length(planeNormal);
+        if (pLen > 1e-6f) planeNormal /= pLen;
+        else planeNormal = glm::vec3(0.0f, 1.0f, 0.0f);
+        planePoint = u0;
+    } else {
+        glm::vec3 eye = camera.computePosition();
+        planeNormal = glm::cross(r1.dir, r0.dir);
+        float pLen = glm::length(planeNormal);
+        if (pLen > 1e-6f) {
+            planeNormal /= pLen;
+        } else {
+            Ray rMid = camera.getRay((screenP0.x + screenP1.x) * 0.5f, (screenP0.y + screenP1.y) * 0.5f);
+            glm::vec3 u0 = camera.unproject(screenP0.x, screenP0.y, 0.5f);
+            glm::vec3 u1 = camera.unproject(screenP1.x, screenP1.y, 0.5f);
+            planeNormal = glm::cross(u1 - u0, rMid.dir);
+            float l2 = glm::length(planeNormal);
+            if (l2 > 1e-6f) planeNormal /= l2;
+            else planeNormal = glm::vec3(0.0f, 1.0f, 0.0f);
+        }
+        planePoint = eye;
+    }
+
+    float planeD = -glm::dot(planeNormal, planePoint);
+
+    // 3. Query all triangles from BVH that intersect the cutting plane (maxRadius=0 to avoid clipping back of limb!)
+    std::vector<BVHTriangle> tris;
+    if (!snapper.getBVH().QueryPlaneTriangles(planeNormal, planeD, hitAvg, 0.0f, tris) || tris.empty()) {
+        return result;
+    }
+
+    // 4. Intersect triangles with plane to produce 3D segments
+    struct PlaneSegment {
+        glm::vec3 p0;
+        glm::vec3 p1;
+    };
+    std::vector<PlaneSegment> segments;
+    segments.reserve(tris.size());
+
+    for (const auto& tri : tris) {
+        float d0 = glm::dot(planeNormal, tri.v0) + planeD;
+        float d1 = glm::dot(planeNormal, tri.v1) + planeD;
+        float d2 = glm::dot(planeNormal, tri.v2) + planeD;
+
+        if (std::abs(d0) < 1e-7f) d0 = (d0 >= 0.0f) ? 1e-7f : -1e-7f;
+        if (std::abs(d1) < 1e-7f) d1 = (d1 >= 0.0f) ? 1e-7f : -1e-7f;
+        if (std::abs(d2) < 1e-7f) d2 = (d2 >= 0.0f) ? 1e-7f : -1e-7f;
+
+        bool s0 = d0 > 0.0f;
+        bool s1 = d1 > 0.0f;
+        bool s2 = d2 > 0.0f;
+
+        if ((s0 == s1) && (s1 == s2)) continue;
+
+        glm::vec3 pts[2];
+        int numPts = 0;
+
+        if (s0 != s1 && numPts < 2) {
+            float t = d0 / (d0 - d1);
+            pts[numPts++] = tri.v0 + t * (tri.v1 - tri.v0);
+        }
+        if (s1 != s2 && numPts < 2) {
+            float t = d1 / (d1 - d2);
+            pts[numPts++] = tri.v1 + t * (tri.v2 - tri.v1);
+        }
+        if (s2 != s0 && numPts < 2) {
+            float t = d2 / (d2 - d0);
+            pts[numPts++] = tri.v2 + t * (tri.v0 - tri.v2);
+        }
+
+        if (numPts == 2) {
+            glm::vec3 diff = pts[0] - pts[1];
+            if (glm::dot(diff, diff) > 1e-10f) {
+                segments.push_back({pts[0], pts[1]});
+            }
+        }
+    }
+
+    if (segments.empty()) return result;
+
+    // 5. Chain segments into loops with bidirectional expansion
+    float totalSegLen = 0.0f;
+    for (const auto& s : segments) totalSegLen += glm::distance(s.p0, s.p1);
+    float avgSegLen = totalSegLen / (float)segments.size();
+    float eps = std::max(avgSegLen * 0.8f, 1e-3f);
+    float epsSq = eps * eps;
+
+    std::vector<std::vector<glm::vec3>> loops;
+    std::vector<bool> used(segments.size(), false);
+
+    for (size_t i = 0; i < segments.size(); ++i) {
+        if (used[i]) continue;
+        used[i] = true;
+
+        std::deque<glm::vec3> chain;
+        chain.push_back(segments[i].p0);
+        chain.push_back(segments[i].p1);
+
+        // Expand forward
+        bool canExpand = true;
+        while (canExpand) {
+            glm::vec3 tip = chain.back();
+            glm::vec3 toStart = tip - chain.front();
+            if (chain.size() >= 3 && glm::dot(toStart, toStart) < epsSq * 4.0f) {
+                break;
+            }
+
+            int bestNext = -1;
+            bool flipNext = false;
+            float bestDistSq = epsSq * 9.0f;
+
+            for (size_t j = 0; j < segments.size(); ++j) {
+                if (used[j]) continue;
+                glm::vec3 d0 = tip - segments[j].p0;
+                float dist0 = glm::dot(d0, d0);
+                if (dist0 < bestDistSq) {
+                    bestDistSq = dist0;
+                    bestNext = (int)j;
+                    flipNext = false;
+                }
+                glm::vec3 d1 = tip - segments[j].p1;
+                float dist1 = glm::dot(d1, d1);
+                if (dist1 < bestDistSq) {
+                    bestDistSq = dist1;
+                    bestNext = (int)j;
+                    flipNext = true;
+                }
+            }
+
+            if (bestNext != -1) {
+                used[bestNext] = true;
+                chain.push_back(flipNext ? segments[bestNext].p0 : segments[bestNext].p1);
+            } else {
+                canExpand = false;
+            }
+        }
+
+        // Expand backward
+        canExpand = true;
+        while (canExpand) {
+            glm::vec3 tip = chain.front();
+            glm::vec3 toBack = tip - chain.back();
+            if (chain.size() >= 3 && glm::dot(toBack, toBack) < epsSq * 4.0f) {
+                break;
+            }
+
+            int bestNext = -1;
+            bool flipNext = false;
+            float bestDistSq = epsSq * 9.0f;
+
+            for (size_t j = 0; j < segments.size(); ++j) {
+                if (used[j]) continue;
+                glm::vec3 d0 = tip - segments[j].p1;
+                float dist0 = glm::dot(d0, d0);
+                if (dist0 < bestDistSq) {
+                    bestDistSq = dist0;
+                    bestNext = (int)j;
+                    flipNext = false;
+                }
+                glm::vec3 d1 = tip - segments[j].p0;
+                float dist1 = glm::dot(d1, d1);
+                if (dist1 < bestDistSq) {
+                    bestDistSq = dist1;
+                    bestNext = (int)j;
+                    flipNext = true;
+                }
+            }
+
+            if (bestNext != -1) {
+                used[bestNext] = true;
+                chain.push_front(flipNext ? segments[bestNext].p1 : segments[bestNext].p0);
+            } else {
+                canExpand = false;
+            }
+        }
+
+        float gap = glm::distance(chain.front(), chain.back());
+        float chainPerim = 0.0f;
+        for (size_t k = 0; k + 1 < chain.size(); ++k) {
+            chainPerim += glm::distance(chain[k], chain[k + 1]);
+        }
+
+        bool isClosed = (gap < eps * 3.0f);
+        if (!isClosed && chain.size() >= 6 && chainPerim > 1e-3f && (gap < chainPerim * 0.45f)) {
+            isClosed = true;
+        }
+
+        if (isClosed && chain.size() >= 4) {
+            std::vector<glm::vec3> loop(chain.begin(), chain.end());
+            loops.push_back(std::move(loop));
+        }
+    }
+
+    if (loops.empty()) return result;
+
+    // 6. Select the loop whose center is closest to hitAvg
+    int bestLoopIdx = -1;
+    float bestLoopDist = 1e30f;
+
+    for (size_t k = 0; k < loops.size(); ++k) {
+        const auto& lp = loops[k];
+        glm::vec3 c(0.0f);
+        float perim = 0.0f;
+        for (size_t v = 0; v < lp.size(); ++v) {
+            c += lp[v];
+            perim += glm::distance(lp[v], lp[(v + 1) % lp.size()]);
+        }
+        c /= (float)lp.size();
+        if (perim < 1e-3f) continue;
+
+        float dist = glm::distance(c, hitAvg);
+        if (dist < bestLoopDist) {
+            bestLoopDist = dist;
+            bestLoopIdx = (int)k;
+        }
+    }
+
+    if (bestLoopIdx == -1) return result;
+    const auto& bestLoop = loops[bestLoopIdx];
+
+    // 7. Resample loop into N equidistant points
+    const int K = (int)bestLoop.size();
+    std::vector<float> cumDist(K + 1, 0.0f);
+    for (int i = 0; i < K; ++i) {
+        cumDist[i + 1] = cumDist[i] + glm::distance(bestLoop[i], bestLoop[(i + 1) % K]);
+    }
+    float totalPerim = cumDist[K];
+    if (totalPerim < 1e-4f) return result;
+
+    const int N = radialSegments;
+    std::vector<glm::vec3> resampled(N);
+
+    for (int j = 0; j < N; ++j) {
+        float targetDist = totalPerim * ((float)j / (float)N);
+        int seg = 0;
+        while (seg < K - 1 && cumDist[seg + 1] < targetDist) {
+            seg++;
+        }
+        float segLen = cumDist[seg + 1] - cumDist[seg];
+        float alpha = (segLen > 1e-6f) ? ((targetDist - cumDist[seg]) / segLen) : 0.0f;
+        glm::vec3 pt = glm::mix(bestLoop[seg], bestLoop[(seg + 1) % K], std::clamp(alpha, 0.0f, 1.0f));
+
+        SnapResult snap = snapper.SnapClosestPoint(targetMesh, pt, 500.0f);
+        if (snap.valid) pt = snap.worldPos;
+        resampled[j] = pt;
+    }
+
+    // 8. Compute center and orient counter-clockwise around planeNormal
+    glm::vec3 loopCenter(0.0f);
+    for (const auto& p : resampled) loopCenter += p;
+    loopCenter /= (float)N;
+
+    glm::vec3 loopNorm(0.0f);
+    for (int j = 0; j < N; ++j) {
+        loopNorm += glm::cross(resampled[j] - loopCenter, resampled[(j + 1) % N] - loopCenter);
+    }
+    if (glm::dot(loopNorm, planeNormal) < 0.0f) {
+        std::reverse(resampled.begin() + 1, resampled.end());
+    }
+
+    // 9. Align start vertex with screenP0
+    glm::vec3 u0 = camera.unproject(screenP0.x, screenP0.y, 0.5f);
+    int startIdx = 0;
+    float bestStartDist = 1e30f;
+    for (int j = 0; j < N; ++j) {
+        float d = glm::distance(resampled[j], u0);
+        if (d < bestStartDist) {
+            bestStartDist = d;
+            startIdx = j;
+        }
+    }
+    if (startIdx > 0) {
+        std::rotate(resampled.begin(), resampled.begin() + startIdx, resampled.end());
+    }
+
+    result.valid = true;
+    result.worldPoints = std::move(resampled);
+    result.center = loopCenter;
+    result.normal = planeNormal;
+    result.radius = totalPerim / (2.0f * 3.14159265f);
+    return result;
+}
+
+TubeBuildResult QuadDrawMeshBuilder::BuildTubeRing(
+    Mesh* retopoMesh, const Mesh* targetMesh, SurfaceSnapper& snapper,
+    const std::vector<glm::vec3>& newRingPoints,
+    const std::vector<int32_t>& previousLoopVertices,
+    int32_t spans
+) {
+    TubeBuildResult result;
+    if (!retopoMesh || newRingPoints.empty()) return result;
+
+    const int N = (int)newRingPoints.size();
+    if (spans < 1) spans = 1;
+
+    bool hasValidPrev = (!previousLoopVertices.empty() && (int)previousLoopVertices.size() == N);
+    if (hasValidPrev) {
+        int32_t ptCount = (int32_t)(retopoMesh->verts.size() / 3);
+        for (int32_t v : previousLoopVertices) {
+            if (v < 0 || v >= ptCount) {
+                hasValidPrev = false;
+                break;
+            }
+        }
+    }
+
+    auto getVertWorld = [&](int32_t idx) -> glm::vec3 {
+        glm::vec3 p(retopoMesh->verts[idx * 3], retopoMesh->verts[idx * 3 + 1], retopoMesh->verts[idx * 3 + 2]);
+        return (retopoMesh->matrix != glm::mat4(1.0f)) ? glm::vec3(retopoMesh->matrix * glm::vec4(p, 1.0f)) : p;
+    };
+
+    if (!hasValidPrev) {
+        result.newLoopVertices.resize(N);
+        for (int j = 0; j < N; ++j) {
+            result.newLoopVertices[j] = AddVertex(retopoMesh, newRingPoints[j]);
+        }
+        result.valid = true;
+        result.quadsCreated = 0;
+        NotifyMeshUpdated(retopoMesh);
+        return result;
+    }
+
+    std::vector<glm::vec3> prevPos(N);
+    for (int j = 0; j < N; ++j) {
+        prevPos[j] = getVertWorld(previousLoopVertices[j]);
+    }
+
+    int bestShift = 0;
+    int bestDir = 1;
+    float minCost = 1e30f;
+
+    for (int dir : {1, -1}) {
+        for (int s = 0; s < N; ++s) {
+            float cost = 0.0f;
+            for (int j = 0; j < N; ++j) {
+                int qIdx = (dir * j + s + N * 100) % N;
+                glm::vec3 diff = prevPos[j] - newRingPoints[qIdx];
+                cost += glm::dot(diff, diff);
+            }
+            if (cost < minCost) {
+                minCost = cost;
+                bestShift = s;
+                bestDir = dir;
+            }
+        }
+    }
+
+    std::vector<glm::vec3> alignedNewPoints(N);
+    for (int j = 0; j < N; ++j) {
+        int qIdx = (bestDir * j + bestShift + N * 100) % N;
+        alignedNewPoints[j] = newRingPoints[qIdx];
+    }
+
+    std::vector<int32_t> currentRing = previousLoopVertices;
+    int totalQuads = 0;
+
+    for (int step = 1; step <= spans; ++step) {
+        float t = (float)step / (float)spans;
+        std::vector<int32_t> nextRing(N);
+
+        for (int j = 0; j < N; ++j) {
+            glm::vec3 pt = glm::mix(prevPos[j], alignedNewPoints[j], t);
+            if (step < spans) {
+                SnapResult snap = snapper.SnapClosestPoint(targetMesh, pt, 500.0f);
+                if (snap.valid) pt = snap.worldPos;
+            } else {
+                pt = alignedNewPoints[j];
+            }
+            nextRing[j] = AddVertex(retopoMesh, pt);
+        }
+
+        for (int j = 0; j < N; ++j) {
+            int jNext = (j + 1) % N;
+            int32_t a = currentRing[j];
+            int32_t b = currentRing[jNext];
+            int32_t c = nextRing[jNext];
+            int32_t d = nextRing[j];
+
+            glm::vec3 quadMid = (getVertWorld(a) + getVertWorld(c)) * 0.5f;
+            SnapResult snap = snapper.SnapClosestPoint(targetMesh, quadMid, 500.0f);
+            glm::vec3 targetN = snap.valid ? snap.normal : glm::vec3(0.0f, 1.0f, 0.0f);
+
+            if (AddQuad(retopoMesh, a, b, c, d, targetN)) {
+                totalQuads++;
+            }
+        }
+
+        currentRing = nextRing;
+    }
+
+    result.valid = true;
+    result.newLoopVertices = currentRing;
+    result.quadsCreated = totalQuads;
+    InvalidateEdgeCache();
+    NotifyMeshUpdated(retopoMesh);
     return result;
 }
 

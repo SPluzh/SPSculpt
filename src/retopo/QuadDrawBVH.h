@@ -543,6 +543,53 @@ public:
         return false;
     }
 
+    bool QueryPlaneTriangles(
+        const glm::vec3& planeNormal, float planeD,
+        const glm::vec3& sphereCenter, float maxRadius,
+        std::vector<BVHTriangle>& outTriangles
+    ) const {
+        if (!m_isBuilt || m_nodeCount == 0 || m_triangles.empty()) return false;
+
+        float maxRadiusSq = maxRadius * maxRadius;
+        glm::vec3 pNorm = glm::normalize(planeNormal);
+
+        int32_t stack[64];
+        int32_t stackPtr = 0;
+        stack[stackPtr++] = 0;
+
+        while (stackPtr > 0) {
+            int32_t currIdx = stack[--stackPtr];
+            const auto& node = m_nodes[currIdx];
+
+            if (maxRadius > 0.0f) {
+                if (node.bbox.SqrDistanceToPoint(sphereCenter) > maxRadiusSq) {
+                    continue;
+                }
+            }
+
+            glm::vec3 bCenter = (node.bbox.minBound + node.bbox.maxBound) * 0.5f;
+            glm::vec3 bExt = (node.bbox.maxBound - node.bbox.minBound) * 0.5f;
+            float r = bExt.x * std::abs(pNorm.x) + bExt.y * std::abs(pNorm.y) + bExt.z * std::abs(pNorm.z);
+            float dist = glm::dot(pNorm, bCenter) + planeD;
+            if (std::abs(dist) > r) {
+                continue;
+            }
+
+            if (node.triCount > 0) {
+                int32_t endTri = node.firstTri + node.triCount;
+                for (int32_t t = node.firstTri; t < endTri; ++t) {
+                    outTriangles.push_back(m_triangles[t]);
+                }
+            } else {
+                int32_t leftIdx = node.leftChild;
+                int32_t rightIdx = node.leftChild + 1;
+                if (stackPtr < 63) stack[stackPtr++] = leftIdx;
+                if (stackPtr < 63) stack[stackPtr++] = rightIdx;
+            }
+        }
+        return !outTriangles.empty();
+    }
+
 private:
     void SubdivideNode(
         int32_t nodeIdx, int32_t first, int32_t count, int32_t depth,

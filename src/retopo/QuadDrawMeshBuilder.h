@@ -200,6 +200,20 @@ struct GrabVertexInfo {
     float weight = 0.0f;
 };
 
+struct TubeSliceResult {
+    bool valid = false;
+    std::vector<glm::vec3> worldPoints;
+    glm::vec3 center{0.0f};
+    glm::vec3 normal{0.0f};
+    float radius = 0.0f;
+};
+
+struct TubeBuildResult {
+    bool valid = false;
+    std::vector<int32_t> newLoopVertices;
+    int32_t quadsCreated = 0;
+};
+
 class QuadDrawMeshBuilder {
 public:
     QuadDrawMeshBuilder();
@@ -275,6 +289,18 @@ public:
         Mesh* mesh, const Mesh* targetMesh, SurfaceSnapper& snapper,
         const BorderChain& chain, const std::vector<glm::vec3>& strokeWorldPoints,
         float weldRadiusPixels = 0.0f, const Camera* camera = nullptr
+    );
+
+    // Tube / Contours Retopology
+    TubeSliceResult SliceTargetMeshForTube(
+        const Camera& camera, const Mesh* targetMesh, SurfaceSnapper& snapper,
+        const glm::vec2& screenP0, const glm::vec2& screenP1, int32_t radialSegments
+    );
+    TubeBuildResult BuildTubeRing(
+        Mesh* retopoMesh, const Mesh* targetMesh, SurfaceSnapper& snapper,
+        const std::vector<glm::vec3>& newRingPoints,
+        const std::vector<int32_t>& previousLoopVertices,
+        int32_t spans = 1
     );
 
     // Brushes (Relax & Grab)
