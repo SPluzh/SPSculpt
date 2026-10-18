@@ -2961,7 +2961,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                 } else {
                                     float bbox[6];
                                     selectedMesh->computeBbox(bbox);
-                                    targetLocalCenter = glm::vec3((bbox[0]+bbox[1])*0.5f, (bbox[2]+bbox[3])*0.5f, (bbox[4]+bbox[5])*0.5f);
+                                    targetLocalCenter = glm::vec3((bbox[0]+bbox[3])*0.5f, (bbox[1]+bbox[4])*0.5f, (bbox[2]+bbox[5])*0.5f);
                                 }
 
                                 glm::vec3 targetWorldCenter = glm::vec3(selectedMesh->matrix * glm::vec4(targetLocalCenter, 1.0f));
@@ -2985,6 +2985,10 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                     selectedMesh->normals[i * 3 + 2] = newNormal.z;
                                 }
                                 selectedMesh->matrix = targetMatrix;
+                                if (selectedMesh->isPrimitive && selectedMesh->primitiveData) {
+                                    selectedMesh->primitiveData->localTransform = deltaLocalMatrixInv * selectedMesh->primitiveData->localTransform;
+                                    selectedMesh->primitiveData->centerOffset = glm::vec3(selectedMesh->primitiveData->localTransform[3]);
+                                }
                                 selectedMesh->postInit();
                                 selectedMesh->isDirty = true;
                                 double totalBtnMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tBtnStart).count();
@@ -5748,7 +5752,9 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGuizmo::AllowAxisFlip(false);
 
             bool cameraDragging = sculpt.getCameraController().isDragging();
-            ImGuizmo::Enable(!cameraDragging);
+            bool primBusy = sculpt.getPrimitiveTool() && 
+                            (sculpt.getPrimitiveTool()->isInteracting() || sculpt.getPrimitiveTool()->isHoveringHandle());
+            ImGuizmo::Enable(!cameraDragging && !primBusy);
             ImGuizmo::SetGizmoSizeClipSpace(m_gizmoSize);
 
             glm::mat4 view = camera.getViewMatrix();
@@ -5758,6 +5764,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             static bool wasUsingGizmo = false;
             static bool draggedPivot = false;
             static glm::mat4 pivotStartMatrix = glm::mat4(1.0f);
+            static glm::mat4 pivotStartLocalTransform = glm::mat4(1.0f);
             static glm::vec3 transformPivotStartLocal = glm::vec3(0.0f);
             static std::vector<float> transformStartVerts;
             static std::vector<float> transformStartNormals;
@@ -5772,10 +5779,13 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
                 pivotStartMatrix = selectedMesh->matrix;
                 draggedPivot = isMovingPivot;
+                if (selectedMesh->isPrimitive && selectedMesh->primitiveData) {
+                    pivotStartLocalTransform = selectedMesh->primitiveData->localTransform;
+                }
 
                 transformHasMask = false;
                 auto tMask0 = std::chrono::high_resolution_clock::now();
-                if (!draggedPivot && !selectedMesh->materials.empty()) {
+                if (!draggedPivot && !selectedMesh->isPrimitive && !selectedMesh->materials.empty()) {
                     for (int i = 0; i < selectedMesh->nbVerts; ++i) {
                         if (selectedMesh->materials[i * 3 + 2] < 0.999f) {
                             transformHasMask = true;
@@ -5786,7 +5796,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 double maskScanMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tMask0).count();
 
                 double vertCopyMs = 0.0;
-                if (draggedPivot || transformHasMask || sculpt.getUseSym()) {
+                if (draggedPivot || transformHasMask || (sculpt.getUseSym() && !selectedMesh->isPrimitive)) {
                     auto tCopy0 = std::chrono::high_resolution_clock::now();
                     transformStartVerts = selectedMesh->verts;
                     transformStartNormals = selectedMesh->normals;
@@ -5846,7 +5856,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                   selectedMesh->outlinerName.c_str(), selectedMesh->nbVerts, frameMs);
                     }
                 } else {
-                    bool useSymTransform = sculpt.getUseSym();
+                    bool useSymTransform = sculpt.getUseSym() && !selectedMesh->isPrimitive;
                     if ((transformHasMask || useSymTransform) && !transformStartVerts.empty() && transformStartVerts.size() == selectedMesh->verts.size()) {
                         auto tSetupStart = std::chrono::high_resolution_clock::now();
 
@@ -5861,9 +5871,9 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         // Compute mesh bounding box in transformStartVerts coordinates
                         float bbox[6];
                         selectedMesh->computeBbox(bbox);
-                        float meshCenterX = (bbox[0] + bbox[1]) * 0.5f;
-                        float meshCenterY = (bbox[2] + bbox[3]) * 0.5f;
-                        float meshCenterZ = (bbox[4] + bbox[5]) * 0.5f;
+                        float meshCenterX = (bbox[0] + bbox[3]) * 0.5f;
+                        float meshCenterY = (bbox[1] + bbox[4]) * 0.5f;
+                        float meshCenterZ = (bbox[2] + bbox[5]) * 0.5f;
 
                         // Pivot location relative to mesh symmetry origin (meshCenter)
                         glm::vec3 d_pivot(
@@ -6063,6 +6073,11 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         }
                         applyVertsMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tV0).count();
 
+                        if (selectedMesh->isPrimitive && selectedMesh->primitiveData) {
+                            selectedMesh->primitiveData->localTransform = selectedMesh->editMatrix * selectedMesh->primitiveData->localTransform;
+                            selectedMesh->primitiveData->centerOffset = glm::vec3(selectedMesh->primitiveData->localTransform[3]);
+                        }
+
                         selectedMesh->editMatrix = glm::mat4(1.0f);
                         selectedMesh->enMatrix = glm::mat3(1.0f);
 
@@ -6149,7 +6164,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     meshUndoState.afterNormals = selectedMesh->normals;
                 } else {
                     float sx = 1.0f, sy = 1.0f, sz = 1.0f;
-                    if (selectedMesh) {
+                    if (selectedMesh && !selectedMesh->isPrimitive) {
                         sx = glm::length(glm::vec3(selectedMesh->matrix[0]));
                         sy = glm::length(glm::vec3(selectedMesh->matrix[1]));
                         sz = glm::length(glm::vec3(selectedMesh->matrix[2]));
@@ -6157,16 +6172,21 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         auto tBS = std::chrono::high_resolution_clock::now();
                         selectedMesh->bakeScale();
                         bakeScaleMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tBS).count();
-                    }
 
-                    if (std::abs(sx - 1.0f) > 1e-4f || std::abs(sy - 1.0f) > 1e-4f || std::abs(sz - 1.0f) > 1e-4f) {
-                        meshUndoState.bakedScale = true;
-                        meshUndoState.scaleX = sx;
-                        meshUndoState.scaleY = sy;
-                        meshUndoState.scaleZ = sz;
+                        if (std::abs(sx - 1.0f) > 1e-4f || std::abs(sy - 1.0f) > 1e-4f || std::abs(sz - 1.0f) > 1e-4f) {
+                            meshUndoState.bakedScale = true;
+                            meshUndoState.scaleX = sx;
+                            meshUndoState.scaleY = sy;
+                            meshUndoState.scaleZ = sz;
+                        }
                     }
                 }
 
+                if (selectedMesh->isPrimitive && selectedMesh->primitiveData) {
+                    meshUndoState.isPrimitive = true;
+                    meshUndoState.beforeLocalTransform = pivotStartLocalTransform;
+                    meshUndoState.afterLocalTransform = selectedMesh->primitiveData->localTransform;
+                }
                 meshUndoState.afterMatrix = selectedMesh->matrix;
                 undoEntry.m_meshStates.push_back(std::move(meshUndoState));
                 g_undoManager.pushTransformChange(scene, std::move(undoEntry));
@@ -6224,6 +6244,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     auto applyTargetMatrix = [&](Mesh* mesh, const glm::mat4& targetMatrix, bool editPivot) {
                         auto tStart = std::chrono::high_resolution_clock::now();
                         glm::mat4 beforeMatrix = mesh->matrix;
+                        glm::mat4 beforeLocalTransform = (mesh->isPrimitive && mesh->primitiveData) ? mesh->primitiveData->localTransform : glm::mat4(1.0f);
                         std::vector<float> beforeVerts;
                         std::vector<float> beforeNormals;
 
@@ -6247,6 +6268,10 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                 mesh->normals[i * 3 + 2] = newNormal.z;
                             }
                             mesh->matrix = targetMatrix;
+                            if (mesh->isPrimitive && mesh->primitiveData) {
+                                mesh->primitiveData->localTransform = deltaLocalMatrixInv * mesh->primitiveData->localTransform;
+                                mesh->primitiveData->centerOffset = glm::vec3(mesh->primitiveData->localTransform[3]);
+                            }
                             mesh->postInit();
                             mesh->isDirty = true;
                         } else {
@@ -6298,6 +6323,11 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         state.meshId = mesh->getID();
                         state.beforeMatrix = beforeMatrix;
                         state.afterMatrix = mesh->matrix;
+                        if (mesh->isPrimitive && mesh->primitiveData) {
+                            state.isPrimitive = true;
+                            state.beforeLocalTransform = beforeLocalTransform;
+                            state.afterLocalTransform = mesh->primitiveData->localTransform;
+                        }
                         if (!beforeVerts.empty()) {
                             state.hasVertexDeformation = true;
                             state.beforeVerts = std::move(beforeVerts);

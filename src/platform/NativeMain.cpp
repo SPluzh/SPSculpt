@@ -50,6 +50,7 @@
 #include "editing/TrimTool.h"
 #include "editing/SplitTool.h"
 #include "editing/BooleanTool.h"
+#include "editing/PrimitiveTool.h"
 #include <cctype>
 
 static bool isImageFile(const std::string& path) {
@@ -722,8 +723,11 @@ int main(int argc, char* argv[]) {
                     ImGuiIO& io = ImGui::GetIO();
                     bool skipSculpt = false;
                     
+                    bool isPrimBusy = (sculpt.getPrimitiveTool() && 
+                                      (sculpt.getPrimitiveTool()->isInteracting() || sculpt.getPrimitiveTool()->isHoveringHandle()));
+
                     // Prioritize ImGuizmo over camera orbit when hovering/interacting with the gizmo
-                    if ((sculpt.getBrush() == BRUSH_TRANSFORM || sculpt.getBrush() == BRUSH_POSE) && (ImGuizmo::IsOver() || ImGuizmo::IsUsing())) {
+                    if (!isPrimBusy && (sculpt.getBrush() == BRUSH_TRANSFORM || sculpt.getBrush() == BRUSH_POSE) && (ImGuizmo::IsOver() || ImGuizmo::IsUsing())) {
                         if (!sculpt.getCameraController().isDragging()) {
                             bool isCameraEvent = sculpt.getCameraController().isNavigationEvent(eventCopy, scene.getCamera().getRef2DMode());
                             bool isAltClickSettingPivot = (eventCopy.type == SDL_MOUSEBUTTONDOWN && eventCopy.button.button == SDL_BUTTON_LEFT &&

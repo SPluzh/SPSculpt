@@ -104,6 +104,30 @@ Mesh* PrimitiveTool::spawnPrimitive(Scene& scene, PrimitiveType type, const glm:
     return mesh;
 }
 
+glm::mat4 PrimitiveTool::getPrimitiveLocalTransform(const Mesh* mesh) const {
+    if (!mesh || !mesh->primitiveData) return glm::mat4(1.0f);
+    if (mesh->primitiveData->localTransform != glm::mat4(1.0f)) {
+        return mesh->primitiveData->localTransform;
+    }
+    if (mesh->nbVerts > 0 && !mesh->verts.empty()) {
+        float bbox[6];
+        mesh->computeBbox(bbox);
+        glm::vec3 c(
+            (bbox[0] + bbox[3]) * 0.5f,
+            (bbox[1] + bbox[4]) * 0.5f,
+            (bbox[2] + bbox[5]) * 0.5f
+        );
+        if (glm::length(c) > 1e-4f) {
+            glm::mat4 T(1.0f);
+            T[3] = glm::vec4(c, 1.0f);
+            const_cast<Mesh*>(mesh)->primitiveData->localTransform = T;
+            const_cast<Mesh*>(mesh)->primitiveData->centerOffset = c;
+            return T;
+        }
+    }
+    return glm::mat4(1.0f);
+}
+
 void PrimitiveTool::updateMeshGeometry(Mesh* mesh) {
     if (!mesh || !mesh->isPrimitive || !mesh->primitiveData) return;
 
@@ -111,10 +135,30 @@ void PrimitiveTool::updateMeshGeometry(Mesh* mesh) {
         mesh->primitiveData->recomputeAutoDensity();
     }
 
+    glm::mat4 T = getPrimitiveLocalTransform(mesh);
+
     std::vector<float> vertices, colors, normals;
     std::vector<uint32_t> faces;
 
     PrimitiveGenerator::generate(*mesh->primitiveData, vertices, faces, colors, normals);
+
+    if (T != glm::mat4(1.0f)) {
+        glm::mat3 NT = glm::transpose(glm::inverse(glm::mat3(T)));
+        for (size_t i = 0; i < vertices.size(); i += 3) {
+            glm::vec4 pos(vertices[i], vertices[i + 1], vertices[i + 2], 1.0f);
+            glm::vec4 newPos = T * pos;
+            vertices[i + 0] = newPos.x;
+            vertices[i + 1] = newPos.y;
+            vertices[i + 2] = newPos.z;
+
+            glm::vec3 norm(normals[i], normals[i + 1], normals[i + 2]);
+            glm::vec3 newNorm = glm::normalize(NT * norm);
+            normals[i + 0] = newNorm.x;
+            normals[i + 1] = newNorm.y;
+            normals[i + 2] = newNorm.z;
+        }
+    }
+    mesh->primitiveData->centerOffset = glm::vec3(T[3]);
 
     int nbVerts = static_cast<int>(vertices.size() / 3);
     int nbFaces = static_cast<int>(faces.size() / 4);
@@ -142,7 +186,7 @@ void PrimitiveTool::updateMeshGeometry(Mesh* mesh) {
     for (int i = 0; i < nbVerts; ++i) {
         mesh->materials[i * 3 + 0] = 0.5f; // roughness
         mesh->materials[i * 3 + 1] = 0.0f; // metalness
-        mesh->materials[i * 3 + 2] = 0.0f; // mask = 0 (unmasked)
+        mesh->materials[i * 3 + 2] = 1.0f; // mask = 1.0 (unmasked)
     }
 
     mesh->hasCustomNormals = false;
@@ -168,6 +212,7 @@ Mesh* PrimitiveTool::bakeToMesh(Scene& scene, Mesh* mesh) {
     if (!mesh || !mesh->isPrimitive) return mesh;
 
     scene.pushHistoryState();
+    mesh->bakeScale();
     mesh->isPrimitive = false;
     mesh->primitiveData.reset();
     scene.setModified(true);
@@ -186,6 +231,7 @@ void PrimitiveTool::bakeAllPrimitives(Scene& scene) {
                 scene.pushHistoryState();
                 bakedAny = true;
             }
+            m->bakeScale();
             m->isPrimitive = false;
             m->primitiveData.reset();
         }
@@ -201,7 +247,7 @@ void PrimitiveTool::buildHandlesForMesh(Mesh* mesh, const Camera& camera) {
     if (!mesh || !mesh->isPrimitive || !mesh->primitiveData) return;
 
     const PrimitiveData& p = *mesh->primitiveData;
-    glm::mat4 model = mesh->matrix;
+    glm::mat4 primWorld = (mesh->matrix * mesh->editMatrix) * getPrimitiveLocalTransform(mesh);
 
     auto addHandle = [&](PrimitiveHandleType type, const glm::vec3& localPos, const glm::vec3& localAxis,
                          const std::string& label, float startVal, float minV, float maxV) {
@@ -209,7 +255,7 @@ void PrimitiveTool::buildHandlesForMesh(Mesh* mesh, const Camera& camera) {
         h.type = type;
         h.localPos = localPos;
         h.localAxis = localAxis;
-        h.worldPos = glm::vec3(model * glm::vec4(localPos, 1.0f));
+        h.worldPos = glm::vec3(primWorld * glm::vec4(h.localPos, 1.0f));
         glm::vec3 proj = camera.project(h.worldPos);
         h.screenPos = glm::vec2(proj.x, proj.y);
         h.label = label;
@@ -222,18 +268,20 @@ void PrimitiveTool::buildHandlesForMesh(Mesh* mesh, const Camera& camera) {
     };
 
     switch (p.type) {
-        case PrimitiveType::Sphere:
-            addHandle(PrimitiveHandleType::SphereRadius, glm::vec3(p.radius, 0.0f, 0.0f), glm::vec3(1, 0, 0),
-                      "Radius", p.radius, 0.5f, 500.0f);
-            addHandle(PrimitiveHandleType::SphereRadius, glm::vec3(0.0f, p.radius, 0.0f), glm::vec3(0, 1, 0),
-                      "Radius", p.radius, 0.5f, 500.0f);
-            break;
-        case PrimitiveType::Geosphere:
-            addHandle(PrimitiveHandleType::GeosphereRadius, glm::vec3(p.radius, 0.0f, 0.0f), glm::vec3(1, 0, 0),
-                      "Radius", p.radius, 0.5f, 500.0f);
-            addHandle(PrimitiveHandleType::GeosphereRadius, glm::vec3(0.0f, p.radius, 0.0f), glm::vec3(0, 1, 0),
+        case PrimitiveType::Sphere: {
+            const float invSqrt2 = 0.70710678f;
+            glm::vec3 dir(invSqrt2, invSqrt2, 0.0f);
+            addHandle(PrimitiveHandleType::SphereRadius, dir * p.radius, dir,
                       "Radius", p.radius, 0.5f, 500.0f);
             break;
+        }
+        case PrimitiveType::Geosphere: {
+            const float invSqrt2 = 0.70710678f;
+            glm::vec3 dir(invSqrt2, invSqrt2, 0.0f);
+            addHandle(PrimitiveHandleType::GeosphereRadius, dir * p.radius, dir,
+                      "Radius", p.radius, 0.5f, 500.0f);
+            break;
+        }
         case PrimitiveType::Cube: {
             glm::vec3 half = p.size * 0.5f;
             addHandle(PrimitiveHandleType::CubeSizeX, glm::vec3(half.x, 0, 0), glm::vec3(1, 0, 0),
@@ -424,8 +472,8 @@ bool PrimitiveTool::handleMouseMove(Scene& scene, const Camera& camera, float mo
 
     if (m_isDraggingHandle && m_activeHandleIdx >= 0 && m_activeHandleIdx < static_cast<int>(m_currentHandles.size())) {
         const auto& h = m_currentHandles[m_activeHandleIdx];
-        glm::mat4 model = m_activeMesh->matrix;
-        glm::vec3 worldAxis = glm::vec3(model * glm::vec4(h.localAxis, 0.0f));
+        glm::mat4 primWorld = (m_activeMesh->matrix * m_activeMesh->editMatrix) * getPrimitiveLocalTransform(m_activeMesh);
+        glm::vec3 worldAxis = glm::vec3(primWorld * glm::vec4(h.localAxis, 0.0f));
         float localAxisLen = glm::length(worldAxis);
         if (localAxisLen < 1e-4f) return true;
         worldAxis /= localAxisLen;
@@ -492,8 +540,8 @@ void PrimitiveTool::renderOverlay(
     buildHandlesForMesh(m_activeMesh, camera);
     if (m_currentHandles.empty()) return;
 
-    glm::mat4 model = m_activeMesh->matrix;
-    glm::vec3 centerWorld = glm::vec3(model * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+    glm::mat4 primWorld = (m_activeMesh->matrix * m_activeMesh->editMatrix) * getPrimitiveLocalTransform(m_activeMesh);
+    glm::vec3 centerWorld = glm::vec3(primWorld * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
     glm::vec3 centerProj = camera.project(centerWorld);
     ImVec2 centerScreen(centerProj.x, centerProj.y);
 
@@ -534,6 +582,7 @@ void PrimitiveTool::renderOverlay(
 
         // Tooltip badge showing parameter value
         if (isHovered || isActive) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
             char valStr[64];
             float curVal = 0.0f;
             const PrimitiveData& p = *m_activeMesh->primitiveData;

@@ -65,8 +65,11 @@ public:
     void bakeAllPrimitives(Scene& scene);
 
     bool isInteracting() const { return m_isDraggingHandle; }
+    bool isHoveringHandle() const { return m_hoveredHandleIdx != -1; }
     Mesh* getActivePrimitiveMesh() const { return m_activeMesh; }
     void setActivePrimitiveMesh(Mesh* m) { m_activeMesh = m; }
+
+    glm::mat4 getPrimitiveLocalTransform(const Mesh* mesh) const;
 
     void markGeometryDirty() { m_geometryDirty = true; }
     void updateGeometryIfNeeded(Scene& scene);

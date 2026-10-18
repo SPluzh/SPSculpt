@@ -20,6 +20,10 @@ struct TransformMeshState {
     std::vector<float> afterVerts;
     std::vector<float> beforeNormals;
     std::vector<float> afterNormals;
+
+    bool isPrimitive = false;
+    glm::mat4 beforeLocalTransform = glm::mat4(1.0f);
+    glm::mat4 afterLocalTransform = glm::mat4(1.0f);
 };
 
 class TransformUndoEntry : public UndoEntry {

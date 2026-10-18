@@ -2572,6 +2572,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                         targetMatrix[3] = glm::vec4(worldPt, 1.0f);
 
                         glm::mat4 beforeMatrix = closestMesh->matrix;
+                        glm::mat4 beforeLocalTransform = (closestMesh->isPrimitive && closestMesh->primitiveData) ? closestMesh->primitiveData->localTransform : glm::mat4(1.0f);
                         std::vector<float> beforeVerts = closestMesh->verts;
                         std::vector<float> beforeNormals = closestMesh->normals;
 
@@ -2596,6 +2597,10 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                         }
 
                         closestMesh->matrix = targetMatrix;
+                        if (closestMesh->isPrimitive && closestMesh->primitiveData) {
+                            closestMesh->primitiveData->localTransform = deltaLocalMatrixInv * closestMesh->primitiveData->localTransform;
+                            closestMesh->primitiveData->centerOffset = glm::vec3(closestMesh->primitiveData->localTransform[3]);
+                        }
                         closestMesh->postInit();
                         closestMesh->isDirty = true;
 
@@ -2604,6 +2609,11 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                         meshUndoState.meshId = closestMesh->getID();
                         meshUndoState.beforeMatrix = beforeMatrix;
                         meshUndoState.afterMatrix = targetMatrix;
+                        if (closestMesh->isPrimitive && closestMesh->primitiveData) {
+                            meshUndoState.isPrimitive = true;
+                            meshUndoState.beforeLocalTransform = beforeLocalTransform;
+                            meshUndoState.afterLocalTransform = closestMesh->primitiveData->localTransform;
+                        }
                         meshUndoState.hasVertexDeformation = true;
                         meshUndoState.beforeVerts = std::move(beforeVerts);
                         meshUndoState.afterVerts = closestMesh->verts;
@@ -2672,6 +2682,10 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 return;
             }
 
+            if (m_primitiveTool && m_primitiveTool->handleMouseDown(scene, camera, (float)mouseX, (float)mouseY, (mod & KMOD_CTRL) != 0, (mod & KMOD_ALT) != 0, (mod & KMOD_SHIFT) != 0)) {
+                return;
+            }
+
             if (m_currentBrush == BRUSH_TRANSFORM) {
                 if (mod & KMOD_ALT) {
                     return;
@@ -2697,10 +2711,6 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 if (m_tubeTool) {
                     m_tubeTool->handleMouseDown(scene, camera, (float)mouseX, (float)mouseY, (mod & KMOD_CTRL) != 0, (mod & KMOD_ALT) != 0, (mod & KMOD_SHIFT) != 0);
                 }
-                return;
-            }
-
-            if (m_primitiveTool && m_primitiveTool->handleMouseDown(scene, camera, (float)mouseX, (float)mouseY, (mod & KMOD_CTRL) != 0, (mod & KMOD_ALT) != 0, (mod & KMOD_SHIFT) != 0)) {
                 return;
             }
 
@@ -3250,6 +3260,13 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             return;
         }
 
+        if (m_primitiveTool && m_primitiveTool->isInteracting()) {
+            if (event.button.button == SDL_BUTTON_LEFT) {
+                m_primitiveTool->handleMouseUp(scene);
+            }
+            return;
+        }
+
         if (m_currentBrush == BRUSH_TRANSFORM) {
             m_cameraController.handleEvent(event, camera, scene.getMeshes(), true, &scene, m_renderer);
             return;
@@ -3272,13 +3289,6 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
         if (m_currentBrush == BRUSH_TUBE && !m_isTubeMoveStroke) {
             if (event.button.button == SDL_BUTTON_LEFT && m_tubeTool) {
                 m_tubeTool->handleMouseUp(scene);
-            }
-            return;
-        }
-
-        if (m_primitiveTool && m_primitiveTool->isInteracting()) {
-            if (event.button.button == SDL_BUTTON_LEFT) {
-                m_primitiveTool->handleMouseUp(scene);
             }
             return;
         }
@@ -4031,7 +4041,15 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             return;
         }
 
+        if (m_primitiveTool && m_primitiveTool->isInteracting()) {
+            m_primitiveTool->handleMouseMove(scene, camera, (float)mouseX, (float)mouseY);
+            return;
+        }
+
         if (m_currentBrush == BRUSH_TRANSFORM) {
+            if (mesh && mesh->isPrimitive && mesh->primitiveData != nullptr && m_primitiveTool && !m_cameraController.isDragging()) {
+                m_primitiveTool->handleMouseMove(scene, camera, (float)mouseX, (float)mouseY);
+            }
             if (m_cameraController.isDragging()) {
                 m_cameraController.handleEvent(event, camera, scene.getMeshes(), true, &scene, m_renderer);
             }

@@ -43,6 +43,8 @@ struct PrimitiveData {
     float arcDegrees = 360.0f;      // Torus sweep angle
     float torusMajorRadius = 35.0f; // Torus main donut radius
     float torusTubeRadius = 10.0f;  // Torus cross-section tube radius
+    glm::mat4 localTransform{1.0f}; // Transform of the primitive relative to the mesh's pivot matrix
+    glm::vec3 centerOffset{0.0f};   // Offset of geometric center relative to pivot matrix
 
     // Topology & Resolution
     int segmentsX = 32;             // Cube / Plane X subdivs

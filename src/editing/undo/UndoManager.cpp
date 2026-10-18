@@ -562,6 +562,11 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
                     // Matrix changed - no vertex VBO upload needed!
                 }
 
+                if (item.isPrimitive && mesh->isPrimitive && mesh->primitiveData) {
+                    mesh->primitiveData->localTransform = isUndo ? item.beforeLocalTransform : item.afterLocalTransform;
+                    mesh->primitiveData->centerOffset = glm::vec3(mesh->primitiveData->localTransform[3]);
+                }
+
                 auto tStateDone = std::chrono::high_resolution_clock::now();
                 double msState = std::chrono::duration<double, std::milli>(tStateDone - tStateStart).count();
                 sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] Applied Transform (%s) | Mesh ID: %u | Mode: %s | Verts: %d | Time: %.2fms\n",
