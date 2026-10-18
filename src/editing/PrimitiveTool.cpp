@@ -55,6 +55,7 @@ Mesh* PrimitiveTool::spawnPrimitive(Scene& scene, PrimitiveType type, const glm:
             break;
         case PrimitiveType::Cylinder:
             mesh->primitiveData->height = 70.0f;
+            mesh->primitiveData->radius = 25.0f;
             mesh->primitiveData->radiusTop = 25.0f;
             mesh->primitiveData->radiusBottom = 25.0f;
             mesh->primitiveData->radialSegments = 64;
@@ -297,8 +298,11 @@ void PrimitiveTool::buildHandlesForMesh(Mesh* mesh, const Camera& camera) {
         }
         case PrimitiveType::Cylinder: {
             float halfH = p.height * 0.5f;
+            float midR = (p.radiusTop + p.radiusBottom) * 0.5f;
             addHandle(PrimitiveHandleType::CylinderHeight, glm::vec3(0, halfH, 0), glm::vec3(0, 1, 0),
                       "Height", p.height, 0.5f, 500.0f);
+            addHandle(PrimitiveHandleType::CylinderRadius, glm::vec3(midR, 0, 0), glm::vec3(1, 0, 0),
+                      "Radius", midR, 0.1f, 500.0f);
             addHandle(PrimitiveHandleType::CylinderRadiusTop, glm::vec3(p.radiusTop, halfH, 0), glm::vec3(1, 0, 0),
                       "R Top", p.radiusTop, 0.0f, 500.0f);
             addHandle(PrimitiveHandleType::CylinderRadiusBottom, glm::vec3(p.radiusBottom, -halfH, 0), glm::vec3(1, 0, 0),
@@ -375,11 +379,28 @@ void PrimitiveTool::applyHandleDelta(PrimitiveHandleType type, float delta) {
         case PrimitiveHandleType::CylinderHeight:
             p.height = std::clamp(start.height + delta * 2.0f, 0.5f, 500.0f);
             break;
+        case PrimitiveHandleType::CylinderRadius: {
+            float startR = (start.radiusTop + start.radiusBottom) * 0.5f;
+            float newR = std::clamp(startR + delta, 0.1f, 500.0f);
+            float actualDelta = newR - startR;
+            p.radius = newR;
+            p.radiusTop = std::clamp(start.radiusTop + actualDelta, 0.0f, 500.0f);
+            p.radiusBottom = std::clamp(start.radiusBottom + actualDelta, 0.1f, 500.0f);
+            if (p.innerRadius > 0.0f) {
+                float maxInner = std::min(p.radiusTop, p.radiusBottom) - 0.2f;
+                if (p.innerRadius > maxInner) {
+                    p.innerRadius = std::max(0.0f, maxInner);
+                }
+            }
+            break;
+        }
         case PrimitiveHandleType::CylinderRadiusTop:
             p.radiusTop = std::clamp(start.radiusTop + delta, 0.0f, 500.0f);
+            p.radius = (p.radiusTop + p.radiusBottom) * 0.5f;
             break;
         case PrimitiveHandleType::CylinderRadiusBottom:
             p.radiusBottom = std::clamp(start.radiusBottom + delta, 0.1f, 500.0f);
+            p.radius = (p.radiusTop + p.radiusBottom) * 0.5f;
             break;
         case PrimitiveHandleType::CylinderInnerRadius: {
             float maxInner = std::min(p.radiusTop, p.radiusBottom) - 0.2f;
@@ -591,6 +612,8 @@ void PrimitiveTool::renderOverlay(
                 case PrimitiveHandleType::GeosphereRadius:
                 case PrimitiveHandleType::CapsuleRadius:
                     curVal = p.radius; break;
+                case PrimitiveHandleType::CylinderRadius:
+                    curVal = (p.radiusTop + p.radiusBottom) * 0.5f; break;
                 case PrimitiveHandleType::CubeSizeX:
                     curVal = p.size.x; break;
                 case PrimitiveHandleType::CubeSizeY:

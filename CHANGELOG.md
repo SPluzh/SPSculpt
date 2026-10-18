@@ -3,6 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [0.3.8]
+- **Cylinder Radius Manipulator**: Added interactive 3D viewport manipulator and GUI slider for cylinder radius, seamlessly scaling top and bottom radii together.
 - **Primitive Gizmo Independence**: Primitive resize handles stay firmly anchored to the object's geometric center and orientation, even when moving, rotating, or aligning the Transform tool pivot.
 - **45° Sphere Radius Handle**: Sphere and Geosphere radius handles are angled at 45° to prevent overlapping with Transform tool axes.
 - **Preserved Transform Scaling**: Scaling primitives with the Transform tool is preserved and no longer resets when tweaking procedural handles.

@@ -2182,8 +2182,22 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     }
                     case PrimitiveType::Cylinder: {
                         changed |= ImGui::SliderFloat("Height", &p.height, 0.5f, 300.0f, "%.1f");
-                        changed |= ImGui::SliderFloat("Top Radius", &p.radiusTop, 0.0f, 200.0f, "%.1f");
-                        changed |= ImGui::SliderFloat("Bottom Radius", &p.radiusBottom, 0.1f, 200.0f, "%.1f");
+                        float avgRadius = (p.radiusTop + p.radiusBottom) * 0.5f;
+                        if (ImGui::SliderFloat("Radius", &avgRadius, 0.1f, 200.0f, "%.1f")) {
+                            float diff = avgRadius - (p.radiusTop + p.radiusBottom) * 0.5f;
+                            p.radiusTop = std::clamp(p.radiusTop + diff, 0.0f, 200.0f);
+                            p.radiusBottom = std::clamp(p.radiusBottom + diff, 0.1f, 200.0f);
+                            p.radius = avgRadius;
+                            changed = true;
+                        }
+                        if (ImGui::SliderFloat("Top Radius", &p.radiusTop, 0.0f, 200.0f, "%.1f")) {
+                            p.radius = (p.radiusTop + p.radiusBottom) * 0.5f;
+                            changed = true;
+                        }
+                        if (ImGui::SliderFloat("Bottom Radius", &p.radiusBottom, 0.1f, 200.0f, "%.1f")) {
+                            p.radius = (p.radiusTop + p.radiusBottom) * 0.5f;
+                            changed = true;
+                        }
                         float maxInner = std::min(p.radiusTop, p.radiusBottom) - 0.2f;
                         if (maxInner > 0.0f) {
                             changed |= ImGui::SliderFloat("Inner Radius (Hole)", &p.innerRadius, 0.0f, maxInner, "%.1f");

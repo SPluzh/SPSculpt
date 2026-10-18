@@ -19,6 +19,7 @@ enum class PrimitiveHandleType {
     CubeSizeZ,
     CubeCornerRadius,
     CylinderHeight,
+    CylinderRadius,
     CylinderRadiusTop,
     CylinderRadiusBottom,
     CylinderInnerRadius,
