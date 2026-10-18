@@ -3,6 +3,9 @@
 #include <glm/glm.hpp>
 #include <vector>
 #include <unordered_set>
+#include <unordered_map>
+#include <utility>
+#include <algorithm>
 #include <cstdint>
 #include "mesh/Mesh.h"
 #include "scene/Camera.h"
@@ -175,6 +178,19 @@ struct ExtrudeVertexResult {
     int32_t neighB = -1;
 };
 
+struct BorderChain {
+    std::vector<int32_t> vertices;
+    std::vector<std::pair<int32_t, int32_t>> edges;
+    bool isClosed = false;
+};
+
+struct StrokeExtrudeResult {
+    bool valid = false;
+    std::vector<int32_t> newVertices;
+    std::vector<int32_t> newPolygons;
+    std::vector<std::pair<int32_t, int32_t>> newFrontEdges;
+};
+
 struct GrabVertexInfo {
     int32_t index = -1;
     glm::vec3 initLocalPos{0.0f};
@@ -216,6 +232,8 @@ public:
     EdgeLoopResult FindEdgeLoop(const Mesh* mesh, int32_t startV0, int32_t startV1);
     std::vector<int32_t> FindPolygonLoop(const Mesh* mesh, int32_t startPoly, int32_t enterV0, int32_t enterV1);
     std::vector<int32_t> FindVertexLoop(const Camera& camera, const Mesh* mesh, int32_t startV, float screenX, float screenY, std::vector<LoopEdge>* outEdges = nullptr);
+    BorderChain FindBorderChain(const Mesh* mesh, int32_t startV0, int32_t startV1);
+    std::vector<BorderChain> ExtractBorderChains(const Mesh* mesh, const std::vector<std::pair<int32_t, int32_t>>& edges);
 
     // Screen Queries
     int32_t FindPolygonUnderScreen(
@@ -253,6 +271,11 @@ public:
     ExtrudeEdgesResult ExtrudeEdges(Mesh* mesh, const std::vector<std::pair<int32_t, int32_t>>& edges, const glm::vec3& targetNormal);
     bool CanExtrudeVertex(const Mesh* mesh, int32_t vCorner, int32_t* outNeighA = nullptr, int32_t* outNeighB = nullptr);
     ExtrudeVertexResult ExtrudeVertex(Mesh* mesh, int32_t vCorner, const glm::vec3& targetNormal, const glm::vec3& initialPos);
+    StrokeExtrudeResult ExtrudeEdgesToStroke(
+        Mesh* mesh, const Mesh* targetMesh, SurfaceSnapper& snapper,
+        const BorderChain& chain, const std::vector<glm::vec3>& strokeWorldPoints,
+        float weldRadiusPixels = 0.0f, const Camera* camera = nullptr
+    );
 
     // Brushes (Relax & Grab)
     bool IsBoundaryOrIsolatedVertex(const Mesh* mesh, int32_t ptIndex);

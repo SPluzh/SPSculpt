@@ -25,7 +25,8 @@ enum class QuadDrawSubTool {
     Delete,             // Component & loop deletion
     Grab,               // Soft move brush
     Pin,                // Lock/freeze components
-    Select              // Select border edges for extrude
+    Select,             // Select border edges for extrude
+    Strip               // Draw stroke opposite selected edges to build quads
 };
 
 enum class DragMode {
@@ -37,7 +38,8 @@ enum class DragMode {
     RelaxDrag,
     PinDrag,
     SliceDrag,
-    BrushResize
+    BrushResize,
+    StrokeDrag
 };
 
 class QuadDrawTool {
@@ -208,8 +210,18 @@ private:
     glm::vec2 m_sliceStartScreen{0.0f};
     glm::vec2 m_sliceEndScreen{0.0f};
 
+    // Strip / Stroke Extrude state
+    std::vector<glm::vec2> m_strokeScreenPoints;
+    std::vector<glm::vec3> m_strokeWorldPoints;
+    std::vector<QuadPreview> m_strokeQuadPreviews;
+    bool m_edgeClickCandidate = false;
+    EdgeHit m_candidateEdge;
+
     void updateHoverState(const Camera& camera, float mouseX, float mouseY, bool ctrl, bool alt, bool shift);
     void commitMultiCut(Scene& scene);
+    void updateStrokePreview(const Camera& camera);
+    void commitStrokeExtrude(Scene& scene, const Camera& camera);
+    void cancelStroke();
 };
 
 } // namespace retopo

@@ -369,13 +369,13 @@ void QuadDrawTool::updateHoverState(
     );
 
     // Check edge hover
-    bool borderOnly = (m_subTool == QuadDrawSubTool::Extrude && !ctrl);
-    float edgeRadius = (m_subTool == QuadDrawSubTool::Select) ? 18.0f : 14.0f;
+    bool borderOnly = (m_subTool == QuadDrawSubTool::Extrude && !ctrl) || (m_subTool == QuadDrawSubTool::Strip);
+    float edgeRadius = (m_subTool == QuadDrawSubTool::Select || m_subTool == QuadDrawSubTool::Strip) ? 18.0f : 14.0f;
     m_hoverEdge = m_snapper.FindNearestRetopoEdge(
         camera, m_retopoMesh, mouseX, mouseY, edgeRadius, m_targetMesh, &m_hoverSnap, borderOnly
     );
 
-    if (m_subTool != QuadDrawSubTool::Select) {
+    if (m_subTool != QuadDrawSubTool::Select && m_subTool != QuadDrawSubTool::Strip) {
         if (m_hoverVertex != -1 && m_hoverEdge.valid) {
             if (m_hoverVertex == m_hoverEdge.v0 || m_hoverVertex == m_hoverEdge.v1) {
                 m_hoverEdge.valid = false;
@@ -406,7 +406,23 @@ void QuadDrawTool::updateHoverState(
 
     if (ctrl && !shift) {
         if (m_hoverEdge.valid) {
-            m_hoverEdgeLoop = m_builder.FindEdgeLoop(m_retopoMesh, m_hoverEdge.v0, m_hoverEdge.v1);
+            if (m_subTool == QuadDrawSubTool::Strip) {
+                BorderChain bc = m_builder.FindBorderChain(m_retopoMesh, m_hoverEdge.v0, m_hoverEdge.v1);
+                m_hoverEdgeLoop.edges.clear();
+                auto getVertWorld = [&](int32_t idx) -> glm::vec3 {
+                    glm::vec3 p(m_retopoMesh->verts[idx * 3], m_retopoMesh->verts[idx * 3 + 1], m_retopoMesh->verts[idx * 3 + 2]);
+                    return (m_retopoMesh->matrix != glm::mat4(1.0f)) ? glm::vec3(m_retopoMesh->matrix * glm::vec4(p, 1.0f)) : p;
+                };
+                for (const auto& e : bc.edges) {
+                    LoopEdge le;
+                    le.v0 = e.first; le.v1 = e.second;
+                    le.worldPos0 = getVertWorld(e.first);
+                    le.worldPos1 = getVertWorld(e.second);
+                    m_hoverEdgeLoop.edges.push_back(le);
+                }
+            } else {
+                m_hoverEdgeLoop = m_builder.FindEdgeLoop(m_retopoMesh, m_hoverEdge.v0, m_hoverEdge.v1);
+            }
         }
     }
 }
@@ -487,6 +503,50 @@ bool QuadDrawTool::handleMouseDown(
             return true;
         }
         return false;
+    }
+
+    // 0.5. Strip Mode (Click to toggle/select edge, Ctrl+Click for chain, Drag to draw stroke)
+    if (m_subTool == QuadDrawSubTool::Strip) {
+        if (m_hoverEdge.valid) {
+            if (ctrl) {
+                BorderChain bc = m_builder.FindBorderChain(m_retopoMesh, m_hoverEdge.v0, m_hoverEdge.v1);
+                if (!bc.edges.empty()) {
+                    for (const auto& e : bc.edges) {
+                        if (alt) deselectEdge(e.first, e.second);
+                        else selectEdge(e.first, e.second);
+                    }
+                } else {
+                    if (alt) deselectEdge(m_hoverEdge.v0, m_hoverEdge.v1);
+                    else selectEdge(m_hoverEdge.v0, m_hoverEdge.v1);
+                }
+                updateHoverState(camera, mouseX, mouseY, ctrl, alt, shift);
+                return true;
+            } else if (alt) {
+                deselectEdge(m_hoverEdge.v0, m_hoverEdge.v1);
+                updateHoverState(camera, mouseX, mouseY, ctrl, alt, shift);
+                return true;
+            } else {
+                m_edgeClickCandidate = true;
+                m_candidateEdge = m_hoverEdge;
+                m_strokeScreenPoints.clear();
+                m_strokeWorldPoints.clear();
+                m_strokeQuadPreviews.clear();
+                m_strokeScreenPoints.push_back(glm::vec2(mouseX, mouseY));
+                glm::vec3 worldPt = m_hoverSnap.valid ? m_hoverSnap.worldPos : camera.unproject(mouseX, mouseY, 0.95f);
+                m_strokeWorldPoints.push_back(worldPt);
+                return true;
+            }
+        } else {
+            m_edgeClickCandidate = false;
+            m_dragMode = DragMode::StrokeDrag;
+            m_strokeScreenPoints.clear();
+            m_strokeWorldPoints.clear();
+            m_strokeQuadPreviews.clear();
+            m_strokeScreenPoints.push_back(glm::vec2(mouseX, mouseY));
+            glm::vec3 worldPt = m_hoverSnap.valid ? m_hoverSnap.worldPos : camera.unproject(mouseX, mouseY, 0.95f);
+            m_strokeWorldPoints.push_back(worldPt);
+            return true;
+        }
     }
 
     // 1. Create Polygon Mode (Click to create quad)
@@ -1009,12 +1069,56 @@ bool QuadDrawTool::handleMouseMove(
         return true;
     }
 
+    if (m_subTool == QuadDrawSubTool::Strip) {
+        if (m_edgeClickCandidate) {
+            float dist = glm::distance(glm::vec2(mouseX, mouseY), glm::vec2(m_dragStartX, m_dragStartY));
+            if (dist > 8.0f) {
+                m_edgeClickCandidate = false;
+                m_dragMode = DragMode::StrokeDrag;
+            }
+        }
+
+        if (m_dragMode == DragMode::StrokeDrag) {
+            glm::vec2 curScreen(mouseX, mouseY);
+            if (m_strokeScreenPoints.empty() || glm::distance(curScreen, m_strokeScreenPoints.back()) > 4.0f) {
+                m_strokeScreenPoints.push_back(curScreen);
+                SnapResult snap = m_snapper.RaycastSurface(camera, m_targetMesh, mouseX, mouseY);
+                glm::vec3 worldPt = snap.valid ? snap.worldPos : camera.unproject(mouseX, mouseY, 0.95f);
+                m_strokeWorldPoints.push_back(worldPt);
+                updateStrokePreview(camera);
+            }
+            m_lastMouseX = mouseX;
+            m_lastMouseY = mouseY;
+            return true;
+        }
+    }
+
     m_lastMouseX = mouseX;
     m_lastMouseY = mouseY;
     return false;
 }
 
 bool QuadDrawTool::handleMouseUp(Scene& scene, const Camera& camera, int button) {
+    if (m_subTool == QuadDrawSubTool::Strip) {
+        if (m_edgeClickCandidate) {
+            if (m_candidateEdge.valid) {
+                toggleEdgeSelection(m_candidateEdge.v0, m_candidateEdge.v1);
+            }
+            cancelStroke();
+            updateHoverState(camera, m_lastMouseX, m_lastMouseY, false, false, false);
+            return true;
+        }
+
+        if (m_dragMode == DragMode::StrokeDrag) {
+            if (m_strokeWorldPoints.size() >= 2) {
+                commitStrokeExtrude(scene, camera);
+            }
+            cancelStroke();
+            updateHoverState(camera, m_lastMouseX, m_lastMouseY, false, false, false);
+            return true;
+        }
+    }
+
     if (m_dragMode == DragMode::None) return false;
 
     if (m_dragMode == DragMode::TweakDrag && m_retopoMesh && m_dragVertex != -1) {
@@ -1119,6 +1223,10 @@ bool QuadDrawTool::handleKeyDown(Scene& scene, int keycode) {
         }
     }
     if (keycode == SDLK_ESCAPE) {
+        if (m_dragMode == DragMode::StrokeDrag || m_edgeClickCandidate) {
+            cancelStroke();
+            return true;
+        }
         if (!m_selectedEdges.empty()) {
             m_selectedEdges.clear();
             return true;
@@ -1277,6 +1385,9 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
             } else if (isExtrudeHover) {
                 selColor = IM_COL32(255, 255, 120, 255);
                 selWidth = m_lineWidth * 3.5f;
+            } else if (m_subTool == QuadDrawSubTool::Strip) {
+                selColor = IM_COL32(255, 160, 20, 255);
+                selWidth = m_lineWidth * 3.2f;
             }
 
             for (const auto& e : m_selectedEdges) {
@@ -1318,12 +1429,12 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
         }
 
         // Draw Highlighted Edge
-        if (m_hoverEdge.valid && (m_subTool == QuadDrawSubTool::Extrude || m_subTool == QuadDrawSubTool::Select || isDeleteMode)) {
+        if (m_hoverEdge.valid && (m_subTool == QuadDrawSubTool::Extrude || m_subTool == QuadDrawSubTool::Select || m_subTool == QuadDrawSubTool::Strip || isDeleteMode)) {
             glm::vec3 s0 = camera.project(m_hoverEdge.worldPos0);
             glm::vec3 s1 = camera.project(m_hoverEdge.worldPos1);
             if (s0.z > 0.0f && s1.z > 0.0f) {
                 ImU32 edgeColor = IM_COL32(255, 230, 40, 255);
-                if (m_subTool == QuadDrawSubTool::Select) {
+                if (m_subTool == QuadDrawSubTool::Select || m_subTool == QuadDrawSubTool::Strip) {
                     if (ImGui::GetIO().KeyAlt) {
                         edgeColor = IM_COL32(255, 60, 60, 255);
                     } else if (isEdgeSelected(m_hoverEdge.v0, m_hoverEdge.v1)) {
@@ -1410,6 +1521,323 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
         drawList->AddLine(ImVec2(mousePos.x - 6, mousePos.y), ImVec2(mousePos.x + 6, mousePos.y), IM_COL32(240, 240, 240, 200), 1.0f);
         drawList->AddLine(ImVec2(mousePos.x, mousePos.y - 6), ImVec2(mousePos.x, mousePos.y + 6), IM_COL32(240, 240, 240, 200), 1.0f);
     }
+
+    // 6. Draw Strip Stroke & Live Quad Previews
+    if (m_subTool == QuadDrawSubTool::Strip) {
+        // Draw live preview quads
+        if (!m_strokeQuadPreviews.empty()) {
+            for (const auto& qp : m_strokeQuadPreviews) {
+                if (!qp.valid) continue;
+                bool allFront = true;
+                ImVec2 pts[4];
+                for (int k = 0; k < 4; ++k) {
+                    if (qp.screenPositions[k].z <= 0.0f || qp.screenPositions[k].z >= 1.0f) {
+                        allFront = false;
+                        break;
+                    }
+                    pts[k] = ImVec2(qp.screenPositions[k].x, qp.screenPositions[k].y);
+                }
+                if (allFront) {
+                    drawList->AddConvexPolyFilled(pts, 4, IM_COL32(40, 230, 90, 110));
+                    drawList->AddPolyline(pts, 4, IM_COL32(80, 255, 120, 240), ImDrawFlags_Closed, 2.5f);
+                    drawList->AddCircleFilled(pts[2], m_pointSize * 0.9f, IM_COL32(80, 255, 120, 255));
+                    drawList->AddCircleFilled(pts[3], m_pointSize * 0.9f, IM_COL32(80, 255, 120, 255));
+                }
+            }
+        }
+
+        // Draw drawn stroke line
+        if (m_strokeScreenPoints.size() >= 2) {
+            std::vector<ImVec2> imPts;
+            imPts.reserve(m_strokeScreenPoints.size());
+            for (const auto& p : m_strokeScreenPoints) {
+                imPts.push_back(ImVec2(p.x, p.y));
+            }
+            drawList->AddPolyline(imPts.data(), (int)imPts.size(), IM_COL32(0, 0, 0, 160), 0, 5.0f);
+            drawList->AddPolyline(imPts.data(), (int)imPts.size(), IM_COL32(255, 215, 30, 255), 0, 3.0f);
+            drawList->AddCircleFilled(imPts.front(), 5.0f, IM_COL32(100, 255, 100, 255));
+            drawList->AddCircleFilled(imPts.back(), 5.0f, IM_COL32(255, 100, 100, 255));
+        }
+
+        char hudBuf[256];
+        if (m_selectedEdges.empty()) {
+            snprintf(hudBuf, sizeof(hudBuf), "Strip Tool: Click border edge to select | Ctrl+Click for chain");
+        } else {
+            snprintf(hudBuf, sizeof(hudBuf), "Strip Tool: %zu edge(s) selected | Draw stroke opposite edges to build quads", m_selectedEdges.size());
+        }
+        ImVec2 hudPos(20.0f, vH - 35.0f);
+        drawList->AddText(ImVec2(hudPos.x + 1, hudPos.y + 1), IM_COL32(0, 0, 0, 220), hudBuf);
+        drawList->AddText(hudPos, IM_COL32(255, 220, 60, 240), hudBuf);
+    }
+}
+
+void QuadDrawTool::cancelStroke() {
+    m_strokeScreenPoints.clear();
+    m_strokeWorldPoints.clear();
+    m_strokeQuadPreviews.clear();
+    m_edgeClickCandidate = false;
+    m_candidateEdge.valid = false;
+    m_dragMode = DragMode::None;
+}
+
+void QuadDrawTool::updateStrokePreview(const Camera& camera) {
+    m_strokeQuadPreviews.clear();
+    if (!m_retopoMesh || m_strokeWorldPoints.size() < 2) return;
+
+    if (m_selectedEdges.empty()) {
+        glm::vec3 strokeMid = m_strokeWorldPoints[m_strokeWorldPoints.size() / 2];
+        float bestDist = 1e9f;
+        int32_t bestV0 = -1, bestV1 = -1;
+        int32_t polyCount = m_retopoMesh->nbFaces;
+
+        auto getVertWorld = [&](int32_t idx) -> glm::vec3 {
+            glm::vec3 p(m_retopoMesh->verts[idx * 3], m_retopoMesh->verts[idx * 3 + 1], m_retopoMesh->verts[idx * 3 + 2]);
+            return (m_retopoMesh->matrix != glm::mat4(1.0f)) ? glm::vec3(m_retopoMesh->matrix * glm::vec4(p, 1.0f)) : p;
+        };
+
+        for (int32_t p = 0; p < polyCount; ++p) {
+            uint32_t q[4] = {
+                m_retopoMesh->faces[p * 4 + 0],
+                m_retopoMesh->faces[p * 4 + 1],
+                m_retopoMesh->faces[p * 4 + 2],
+                m_retopoMesh->faces[p * 4 + 3]
+            };
+            int numE = (q[3] != TRI_INDEX) ? 4 : 3;
+            for (int e = 0; e < numE; ++e) {
+                int32_t u = (int32_t)q[e];
+                int32_t v = (int32_t)q[(e + 1) % numE];
+                if (u > v) std::swap(u, v);
+                int count = 0;
+                for (int32_t p2 = 0; p2 < polyCount; ++p2) {
+                    if (PolygonHasEdge(m_retopoMesh->faces, p2, u, v)) count++;
+                }
+                if (count == 1) {
+                    glm::vec3 eMid = (getVertWorld(u) + getVertWorld(v)) * 0.5f;
+                    float d = glm::distance(eMid, strokeMid);
+                    if (d < bestDist) {
+                        bestDist = d;
+                        bestV0 = u;
+                        bestV1 = v;
+                    }
+                }
+            }
+        }
+
+        if (bestV0 != -1 && bestV1 != -1) {
+            BorderChain bc = m_builder.FindBorderChain(m_retopoMesh, bestV0, bestV1);
+            if (!bc.edges.empty()) {
+                for (const auto& edge : bc.edges) {
+                    selectEdge(edge.first, edge.second);
+                }
+            }
+        }
+    }
+
+    if (m_selectedEdges.empty()) return;
+
+    std::vector<BorderChain> chains = m_builder.ExtractBorderChains(m_retopoMesh, m_selectedEdges);
+    if (chains.empty()) return;
+
+    auto getVertWorld = [&](int32_t idx) -> glm::vec3 {
+        glm::vec3 p(m_retopoMesh->verts[idx * 3], m_retopoMesh->verts[idx * 3 + 1], m_retopoMesh->verts[idx * 3 + 2]);
+        return (m_retopoMesh->matrix != glm::mat4(1.0f)) ? glm::vec3(m_retopoMesh->matrix * glm::vec4(p, 1.0f)) : p;
+    };
+
+    int bestChainIdx = 0;
+    float bestChainDist = 1e9f;
+    for (size_t c = 0; c < chains.size(); ++c) {
+        float minDist = 1e9f;
+        for (int32_t v : chains[c].vertices) {
+            glm::vec3 vPos = getVertWorld(v);
+            for (const auto& sp : m_strokeWorldPoints) {
+                minDist = std::min(minDist, glm::distance(vPos, sp));
+            }
+        }
+        if (minDist < bestChainDist) {
+            bestChainDist = minDist;
+            bestChainIdx = (int)c;
+        }
+    }
+
+    const BorderChain& chain = chains[bestChainIdx];
+    int32_t N = (int32_t)chain.edges.size();
+    if (N == 0 || chain.vertices.size() < (size_t)(N + 1)) return;
+
+    std::vector<glm::vec3> stroke = m_strokeWorldPoints;
+    glm::vec3 v0Pos = getVertWorld(chain.vertices.front());
+    glm::vec3 vNPos = getVertWorld(chain.vertices.back());
+    float dNormal = glm::distance(stroke.front(), v0Pos) + glm::distance(stroke.back(), vNPos);
+    float dReversed = glm::distance(stroke.front(), vNPos) + glm::distance(stroke.back(), v0Pos);
+    if (dReversed < dNormal && !chain.isClosed) {
+        std::reverse(stroke.begin(), stroke.end());
+    }
+
+    std::vector<float> cumChain(N + 1, 0.0f);
+    for (int32_t i = 1; i <= N; ++i) {
+        cumChain[i] = cumChain[i - 1] + glm::distance(
+            getVertWorld(chain.vertices[i]),
+            getVertWorld(chain.vertices[i - 1])
+        );
+    }
+    float totalChainLen = cumChain[N];
+
+    std::vector<float> cumStroke(stroke.size(), 0.0f);
+    for (size_t i = 1; i < stroke.size(); ++i) {
+        cumStroke[i] = cumStroke[i - 1] + glm::distance(stroke[i], stroke[i - 1]);
+    }
+    float totalStrokeLen = cumStroke.back();
+    if (totalStrokeLen < 1e-5f) return;
+
+    std::vector<glm::vec3> resampledPts(N + 1);
+    for (int32_t i = 0; i <= N; ++i) {
+        float t = (totalChainLen > 1e-5f) ? (cumChain[i] / totalChainLen) : ((float)i / (float)N);
+        float targetDist = t * totalStrokeLen;
+        size_t seg = 0;
+        while (seg + 1 < cumStroke.size() && cumStroke[seg + 1] < targetDist) {
+            seg++;
+        }
+        if (seg + 1 >= cumStroke.size()) {
+            resampledPts[i] = stroke.back();
+        } else {
+            float segLen = cumStroke[seg + 1] - cumStroke[seg];
+            float alpha = (segLen > 1e-6f) ? ((targetDist - cumStroke[seg]) / segLen) : 0.0f;
+            resampledPts[i] = glm::mix(stroke[seg], stroke[seg + 1], std::clamp(alpha, 0.0f, 1.0f));
+        }
+
+        if (m_targetMesh && m_targetMesh->nbFaces > 0) {
+            SnapResult snap = m_snapper.SnapClosestPoint(m_targetMesh, resampledPts[i], 500.0f);
+            if (snap.valid) resampledPts[i] = snap.worldPos;
+        }
+    }
+
+    for (int32_t i = 0; i < N; ++i) {
+        QuadPreview qp;
+        qp.valid = true;
+        qp.v[0] = chain.vertices[i];
+        qp.v[1] = chain.vertices[i + 1];
+        qp.worldPositions[0] = getVertWorld(chain.vertices[i]);
+        qp.worldPositions[1] = getVertWorld(chain.vertices[i + 1]);
+        qp.worldPositions[2] = resampledPts[i + 1];
+        qp.worldPositions[3] = resampledPts[i];
+        for (int k = 0; k < 4; ++k) {
+            qp.screenPositions[k] = camera.project(qp.worldPositions[k]);
+        }
+        m_strokeQuadPreviews.push_back(qp);
+    }
+}
+
+void QuadDrawTool::commitStrokeExtrude(Scene& scene, const Camera& camera) {
+    if (!m_retopoMesh || m_strokeWorldPoints.size() < 2) return;
+
+    if (m_selectedEdges.empty()) {
+        glm::vec3 strokeMid = m_strokeWorldPoints[m_strokeWorldPoints.size() / 2];
+        float bestDist = 1e9f;
+        int32_t bestV0 = -1, bestV1 = -1;
+        int32_t polyCount = m_retopoMesh->nbFaces;
+
+        auto getVertWorld = [&](int32_t idx) -> glm::vec3 {
+            glm::vec3 p(m_retopoMesh->verts[idx * 3], m_retopoMesh->verts[idx * 3 + 1], m_retopoMesh->verts[idx * 3 + 2]);
+            return (m_retopoMesh->matrix != glm::mat4(1.0f)) ? glm::vec3(m_retopoMesh->matrix * glm::vec4(p, 1.0f)) : p;
+        };
+
+        for (int32_t p = 0; p < polyCount; ++p) {
+            uint32_t q[4] = {
+                m_retopoMesh->faces[p * 4 + 0],
+                m_retopoMesh->faces[p * 4 + 1],
+                m_retopoMesh->faces[p * 4 + 2],
+                m_retopoMesh->faces[p * 4 + 3]
+            };
+            int numE = (q[3] != TRI_INDEX) ? 4 : 3;
+            for (int e = 0; e < numE; ++e) {
+                int32_t u = (int32_t)q[e];
+                int32_t v = (int32_t)q[(e + 1) % numE];
+                if (u > v) std::swap(u, v);
+                int count = 0;
+                for (int32_t p2 = 0; p2 < polyCount; ++p2) {
+                    if (PolygonHasEdge(m_retopoMesh->faces, p2, u, v)) count++;
+                }
+                if (count == 1) {
+                    glm::vec3 eMid = (getVertWorld(u) + getVertWorld(v)) * 0.5f;
+                    float d = glm::distance(eMid, strokeMid);
+                    if (d < bestDist) {
+                        bestDist = d;
+                        bestV0 = u;
+                        bestV1 = v;
+                    }
+                }
+            }
+        }
+
+        if (bestV0 != -1 && bestV1 != -1) {
+            BorderChain bc = m_builder.FindBorderChain(m_retopoMesh, bestV0, bestV1);
+            if (!bc.edges.empty()) {
+                for (const auto& edge : bc.edges) {
+                    selectEdge(edge.first, edge.second);
+                }
+            }
+        }
+    }
+
+    if (m_selectedEdges.empty()) {
+        sculpt_log("[QuadDrawTool] Strip extrude: No border edges selected!\n");
+        return;
+    }
+
+    std::vector<BorderChain> chains = m_builder.ExtractBorderChains(m_retopoMesh, m_selectedEdges);
+    if (chains.empty()) return;
+
+    auto getVertWorld = [&](int32_t idx) -> glm::vec3 {
+        glm::vec3 p(m_retopoMesh->verts[idx * 3], m_retopoMesh->verts[idx * 3 + 1], m_retopoMesh->verts[idx * 3 + 2]);
+        return (m_retopoMesh->matrix != glm::mat4(1.0f)) ? glm::vec3(m_retopoMesh->matrix * glm::vec4(p, 1.0f)) : p;
+    };
+
+    int bestChainIdx = 0;
+    float bestChainDist = 1e9f;
+    for (size_t c = 0; c < chains.size(); ++c) {
+        float minDist = 1e9f;
+        for (int32_t v : chains[c].vertices) {
+            glm::vec3 vPos = getVertWorld(v);
+            for (const auto& sp : m_strokeWorldPoints) {
+                minDist = std::min(minDist, glm::distance(vPos, sp));
+            }
+        }
+        if (minDist < bestChainDist) {
+            bestChainDist = minDist;
+            bestChainIdx = (int)c;
+        }
+    }
+
+    const BorderChain& activeChain = chains[bestChainIdx];
+
+    g_undoManager.pushTopologyChange(scene, "Strip Extrude to Stroke", [&]() {
+        StrokeExtrudeResult res = m_builder.ExtrudeEdgesToStroke(
+            m_retopoMesh, m_targetMesh, m_snapper, activeChain,
+            m_strokeWorldPoints, m_weldRadiusPixels, &camera
+        );
+        if (res.valid) {
+            std::unordered_set<uint64_t> chainEdgeKeys;
+            auto makeKey = [](int32_t a, int32_t b) -> uint64_t {
+                uint32_t u = (uint32_t)std::min(a, b);
+                uint32_t v = (uint32_t)std::max(a, b);
+                return ((uint64_t)u << 32) | (uint64_t)v;
+            };
+            for (const auto& e : activeChain.edges) {
+                chainEdgeKeys.insert(makeKey(e.first, e.second));
+            }
+
+            std::vector<std::pair<int32_t, int32_t>> updatedSelected;
+            for (const auto& e : m_selectedEdges) {
+                if (!chainEdgeKeys.count(makeKey(e.first, e.second))) {
+                    updatedSelected.push_back(e);
+                }
+            }
+            for (const auto& fe : res.newFrontEdges) {
+                updatedSelected.push_back(fe);
+            }
+            m_selectedEdges = std::move(updatedSelected);
+            m_builder.InvalidateEdgeCache();
+        }
+    });
 }
 
 } // namespace retopo

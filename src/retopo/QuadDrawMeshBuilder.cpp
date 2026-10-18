@@ -1873,4 +1873,423 @@ bool QuadDrawMeshBuilder::CollectGrabVertices(
     return !outVertices.empty();
 }
 
+BorderChain QuadDrawMeshBuilder::FindBorderChain(const Mesh* mesh, int32_t startV0, int32_t startV1) {
+    BorderChain result;
+    if (!mesh || startV0 == startV1 || startV0 < 0 || startV1 < 0) return result;
+
+    int32_t ptCount = (int32_t)(mesh->verts.size() / 3);
+    int32_t polyCount = (int32_t)(mesh->faces.size() / 4);
+    if (startV0 >= ptCount || startV1 >= ptCount) return result;
+
+    auto countEdgePolys = [&](int32_t u, int32_t v) -> int32_t {
+        int32_t cnt = 0;
+        for (int32_t i = 0; i < polyCount; ++i) {
+            if (PolygonHasEdge(mesh->faces, i, u, v)) cnt++;
+        }
+        return cnt;
+    };
+
+    if (countEdgePolys(startV0, startV1) != 1) {
+        return result;
+    }
+
+    auto makeEdgeKey = [](int32_t a, int32_t b) -> uint64_t {
+        uint32_t u = (uint32_t)std::min(a, b);
+        uint32_t v = (uint32_t)std::max(a, b);
+        return ((uint64_t)u << 32) | (uint64_t)v;
+    };
+
+    auto getIncidentBorderEdges = [&](int32_t v, int32_t excludeNeighbor) -> std::vector<int32_t> {
+        std::vector<int32_t> neighbors;
+        for (int32_t p = 0; p < polyCount; ++p) {
+            if (!PolygonHasVertex(mesh->faces, p, v)) continue;
+            uint32_t q[4] = {
+                mesh->faces[p * 4 + 0],
+                mesh->faces[p * 4 + 1],
+                mesh->faces[p * 4 + 2],
+                mesh->faces[p * 4 + 3]
+            };
+            int numE = (q[3] != TRI_INDEX) ? 4 : 3;
+            for (int e = 0; e < numE; ++e) {
+                int32_t a = (int32_t)q[e];
+                int32_t b = (int32_t)q[(e + 1) % numE];
+                int32_t other = -1;
+                if (a == v) other = b;
+                else if (b == v) other = a;
+                if (other != -1 && other != excludeNeighbor) {
+                    if (countEdgePolys(v, other) == 1) {
+                        if (std::find(neighbors.begin(), neighbors.end(), other) == neighbors.end()) {
+                            neighbors.push_back(other);
+                        }
+                    }
+                }
+            }
+        }
+        return neighbors;
+    };
+
+    std::unordered_set<uint64_t> visitedEdges;
+    visitedEdges.insert(makeEdgeKey(startV0, startV1));
+
+    // Trace forward from startV1
+    std::vector<int32_t> forwardVerts;
+    std::vector<std::pair<int32_t, int32_t>> forwardEdges;
+    int32_t curr = startV1;
+    int32_t prev = startV0;
+    bool isClosed = false;
+
+    while (true) {
+        auto nexts = getIncidentBorderEdges(curr, prev);
+        if (nexts.empty()) break;
+        int32_t next = nexts[0];
+        uint64_t key = makeEdgeKey(curr, next);
+        if (visitedEdges.count(key)) {
+            if (next == startV0) {
+                isClosed = true;
+            }
+            break;
+        }
+        visitedEdges.insert(key);
+        forwardEdges.push_back({curr, next});
+        forwardVerts.push_back(next);
+        prev = curr;
+        curr = next;
+    }
+
+    // Trace backward from startV0 (only if not closed)
+    std::vector<int32_t> backwardVerts;
+    std::vector<std::pair<int32_t, int32_t>> backwardEdges;
+    if (!isClosed) {
+        curr = startV0;
+        prev = startV1;
+        while (true) {
+            auto nexts = getIncidentBorderEdges(curr, prev);
+            if (nexts.empty()) break;
+            int32_t next = nexts[0];
+            uint64_t key = makeEdgeKey(curr, next);
+            if (visitedEdges.count(key)) break;
+            visitedEdges.insert(key);
+            backwardEdges.push_back({next, curr});
+            backwardVerts.push_back(next);
+            prev = curr;
+            curr = next;
+        }
+    }
+
+    std::reverse(backwardVerts.begin(), backwardVerts.end());
+    std::reverse(backwardEdges.begin(), backwardEdges.end());
+
+    result.vertices = backwardVerts;
+    result.vertices.push_back(startV0);
+    result.vertices.push_back(startV1);
+    result.vertices.insert(result.vertices.end(), forwardVerts.begin(), forwardVerts.end());
+
+    result.edges = backwardEdges;
+    result.edges.push_back({startV0, startV1});
+    result.edges.insert(result.edges.end(), forwardEdges.begin(), forwardEdges.end());
+    result.isClosed = isClosed;
+
+    return result;
+}
+
+std::vector<BorderChain> QuadDrawMeshBuilder::ExtractBorderChains(
+    const Mesh* mesh, const std::vector<std::pair<int32_t, int32_t>>& edges
+) {
+    std::vector<BorderChain> chains;
+    if (!mesh || edges.empty()) return chains;
+
+    int32_t ptCount = (int32_t)(mesh->verts.size() / 3);
+    int32_t polyCount = (int32_t)(mesh->faces.size() / 4);
+
+    auto countEdgePolys = [&](int32_t u, int32_t v) -> int32_t {
+        int32_t cnt = 0;
+        for (int32_t i = 0; i < polyCount; ++i) {
+            if (PolygonHasEdge(mesh->faces, i, u, v)) cnt++;
+        }
+        return cnt;
+    };
+
+    auto makeKey = [](int32_t a, int32_t b) -> uint64_t {
+        uint32_t u = (uint32_t)std::min(a, b);
+        uint32_t v = (uint32_t)std::max(a, b);
+        return ((uint64_t)u << 32) | (uint64_t)v;
+    };
+
+    std::vector<std::pair<int32_t, int32_t>> validEdges;
+    std::unordered_set<uint64_t> seenKeys;
+    for (const auto& e : edges) {
+        int32_t u = e.first;
+        int32_t v = e.second;
+        if (u < 0 || u >= ptCount || v < 0 || v >= ptCount || u == v) continue;
+        uint64_t k = makeKey(u, v);
+        if (seenKeys.count(k)) continue;
+        if (countEdgePolys(u, v) >= 2) continue;
+        seenKeys.insert(k);
+        validEdges.push_back({u, v});
+    }
+
+    if (validEdges.empty()) return chains;
+
+    std::unordered_map<int32_t, std::vector<int32_t>> adj;
+    std::unordered_set<uint64_t> unvisitedEdges;
+    for (const auto& e : validEdges) {
+        adj[e.first].push_back(e.second);
+        adj[e.second].push_back(e.first);
+        unvisitedEdges.insert(makeKey(e.first, e.second));
+    }
+
+    while (!unvisitedEdges.empty()) {
+        uint64_t seedKey = *unvisitedEdges.begin();
+        int32_t seedU = (int32_t)(seedKey >> 32);
+        int32_t seedV = (int32_t)(seedKey & 0xFFFFFFFF);
+
+        std::unordered_set<int32_t> compVerts;
+        std::vector<int32_t> queue = { seedU };
+        compVerts.insert(seedU);
+        size_t qHead = 0;
+        while (qHead < queue.size()) {
+            int32_t curr = queue[qHead++];
+            for (int32_t neigh : adj[curr]) {
+                if (unvisitedEdges.count(makeKey(curr, neigh))) {
+                    if (!compVerts.count(neigh)) {
+                        compVerts.insert(neigh);
+                        queue.push_back(neigh);
+                    }
+                }
+            }
+        }
+
+        std::vector<int32_t> endpoints;
+        for (int32_t v : compVerts) {
+            int deg = 0;
+            for (int32_t neigh : adj[v]) {
+                if (unvisitedEdges.count(makeKey(v, neigh))) deg++;
+            }
+            if (deg == 1) {
+                endpoints.push_back(v);
+            }
+        }
+
+        BorderChain chain;
+        if (!endpoints.empty()) {
+            int32_t curr = endpoints[0];
+            int32_t prev = -1;
+            chain.vertices.push_back(curr);
+            while (true) {
+                int32_t next = -1;
+                for (int32_t neigh : adj[curr]) {
+                    if (neigh != prev && unvisitedEdges.count(makeKey(curr, neigh))) {
+                        next = neigh;
+                        break;
+                    }
+                }
+                if (next == -1) break;
+                unvisitedEdges.erase(makeKey(curr, next));
+                chain.edges.push_back({curr, next});
+                chain.vertices.push_back(next);
+                prev = curr;
+                curr = next;
+            }
+            chain.isClosed = false;
+        } else {
+            int32_t curr = seedU;
+            int32_t prev = -1;
+            chain.vertices.push_back(curr);
+            while (true) {
+                int32_t next = -1;
+                for (int32_t neigh : adj[curr]) {
+                    if (neigh != prev && unvisitedEdges.count(makeKey(curr, neigh))) {
+                        next = neigh;
+                        break;
+                    }
+                }
+                if (next == -1) break;
+                unvisitedEdges.erase(makeKey(curr, next));
+                chain.edges.push_back({curr, next});
+                chain.vertices.push_back(next);
+                if (next == seedU) {
+                    chain.isClosed = true;
+                    break;
+                }
+                prev = curr;
+                curr = next;
+            }
+        }
+
+        if (!chain.edges.empty()) {
+            chains.push_back(chain);
+        }
+    }
+
+    return chains;
+}
+
+StrokeExtrudeResult QuadDrawMeshBuilder::ExtrudeEdgesToStroke(
+    Mesh* mesh,
+    const Mesh* targetMesh,
+    SurfaceSnapper& snapper,
+    const BorderChain& chain,
+    const std::vector<glm::vec3>& strokeWorldPoints,
+    float weldRadiusPixels,
+    const Camera* camera
+) {
+    StrokeExtrudeResult result;
+    if (!mesh || chain.edges.empty() || strokeWorldPoints.size() < 2) return result;
+
+    int32_t N = (int32_t)chain.edges.size();
+    if (chain.vertices.size() < (size_t)(N + 1)) return result;
+
+    auto getVertWorld = [&](int32_t idx) -> glm::vec3 {
+        glm::vec3 p(mesh->verts[idx * 3], mesh->verts[idx * 3 + 1], mesh->verts[idx * 3 + 2]);
+        return (mesh->matrix != glm::mat4(1.0f)) ? glm::vec3(mesh->matrix * glm::vec4(p, 1.0f)) : p;
+    };
+
+    std::vector<glm::vec3> stroke;
+    stroke.push_back(strokeWorldPoints[0]);
+    for (size_t i = 1; i < strokeWorldPoints.size(); ++i) {
+        if (glm::distance(strokeWorldPoints[i], stroke.back()) > 1e-4f) {
+            stroke.push_back(strokeWorldPoints[i]);
+        }
+    }
+    if (stroke.size() < 2) return result;
+
+    glm::vec3 v0Pos = getVertWorld(chain.vertices.front());
+    glm::vec3 vNPos = getVertWorld(chain.vertices.back());
+    float dNormal = glm::distance(stroke.front(), v0Pos) + glm::distance(stroke.back(), vNPos);
+    float dReversed = glm::distance(stroke.front(), vNPos) + glm::distance(stroke.back(), v0Pos);
+
+    if (dReversed < dNormal && !chain.isClosed) {
+        std::reverse(stroke.begin(), stroke.end());
+    }
+
+    std::vector<float> cumChain(N + 1, 0.0f);
+    for (int32_t i = 1; i <= N; ++i) {
+        cumChain[i] = cumChain[i - 1] + glm::distance(
+            getVertWorld(chain.vertices[i]),
+            getVertWorld(chain.vertices[i - 1])
+        );
+    }
+    float totalChainLen = cumChain[N];
+
+    std::vector<float> cumStroke(stroke.size(), 0.0f);
+    for (size_t i = 1; i < stroke.size(); ++i) {
+        cumStroke[i] = cumStroke[i - 1] + glm::distance(stroke[i], stroke[i - 1]);
+    }
+    float totalStrokeLen = cumStroke.back();
+    if (totalStrokeLen < 1e-5f) return result;
+
+    std::vector<glm::vec3> resampledPts(N + 1);
+    for (int32_t i = 0; i <= N; ++i) {
+        float t = (totalChainLen > 1e-5f) ? (cumChain[i] / totalChainLen) : ((float)i / (float)N);
+        float targetDist = t * totalStrokeLen;
+
+        size_t seg = 0;
+        while (seg + 1 < cumStroke.size() && cumStroke[seg + 1] < targetDist) {
+            seg++;
+        }
+        if (seg + 1 >= cumStroke.size()) {
+            resampledPts[i] = stroke.back();
+        } else {
+            float segLen = cumStroke[seg + 1] - cumStroke[seg];
+            float alpha = (segLen > 1e-6f) ? ((targetDist - cumStroke[seg]) / segLen) : 0.0f;
+            alpha = std::clamp(alpha, 0.0f, 1.0f);
+            resampledPts[i] = glm::mix(stroke[seg], stroke[seg + 1], alpha);
+        }
+
+        if (targetMesh && targetMesh->nbFaces > 0) {
+            SnapResult snap = snapper.SnapClosestPoint(targetMesh, resampledPts[i], 500.0f);
+            if (snap.valid) {
+                resampledPts[i] = snap.worldPos;
+            }
+        }
+    }
+
+    std::vector<int32_t> newVertIndices(N + 1, -1);
+    for (int32_t i = 0; i <= N; ++i) {
+        if (chain.isClosed && i == N) {
+            newVertIndices[N] = newVertIndices[0];
+            continue;
+        }
+        int32_t nv = AddVertex(mesh, resampledPts[i]);
+        if (nv == -1) {
+            for (int32_t added : result.newVertices) {
+                DeleteVertex(mesh, added);
+            }
+            return StrokeExtrudeResult();
+        }
+        newVertIndices[i] = nv;
+        result.newVertices.push_back(nv);
+    }
+
+    for (int32_t i = 0; i < N; ++i) {
+        int32_t u = chain.vertices[i];
+        int32_t v = chain.vertices[i + 1];
+        int32_t nu = newVertIndices[i];
+        int32_t nv = newVertIndices[i + 1];
+
+        glm::vec3 quadMid = (getVertWorld(u) + getVertWorld(v) + resampledPts[i] + resampledPts[i + 1]) * 0.25f;
+        glm::vec3 targetNorm(0, 1, 0);
+        if (targetMesh && targetMesh->nbFaces > 0) {
+            SnapResult snapMid = snapper.SnapClosestPoint(targetMesh, quadMid, 500.0f);
+            if (snapMid.valid) targetNorm = snapMid.normal;
+        }
+
+        if (AddQuad(mesh, u, v, nv, nu, targetNorm)) {
+            result.newPolygons.push_back((int32_t)(mesh->faces.size() / 4) - 1);
+            result.newFrontEdges.push_back({std::min(nu, nv), std::max(nu, nv)});
+        }
+    }
+
+    if (result.newPolygons.empty()) {
+        for (int32_t added : result.newVertices) {
+            DeleteVertex(mesh, added);
+        }
+        return StrokeExtrudeResult();
+    }
+
+    if (camera && weldRadiusPixels > 0.0f && !chain.isClosed) {
+        std::unordered_set<int32_t> excluded;
+        for (int32_t v : chain.vertices) excluded.insert(v);
+        for (int32_t nv : newVertIndices) excluded.insert(nv);
+
+        std::vector<std::pair<int32_t, int32_t>> welds;
+
+        glm::vec3 sStart = camera->project(resampledPts.front());
+        if (sStart.z > 0.0f && sStart.z < 1.0f) {
+            int32_t w = snapper.FindNearestRetopoVertex(*camera, mesh, sStart.x, sStart.y, weldRadiusPixels, newVertIndices[0], targetMesh);
+            if (w != -1 && !excluded.count(w)) {
+                welds.push_back({newVertIndices[0], w});
+            }
+        }
+
+        glm::vec3 sEnd = camera->project(resampledPts.back());
+        if (sEnd.z > 0.0f && sEnd.z < 1.0f) {
+            int32_t w = snapper.FindNearestRetopoVertex(*camera, mesh, sEnd.x, sEnd.y, weldRadiusPixels, newVertIndices[N], targetMesh);
+            if (w != -1 && !excluded.count(w)) {
+                welds.push_back({newVertIndices[N], w});
+            }
+        }
+
+        if (!welds.empty()) {
+            std::vector<int32_t> remap;
+            WeldVerticesMultiple(mesh, welds, nullptr, &remap);
+            if (!remap.empty()) {
+                for (auto& fe : result.newFrontEdges) {
+                    if (fe.first >= 0 && fe.first < (int32_t)remap.size() && remap[fe.first] != -1) {
+                        fe.first = remap[fe.first];
+                    }
+                    if (fe.second >= 0 && fe.second < (int32_t)remap.size() && remap[fe.second] != -1) {
+                        fe.second = remap[fe.second];
+                    }
+                    if (fe.first > fe.second) std::swap(fe.first, fe.second);
+                }
+            }
+        }
+    }
+
+    result.valid = true;
+    NotifyMeshUpdated(mesh);
+    return result;
+}
+
 } // namespace retopo

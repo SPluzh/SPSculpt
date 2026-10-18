@@ -3200,7 +3200,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             "Delete",
                             "Grab Brush",
                             "Pin Tool",
-                            "Select Edges"
+                            "Select Edges",
+                            "Strip (Draw to Quads)"
                         };
                         int subToolIdx = (int)qd->getSubTool();
                         if (ImGui::Combo("SubTool", &subToolIdx, subTools, IM_ARRAYSIZE(subTools))) {
@@ -3247,6 +3248,19 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                     qd->deleteSelectedEdges(scene);
                                 }
                             }
+                        } else if (qd->getSubTool() == retopo::QuadDrawSubTool::Strip) {
+                            ImGui::TextColored(ImVec4(0.2f, 0.9f, 1.0f, 1.0f), "Strip Tool: Draw line opposite selected edges to generate quads.");
+                            ImGui::Text("Selected edges: %zu", qd->getSelectedEdgeCount());
+                            if (qd->getSelectedEdgeCount() > 0) {
+                                if (ImGui::Button("Clear Selection")) {
+                                    qd->clearSelectedEdges();
+                                }
+                            }
+                            ImGui::TextDisabled("Controls:");
+                            ImGui::BulletText("LMB on border edge: Toggle select edge");
+                            ImGui::BulletText("Ctrl+LMB on edge: Select border chain");
+                            ImGui::BulletText("LMB Drag on surface: Draw line opposite edges to create quads");
+                            ImGui::BulletText("New front edges are automatically selected for chaining!");
                         }
 
                         ImGui::Separator();
