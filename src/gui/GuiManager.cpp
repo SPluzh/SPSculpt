@@ -3202,7 +3202,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             "Pin Tool",
                             "Select Edges",
                             "Strip (Draw to Quads)",
-                            "Tube (Contours)"
+                            "Tube Slice (Contours)",
+                            "Tube Curve (Centerline)"
                         };
                         int subToolIdx = (int)qd->getSubTool();
                         if (ImGui::Combo("SubTool", &subToolIdx, subTools, IM_ARRAYSIZE(subTools))) {
@@ -3276,45 +3277,69 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             ImGui::BulletText("Ctrl+LMB on edge: Select border chain");
                             ImGui::BulletText("LMB Drag on surface: Draw line opposite edges to create quads");
                             ImGui::BulletText("New front edges are automatically selected for chaining!");
-                        } else if (qd->getSubTool() == retopo::QuadDrawSubTool::Tube) {
-                            ImGui::TextColored(ImVec4(0.2f, 0.9f, 1.0f, 1.0f), "Tube Retopo: Retopologize elongated cylindrical objects.");
+                        } else if (qd->getSubTool() == retopo::QuadDrawSubTool::TubeSlice) {
+                            ImGui::TextColored(ImVec4(0.2f, 0.9f, 1.0f, 1.0f), "Tube Slice: Draw line across limb to slice and build quad tube.");
 
-                            int radSegs = qd->getTubeRadialSegments();
+                            int radSegs = qd->getTubeSliceRadialSegments();
                             if (ImGui::SliderInt("Radial Segments", &radSegs, 4, 32)) {
-                                qd->setTubeRadialSegments(radSegs);
+                                qd->setTubeSliceRadialSegments(radSegs);
                             }
-                            int spans = qd->getTubeSpans();
+                            int spans = qd->getTubeSliceSpans();
+                            if (ImGui::SliderInt("Spans (Rings)", &spans, 1, 16)) {
+                                qd->setTubeSliceSpans(spans);
+                            }
+                            if (qd->hasActiveTubeSliceLoop()) {
+                                ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.5f, 1.0f), "Active Ring: Ready (%zu vertices)", qd->getActiveTubeSliceLoopCount());
+                                ImGui::SameLine();
+                                if (ImGui::SmallButton("End Tube / Reset")) {
+                                    qd->clearActiveTubeSliceLoop();
+                                }
+                            } else {
+                                ImGui::TextDisabled("No active ring. Draw across limb to start tube.");
+                            }
+                            ImGui::TextDisabled("Controls:");
+                            ImGui::BulletText("LMB Drag across mesh: Cut cylinder & create ring");
+                            ImGui::BulletText("Subsequent cuts automatically bridge into a tube");
+                            ImGui::BulletText("Press Esc to finish current tube and start a new one");
+                        } else if (qd->getSubTool() == retopo::QuadDrawSubTool::TubeCurve) {
+                            ImGui::TextColored(ImVec4(0.2f, 0.9f, 1.0f, 1.0f), "Tube Curve: Retopologize elongated cylindrical objects via centerline.");
+
+                            int radSegs = qd->getTubeCurveRadialSegments();
+                            if (ImGui::SliderInt("Radial Segments", &radSegs, 4, 32)) {
+                                qd->setTubeCurveRadialSegments(radSegs);
+                            }
+                            int spans = qd->getTubeCurveSpans();
                             if (ImGui::SliderInt("Spans per Segment", &spans, 1, 32)) {
-                                qd->setTubeSpans(spans);
+                                qd->setTubeCurveSpans(spans);
                             }
 
-                            size_t ptCount = qd->getTubePointsCount();
-                            if (qd->hasActiveTube()) {
-                                ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.5f, 1.0f), "Tube Ready: %zu points, %d quads", ptCount, qd->getTubeQuadsCount());
+                            size_t ptCount = qd->getTubeCurvePointsCount();
+                            if (qd->hasActiveTubeCurve()) {
+                                ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.5f, 1.0f), "Tube Ready: %zu points, %d quads", ptCount, qd->getTubeCurveQuadsCount());
                                 if (ImGui::Button("Commit Tube (Enter)", ImVec2(150, 26))) {
-                                    qd->commitCurrentTube(scene);
+                                    qd->commitCurrentTubeCurve(scene);
                                 }
                                 ImGui::SameLine();
                                 if (ImGui::Button("Reset (Esc)", ImVec2(90, 26))) {
-                                    qd->resetTube();
+                                    qd->resetTubeCurve();
                                 }
 
                                 ImGui::Text("Extrude from ends:");
                                 if (ImGui::SmallButton("Extrude Start")) {
-                                    qd->extrudeTubeStart();
+                                    qd->extrudeTubeCurveStart();
                                 }
                                 ImGui::SameLine();
                                 if (ImGui::SmallButton("Extrude End")) {
-                                    qd->extrudeTubeEnd();
+                                    qd->extrudeTubeCurveEnd();
                                 }
                                 ImGui::SameLine();
                                 if (ImGui::SmallButton("Delete Last Point")) {
-                                    qd->removeLastTubePoint();
+                                    qd->removeLastTubeCurvePoint();
                                 }
                             } else if (ptCount == 1) {
                                 ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f), "Point P0 set. Click on mesh to place P1.");
                                 if (ImGui::SmallButton("Reset")) {
-                                    qd->resetTube();
+                                    qd->resetTubeCurve();
                                 }
                             } else {
                                 ImGui::TextDisabled("Click on mesh to place Start Point (P0).");

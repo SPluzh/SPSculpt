@@ -27,7 +27,8 @@ enum class QuadDrawSubTool {
     Pin,                // Lock/freeze components
     Select,             // Select border edges for extrude
     Strip,              // Draw stroke opposite selected edges to build quads
-    Tube                // Draw across cylindrical mesh to create rings & tubes
+    TubeSlice,          // Draw across cylindrical mesh to create rings & tubes
+    TubeCurve           // Interactive centerline curve/points to build tubes
 };
 
 enum class DragMode {
@@ -41,7 +42,8 @@ enum class DragMode {
     SliceDrag,
     BrushResize,
     StrokeDrag,
-    TubeDrag
+    TubeSliceDrag,
+    TubeCurveDrag
 };
 
 class QuadDrawTool {
@@ -135,33 +137,59 @@ public:
     QuadDrawMeshBuilder& getBuilder() { return m_builder; }
     SurfaceSnapper& getSnapper() { return m_snapper; }
 
-    // Tube Retopo settings
-    int getTubeRadialSegments() const { return m_tubeRadialSegments; }
-    void setTubeRadialSegments(int s);
+    // Tube Slice settings
+    int getTubeSliceRadialSegments() const { return m_tubeSliceRadialSegments; }
+    void setTubeSliceRadialSegments(int s) { m_tubeSliceRadialSegments = std::clamp(s, 4, 64); }
 
-    int getTubeSpans() const { return m_tubeSpans; }
-    void setTubeSpans(int s);
+    int getTubeSliceSpans() const { return m_tubeSliceSpans; }
+    void setTubeSliceSpans(int s) { m_tubeSliceSpans = std::clamp(s, 1, 32); }
 
-    bool hasActiveTube() const { return m_tubePoints.size() >= 2 && m_tubeGeomPreview.valid; }
-    bool hasTubePoints() const { return !m_tubePoints.empty(); }
-    size_t getTubePointsCount() const { return m_tubePoints.size(); }
-    int32_t getTubeQuadsCount() const { return m_tubeGeomPreview.quadsCount; }
-    const std::vector<glm::vec3>& getTubePoints() const { return m_tubePoints; }
+    bool hasActiveTubeSliceLoop() const { return !m_lastTubeSliceLoop.empty(); }
+    size_t getActiveTubeSliceLoopCount() const { return m_lastTubeSliceLoop.size(); }
+    const std::vector<int32_t>& getActiveTubeSliceLoop() const { return m_lastTubeSliceLoop; }
+    void clearActiveTubeSliceLoop() { m_lastTubeSliceLoop.clear(); }
 
-    void extrudeTubeStart();
-    void extrudeTubeEnd();
-    void removeLastTubePoint();
-    void commitCurrentTube(Scene& scene);
-    void resetTube();
-    void recalculateTubePreview();
+    // Tube Curve settings
+    int getTubeCurveRadialSegments() const { return m_tubeCurveRadialSegments; }
+    void setTubeCurveRadialSegments(int s);
+
+    int getTubeCurveSpans() const { return m_tubeCurveSpans; }
+    void setTubeCurveSpans(int s);
+
+    bool hasActiveTubeCurve() const { return m_tubeCurvePoints.size() >= 2 && m_tubeCurveGeomPreview.valid; }
+    bool hasTubeCurvePoints() const { return !m_tubeCurvePoints.empty(); }
+    size_t getTubeCurvePointsCount() const { return m_tubeCurvePoints.size(); }
+    int32_t getTubeCurveQuadsCount() const { return m_tubeCurveGeomPreview.quadsCount; }
+    const std::vector<glm::vec3>& getTubeCurvePoints() const { return m_tubeCurvePoints; }
+
+    void extrudeTubeCurveStart();
+    void extrudeTubeCurveEnd();
+    void removeLastTubeCurvePoint();
+    void commitCurrentTubeCurve(Scene& scene);
+    void resetTubeCurve();
+    void recalculateTubeCurvePreview();
+
+    // Compatibility aliases
+    int getTubeRadialSegments() const { return m_tubeCurveRadialSegments; }
+    void setTubeRadialSegments(int s) { setTubeCurveRadialSegments(s); }
+    int getTubeSpans() const { return m_tubeCurveSpans; }
+    void setTubeSpans(int s) { setTubeCurveSpans(s); }
+    bool hasActiveTube() const { return hasActiveTubeCurve(); }
+    size_t getTubePointsCount() const { return getTubeCurvePointsCount(); }
+    int32_t getTubeQuadsCount() const { return getTubeCurveQuadsCount(); }
+    void commitCurrentTube(Scene& scene) { commitCurrentTubeCurve(scene); }
+    void resetTube() { resetTubeCurve(); }
 
     bool isDragging() const { return m_dragMode != DragMode::None; }
     bool isHoveringHandle() const {
-        return (m_subTool == QuadDrawSubTool::Tube && m_tubeHoveredPointIdx >= 0);
+        return (m_subTool == QuadDrawSubTool::TubeCurve && m_tubeCurveHoveredPointIdx >= 0);
     }
     bool isHoveringInteractive() const {
-        if (m_subTool == QuadDrawSubTool::Tube) {
-            return m_tubeHoveredPointIdx >= 0 || m_dragMode == DragMode::TubeDrag;
+        if (m_subTool == QuadDrawSubTool::TubeCurve) {
+            return m_tubeCurveHoveredPointIdx >= 0 || m_dragMode == DragMode::TubeCurveDrag;
+        }
+        if (m_subTool == QuadDrawSubTool::TubeSlice) {
+            return m_dragMode == DragMode::TubeSliceDrag;
         }
         return m_hoverVertex >= 0 || m_hoverEdge.valid || m_hoverQuad.valid || m_dragMode != DragMode::None;
     }
@@ -271,16 +299,24 @@ private:
     bool m_edgeClickCandidate = false;
     EdgeHit m_candidateEdge;
 
-    // Tube Retopo state
-    int m_tubeRadialSegments = 8;
-    int m_tubeSpans = 6;
-    std::vector<glm::vec3> m_tubePoints;
-    glm::vec3 m_tubeCursorWorld{0.0f};
-    int32_t m_tubeHoveredPointIdx = -1;
-    int32_t m_tubeDraggingPointIdx = -1;
-    bool m_tubeExtrudeDrag = false;
-    int32_t m_tubeWeldTargetPointIdx = -1;
-    TubeSegmentResult m_tubeGeomPreview;
+    // Tube Slice state
+    int m_tubeSliceRadialSegments = 8;
+    int m_tubeSliceSpans = 1;
+    glm::vec2 m_tubeSliceStartScreen{0.0f};
+    glm::vec2 m_tubeSliceEndScreen{0.0f};
+    TubeSliceResult m_tubeSlicePreviewResult;
+    std::vector<int32_t> m_lastTubeSliceLoop;
+
+    // Tube Curve state
+    int m_tubeCurveRadialSegments = 8;
+    int m_tubeCurveSpans = 6;
+    std::vector<glm::vec3> m_tubeCurvePoints;
+    glm::vec3 m_tubeCurveCursorWorld{0.0f};
+    int32_t m_tubeCurveHoveredPointIdx = -1;
+    int32_t m_tubeCurveDraggingPointIdx = -1;
+    bool m_tubeCurveExtrudeDrag = false;
+    int32_t m_tubeCurveWeldTargetPointIdx = -1;
+    TubeSegmentResult m_tubeCurveGeomPreview;
 
     void updateHoverState(const Camera& camera, float mouseX, float mouseY, bool ctrl, bool alt, bool shift);
     void commitMultiCut(Scene& scene);
