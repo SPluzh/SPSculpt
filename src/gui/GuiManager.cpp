@@ -3277,28 +3277,57 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             ImGui::BulletText("LMB Drag on surface: Draw line opposite edges to create quads");
                             ImGui::BulletText("New front edges are automatically selected for chaining!");
                         } else if (qd->getSubTool() == retopo::QuadDrawSubTool::Tube) {
-                            ImGui::TextColored(ImVec4(0.2f, 0.9f, 1.0f, 1.0f), "Tube Tool: Draw line across limb to slice and build quad tube.");
+                            ImGui::TextColored(ImVec4(0.2f, 0.9f, 1.0f, 1.0f), "Tube Retopo: Retopologize elongated cylindrical objects.");
+
                             int radSegs = qd->getTubeRadialSegments();
                             if (ImGui::SliderInt("Radial Segments", &radSegs, 4, 32)) {
                                 qd->setTubeRadialSegments(radSegs);
                             }
                             int spans = qd->getTubeSpans();
-                            if (ImGui::SliderInt("Spans (Rings)", &spans, 1, 16)) {
+                            if (ImGui::SliderInt("Spans per Segment", &spans, 1, 32)) {
                                 qd->setTubeSpans(spans);
                             }
-                            if (qd->hasActiveTubeLoop()) {
-                                ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.5f, 1.0f), "Active Ring: Ready (%zu vertices)", qd->getActiveTubeLoopCount());
+
+                            size_t ptCount = qd->getTubePointsCount();
+                            if (qd->hasActiveTube()) {
+                                ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.5f, 1.0f), "Tube Ready: %zu points, %d quads", ptCount, qd->getTubeQuadsCount());
+                                if (ImGui::Button("Commit Tube (Enter)", ImVec2(150, 26))) {
+                                    qd->commitCurrentTube(scene);
+                                }
                                 ImGui::SameLine();
-                                if (ImGui::SmallButton("End Tube / Reset")) {
-                                    qd->clearActiveTubeLoop();
+                                if (ImGui::Button("Reset (Esc)", ImVec2(90, 26))) {
+                                    qd->resetTube();
+                                }
+
+                                ImGui::Text("Extrude from ends:");
+                                if (ImGui::SmallButton("Extrude Start")) {
+                                    qd->extrudeTubeStart();
+                                }
+                                ImGui::SameLine();
+                                if (ImGui::SmallButton("Extrude End")) {
+                                    qd->extrudeTubeEnd();
+                                }
+                                ImGui::SameLine();
+                                if (ImGui::SmallButton("Delete Last Point")) {
+                                    qd->removeLastTubePoint();
+                                }
+                            } else if (ptCount == 1) {
+                                ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f), "Point P0 set. Click on mesh to place P1.");
+                                if (ImGui::SmallButton("Reset")) {
+                                    qd->resetTube();
                                 }
                             } else {
-                                ImGui::TextDisabled("No active ring. Draw across limb to start tube.");
+                                ImGui::TextDisabled("Click on mesh to place Start Point (P0).");
                             }
+
                             ImGui::TextDisabled("Controls:");
-                            ImGui::BulletText("LMB Drag across mesh: Cut cylinder & create ring");
-                            ImGui::BulletText("Subsequent cuts automatically bridge into a tube");
-                            ImGui::BulletText("Press Esc to finish current tube and start a new one");
+                            ImGui::BulletText("LMB click: Add point to tube chain");
+                            ImGui::BulletText("LMB drag handle: Move point on surface");
+                            ImGui::BulletText("Drag point onto another point: Collapse / weld points");
+                            ImGui::BulletText("Alt + LMB drag end handle: Extrude new point");
+                            ImGui::BulletText("Backspace: Delete last placed point");
+                            ImGui::BulletText("Enter / Space: Commit tube to mesh");
+                            ImGui::BulletText("Escape: Reset all points");
                         }
 
                         ImGui::Separator();

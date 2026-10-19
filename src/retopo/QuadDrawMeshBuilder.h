@@ -214,6 +214,14 @@ struct TubeBuildResult {
     int32_t quadsCreated = 0;
 };
 
+struct TubeSegmentResult {
+    bool valid = false;
+    std::vector<std::vector<glm::vec3>> rings; // rings[ringIndex][radialVertexIndex]
+    int32_t radialSegments = 0;
+    int32_t spans = 0;
+    int32_t quadsCount = 0;
+};
+
 class QuadDrawMeshBuilder {
 public:
     QuadDrawMeshBuilder();
@@ -301,6 +309,20 @@ public:
         const std::vector<glm::vec3>& newRingPoints,
         const std::vector<int32_t>& previousLoopVertices,
         int32_t spans = 1
+    );
+    TubeSegmentResult GenerateTubeBetweenPoints(
+        const Mesh* targetMesh, SurfaceSnapper& snapper,
+        const glm::vec3& startWorldPos, const glm::vec3& endWorldPos,
+        int32_t radialSegments, int32_t spans
+    );
+    TubeSegmentResult GenerateTubeFromPoints(
+        const Mesh* targetMesh, SurfaceSnapper& snapper,
+        const std::vector<glm::vec3>& centerlinePoints,
+        int32_t radialSegments, int32_t spansPerSegment
+    );
+    TubeBuildResult CommitTubeMesh(
+        Mesh* retopoMesh, const Mesh* targetMesh, SurfaceSnapper& snapper,
+        const TubeSegmentResult& tubeGeom
     );
 
     // Brushes (Relax & Grab)

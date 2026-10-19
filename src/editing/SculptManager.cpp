@@ -2431,7 +2431,13 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
         m_mouseDownY = mouseY;
 
         // Check if event is handled by camera navigation preset
-        if (m_cameraController.isNavigationEvent(event, camera.getRef2DMode())) {
+        bool qdIntercept = false;
+        if (m_currentBrush == BRUSH_QUAD_DRAW && m_quadDrawTool) {
+            if (m_quadDrawTool->isDragging() || m_quadDrawTool->isHoveringInteractive()) {
+                qdIntercept = true;
+            }
+        }
+        if (!qdIntercept && m_cameraController.isNavigationEvent(event, camera.getRef2DMode())) {
             m_cameraController.handleEvent(event, camera, scene.getMeshes(), true, &scene, m_renderer);
             return;
         }

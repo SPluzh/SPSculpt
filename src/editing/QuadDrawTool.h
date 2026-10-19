@@ -137,15 +137,34 @@ public:
 
     // Tube Retopo settings
     int getTubeRadialSegments() const { return m_tubeRadialSegments; }
-    void setTubeRadialSegments(int s) { m_tubeRadialSegments = std::clamp(s, 4, 32); }
+    void setTubeRadialSegments(int s);
 
     int getTubeSpans() const { return m_tubeSpans; }
-    void setTubeSpans(int s) { m_tubeSpans = std::clamp(s, 1, 16); }
+    void setTubeSpans(int s);
 
-    bool hasActiveTubeLoop() const { return !m_lastTubeLoop.empty(); }
-    size_t getActiveTubeLoopCount() const { return m_lastTubeLoop.size(); }
-    const std::vector<int32_t>& getActiveTubeLoop() const { return m_lastTubeLoop; }
-    void clearActiveTubeLoop() { m_lastTubeLoop.clear(); }
+    bool hasActiveTube() const { return m_tubePoints.size() >= 2 && m_tubeGeomPreview.valid; }
+    bool hasTubePoints() const { return !m_tubePoints.empty(); }
+    size_t getTubePointsCount() const { return m_tubePoints.size(); }
+    int32_t getTubeQuadsCount() const { return m_tubeGeomPreview.quadsCount; }
+    const std::vector<glm::vec3>& getTubePoints() const { return m_tubePoints; }
+
+    void extrudeTubeStart();
+    void extrudeTubeEnd();
+    void removeLastTubePoint();
+    void commitCurrentTube(Scene& scene);
+    void resetTube();
+    void recalculateTubePreview();
+
+    bool isDragging() const { return m_dragMode != DragMode::None; }
+    bool isHoveringHandle() const {
+        return (m_subTool == QuadDrawSubTool::Tube && m_tubeHoveredPointIdx >= 0);
+    }
+    bool isHoveringInteractive() const {
+        if (m_subTool == QuadDrawSubTool::Tube) {
+            return m_tubeHoveredPointIdx >= 0 || m_dragMode == DragMode::TubeDrag;
+        }
+        return m_hoverVertex >= 0 || m_hoverEdge.valid || m_hoverQuad.valid || m_dragMode != DragMode::None;
+    }
 
 private:
     SculptManager& m_sculpt;
@@ -254,11 +273,14 @@ private:
 
     // Tube Retopo state
     int m_tubeRadialSegments = 8;
-    int m_tubeSpans = 1;
-    glm::vec2 m_tubeStartScreen{0.0f};
-    glm::vec2 m_tubeEndScreen{0.0f};
-    TubeSliceResult m_tubePreviewResult;
-    std::vector<int32_t> m_lastTubeLoop;
+    int m_tubeSpans = 6;
+    std::vector<glm::vec3> m_tubePoints;
+    glm::vec3 m_tubeCursorWorld{0.0f};
+    int32_t m_tubeHoveredPointIdx = -1;
+    int32_t m_tubeDraggingPointIdx = -1;
+    bool m_tubeExtrudeDrag = false;
+    int32_t m_tubeWeldTargetPointIdx = -1;
+    TubeSegmentResult m_tubeGeomPreview;
 
     void updateHoverState(const Camera& camera, float mouseX, float mouseY, bool ctrl, bool alt, bool shift);
     void commitMultiCut(Scene& scene);
