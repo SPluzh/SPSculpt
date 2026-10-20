@@ -463,8 +463,8 @@ void QuadDrawTool::updateHoverState(
         }
     }
 
-    // Check face hover (for Delete, Select, and Tweak tools)
-    if ((m_subTool == QuadDrawSubTool::Delete || (ctrl && shift) || m_subTool == QuadDrawSubTool::Select || m_subTool == QuadDrawSubTool::Tweak) && m_hoverVertex == -1 && !m_hoverEdge.valid) {
+    // Check face hover (for Delete, Select, Tweak, and MultiCut tools)
+    if ((m_subTool == QuadDrawSubTool::Delete || (ctrl && shift) || m_subTool == QuadDrawSubTool::Select || m_subTool == QuadDrawSubTool::Tweak || m_subTool == QuadDrawSubTool::MultiCut) && m_hoverVertex == -1 && !m_hoverEdge.valid) {
         m_hoverPoly = m_builder.FindPolygonUnderScreen(camera, m_retopoMesh, mouseX, mouseY, m_targetMesh, &m_snapper);
     }
 
@@ -481,6 +481,10 @@ void QuadDrawTool::updateHoverState(
                 m_retopoMesh, m_targetMesh, m_snapper, camera,
                 m_hoverEdge.v0, m_hoverEdge.v1, m_hoverEdge.t, m_hoverEdge.polyIndex
             );
+        }
+    } else if (m_subTool == QuadDrawSubTool::MultiCut) {
+        if (m_hoverEdge.valid && shift) {
+            m_hoverEdge.t = std::clamp(std::round(m_hoverEdge.t * 4.0f) * 0.25f, 0.0f, 1.0f);
         }
     }
 
@@ -533,6 +537,18 @@ bool QuadDrawTool::handleMouseDown(
     if (button == SDL_BUTTON_MIDDLE) {
         m_dragMode = DragMode::BrushResize;
         return true;
+    }
+
+    if (button == SDL_BUTTON_RIGHT) {
+        if (m_subTool == QuadDrawSubTool::MultiCut) {
+            if (m_multiCutPoints.size() >= 2) {
+                commitMultiCut(scene);
+            } else {
+                m_multiCutPoints.clear();
+            }
+            return true;
+        }
+        return false;
     }
 
     if (button != SDL_BUTTON_LEFT) return false;
@@ -819,26 +835,38 @@ bool QuadDrawTool::handleMouseDown(
         if (m_hoverVertex != -1) {
             mcp.type = MultiCutSnapType::Vertex;
             mcp.vertexIdx = m_hoverVertex;
-            mcp.worldPos = glm::vec3(
+            glm::vec3 p(
                 m_retopoMesh->verts[m_hoverVertex * 3],
                 m_retopoMesh->verts[m_hoverVertex * 3 + 1],
                 m_retopoMesh->verts[m_hoverVertex * 3 + 2]
             );
+            mcp.worldPos = (m_retopoMesh->matrix != glm::mat4(1.0f)) ? glm::vec3(m_retopoMesh->matrix * glm::vec4(p, 1.0f)) : p;
         } else if (m_hoverEdge.valid) {
             mcp.type = MultiCutSnapType::Edge;
             mcp.edgeV0 = m_hoverEdge.v0;
             mcp.edgeV1 = m_hoverEdge.v1;
             mcp.edgeT = m_hoverEdge.t;
             mcp.worldPos = glm::mix(m_hoverEdge.worldPos0, m_hoverEdge.worldPos1, m_hoverEdge.t);
-        } else if (m_hoverSnap.valid) {
+        } else if (m_hoverPoly != -1) {
             mcp.type = MultiCutSnapType::Face;
-            mcp.worldPos = m_hoverSnap.worldPos;
+            mcp.polyIndex = m_hoverPoly;
+            mcp.worldPos = m_hoverSnap.valid ? m_hoverSnap.worldPos : camera.unproject(mouseX, mouseY, 0.5f);
         } else {
             m_dragMode = DragMode::SliceDrag;
             m_sliceStartScreen = glm::vec2(mouseX, mouseY);
             m_sliceEndScreen = m_sliceStartScreen;
             return true;
         }
+
+        // Commit if user clicked the same vertex as the last point (double-click finish)
+        if (!m_multiCutPoints.empty()) {
+            const auto& last = m_multiCutPoints.back();
+            if (last.type == MultiCutSnapType::Vertex && mcp.type == MultiCutSnapType::Vertex && last.vertexIdx == mcp.vertexIdx) {
+                commitMultiCut(scene);
+                return true;
+            }
+        }
+
         m_multiCutPoints.push_back(mcp);
         return true;
     }
@@ -1770,7 +1798,7 @@ bool QuadDrawTool::handleKeyDown(Scene& scene, int keycode) {
         }
     }
 
-    if (keycode == SDLK_RETURN || keycode == SDLK_KP_ENTER) {
+    if (keycode == SDLK_RETURN || keycode == SDLK_KP_ENTER || keycode == SDLK_SPACE) {
         commitMultiCut(scene);
         return true;
     }
@@ -2154,29 +2182,98 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
         }
     }
 
-    // 3. Draw Multi-Cut Placed Chain
-    if (!m_multiCutPoints.empty()) {
+    // 3. Draw Multi-Cut Placed Chain & Live Preview
+    if (m_subTool == QuadDrawSubTool::MultiCut && m_retopoMesh) {
+        MultiCutPoint cand;
+        bool hasCand = false;
+        if (m_hoverVertex != -1) {
+            hasCand = true;
+            cand.type = MultiCutSnapType::Vertex;
+            cand.vertexIdx = m_hoverVertex;
+            glm::vec3 p(
+                m_retopoMesh->verts[m_hoverVertex * 3],
+                m_retopoMesh->verts[m_hoverVertex * 3 + 1],
+                m_retopoMesh->verts[m_hoverVertex * 3 + 2]
+            );
+            cand.worldPos = (m_retopoMesh->matrix != glm::mat4(1.0f)) ? glm::vec3(m_retopoMesh->matrix * glm::vec4(p, 1.0f)) : p;
+        } else if (m_hoverEdge.valid) {
+            hasCand = true;
+            cand.type = MultiCutSnapType::Edge;
+            cand.edgeV0 = m_hoverEdge.v0;
+            cand.edgeV1 = m_hoverEdge.v1;
+            cand.edgeT = m_hoverEdge.t;
+            cand.worldPos = glm::mix(m_hoverEdge.worldPos0, m_hoverEdge.worldPos1, m_hoverEdge.t);
+        } else if (m_hoverPoly != -1 && m_hoverSnap.valid) {
+            hasCand = true;
+            cand.type = MultiCutSnapType::Face;
+            cand.polyIndex = m_hoverPoly;
+            cand.worldPos = m_hoverSnap.worldPos;
+        }
+
+        // Draw preview cuts from builder
+        if (!m_multiCutPoints.empty()) {
+            MultiCutResult preview = m_builder.BuildMultiCutFromPoints(
+                camera, m_retopoMesh, m_targetMesh, m_snapper, m_multiCutPoints, hasCand ? &cand : nullptr
+            );
+            for (const auto& seg : preview.previewSegments) {
+                glm::vec3 sp0 = camera.project(seg.p0);
+                glm::vec3 sp1 = camera.project(seg.p1);
+                if (sp0.z > 0.0f && sp1.z > 0.0f) {
+                    drawList->AddLine(ImVec2(sp0.x, sp0.y), ImVec2(sp1.x, sp1.y), IM_COL32(255, 180, 20, 255), 2.5f);
+                }
+            }
+        }
+
+        // Draw placed points
         for (size_t i = 0; i < m_multiCutPoints.size(); ++i) {
             glm::vec3 sp = camera.project(m_multiCutPoints[i].worldPos);
             if (sp.z > 0.0f) {
-                drawList->AddCircleFilled(ImVec2(sp.x, sp.y), 5.0f, IM_COL32(255, 180, 20, 255));
-                if (i + 1 < m_multiCutPoints.size()) {
-                    glm::vec3 spNext = camera.project(m_multiCutPoints[i + 1].worldPos);
-                    if (spNext.z > 0.0f) {
-                        drawList->AddLine(ImVec2(sp.x, sp.y), ImVec2(spNext.x, spNext.y), IM_COL32(255, 180, 20, 255), 2.0f);
-                    }
+                drawList->AddCircleFilled(ImVec2(sp.x, sp.y), 5.5f, IM_COL32(255, 180, 20, 255));
+                drawList->AddCircle(ImVec2(sp.x, sp.y), 6.5f, IM_COL32(0, 0, 0, 220), 12, 1.5f);
+            }
+        }
+
+        // Draw hover candidate indicator
+        if (hasCand) {
+            glm::vec3 sp = camera.project(cand.worldPos);
+            if (sp.z > 0.0f) {
+                ImU32 candColor = (cand.type == MultiCutSnapType::Vertex)
+                    ? IM_COL32(50, 255, 120, 255)
+                    : IM_COL32(0, 220, 255, 255);
+                drawList->AddCircleFilled(ImVec2(sp.x, sp.y), 4.5f, candColor);
+                drawList->AddCircle(ImVec2(sp.x, sp.y), 6.0f, IM_COL32(255, 255, 255, 220), 12, 1.2f);
+
+                if (cand.type == MultiCutSnapType::Edge && ImGui::GetIO().KeyShift) {
+                    char snapBuf[32];
+                    snprintf(snapBuf, sizeof(snapBuf), "%.0f%%", cand.edgeT * 100.0f);
+                    drawList->AddText(ImVec2(sp.x + 10, sp.y - 12), IM_COL32(255, 255, 100, 255), snapBuf);
                 }
             }
         }
     }
 
-    // 4. Draw Screen Slice Line
+    // 4. Draw Screen Slice Line & Real-time preview of cut segments
     if (m_dragMode == DragMode::SliceDrag) {
         drawList->AddLine(
             ImVec2(m_sliceStartScreen.x, m_sliceStartScreen.y),
             ImVec2(m_sliceEndScreen.x, m_sliceEndScreen.y),
             IM_COL32(255, 70, 70, 255), 2.5f
         );
+
+        if (m_retopoMesh) {
+            MultiCutResult slice = m_builder.BuildSliceCut(
+                camera, m_retopoMesh, m_targetMesh, m_snapper, m_sliceStartScreen, m_sliceEndScreen
+            );
+            for (const auto& seg : slice.previewSegments) {
+                glm::vec3 sp0 = camera.project(seg.p0);
+                glm::vec3 sp1 = camera.project(seg.p1);
+                if (sp0.z > 0.0f && sp1.z > 0.0f) {
+                    drawList->AddLine(ImVec2(sp0.x, sp0.y), ImVec2(sp1.x, sp1.y), IM_COL32(50, 255, 150, 255), 3.0f);
+                    drawList->AddCircleFilled(ImVec2(sp0.x, sp0.y), 4.0f, IM_COL32(50, 255, 150, 255));
+                    drawList->AddCircleFilled(ImVec2(sp1.x, sp1.y), 4.0f, IM_COL32(50, 255, 150, 255));
+                }
+            }
+        }
     }
 
     // 5. Draw Brush Circle for Grab, Relax, Pin, or BrushResize

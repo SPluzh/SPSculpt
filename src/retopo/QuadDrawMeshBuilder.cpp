@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <deque>
+#include <map>
 #include <unordered_map>
 #include <utility>
 #include "common/Constants.h"
@@ -1313,6 +1314,138 @@ bool QuadDrawMeshBuilder::ApplyEdgeLoopCut(Mesh* retopo, const EdgeCutResult& cu
     return true;
 }
 
+// Helper for finding edge intersections with a 2D screen line segment
+struct ScreenLineEdgeHit {
+    float s = 0.0f; // Parameter along line [0, 1]
+    int32_t edgeV0 = -1;
+    int32_t edgeV1 = -1;
+    float edgeT = 0.5f; // Parameter along edge [0, 1]
+    glm::vec3 worldPos{0.0f};
+    std::vector<int32_t> polys; // Adjacent polygons sharing this edge
+};
+
+static std::vector<ScreenLineEdgeHit> FindScreenLineEdgeIntersections(
+    const Camera& camera, const Mesh* retopo, const Mesh* targetMesh, SurfaceSnapper& snapper,
+    const glm::vec2& screenP0, const glm::vec2& screenP1, bool cutThrough = false
+) {
+    std::vector<ScreenLineEdgeHit> intersections;
+    if (!retopo || retopo->nbFaces == 0 || retopo->nbVerts == 0) return intersections;
+
+    float lineLen = glm::distance(screenP0, screenP1);
+    if (lineLen < 2.0f) return intersections;
+
+    auto getVertWorld = [&](int32_t idx) -> glm::vec3 {
+        glm::vec3 p(retopo->verts[idx * 3], retopo->verts[idx * 3 + 1], retopo->verts[idx * 3 + 2]);
+        return (retopo->matrix != glm::mat4(1.0f)) ? glm::vec3(retopo->matrix * glm::vec4(p, 1.0f)) : p;
+    };
+
+    int32_t polyCount = (int32_t)(retopo->faces.size() / 4);
+    int32_t vertCount = (int32_t)(retopo->verts.size() / 3);
+
+    struct EdgeKey {
+        int32_t u, v;
+        bool operator<(const EdgeKey& o) const {
+            if (u != o.u) return u < o.u;
+            return v < o.v;
+        }
+    };
+    std::map<EdgeKey, std::vector<int32_t>> edgeToPolys;
+    for (int32_t p = 0; p < polyCount; ++p) {
+        uint32_t f[4] = {
+            retopo->faces[p * 4 + 0],
+            retopo->faces[p * 4 + 1],
+            retopo->faces[p * 4 + 2],
+            retopo->faces[p * 4 + 3]
+        };
+        int kMax = (f[3] != TRI_INDEX) ? 4 : 3;
+        for (int k = 0; k < kMax; ++k) {
+            int32_t u = (int32_t)f[k];
+            int32_t v = (int32_t)f[(k + 1) % kMax];
+            if (u >= vertCount || v >= vertCount || u == v) continue;
+            int32_t e0 = std::min(u, v);
+            int32_t e1 = std::max(u, v);
+            edgeToPolys[{e0, e1}].push_back(p);
+        }
+    }
+
+    glm::vec2 dL = screenP1 - screenP0;
+    glm::vec3 camPos = camera.computePosition();
+
+    for (const auto& kv : edgeToPolys) {
+        int32_t u = kv.first.u;
+        int32_t v = kv.first.v;
+        glm::vec3 wU = getVertWorld(u);
+        glm::vec3 wV = getVertWorld(v);
+
+        glm::vec3 sU = camera.project(wU);
+        glm::vec3 sV = camera.project(wV);
+        if (sU.z <= 0.0f || sV.z <= 0.0f) continue;
+
+        if (!cutThrough) {
+            bool anyFront = false;
+            for (int32_t pIdx : kv.second) {
+                uint32_t f[4] = {
+                    retopo->faces[pIdx * 4 + 0],
+                    retopo->faces[pIdx * 4 + 1],
+                    retopo->faces[pIdx * 4 + 2],
+                    retopo->faces[pIdx * 4 + 3]
+                };
+                if (f[0] >= (uint32_t)vertCount || f[1] >= (uint32_t)vertCount || f[2] >= (uint32_t)vertCount) continue;
+                glm::vec3 p0 = getVertWorld(f[0]);
+                glm::vec3 p1 = getVertWorld(f[1]);
+                glm::vec3 p2 = getVertWorld(f[2]);
+                glm::vec3 faceNorm = glm::cross(p1 - p0, p2 - p0);
+                glm::vec3 viewDir = ((p0 + p1 + p2) * (1.0f / 3.0f)) - camPos;
+                if (glm::dot(faceNorm, viewDir) < 0.0f) {
+                    anyFront = true;
+                    break;
+                }
+            }
+            if (!anyFront) continue;
+        }
+
+        glm::vec2 pU(sU.x, sU.y);
+        glm::vec2 pV(sV.x, sV.y);
+        glm::vec2 dE = pV - pU;
+
+        float denom = dL.x * dE.y - dL.y * dE.x;
+        if (std::abs(denom) < 1e-6f) continue;
+
+        glm::vec2 d0 = pU - screenP0;
+        float s = (d0.x * dE.y - d0.y * dE.x) / denom;
+        float t = (d0.x * dL.y - d0.y * dL.x) / denom;
+
+        if (s >= 0.0f && s <= 1.0f && t >= 0.0f && t <= 1.0f) {
+            ScreenLineEdgeHit hit;
+            hit.s = s;
+            hit.edgeV0 = u;
+            hit.edgeV1 = v;
+            hit.edgeT = t;
+            glm::vec3 rawWorld = glm::mix(wU, wV, t);
+            SnapResult snap = snapper.SnapClosestPoint(targetMesh, rawWorld, 100.0f);
+            hit.worldPos = snap.valid ? snap.worldPos : rawWorld;
+            hit.polys = kv.second;
+            intersections.push_back(hit);
+        }
+    }
+
+    std::sort(intersections.begin(), intersections.end(), [](const auto& a, const auto& b) {
+        return a.s < b.s;
+    });
+
+    std::vector<ScreenLineEdgeHit> uniqueHits;
+    for (const auto& hit : intersections) {
+        if (!uniqueHits.empty()) {
+            const auto& prev = uniqueHits.back();
+            if (prev.edgeV0 == hit.edgeV0 && prev.edgeV1 == hit.edgeV1) continue;
+            if (std::abs(prev.s - hit.s) < 1e-4f) continue;
+        }
+        uniqueHits.push_back(hit);
+    }
+
+    return uniqueHits;
+}
+
 MultiCutResult QuadDrawMeshBuilder::BuildMultiCutFromPoints(
     const Camera& camera, const Mesh* retopo, const Mesh* targetMesh, SurfaceSnapper& snapper,
     const std::vector<MultiCutPoint>& points, const MultiCutPoint* candidateHover
@@ -1334,7 +1467,151 @@ MultiCutResult QuadDrawMeshBuilder::BuildMultiCutFromPoints(
         result.previewSegments.push_back(seg);
     }
 
-    result.valid = !result.previewSegments.empty();
+    if (points.size() < 2) {
+        result.valid = !result.previewSegments.empty();
+        return result;
+    }
+
+    auto pointInPoly = [&](const MultiCutPoint& pt, int32_t pIdx) -> bool {
+        if (pIdx < 0 || (size_t)pIdx * 4 + 3 >= retopo->faces.size()) return false;
+        if (pt.type == MultiCutSnapType::Vertex) {
+            return PolygonHasVertex(retopo->faces, pIdx, pt.vertexIdx);
+        }
+        if (pt.type == MultiCutSnapType::Edge) {
+            return PolygonHasEdge(retopo->faces, pIdx, pt.edgeV0, pt.edgeV1);
+        }
+        if (pt.type == MultiCutSnapType::Face) {
+            return pt.polyIndex == pIdx;
+        }
+        return false;
+    };
+
+    int32_t polyCount = (int32_t)(retopo->faces.size() / 4);
+
+    for (size_t i = 0; i + 1 < points.size(); ++i) {
+        const auto& pA = points[i];
+        const auto& pB = points[i + 1];
+
+        // 1. Direct shared polygon cut
+        int32_t sharedPoly = -1;
+        for (int32_t p = 0; p < polyCount; ++p) {
+            if (pointInPoly(pA, p) && pointInPoly(pB, p)) {
+                sharedPoly = p;
+                break;
+            }
+        }
+
+        if (sharedPoly != -1) {
+            bool sameVert = (pA.type == MultiCutSnapType::Vertex && pB.type == MultiCutSnapType::Vertex && pA.vertexIdx == pB.vertexIdx);
+            bool sameEdge = (pA.type == MultiCutSnapType::Edge && pB.type == MultiCutSnapType::Edge &&
+                std::min(pA.edgeV0, pA.edgeV1) == std::min(pB.edgeV0, pB.edgeV1) &&
+                std::max(pA.edgeV0, pA.edgeV1) == std::max(pB.edgeV0, pB.edgeV1));
+            if (!sameVert && !sameEdge) {
+                PolygonCut cut;
+                cut.polyIndex = sharedPoly;
+                cut.end0IsVertex = (pA.type == MultiCutSnapType::Vertex);
+                cut.end0Vertex = pA.vertexIdx;
+                cut.end0EdgeV0 = pA.edgeV0;
+                cut.end0EdgeV1 = pA.edgeV1;
+                cut.end0EdgeT = pA.edgeT;
+                cut.end0WorldPos = pA.worldPos;
+
+                cut.end1IsVertex = (pB.type == MultiCutSnapType::Vertex);
+                cut.end1Vertex = pB.vertexIdx;
+                cut.end1EdgeV0 = pB.edgeV0;
+                cut.end1EdgeV1 = pB.edgeV1;
+                cut.end1EdgeT = pB.edgeT;
+                cut.end1WorldPos = pB.worldPos;
+
+                result.cuts.push_back(cut);
+            }
+        } else {
+            // 2. Multi-polygon screen line tracing
+            glm::vec3 sA = camera.project(pA.worldPos);
+            glm::vec3 sB = camera.project(pB.worldPos);
+            if (sA.z > 0.0f && sB.z > 0.0f) {
+                auto hits = FindScreenLineEdgeIntersections(
+                    camera, retopo, targetMesh, snapper, glm::vec2(sA), glm::vec2(sB), false
+                );
+
+                struct TraceNode {
+                    bool isVertex;
+                    int32_t vertIdx;
+                    int32_t edgeV0, edgeV1;
+                    float edgeT;
+                    glm::vec3 worldPos;
+                    std::vector<int32_t> polys;
+                };
+
+                std::vector<TraceNode> nodes;
+                TraceNode nodeA;
+                nodeA.isVertex = (pA.type == MultiCutSnapType::Vertex);
+                nodeA.vertIdx = pA.vertexIdx;
+                nodeA.edgeV0 = pA.edgeV0; nodeA.edgeV1 = pA.edgeV1; nodeA.edgeT = pA.edgeT;
+                nodeA.worldPos = pA.worldPos;
+                for (int32_t p = 0; p < polyCount; ++p) {
+                    if (pointInPoly(pA, p)) nodeA.polys.push_back(p);
+                }
+                nodes.push_back(nodeA);
+
+                for (const auto& h : hits) {
+                    if (h.s > 0.03f && h.s < 0.97f) {
+                        TraceNode n;
+                        n.isVertex = false;
+                        n.vertIdx = -1;
+                        n.edgeV0 = h.edgeV0; n.edgeV1 = h.edgeV1; n.edgeT = h.edgeT;
+                        n.worldPos = h.worldPos;
+                        n.polys = h.polys;
+                        nodes.push_back(n);
+                    }
+                }
+
+                TraceNode nodeB;
+                nodeB.isVertex = (pB.type == MultiCutSnapType::Vertex);
+                nodeB.vertIdx = pB.vertexIdx;
+                nodeB.edgeV0 = pB.edgeV0; nodeB.edgeV1 = pB.edgeV1; nodeB.edgeT = pB.edgeT;
+                nodeB.worldPos = pB.worldPos;
+                for (int32_t p = 0; p < polyCount; ++p) {
+                    if (pointInPoly(pB, p)) nodeB.polys.push_back(p);
+                }
+                nodes.push_back(nodeB);
+
+                for (size_t n = 0; n + 1 < nodes.size(); ++n) {
+                    const auto& n0 = nodes[n];
+                    const auto& n1 = nodes[n + 1];
+
+                    int32_t commonPoly = -1;
+                    for (int32_t p0 : n0.polys) {
+                        for (int32_t p1 : n1.polys) {
+                            if (p0 == p1) {
+                                commonPoly = p0;
+                                break;
+                            }
+                        }
+                        if (commonPoly != -1) break;
+                    }
+
+                    if (commonPoly != -1) {
+                        PolygonCut cut;
+                        cut.polyIndex = commonPoly;
+                        cut.end0IsVertex = n0.isVertex;
+                        cut.end0Vertex = n0.vertIdx;
+                        cut.end0EdgeV0 = n0.edgeV0; cut.end0EdgeV1 = n0.edgeV1; cut.end0EdgeT = n0.edgeT;
+                        cut.end0WorldPos = n0.worldPos;
+
+                        cut.end1IsVertex = n1.isVertex;
+                        cut.end1Vertex = n1.vertIdx;
+                        cut.end1EdgeV0 = n1.edgeV0; cut.end1EdgeV1 = n1.edgeV1; cut.end1EdgeT = n1.edgeT;
+                        cut.end1WorldPos = n1.worldPos;
+
+                        result.cuts.push_back(cut);
+                    }
+                }
+            }
+        }
+    }
+
+    result.valid = !result.cuts.empty() || !result.previewSegments.empty();
     return result;
 }
 
@@ -1343,22 +1620,268 @@ MultiCutResult QuadDrawMeshBuilder::BuildSliceCut(
     const glm::vec2& screenP0, const glm::vec2& screenP1, bool cutThrough, bool cutInfinite
 ) {
     MultiCutResult result;
-    if (!retopo || retopo->nbFaces == 0) return result;
+    if (!retopo || retopo->nbFaces == 0 || retopo->nbVerts == 0) return result;
 
-    MultiCutSliceSegment seg;
-    seg.p0 = camera.unproject(screenP0.x, screenP0.y, 0.5f);
-    seg.p1 = camera.unproject(screenP1.x, screenP1.y, 0.5f);
-    result.previewSegments.push_back(seg);
-    result.valid = true;
+    auto hits = FindScreenLineEdgeIntersections(camera, retopo, targetMesh, snapper, screenP0, screenP1, cutThrough);
+    if (hits.size() < 2) return result;
+
+    for (size_t i = 0; i + 1 < hits.size(); ++i) {
+        const auto& hA = hits[i];
+        const auto& hB = hits[i + 1];
+
+        int32_t sharedPoly = -1;
+        for (int32_t pA : hA.polys) {
+            for (int32_t pB : hB.polys) {
+                if (pA == pB) {
+                    sharedPoly = pA;
+                    break;
+                }
+            }
+            if (sharedPoly != -1) break;
+        }
+
+        if (sharedPoly != -1) {
+            PolygonCut cut;
+            cut.polyIndex = sharedPoly;
+            cut.end0IsVertex = false;
+            cut.end0Vertex = -1;
+            cut.end0EdgeV0 = hA.edgeV0;
+            cut.end0EdgeV1 = hA.edgeV1;
+            cut.end0EdgeT = hA.edgeT;
+            cut.end0WorldPos = hA.worldPos;
+
+            cut.end1IsVertex = false;
+            cut.end1Vertex = -1;
+            cut.end1EdgeV0 = hB.edgeV0;
+            cut.end1EdgeV1 = hB.edgeV1;
+            cut.end1EdgeT = hB.edgeT;
+            cut.end1WorldPos = hB.worldPos;
+
+            result.cuts.push_back(cut);
+
+            MultiCutSliceSegment seg;
+            seg.p0 = hA.worldPos;
+            seg.p1 = hB.worldPos;
+            seg.polyIndex = sharedPoly;
+            result.previewSegments.push_back(seg);
+        }
+    }
+
+    result.valid = !result.cuts.empty();
     return result;
 }
 
 bool QuadDrawMeshBuilder::ApplyPolygonCuts(
     Mesh* retopo, const Mesh* targetMesh, SurfaceSnapper& snapper, const std::vector<PolygonCut>& cuts
 ) {
-    if (!retopo || cuts.empty()) return false;
-    NotifyMeshUpdated(retopo);
-    return true;
+    if (!retopo || cuts.empty() || retopo->nbFaces == 0) return false;
+
+    int32_t originalPolyCount = (int32_t)(retopo->faces.size() / 4);
+
+    struct EdgeKey {
+        int32_t u, v;
+        bool operator<(const EdgeKey& o) const {
+            if (u != o.u) return u < o.u;
+            return v < o.v;
+        }
+    };
+    std::map<EdgeKey, int32_t> edgeNewVerts;
+
+    auto getOrCreateCutVertex = [&](bool isVertex, int32_t vertIdx, int32_t edgeV0, int32_t edgeV1, float edgeT, const glm::vec3& worldPos) -> int32_t {
+        if (isVertex) {
+            if (vertIdx >= 0 && vertIdx < (int32_t)(retopo->verts.size() / 3)) {
+                return vertIdx;
+            }
+            return -1;
+        }
+
+        if (edgeV0 < 0 || edgeV1 < 0 || edgeV0 == edgeV1) {
+            glm::vec3 pos = worldPos;
+            SnapResult snap = snapper.SnapClosestPoint(targetMesh, pos, 100.0f);
+            if (snap.valid) pos = snap.worldPos;
+            return AddVertex(retopo, pos);
+        }
+
+        if (edgeT <= 0.05f) return edgeV0;
+        if (edgeT >= 0.95f) return edgeV1;
+
+        int32_t e0 = std::min(edgeV0, edgeV1);
+        int32_t e1 = std::max(edgeV0, edgeV1);
+        auto it = edgeNewVerts.find({e0, e1});
+        if (it != edgeNewVerts.end()) {
+            return it->second;
+        }
+
+        glm::vec3 pos = worldPos;
+        SnapResult snap = snapper.SnapClosestPoint(targetMesh, pos, 100.0f);
+        if (snap.valid) pos = snap.worldPos;
+        int32_t newV = AddVertex(retopo, pos);
+        edgeNewVerts[{e0, e1}] = newV;
+        return newV;
+    };
+
+    std::unordered_set<int32_t> processedPolys;
+    bool anyApplied = false;
+
+    for (const auto& cut : cuts) {
+        int32_t p = cut.polyIndex;
+        if (p < 0 || p >= originalPolyCount || (size_t)p * 4 + 3 >= retopo->faces.size()) continue;
+        if (processedPolys.count(p)) continue;
+
+        int32_t vA = getOrCreateCutVertex(cut.end0IsVertex, cut.end0Vertex, cut.end0EdgeV0, cut.end0EdgeV1, cut.end0EdgeT, cut.end0WorldPos);
+        int32_t vB = getOrCreateCutVertex(cut.end1IsVertex, cut.end1Vertex, cut.end1EdgeV0, cut.end1EdgeV1, cut.end1EdgeT, cut.end1WorldPos);
+
+        if (vA < 0 || vB < 0 || vA == vB) continue;
+
+        uint32_t f[4] = {
+            retopo->faces[p * 4 + 0],
+            retopo->faces[p * 4 + 1],
+            retopo->faces[p * 4 + 2],
+            retopo->faces[p * 4 + 3]
+        };
+        bool isQuad = (f[3] != TRI_INDEX);
+        int N = isQuad ? 4 : 3;
+        std::vector<int32_t> origVerts;
+        for (int i = 0; i < N; ++i) origVerts.push_back((int32_t)f[i]);
+
+        bool vAIsOrig = false, vBIsOrig = false;
+        for (int v : origVerts) {
+            if (v == vA) vAIsOrig = true;
+            if (v == vB) vBIsOrig = true;
+        }
+
+        std::vector<int32_t> cycle;
+        for (int k = 0; k < N; ++k) {
+            cycle.push_back(origVerts[k]);
+            int32_t u = origVerts[k];
+            int32_t v = origVerts[(k + 1) % N];
+            int32_t eMin = std::min(u, v);
+            int32_t eMax = std::max(u, v);
+
+            bool vAOnEdge = false;
+            if (!vAIsOrig) {
+                if ((cut.end0EdgeV0 == u && cut.end0EdgeV1 == v) || (cut.end0EdgeV0 == v && cut.end0EdgeV1 == u)) {
+                    vAOnEdge = true;
+                } else if (edgeNewVerts.count({eMin, eMax}) && edgeNewVerts[{eMin, eMax}] == vA) {
+                    vAOnEdge = true;
+                }
+            }
+
+            bool vBOnEdge = false;
+            if (!vBIsOrig) {
+                if ((cut.end1EdgeV0 == u && cut.end1EdgeV1 == v) || (cut.end1EdgeV0 == v && cut.end1EdgeV1 == u)) {
+                    vBOnEdge = true;
+                } else if (edgeNewVerts.count({eMin, eMax}) && edgeNewVerts[{eMin, eMax}] == vB) {
+                    vBOnEdge = true;
+                }
+            }
+
+            if (vAOnEdge && vBOnEdge) {
+                float tA = cut.end0EdgeT;
+                float tB = cut.end1EdgeT;
+                if (cut.end0EdgeV0 == v && cut.end0EdgeV1 == u) tA = 1.0f - tA;
+                if (cut.end1EdgeV0 == v && cut.end1EdgeV1 == u) tB = 1.0f - tB;
+                if (tA < tB) {
+                    cycle.push_back(vA);
+                    cycle.push_back(vB);
+                } else {
+                    cycle.push_back(vB);
+                    cycle.push_back(vA);
+                }
+            } else if (vAOnEdge) {
+                cycle.push_back(vA);
+            } else if (vBOnEdge) {
+                cycle.push_back(vB);
+            }
+        }
+
+        int idxA = -1, idxB = -1;
+        for (size_t i = 0; i < cycle.size(); ++i) {
+            if (cycle[i] == vA && idxA == -1) idxA = (int)i;
+            if (cycle[i] == vB && idxB == -1) idxB = (int)i;
+        }
+
+        if (idxA == -1 || idxB == -1 || idxA == idxB) continue;
+
+        int M = (int)cycle.size();
+        std::vector<int32_t> poly1;
+        int cur = idxA;
+        while (cur != idxB) {
+            poly1.push_back(cycle[cur]);
+            cur = (cur + 1) % M;
+        }
+        poly1.push_back(cycle[idxB]);
+
+        std::vector<int32_t> poly2;
+        cur = idxB;
+        while (cur != idxA) {
+            poly2.push_back(cycle[cur]);
+            cur = (cur + 1) % M;
+        }
+        poly2.push_back(cycle[idxA]);
+
+        if (poly1.size() < 3 || poly2.size() < 3) continue;
+
+        auto convertToFaces = [&](const std::vector<int32_t>& pVerts) -> std::vector<std::vector<uint32_t>> {
+            std::vector<std::vector<uint32_t>> res;
+            if (pVerts.size() == 3) {
+                res.push_back({ (uint32_t)pVerts[0], (uint32_t)pVerts[1], (uint32_t)pVerts[2], TRI_INDEX });
+            } else if (pVerts.size() == 4) {
+                res.push_back({ (uint32_t)pVerts[0], (uint32_t)pVerts[1], (uint32_t)pVerts[2], (uint32_t)pVerts[3] });
+            } else if (pVerts.size() == 5) {
+                auto getVertPos = [&](int32_t vIdx) -> glm::vec3 {
+                    return glm::vec3(retopo->verts[vIdx * 3], retopo->verts[vIdx * 3 + 1], retopo->verts[vIdx * 3 + 2]);
+                };
+                float d02 = glm::distance(getVertPos(pVerts[0]), getVertPos(pVerts[2]));
+                float d24 = glm::distance(getVertPos(pVerts[2]), getVertPos(pVerts[4]));
+                if (d02 < d24) {
+                    res.push_back({ (uint32_t)pVerts[0], (uint32_t)pVerts[1], (uint32_t)pVerts[2], TRI_INDEX });
+                    res.push_back({ (uint32_t)pVerts[0], (uint32_t)pVerts[2], (uint32_t)pVerts[3], (uint32_t)pVerts[4] });
+                } else {
+                    res.push_back({ (uint32_t)pVerts[0], (uint32_t)pVerts[1], (uint32_t)pVerts[2], (uint32_t)pVerts[4] });
+                    res.push_back({ (uint32_t)pVerts[2], (uint32_t)pVerts[3], (uint32_t)pVerts[4], TRI_INDEX });
+                }
+            } else {
+                for (size_t t = 1; t + 1 < pVerts.size(); ++t) {
+                    res.push_back({ (uint32_t)pVerts[0], (uint32_t)pVerts[t], (uint32_t)pVerts[t + 1], TRI_INDEX });
+                }
+            }
+            return res;
+        };
+
+        auto facesA = convertToFaces(poly1);
+        auto facesB = convertToFaces(poly2);
+        std::vector<std::vector<uint32_t>> allNewFaces;
+        allNewFaces.insert(allNewFaces.end(), facesA.begin(), facesA.end());
+        allNewFaces.insert(allNewFaces.end(), facesB.begin(), facesB.end());
+
+        if (allNewFaces.size() >= 2) {
+            retopo->faces[p * 4 + 0] = allNewFaces[0][0];
+            retopo->faces[p * 4 + 1] = allNewFaces[0][1];
+            retopo->faces[p * 4 + 2] = allNewFaces[0][2];
+            retopo->faces[p * 4 + 3] = allNewFaces[0][3];
+
+            uint32_t grp = (p < (int32_t)retopo->faceGroups.size()) ? retopo->faceGroups[p] : 1;
+            for (size_t k = 1; k < allNewFaces.size(); ++k) {
+                retopo->faces.push_back(allNewFaces[k][0]);
+                retopo->faces.push_back(allNewFaces[k][1]);
+                retopo->faces.push_back(allNewFaces[k][2]);
+                retopo->faces.push_back(allNewFaces[k][3]);
+                if (!retopo->faceGroups.empty()) {
+                    retopo->faceGroups.push_back(grp);
+                }
+            }
+
+            processedPolys.insert(p);
+            anyApplied = true;
+        }
+    }
+
+    if (anyApplied) {
+        NotifyMeshUpdated(retopo);
+        return true;
+    }
+    return false;
 }
 
 ExtrudeEdgeResult QuadDrawMeshBuilder::ExtrudeEdge(

@@ -3232,6 +3232,39 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             } else {
                                 ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "LMB Drag: Move selection, edge, polygon, or vertex with auto-weld.");
                             }
+                        } else if (qd->getSubTool() == retopo::QuadDrawSubTool::Knife) {
+                            ImGui::TextColored(ImVec4(0.2f, 0.9f, 1.0f, 1.0f), "Knife Tool: Insert edge loops across quad topology.");
+                            ImGui::TextDisabled("Controls:");
+                            ImGui::BulletText("Hover edge: Preview edge loop cut");
+                            ImGui::BulletText("LMB on edge: Insert edge loop");
+                        } else if (qd->getSubTool() == retopo::QuadDrawSubTool::MultiCut) {
+                            ImGui::TextColored(ImVec4(0.2f, 0.9f, 1.0f, 1.0f), "Multi-Cut Tool: Cut faces, split quads, or slice across mesh.");
+                            size_t ptCount = qd->getMultiCutPointsCount();
+                            if (ptCount > 0) {
+                                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Cut chain points: %zu", ptCount);
+                                if (ptCount >= 2) {
+                                    if (ImGui::Button("Apply Cut (Enter)", ImVec2(140, 0))) {
+                                        qd->commitMultiCut(scene);
+                                    }
+                                    ImGui::SameLine();
+                                }
+                                if (ImGui::Button("Undo Point (Backspace)")) {
+                                    qd->popMultiCutPoint();
+                                }
+                                ImGui::SameLine();
+                                if (ImGui::Button("Cancel (Esc)")) {
+                                    qd->clearMultiCutPoints();
+                                }
+                            } else {
+                                ImGui::TextDisabled("No active cut. Click on edges/vertices to start cut chain.");
+                            }
+                            ImGui::TextDisabled("Controls:");
+                            ImGui::BulletText("LMB on Vertex/Edge/Face: Place cut point");
+                            ImGui::BulletText("Shift+LMB: Snap to 25%% / 50%% / 75%% edge division");
+                            ImGui::BulletText("Enter, Space, or RMB: Apply and commit cut");
+                            ImGui::BulletText("Backspace: Undo last placed point");
+                            ImGui::BulletText("Esc: Cancel current cut");
+                            ImGui::BulletText("LMB Drag in empty space: Screen Slice cut across faces");
                         } else if (qd->getSubTool() == retopo::QuadDrawSubTool::Delete) {
                             if (qd->getSelectedEdgeCount() > 0) {
                                 ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%zu edge(s) selected: Click selection or press Delete button.", qd->getSelectedEdgeCount());

@@ -180,6 +180,12 @@ public:
     void commitCurrentTube(Scene& scene) { commitCurrentTubeCurve(scene); }
     void resetTube() { resetTubeCurve(); }
 
+    // Multi-Cut
+    size_t getMultiCutPointsCount() const { return m_multiCutPoints.size(); }
+    void popMultiCutPoint() { if (!m_multiCutPoints.empty()) m_multiCutPoints.pop_back(); }
+    void clearMultiCutPoints() { m_multiCutPoints.clear(); }
+    void commitMultiCut(Scene& scene);
+
     bool isDragging() const { return m_dragMode != DragMode::None; }
     bool isHoveringHandle() const {
         return (m_subTool == QuadDrawSubTool::TubeCurve && m_tubeCurveHoveredPointIdx >= 0);
@@ -190,6 +196,9 @@ public:
         }
         if (m_subTool == QuadDrawSubTool::TubeSlice) {
             return m_dragMode == DragMode::TubeSliceDrag;
+        }
+        if (m_subTool == QuadDrawSubTool::MultiCut) {
+            return !m_multiCutPoints.empty() || m_hoverVertex >= 0 || m_hoverEdge.valid || m_hoverPoly >= 0 || m_dragMode != DragMode::None;
         }
         return m_hoverVertex >= 0 || m_hoverEdge.valid || m_hoverQuad.valid || m_dragMode != DragMode::None;
     }
@@ -319,7 +328,6 @@ private:
     TubeSegmentResult m_tubeCurveGeomPreview;
 
     void updateHoverState(const Camera& camera, float mouseX, float mouseY, bool ctrl, bool alt, bool shift);
-    void commitMultiCut(Scene& scene);
     void updateStrokePreview(const Camera& camera);
     void commitStrokeExtrude(Scene& scene, const Camera& camera);
     void cancelStroke();
