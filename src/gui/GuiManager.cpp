@@ -3220,7 +3220,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                     qd->clearSelectedEdges();
                                 }
                             } else {
-                                ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "LMB to place vertex. Drag border edge to extrude.");
+                                ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "LMB: Place vertex / Extrude border. Ctrl+LMB: Insert Edge Loop.");
                             }
                         } else if (qd->getSubTool() == retopo::QuadDrawSubTool::Tweak) {
                             if (qd->getSelectedEdgeCount() > 0) {
@@ -3230,12 +3230,13 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                     qd->clearSelectedEdges();
                                 }
                             } else {
-                                ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "LMB Drag: Move selection, edge, polygon, or vertex with auto-weld.");
+                                ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "LMB Drag: Move selection/edge/poly/vert. Ctrl+LMB: Insert Edge Loop.");
                             }
                         } else if (qd->getSubTool() == retopo::QuadDrawSubTool::Knife) {
-                            ImGui::TextColored(ImVec4(0.2f, 0.9f, 1.0f, 1.0f), "Knife Tool: Insert edge loops across quad topology.");
+                            ImGui::TextColored(ImVec4(0.2f, 0.9f, 1.0f, 1.0f), "Knife / Loop Cut Tool: Insert edge loops across quad topology.");
                             ImGui::TextDisabled("Controls:");
-                            ImGui::BulletText("Hover edge: Preview edge loop cut");
+                            ImGui::BulletText("Hover edge: Preview complete edge loop cut across quads");
+                            ImGui::BulletText("Shift: Snap to 25%% / 50%% / 75%% edge division");
                             ImGui::BulletText("LMB on edge: Insert edge loop");
                         } else if (qd->getSubTool() == retopo::QuadDrawSubTool::MultiCut) {
                             ImGui::TextColored(ImVec4(0.2f, 0.9f, 1.0f, 1.0f), "Multi-Cut Tool: Cut faces, split quads, or slice across mesh.");
@@ -3265,6 +3266,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             ImGui::BulletText("Backspace: Undo last placed point");
                             ImGui::BulletText("Esc: Cancel current cut");
                             ImGui::BulletText("LMB Drag in empty space: Screen Slice cut across faces");
+                            ImGui::BulletText("Ctrl+LMB on edge: Insert Edge Loop (Loop Cut)");
                         } else if (qd->getSubTool() == retopo::QuadDrawSubTool::Delete) {
                             if (qd->getSelectedEdgeCount() > 0) {
                                 ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%zu edge(s) selected: Click selection or press Delete button.", qd->getSelectedEdgeCount());

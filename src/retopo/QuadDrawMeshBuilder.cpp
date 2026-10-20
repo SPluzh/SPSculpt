@@ -1205,7 +1205,7 @@ EdgeCutResult QuadDrawMeshBuilder::FindEdgeLoopCut(
     const Camera& camera, int32_t startV0, int32_t startV1, float startT, int32_t hintPoly
 ) {
     EdgeCutResult result;
-    if (!retopo || startV0 == startV1) return result;
+    if (!retopo || startV0 == startV1 || retopo->nbFaces == 0 || retopo->nbVerts == 0) return result;
 
     float t = std::clamp(startT, 0.02f, 0.98f);
     result.paramT = t;
@@ -1220,70 +1220,167 @@ EdgeCutResult QuadDrawMeshBuilder::FindEdgeLoopCut(
 
     int32_t polyCount = (int32_t)(retopo->faces.size() / 4);
 
-    // Initial cut point
-    CutPoint cp;
-    cp.v0 = std::min(startV0, startV1);
-    cp.v1 = std::max(startV0, startV1);
-    cp.t = (startV0 < startV1) ? t : (1.0f - t);
-    glm::vec3 rawPos = glm::mix(getVertWorld(cp.v0), getVertWorld(cp.v1), cp.t);
-    SnapResult snap = snapper.SnapClosestPoint(targetMesh, rawPos, 100.0f);
-    cp.worldPos = snap.valid ? snap.worldPos : rawPos;
-    result.cutPoints.push_back(cp);
+    struct EdgeKey {
+        int32_t u, v;
+        bool operator<(const EdgeKey& o) const {
+            if (u != o.u) return u < o.u;
+            return v < o.v;
+        }
+    };
+    auto makeKey = [](int32_t a, int32_t b) -> EdgeKey {
+        return { std::min(a, b), std::max(a, b) };
+    };
 
-    // Trace quads
-    int32_t curPoly = hintPoly;
-    if (curPoly == -1) {
-        for (int p = 0; p < polyCount; ++p) {
-            if (PolygonHasEdge(retopo->faces, p, startV0, startV1)) {
-                curPoly = p;
-                break;
-            }
+    std::map<EdgeKey, std::vector<int32_t>> edgeToQuads;
+    for (int32_t p = 0; p < polyCount; ++p) {
+        if (retopo->faces[p * 4 + 3] == TRI_INDEX) continue;
+        uint32_t f[4] = {
+            retopo->faces[p * 4 + 0],
+            retopo->faces[p * 4 + 1],
+            retopo->faces[p * 4 + 2],
+            retopo->faces[p * 4 + 3]
+        };
+        for (int k = 0; k < 4; ++k) {
+            int32_t u = (int32_t)f[k];
+            int32_t v = (int32_t)f[(k + 1) % 4];
+            edgeToQuads[makeKey(u, v)].push_back(p);
         }
     }
 
-    if (curPoly != -1 && retopo->faces[curPoly * 4 + 3] != TRI_INDEX) {
-        uint32_t q[4] = {
-            retopo->faces[curPoly * 4 + 0],
-            retopo->faces[curPoly * 4 + 1],
-            retopo->faces[curPoly * 4 + 2],
-            retopo->faces[curPoly * 4 + 3]
-        };
+    EdgeKey startKey = makeKey(startV0, startV1);
+    auto itStart = edgeToQuads.find(startKey);
+    if (itStart == edgeToQuads.end() || itStart->second.empty()) {
+        return result;
+    }
 
-        // Opposite edge across quad
-        int32_t oppV0 = -1, oppV1 = -1;
-        if ((q[0] == (uint32_t)startV0 && q[1] == (uint32_t)startV1) || (q[0] == (uint32_t)startV1 && q[1] == (uint32_t)startV0)) {
-            oppV0 = q[3]; oppV1 = q[2];
-        } else if ((q[1] == (uint32_t)startV0 && q[2] == (uint32_t)startV1) || (q[1] == (uint32_t)startV1 && q[2] == (uint32_t)startV0)) {
-            oppV0 = q[0]; oppV1 = q[3];
-        } else if ((q[2] == (uint32_t)startV0 && q[3] == (uint32_t)startV1) || (q[2] == (uint32_t)startV1 && q[3] == (uint32_t)startV0)) {
-            oppV0 = q[1]; oppV1 = q[0];
-        } else if ((q[3] == (uint32_t)startV0 && q[0] == (uint32_t)startV1) || (q[3] == (uint32_t)startV1 && q[0] == (uint32_t)startV0)) {
-            oppV0 = q[2]; oppV1 = q[1];
+    std::vector<int32_t> incidentPolys = itStart->second;
+    if (hintPoly != -1) {
+        auto itHint = std::find(incidentPolys.begin(), incidentPolys.end(), hintPoly);
+        if (itHint != incidentPolys.end() && itHint != incidentPolys.begin()) {
+            std::swap(incidentPolys[0], *itHint);
         }
+    }
 
-        if (oppV0 != -1 && oppV1 != -1) {
-            CutPoint cpOpp;
-            cpOpp.v0 = std::min(oppV0, oppV1);
-            cpOpp.v1 = std::max(oppV0, oppV1);
-            cpOpp.t = t;
-            glm::vec3 rawOpp = glm::mix(getVertWorld(cpOpp.v0), getVertWorld(cpOpp.v1), cpOpp.t);
-            SnapResult snapOpp = snapper.SnapClosestPoint(targetMesh, rawOpp, 100.0f);
-            cpOpp.worldPos = snapOpp.valid ? snapOpp.worldPos : rawOpp;
-            result.cutPoints.push_back(cpOpp);
+    std::map<EdgeKey, int32_t> edgeCutMap;
 
-            CutSegment seg;
-            seg.p0 = cp.worldPos;
-            seg.p1 = cpOpp.worldPos;
-            seg.polyIndex = curPoly;
-            result.cutSegments.push_back(seg);
+    auto getOrCreateEdgeCut = [&](int32_t u, int32_t v, float paramFromU) -> int32_t {
+        EdgeKey ek = makeKey(u, v);
+        auto it = edgeCutMap.find(ek);
+        if (it != edgeCutMap.end()) {
+            return it->second;
+        }
+        CutPoint cp;
+        cp.v0 = ek.u;
+        cp.v1 = ek.v;
+        float tNorm = (u == ek.u) ? paramFromU : (1.0f - paramFromU);
+        cp.t = std::clamp(tNorm, 0.02f, 0.98f);
+        glm::vec3 rawPos = glm::mix(getVertWorld(cp.v0), getVertWorld(cp.v1), cp.t);
+        SnapResult snap = snapper.SnapClosestPoint(targetMesh, rawPos, 100.0f);
+        cp.worldPos = snap.valid ? snap.worldPos : rawPos;
+        int32_t idx = (int32_t)result.cutPoints.size();
+        result.cutPoints.push_back(cp);
+        edgeCutMap[ek] = idx;
+        return idx;
+    };
+
+    getOrCreateEdgeCut(startV0, startV1, t);
+
+    std::unordered_set<int32_t> visitedPolys;
+
+    auto traceDirection = [&](int32_t initPoly, int32_t initU, int32_t initV, float initT) {
+        int32_t curPoly = initPoly;
+        int32_t curU = initU;
+        int32_t curV = initV;
+        float curT = initT;
+        int maxSteps = polyCount + 2;
+
+        while (curPoly != -1 && --maxSteps >= 0) {
+            if (visitedPolys.count(curPoly)) {
+                result.isClosed = true;
+                break;
+            }
+            if ((size_t)curPoly * 4 + 3 >= retopo->faces.size()) break;
+            if (retopo->faces[curPoly * 4 + 3] == TRI_INDEX) break;
+
+            visitedPolys.insert(curPoly);
+
+            uint32_t f[4] = {
+                retopo->faces[curPoly * 4 + 0],
+                retopo->faces[curPoly * 4 + 1],
+                retopo->faces[curPoly * 4 + 2],
+                retopo->faces[curPoly * 4 + 3]
+            };
+
+            int kEntry = -1;
+            bool entryReversed = false;
+            for (int k = 0; k < 4; ++k) {
+                int32_t a = (int32_t)f[k];
+                int32_t b = (int32_t)f[(k + 1) % 4];
+                if (a == curU && b == curV) {
+                    kEntry = k;
+                    entryReversed = false;
+                    break;
+                } else if (a == curV && b == curU) {
+                    kEntry = k;
+                    entryReversed = true;
+                    break;
+                }
+            }
+            if (kEntry == -1) break;
+
+            int32_t q0 = (int32_t)f[kEntry];
+            int32_t q1 = (int32_t)f[(kEntry + 1) % 4];
+            int32_t q2 = (int32_t)f[(kEntry + 2) % 4];
+            int32_t q3 = (int32_t)f[(kEntry + 3) % 4];
+
+            float tAlongQ0Q1 = entryReversed ? (1.0f - curT) : curT;
+
+            int32_t cutPtA = getOrCreateEdgeCut(q0, q1, tAlongQ0Q1);
+            int32_t cutPtB = getOrCreateEdgeCut(q3, q2, tAlongQ0Q1);
 
             QuadSplitInfo qs;
             qs.polyIndex = curPoly;
-            qs.cutPtA = 0;
-            qs.cutPtB = 1;
-            qs.q[0] = q[0]; qs.q[1] = q[1]; qs.q[2] = q[2]; qs.q[3] = q[3];
+            qs.cutPtA = cutPtA;
+            qs.cutPtB = cutPtB;
+            qs.q[0] = q0;
+            qs.q[1] = q1;
+            qs.q[2] = q2;
+            qs.q[3] = q3;
             result.quadSplits.push_back(qs);
+
+            CutSegment seg;
+            seg.p0 = result.cutPoints[cutPtA].worldPos;
+            seg.p1 = result.cutPoints[cutPtB].worldPos;
+            seg.polyIndex = curPoly;
+            result.cutSegments.push_back(seg);
+
+            EdgeKey exitKey = makeKey(q3, q2);
+            int32_t nextPoly = -1;
+            auto itExit = edgeToQuads.find(exitKey);
+            if (itExit != edgeToQuads.end()) {
+                for (int32_t pCand : itExit->second) {
+                    if (pCand != curPoly) {
+                        nextPoly = pCand;
+                        break;
+                    }
+                }
+            }
+
+            if (nextPoly == -1) {
+                break;
+            }
+
+            curPoly = nextPoly;
+            curU = q3;
+            curV = q2;
+            curT = tAlongQ0Q1;
         }
+    };
+
+    traceDirection(incidentPolys[0], startV0, startV1, t);
+
+    if (!result.isClosed && incidentPolys.size() > 1 && !visitedPolys.count(incidentPolys[1])) {
+        traceDirection(incidentPolys[1], startV0, startV1, t);
     }
 
     result.valid = !result.cutSegments.empty();
@@ -1292,22 +1389,40 @@ EdgeCutResult QuadDrawMeshBuilder::FindEdgeLoopCut(
 
 bool QuadDrawMeshBuilder::ApplyEdgeLoopCut(Mesh* retopo, const EdgeCutResult& cutResult) {
     if (!retopo || !cutResult.valid || cutResult.quadSplits.empty()) return false;
+    if (retopo->nbFaces == 0 || retopo->nbVerts == 0) return false;
 
-    // Create vertices for cut points
     std::vector<int32_t> newVertIndices(cutResult.cutPoints.size());
     for (size_t i = 0; i < cutResult.cutPoints.size(); ++i) {
         newVertIndices[i] = AddVertex(retopo, cutResult.cutPoints[i].worldPos);
     }
 
     for (const auto& qs : cutResult.quadSplits) {
+        if (qs.cutPtA < 0 || qs.cutPtA >= (int32_t)newVertIndices.size()) continue;
+        if (qs.cutPtB < 0 || qs.cutPtB >= (int32_t)newVertIndices.size()) continue;
+
         int32_t newVA = newVertIndices[qs.cutPtA];
         int32_t newVB = newVertIndices[qs.cutPtB];
         if (newVA == -1 || newVB == -1) continue;
 
-        // Split quad into two quads
-        DeletePolygon(retopo, qs.polyIndex);
-        AddQuad(retopo, qs.q[0], newVA, newVB, qs.q[3], glm::vec3(0, 1, 0));
-        AddQuad(retopo, newVA, qs.q[1], qs.q[2], newVB, glm::vec3(0, 1, 0));
+        int32_t p = qs.polyIndex;
+        if (p < 0 || (size_t)p * 4 + 3 >= retopo->faces.size()) continue;
+
+        uint32_t q1[4] = { (uint32_t)qs.q[0], (uint32_t)newVA, (uint32_t)newVB, (uint32_t)qs.q[3] };
+        uint32_t q2[4] = { (uint32_t)newVA, (uint32_t)qs.q[1], (uint32_t)qs.q[2], (uint32_t)newVB };
+
+        retopo->faces[p * 4 + 0] = q1[0];
+        retopo->faces[p * 4 + 1] = q1[1];
+        retopo->faces[p * 4 + 2] = q1[2];
+        retopo->faces[p * 4 + 3] = q1[3];
+
+        uint32_t grp = (p < (int32_t)retopo->faceGroups.size()) ? retopo->faceGroups[p] : 1;
+        retopo->faces.push_back(q2[0]);
+        retopo->faces.push_back(q2[1]);
+        retopo->faces.push_back(q2[2]);
+        retopo->faces.push_back(q2[3]);
+        if (!retopo->faceGroups.empty()) {
+            retopo->faceGroups.push_back(grp);
+        }
     }
 
     NotifyMeshUpdated(retopo);
@@ -1702,8 +1817,8 @@ bool QuadDrawMeshBuilder::ApplyPolygonCuts(
             return AddVertex(retopo, pos);
         }
 
-        if (edgeT <= 0.05f) return edgeV0;
-        if (edgeT >= 0.95f) return edgeV1;
+        if (edgeT <= 0.005f) return edgeV0;
+        if (edgeT >= 0.995f) return edgeV1;
 
         int32_t e0 = std::min(edgeV0, edgeV1);
         int32_t e1 = std::max(edgeV0, edgeV1);

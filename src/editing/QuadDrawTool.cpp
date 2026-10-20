@@ -475,20 +475,38 @@ void QuadDrawTool::updateHoverState(
         m_hoverQuad = m_builder.FindPotentialQuad(
             camera, m_retopoMesh, targetNorm, mouseX, mouseY, m_targetMesh, &m_snapper
         );
-    } else if (m_subTool == QuadDrawSubTool::Knife) {
-        if (m_hoverEdge.valid) {
-            m_hoverCut = m_builder.FindEdgeLoopCut(
-                m_retopoMesh, m_targetMesh, m_snapper, camera,
-                m_hoverEdge.v0, m_hoverEdge.v1, m_hoverEdge.t, m_hoverEdge.polyIndex
-            );
-        }
     } else if (m_subTool == QuadDrawSubTool::MultiCut) {
         if (m_hoverEdge.valid && shift) {
             m_hoverEdge.t = std::clamp(std::round(m_hoverEdge.t * 4.0f) * 0.25f, 0.0f, 1.0f);
         }
     }
 
-    if (ctrl && !shift) {
+    bool isLoopCutActive = (m_subTool == QuadDrawSubTool::Knife) ||
+                           (ctrl && !shift && (m_subTool == QuadDrawSubTool::MultiCut ||
+                                               m_subTool == QuadDrawSubTool::Extrude ||
+                                               m_subTool == QuadDrawSubTool::CreatePolygon ||
+                                               m_subTool == QuadDrawSubTool::Tweak));
+    if (isLoopCutActive) {
+        if (m_hoverEdge.valid) {
+            float edgeT = m_hoverEdge.t;
+            if (shift) {
+                edgeT = std::clamp(std::round(edgeT * 4.0f) * 0.25f, 0.0f, 1.0f);
+                if (edgeT < 0.05f) edgeT = 0.25f;
+                if (edgeT > 0.95f) edgeT = 0.75f;
+            }
+            m_hoverCut = m_builder.FindEdgeLoopCut(
+                m_retopoMesh, m_targetMesh, m_snapper, camera,
+                m_hoverEdge.v0, m_hoverEdge.v1, edgeT, m_hoverEdge.polyIndex
+            );
+            m_hoverEdgeLoop.edges.clear();
+        } else {
+            m_hoverCut.valid = false;
+        }
+    } else {
+        m_hoverCut.valid = false;
+    }
+
+    if (ctrl && !shift && !isLoopCutActive) {
         if (m_hoverEdge.valid) {
             if (m_subTool == QuadDrawSubTool::Strip) {
                 BorderChain bc = m_builder.FindBorderChain(m_retopoMesh, m_hoverEdge.v0, m_hoverEdge.v1);
@@ -817,16 +835,24 @@ bool QuadDrawTool::handleMouseDown(
         return true;
     }
 
-    // 6. Knife Mode: insert edge loop
-    if (m_subTool == QuadDrawSubTool::Knife) {
+    // 6. Knife / Loop Cut Mode: insert edge loop
+    bool isLoopCutActive = (m_subTool == QuadDrawSubTool::Knife) ||
+                           (ctrl && !shift && (m_subTool == QuadDrawSubTool::MultiCut ||
+                                               m_subTool == QuadDrawSubTool::Extrude ||
+                                               m_subTool == QuadDrawSubTool::CreatePolygon ||
+                                               m_subTool == QuadDrawSubTool::Tweak));
+    if (isLoopCutActive && button == SDL_BUTTON_LEFT) {
         if (m_hoverCut.valid) {
             g_undoManager.pushTopologyChange(scene, "Insert Edge Loop", [&]() {
                 m_builder.ApplyEdgeLoopCut(m_retopoMesh, m_hoverCut);
             });
             m_hoverCut.valid = false;
+            updateHoverState(camera, mouseX, mouseY, ctrl, alt, shift);
             return true;
         }
-        return false;
+        if (m_subTool == QuadDrawSubTool::Knife) {
+            return false;
+        }
     }
 
     // 7. Multi-Cut Mode
