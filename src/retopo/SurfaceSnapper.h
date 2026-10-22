@@ -49,12 +49,14 @@ public:
     // Snap a 3D point directly to the closest point on target surface
     SnapResult SnapClosestPoint(const Mesh* targetMesh, const glm::vec3& worldPoint, float maxDist = 500.0f);
 
-    // Find nearest retopo vertex in screen space (with depth sorting & target occlusion)
+    // Find nearest retopo vertex in screen space (with depth sorting, backface culling, target occlusion & 3D distance limit)
     int32_t FindNearestRetopoVertex(
         const Camera& camera, const Mesh* retopoMesh,
         float screenX, float screenY, float maxRadiusPixels = 12.0f,
         int32_t excludeIndex = -1, const Mesh* targetMesh = nullptr,
-        const SnapResult* precomputedTargetSnap = nullptr
+        const SnapResult* precomputedTargetSnap = nullptr,
+        const glm::vec3* sourceWorldPos = nullptr,
+        float maxWorldDistance = -1.0f
     );
 
     // Find nearest retopo edge in screen space within pixel distance

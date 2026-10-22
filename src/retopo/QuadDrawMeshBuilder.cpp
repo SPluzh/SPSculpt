@@ -863,6 +863,15 @@ int32_t QuadDrawMeshBuilder::FindPolygonUnderScreen(
             if (s3.z <= 0.0f) continue;
         }
 
+        // Backface check
+        glm::vec3 w0 = getVertWorld(fv[0]);
+        glm::vec3 w1 = getVertWorld(fv[1]);
+        glm::vec3 w2 = getVertWorld(fv[2]);
+        glm::vec3 n = glm::cross(w1 - w0, w2 - w0);
+        glm::vec3 center = isQuad ? (w0 + w1 + w2 + getVertWorld(fv[3])) * 0.25f : (w0 + w1 + w2) * 0.333333f;
+        glm::vec3 viewVec = camera.computePosition() - center;
+        if (glm::dot(n, viewVec) <= 0.0f) continue;
+
         // 2D inside test
         bool inside = false;
         float zVal = (s0.z + s1.z + s2.z) * (1.0f / 3.0f);
@@ -885,9 +894,25 @@ int32_t QuadDrawMeshBuilder::FindPolygonUnderScreen(
             }
         }
 
-        if (inside && zVal < bestZ) {
-            bestZ = zVal;
-            bestPoly = f;
+        if (inside) {
+            if (targetMesh && targetMesh->nbFaces > 0 && snapper) {
+                SnapResult tSnap;
+                if (precomputedTargetSnap && precomputedTargetSnap->valid &&
+                    std::abs(precomputedTargetSnap->screenPos.x - screenX) < 5.0f &&
+                    std::abs(precomputedTargetSnap->screenPos.y - screenY) < 5.0f) {
+                    tSnap = *precomputedTargetSnap;
+                } else {
+                    tSnap = snapper->RaycastSurface(camera, targetMesh, screenX, screenY);
+                }
+                if (tSnap.valid && zVal > tSnap.screenPos.z + 0.005f) {
+                    continue; // Occluded by target mesh
+                }
+            }
+
+            if (zVal < bestZ) {
+                bestZ = zVal;
+                bestPoly = f;
+            }
         }
     }
 
@@ -950,6 +975,13 @@ QuadPreview QuadDrawMeshBuilder::FindPotentialQuad(
 
         float dSq = dx * dx + dy * dy;
         if (dSq <= maxRadiusSq) {
+            if (targetMesh && targetMesh->nbFaces > 0 && snapper) {
+                SnapResult tSnap = snapper->RaycastSurface(camera, targetMesh, sPos.x, sPos.y);
+                if (tSnap.valid && sPos.z > tSnap.screenPos.z + 0.005f) {
+                    continue; // Occluded by target mesh
+                }
+            }
+
             CandidatePt cp;
             cp.index = i;
             cp.worldPos = getVertWorld(i);
@@ -2895,7 +2927,7 @@ StrokeExtrudeResult QuadDrawMeshBuilder::ExtrudeEdgesToStroke(
 
         glm::vec3 sStart = camera->project(resampledPts.front());
         if (sStart.z > 0.0f && sStart.z < 1.0f) {
-            int32_t w = snapper.FindNearestRetopoVertex(*camera, mesh, sStart.x, sStart.y, weldRadiusPixels, newVertIndices[0], targetMesh);
+            int32_t w = snapper.FindNearestRetopoVertex(*camera, mesh, sStart.x, sStart.y, weldRadiusPixels, newVertIndices[0], targetMesh, nullptr, &resampledPts.front());
             if (w != -1 && !excluded.count(w)) {
                 welds.push_back({newVertIndices[0], w});
             }
@@ -2903,7 +2935,7 @@ StrokeExtrudeResult QuadDrawMeshBuilder::ExtrudeEdgesToStroke(
 
         glm::vec3 sEnd = camera->project(resampledPts.back());
         if (sEnd.z > 0.0f && sEnd.z < 1.0f) {
-            int32_t w = snapper.FindNearestRetopoVertex(*camera, mesh, sEnd.x, sEnd.y, weldRadiusPixels, newVertIndices[N], targetMesh);
+            int32_t w = snapper.FindNearestRetopoVertex(*camera, mesh, sEnd.x, sEnd.y, weldRadiusPixels, newVertIndices[N], targetMesh, nullptr, &resampledPts.back());
             if (w != -1 && !excluded.count(w)) {
                 welds.push_back({newVertIndices[N], w});
             }

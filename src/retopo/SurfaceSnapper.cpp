@@ -117,27 +117,101 @@ int32_t SurfaceSnapper::FindNearestRetopoVertex(
     const Camera& camera, const Mesh* retopoMesh,
     float screenX, float screenY, float maxRadiusPixels,
     int32_t excludeIndex, const Mesh* targetMesh,
-    const SnapResult* precomputedTargetSnap
+    const SnapResult* precomputedTargetSnap,
+    const glm::vec3* sourceWorldPos,
+    float maxWorldDistance
 ) {
     if (!retopoMesh || retopoMesh->nbVerts == 0) return -1;
 
     const int ptCount = retopoMesh->nbVerts;
+    const int numFaces = retopoMesh->nbFaces;
+    const auto& faces = retopoMesh->faces;
     const auto& verts = retopoMesh->verts;
     const glm::mat4& mat = retopoMesh->matrix;
     const bool hasTransform = (mat != glm::mat4(1.0f));
 
-    float bestDistSq = maxRadiusPixels * maxRadiusPixels;
-    int32_t bestIdx = -1;
+    auto getVertWorld = [&](uint32_t idx) -> glm::vec3 {
+        glm::vec3 p(verts[idx * 3 + 0], verts[idx * 3 + 1], verts[idx * 3 + 2]);
+        return hasTransform ? glm::vec3(mat * glm::vec4(p, 1.0f)) : p;
+    };
 
     glm::vec3 camPos = camera.computePosition();
     bool isOrtho = camera.isOrthographic();
+    glm::vec3 orthoDir = isOrtho ? glm::vec3(camera.getViewMatrix()[0][2], camera.getViewMatrix()[1][2], camera.getViewMatrix()[2][2]) : glm::vec3(0.0f);
+
+    // Precompute vertex face counts & front-facing face counts to cull backface vertices
+    std::vector<int32_t> vertPolyCount(ptCount, 0);
+    std::vector<int32_t> vertFrontFacingCount(ptCount, 0);
+
+    for (int f = 0; f < numFaces; ++f) {
+        if (!retopoMesh->faceVisible.empty() && !retopoMesh->faceVisible[f]) continue;
+
+        uint32_t q[4] = { faces[f * 4 + 0], faces[f * 4 + 1], faces[f * 4 + 2], faces[f * 4 + 3] };
+        int numE = (q[3] != TRI_INDEX) ? 4 : 3;
+
+        glm::vec3 p0 = getVertWorld(q[0]);
+        glm::vec3 p1 = getVertWorld(q[1]);
+        glm::vec3 p2 = getVertWorld(q[2]);
+        glm::vec3 n = glm::cross(p1 - p0, p2 - p0);
+        float lenN = glm::length(n);
+        if (lenN < 1e-8f && numE == 4) {
+            n = glm::cross(p2 - p0, getVertWorld(q[3]) - p0);
+            lenN = glm::length(n);
+        }
+
+        glm::vec3 center = (numE == 4) ? (p0 + p1 + p2 + getVertWorld(q[3])) * 0.25f : (p0 + p1 + p2) * 0.333333f;
+        glm::vec3 viewVec = isOrtho ? orthoDir : (camPos - center);
+
+        bool isFront = (lenN < 1e-8f) || (glm::dot(n, viewVec) > 0.0f);
+
+        for (int e = 0; e < numE; ++e) {
+            uint32_t vi = q[e];
+            if (vi < (uint32_t)ptCount) {
+                vertPolyCount[vi]++;
+                if (isFront) {
+                    vertFrontFacingCount[vi]++;
+                }
+            }
+        }
+    }
+
+    // If sourceWorldPos is provided, compute world distance threshold corresponding to maxRadiusPixels
+    float threshold3D = maxWorldDistance;
+    glm::vec3 srcScreen(0.0f);
+    if (sourceWorldPos) {
+        srcScreen = camera.project(*sourceWorldPos);
+        if (threshold3D <= 0.0f) {
+            glm::vec3 pOff = camera.unproject(srcScreen.x + maxRadiusPixels * 2.5f, srcScreen.y, srcScreen.z);
+            threshold3D = glm::distance(pOff, *sourceWorldPos);
+            if (threshold3D < 0.001f) threshold3D = 50.0f;
+        }
+    }
+
+    float bestDistSq = maxRadiusPixels * maxRadiusPixels;
+    float bestZ = 2.0f;
+    int32_t bestIdx = -1;
 
     for (int i = 0; i < ptCount; ++i) {
         if (i == excludeIndex) continue;
         if (!retopoMesh->vertVisible.empty() && !retopoMesh->vertVisible[i]) continue;
 
-        glm::vec3 localPos(verts[i * 3 + 0], verts[i * 3 + 1], verts[i * 3 + 2]);
-        glm::vec3 worldPos = hasTransform ? glm::vec3(mat * glm::vec4(localPos, 1.0f)) : localPos;
+        // 1. Backface check on retopo mesh: if vertex has faces and none are front-facing, it's on the back side
+        if (vertPolyCount[i] > 0 && vertFrontFacingCount[i] == 0) {
+            continue;
+        }
+
+        glm::vec3 worldPos = getVertWorld(i);
+
+        // 2. Isolated vertex (no faces yet): check against targetMesh surface normal
+        if (vertPolyCount[i] == 0 && targetMesh && targetMesh->nbFaces > 0) {
+            SnapResult sc = const_cast<SurfaceSnapper*>(this)->SnapClosestPoint(targetMesh, worldPos, 200.0f);
+            if (sc.valid) {
+                glm::vec3 viewVec = isOrtho ? orthoDir : (camPos - worldPos);
+                if (glm::dot(sc.normal, viewVec) <= 0.0f) {
+                    continue; // Back-facing on targetMesh surface
+                }
+            }
+        }
 
         glm::vec3 sPos = camera.project(worldPos);
         if (sPos.z < 0.0f || sPos.z > 1.0f) continue; // Behind camera or outside depth range
@@ -146,27 +220,69 @@ int32_t SurfaceSnapper::FindNearestRetopoVertex(
         float dy = sPos.y - screenY;
         float dSq = dx * dx + dy * dy;
 
-        if (dSq <= bestDistSq) {
-            // Occlusion check with targetMesh
-            if (targetMesh && targetMesh->nbFaces > 0) {
-                SnapResult tSnap;
-                if (precomputedTargetSnap && precomputedTargetSnap->valid &&
-                    std::abs(precomputedTargetSnap->screenPos.x - sPos.x) < 5.0f &&
-                    std::abs(precomputedTargetSnap->screenPos.y - sPos.y) < 5.0f) {
-                    tSnap = *precomputedTargetSnap;
-                } else {
-                    tSnap = RaycastSurface(camera, targetMesh, sPos.x, sPos.y);
-                }
+        if (dSq > bestDistSq) continue;
 
-                if (tSnap.valid) {
-                    float tZ = tSnap.screenPos.z;
-                    if (sPos.z > tZ + 0.005f) {
+        // 3. Occlusion check with targetMesh
+        if (targetMesh && targetMesh->nbFaces > 0) {
+            SnapResult tSnap;
+            if (precomputedTargetSnap && precomputedTargetSnap->valid &&
+                std::abs(precomputedTargetSnap->screenPos.x - sPos.x) < 5.0f &&
+                std::abs(precomputedTargetSnap->screenPos.y - sPos.y) < 5.0f) {
+                tSnap = *precomputedTargetSnap;
+            } else {
+                tSnap = const_cast<SurfaceSnapper*>(this)->RaycastSurface(camera, targetMesh, sPos.x, sPos.y);
+            }
+
+            if (tSnap.valid) {
+                float tZ = tSnap.screenPos.z;
+                if (sPos.z > tZ + 0.005f) {
+                    continue; // Occluded by targetMesh!
+                }
+            } else {
+                // Secondary occlusion check: direct ray from camera to worldPos
+                glm::vec3 toVert = worldPos - camPos;
+                float distToVert = glm::length(toVert);
+                if (distToVert > 1e-4f) {
+                    glm::vec3 rayDir = toVert / distToVert;
+                    glm::vec3 hitPt{0.0f}, hitN{0.0f};
+                    if (m_bvh.Raycast(camPos, rayDir, hitPt, hitN, distToVert - 0.02f, false)) {
                         continue; // Occluded by targetMesh!
                     }
                 }
             }
+        }
 
+        // 4. Source point proximity and depth check (when dragging/tweaking)
+        if (sourceWorldPos) {
+            // Candidate vertex cannot be noticeably behind the moving source vertex in depth
+            if (sPos.z > srcScreen.z + 0.015f) {
+                continue;
+            }
+
+            // 3D world distance check
+            float dist3D = glm::distance(worldPos, *sourceWorldPos);
+            if (dist3D > threshold3D) {
+                continue;
+            }
+        }
+
+        // 5. Depth-prioritized selection: front vertices always take precedence over deeper ones
+        bool isBetter = false;
+        if (bestIdx == -1) {
+            isBetter = true;
+        } else if (sPos.z < bestZ - 0.01f) {
+            // Significantly closer in depth to camera
+            isBetter = true;
+        } else if (std::abs(sPos.z - bestZ) <= 0.01f) {
+            // Same depth layer, pick closer in screen space
+            if (dSq < bestDistSq) {
+                isBetter = true;
+            }
+        }
+
+        if (isBetter) {
             bestDistSq = dSq;
+            bestZ = sPos.z;
             bestIdx = i;
         }
     }
@@ -196,24 +312,41 @@ EdgeHit SurfaceSnapper::FindNearestRetopoEdge(
         return hasTransform ? glm::vec3(mat * glm::vec4(p, 1.0f)) : p;
     };
 
-    // If borderOnly is requested, precompute edge face counts to filter out interior edges
+    glm::vec3 camPos = camera.computePosition();
+    bool isOrtho = camera.isOrthographic();
+    glm::vec3 orthoDir = isOrtho ? glm::vec3(camera.getViewMatrix()[0][2], camera.getViewMatrix()[1][2], camera.getViewMatrix()[2][2]) : glm::vec3(0.0f);
+
+    // Precompute edge face counts & front-facing counts to filter backface edges
     std::unordered_map<uint64_t, int32_t> edgeFaceCounts;
-    if (borderOnly) {
-        for (int f = 0; f < numFaces; ++f) {
-            if (!retopoMesh->faceVisible.empty() && !retopoMesh->faceVisible[f]) continue;
-            uint32_t fv[4] = { faces[f * 4 + 0], faces[f * 4 + 1], faces[f * 4 + 2], faces[f * 4 + 3] };
-            int numE = (fv[3] != TRI_INDEX) ? 4 : 3;
-            for (int e = 0; e < numE; ++e) {
-                uint32_t eu = fv[e];
-                uint32_t ev = fv[(e + 1) % numE];
-                if (eu >= (uint32_t)numVerts || ev >= (uint32_t)numVerts) continue;
-                uint64_t k = (static_cast<uint64_t>(std::min(eu, ev)) << 32) | static_cast<uint64_t>(std::max(eu, ev));
-                edgeFaceCounts[k]++;
+    std::unordered_map<uint64_t, int32_t> edgeFrontFacingCounts;
+
+    for (int f = 0; f < numFaces; ++f) {
+        if (!retopoMesh->faceVisible.empty() && !retopoMesh->faceVisible[f]) continue;
+        uint32_t fv[4] = { faces[f * 4 + 0], faces[f * 4 + 1], faces[f * 4 + 2], faces[f * 4 + 3] };
+        int numE = (fv[3] != TRI_INDEX) ? 4 : 3;
+
+        glm::vec3 p0 = getVertWorld(fv[0]);
+        glm::vec3 p1 = getVertWorld(fv[1]);
+        glm::vec3 p2 = getVertWorld(fv[2]);
+        glm::vec3 n = glm::cross(p1 - p0, p2 - p0);
+        glm::vec3 center = (numE == 4) ? (p0 + p1 + p2 + getVertWorld(fv[3])) * 0.25f : (p0 + p1 + p2) * 0.333333f;
+        glm::vec3 viewVec = isOrtho ? orthoDir : (camPos - center);
+        bool isFront = (glm::dot(n, viewVec) > 0.0f);
+
+        for (int e = 0; e < numE; ++e) {
+            uint32_t eu = fv[e];
+            uint32_t ev = fv[(e + 1) % numE];
+            if (eu >= (uint32_t)numVerts || ev >= (uint32_t)numVerts) continue;
+            uint64_t k = (static_cast<uint64_t>(std::min(eu, ev)) << 32) | static_cast<uint64_t>(std::max(eu, ev));
+            edgeFaceCounts[k]++;
+            if (isFront) {
+                edgeFrontFacingCounts[k]++;
             }
         }
     }
 
     float bestDist = maxRadiusPixels;
+    float bestZ = 2.0f;
     std::unordered_set<uint64_t> visitedEdges;
 
     for (int f = 0; f < numFaces; ++f) {
@@ -234,6 +367,12 @@ EdgeHit SurfaceSnapper::FindNearestRetopoEdge(
 
             uint64_t edgeKey = (static_cast<uint64_t>(std::min(u, v)) << 32) | static_cast<uint64_t>(std::max(u, v));
             if (!visitedEdges.insert(edgeKey).second) continue; // Each unique edge checked once
+
+            // Backface culling: skip edge if all incident faces face away
+            auto ffIt = edgeFrontFacingCounts.find(edgeKey);
+            if (ffIt == edgeFrontFacingCounts.end() || ffIt->second == 0) {
+                continue;
+            }
 
             if (borderOnly) {
                 auto it = edgeFaceCounts.find(edgeKey);
@@ -280,27 +419,50 @@ EdgeHit SurfaceSnapper::FindNearestRetopoEdge(
                         std::abs(precomputedTargetSnap->screenPos.y - edgeScreenMid.y) < 5.0f) {
                         tSnap = *precomputedTargetSnap;
                     } else {
-                        tSnap = RaycastSurface(camera, targetMesh, edgeScreenMid.x, edgeScreenMid.y);
+                        tSnap = const_cast<SurfaceSnapper*>(this)->RaycastSurface(camera, targetMesh, edgeScreenMid.x, edgeScreenMid.y);
                     }
 
                     if (tSnap.valid) {
-                        Ray camRay = camera.getRay(edgeScreenMid.x, edgeScreenMid.y);
-                        float depthBehind = glm::dot(edgeWorldMid - tSnap.worldPos, camRay.dir);
-                        if (depthBehind > 15.0f) {
+                        float tZ = tSnap.screenPos.z;
+                        if (edgeScreenMid.z > tZ + 0.005f) {
                             continue; // Edge is occluded on back of mesh
+                        }
+                    } else {
+                        glm::vec3 toEdge = edgeWorldMid - camPos;
+                        float distToEdge = glm::length(toEdge);
+                        if (distToEdge > 1e-4f) {
+                            glm::vec3 rayDir = toEdge / distToEdge;
+                            glm::vec3 hitPt{0.0f}, hitN{0.0f};
+                            if (m_bvh.Raycast(camPos, rayDir, hitPt, hitN, distToEdge - 0.02f, false)) {
+                                continue; // Occluded by targetMesh!
+                            }
                         }
                     }
                 }
 
-                bestDist = d;
-                result.valid = true;
-                result.v0 = (int32_t)u;
-                result.v1 = (int32_t)v;
-                result.worldPos0 = w0;
-                result.worldPos1 = w1;
-                result.t = t;
-                result.dist = d;
-                result.polyIndex = f;
+                bool isBetter = false;
+                if (!result.valid) {
+                    isBetter = true;
+                } else if (edgeScreenMid.z < bestZ - 0.01f) {
+                    isBetter = true;
+                } else if (std::abs(edgeScreenMid.z - bestZ) <= 0.01f) {
+                    if (d < bestDist) {
+                        isBetter = true;
+                    }
+                }
+
+                if (isBetter) {
+                    bestDist = d;
+                    bestZ = edgeScreenMid.z;
+                    result.valid = true;
+                    result.v0 = (int32_t)u;
+                    result.v1 = (int32_t)v;
+                    result.worldPos0 = w0;
+                    result.worldPos1 = w1;
+                    result.t = t;
+                    result.dist = d;
+                    result.polyIndex = f;
+                }
             }
         }
     }
@@ -316,7 +478,8 @@ SnapResult SurfaceSnapper::Snap(
 
     if (retopoMesh && retopoMesh->nbVerts > 0) {
         int32_t nearV = FindNearestRetopoVertex(
-            camera, retopoMesh, screenX, screenY, snapRadiusPixels, -1, targetMesh, &targetSnap
+            camera, retopoMesh, screenX, screenY, snapRadiusPixels, -1, targetMesh, &targetSnap,
+            targetSnap.valid ? &targetSnap.worldPos : nullptr
         );
         if (nearV != -1) {
             SnapResult res;

@@ -2433,7 +2433,11 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
         // Check if event is handled by camera navigation preset
         bool qdIntercept = false;
         if (m_currentBrush == BRUSH_QUAD_DRAW && m_quadDrawTool) {
-            if (m_quadDrawTool->isDragging() || m_quadDrawTool->isHoveringInteractive()) {
+            if (m_quadDrawTool->isDragging()) {
+                qdIntercept = true;
+            } else if (event.button.button == SDL_BUTTON_LEFT && m_quadDrawTool->isHoveringInteractive()) {
+                qdIntercept = true;
+            } else if (event.button.button == SDL_BUTTON_RIGHT && m_quadDrawTool->getSubTool() == retopo::QuadDrawSubTool::MultiCut && m_quadDrawTool->getMultiCutPointsCount() > 0) {
                 qdIntercept = true;
             }
         }
@@ -2445,7 +2449,10 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
         if (m_currentBrush == BRUSH_QUAD_DRAW) {
             if (m_quadDrawTool) {
                 SDL_Keymod mod = SDL_GetModState();
-                m_quadDrawTool->handleMouseDown(scene, camera, (float)mouseX, (float)mouseY, (mod & KMOD_CTRL) != 0, (mod & KMOD_ALT) != 0, (mod & KMOD_SHIFT) != 0, event.button.button);
+                bool handled = m_quadDrawTool->handleMouseDown(scene, camera, (float)mouseX, (float)mouseY, (mod & KMOD_CTRL) != 0, (mod & KMOD_ALT) != 0, (mod & KMOD_SHIFT) != 0, event.button.button);
+                if (!handled && m_cameraController.isNavigationEvent(event, camera.getRef2DMode())) {
+                    m_cameraController.handleEvent(event, camera, scene.getMeshes(), true, &scene, m_renderer);
+                }
             }
             return;
         }
@@ -3216,6 +3223,10 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
     } else if (event.type == SDL_MOUSEBUTTONUP) {
         if (m_cameraController.isDragging() || event.button.button == SDL_BUTTON_MIDDLE || event.button.button == SDL_BUTTON_RIGHT) {
             m_cameraController.handleEvent(event, camera, scene.getMeshes(), true, &scene, m_renderer);
+            if (m_currentBrush == BRUSH_QUAD_DRAW && m_quadDrawTool) {
+                SDL_Keymod mod = SDL_GetModState();
+                m_quadDrawTool->handleMouseMove(scene, camera, (float)event.button.x, (float)event.button.y, (mod & KMOD_CTRL) != 0, (mod & KMOD_ALT) != 0, (mod & KMOD_SHIFT) != 0);
+            }
             return;
         }
 

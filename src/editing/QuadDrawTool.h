@@ -137,6 +137,8 @@ public:
     QuadDrawMeshBuilder& getBuilder() { return m_builder; }
     SurfaceSnapper& getSnapper() { return m_snapper; }
 
+    bool isPointOccluded(const Scene& scene, const Camera& camera, const glm::vec3& worldPos, const glm::vec3& screenPos) const;
+
     // Tube Slice settings
     int getTubeSliceRadialSegments() const { return m_tubeSliceRadialSegments; }
     void setTubeSliceRadialSegments(int s) { m_tubeSliceRadialSegments = std::clamp(s, 4, 64); }

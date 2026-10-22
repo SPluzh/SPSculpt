@@ -445,7 +445,8 @@ void QuadDrawTool::updateHoverState(
 
     // Check vertex hover
     m_hoverVertex = m_snapper.FindNearestRetopoVertex(
-        camera, m_retopoMesh, mouseX, mouseY, m_weldRadiusPixels, -1, m_targetMesh, &m_hoverSnap
+        camera, m_retopoMesh, mouseX, mouseY, m_weldRadiusPixels, -1, m_targetMesh, &m_hoverSnap,
+        m_hoverSnap.valid ? &m_hoverSnap.worldPos : nullptr
     );
 
     // Check edge hover
@@ -558,7 +559,7 @@ bool QuadDrawTool::handleMouseDown(
     }
 
     if (button == SDL_BUTTON_RIGHT) {
-        if (m_subTool == QuadDrawSubTool::MultiCut) {
+        if (m_subTool == QuadDrawSubTool::MultiCut && !m_multiCutPoints.empty()) {
             if (m_multiCutPoints.size() >= 2) {
                 commitMultiCut(scene);
             } else {
@@ -1340,8 +1341,18 @@ bool QuadDrawTool::handleMouseMove(
 
         // 2. Check weld candidates
         if (m_tweakVerts.size() == 1) {
+            glm::vec3 curPos(
+                m_retopoMesh->verts[m_tweakVerts[0].vertexIdx * 3 + 0],
+                m_retopoMesh->verts[m_tweakVerts[0].vertexIdx * 3 + 1],
+                m_retopoMesh->verts[m_tweakVerts[0].vertexIdx * 3 + 2]
+            );
+            if (m_retopoMesh->matrix != glm::mat4(1.0f)) {
+                curPos = glm::vec3(m_retopoMesh->matrix * glm::vec4(curPos, 1.0f));
+            }
+
             m_weldTargetVertex = m_snapper.FindNearestRetopoVertex(
-                camera, m_retopoMesh, mouseX, mouseY, m_weldRadiusPixels, m_tweakVerts[0].vertexIdx, m_targetMesh, snap.valid ? &snap : nullptr
+                camera, m_retopoMesh, mouseX, mouseY, m_weldRadiusPixels, m_tweakVerts[0].vertexIdx, m_targetMesh, snap.valid ? &snap : nullptr,
+                &curPos
             );
             m_tweakVerts[0].weldTarget = m_weldTargetVertex;
         } else {
@@ -1352,9 +1363,13 @@ bool QuadDrawTool::handleMouseMove(
                     m_retopoMesh->verts[tv.vertexIdx * 3 + 1],
                     m_retopoMesh->verts[tv.vertexIdx * 3 + 2]
                 );
+                if (m_retopoMesh->matrix != glm::mat4(1.0f)) {
+                    curPos = glm::vec3(m_retopoMesh->matrix * glm::vec4(curPos, 1.0f));
+                }
                 glm::vec3 sPos = camera.project(curPos);
                 int32_t weld = m_snapper.FindNearestRetopoVertex(
-                    camera, m_retopoMesh, sPos.x, sPos.y, m_weldRadiusPixels, tv.vertexIdx, m_targetMesh
+                    camera, m_retopoMesh, sPos.x, sPos.y, m_weldRadiusPixels, tv.vertexIdx, m_targetMesh, nullptr,
+                    &curPos
                 );
                 if (weld != -1 && movingVerts.count(weld)) {
                     weld = -1;
@@ -1381,7 +1396,8 @@ bool QuadDrawTool::handleMouseMove(
 
         // Check weld candidate
         int32_t weld = m_snapper.FindNearestRetopoVertex(
-            camera, m_retopoMesh, mouseX, mouseY, m_weldRadiusPixels, m_extrudedSingleV, m_targetMesh, snap.valid ? &snap : nullptr
+            camera, m_retopoMesh, mouseX, mouseY, m_weldRadiusPixels, m_extrudedSingleV, m_targetMesh, snap.valid ? &snap : nullptr,
+            &targetPos
         );
 
         if (weld == m_extrudeCornerV || weld == m_extrudeCornerVA || weld == m_extrudeCornerVB) {
@@ -1451,10 +1467,14 @@ bool QuadDrawTool::handleMouseMove(
                 m_retopoMesh->verts[ev.newV * 3 + 1],
                 m_retopoMesh->verts[ev.newV * 3 + 2]
             );
-            glm::vec3 sPos = camera.project(curPos);
+            glm::vec3 worldCurPos = (m_retopoMesh->matrix != glm::mat4(1.0f))
+                ? glm::vec3(m_retopoMesh->matrix * glm::vec4(curPos, 1.0f))
+                : curPos;
+            glm::vec3 sPos = camera.project(worldCurPos);
 
             int32_t weld = m_snapper.FindNearestRetopoVertex(
-                camera, m_retopoMesh, sPos.x, sPos.y, m_weldRadiusPixels, ev.newV, m_targetMesh
+                camera, m_retopoMesh, sPos.x, sPos.y, m_weldRadiusPixels, ev.newV, m_targetMesh, nullptr,
+                &worldCurPos
             );
 
             if (weld != -1 && excludedWeldVerts.count(weld)) {
@@ -1866,6 +1886,96 @@ bool QuadDrawTool::handleKeyDown(Scene& scene, int keycode) {
     return false;
 }
 
+bool QuadDrawTool::isPointOccluded(const Scene& scene, const Camera& camera, const glm::vec3& worldPos, const glm::vec3& screenPos) const {
+    if (m_xRay) return false;
+    if (screenPos.z < 0.0f || screenPos.z > 1.0f) return true;
+
+    // 1. Occlusion by target mesh
+    if (m_targetMesh && m_targetMesh->nbFaces > 0) {
+        SnapResult snap = const_cast<SurfaceSnapper&>(m_snapper).RaycastSurface(camera, m_targetMesh, screenPos.x, screenPos.y);
+        if (snap.valid) {
+            float targetZ = snap.screenPos.z;
+            if (screenPos.z > targetZ + 0.005f) {
+                return true;
+            }
+        }
+    }
+
+    // 2. Occlusion by other opaque scene meshes
+    const auto& meshes = scene.getMeshes();
+    if (meshes.size() > 1) {
+        Ray camRay = camera.getRay(screenPos.x, screenPos.y);
+        for (Mesh* m : meshes) {
+            if (!m || m == m_retopoMesh || m == m_targetMesh || m->nbFaces == 0 || m->verts.empty()) continue;
+            if (!scene.isMeshRenderVisible(m)) continue;
+
+            glm::mat4 invMatrix = glm::inverse(m->matrix);
+            glm::vec3 localRayOrigin = glm::vec3(invMatrix * glm::vec4(camRay.origin, 1.0f));
+            glm::vec3 localRayDir = glm::normalize(glm::vec3(invMatrix * glm::vec4(camRay.dir, 0.0f)));
+
+            std::vector<uint32_t> candidateFaces = m->octree.collectIntersectRay(
+                localRayOrigin.x, localRayOrigin.y, localRayOrigin.z,
+                localRayDir.x, localRayDir.y, localRayDir.z
+            );
+
+            auto rayTri = [](const glm::vec3& orig, const glm::vec3& dir, const glm::vec3& a, const glm::vec3& b, const glm::vec3& c, float& outT) -> bool {
+                glm::vec3 e1 = b - a;
+                glm::vec3 e2 = c - a;
+                glm::vec3 p = glm::cross(dir, e2);
+                float det = glm::dot(e1, p);
+                if (std::abs(det) < 1e-8f) return false;
+                float invDet = 1.0f / det;
+                glm::vec3 tvec = orig - a;
+                float u = glm::dot(tvec, p) * invDet;
+                if (u < 0.0f || u > 1.0f) return false;
+                glm::vec3 q = glm::cross(tvec, e1);
+                float v = glm::dot(dir, q) * invDet;
+                if (v < 0.0f || u + v > 1.0f) return false;
+                float t = glm::dot(e2, q) * invDet;
+                if (t < 1e-4f) return false;
+                outT = t;
+                return true;
+            };
+
+            for (uint32_t faceId : candidateFaces) {
+                if (faceId >= (uint32_t)m->nbFaces) continue;
+                uint32_t v0Id = m->faces[faceId * 4 + 0];
+                uint32_t v1Id = m->faces[faceId * 4 + 1];
+                uint32_t v2Id = m->faces[faceId * 4 + 2];
+                uint32_t v3Id = m->faces[faceId * 4 + 3];
+                if (v0Id >= (uint32_t)m->nbVerts || v1Id >= (uint32_t)m->nbVerts || v2Id >= (uint32_t)m->nbVerts) continue;
+
+                glm::vec3 v0(m->verts[v0Id * 3], m->verts[v0Id * 3 + 1], m->verts[v0Id * 3 + 2]);
+                glm::vec3 v1(m->verts[v1Id * 3], m->verts[v1Id * 3 + 1], m->verts[v1Id * 3 + 2]);
+                glm::vec3 v2(m->verts[v2Id * 3], m->verts[v2Id * 3 + 1], m->verts[v2Id * 3 + 2]);
+
+                float tHit = 0.0f;
+                if (rayTri(localRayOrigin, localRayDir, v0, v1, v2, tHit)) {
+                    glm::vec3 hitLocal = localRayOrigin + localRayDir * tHit;
+                    glm::vec3 hitWorld = glm::vec3(m->matrix * glm::vec4(hitLocal, 1.0f));
+                    glm::vec3 sHit = camera.project(hitWorld);
+                    if (sHit.z > 0.0f && sHit.z < screenPos.z - 0.003f) {
+                        return true;
+                    }
+                }
+                if (v3Id != 0xffffffff && v3Id < (uint32_t)m->nbVerts) {
+                    glm::vec3 v3(m->verts[v3Id * 3], m->verts[v3Id * 3 + 1], m->verts[v3Id * 3 + 2]);
+                    if (rayTri(localRayOrigin, localRayDir, v0, v2, v3, tHit)) {
+                        glm::vec3 hitLocal = localRayOrigin + localRayDir * tHit;
+                        glm::vec3 hitWorld = glm::vec3(m->matrix * glm::vec4(hitLocal, 1.0f));
+                        glm::vec3 sHit = camera.project(hitWorld);
+                        if (sHit.z > 0.0f && sHit.z < screenPos.z - 0.003f) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
 void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, float vH) {
     ImDrawList* drawList = ImGui::GetForegroundDrawList();
     if (!drawList) return;
@@ -1875,7 +1985,7 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
     // 0. Draw Cursor Snap Indicator on target surface
     if (m_dragMode == DragMode::None && m_hoverSnap.valid && (m_subTool == QuadDrawSubTool::Extrude || m_subTool == QuadDrawSubTool::CreatePolygon)) {
         glm::vec3 sPos = camera.project(m_hoverSnap.worldPos);
-        if (sPos.z >= 0.0f && sPos.z <= 1.0f) {
+        if (sPos.z >= 0.0f && sPos.z <= 1.0f && (m_xRay || !isPointOccluded(scene, camera, m_hoverSnap.worldPos, sPos))) {
             ImVec2 c(sPos.x, sPos.y);
             drawList->AddCircleFilled(c, 4.0f, IM_COL32(30, 255, 120, 220));
             drawList->AddCircle(c, 9.0f, IM_COL32(30, 255, 120, 200), 16, 1.5f);
@@ -1886,12 +1996,21 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
 
     // 1. Draw Quad Preview (Green polygon)
     if (m_dragMode == DragMode::None && m_hoverQuad.valid) {
-        ImVec2 pts[4];
-        for (int i = 0; i < 4; ++i) {
-            pts[i] = ImVec2(m_hoverQuad.screenPositions[i].x, m_hoverQuad.screenPositions[i].y);
+        bool quadVis = m_xRay;
+        if (!quadVis) {
+            glm::vec3 center = (m_hoverQuad.worldPositions[0] + m_hoverQuad.worldPositions[1] + m_hoverQuad.worldPositions[2] + m_hoverQuad.worldPositions[3]) * 0.25f;
+            glm::vec3 viewVec = camera.computePosition() - center;
+            bool frontFacing = (glm::dot(m_hoverQuad.normal, viewVec) > 0.0f);
+            quadVis = frontFacing && !isPointOccluded(scene, camera, center, camera.project(center));
         }
-        drawList->AddConvexPolyFilled(pts, 4, IM_COL32(40, 230, 90, 110));
-        drawList->AddPolyline(pts, 4, IM_COL32(80, 255, 120, 240), ImDrawFlags_Closed, 2.5f);
+        if (quadVis) {
+            ImVec2 pts[4];
+            for (int i = 0; i < 4; ++i) {
+                pts[i] = ImVec2(m_hoverQuad.screenPositions[i].x, m_hoverQuad.screenPositions[i].y);
+            }
+            drawList->AddConvexPolyFilled(pts, 4, IM_COL32(40, 230, 90, 110));
+            drawList->AddPolyline(pts, 4, IM_COL32(80, 255, 120, 240), ImDrawFlags_Closed, 2.5f);
+        }
     }
 
     // 2. Draw Retopo Mesh (Wireframe & Points)
@@ -1913,10 +2032,87 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
             screenPts[i] = camera.project(getVertWorld(i));
         }
 
+        std::vector<bool> polyFrontFacing(polyCount, true);
+        std::vector<bool> polyVisible(polyCount, true);
+        std::vector<bool> vertVisible(ptCount, true);
+
+        if (!m_xRay) {
+            std::vector<int> vertPolyCount(ptCount, 0);
+            std::vector<int> vertFrontFacingCount(ptCount, 0);
+
+            for (int f = 0; f < polyCount; ++f) {
+                uint32_t q[4] = { faces[f * 4 + 0], faces[f * 4 + 1], faces[f * 4 + 2], faces[f * 4 + 3] };
+                int numE = (q[3] != TRI_INDEX) ? 4 : 3;
+
+                glm::vec3 p0 = getVertWorld(q[0]);
+                glm::vec3 p1 = getVertWorld(q[1]);
+                glm::vec3 p2 = getVertWorld(q[2]);
+                glm::vec3 n = glm::cross(p1 - p0, p2 - p0);
+                glm::vec3 center = (numE == 4) ? (p0 + p1 + p2 + getVertWorld(q[3])) * 0.25f : (p0 + p1 + p2) * 0.333333f;
+                glm::vec3 viewVec = camera.computePosition() - center;
+
+                bool isFront = (glm::dot(n, viewVec) > 0.0f);
+                polyFrontFacing[f] = isFront;
+
+                for (int e = 0; e < numE; ++e) {
+                    uint32_t vi = q[e];
+                    if (vi < (uint32_t)ptCount) {
+                        vertPolyCount[vi]++;
+                        if (isFront) {
+                            vertFrontFacingCount[vi]++;
+                        }
+                    }
+                }
+            }
+
+            for (int i = 0; i < ptCount; ++i) {
+                if (screenPts[i].z < 0.0f || screenPts[i].z > 1.0f) {
+                    vertVisible[i] = false;
+                    continue;
+                }
+                // If vertex has faces and none face forward, it's on the back of the model
+                if (vertPolyCount[i] > 0 && vertFrontFacingCount[i] == 0) {
+                    vertVisible[i] = false;
+                    continue;
+                }
+                glm::vec3 wPos = getVertWorld(i);
+                vertVisible[i] = !isPointOccluded(scene, camera, wPos, screenPts[i]);
+            }
+
+            for (int f = 0; f < polyCount; ++f) {
+                if (!polyFrontFacing[f]) {
+                    polyVisible[f] = false;
+                    continue;
+                }
+                uint32_t q[4] = { faces[f * 4 + 0], faces[f * 4 + 1], faces[f * 4 + 2], faces[f * 4 + 3] };
+                int numE = (q[3] != TRI_INDEX) ? 4 : 3;
+
+                bool anyVertVis = false;
+                for (int e = 0; e < numE; ++e) {
+                    if (q[e] < (uint32_t)ptCount && vertVisible[q[e]]) {
+                        anyVertVis = true;
+                        break;
+                    }
+                }
+                if (!anyVertVis) {
+                    polyVisible[f] = false;
+                    continue;
+                }
+
+                glm::vec3 center(0.0f);
+                for (int e = 0; e < numE; ++e) center += getVertWorld(q[e]);
+                center /= (float)numE;
+                glm::vec3 sCenter = camera.project(center);
+                polyVisible[f] = !isPointOccluded(scene, camera, center, sCenter);
+            }
+        }
+
         // Draw Wireframe
         if (m_showWireframe) {
             ImU32 wireCol = ImGui::ColorConvertFloat4ToU32(m_wireColor);
             for (int f = 0; f < polyCount; ++f) {
+                if (!polyVisible[f]) continue;
+
                 uint32_t q[4] = { faces[f * 4 + 0], faces[f * 4 + 1], faces[f * 4 + 2], faces[f * 4 + 3] };
                 int numE = (q[3] != TRI_INDEX) ? 4 : 3;
 
@@ -1934,6 +2130,7 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
 
         // Draw Vertices
         for (int i = 0; i < ptCount; ++i) {
+            if (!vertVisible[i]) continue;
             if (screenPts[i].z < 0.0f || screenPts[i].z > 1.0f) continue;
             ImVec2 p(screenPts[i].x, screenPts[i].y);
 
@@ -2023,6 +2220,7 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
 
             for (const auto& e : m_selectedEdges) {
                 if (e.first < 0 || e.first >= ptCount || e.second < 0 || e.second >= ptCount) continue;
+                if (!m_xRay && (!vertVisible[e.first] && !vertVisible[e.second])) continue;
                 glm::vec3 s0 = screenPts[e.first];
                 glm::vec3 s1 = screenPts[e.second];
                 if (s0.z > 0.0f && s0.z < 1.0f && s1.z > 0.0f && s1.z < 1.0f) {
@@ -2038,30 +2236,32 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
 
         // Draw Highlighted Face (in Select, Delete, or Tweak mode) - ONLY when not dragging
         if (m_dragMode == DragMode::None && m_hoverPoly != -1 && m_hoverPoly < polyCount && !m_hoverEdge.valid && m_hoverVertex == -1) {
-            uint32_t q[4] = { faces[m_hoverPoly * 4 + 0], faces[m_hoverPoly * 4 + 1], faces[m_hoverPoly * 4 + 2], faces[m_hoverPoly * 4 + 3] };
-            int numE = (q[3] != TRI_INDEX) ? 4 : 3;
-            ImVec2 polyScreen[4];
-            bool allFront = true;
-            for (int e = 0; e < numE; ++e) {
-                if (screenPts[q[e]].z < 0.0f || screenPts[q[e]].z > 1.0f) { allFront = false; break; }
-                polyScreen[e] = ImVec2(screenPts[q[e]].x, screenPts[q[e]].y);
-            }
-            if (allFront) {
-                if (m_subTool == QuadDrawSubTool::Select) {
-                    ImU32 fillCol = ImGui::GetIO().KeyAlt ? IM_COL32(255, 60, 60, 80) : IM_COL32(50, 220, 255, 80);
-                    ImU32 lineCol = ImGui::GetIO().KeyAlt ? IM_COL32(255, 80, 80, 220) : IM_COL32(80, 240, 255, 220);
-                    drawList->AddConvexPolyFilled(polyScreen, numE, fillCol);
-                    drawList->AddPolyline(polyScreen, numE, lineCol, ImDrawFlags_Closed, 2.0f);
-                } else if (isDeleteMode) {
-                    drawList->AddConvexPolyFilled(polyScreen, numE, IM_COL32(255, 40, 40, 90));
-                    drawList->AddPolyline(polyScreen, numE, IM_COL32(255, 60, 60, 220), ImDrawFlags_Closed, 2.5f);
-                } else if (m_subTool == QuadDrawSubTool::Tweak) {
-                    ImU32 fillCol = IM_COL32(40, 190, 255, 75);
-                    ImU32 lineCol = IM_COL32(70, 230, 255, 220);
-                    drawList->AddConvexPolyFilled(polyScreen, numE, fillCol);
-                    drawList->AddPolyline(polyScreen, numE, lineCol, ImDrawFlags_Closed, m_lineWidth * 2.0f);
-                    for (int e = 0; e < numE; ++e) {
-                        drawList->AddCircleFilled(polyScreen[e], m_pointSize * 1.1f, lineCol);
+            if (polyVisible[m_hoverPoly]) {
+                uint32_t q[4] = { faces[m_hoverPoly * 4 + 0], faces[m_hoverPoly * 4 + 1], faces[m_hoverPoly * 4 + 2], faces[m_hoverPoly * 4 + 3] };
+                int numE = (q[3] != TRI_INDEX) ? 4 : 3;
+                ImVec2 polyScreen[4];
+                bool allFront = true;
+                for (int e = 0; e < numE; ++e) {
+                    if (screenPts[q[e]].z < 0.0f || screenPts[q[e]].z > 1.0f) { allFront = false; break; }
+                    polyScreen[e] = ImVec2(screenPts[q[e]].x, screenPts[q[e]].y);
+                }
+                if (allFront) {
+                    if (m_subTool == QuadDrawSubTool::Select) {
+                        ImU32 fillCol = ImGui::GetIO().KeyAlt ? IM_COL32(255, 60, 60, 80) : IM_COL32(50, 220, 255, 80);
+                        ImU32 lineCol = ImGui::GetIO().KeyAlt ? IM_COL32(255, 80, 80, 220) : IM_COL32(80, 240, 255, 220);
+                        drawList->AddConvexPolyFilled(polyScreen, numE, fillCol);
+                        drawList->AddPolyline(polyScreen, numE, lineCol, ImDrawFlags_Closed, 2.0f);
+                    } else if (isDeleteMode) {
+                        drawList->AddConvexPolyFilled(polyScreen, numE, IM_COL32(255, 40, 40, 90));
+                        drawList->AddPolyline(polyScreen, numE, IM_COL32(255, 60, 60, 220), ImDrawFlags_Closed, 2.5f);
+                    } else if (m_subTool == QuadDrawSubTool::Tweak) {
+                        ImU32 fillCol = IM_COL32(40, 190, 255, 75);
+                        ImU32 lineCol = IM_COL32(70, 230, 255, 220);
+                        drawList->AddConvexPolyFilled(polyScreen, numE, fillCol);
+                        drawList->AddPolyline(polyScreen, numE, lineCol, ImDrawFlags_Closed, m_lineWidth * 2.0f);
+                        for (int e = 0; e < numE; ++e) {
+                            drawList->AddCircleFilled(polyScreen[e], m_pointSize * 1.1f, lineCol);
+                        }
                     }
                 }
             }
@@ -2069,40 +2269,51 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
 
         // Draw Highlighted Edge - ONLY when not dragging
         if (m_dragMode == DragMode::None && m_hoverEdge.valid && (m_subTool == QuadDrawSubTool::Extrude || m_subTool == QuadDrawSubTool::Select || m_subTool == QuadDrawSubTool::Strip || m_subTool == QuadDrawSubTool::Tweak || isDeleteMode)) {
-            glm::vec3 s0;
-            glm::vec3 s1;
-            if (m_hoverEdge.v0 >= 0 && m_hoverEdge.v0 < ptCount && m_hoverEdge.v1 >= 0 && m_hoverEdge.v1 < ptCount) {
-                s0 = screenPts[m_hoverEdge.v0];
-                s1 = screenPts[m_hoverEdge.v1];
-            } else {
-                s0 = camera.project(m_hoverEdge.worldPos0);
-                s1 = camera.project(m_hoverEdge.worldPos1);
-            }
-            if (s0.z > 0.0f && s1.z > 0.0f) {
-                ImU32 edgeColor = IM_COL32(255, 230, 40, 255);
-                if (m_subTool == QuadDrawSubTool::Select || m_subTool == QuadDrawSubTool::Strip) {
-                    if (ImGui::GetIO().KeyAlt) {
-                        edgeColor = IM_COL32(255, 60, 60, 255);
-                    } else if (isEdgeSelected(m_hoverEdge.v0, m_hoverEdge.v1)) {
-                        edgeColor = IM_COL32(255, 200, 50, 255);
-                    } else {
-                        edgeColor = IM_COL32(50, 230, 255, 255);
-                    }
-                } else if (isDeleteMode) {
-                    edgeColor = IM_COL32(255, 40, 40, 255);
-                } else if (m_subTool == QuadDrawSubTool::Tweak) {
-                    if (isEdgeSelected(m_hoverEdge.v0, m_hoverEdge.v1)) {
-                        edgeColor = IM_COL32(255, 255, 90, 255);
-                    } else {
-                        edgeColor = IM_COL32(60, 230, 255, 255);
-                    }
+            bool edgeVis = m_xRay;
+            if (!edgeVis) {
+                if (m_hoverEdge.v0 >= 0 && m_hoverEdge.v0 < ptCount && m_hoverEdge.v1 >= 0 && m_hoverEdge.v1 < ptCount) {
+                    edgeVis = vertVisible[m_hoverEdge.v0] || vertVisible[m_hoverEdge.v1];
+                } else {
+                    glm::vec3 mid = (m_hoverEdge.worldPos0 + m_hoverEdge.worldPos1) * 0.5f;
+                    edgeVis = !isPointOccluded(scene, camera, mid, camera.project(mid));
                 }
-                drawList->AddLine(
-                    ImVec2(s0.x, s0.y), ImVec2(s1.x, s1.y),
-                    edgeColor, m_lineWidth * 2.8f
-                );
-                drawList->AddCircleFilled(ImVec2(s0.x, s0.y), m_pointSize * 1.1f, edgeColor);
-                drawList->AddCircleFilled(ImVec2(s1.x, s1.y), m_pointSize * 1.1f, edgeColor);
+            }
+            if (edgeVis) {
+                glm::vec3 s0;
+                glm::vec3 s1;
+                if (m_hoverEdge.v0 >= 0 && m_hoverEdge.v0 < ptCount && m_hoverEdge.v1 >= 0 && m_hoverEdge.v1 < ptCount) {
+                    s0 = screenPts[m_hoverEdge.v0];
+                    s1 = screenPts[m_hoverEdge.v1];
+                } else {
+                    s0 = camera.project(m_hoverEdge.worldPos0);
+                    s1 = camera.project(m_hoverEdge.worldPos1);
+                }
+                if (s0.z > 0.0f && s1.z > 0.0f) {
+                    ImU32 edgeColor = IM_COL32(255, 230, 40, 255);
+                    if (m_subTool == QuadDrawSubTool::Select || m_subTool == QuadDrawSubTool::Strip) {
+                        if (ImGui::GetIO().KeyAlt) {
+                            edgeColor = IM_COL32(255, 60, 60, 255);
+                        } else if (isEdgeSelected(m_hoverEdge.v0, m_hoverEdge.v1)) {
+                            edgeColor = IM_COL32(255, 200, 50, 255);
+                        } else {
+                            edgeColor = IM_COL32(50, 230, 255, 255);
+                        }
+                    } else if (isDeleteMode) {
+                        edgeColor = IM_COL32(255, 40, 40, 255);
+                    } else if (m_subTool == QuadDrawSubTool::Tweak) {
+                        if (isEdgeSelected(m_hoverEdge.v0, m_hoverEdge.v1)) {
+                            edgeColor = IM_COL32(255, 255, 90, 255);
+                        } else {
+                            edgeColor = IM_COL32(60, 230, 255, 255);
+                        }
+                    }
+                    drawList->AddLine(
+                        ImVec2(s0.x, s0.y), ImVec2(s1.x, s1.y),
+                        edgeColor, m_lineWidth * 2.8f
+                    );
+                    drawList->AddCircleFilled(ImVec2(s0.x, s0.y), m_pointSize * 1.1f, edgeColor);
+                    drawList->AddCircleFilled(ImVec2(s1.x, s1.y), m_pointSize * 1.1f, edgeColor);
+                }
             }
         }
 
@@ -2114,7 +2325,7 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
                 if (u >= 0 && u < ptCount && v >= 0 && v < ptCount) {
                     glm::vec3 s0 = screenPts[u];
                     glm::vec3 s1 = screenPts[v];
-                    if (s0.z > 0.0f && s1.z > 0.0f) {
+                    if (s0.z > 0.0f && s1.z > 0.0f && (m_xRay || vertVisible[u] || vertVisible[v])) {
                         ImU32 edgeColor = isEdgeSelected(u, v) ? IM_COL32(255, 255, 90, 255) : IM_COL32(60, 230, 255, 255);
                         drawList->AddLine(
                             ImVec2(s0.x, s0.y), ImVec2(s1.x, s1.y),
@@ -2125,45 +2336,49 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
                     }
                 }
             } else if (m_tweakSource == TweakSource::Polygon && m_tweakPoly >= 0 && m_tweakPoly < polyCount) {
-                uint32_t q[4] = { faces[m_tweakPoly * 4 + 0], faces[m_tweakPoly * 4 + 1], faces[m_tweakPoly * 4 + 2], faces[m_tweakPoly * 4 + 3] };
-                int numE = (q[3] != TRI_INDEX) ? 4 : 3;
-                ImVec2 polyScreen[4];
-                bool allFront = true;
-                for (int e = 0; e < numE; ++e) {
-                    int32_t vi = (int32_t)q[e];
-                    if (vi < 0 || vi >= ptCount || screenPts[vi].z < 0.0f || screenPts[vi].z > 1.0f) {
-                        allFront = false;
-                        break;
-                    }
-                    polyScreen[e] = ImVec2(screenPts[vi].x, screenPts[vi].y);
-                }
-                if (allFront) {
-                    ImU32 fillCol = IM_COL32(40, 190, 255, 75);
-                    ImU32 lineCol = IM_COL32(70, 230, 255, 220);
-                    drawList->AddConvexPolyFilled(polyScreen, numE, fillCol);
-                    drawList->AddPolyline(polyScreen, numE, lineCol, ImDrawFlags_Closed, m_lineWidth * 2.0f);
+                if (m_xRay || polyVisible[m_tweakPoly]) {
+                    uint32_t q[4] = { faces[m_tweakPoly * 4 + 0], faces[m_tweakPoly * 4 + 1], faces[m_tweakPoly * 4 + 2], faces[m_tweakPoly * 4 + 3] };
+                    int numE = (q[3] != TRI_INDEX) ? 4 : 3;
+                    ImVec2 polyScreen[4];
+                    bool allFront = true;
                     for (int e = 0; e < numE; ++e) {
-                        drawList->AddCircleFilled(polyScreen[e], m_pointSize * 1.1f, lineCol);
+                        int32_t vi = (int32_t)q[e];
+                        if (vi < 0 || vi >= ptCount || screenPts[vi].z < 0.0f || screenPts[vi].z > 1.0f) {
+                            allFront = false;
+                            break;
+                        }
+                        polyScreen[e] = ImVec2(screenPts[vi].x, screenPts[vi].y);
+                    }
+                    if (allFront) {
+                        ImU32 fillCol = IM_COL32(40, 190, 255, 75);
+                        ImU32 lineCol = IM_COL32(70, 230, 255, 220);
+                        drawList->AddConvexPolyFilled(polyScreen, numE, fillCol);
+                        drawList->AddPolyline(polyScreen, numE, lineCol, ImDrawFlags_Closed, m_lineWidth * 2.0f);
+                        for (int e = 0; e < numE; ++e) {
+                            drawList->AddCircleFilled(polyScreen[e], m_pointSize * 1.1f, lineCol);
+                        }
                     }
                 }
             }
 
             for (const auto& tv : m_tweakVerts) {
                 if (tv.weldTarget != -1 && tv.weldTarget < ptCount) {
-                    glm::vec3 sSrc = screenPts[tv.vertexIdx];
-                    glm::vec3 sTgt = screenPts[tv.weldTarget];
-                    if (sSrc.z > 0.0f && sTgt.z > 0.0f) {
-                        drawList->AddLine(
-                            ImVec2(sSrc.x, sSrc.y), ImVec2(sTgt.x, sTgt.y),
-                            IM_COL32(50, 255, 100, 255), 2.2f
-                        );
-                        drawList->AddCircleFilled(
-                            ImVec2(sTgt.x, sTgt.y), m_pointSize * 1.6f,
-                            IM_COL32(50, 255, 100, 255)
-                        );
+                    if (m_xRay || vertVisible[tv.vertexIdx] || vertVisible[tv.weldTarget]) {
+                        glm::vec3 sSrc = screenPts[tv.vertexIdx];
+                        glm::vec3 sTgt = screenPts[tv.weldTarget];
+                        if (sSrc.z > 0.0f && sTgt.z > 0.0f) {
+                            drawList->AddLine(
+                                ImVec2(sSrc.x, sSrc.y), ImVec2(sTgt.x, sTgt.y),
+                                IM_COL32(50, 255, 100, 255), 2.2f
+                            );
+                            drawList->AddCircleFilled(
+                                ImVec2(sTgt.x, sTgt.y), m_pointSize * 1.6f,
+                                IM_COL32(50, 255, 100, 255)
+                            );
+                        }
                     }
                 }
-                if (tv.vertexIdx >= 0 && tv.vertexIdx < ptCount) {
+                if (tv.vertexIdx >= 0 && tv.vertexIdx < ptCount && (m_xRay || vertVisible[tv.vertexIdx])) {
                     glm::vec3 s = screenPts[tv.vertexIdx];
                     if (s.z > 0.0f && s.z < 1.0f) {
                         drawList->AddCircleFilled(ImVec2(s.x, s.y), m_pointSize * 1.3f, IM_COL32(50, 220, 255, 255));
@@ -2176,6 +2391,10 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
         // Draw Edge Loop Highlight - ONLY when not dragging
         if (m_dragMode == DragMode::None && !m_hoverEdgeLoop.edges.empty()) {
             for (const auto& le : m_hoverEdgeLoop.edges) {
+                if (!m_xRay) {
+                    glm::vec3 mid = (le.worldPos0 + le.worldPos1) * 0.5f;
+                    if (isPointOccluded(scene, camera, mid, camera.project(mid))) continue;
+                }
                 glm::vec3 s0 = camera.project(le.worldPos0);
                 glm::vec3 s1 = camera.project(le.worldPos1);
                 if (s0.z > 0.0f && s1.z > 0.0f) {
@@ -2190,6 +2409,10 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
         // Draw Knife / Multi-Cut Cut Preview
         if (m_dragMode == DragMode::None && m_hoverCut.valid) {
             for (const auto& cs : m_hoverCut.cutSegments) {
+                if (!m_xRay) {
+                    glm::vec3 mid = (cs.p0 + cs.p1) * 0.5f;
+                    if (isPointOccluded(scene, camera, mid, camera.project(mid))) continue;
+                }
                 glm::vec3 s0 = camera.project(cs.p0);
                 glm::vec3 s1 = camera.project(cs.p1);
                 if (s0.z > 0.0f && s1.z > 0.0f) {
@@ -2200,6 +2423,9 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
                 }
             }
             for (const auto& cp : m_hoverCut.cutPoints) {
+                if (!m_xRay) {
+                    if (isPointOccluded(scene, camera, cp.worldPos, camera.project(cp.worldPos))) continue;
+                }
                 glm::vec3 sp = camera.project(cp.worldPos);
                 if (sp.z > 0.0f) {
                     drawList->AddCircleFilled(ImVec2(sp.x, sp.y), 4.5f, IM_COL32(50, 255, 100, 255));
@@ -2242,6 +2468,10 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
                 camera, m_retopoMesh, m_targetMesh, m_snapper, m_multiCutPoints, hasCand ? &cand : nullptr
             );
             for (const auto& seg : preview.previewSegments) {
+                if (!m_xRay) {
+                    glm::vec3 mid = (seg.p0 + seg.p1) * 0.5f;
+                    if (isPointOccluded(scene, camera, mid, camera.project(mid))) continue;
+                }
                 glm::vec3 sp0 = camera.project(seg.p0);
                 glm::vec3 sp1 = camera.project(seg.p1);
                 if (sp0.z > 0.0f && sp1.z > 0.0f) {
@@ -2253,7 +2483,7 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
         // Draw placed points
         for (size_t i = 0; i < m_multiCutPoints.size(); ++i) {
             glm::vec3 sp = camera.project(m_multiCutPoints[i].worldPos);
-            if (sp.z > 0.0f) {
+            if (sp.z > 0.0f && (m_xRay || !isPointOccluded(scene, camera, m_multiCutPoints[i].worldPos, sp))) {
                 drawList->AddCircleFilled(ImVec2(sp.x, sp.y), 5.5f, IM_COL32(255, 180, 20, 255));
                 drawList->AddCircle(ImVec2(sp.x, sp.y), 6.5f, IM_COL32(0, 0, 0, 220), 12, 1.5f);
             }
@@ -2262,7 +2492,7 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
         // Draw hover candidate indicator
         if (hasCand) {
             glm::vec3 sp = camera.project(cand.worldPos);
-            if (sp.z > 0.0f) {
+            if (sp.z > 0.0f && (m_xRay || !isPointOccluded(scene, camera, cand.worldPos, sp))) {
                 ImU32 candColor = (cand.type == MultiCutSnapType::Vertex)
                     ? IM_COL32(50, 255, 120, 255)
                     : IM_COL32(0, 220, 255, 255);
@@ -2291,6 +2521,10 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
                 camera, m_retopoMesh, m_targetMesh, m_snapper, m_sliceStartScreen, m_sliceEndScreen
             );
             for (const auto& seg : slice.previewSegments) {
+                if (!m_xRay) {
+                    glm::vec3 mid = (seg.p0 + seg.p1) * 0.5f;
+                    if (isPointOccluded(scene, camera, mid, camera.project(mid))) continue;
+                }
                 glm::vec3 sp0 = camera.project(seg.p0);
                 glm::vec3 sp1 = camera.project(seg.p1);
                 if (sp0.z > 0.0f && sp1.z > 0.0f) {
@@ -2318,6 +2552,10 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
         if (!m_strokeQuadPreviews.empty()) {
             for (const auto& qp : m_strokeQuadPreviews) {
                 if (!qp.valid) continue;
+                if (!m_xRay) {
+                    glm::vec3 mid = (qp.worldPositions[0] + qp.worldPositions[1] + qp.worldPositions[2] + qp.worldPositions[3]) * 0.25f;
+                    if (isPointOccluded(scene, camera, mid, camera.project(mid))) continue;
+                }
                 bool allFront = true;
                 ImVec2 pts[4];
                 for (int k = 0; k < 4; ++k) {
