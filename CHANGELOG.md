@@ -3,12 +3,11 @@
 All notable changes to this project will be documented in this file.
 
 ## [0.3.10]
-- **Linux Platform Support**: Native support for Linux with standalone portable builds, automatic shared library discovery (`$ORIGIN` RPATH), and dedicated build and launch scripts.
-- **Stylus & Graphic Tablet Support (Evdev)**: Direct kernel-level graphics tablet integration on Linux via `/dev/input/` with real-time pressure sensitivity, tilt tracking, and eraser mode for natural sculpting.
-- **Cross-Platform Tablet Diagnostics**: Full tablet diagnostics panel and pressure response curves accessible on all platforms under Preferences, Window, and Options menus.
-- **Native Linux File Dialogs**: Seamless file open and save dialogs powered by `zenity` with multi-format filtering for scenes, meshes, and textures.
-- **System Typography & Fallbacks**: Crisp UI text rendering with automatic fallback detection for standard Linux distribution fonts (DejaVu Sans, Ubuntu, Liberation Sans, FreeSans) including Cyrillic glyphs.
-- **Remote VM Compilation**: Added automated build script (`build_linux_on_vm.bat`) to sync source code and compile Linux binaries on a virtual machine in a single command.
+- **Native Linux Support**: SPSculpt now runs natively on Linux as a standalone, portable application.
+- **Graphic Tablets on Linux**: Full stylus pressure sensitivity, tilt, and eraser support for sculpting.
+- **Tablet Preferences**: New calibration tab to customize pressure response curves and test your pen.
+- **Native File Dialogs**: Standard Linux file picker for importing and exporting 3D models and scenes.
+- **System Fonts & Cyrillic**: Sharp interface rendering using distribution fonts with full Cyrillic support.
 
 ## [0.3.9]
 - **Quad Draw Retopology**: Interactive surface retopology tool with real-time snapping to target meshes and full Undo/Redo (Ctrl+Z) support.
