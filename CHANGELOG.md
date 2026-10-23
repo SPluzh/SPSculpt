@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 - **Tablet Preferences**: New calibration tab to customize pressure response curves and test your pen.
 - **Native File Dialogs**: Standard Linux file picker for importing and exporting 3D models and scenes.
 - **System Fonts & Cyrillic**: Sharp interface rendering using distribution fonts with full Cyrillic support.
+- **Undo & Tube Stability**: Fixed heap corruption crash on Linux when undoing procedural Tube modifications and topological changes.
 
 ## [0.3.9]
 - **Quad Draw Retopology**: Interactive surface retopology tool with real-time snapping to target meshes and full Undo/Redo (Ctrl+Z) support.

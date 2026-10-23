@@ -29,7 +29,7 @@ public:
 
     // Multi-instance & Procedural Tube Persistence
     void syncToActiveMesh();
-    bool loadFromMesh(Mesh* mesh);
+    bool loadFromMesh(Mesh* mesh, bool forceReload = false);
     void startNewTube(Scene& scene);
     Mesh* bakeToMesh(Scene& scene);
     Mesh* bakeMesh(Scene& scene, Mesh* mesh);

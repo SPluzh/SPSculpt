@@ -176,6 +176,7 @@ public:
     void deleteSelection();
     void replaceMesh(Mesh* oldMesh, Mesh* newMesh);
     void clear();
+    void notifyMeshWillBeDeleted(Mesh* m);
     const std::vector<Mesh*>& getMeshes() const;
     void selectMesh(Mesh* m);
     Mesh* getSelected() const;

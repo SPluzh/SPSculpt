@@ -148,30 +148,44 @@ void QuadDrawTool::onSceneTopologyRestored(Scene& scene) {
     m_extrudedFrontEdges.clear();
     m_snapper.ClearCache();
 
-    ensureTargetAndRetopo(scene, false);
+    if (m_sculpt.getBrush() == BRUSH_QUAD_DRAW) {
+        ensureTargetAndRetopo(scene, false);
 
-    if (m_retopoMesh) {
-        std::unordered_set<uint32_t> validPins;
-        for (uint32_t v : m_pinnedVertices) {
-            if (v < (uint32_t)m_retopoMesh->nbVerts) {
-                validPins.insert(v);
+        if (m_retopoMesh) {
+            std::unordered_set<uint32_t> validPins;
+            for (uint32_t v : m_pinnedVertices) {
+                if (v < (uint32_t)m_retopoMesh->nbVerts) {
+                    validPins.insert(v);
+                }
             }
-        }
-        m_pinnedVertices = std::move(validPins);
-        pruneSelectedEdges();
+            m_pinnedVertices = std::move(validPins);
+            pruneSelectedEdges();
 
-        bool loopValid = true;
-        for (int32_t v : m_lastTubeSliceLoop) {
-            if (v < 0 || v >= m_retopoMesh->nbVerts) {
-                loopValid = false;
-                break;
+            bool loopValid = true;
+            for (int32_t v : m_lastTubeSliceLoop) {
+                if (v < 0 || v >= m_retopoMesh->nbVerts) {
+                    loopValid = false;
+                    break;
+                }
             }
+            if (!loopValid) m_lastTubeSliceLoop.clear();
+        } else {
+            m_pinnedVertices.clear();
+            m_selectedEdges.clear();
+            m_lastTubeSliceLoop.clear();
         }
-        if (!loopValid) m_lastTubeSliceLoop.clear();
     } else {
-        m_pinnedVertices.clear();
-        m_selectedEdges.clear();
-        m_lastTubeSliceLoop.clear();
+        const auto& meshes = scene.getMeshes();
+        if (m_targetMesh && std::find(meshes.begin(), meshes.end(), m_targetMesh) == meshes.end()) {
+            m_targetMesh = nullptr;
+            m_snapper.ClearCache();
+        }
+        if (m_retopoMesh && std::find(meshes.begin(), meshes.end(), m_retopoMesh) == meshes.end()) {
+            m_retopoMesh = nullptr;
+            m_pinnedVertices.clear();
+            m_selectedEdges.clear();
+            m_lastTubeSliceLoop.clear();
+        }
     }
 }
 

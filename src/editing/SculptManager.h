@@ -535,6 +535,13 @@ public:
     PrimitiveTool* getPrimitiveTool() const { return m_primitiveTool.get(); }
     retopo::QuadDrawTool* getQuadDrawTool() const { return m_quadDrawTool.get(); }
 
+    void notifyMeshDeleted(Mesh* mesh) {
+        if (m_lastActiveMesh == mesh) {
+            m_lastActiveMesh = nullptr;
+        }
+        m_knownMeshes.erase(mesh);
+    }
+
 private:
     Mesh* m_lastActiveMesh = nullptr;
     std::unordered_set<const Mesh*> m_knownMeshes;

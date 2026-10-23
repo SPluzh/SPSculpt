@@ -224,7 +224,11 @@ public:
 
     bool Build(const Mesh* targetMesh) {
         Clear();
-        if (!targetMesh || targetMesh->nbFaces == 0 || targetMesh->nbVerts == 0) return false;
+        if (!targetMesh || targetMesh->nbFaces <= 0 || targetMesh->nbVerts <= 0 ||
+            targetMesh->faces.size() < (size_t)targetMesh->nbFaces * 4 ||
+            targetMesh->verts.size() < (size_t)targetMesh->nbVerts * 3) {
+            return false;
+        }
 
         const int numFaces = targetMesh->nbFaces;
         const int numVerts = targetMesh->nbVerts;

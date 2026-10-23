@@ -2396,7 +2396,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 settings.intensity = intensityPct / 100.0f;
             }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Overall brush strength (0% to 1000%)");
+                ImGui::SetTooltip("%s", "Overall brush strength (0% to 1000%)");
                 float wheel = ImGui::GetIO().MouseWheel;
                 if (wheel != 0.0f) {
                     float stepPct = (intensityPct < 100.0f) ? 5.0f : 25.0f;
@@ -3882,7 +3882,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         stack.bake(stack.getBase(), selectedMesh->verts);
                         selectedMesh->updateAfterLayerBake();
                     }
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Layer Intensity (-100% to 100%)");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Layer Intensity (-100% to 100%)");
                     ImGui::PopItemWidth();
 
                     ImGui::PopID();
@@ -10378,7 +10378,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
                 ImGui::CloseCurrentPopup();
             }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Reset 2D pan offset to center and zoom scale to 100%");
+                ImGui::SetTooltip("%s", "Reset 2D pan offset to center and zoom scale to 100%");
             }
 
             ImGui::EndPopup();

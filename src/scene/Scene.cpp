@@ -77,6 +77,7 @@ Scene::~Scene() {
 
 void Scene::clear() {
     for (auto* m : m_meshes) {
+        notifyMeshWillBeDeleted(m);
         delete m;
     }
     m_meshes.clear();
@@ -92,6 +93,19 @@ void Scene::clear() {
     m_refImages.clear();
     m_soloMeshId = 0;
     m_isModified = false;
+}
+
+void Scene::notifyMeshWillBeDeleted(Mesh* m) {
+    if (!m) return;
+    if (m_sculptManager) {
+        if (auto* tube = m_sculptManager->getTubeTool()) {
+            tube->notifyMeshDeleted(m);
+        }
+        if (auto* qd = m_sculptManager->getQuadDrawTool()) {
+            qd->notifyMeshDeleted(m);
+        }
+        m_sculptManager->notifyMeshDeleted(m);
+    }
 }
 
 void Scene::addReferenceImage(const std::string& path) {
@@ -403,6 +417,7 @@ void Scene::restoreState(const HistoryState& hs) {
     }
 
     for (auto& pair : existingMap) {
+        notifyMeshWillBeDeleted(pair.second);
         delete pair.second;
     }
 
@@ -441,7 +456,7 @@ void Scene::restoreState(const HistoryState& hs) {
         if (auto* tube = m_sculptManager->getTubeTool()) {
             Mesh* sel = getSelected();
             if (sel && sel->isTube && sel->tubeData) {
-                tube->loadFromMesh(sel);
+                tube->loadFromMesh(sel, true);
             } else if (tube->getActiveTubeMesh() && std::find(m_meshes.begin(), m_meshes.end(), tube->getActiveTubeMesh()) == m_meshes.end()) {
                 tube->notifyMeshDeleted(tube->getActiveTubeMesh());
             }
@@ -542,14 +557,7 @@ void Scene::removeMesh(Mesh* m) {
             m_selectedMeshes.erase(selIt);
         }
         
-        if (m_sculptManager) {
-            if (auto* tube = m_sculptManager->getTubeTool()) {
-                tube->notifyMeshDeleted(m);
-            }
-            if (auto* qd = m_sculptManager->getQuadDrawTool()) {
-                qd->notifyMeshDeleted(m);
-            }
-        }
+        notifyMeshWillBeDeleted(m);
         delete m;
         
         if (m_selectedIdx == idx) {
@@ -606,6 +614,7 @@ void Scene::replaceMesh(Mesh* oldMesh, Mesh* newMesh) {
             sel = newMesh;
         }
     }
+    notifyMeshWillBeDeleted(oldMesh);
     delete oldMesh;
 }
 
@@ -1555,6 +1564,7 @@ void Scene::mergeSelection() {
         auto it = std::find(m_meshes.begin(), m_meshes.end(), m);
         if (it != m_meshes.end()) {
             m_meshes.erase(it);
+            notifyMeshWillBeDeleted(m);
             delete m;
         }
     }

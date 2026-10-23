@@ -94,13 +94,13 @@ void TubeTool::syncToActiveMesh() {
     td.showProfileAtEnd = showProfileAtEnd;
 }
 
-bool TubeTool::loadFromMesh(Mesh* mesh) {
+bool TubeTool::loadFromMesh(Mesh* mesh, bool forceReload) {
     if (!mesh || !mesh->isTube || !mesh->tubeData) return false;
     if (isInteracting()) return false;
 
-    if (m_activeTubeMesh == mesh) return true;
+    if (m_activeTubeMesh == mesh && !forceReload) return true;
 
-    if (m_activeTubeMesh && m_activeTubeMesh != mesh) {
+    if (m_activeTubeMesh && m_activeTubeMesh != mesh && !forceReload) {
         syncToActiveMesh();
     }
 
