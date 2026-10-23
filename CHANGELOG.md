@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.10]
+- **Linux Platform Support**: Native support for Linux with standalone portable builds, automatic shared library discovery (`$ORIGIN` RPATH), and dedicated build and launch scripts.
+- **Stylus & Graphic Tablet Support (Evdev)**: Direct kernel-level graphics tablet integration on Linux via `/dev/input/` with real-time pressure sensitivity, tilt tracking, and eraser mode for natural sculpting.
+- **Cross-Platform Tablet Diagnostics**: Full tablet diagnostics panel and pressure response curves accessible on all platforms under Preferences, Window, and Options menus.
+- **Native Linux File Dialogs**: Seamless file open and save dialogs powered by `zenity` with multi-format filtering for scenes, meshes, and textures.
+- **System Typography & Fallbacks**: Crisp UI text rendering with automatic fallback detection for standard Linux distribution fonts (DejaVu Sans, Ubuntu, Liberation Sans, FreeSans) including Cyrillic glyphs.
+- **Remote VM Compilation**: Added automated build script (`build_linux_on_vm.bat`) to sync source code and compile Linux binaries on a virtual machine in a single command.
+
 ## [0.3.9]
 - **Quad Draw Retopology**: Interactive surface retopology tool with real-time snapping to target meshes and full Undo/Redo (Ctrl+Z) support.
 - **Point & Quad Creation**: Click to place surface points, Shift+Click to create quads, and drag boundary edges or corner vertices to extrude with magnetic auto-welding.
