@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.9]
+- **Quad Draw Retopology**: Interactive surface retopology tool with real-time snapping to target meshes and full Undo/Redo (Ctrl+Z) support.
+- **Point & Quad Creation**: Click to place surface points, Shift+Click to create quads, and drag boundary edges or corner vertices to extrude with magnetic auto-welding.
+- **Multi-Edge Extrude & Strip Tool**: Extrude multiple selected edges simultaneously, or sketch freehand strokes to quickly lay down quad strips following organic curves.
+- **Tube Retopology**: Rapidly retopologize limbs and fingers using cross-section rings (**Tube Slice**) or an interactive 3D centerline curve (**Tube Curve**).
+- **Multi-Cut & Loop Cut**: Slice across polygons with live previews and percentage snapping (25%/50%/75%), or insert Edge Loops via Ctrl+LMB.
+- **Tweak & Backface Occlusion**: Drag vertices, edges, or entire polygons directly on the surface, with backface culling to prevent snapping through to the rear of the model.
+- **Overlay Themes & Preferences**: Clean viewport overlays that render beneath UI panels, with customizable colors and magnetic weld markers in Preferences.
+
 ## [0.3.8]
 - **Cylinder Radius Manipulator**: Added interactive 3D viewport manipulator and GUI slider for cylinder radius, seamlessly scaling top and bottom radii together.
 - **Primitive Gizmo Independence**: Primitive resize handles stay firmly anchored to the object's geometric center and orientation, even when moving, rotating, or aligning the Transform tool pivot.
@@ -10,7 +19,6 @@ All notable changes to this project will be documented in this file.
 - **Boolean & Trim on Primitives**: Fixed cap quad winding order on Cylinders, Cones, and partial Torus so primitives generate watertight 2-manifold geometry compatible with Boolean, Trim, and Split tools.
 - **Boolean & Trim on Tubes**: Fixed tube caps so baked tubes work seamlessly with Boolean, Trim, and Split tools.
 - **Bake All Tubes**: Properly syncs and finalizes all active curves before converting tubes into editable meshes.
-- **Quad Draw Overlay Occlusion**: Render Quad Draw mesh wireframe, vertices, and overlays on ImGui's background draw list so they no longer render on top of ImGui windows and panels.
 
 ## [0.3.7]
 - **Interactive Primitives**: 3D viewport handles to drag size, radius, height, and bevels directly on the mesh.
