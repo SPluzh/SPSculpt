@@ -2025,7 +2025,7 @@ bool QuadDrawTool::isPointOccluded(const Scene& scene, const Camera& camera, con
 }
 
 void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, float vH) {
-    ImDrawList* drawList = ImGui::GetForegroundDrawList();
+    ImDrawList* drawList = ImGui::GetBackgroundDrawList();
     if (!drawList) return;
 
     ensureTargetAndRetopo(scene, false);

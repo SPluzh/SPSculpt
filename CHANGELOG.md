@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 - **Boolean & Trim on Primitives**: Fixed cap quad winding order on Cylinders, Cones, and partial Torus so primitives generate watertight 2-manifold geometry compatible with Boolean, Trim, and Split tools.
 - **Boolean & Trim on Tubes**: Fixed tube caps so baked tubes work seamlessly with Boolean, Trim, and Split tools.
 - **Bake All Tubes**: Properly syncs and finalizes all active curves before converting tubes into editable meshes.
+- **Quad Draw Overlay Occlusion**: Render Quad Draw mesh wireframe, vertices, and overlays on ImGui's background draw list so they no longer render on top of ImGui windows and panels.
 
 ## [0.3.7]
 - **Interactive Primitives**: 3D viewport handles to drag size, radius, height, and bevels directly on the mesh.
