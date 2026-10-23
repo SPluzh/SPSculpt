@@ -2,6 +2,7 @@
 #include "common/Logger.h"
 #include <algorithm>
 #include <cmath>
+#include <unordered_map>
 
 namespace retopo {
 
