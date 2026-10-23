@@ -15,9 +15,7 @@
 #include "editing/undo/UndoManager.h"
 #include "common/Logger.h"
 #include <glm/gtc/matrix_transform.hpp>
-#ifdef _WIN32
 #include "platform/TabletInput.h"
-#endif
 #include "mesh/Topology.h"
 #include "mesh/Mesh.h"
 #include <vector>
@@ -1083,7 +1081,6 @@ int SculptManager::doStrokePass(
             std::memcpy(alphaLookAt, &lookAtMat[0][0], 16 * sizeof(float));
 
             float finalAngle = getCurrentSettings().stampAngle;
-#ifdef _WIN32
             if (getCurrentSettings().stampUseTilt && g_tablet.isAvailable() && g_tablet.isPenActive() && g_tablet.isTiltEnabled()) {
                 float tx = g_tablet.getTiltX();
                 float ty = g_tablet.getTiltY();
@@ -1092,7 +1089,6 @@ int SculptManager::doStrokePass(
                     finalAngle += tiltAngle;
                 }
             }
-#endif
 
             deformedCount = strokeBrush(
                 mesh->verts.data(),
@@ -3198,7 +3194,6 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
                 // Check stylus/tablet pressure
                 float currentPressure = 1.0f;
-#ifdef _WIN32
                 if (g_tablet.isAvailable() && g_tablet.isPenActive()) {
                     currentPressure = g_tablet.getPressure();
                 } else {
@@ -3208,13 +3203,6 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     }
                     currentPressure = m_usingStylus ? m_stylusPressure : 1.0f;
                 }
-#else
-                if (m_usingStylus && (SDL_GetTicks() - m_lastStylusTime > 1000)) {
-                    m_usingStylus = false;
-                    m_stylusPressure = 1.0f;
-                }
-                currentPressure = m_usingStylus ? m_stylusPressure : 1.0f;
-#endif
 
                 // Execute first stroke frame immediately
                 executeStroke(scene, mesh, camera, (float)mouseX, (float)mouseY, currentPressure);
@@ -4275,7 +4263,6 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             Mesh* targetMesh = m_isTubeMoveStroke ? (m_tubeMoveHitMesh ? m_tubeMoveHitMesh : mesh) : mesh;
             // Check stylus/tablet pressure
             float currentPressure = 1.0f;
-#ifdef _WIN32
             if (g_tablet.isAvailable() && g_tablet.isPenActive()) {
                 currentPressure = g_tablet.getPressure();
             } else {
@@ -4285,13 +4272,6 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 }
                 currentPressure = m_usingStylus ? m_stylusPressure : 1.0f;
             }
-#else
-            if (m_usingStylus && (SDL_GetTicks() - m_lastStylusTime > 1000)) {
-                m_usingStylus = false;
-                m_stylusPressure = 1.0f;
-            }
-            currentPressure = m_usingStylus ? m_stylusPressure : 1.0f;
-#endif
 
             float strokeDx = (float)(mouseX - m_lastStrokeX);
             float strokeDy = (float)(mouseY - m_lastStrokeY);

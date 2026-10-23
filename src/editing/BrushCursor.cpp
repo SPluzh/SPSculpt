@@ -4,9 +4,7 @@
 #include "scene/Camera.h"
 #include "render/AngleRenderer.h"
 #include "mesh/Mesh.h"
-#ifdef _WIN32
 #include "platform/TabletInput.h"
-#endif
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <cmath>

@@ -35,12 +35,14 @@
 
 #include "platform/HotkeyDispatcher.h"
 #include "platform/HotkeyManager.h"
+#include "platform/TabletInput.h"
 #include "render/RenderSettings.h"
 #include "common/IniFile.h"
 #include "common/RecentFiles.h"
 #include "common/Version.h"
 #include "common/FormatConstants.h"
 #include "common/StringUtils.h"
+#include "common/Logger.h"
 #include "brushes/BrushPresetManager.h"
 #include "files/FileManager.h"
 #include "stb_image.h"
@@ -52,6 +54,9 @@
 #include "editing/BooleanTool.h"
 #include "editing/PrimitiveTool.h"
 #include <cctype>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 static bool isImageFile(const std::string& path) {
     size_t dotPos = path.find_last_of('.');
@@ -94,8 +99,6 @@ static void setAppWindowIcon(SDL_Window* window, const char* iconPath) {
 #include <windows.h>
 #include <shellapi.h>
 #include <SDL2/SDL_syswm.h>
-#include "platform/TabletInput.h"
-#include "common/Logger.h"
 
 LONG WINAPI windowsExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo) {
     sculpt_log("\n=============================================\n");
@@ -194,6 +197,9 @@ static void SDLCALL TabletMessageHook(void* userdata, void* hWnd, unsigned int m
 #endif
 
 void crashHandler(int signum) {
+    if (signum == SIGINT || signum == SIGTERM) {
+        exit(0);
+    }
     sculpt_log("\n=============================================\n");
     const char* sigName = "Unknown";
     switch (signum) {
@@ -290,6 +296,19 @@ int main(int argc, char* argv[]) {
         size_t lastSlash = pathStr.find_last_of(L"\\/");
         if (lastSlash != std::wstring::npos) {
             SetCurrentDirectoryW(pathStr.substr(0, lastSlash).c_str());
+        }
+    }
+#else
+    char exePathBuf[1024];
+    ssize_t len = readlink("/proc/self/exe", exePathBuf, sizeof(exePathBuf) - 1);
+    if (len != -1) {
+        exePathBuf[len] = '\0';
+        std::string pathStr(exePathBuf);
+        size_t lastSlash = pathStr.find_last_of('/');
+        if (lastSlash != std::string::npos) {
+            if (chdir(pathStr.substr(0, lastSlash).c_str()) != 0) {
+                // ignore
+            }
         }
     }
 #endif
@@ -547,6 +566,8 @@ int main(int argc, char* argv[]) {
         g_tablet.startPolling();
     }
     SDL_SetWindowsMessageHook(TabletMessageHook, &sculpt);
+#else
+    g_tablet.startPolling();
 #endif
 
     auto lastFrameTime = std::chrono::high_resolution_clock::now();
@@ -977,6 +998,8 @@ int main(int argc, char* argv[]) {
 
 #ifdef _WIN32
     g_tablet.wintabClose();
+#else
+    g_tablet.stopPolling();
 #endif
 
     gui.shutdown();

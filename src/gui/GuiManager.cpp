@@ -661,6 +661,19 @@ void GuiManager::rebuildFontsAndStyles() {
     if (!mainFont) {
         mainFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\arial.ttf", std::round(14.0f * combinedScale), nullptr, io.Fonts->GetGlyphRangesCyrillic());
     }
+#else
+    const char* linuxFontPaths[] = {
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf"
+    };
+    for (const char* p : linuxFontPaths) {
+        if (std::filesystem::exists(p)) {
+            mainFont = io.Fonts->AddFontFromFileTTF(p, std::round(14.0f * combinedScale), nullptr, io.Fonts->GetGlyphRangesCyrillic());
+            if (mainFont) break;
+        }
+    }
 #endif
 
     if (!mainFont) {
@@ -2361,7 +2374,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGui::SliderFloat("Radius", &settings.radius, 1.0f, 1000.0f, "%.1f px");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Brush radius in pixels");
 
-#ifdef _WIN32
             bool pressureSize = g_tablet.isPressureSizeEnabled();
             if (ImGui::Checkbox("Use Pressure for Size", &pressureSize)) {
                 g_tablet.setPressureSizeEnabled(pressureSize);
@@ -2373,7 +2385,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 g_tablet.setPressureCursorEnabled(pressureCursor);
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Vary cursor dot/point size dynamically based on stylus pressure");
-#endif
 
             float intensityPct = settings.intensity * 100.0f;
             float maxPct = (intensityPct > 100.0f) ? std::min(1000.0f, std::max(100.0f, intensityPct)) : 100.0f;
@@ -2553,7 +2564,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     float rOut = size * 0.4f;
                     float rIn = rOut * settings.stampInnerRatio;
                     float finalAngle = settings.stampAngle;
-#ifdef _WIN32
                     if (settings.stampUseTilt && g_tablet.isAvailable() && g_tablet.isPenActive() && g_tablet.isTiltEnabled()) {
                         float tx = g_tablet.getTiltX();
                         float ty = g_tablet.getTiltY();
@@ -2561,7 +2571,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             finalAngle += std::atan2(ty, tx) * (180.0f / 3.1415926535f);
                         }
                     }
-#endif
                     float angleRad = finalAngle * (3.14159265f / 180.0f);
                     float cosA = std::cos(angleRad);
                     float sinA = std::sin(angleRad);
@@ -8712,11 +8721,17 @@ void GuiManager::drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRend
         }
         ImGui::Separator();
         ImGui::MenuItem("Preferences & App Settings", nullptr, &m_showPreferencesPanel);
+        if (ImGui::MenuItem("Tablet & Stylus Settings...")) {
+            toggleTabletDiagPanel();
+        }
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Options")) {
         if (ImGui::MenuItem("Preferences & App Settings...", "Ctrl+,")) {
             m_showPreferencesPanel = true;
+        }
+        if (ImGui::MenuItem("Tablet & Stylus Settings...")) {
+            toggleTabletDiagPanel();
         }
         ImGui::EndMenu();
     }
@@ -11915,7 +11930,6 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                 ImGui::EndTabItem();
             }
 
-#ifdef _WIN32
             // 7. Tablet & Stylus Tab
             ImGuiTabItemFlags tabletTabFlags = (m_preferencesActiveTab == 6) ? ImGuiTabItemFlags_SetSelected : 0;
             if (ImGui::BeginTabItem("Tablet & Stylus", nullptr, tabletTabFlags)) {
@@ -11927,6 +11941,7 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                 TabletMode activeMode = g_tablet.getActiveMode();
                 TabletMode forcedMode = g_tablet.getForcedMode();
 
+#ifdef _WIN32
                 const char* modeNames[] = { "Auto (Fallback)", "Windows Ink", "WinTab" };
                 int currentModeIdx = 0;
                 if (forcedMode == TabletMode::WININK) currentModeIdx = 1;
@@ -11938,10 +11953,19 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                     else if (currentModeIdx == 1) g_tablet.setForcedMode(TabletMode::WININK);
                     else if (currentModeIdx == 2) g_tablet.setForcedMode(TabletMode::WINTAB);
                 }
+#endif
 
                 TabletInput::DiagInfo diag = g_tablet.getDiagInfo();
 
-                ImGui::Text("Active Mode: %s", (diag.activeMode == TabletMode::WINTAB ? "WinTab" : (diag.activeMode == TabletMode::WININK ? "Windows Ink" : "None (Mouse)")));
+                const char* modeStr = "None (Mouse)";
+                if (diag.activeMode == TabletMode::WINTAB) modeStr = "WinTab";
+                else if (diag.activeMode == TabletMode::WININK) modeStr = "Windows Ink";
+                else if (diag.activeMode == TabletMode::LINUX_EVDEV) modeStr = "Linux Evdev (Direct Input)";
+
+                ImGui::Text("Active Mode: %s", modeStr);
+                if (!diag.deviceName.empty()) {
+                    ImGui::Text("Device: %s", diag.deviceName.c_str());
+                }
                 ImGui::SameLine();
                 if (diag.activeMode != TabletMode::NONE) {
                     ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "  [Connected]");
@@ -11963,9 +11987,13 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                 ImGui::Separator();
                 ImGui::Spacing();
 
+#ifdef _WIN32
                 ImGui::Text("Wintab32.dll: %s", (diag.wintabLoaded ? "LOADED" : "NOT FOUND"));
                 ImGui::Text("WinTab Context: %s", (diag.wintabContextOpen ? "OPEN" : "CLOSED"));
                 ImGui::Text("Windows Ink: %s", (diag.winInkAvailable ? "AVAILABLE" : "NOT ACTIVE"));
+#else
+                ImGui::Text("Subsystem: Linux Evdev (Kernel Direct Input)");
+#endif
                 ImGui::Text("Max Pressure: %d", diag.maxPressure);
                 ImGui::Text("Packets/Sec: %d", diag.packetsLastSecond);
 
@@ -12238,7 +12266,6 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
 
                 ImGui::EndTabItem();
             }
-#endif
 
             // 8. Hotkeys & Navigation Tab
             ImGuiTabItemFlags hotkeysTabFlags = (m_preferencesActiveTab == 7) ? ImGuiTabItemFlags_SetSelected : 0;

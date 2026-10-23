@@ -12,6 +12,7 @@ include(FetchContent)
 FetchContent_Declare(imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
     GIT_TAG v1.91.0
+    GIT_SHALLOW TRUE
 )
 FetchContent_GetProperties(imgui)
 if(NOT imgui_POPULATED)
@@ -21,6 +22,7 @@ endif()
 FetchContent_Declare(json
     GIT_REPOSITORY https://github.com/nlohmann/json.git
     GIT_TAG v3.11.3
+    GIT_SHALLOW TRUE
 )
 
 set(MANIFOLD_PAR "NONE" CACHE STRING "Parallel backend" FORCE)
@@ -195,6 +197,15 @@ if(MINGW)
     target_link_options(SPSculpt PRIVATE -static-libgcc -static-libstdc++)
 endif()
 
+if(UNIX AND NOT APPLE)
+    find_package(Threads REQUIRED)
+    target_link_libraries(SPSculpt PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+    set_target_properties(SPSculpt PROPERTIES
+        BUILD_RPATH "$ORIGIN"
+        INSTALL_RPATH "$ORIGIN"
+    )
+endif()
+
 add_custom_command(
     TARGET SPSculpt POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -202,5 +213,17 @@ add_custom_command(
         $<TARGET_FILE_DIR:SPSculpt>/resources
     COMMENT "Copying resources to binary output directory"
 )
+
+if(UNIX AND NOT APPLE)
+    add_custom_command(
+        TARGET SPSculpt POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_SONAME_FILE:manifold>
+            $<TARGET_FILE_DIR:SPSculpt>/
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_SONAME_FILE:Clipper2>
+            $<TARGET_FILE_DIR:SPSculpt>/
+    )
+endif()
 
 

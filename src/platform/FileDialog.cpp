@@ -1,6 +1,7 @@
 #include "platform/FileDialog.h"
 #include "common/StringUtils.h"
 #include "common/FormatConstants.h"
+#include <algorithm>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -75,6 +76,31 @@ std::string openFile(const std::vector<FilterSpec>& filters, const std::string& 
     if (GetOpenFileNameW(&ofn)) {
         return wideToUtf8(szFile);
     }
+#else
+    std::vector<FilterSpec> effectiveFilters = filters.empty() ? getImportFilters() : filters;
+    std::string cmd = "zenity --file-selection";
+    if (!title.empty()) {
+        cmd += " --title=\"" + title + "\"";
+    }
+    for (const auto& f : effectiveFilters) {
+        std::string pat = f.pattern;
+        std::replace(pat.begin(), pat.end(), ';', ' ');
+        cmd += " --file-filter=\"" + f.name + " | " + pat + "\"";
+    }
+    cmd += " 2>/dev/null";
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (pipe) {
+        char buf[1024];
+        std::string res;
+        while (fgets(buf, sizeof(buf), pipe) != nullptr) {
+            res += buf;
+        }
+        pclose(pipe);
+        while (!res.empty() && (res.back() == '\n' || res.back() == '\r')) {
+            res.pop_back();
+        }
+        if (!res.empty()) return res;
+    }
 #endif
     return "";
 }
@@ -124,6 +150,38 @@ std::string saveFile(const std::vector<FilterSpec>& filters, const std::string& 
 
     if (GetSaveFileNameW(&ofn)) {
         return wideToUtf8(szFile);
+    }
+#else
+    std::vector<FilterSpec> effectiveFilters = filters.empty() ? getExportFilters() : filters;
+    std::string cmd = "zenity --file-selection --save --confirm-overwrite";
+    if (!title.empty()) {
+        cmd += " --title=\"" + title + "\"";
+    }
+    for (const auto& f : effectiveFilters) {
+        std::string pat = f.pattern;
+        std::replace(pat.begin(), pat.end(), ';', ' ');
+        cmd += " --file-filter=\"" + f.name + " | " + pat + "\"";
+    }
+    cmd += " 2>/dev/null";
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (pipe) {
+        char buf[1024];
+        std::string res;
+        while (fgets(buf, sizeof(buf), pipe) != nullptr) {
+            res += buf;
+        }
+        pclose(pipe);
+        while (!res.empty() && (res.back() == '\n' || res.back() == '\r')) {
+            res.pop_back();
+        }
+        if (!res.empty()) {
+            if (!defaultExt.empty() && res.find('.') == std::string::npos) {
+                std::string ext = defaultExt;
+                if (ext.front() != '.') ext = "." + ext;
+                res += ext;
+            }
+            return res;
+        }
     }
 #endif
     return "";

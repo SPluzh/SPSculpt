@@ -1,9 +1,7 @@
 #pragma once
 #include <SDL2/SDL.h>
 #include <imgui.h>
-#ifdef _WIN32
 #include "platform/TabletInput.h"
-#endif
 #include <deque>
 #include <chrono>
 #include <thread>
