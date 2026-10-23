@@ -24,6 +24,7 @@
 #include "editing/QuadDrawTool.h"
 #include "editing/BooleanTool.h"
 #include "editing/undo/UndoManager.h"
+#include "gui/ToolOverlayTheme.h"
 #include <imgui.h>
 #include "gui/IconsLucide.h"
 #include "gui/lucide_font.h"
@@ -3432,11 +3433,13 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         ImVec4 wireColor = qd->getWireColor();
                         if (ImGui::ColorEdit4("Wire Color", (float*)&wireColor, ImGuiColorEditFlags_NoInputs)) {
                             qd->setWireColor(wireColor);
+                            gui::ToolOverlayTheme::get().edgeWireframe = wireColor;
                         }
 
                         float ptSize = qd->getPointSize();
                         if (ImGui::SliderFloat("Point Size", &ptSize, 2.0f, 12.0f, "%.1f")) {
                             qd->setPointSize(ptSize);
+                            gui::ToolOverlayTheme::get().pointRadius = ptSize;
                         }
 
                         ImGui::Separator();
@@ -7530,10 +7533,14 @@ bool GuiManager::saveSettings(IniFile& ini) {
         m_hotkeyManager->saveActivePresetName(ini);
     }
 
+    gui::ToolOverlayTheme::get().save(ini);
+
     return true;
 }
 
 bool GuiManager::loadSettings(const IniFile& ini) {
+    gui::ToolOverlayTheme::get().load(ini);
+
     if (m_hotkeyManager) {
         m_hotkeyManager->loadActivePresetName(ini);
     }
@@ -11156,6 +11163,13 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                     takeScreenshot(scene, renderer);
                 }
 
+                ImGui::EndTabItem();
+            }
+
+            // 2.5 Tool Overlays & Colors Tab
+            if (ImGui::BeginTabItem("Tool Overlays & Colors")) {
+                ImGui::Spacing();
+                gui::ToolOverlayTheme::get().drawSettingsUI();
                 ImGui::EndTabItem();
             }
 

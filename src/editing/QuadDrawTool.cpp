@@ -2,6 +2,7 @@
 #include "editing/SculptManager.h"
 #include "editing/undo/UndoManager.h"
 #include "common/Logger.h"
+#include "gui/ToolOverlayTheme.h"
 #include <SDL2/SDL.h>
 #include <cmath>
 #include <algorithm>
@@ -10,6 +11,7 @@ namespace retopo {
 
 QuadDrawTool::QuadDrawTool(SculptManager& sm)
     : m_sculpt(sm) {
+    m_wireColor = gui::ToolOverlayTheme::get().edgeWireframe;
 }
 
 QuadDrawTool::~QuadDrawTool() = default;
@@ -1339,6 +1341,11 @@ bool QuadDrawTool::handleMouseMove(
             m_builder.SetVertexPosition(m_retopoMesh, tv.vertexIdx, newPos);
         }
 
+        auto getVertWorld = [&](int32_t idx) -> glm::vec3 {
+            glm::vec3 p(m_retopoMesh->verts[idx * 3], m_retopoMesh->verts[idx * 3 + 1], m_retopoMesh->verts[idx * 3 + 2]);
+            return (m_retopoMesh->matrix != glm::mat4(1.0f)) ? glm::vec3(m_retopoMesh->matrix * glm::vec4(p, 1.0f)) : p;
+        };
+
         // 2. Check weld candidates
         if (m_tweakVerts.size() == 1) {
             glm::vec3 curPos(
@@ -1354,10 +1361,22 @@ bool QuadDrawTool::handleMouseMove(
                 camera, m_retopoMesh, mouseX, mouseY, m_weldRadiusPixels, m_tweakVerts[0].vertexIdx, m_targetMesh, snap.valid ? &snap : nullptr,
                 &curPos
             );
+            if (m_weldTargetVertex != -1 && movingVerts.count(m_weldTargetVertex)) {
+                m_weldTargetVertex = -1;
+            }
             m_tweakVerts[0].weldTarget = m_weldTargetVertex;
+
+            // 3. Magnetic visual snap to weld target
+            if (m_weldTargetVertex != -1 && m_weldTargetVertex < (int32_t)m_retopoMesh->nbVerts) {
+                glm::vec3 targetWorld = getVertWorld(m_weldTargetVertex);
+                m_builder.SetVertexPosition(m_retopoMesh, m_tweakVerts[0].vertexIdx, targetWorld);
+            }
         } else {
             m_weldTargetVertex = -1;
-            for (auto& tv : m_tweakVerts) {
+            std::unordered_map<int32_t, int> weldTargetToTvIdx;
+
+            for (size_t i = 0; i < m_tweakVerts.size(); ++i) {
+                auto& tv = m_tweakVerts[i];
                 glm::vec3 curPos(
                     m_retopoMesh->verts[tv.vertexIdx * 3 + 0],
                     m_retopoMesh->verts[tv.vertexIdx * 3 + 1],
@@ -1375,6 +1394,35 @@ bool QuadDrawTool::handleMouseMove(
                     weld = -1;
                 }
                 tv.weldTarget = weld;
+
+                if (weld != -1) {
+                    auto it = weldTargetToTvIdx.find(weld);
+                    if (it != weldTargetToTvIdx.end()) {
+                        int otherIdx = it->second;
+                        glm::vec3 otherPos(
+                            m_retopoMesh->verts[m_tweakVerts[otherIdx].vertexIdx * 3 + 0],
+                            m_retopoMesh->verts[m_tweakVerts[otherIdx].vertexIdx * 3 + 1],
+                            m_retopoMesh->verts[m_tweakVerts[otherIdx].vertexIdx * 3 + 2]
+                        );
+                        glm::vec3 targetWorld = getVertWorld(weld);
+                        if (glm::distance(curPos, targetWorld) < glm::distance(otherPos, targetWorld)) {
+                            m_tweakVerts[otherIdx].weldTarget = -1;
+                            it->second = (int)i;
+                        } else {
+                            tv.weldTarget = -1;
+                        }
+                    } else {
+                        weldTargetToTvIdx[weld] = (int)i;
+                    }
+                }
+            }
+
+            // 3. Magnetic visual snap to weld targets
+            for (auto& tv : m_tweakVerts) {
+                if (tv.weldTarget != -1 && tv.weldTarget < (int32_t)m_retopoMesh->nbVerts) {
+                    glm::vec3 targetWorld = getVertWorld(tv.weldTarget);
+                    m_builder.SetVertexPosition(m_retopoMesh, tv.vertexIdx, targetWorld);
+                }
             }
         }
 
@@ -2128,6 +2176,8 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
             }
         }
 
+        auto& theme = gui::ToolOverlayTheme::get();
+
         // Draw Vertices
         for (int i = 0; i < ptCount; ++i) {
             if (!vertVisible[i]) continue;
@@ -2144,31 +2194,20 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
             }
 
             if (i == m_weldTargetVertex || i == m_extrudeWeldTarget0 || i == m_extrudeWeldTarget1 || i == m_extrudeVertexWeldTarget || isExtrudeWeld || isTweakWeld) {
-                // Weld Target highlight: Pulsing red
-                drawList->AddCircleFilled(p, m_pointSize * 1.6f, IM_COL32(255, 30, 30, 240));
-                drawList->AddCircle(p, m_pointSize * 2.2f, IM_COL32(255, 255, 255, 220), 16, 2.0f);
+                // Unified Weld Target highlight
+                theme.drawWeldMarker(drawList, p, m_pointSize);
             } else if (i == m_hoverVertex) {
                 if (m_subTool == QuadDrawSubTool::Extrude && m_builder.CanExtrudeVertex(m_retopoMesh, i)) {
-                    // Extrudable corner vertex: Green highlight ring
-                    drawList->AddCircleFilled(p, m_pointSize * 1.5f, IM_COL32(50, 255, 100, 255));
-                    drawList->AddCircle(p, m_pointSize * 2.2f, IM_COL32(255, 255, 255, 220), 16, 2.0f);
+                    theme.drawVertex(drawList, p, gui::OverlayVertexState::ExtrudableCorner, m_pointSize);
                 } else if (m_subTool == QuadDrawSubTool::Delete || (ImGui::GetIO().KeyCtrl && ImGui::GetIO().KeyShift)) {
-                    // Hovered vertex in Delete mode: Red
-                    drawList->AddCircleFilled(p, m_pointSize * 1.5f, IM_COL32(255, 40, 40, 255));
-                    drawList->AddCircle(p, m_pointSize * 2.0f, IM_COL32(255, 255, 255, 200), 16, 1.5f);
+                    theme.drawVertex(drawList, p, gui::OverlayVertexState::DeleteHover, m_pointSize);
                 } else {
-                    // Hovered vertex: Yellow
-                    drawList->AddCircleFilled(p, m_pointSize * 1.4f, IM_COL32(255, 230, 40, 255));
-                    drawList->AddCircle(p, m_pointSize * 1.8f, IM_COL32(0, 0, 0, 180), 16, 1.5f);
+                    theme.drawVertex(drawList, p, gui::OverlayVertexState::Hover, m_pointSize);
                 }
             } else if (m_pinnedVertices.count((uint32_t)i)) {
-                // Pinned vertex: Cyan
-                drawList->AddCircleFilled(p, m_pointSize * 1.2f, IM_COL32(30, 220, 255, 240));
-                drawList->AddCircle(p, m_pointSize * 1.4f, IM_COL32(0, 0, 0, 180), 16, 1.0f);
+                theme.drawVertex(drawList, p, gui::OverlayVertexState::Pinned, m_pointSize);
             } else {
-                // Standard retopo vertex: Light grey / white
-                drawList->AddCircleFilled(p, m_pointSize, IM_COL32(240, 240, 240, 220));
-                drawList->AddCircle(p, m_pointSize, IM_COL32(40, 40, 40, 180), 12, 1.0f);
+                theme.drawVertex(drawList, p, gui::OverlayVertexState::Normal, m_pointSize);
             }
         }
 
@@ -2362,23 +2401,9 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
             }
 
             for (const auto& tv : m_tweakVerts) {
-                if (tv.weldTarget != -1 && tv.weldTarget < ptCount) {
-                    if (m_xRay || vertVisible[tv.vertexIdx] || vertVisible[tv.weldTarget]) {
-                        glm::vec3 sSrc = screenPts[tv.vertexIdx];
-                        glm::vec3 sTgt = screenPts[tv.weldTarget];
-                        if (sSrc.z > 0.0f && sTgt.z > 0.0f) {
-                            drawList->AddLine(
-                                ImVec2(sSrc.x, sSrc.y), ImVec2(sTgt.x, sTgt.y),
-                                IM_COL32(50, 255, 100, 255), 2.2f
-                            );
-                            drawList->AddCircleFilled(
-                                ImVec2(sTgt.x, sTgt.y), m_pointSize * 1.6f,
-                                IM_COL32(50, 255, 100, 255)
-                            );
-                        }
-                    }
-                }
-                if (tv.vertexIdx >= 0 && tv.vertexIdx < ptCount && (m_xRay || vertVisible[tv.vertexIdx])) {
+                // When welded, the target vertex is already rendered as pulsing red with white ring in the vertex loop (isTweakWeld)
+                // and the tweaked vertex has magnetically snapped to it. Only draw the moving vertex highlight when not welded.
+                if (tv.weldTarget == -1 && tv.vertexIdx >= 0 && tv.vertexIdx < ptCount && (m_xRay || vertVisible[tv.vertexIdx])) {
                     glm::vec3 s = screenPts[tv.vertexIdx];
                     if (s.z > 0.0f && s.z < 1.0f) {
                         drawList->AddCircleFilled(ImVec2(s.x, s.y), m_pointSize * 1.3f, IM_COL32(50, 220, 255, 255));
@@ -2816,9 +2841,8 @@ void QuadDrawTool::renderOverlay(Scene& scene, const Camera& camera, float vW, f
         if (m_dragMode == DragMode::TubeCurveDrag && m_tubeCurveWeldTargetPointIdx >= 0 && m_tubeCurveWeldTargetPointIdx < (int32_t)numPts) {
             glm::vec3 sp = camera.project(m_tubeCurvePoints[m_tubeCurveWeldTargetPointIdx]);
             if (sp.z > 0.0f && sp.z < 1.0f) {
-                drawList->AddCircle(ImVec2(sp.x, sp.y), 15.0f, IM_COL32(50, 255, 100, 255), 24, 2.5f);
-                drawList->AddCircleFilled(ImVec2(sp.x, sp.y), 6.5f, IM_COL32(50, 255, 100, 220));
-                drawList->AddText(ImVec2(sp.x + 18.0f, sp.y - 10.0f), IM_COL32(50, 255, 100, 255), "Collapse Point");
+                gui::ToolOverlayTheme::get().drawWeldMarker(drawList, ImVec2(sp.x, sp.y), 6.5f);
+                drawList->AddText(ImVec2(sp.x + 18.0f, sp.y - 10.0f), gui::ToolOverlayTheme::toU32(gui::ToolOverlayTheme::get().weldTargetFill), "Collapse / Snap Point");
             }
         }
 

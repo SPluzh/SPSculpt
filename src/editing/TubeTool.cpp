@@ -1,6 +1,7 @@
 #include "editing/TubeTool.h"
 #include "editing/SculptManager.h"
 #include "gui/GuiManager.h"
+#include "gui/ToolOverlayTheme.h"
 #include "scene/Scene.h"
 #include "scene/Camera.h"
 #include "mesh/Mesh.h"
@@ -2438,9 +2439,8 @@ void TubeTool::renderOverlay(
 
             // Highlight ring if snap target
             if (isSnapTarget) {
-                drawList->AddCircle(p, r + 7.0f, IM_COL32(255, 140, 0, 255), 0, 3.0f);
-                drawList->AddCircleFilled(p, r + 5.0f, IM_COL32(255, 160, 40, 90));
-                drawList->AddText(ImVec2(p.x + r + 8.0f, p.y + 6.0f), IM_COL32(255, 180, 50, 255), "Snap & Merge");
+                gui::ToolOverlayTheme::get().drawWeldMarker(drawList, p, r);
+                drawList->AddText(ImVec2(p.x + r + 8.0f, p.y + 6.0f), gui::ToolOverlayTheme::toU32(gui::ToolOverlayTheme::get().weldTargetFill), "Snap & Merge");
             }
 
             // Drop shadow & Fill: Square for sharp corner point, Circle for smooth point
@@ -2599,9 +2599,8 @@ void TubeTool::renderOverlay(
 
                     // Snap target highlight
                     if (isSnapTarget) {
-                        drawList->AddCircle(p, curR + 6.0f, IM_COL32(255, 140, 0, 255), 0, 3.0f);
-                        drawList->AddCircleFilled(p, curR + 4.0f, IM_COL32(255, 160, 40, 90));
-                        drawList->AddText(ImVec2(p.x + curR + 6.0f, p.y + 4.0f), IM_COL32(255, 180, 50, 255), "Snap & Merge");
+                        gui::ToolOverlayTheme::get().drawWeldMarker(drawList, p, curR);
+                        drawList->AddText(ImVec2(p.x + curR + 6.0f, p.y + 4.0f), gui::ToolOverlayTheme::toU32(gui::ToolOverlayTheme::get().weldTargetFill), "Snap & Merge");
                     }
 
                     // Shadow and shape: Square for sharp corner, Circle for smooth point

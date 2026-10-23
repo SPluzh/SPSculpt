@@ -165,6 +165,7 @@ add_executable(SPSculpt
     src/brushes/BrushPresetManager.cpp
     # gui
     src/gui/GuiManager.cpp
+    src/gui/ToolOverlayTheme.cpp
     # platform
     src/platform/HotkeyPreset.cpp
     src/platform/HotkeyManager.cpp
