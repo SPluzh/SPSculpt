@@ -6461,7 +6461,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     meshUndoState.afterVerts = selectedMesh->verts;
                     meshUndoState.beforeNormals = std::move(transformStartNormals);
                     meshUndoState.afterNormals = selectedMesh->normals;
-                } else if (transformHasMask || sculpt.getUseSym()) {
+                } else if (!selectedMesh->isPrimitive && (transformHasMask || sculpt.getUseSym())) {
                     selectedMesh->matrix = pivotStartMatrix;
 
                     auto tPI = std::chrono::high_resolution_clock::now();
@@ -6617,7 +6617,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             mesh->isDirty = true;
                         } else {
                             bool hasMask = false;
-                            if (!mesh->materials.empty()) {
+                            if (!mesh->isPrimitive && !mesh->materials.empty()) {
                                 for (int i = 0; i < mesh->nbVerts; ++i) {
                                     if (mesh->materials[i * 3 + 2] < 0.999f) {
                                         hasMask = true;
