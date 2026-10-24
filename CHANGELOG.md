@@ -2,9 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.12]
+- **Linux AppImage**: Standalone portable package with universal runtime and persistent user config in `~/.config/spsculpt/`.
+
 ## [0.3.11]
-- **Linux AppImage Distribution**: Standalone portable AppImage package with Type 2 universal runtime (runs out of the box on modern distros including Ubuntu 24.04 without requiring legacy libfuse2).
-- **AppImage User Config & Storage**: Dedicated persistent user configuration handling in `~/.config/spsculpt/` with automatic resource symlinking and writable caches.
 - **Primitive Handle Glow**: 3D handles on primitives now highlight and glow on hover, just like the Tube Tool.
 - **Window Layering**: Viewport manipulators, curves, and rulers now stay behind open UI panels and windows.
 - **Reliable Selection**: Fixed Transform tool gizmo blocking mouse clicks on primitive handles.
