@@ -147,8 +147,8 @@ private:
     TabletMode _forcedMode = TabletMode::NONE;
 
     std::atomic<bool> _usePressure{true};
-    std::atomic<bool> _usePressureSize{true};
-    std::atomic<bool> _usePressureCursor{true};
+    std::atomic<bool> _usePressureSize{false};
+    std::atomic<bool> _usePressureCursor{false};
     std::atomic<bool> _useTilt{true};
     std::atomic<InterpolationType> _interpolationType{InterpolationType::LINEAR};
     std::vector<CurvePoint> _pressureCurve = {{0.0f, 0.0f}, {1.0f, 1.0f}};

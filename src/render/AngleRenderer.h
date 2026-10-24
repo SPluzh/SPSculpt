@@ -467,12 +467,12 @@ private:
     bool m_transparentClear = false;
 
     // Environmental parameters
-    float m_exposure = 1.0f;
+    float m_exposure = 0.5f;
     float m_sph[27] = {0.0f};
 
     // Symmetry parameters
     bool m_showSymmetryLine = false;
-    float m_symmetryLineWidth = 0.11f;
+    float m_symmetryLineWidth = 0.10f;
     float m_symmetryAnimTimer = 0.0f;
     float m_symmetryCurrentAlpha = 0.0f;
     float m_tempSymLineDuration = 1.8f;
@@ -599,26 +599,26 @@ private:
     int m_gridLineCount = 0;
 
     // Anti-Aliasing & Depth Precision Settings
-    bool m_useFxaa = true;
+    bool m_useFxaa = false;
     bool m_fxaaSharpMode = true;
-    bool m_useTaa = true;
+    bool m_useTaa = false;
     bool m_taaResetOnStroke = true;
     bool m_taaResetHistory = true;
-    bool m_useMotionVectors = true;
+    bool m_useMotionVectors = false;
     bool m_useReverseZ = false;
-    bool m_usePolygonOffset = true;
+    bool m_usePolygonOffset = false;
     float m_polyOffsetFactor = -1.0f;
     float m_polyOffsetUnits = -1.0f;
     int m_anisotropyLevel = 4;
     bool m_useSubpixelCulling = false;
-    float m_subpixelCullThreshold = 0.5f;
+    float m_subpixelCullThreshold = 0.55f;
 
     struct TaaState {
         int frameIndex = 0;
         glm::vec2 currentJitter{0.0f};
         glm::vec2 prevJitter{0.0f};
     } m_taaState;
-    bool m_useSsao = true;
+    bool m_useSsao = false;
     float m_ssaoRadius = 0.5f;
     float m_ssaoBias = 0.025f;
     float m_ssaoIntensity = 1.0f;
@@ -633,44 +633,44 @@ private:
     float m_bevelRadius = 4.0f;
     float m_bevelStrength = 1.5f;
     bool m_bevelScaleWithDistance = false;
-    bool m_showContour = true;
+    bool m_showContour = false;
     bool m_enableSelectionFlash = true;
     float m_selectionAnimTimer = 0.0f;
     float m_selectionAnimDuration = 1.2f;
     const Mesh* m_lastSelectedMesh = nullptr;
     std::chrono::high_resolution_clock::time_point m_lastRenderTime;
-    bool m_showGrid = true;
-    bool m_showSafeFrames = false;
-    float m_safeFramesMargin = 20.0f;
-    float m_safeFramesThickness = 1.5f;
-    glm::vec4 m_contourColor{1.0f, 0.75f, 0.1f, 1.0f};
-    float m_cursorThickness = 2.5f;
+    bool m_showGrid = false;
+    bool m_showSafeFrames = true;
+    float m_safeFramesMargin = 35.0f;
+    float m_safeFramesThickness = 0.1f;
+    glm::vec4 m_contourColor{0.206114f, 0.669872f, 0.553932f, 1.0f};
+    float m_cursorThickness = 1.0f;
     bool m_smoothCursor = true;
     bool m_useCrosshairCursor = true;
 
-    int m_shaderType = 0;
-    int m_matcapIdx = 0;
-    bool m_flatShading = false;
-    bool m_darkenUnselected = true;
+    int m_shaderType = 1;
+    int m_matcapIdx = 3;
+    bool m_flatShading = true;
+    bool m_darkenUnselected = false;
     bool m_showWireframe = false;
-    float m_wireframeOpacity = 0.45f;
-    glm::vec4 m_wireframeColor{0.15f, 0.15f, 0.15f, 1.0f};
+    float m_wireframeOpacity = 0.6f;
+    glm::vec4 m_wireframeColor{0.0f, 0.0f, 0.0f, 0.6f};
     bool m_showPolyGroups = false;
     bool m_xrayEnabled = false;
     int m_xrayTarget = 0; // 0: Unselected (default), 1: Selected, 2: All
-    glm::vec4 m_xrayColor{0.2f, 0.6f, 1.0f, 0.5f};
+    glm::vec4 m_xrayColor{0.0f, 1.0f, 0.847124f, 0.698082f};
     BrushType m_activeBrush = BRUSH_FLATTEN;
     float m_curvature = 0.0f;
 
     // Global material settings
-    float m_albedo[3] = {0.72f, 0.52f, 0.45f};
+    float m_albedo[3] = {1.0f, 1.0f, 1.0f};
     float m_roughness = 0.5f;
     float m_metallic = 0.0f;
     float m_alpha = 1.0f;
     unsigned int m_textureId = 0;
     bool m_hasUV = false;
-    bool m_useVertexColors = false;
-    bool m_useVertexMaterials = false;
+    bool m_useVertexColors = true;
+    bool m_useVertexMaterials = true;
 
     // Glass parameters
     float m_transmission = 0.0f;
@@ -695,7 +695,7 @@ private:
 
     // Environment presets
     std::vector<EnvironmentPreset> m_environments;
-    int m_currentEnvIdx = 0;
+    int m_currentEnvIdx = 2;
     float m_envRotation = 0.0f;
     GLuint m_envTexture = 0;
     int m_envWidth = 1024;

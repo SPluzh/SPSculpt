@@ -183,6 +183,9 @@ HKAction HotkeyManager::lookupKeyAction(SDL_Keycode key, bool ctrl, bool alt, bo
             return action;
         }
     }
+    if (!ctrl && !alt && !shift && (key == SDLK_r || key == SDLK_7)) {
+        return HKAction::ToolPinch;
+    }
     return HKAction::None;
 }
 

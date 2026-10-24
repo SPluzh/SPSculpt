@@ -22,6 +22,7 @@ walkthrough.md
 *.exe
 *.o
 *.obj
+*.zip
 
 # Debug logs
 debug_log.txt

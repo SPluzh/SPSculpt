@@ -7587,12 +7587,12 @@ bool GuiManager::loadSettings(const IniFile& ini) {
     if (!ini.hasSection(genSec)) genSec = "General";
     if (ini.hasSection(genSec)) {
         if (ini.hasKey(genSec, "uiScaleMultiplier")) {
-            m_uiScale = ini.getFloat(genSec, "uiScaleMultiplier", 1.0f);
+            m_uiScale = ini.getFloat(genSec, "uiScaleMultiplier", 1.5f);
             if (m_uiScale < 0.5f) m_uiScale = 0.5f;
             if (m_uiScale > 2.5f) m_uiScale = 2.5f;
         }
         if (ini.hasKey(genSec, "floatingIslandScaleMultiplier")) {
-            m_floatingIslandScale = ini.getFloat(genSec, "floatingIslandScaleMultiplier", 1.0f);
+            m_floatingIslandScale = ini.getFloat(genSec, "floatingIslandScaleMultiplier", 1.7f);
             if (m_floatingIslandScale < 0.5f) m_floatingIslandScale = 0.5f;
             if (m_floatingIslandScale > 2.5f) m_floatingIslandScale = 2.5f;
         }
@@ -7603,7 +7603,7 @@ bool GuiManager::loadSettings(const IniFile& ini) {
         }
         if (ini.hasKey(genSec, "fpsLimitEnabled")) m_fpsLimitEnabled = ini.getBool(genSec, "fpsLimitEnabled");
         if (ini.hasKey(genSec, "fpsLimit")) {
-            m_fpsLimit = ini.getInt(genSec, "fpsLimit", 60);
+            m_fpsLimit = ini.getInt(genSec, "fpsLimit", 31);
             if (m_fpsLimit < 15) m_fpsLimit = 15;
             if (m_fpsLimit > 240) m_fpsLimit = 240;
         }
@@ -7613,21 +7613,21 @@ bool GuiManager::loadSettings(const IniFile& ini) {
 
     std::string remeshSec = "Remesh";
     if (ini.hasSection(remeshSec)) {
-        if (ini.hasKey(remeshSec, "resolution")) m_remeshResolution = ini.getInt(remeshSec, "resolution", 150);
+        if (ini.hasKey(remeshSec, "resolution")) m_remeshResolution = ini.getInt(remeshSec, "resolution", 310);
         if (ini.hasKey(remeshSec, "keepPolyGroups")) m_remeshKeepPolyGroups = ini.getBool(remeshSec, "keepPolyGroups");
         if (ini.hasKey(remeshSec, "alignSymmetry")) m_remeshAlignSymmetry = ini.getBool(remeshSec, "alignSymmetry");
     } else if (ini.hasSection("GuiGeneral")) {
         if (ini.hasKey("GuiGeneral", "remeshAlignSymmetry")) m_remeshAlignSymmetry = ini.getBool("GuiGeneral", "remeshAlignSymmetry");
-        if (ini.hasKey("GuiGeneral", "remeshResolution")) m_remeshResolution = ini.getInt("GuiGeneral", "remeshResolution", 150);
+        if (ini.hasKey("GuiGeneral", "remeshResolution")) m_remeshResolution = ini.getInt("GuiGeneral", "remeshResolution", 310);
         if (ini.hasKey("GuiGeneral", "remeshKeepPolyGroups")) m_remeshKeepPolyGroups = ini.getBool("GuiGeneral", "remeshKeepPolyGroups");
     }
 
     std::string winSec = "Window";
     if (ini.hasSection(winSec)) {
-        if (ini.hasKey(winSec, "width")) m_winWidth = ini.getInt(winSec, "width", 1280);
-        if (ini.hasKey(winSec, "height")) m_winHeight = ini.getInt(winSec, "height", 720);
-        if (ini.hasKey(winSec, "x")) m_winX = ini.getInt(winSec, "x", SDL_WINDOWPOS_CENTERED);
-        if (ini.hasKey(winSec, "y")) m_winY = ini.getInt(winSec, "y", SDL_WINDOWPOS_CENTERED);
+        if (ini.hasKey(winSec, "width")) m_winWidth = ini.getInt(winSec, "width", 2560);
+        if (ini.hasKey(winSec, "height")) m_winHeight = ini.getInt(winSec, "height", 1566);
+        if (ini.hasKey(winSec, "x")) m_winX = ini.getInt(winSec, "x", 0);
+        if (ini.hasKey(winSec, "y")) m_winY = ini.getInt(winSec, "y", 34);
         if (ini.hasKey(winSec, "maximized")) m_winMaximized = ini.getBool(winSec, "maximized");
     }
 
@@ -7640,8 +7640,8 @@ bool GuiManager::loadSettings(const IniFile& ini) {
             }
         }
         if (ini.hasKey(undoSec, "maxEntries")) {
-            size_t n = ini.getInt(undoSec, "maxEntries", 100);
-            if (n >= 1 && n <= 10000) {
+            size_t n = ini.getInt(undoSec, "maxEntries", 0);
+            if (n <= 10000) {
                 g_undoManager.setMaxEntries(n);
             }
         }

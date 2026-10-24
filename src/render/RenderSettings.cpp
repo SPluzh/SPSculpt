@@ -124,10 +124,10 @@ bool RenderSettings::load(const IniFile& ini, AngleRenderer& renderer, Scene& sc
     if (ini.hasKey(sec, "selectionAnimDuration")) renderer.setSelectionAnimDuration(ini.getFloat(sec, "selectionAnimDuration", 1.2f));
     if (ini.hasKey(sec, "showGrid")) renderer.setShowGrid(ini.getBool(sec, "showGrid"));
     if (ini.hasKey(sec, "showSafeFrames")) renderer.setShowSafeFrames(ini.getBool(sec, "showSafeFrames"));
-    if (ini.hasKey(sec, "safeFramesMargin")) renderer.setSafeFramesMargin(ini.getFloat(sec, "safeFramesMargin", 20.0f));
-    if (ini.hasKey(sec, "safeFramesThickness")) renderer.setSafeFramesThickness(ini.getFloat(sec, "safeFramesThickness", 1.5f));
+    if (ini.hasKey(sec, "safeFramesMargin")) renderer.setSafeFramesMargin(ini.getFloat(sec, "safeFramesMargin", 35.0f));
+    if (ini.hasKey(sec, "safeFramesThickness")) renderer.setSafeFramesThickness(ini.getFloat(sec, "safeFramesThickness", 0.1f));
     if (ini.hasKey(sec, "showSymmetryLine")) renderer.setShowSymmetryLine(ini.getBool(sec, "showSymmetryLine"));
-    if (ini.hasKey(sec, "symmetryLineWidth")) renderer.setSymmetryLineWidth(ini.getFloat(sec, "symmetryLineWidth", 0.11f));
+    if (ini.hasKey(sec, "symmetryLineWidth")) renderer.setSymmetryLineWidth(ini.getFloat(sec, "symmetryLineWidth", 0.10f));
     if (ini.hasKey(sec, "darkenUnselected")) renderer.setDarkenUnselected(ini.getBool(sec, "darkenUnselected"));
     
     if (ini.hasKey(sec, "contourColor")) {
@@ -138,14 +138,14 @@ bool RenderSettings::load(const IniFile& ini, AngleRenderer& renderer, Scene& sc
         }
     }
 
-    if (ini.hasKey(sec, "cursorThickness")) renderer.setCursorThickness(ini.getFloat(sec, "cursorThickness", 2.5f));
+    if (ini.hasKey(sec, "cursorThickness")) renderer.setCursorThickness(ini.getFloat(sec, "cursorThickness", 1.0f));
     if (ini.hasKey(sec, "smoothCursor")) renderer.setSmoothCursor(ini.getBool(sec, "smoothCursor"));
     if (ini.hasKey(sec, "useCrosshairCursor")) renderer.setUseCrosshairCursor(ini.getBool(sec, "useCrosshairCursor", true));
     if (ini.hasKey(sec, "splitMode")) scene.setSplitMode(static_cast<Scene::SplitMode>(ini.getInt(sec, "splitMode", 0)));
     if (ini.hasKey(sec, "splitShowInactiveCursor")) scene.setSplitShowInactiveCursor(ini.getBool(sec, "splitShowInactiveCursor"));
 
     if (ini.hasKey(sec, "cameraMode")) {
-        auto val = static_cast<CameraEnums::CameraMode>(ini.getInt(sec, "cameraMode", 0));
+        auto val = static_cast<CameraEnums::CameraMode>(ini.getInt(sec, "cameraMode", 1));
         for (int cIdx = 0; cIdx < 2; ++cIdx) {
             Camera* cam = scene.getCameraByIndex(cIdx);
             if (cam) cam->setMode(val);
@@ -159,7 +159,7 @@ bool RenderSettings::load(const IniFile& ini, AngleRenderer& renderer, Scene& sc
         }
     }
     if (ini.hasKey(sec, "cameraFov")) {
-        float val = ini.getFloat(sec, "cameraFov", 45.0f);
+        float val = ini.getFloat(sec, "cameraFov", 110.5f);
         for (int cIdx = 0; cIdx < 2; ++cIdx) {
             Camera* cam = scene.getCameraByIndex(cIdx);
             if (cam) cam->setFov(val);
@@ -181,7 +181,7 @@ bool RenderSettings::load(const IniFile& ini, AngleRenderer& renderer, Scene& sc
     }
 
     if (ini.hasKey(sec, "speedRotate")) {
-        float val = ini.getFloat(sec, "speedRotate", 1.0f);
+        float val = ini.getFloat(sec, "speedRotate", 1.2f);
         for (int cIdx = 0; cIdx < 2; ++cIdx) {
             Camera* cam = scene.getCameraByIndex(cIdx);
             if (cam) cam->setSpeedRotate(val);
@@ -210,10 +210,10 @@ bool RenderSettings::load(const IniFile& ini, AngleRenderer& renderer, Scene& sc
     }
     
     if (ini.hasKey(sec, "currentEnvIdx")) {
-        renderer.setEnvironmentPreset(ini.getInt(sec, "currentEnvIdx"));
+        renderer.setEnvironmentPreset(ini.getInt(sec, "currentEnvIdx", 2));
     }
 
-    if (ini.hasKey(sec, "exposure")) renderer.setExposure(ini.getFloat(sec, "exposure"));
+    if (ini.hasKey(sec, "exposure")) renderer.setExposure(ini.getFloat(sec, "exposure", 0.5f));
     if (ini.hasKey(sec, "wetClayWetness")) renderer.setWetClayWetness(ini.getFloat(sec, "wetClayWetness", 0.6f));
     if (ini.hasKey(sec, "wetClayBumpStrength")) renderer.setWetClayBumpStrength(ini.getFloat(sec, "wetClayBumpStrength", 0.4f));
     if (ini.hasKey(sec, "wetClayNoiseScale")) renderer.setWetClayNoiseScale(ini.getFloat(sec, "wetClayNoiseScale", 8.0f));
@@ -227,15 +227,15 @@ bool RenderSettings::load(const IniFile& ini, AngleRenderer& renderer, Scene& sc
         }
     }
 
-    if (ini.hasKey(sec, "shaderType")) renderer.setShaderType(ini.getInt(sec, "shaderType", 0));
+    if (ini.hasKey(sec, "shaderType")) renderer.setShaderType(ini.getInt(sec, "shaderType", 1));
     if (ini.hasKey(sec, "matcapIdx")) {
-        int mIdx = ini.getInt(sec, "matcapIdx", 0);
+        int mIdx = ini.getInt(sec, "matcapIdx", 3);
         if (mIdx >= 0 && mIdx < static_cast<int>(renderer.getMatcaps().size())) {
             renderer.setMatcap(mIdx);
         }
     }
     if (ini.hasKey(sec, "showWireframe")) renderer.setShowWireframe(ini.getBool(sec, "showWireframe"));
-    if (ini.hasKey(sec, "wireframeOpacity")) renderer.setWireframeOpacity(ini.getFloat(sec, "wireframeOpacity", 0.45f));
+    if (ini.hasKey(sec, "wireframeOpacity")) renderer.setWireframeOpacity(ini.getFloat(sec, "wireframeOpacity", 0.60f));
     if (ini.hasKey(sec, "wireframeColor")) {
         std::stringstream ss(ini.get(sec, "wireframeColor"));
         float r, g, b, a;
@@ -258,7 +258,7 @@ bool RenderSettings::load(const IniFile& ini, AngleRenderer& renderer, Scene& sc
     if (ini.hasKey(sec, "usePolygonOffset")) renderer.setUsePolygonOffset(ini.getBool(sec, "usePolygonOffset"));
     if (ini.hasKey(sec, "anisotropyLevel")) renderer.setAnisotropyLevel(ini.getInt(sec, "anisotropyLevel", 4));
     if (ini.hasKey(sec, "useSubpixelCulling")) renderer.setUseSubpixelCulling(ini.getBool(sec, "useSubpixelCulling"));
-    if (ini.hasKey(sec, "subpixelCullThreshold")) renderer.setSubpixelCullThreshold(ini.getFloat(sec, "subpixelCullThreshold", 0.5f));
+    if (ini.hasKey(sec, "subpixelCullThreshold")) renderer.setSubpixelCullThreshold(ini.getFloat(sec, "subpixelCullThreshold", 0.55f));
     if (ini.hasKey(sec, "useSsao")) renderer.setUseSsao(ini.getBool(sec, "useSsao"));
     if (ini.hasKey(sec, "ssaoRadius")) renderer.setSsaoRadius(ini.getFloat(sec, "ssaoRadius", 0.5f));
     if (ini.hasKey(sec, "ssaoBias")) renderer.setSsaoBias(ini.getFloat(sec, "ssaoBias", 0.025f));

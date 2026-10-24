@@ -229,109 +229,171 @@ SculptManager::SculptManager() {
         m_brushSettings[i].maskExtractThickness = 0.05f;
     }
 
-    // Set brush-specific defaults
+    // Set brush-specific defaults matching app_settings.cfg
+    m_brushSettings[BRUSH_FLATTEN].radius = 146.0f;
+    m_brushSettings[BRUSH_FLATTEN].intensity = 0.149644f;
+    m_brushSettings[BRUSH_FLATTEN].focalShift = -0.30f;
+    m_brushSettings[BRUSH_FLATTEN].spacing = 0.05f;
     m_brushSettings[BRUSH_FLATTEN].negative = true;
-    m_brushSettings[BRUSH_FLATTEN].culling = true;
+    m_brushSettings[BRUSH_FLATTEN].culling = false;
 
-    m_brushSettings[BRUSH_SMOOTH].intensity = 0.75f;
+    m_brushSettings[BRUSH_SMOOTH].radius = 125.0f;
+    m_brushSettings[BRUSH_SMOOTH].intensity = 1.002429f;
+    m_brushSettings[BRUSH_SMOOTH].focalShift = 0.605884f;
     m_brushSettings[BRUSH_SMOOTH].culling = true;
 
-    m_brushSettings[BRUSH_INFLATE].intensity = 0.3f;
-    m_brushSettings[BRUSH_INFLATE].culling = true;
+    m_brushSettings[BRUSH_INFLATE].radius = 146.0f;
+    m_brushSettings[BRUSH_INFLATE].intensity = 0.149646f;
+    m_brushSettings[BRUSH_INFLATE].focalShift = -0.005f;
+    m_brushSettings[BRUSH_INFLATE].culling = false;
 
-    m_brushSettings[BRUSH_PINCH].intensity = 0.75f;
+    m_brushSettings[BRUSH_PINCH].radius = 125.0f;
+    m_brushSettings[BRUSH_PINCH].intensity = 0.500683f;
+    m_brushSettings[BRUSH_PINCH].focalShift = 0.645f;
     m_brushSettings[BRUSH_PINCH].culling = true;
 
-    m_brushSettings[BRUSH_CREASE].intensity = 0.75f;
+    m_brushSettings[BRUSH_CREASE].radius = 122.0f;
+    m_brushSettings[BRUSH_CREASE].intensity = 0.101145f;
     m_brushSettings[BRUSH_CREASE].negative = true;
     m_brushSettings[BRUSH_CREASE].culling = true;
 
-    m_brushSettings[BRUSH_VTOOL].intensity = 0.75f;
+    m_brushSettings[BRUSH_VTOOL].radius = 138.5f;
+    m_brushSettings[BRUSH_VTOOL].intensity = 0.054995f;
+    m_brushSettings[BRUSH_VTOOL].focalShift = -0.825f;
+    m_brushSettings[BRUSH_VTOOL].spacing = 0.05f;
     m_brushSettings[BRUSH_VTOOL].negative = true;
-    m_brushSettings[BRUSH_VTOOL].culling = true;
+    m_brushSettings[BRUSH_VTOOL].culling = false;
 
-    m_brushSettings[BRUSH_MOVE].radius = 100.0f;
+    m_brushSettings[BRUSH_MOVE].radius = 352.0f;
+    m_brushSettings[BRUSH_MOVE].intensity = 0.999029f;
+    m_brushSettings[BRUSH_MOVE].focalShift = 0.282281f;
+    m_brushSettings[BRUSH_MOVE].topoCheck = true;
+    m_brushSettings[BRUSH_MOVE].culling = false;
 
     m_brushSettings[BRUSH_DRAG].radius = 100.0f;
+    m_brushSettings[BRUSH_DRAG].intensity = 0.5f;
+    m_brushSettings[BRUSH_DRAG].culling = false;
 
-    m_brushSettings[BRUSH_ELASTIC].radius = 100.0f;
+    m_brushSettings[BRUSH_ELASTIC].radius = 614.5f;
+    m_brushSettings[BRUSH_ELASTIC].intensity = 0.441305f;
+    m_brushSettings[BRUSH_ELASTIC].focalShift = 0.695001f;
     m_brushSettings[BRUSH_ELASTIC].elasticity = 0.5f;
+    m_brushSettings[BRUSH_ELASTIC].culling = false;
 
-    m_brushSettings[BRUSH_MASK].intensity = 1.0f;
-    m_brushSettings[BRUSH_MASK].negative = true;
+    m_brushSettings[BRUSH_MASK].radius = 50.0f;
+    m_brushSettings[BRUSH_MASK].intensity = 0.744898f;
+    m_brushSettings[BRUSH_MASK].focalShift = 0.857143f;
     m_brushSettings[BRUSH_MASK].culling = true;
 
+    m_brushSettings[BRUSH_PAINT].radius = 108.5f;
+    m_brushSettings[BRUSH_PAINT].intensity = 0.5f;
     m_brushSettings[BRUSH_PAINT].hardness = 0.7f;
     m_brushSettings[BRUSH_PAINT].culling = true;
-
-    m_brushSettings[BRUSH_POLYGROUP].radius = 60.0f;
-    m_brushSettings[BRUSH_POLYGROUP].culling = true;
+    m_brushSettings[BRUSH_PAINT].paintColor = glm::vec3(0.971154f, 0.909559f, 0.513591f);
 
     m_brushSettings[BRUSH_TWIST].radius = 100.0f;
+    m_brushSettings[BRUSH_TWIST].intensity = 0.5f;
     m_brushSettings[BRUSH_TWIST].culling = true;
 
     m_brushSettings[BRUSH_LOCALSCALE].radius = 100.0f;
+    m_brushSettings[BRUSH_LOCALSCALE].intensity = 0.5f;
     m_brushSettings[BRUSH_LOCALSCALE].culling = true;
 
+    m_brushSettings[BRUSH_CLAY].radius = 84.5f;
+    m_brushSettings[BRUSH_CLAY].intensity = 0.5f;
     m_brushSettings[BRUSH_CLAY].clay = true;
-    m_brushSettings[BRUSH_CLAY].accumulate = true;
     m_brushSettings[BRUSH_CLAY].culling = false;
 
-    m_brushSettings[BRUSH_CLAYBUILDUP].intensity = 0.3f;
+    m_brushSettings[BRUSH_CLAYBUILDUP].radius = 134.0f;
+    m_brushSettings[BRUSH_CLAYBUILDUP].intensity = 1.004649f;
+    m_brushSettings[BRUSH_CLAYBUILDUP].focalShift = -0.285f;
+    m_brushSettings[BRUSH_CLAYBUILDUP].spacing = 0.05f;
     m_brushSettings[BRUSH_CLAYBUILDUP].clay = true;
     m_brushSettings[BRUSH_CLAYBUILDUP].accumulate = false;
     m_brushSettings[BRUSH_CLAYBUILDUP].culling = false;
 
-    m_brushSettings[BRUSH_DAMSTANDARD].intensity = 0.75f;
+    m_brushSettings[BRUSH_DAMSTANDARD].radius = 158.0f;
+    m_brushSettings[BRUSH_DAMSTANDARD].intensity = 0.149387f;
+    m_brushSettings[BRUSH_DAMSTANDARD].focalShift = 0.175f;
+    m_brushSettings[BRUSH_DAMSTANDARD].spacing = 0.05f;
     m_brushSettings[BRUSH_DAMSTANDARD].negative = true;
-    m_brushSettings[BRUSH_DAMSTANDARD].culling = true;
+    m_brushSettings[BRUSH_DAMSTANDARD].culling = false;
 
+    m_brushSettings[BRUSH_SQUAREBRUSH].radius = 78.5f;
+    m_brushSettings[BRUSH_SQUAREBRUSH].intensity = 0.645477f;
+    m_brushSettings[BRUSH_SQUAREBRUSH].focalShift = -0.54f;
     m_brushSettings[BRUSH_SQUAREBRUSH].clay = true;
     m_brushSettings[BRUSH_SQUAREBRUSH].culling = false;
 
+    m_brushSettings[BRUSH_VISIBILITY].radius = 50.0f;
     m_brushSettings[BRUSH_VISIBILITY].culling = false;
 
+    m_brushSettings[BRUSH_MASK_GRADIENT_BLUR].radius = 50.0f;
     m_brushSettings[BRUSH_MASK_GRADIENT_BLUR].maskSharpenBlurIterations = 40;
     m_brushSettings[BRUSH_MASK_GRADIENT_BLUR].culling = false;
 
+    m_brushSettings[BRUSH_MEASURE].radius = 50.0f;
     m_brushSettings[BRUSH_MEASURE].culling = false;
+
+    m_brushSettings[BRUSH_DIVIDER].radius = 50.0f;
     m_brushSettings[BRUSH_DIVIDER].culling = false;
+
+    m_brushSettings[BRUSH_TRANSFORM].radius = 48.5f;
+    m_brushSettings[BRUSH_TRANSFORM].intensity = 0.485038f;
     m_brushSettings[BRUSH_TRANSFORM].culling = false;
-    m_brushSettings[BRUSH_POSE].culling = false;
+
+    m_brushSettings[BRUSH_ARMATURE_SPHERES].radius = 50.0f;
+    m_brushSettings[BRUSH_ARMATURE_SPHERES].culling = false;
+
+    m_brushSettings[BRUSH_BRUSH].radius = 89.0f;
+    m_brushSettings[BRUSH_BRUSH].intensity = 0.045884f;
+    m_brushSettings[BRUSH_BRUSH].focalShift = -0.46f;
+    m_brushSettings[BRUSH_BRUSH].spacing = 0.05f;
+    m_brushSettings[BRUSH_BRUSH].culling = true;
+    m_brushSettings[BRUSH_BRUSH].clay = true;
+    m_brushSettings[BRUSH_BRUSH].stampType = 4;
+    m_brushSettings[BRUSH_BRUSH].stampInnerRatio = 0.2f;
+    m_brushSettings[BRUSH_BRUSH].stampLockRotation = true;
+    m_brushSettings[BRUSH_BRUSH].stampUseTilt = true;
+
+    m_brushSettings[BRUSH_POLYGROUP].radius = 65.0f;
+    m_brushSettings[BRUSH_POLYGROUP].intensity = 0.5f;
+    m_brushSettings[BRUSH_POLYGROUP].focalShift = 0.82f;
+    m_brushSettings[BRUSH_POLYGROUP].culling = true;
+
+    m_brushSettings[BRUSH_CLIP_CURVE].radius = 177.5f;
     m_brushSettings[BRUSH_CLIP_CURVE].culling = false;
+
+    m_brushSettings[BRUSH_TRIM].radius = 50.0f;
     m_brushSettings[BRUSH_TRIM].culling = false;
-    m_brushSettings[BRUSH_SPLIT].culling = false;
+
+    m_brushSettings[BRUSH_SPLIT].radius = 134.0f;
+    m_brushSettings[BRUSH_SPLIT].intensity = 0.056369f;
+    m_brushSettings[BRUSH_SPLIT].focalShift = -0.555f;
+    m_brushSettings[BRUSH_SPLIT].culling = true;
     m_brushSettings[BRUSH_SPLIT].splitMode = 0; // 0 = Lasso (like Trim)
 
-    m_brushSettings[BRUSH_BRUSH].radius = 50.0f;
-    m_brushSettings[BRUSH_BRUSH].intensity = 0.5f;
-    m_brushSettings[BRUSH_BRUSH].culling = true;
-    m_brushSettings[BRUSH_BRUSH].accumulate = true;
-    m_brushSettings[BRUSH_BRUSH].stampBlur = 0.0f;
-    m_brushSettings[BRUSH_BRUSH].stampLockRotation = false;
-    m_brushSettings[BRUSH_BRUSH].stampUseTilt = false;
-
-    m_brushSettings[BRUSH_DELETE_LAYER].radius = 50.0f;
+    m_brushSettings[BRUSH_DELETE_LAYER].radius = 164.0f;
     m_brushSettings[BRUSH_DELETE_LAYER].intensity = 0.5f;
     m_brushSettings[BRUSH_DELETE_LAYER].culling = true;
 
     m_brushSettings[BRUSH_RELAX].radius = 50.0f;
     m_brushSettings[BRUSH_RELAX].intensity = 0.5f;
     m_brushSettings[BRUSH_RELAX].culling = true;
-    m_brushSettings[BRUSH_RELAX].relaxAlgorithm = RELAX_ALGO_TANGENTIAL;
-    m_brushSettings[BRUSH_RELAX].relaxMode = RELAX_MODE_AUTOLOCK;
-    m_brushSettings[BRUSH_RELAX].relaxPreserveCreases = true;
-    m_brushSettings[BRUSH_RELAX].relaxCreaseAngle = 45.0f;
-    m_brushSettings[BRUSH_RELAX].relaxIterations = 1;
 
-    m_brushSettings[BRUSH_SNAKEHOOK].radius = 60.0f;
+    m_brushSettings[BRUSH_POSE].radius = 50.0f;
+    m_brushSettings[BRUSH_POSE].culling = false;
+
+    m_brushSettings[BRUSH_SNAKEHOOK].radius = 82.5f;
     m_brushSettings[BRUSH_SNAKEHOOK].intensity = 1.0f;
     m_brushSettings[BRUSH_SNAKEHOOK].culling = false;
     m_brushSettings[BRUSH_SNAKEHOOK].spacing = 0.1f;
-    m_brushSettings[BRUSH_SNAKEHOOK].snakePinch = 0.0f;
-    m_brushSettings[BRUSH_SNAKEHOOK].snakeMagnify = 0.0f;
-    m_brushSettings[BRUSH_SNAKEHOOK].snakeTwist = 0.0f;
-    m_brushSettings[BRUSH_SNAKEHOOK].snakeRelax = 0.05f;
+
+    m_brushSettings[BRUSH_TUBE].radius = 50.0f;
+    m_brushSettings[BRUSH_TUBE].culling = false;
+
+    m_brushSettings[BRUSH_QUAD_DRAW].radius = 66.5f;
+    m_brushSettings[BRUSH_QUAD_DRAW].culling = false;
 }
 
 std::vector<glm::vec3> SculptManager::getActiveSymmetryScales() const {

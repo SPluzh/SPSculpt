@@ -314,11 +314,17 @@ bool HotkeyPreset::loadFromIni(const IniFile& ini) {
     for (const auto& info : getAllHKActions()) {
         if (ini.hasKey("Keys", info.id)) {
             std::string str = ini.get("Keys", info.id);
+            if (info.action == HKAction::ToolPinch && str == "7") {
+                str = "R";
+            }
             KeyBinding kb = KeyBinding::fromString(str);
             if (kb.isValid()) {
                 keyBindings[info.action] = kb;
             }
         }
+    }
+    if (keyBindings.find(HKAction::ToolPinch) == keyBindings.end()) {
+        keyBindings[HKAction::ToolPinch] = { SDLK_r };
     }
 
     // MouseNav
@@ -368,13 +374,13 @@ static void populateCommonKeyBindings(HotkeyPreset& p) {
     p.keyBindings[HKAction::ToolTransform]     = { SDLK_4 };
     p.keyBindings[HKAction::ToolSmooth]        = { SDLK_5 };
     p.keyBindings[HKAction::ToolBrush]         = { SDLK_6 };
-    p.keyBindings[HKAction::ToolPinch]         = { SDLK_7 };
     p.keyBindings[HKAction::ToolCrease]        = { SDLK_8 };
     p.keyBindings[HKAction::ToolDrag]          = { SDLK_9 };
 
     p.keyBindings[HKAction::ToolMove]          = { SDLK_q };
     p.keyBindings[HKAction::ToolClayBuildup]    = { SDLK_w };
     p.keyBindings[HKAction::ToolDamStandard]   = { SDLK_e };
+    p.keyBindings[HKAction::ToolPinch]         = { SDLK_r };
     p.keyBindings[HKAction::ToolTube]          = { SDLK_t };
 
     p.keyBindings[HKAction::BrushIntensity]    = { SDLK_a };

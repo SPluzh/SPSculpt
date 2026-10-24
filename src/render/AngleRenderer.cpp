@@ -448,7 +448,7 @@ bool AngleRenderer::init(int width, int height) {
 
     // E. Initialize environments presets
     initEnvironments();
-    loadEnvironmentTexture(0); // Load Mpumalanga veld by default
+    loadEnvironmentTexture(2); // Load Studio Small 01 (currentEnvIdx=2) by default
     initMatcaps();
 
     // F. Initialize RTT Targets

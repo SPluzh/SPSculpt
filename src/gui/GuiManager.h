@@ -47,18 +47,18 @@ public:
     };
 
 private:
-    bool m_showToolbar = true;
-    bool m_showSculptingPanel = true;
+    bool m_showToolbar = false;
+    bool m_showSculptingPanel = false;
     bool m_showScenePanel = true;
-    bool m_showTopologyPanel = true;
+    bool m_showTopologyPanel = false;
     bool m_showFilesPanel = true;
-    bool m_showCameraPanel = true;
-    bool m_showRenderingPanel = true;
+    bool m_showCameraPanel = false;
+    bool m_showRenderingPanel = false;
     bool m_showMaskingPanel = true;
-    bool m_showMultiresPanel = true;
-    bool m_showLayersPanel = true;
+    bool m_showMultiresPanel = false;
+    bool m_showLayersPanel = false;
     bool m_showZSpheresPanel = true;
-    bool m_showReferenceImagesPanel = true;
+    bool m_showReferenceImagesPanel = false;
     bool m_showGizmoCube = true;
     bool m_showMeshInfo = true;
     bool m_showTabletDiagPanel = false;
@@ -67,7 +67,7 @@ private:
     bool m_showFloatingIsland = true;
     bool m_showTimelapsePanel = false;
     bool m_showPreferencesPanel = false;
-    bool m_showHotkeyHUD = false;
+    bool m_showHotkeyHUD = true;
     bool m_showCameraBookmarksPanel = false;
 
     // Brush Icon Capture settings
@@ -94,30 +94,30 @@ private:
 
     // FPS limiter
     bool m_fpsLimitEnabled = true;
-    int  m_fpsLimit = 60;
+    int  m_fpsLimit = 31;
 
     // settings
     float m_dyntopoDetail = 100.0f;
-    int m_remeshResolution = 150;
+    int m_remeshResolution = 310;
     bool m_remeshKeepPolyGroups = true;
     bool m_remeshAlignSymmetry = false;
-    bool m_animateBookmarks = true;
-    bool m_savePngNextToProject = false;
+    bool m_animateBookmarks = false;
+    bool m_savePngNextToProject = true;
     bool m_imguiInitialized = false;
     bool m_editPivot = false;
     float m_gizmoSize = 0.10f;
     float m_dpiScale = 1.0f;
-    float m_uiScale = 1.0f;
-    float m_floatingIslandScale = 1.0f;
+    float m_uiScale = 1.5f;
+    float m_floatingIslandScale = 1.7f;
     bool m_pendingUiScaleRefresh = false;
     SDL_Window* m_window = nullptr;
 
     // Window settings
-    int m_winWidth = 1280;
-    int m_winHeight = 720;
-    int m_winX = SDL_WINDOWPOS_CENTERED;
-    int m_winY = SDL_WINDOWPOS_CENTERED;
-    bool m_winMaximized = false;
+    int m_winWidth = 2560;
+    int m_winHeight = 1566;
+    int m_winX = 0;
+    int m_winY = 34;
+    bool m_winMaximized = true;
 
     void rebuildFontsAndStyles();
     float getUiScale() const { return m_dpiScale * m_uiScale; }
@@ -164,11 +164,11 @@ private:
     bool m_screenshotShowContour = false;
     BrushType m_lastBrushType = BRUSH_MOVE;
     bool m_previewingPaint = false;
-    float m_savedAlbedo[3] = {0.72f, 0.52f, 0.45f};
+    float m_savedAlbedo[3] = {1.0f, 1.0f, 1.0f};
     float m_savedRoughness = 0.5f;
     float m_savedMetallic = 0.0f;
-    bool m_savedUseVertexColors = false;
-    bool m_savedUseVertexMaterials = false;
+    bool m_savedUseVertexColors = true;
+    bool m_savedUseVertexMaterials = true;
     // Window title & Unsaved exit dialog state
     std::string m_lastWindowTitle = "";
     bool m_showUnsavedModal = false;

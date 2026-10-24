@@ -212,7 +212,7 @@ private:
     int m_mouseDownY = 0;
 
     BrushCursor m_cursor;
-    bool m_useSym = false;
+    bool m_useSym = true;
     bool m_symX = true;
     bool m_symY = false;
     bool m_symZ = false;
@@ -627,7 +627,7 @@ private:
 
     int m_dividerDivisions = 3; // От 2 до 6
 
-    bool m_measureUseDistanceThickness = true;
+    bool m_measureUseDistanceThickness = false;
 
     bool m_isMeasureVisibleV1 = true;
     bool m_isMeasureVisibleV2 = true;

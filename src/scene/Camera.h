@@ -174,7 +174,7 @@ private:
 
     bool m_usePivot = true;
 
-    CameraEnums::CameraMode m_mode = CameraEnums::CameraMode::ORBIT;
+    CameraEnums::CameraMode m_mode = CameraEnums::CameraMode::PLANE;
     CameraEnums::Projection m_projectionType = CameraEnums::Projection::PERSPECTIVE;
 
     glm::quat m_quatRot{1.0f, 0.0f, 0.0f, 0.0f};
@@ -188,11 +188,11 @@ private:
     int m_height = 0;
 
     float m_speed = 1.0f;
-    float m_speedRotate = 1.0f;
+    float m_speedRotate = 1.2f;
     float m_speedTranslate = 1.0f;
     float m_speedZoom = 1.0f;
     float m_speedRoll = 1.0f;
-    float m_fov = 45.0f; // Focal length in mm
+    float m_fov = 110.5f; // Focal length in mm
 
     glm::vec3 m_trans{0.0f, 0.0f, 30.0f};
     glm::vec3 m_center{0.0f}; // Pivot of rotation

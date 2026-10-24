@@ -274,6 +274,9 @@ HKAction HotkeyDispatcher::mapKeyToAction(const SDL_Keysym& keysym, bool ctrlPre
             return action;
         }
     }
+    if (!ctrlPressed && !altPressed && !shiftPressed && (keysym.sym == SDLK_r || keysym.sym == SDLK_7)) {
+        return HKAction::ToolPinch;
+    }
     return HKAction::None;
 }
 
