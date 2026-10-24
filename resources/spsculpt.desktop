@@ -1,0 +1,14 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=SPSculpt
+GenericName=3D Sculpting Software
+Comment=Digital 3D Sculpting and Modeling Application
+Exec=SPSculpt %F
+Icon=spsculpt
+Terminal=false
+Categories=Graphics;3DGraphics;
+MimeType=model/obj;model/stl;model/gltf+json;model/gltf-binary;
+StartupNotify=true
+StartupWMClass=SPSculpt
+Keywords=3d;sculpt;mesh;modeling;cad;

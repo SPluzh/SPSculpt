@@ -299,15 +299,19 @@ int main(int argc, char* argv[]) {
         }
     }
 #else
-    char exePathBuf[1024];
-    ssize_t len = readlink("/proc/self/exe", exePathBuf, sizeof(exePathBuf) - 1);
-    if (len != -1) {
-        exePathBuf[len] = '\0';
-        std::string pathStr(exePathBuf);
-        size_t lastSlash = pathStr.find_last_of('/');
-        if (lastSlash != std::string::npos) {
-            if (chdir(pathStr.substr(0, lastSlash).c_str()) != 0) {
-                // ignore
+    // In standard Linux runs, change CWD to executable directory.
+    // In AppImage, AppRun manages working directory in ~/.config/spsculpt (writable).
+    if (!getenv("APPIMAGE") && !getenv("APPDIR")) {
+        char exePathBuf[1024];
+        ssize_t len = readlink("/proc/self/exe", exePathBuf, sizeof(exePathBuf) - 1);
+        if (len != -1) {
+            exePathBuf[len] = '\0';
+            std::string pathStr(exePathBuf);
+            size_t lastSlash = pathStr.find_last_of('/');
+            if (lastSlash != std::string::npos) {
+                if (chdir(pathStr.substr(0, lastSlash).c_str()) != 0) {
+                    // ignore
+                }
             }
         }
     }

@@ -1,0 +1,62 @@
+#!/bin/bash
+set -e
+
+# Detect AppDir location
+HERE="$(dirname "$(readlink -f "${0}")")"
+export APPDIR="${APPDIR:-$HERE}"
+
+# Convert relative file arguments using Original Working Directory (OWD)
+ORIGINAL_DIR="${OWD:-$PWD}"
+PROCESSED_ARGS=()
+for arg in "$@"; do
+    if [[ "$arg" != -* ]] && [ -e "$ORIGINAL_DIR/$arg" ]; then
+        PROCESSED_ARGS+=("$(cd "$ORIGINAL_DIR" && realpath "$arg")")
+    else
+        PROCESSED_ARGS+=("$arg")
+    fi
+done
+
+# User configuration and writable data directory
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/spsculpt"
+mkdir -p "$CONFIG_DIR/resources/shader_cache"
+mkdir -p "$CONFIG_DIR/resources/thumbcache"
+mkdir -p "$CONFIG_DIR/presets"
+
+# Locate bundled resources inside AppImage
+RESOURCES_SRC="$HERE/usr/bin/resources"
+if [ ! -d "$RESOURCES_SRC" ]; then
+    RESOURCES_SRC="$HERE/resources"
+fi
+
+# Set up resource symlinks only once (or if missing)
+if [ -d "$RESOURCES_SRC" ] && [ ! -e "$CONFIG_DIR/resources/shaders" ]; then
+    for item in "$RESOURCES_SRC"/*; do
+        target_name="${item##*/}"
+        if [ "$target_name" != "shader_cache" ] && [ "$target_name" != "thumbcache" ]; then
+            ln -sfn "$item" "$CONFIG_DIR/resources/$target_name"
+        fi
+    done
+fi
+
+# Copy default presets only once if missing
+PRESETS_SRC="$HERE/usr/bin/presets"
+if [ ! -d "$PRESETS_SRC" ]; then
+    PRESETS_SRC="$HERE/presets"
+fi
+
+if [ -d "$PRESETS_SRC" ] && [ ! -f "$CONFIG_DIR/presets/ZBrush.preset" ]; then
+    for p in "$PRESETS_SRC"/*; do
+        p_name="${p##*/}"
+        if [ -f "$p" ] && [ ! -f "$CONFIG_DIR/presets/$p_name" ]; then
+            cp "$p" "$CONFIG_DIR/presets/"
+        fi
+    done
+fi
+
+# Environment paths
+export LD_LIBRARY_PATH="$HERE/usr/lib:$HERE/usr/bin:$LD_LIBRARY_PATH"
+export PATH="$HERE/usr/bin:$PATH"
+
+# Run from writable config directory
+cd "$CONFIG_DIR"
+exec "$HERE/usr/bin/SPSculpt" "${PROCESSED_ARGS[@]}"

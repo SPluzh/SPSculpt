@@ -257,7 +257,8 @@ GLuint AngleRenderer::loadAndCompileProgram(const std::string& vertFile, const s
                 GLsizei lengthRead = 0;
                 glGetProgramBinary(prog, binaryLength, &lengthRead, &binaryFormat, binaryData.data());
                 if (lengthRead > 0) {
-                    std::filesystem::create_directories("resources/shader_cache");
+                    std::error_code ec;
+                    std::filesystem::create_directories("resources/shader_cache", ec);
                     std::ofstream outFile(cachePath, std::ios::binary);
                     if (outFile.is_open()) {
                         outFile.write(reinterpret_cast<const char*>(&binaryFormat), sizeof(binaryFormat));
