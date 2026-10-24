@@ -225,7 +225,7 @@ private:
     HotkeyManager* m_hotkeyManager = nullptr;
     HKAction m_capturingAction = HKAction::None;
     SDL_Keycode m_selectedVirtualKey = SDLK_UNKNOWN;
-    int m_keyboardModifierLayer = 0; // 0=None, 1=Ctrl, 2=Alt, 3=Shift, 4=Ctrl+Shift, 5=Ctrl+Alt
+    int m_keyboardModifierLayer = 0; // 0=None, 1=Ctrl, 2=Alt, 3=Shift, 4=Ctrl+Shift, 5=Ctrl+Alt, 6=Alt+Shift
     char m_hotkeySearchFilter[64] = "";
     char m_newPresetNameBuf[64] = "";
     bool m_showNewPresetDialog = false;
@@ -288,6 +288,8 @@ public:
 
     bool isCapturingHotkey() const { return m_capturingAction != HKAction::None; }
     bool handleCapturedKeyEvent(const SDL_Event& e);
+    bool isHotkeysTabActive() const { return m_showPreferencesPanel && (m_preferencesSelectedTab == PrefTab_Hotkeys); }
+    void getActiveModifierLayer(bool& outCtrl, bool& outAlt, bool& outShift) const;
 
     bool isPointOverWindow(const ImVec2& pt) const;
 

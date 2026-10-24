@@ -12529,23 +12529,71 @@ static const KeyVisual s_keyboardLayout[] = {
     { "Right", 15.55f, 5.35f, 1.0f, SDLK_RIGHT }
 };
 
+void GuiManager::getActiveModifierLayer(bool& outCtrl, bool& outAlt, bool& outShift) const {
+    int numKeys = 0;
+    const Uint8* kbState = SDL_GetKeyboardState(&numKeys);
+    SDL_Keymod modState = SDL_GetModState();
+
+    bool physCtrl = (modState & KMOD_CTRL) != 0 ||
+                    (kbState && SDL_SCANCODE_LCTRL < numKeys && kbState[SDL_SCANCODE_LCTRL]) ||
+                    (kbState && SDL_SCANCODE_RCTRL < numKeys && kbState[SDL_SCANCODE_RCTRL]);
+    bool physAlt = (modState & KMOD_ALT) != 0 ||
+                   (kbState && SDL_SCANCODE_LALT < numKeys && kbState[SDL_SCANCODE_LALT]) ||
+                   (kbState && SDL_SCANCODE_RALT < numKeys && kbState[SDL_SCANCODE_RALT]);
+    bool physShift = (modState & KMOD_SHIFT) != 0 ||
+                     (kbState && SDL_SCANCODE_LSHIFT < numKeys && kbState[SDL_SCANCODE_LSHIFT]) ||
+                     (kbState && SDL_SCANCODE_RSHIFT < numKeys && kbState[SDL_SCANCODE_RSHIFT]);
+
+    if (physCtrl || physAlt || physShift) {
+        outCtrl = physCtrl;
+        outAlt = physAlt;
+        outShift = physShift;
+    } else {
+        outCtrl = (m_keyboardModifierLayer == 1 || m_keyboardModifierLayer == 4 || m_keyboardModifierLayer == 5);
+        outAlt = (m_keyboardModifierLayer == 2 || m_keyboardModifierLayer == 5 || m_keyboardModifierLayer == 6);
+        outShift = (m_keyboardModifierLayer == 3 || m_keyboardModifierLayer == 4 || m_keyboardModifierLayer == 6);
+    }
+}
+
 void GuiManager::drawVirtualKeyboard(ImDrawList* dl, ImVec2 origin, float scale, const HotkeyPreset& preset) {
     float keyUnitSize = 36.0f * scale;
     float keySpacing = 3.0f * scale;
     float keyRounding = 4.0f * scale;
 
-    bool layerCtrl = (m_keyboardModifierLayer == 1 || m_keyboardModifierLayer == 4 || m_keyboardModifierLayer == 5);
-    bool layerAlt = (m_keyboardModifierLayer == 2 || m_keyboardModifierLayer == 5);
-    bool layerShift = (m_keyboardModifierLayer == 3 || m_keyboardModifierLayer == 4);
+    bool layerCtrl = false, layerAlt = false, layerShift = false;
+    getActiveModifierLayer(layerCtrl, layerAlt, layerShift);
+
+    int numKeys = 0;
+    const Uint8* kbState = SDL_GetKeyboardState(&numKeys);
+    SDL_Keymod modState = SDL_GetModState();
 
     ImVec2 mousePos = ImGui::GetIO().MousePos;
     const KeyVisual* hoveredKey = nullptr;
     std::vector<const HKActionInfo*> hoveredActions;
+    bool hoveredKeyIsPressed = false;
 
     for (const auto& kv : s_keyboardLayout) {
         ImVec2 pos = ImVec2(origin.x + kv.x * (keyUnitSize + keySpacing),
                             origin.y + kv.y * (keyUnitSize + keySpacing));
         ImVec2 size = ImVec2(kv.width * keyUnitSize + (kv.width - 1.0f) * keySpacing, keyUnitSize);
+
+        // Check if this physical key is currently pressed down
+        bool isKeyDown = false;
+        if (kbState && numKeys > 0) {
+            SDL_Scancode sc = SDL_GetScancodeFromKey(kv.keycode);
+            if (sc != SDL_SCANCODE_UNKNOWN && (int)sc < numKeys && kbState[sc]) {
+                isKeyDown = true;
+            }
+        }
+        // Additional fallback for modifier keys via SDL_GetModState
+        if (!isKeyDown) {
+            if (kv.keycode == SDLK_LCTRL && (modState & KMOD_LCTRL)) isKeyDown = true;
+            else if (kv.keycode == SDLK_RCTRL && (modState & KMOD_RCTRL)) isKeyDown = true;
+            else if (kv.keycode == SDLK_LALT && (modState & KMOD_LALT)) isKeyDown = true;
+            else if (kv.keycode == SDLK_RALT && (modState & KMOD_RALT)) isKeyDown = true;
+            else if (kv.keycode == SDLK_LSHIFT && (modState & KMOD_LSHIFT)) isKeyDown = true;
+            else if (kv.keycode == SDLK_RSHIFT && (modState & KMOD_RSHIFT)) isKeyDown = true;
+        }
 
         std::vector<const HKActionInfo*> matchedActions;
         for (const auto& [action, binding] : preset.keyBindings) {
@@ -12579,6 +12627,7 @@ void GuiManager::drawVirtualKeyboard(ImDrawList* dl, ImVec2 origin, float scale,
         if (isHovered) {
             hoveredKey = &kv;
             hoveredActions = matchedActions;
+            hoveredKeyIsPressed = isKeyDown;
             fillColor = ImColor(std::min(1.0f, ImColor(fillColor).Value.x * 1.3f),
                                 std::min(1.0f, ImColor(fillColor).Value.y * 1.3f),
                                 std::min(1.0f, ImColor(fillColor).Value.z * 1.3f), 1.0f);
@@ -12591,11 +12640,44 @@ void GuiManager::drawVirtualKeyboard(ImDrawList* dl, ImVec2 origin, float scale,
             }
         }
 
+        if (isKeyDown) {
+            // Distinct active visual styling when key is physically held down
+            if (matchedActions.size() > 1) {
+                fillColor = IM_COL32(255, 60, 60, 255); // Vivid glowing red for conflicts
+                actionColor = IM_COL32(255, 255, 120, 255);
+            } else if (matchedActions.size() == 1) {
+                if (matchedActions[0]->isModal) {
+                    fillColor = IM_COL32(255, 160, 30, 255); // Vivid glowing modal amber
+                } else {
+                    fillColor = IM_COL32(0, 205, 180, 255); // Vivid glowing teal
+                }
+                actionColor = IM_COL32(255, 255, 255, 255);
+            } else {
+                fillColor = IM_COL32(40, 125, 200, 255); // Active electric blue for free/unbound or modifier keys
+                actionColor = IM_COL32(215, 240, 255, 255);
+            }
+            textColor = IM_COL32(255, 255, 255, 255);
+
+            // Tactile mechanical press offset down
+            pos.y += 1.5f * scale;
+
+            // Auto-select key in inspector when pressed (if not typing in a text field and not pure modifier)
+            if (!ImGui::GetIO().WantTextInput &&
+                kv.keycode != SDLK_LCTRL && kv.keycode != SDLK_RCTRL &&
+                kv.keycode != SDLK_LALT && kv.keycode != SDLK_RALT &&
+                kv.keycode != SDLK_LSHIFT && kv.keycode != SDLK_RSHIFT) {
+                m_selectedVirtualKey = kv.keycode;
+            }
+        }
+
         dl->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y), fillColor, keyRounding);
 
         ImU32 borderColor = IM_COL32(65, 70, 80, 255);
         float borderThickness = 1.0f;
-        if (kv.keycode == m_selectedVirtualKey) {
+        if (isKeyDown) {
+            borderColor = IM_COL32(120, 235, 255, 255); // Glowing electric cyan border
+            borderThickness = 2.5f;
+        } else if (kv.keycode == m_selectedVirtualKey) {
             borderColor = IM_COL32(255, 255, 255, 255);
             borderThickness = 2.0f;
         } else if (isHovered) {
@@ -12618,6 +12700,10 @@ void GuiManager::drawVirtualKeyboard(ImDrawList* dl, ImVec2 origin, float scale,
     if (hoveredKey) {
         ImGui::BeginTooltip();
         ImGui::TextColored(ImVec4(0.3f, 0.9f, 1.0f, 1.0f), "Key: %s", hoveredKey->label);
+        if (hoveredKeyIsPressed) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.6f, 1.0f), "[PRESSED]");
+        }
         if (hoveredActions.empty()) {
             ImGui::TextDisabled("Status: Free (unassigned in this modifier layer)");
             ImGui::TextDisabled("Click to select, or click an action below to bind");
@@ -12780,12 +12866,38 @@ void GuiManager::drawHotkeysTab(Scene& scene, SculptManager& sculpt) {
     ImGui::Separator();
     ImGui::Spacing();
 
+    // Query physical modifiers
+    int numKeys = 0;
+    const Uint8* kbState = SDL_GetKeyboardState(&numKeys);
+    SDL_Keymod modState = SDL_GetModState();
+    bool physCtrl = (modState & KMOD_CTRL) != 0 ||
+                    (kbState && SDL_SCANCODE_LCTRL < numKeys && kbState[SDL_SCANCODE_LCTRL]) ||
+                    (kbState && SDL_SCANCODE_RCTRL < numKeys && kbState[SDL_SCANCODE_RCTRL]);
+    bool physAlt = (modState & KMOD_ALT) != 0 ||
+                   (kbState && SDL_SCANCODE_LALT < numKeys && kbState[SDL_SCANCODE_LALT]) ||
+                   (kbState && SDL_SCANCODE_RALT < numKeys && kbState[SDL_SCANCODE_RALT]);
+    bool physShift = (modState & KMOD_SHIFT) != 0 ||
+                     (kbState && SDL_SCANCODE_LSHIFT < numKeys && kbState[SDL_SCANCODE_LSHIFT]) ||
+                     (kbState && SDL_SCANCODE_RSHIFT < numKeys && kbState[SDL_SCANCODE_RSHIFT]);
+    bool hasPhysMod = (physCtrl || physAlt || physShift);
+
+    int activeVisualLayer = m_keyboardModifierLayer;
+    if (hasPhysMod) {
+        if (physCtrl && physShift) activeVisualLayer = 4;
+        else if (physCtrl && physAlt) activeVisualLayer = 5;
+        else if (physAlt && physShift) activeVisualLayer = 6;
+        else if (physCtrl) activeVisualLayer = 1;
+        else if (physAlt) activeVisualLayer = 2;
+        else if (physShift) activeVisualLayer = 3;
+        else activeVisualLayer = -1;
+    }
+
     // Layer switch buttons
     ImGui::Text("Modifier Layer: ");
     ImGui::SameLine();
-    const char* layerNames[] = { "None", "Ctrl", "Alt", "Shift", "Ctrl+Shift", "Ctrl+Alt" };
-    for (int i = 0; i < 6; ++i) {
-        bool isActiveLayer = (m_keyboardModifierLayer == i);
+    const char* layerNames[] = { "None", "Ctrl", "Alt", "Shift", "Ctrl+Shift", "Ctrl+Alt", "Alt+Shift" };
+    for (int i = 0; i < 7; ++i) {
+        bool isActiveLayer = (activeVisualLayer == i);
         if (isActiveLayer) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 1.0f));
         }
@@ -12797,7 +12909,15 @@ void GuiManager::drawHotkeysTab(Scene& scene, SculptManager& sculpt) {
         }
         ImGui::SameLine();
     }
-    ImGui::NewLine();
+    if (hasPhysMod) {
+        std::string modStr = "";
+        if (physCtrl) modStr += "Ctrl ";
+        if (physAlt) modStr += "Alt ";
+        if (physShift) modStr += "Shift ";
+        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.75f, 1.0f), "[Physical: %s]", modStr.c_str());
+    } else {
+        ImGui::NewLine();
+    }
 
     // Draw keyboard canvas
     float keyUnitSize = 36.0f * scale;
@@ -12820,12 +12940,13 @@ void GuiManager::drawHotkeysTab(Scene& scene, SculptManager& sculpt) {
     ImGui::TextColored(ImVec4(0.95f, 0.25f, 0.25f, 1.0f), "[■ Conflict]");
     ImGui::SameLine();
     ImGui::TextColored(ImVec4(0.55f, 0.58f, 0.65f, 1.0f), "[■ Free / Unbound]");
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.47f, 0.92f, 1.0f, 1.0f), "[■ Pressed Key]");
 
     // Key Inspector bar
     if (m_selectedVirtualKey != SDLK_UNKNOWN) {
-        bool layerCtrl = (m_keyboardModifierLayer == 1 || m_keyboardModifierLayer == 4 || m_keyboardModifierLayer == 5);
-        bool layerAlt = (m_keyboardModifierLayer == 2 || m_keyboardModifierLayer == 5);
-        bool layerShift = (m_keyboardModifierLayer == 3 || m_keyboardModifierLayer == 4);
+        bool layerCtrl = false, layerAlt = false, layerShift = false;
+        getActiveModifierLayer(layerCtrl, layerAlt, layerShift);
 
         std::vector<HKAction> actionsOnKey;
         for (const auto& [action, binding] : preset.keyBindings) {
@@ -12835,10 +12956,21 @@ void GuiManager::drawHotkeysTab(Scene& scene, SculptManager& sculpt) {
         }
 
         const char* keyName = SDL_GetKeyName(m_selectedVirtualKey);
+        std::string comboName = "";
+        bool isModKey = (m_selectedVirtualKey == SDLK_LCTRL || m_selectedVirtualKey == SDLK_RCTRL ||
+                         m_selectedVirtualKey == SDLK_LALT  || m_selectedVirtualKey == SDLK_RALT ||
+                         m_selectedVirtualKey == SDLK_LSHIFT || m_selectedVirtualKey == SDLK_RSHIFT);
+        if (!isModKey) {
+            if (layerCtrl) comboName += "Ctrl+";
+            if (layerAlt) comboName += "Alt+";
+            if (layerShift) comboName += "Shift+";
+        }
+        comboName += (keyName ? keyName : "Unknown");
+
         ImGui::Spacing();
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.14f, 0.17f, 0.6f));
         ImGui::BeginChild("##KeyInspector", ImVec2(0, 36.0f * scale), true);
-        ImGui::Text("Selected Key: [%s] | Current Action: ", keyName ? keyName : "Unknown");
+        ImGui::Text("Selected Key: [%s] | Current Action: ", comboName.c_str());
         ImGui::SameLine();
         if (actionsOnKey.empty()) {
             ImGui::TextDisabled("Unassigned");

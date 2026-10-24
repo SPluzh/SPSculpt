@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.13]
+- **Interactive Hotkeys Keyboard**: Physical key presses now light up on the virtual keyboard in Settings.
+- **Modifier Preview**: Holding Ctrl, Shift, or Alt instantly shows all shortcuts assigned with them.
+
 ## [0.3.12]
 - **Linux AppImage**: Standalone portable package with universal runtime and persistent user config in `~/.config/spsculpt/`.
 

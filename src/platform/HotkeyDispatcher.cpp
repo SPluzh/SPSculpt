@@ -25,6 +25,12 @@ bool HotkeyDispatcher::processEvent(const SDL_Event& event, SculptManager& sculp
         return true; // Consume event without acting
     }
 
+    if (gui.isHotkeysTabActive()) {
+        if (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) {
+            return true; // Consume keyboard event so viewport actions don't fire while testing hotkeys in settings
+        }
+    }
+
     if (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) {
         ImGuiIO& io = ImGui::GetIO();
         if (io.WantCaptureKeyboard) {
