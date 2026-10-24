@@ -6,12 +6,30 @@
 #include "editing/undo/TransformUndoEntry.h"
 #include "editing/undo/UndoManager.h"
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <imguizmo/ImGuizmo.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <cmath>
 #include <algorithm>
 #include <chrono>
+
+static bool isMouseOverAnyImGuiWindow() {
+    ImGuiContext* g = GImGui;
+    if (!g) return false;
+    ImVec2 mpos = ImGui::GetMousePos();
+    for (int i = 0; i < g->Windows.Size; i++) {
+        ImGuiWindow* window = g->Windows[i];
+        if (window->Active && window->WasActive && !window->Hidden) {
+            if (!(window->Flags & ImGuiWindowFlags_NoMouseInputs)) {
+                if (window->Rect().Contains(mpos)) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
 
 PoseTool::PoseTool(SculptManager& sm)
     : m_sculpt(sm) {
@@ -175,7 +193,7 @@ void PoseTool::mirrorLineAcrossSymmetry(Mesh* mesh) {
 }
 
 bool PoseTool::handleMouseDown(Scene& scene, const Camera& camera, float mouseX, float mouseY, bool isCtrl, bool isAlt, bool isShift) {
-    if (ImGui::GetIO().WantCaptureMouse) return false;
+    if (isMouseOverAnyImGuiWindow()) return false;
     Mesh* mesh = scene.getSelected();
     if (!mesh) return false;
 

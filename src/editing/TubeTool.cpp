@@ -9,9 +9,27 @@
 #include "common/Logger.h"
 
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <cmath>
 #include <algorithm>
+
+static bool isMouseOverAnyImGuiWindow() {
+    ImGuiContext* g = GImGui;
+    if (!g) return false;
+    ImVec2 mpos = ImGui::GetMousePos();
+    for (int i = 0; i < g->Windows.Size; i++) {
+        ImGuiWindow* window = g->Windows[i];
+        if (window->Active && window->WasActive && !window->Hidden) {
+            if (!(window->Flags & ImGuiWindowFlags_NoMouseInputs)) {
+                if (window->Rect().Contains(mpos)) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846f
@@ -728,7 +746,7 @@ bool TubeTool::handleMouseDown(
     float mouseX, float mouseY,
     bool isCtrl, bool isAlt, bool isShift
 ) {
-    if (ImGui::GetIO().WantCaptureMouse) {
+    if (isMouseOverAnyImGuiWindow()) {
         return false;
     }
     if (m_baseMesh == nullptr) {
@@ -994,7 +1012,7 @@ bool TubeTool::handleMouseDown(
 }
 
 bool TubeTool::handleMouseMove(Scene& scene, const Camera& camera, float mouseX, float mouseY) {
-    if (!isInteracting() && ImGui::GetIO().WantCaptureMouse) {
+    if (!isInteracting() && isMouseOverAnyImGuiWindow()) {
         m_hoveredPointIdx = -1;
         m_hoveredRadiusHandleIdx = -1;
         m_hoveredRadiusRing = false;
@@ -2237,7 +2255,7 @@ void TubeTool::renderOverlay(
     ImDrawList* drawList = ImGui::GetBackgroundDrawList();
     if (!drawList) return;
 
-    if (!isInteracting() && ImGui::GetIO().WantCaptureMouse) {
+    if (!isInteracting() && isMouseOverAnyImGuiWindow()) {
         m_hoveredPointIdx = -1;
         m_hoveredRadiusHandleIdx = -1;
         m_hoveredRadiusRing = false;

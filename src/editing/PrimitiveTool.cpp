@@ -6,9 +6,26 @@
 #include "mesh/Topology.h"
 #include "sculpt/PrimitiveGenerator.h"
 #include "common/Logger.h"
-#include <imgui.h>
+#include <imgui_internal.h>
 #include <algorithm>
 #include <cmath>
+
+static bool isMouseOverAnyImGuiWindow() {
+    ImGuiContext* g = GImGui;
+    if (!g) return false;
+    ImVec2 mpos = ImGui::GetMousePos();
+    for (int i = 0; i < g->Windows.Size; i++) {
+        ImGuiWindow* window = g->Windows[i];
+        if (window->Active && window->WasActive && !window->Hidden) {
+            if (!(window->Flags & ImGuiWindowFlags_NoMouseInputs)) {
+                if (window->Rect().Contains(mpos)) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
 
 PrimitiveTool::PrimitiveTool(SculptManager& sm)
     : m_sculpt(sm) {
@@ -449,7 +466,7 @@ bool PrimitiveTool::handleMouseDown(
     float mouseX, float mouseY,
     bool isCtrl, bool isAlt, bool isShift
 ) {
-    if (ImGui::GetIO().WantCaptureMouse) {
+    if (isMouseOverAnyImGuiWindow()) {
         return false;
     }
     (void)isCtrl; (void)isAlt; (void)isShift;
@@ -463,7 +480,7 @@ bool PrimitiveTool::handleMouseDown(
 
     glm::vec2 mousePos(mouseX, mouseY);
     int hitIdx = -1;
-    float closestDist = 16.0f;
+    float closestDist = 20.0f;
 
     for (size_t i = 0; i < m_currentHandles.size(); ++i) {
         float d = glm::distance(mousePos, m_currentHandles[i].screenPos);
@@ -485,7 +502,7 @@ bool PrimitiveTool::handleMouseDown(
 }
 
 bool PrimitiveTool::handleMouseMove(Scene& scene, const Camera& camera, float mouseX, float mouseY) {
-    if (!m_isDraggingHandle && ImGui::GetIO().WantCaptureMouse) {
+    if (!m_isDraggingHandle && isMouseOverAnyImGuiWindow()) {
         m_hoveredHandleIdx = -1;
         return false;
     }
@@ -530,7 +547,7 @@ bool PrimitiveTool::handleMouseMove(Scene& scene, const Camera& camera, float mo
     // Hover detection when not dragging
     buildHandlesForMesh(m_activeMesh, camera);
     int newHover = -1;
-    float closestDist = 16.0f;
+    float closestDist = 20.0f;
     for (size_t i = 0; i < m_currentHandles.size(); ++i) {
         float d = glm::distance(mousePos, m_currentHandles[i].screenPos);
         if (d < closestDist) {
@@ -560,18 +577,33 @@ void PrimitiveTool::renderOverlay(
     ImDrawList* drawList = ImGui::GetBackgroundDrawList();
     if (!drawList) return;
 
-    if (!m_isDraggingHandle && ImGui::GetIO().WantCaptureMouse) {
-        m_hoveredHandleIdx = -1;
-    }
-
     Mesh* sel = scene.getSelected();
     if (!sel || !sel->isPrimitive || !sel->primitiveData) {
+        m_hoveredHandleIdx = -1;
         return;
     }
     m_activeMesh = sel;
 
     buildHandlesForMesh(m_activeMesh, camera);
     if (m_currentHandles.empty()) return;
+
+    // Real-time hover detection every frame directly in renderOverlay
+    if (!m_isDraggingHandle) {
+        int newHover = -1;
+        if (!isMouseOverAnyImGuiWindow()) {
+            ImVec2 m = ImGui::GetMousePos();
+            glm::vec2 mousePos(m.x, m.y);
+            float closestDist = 20.0f;
+            for (size_t i = 0; i < m_currentHandles.size(); ++i) {
+                float d = glm::distance(mousePos, m_currentHandles[i].screenPos);
+                if (d < closestDist) {
+                    closestDist = d;
+                    newHover = static_cast<int>(i);
+                }
+            }
+        }
+        m_hoveredHandleIdx = newHover;
+    }
 
     glm::mat4 primWorld = (m_activeMesh->matrix * m_activeMesh->editMatrix) * getPrimitiveLocalTransform(m_activeMesh);
     glm::vec3 centerWorld = glm::vec3(primWorld * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
@@ -587,20 +619,25 @@ void PrimitiveTool::renderOverlay(
         // Guide line from center (or anchor) to handle
         if (centerProj.z >= 0.0f && centerProj.z <= 1.0f) {
             ImU32 lineCol = (isHovered || isActive) ? IM_COL32(255, 230, 40, 220) : IM_COL32(0, 200, 240, 140);
-            drawList->AddLine(centerScreen, ImVec2(h.screenPos.x, h.screenPos.y), IM_COL32(0, 0, 0, 160), 3.0f);
+            drawList->AddLine(centerScreen, ImVec2(h.screenPos.x, h.screenPos.y), IM_COL32(0, 0, 0, 160), (isHovered || isActive) ? 4.0f : 3.0f);
             drawList->AddLine(centerScreen, ImVec2(h.screenPos.x, h.screenPos.y), lineCol, (isHovered || isActive) ? 2.5f : 1.5f);
         }
 
         // Draw Handle
-        float radius = (isHovered || isActive) ? 9.5f : 7.0f;
+        float radius = (isHovered || isActive) ? 10.0f : 7.0f;
         ImVec2 hPos(h.screenPos.x, h.screenPos.y);
+
+        // Outer glow aura on hover / drag (matching Tube Tool aesthetics)
+        if (isHovered || isActive) {
+            drawList->AddCircle(hPos, radius + 3.5f, IM_COL32(255, 220, 40, 150), 16, 2.0f);
+        }
 
         // Shadow circle
         drawList->AddCircleFilled(ImVec2(hPos.x + 1.5f, hPos.y + 1.5f), radius + 1.0f, IM_COL32(0, 0, 0, 180), 16);
 
         // Outer rim
         ImU32 rimCol = (isHovered || isActive) ? IM_COL32(255, 240, 100, 255) : IM_COL32(20, 25, 30, 240);
-        drawList->AddCircle(hPos, radius, rimCol, 16, 2.0f);
+        drawList->AddCircle(hPos, radius, rimCol, 16, (isHovered || isActive) ? 2.5f : 2.0f);
 
         // Inner fill
         ImU32 fillCol;

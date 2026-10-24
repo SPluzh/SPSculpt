@@ -5791,7 +5791,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             }
         };
 
-        if (!sculpt.getDraggedSegment() && ImGui::GetIO().WantCaptureMouse) {
+        if (!sculpt.getDraggedSegment() && isPointOverImGuiWindow(ImGui::GetMousePos())) {
             sculpt.clearHoveredSegment();
         }
         const MeasurementSegment* hoveredSeg = sculpt.getHoveredSegment();
