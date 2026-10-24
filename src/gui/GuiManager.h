@@ -206,7 +206,22 @@ private:
     void drawReferenceImageManipulator(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer);
     void drawCameraBookmarksPanel(Scene& scene, AngleRenderer& renderer);
 
+public:
+    enum PrefTab {
+        PrefTab_Interface = 0,
+        PrefTab_Camera = 1,
+        PrefTab_Rendering = 2,
+        PrefTab_ToolOverlays = 3,
+        PrefTab_Performance = 4,
+        PrefTab_Undo = 5,
+        PrefTab_DebugLog = 6,
+        PrefTab_Tablet = 7,
+        PrefTab_Hotkeys = 8,
+    };
+
+private:
     int m_preferencesActiveTab = -1;
+    int m_preferencesSelectedTab = 0;
     HotkeyManager* m_hotkeyManager = nullptr;
     HKAction m_capturingAction = HKAction::None;
     SDL_Keycode m_selectedVirtualKey = SDLK_UNKNOWN;
@@ -305,8 +320,8 @@ public:
     bool isSculptingPanelVisible() const { return m_showSculptingPanel; }
     void toggleScenePanel() { m_showScenePanel = !m_showScenePanel; }
     void toggleTopologyPanel() { m_showTopologyPanel = !m_showTopologyPanel; }
-    void toggleCameraPanel() { m_showPreferencesPanel = true; m_preferencesActiveTab = 1; }
-    void toggleRenderingPanel() { m_showPreferencesPanel = true; m_preferencesActiveTab = 2; }
+    void toggleCameraPanel() { m_showPreferencesPanel = true; m_preferencesActiveTab = PrefTab_Camera; }
+    void toggleRenderingPanel() { m_showPreferencesPanel = true; m_preferencesActiveTab = PrefTab_Rendering; }
     void toggleMaskingPanel() { m_showMaskingPanel = !m_showMaskingPanel; }
     void toggleMultiresPanel() { m_showMultiresPanel = !m_showMultiresPanel; }
     void toggleLayersPanel() { m_showLayersPanel = !m_showLayersPanel; }
@@ -314,9 +329,9 @@ public:
     void toggleReferenceImagesPanel() { m_showReferenceImagesPanel = !m_showReferenceImagesPanel; }
     void toggleGizmoCube() { m_showGizmoCube = !m_showGizmoCube; }
     void toggleMeshInfo() { m_showMeshInfo = !m_showMeshInfo; }
-    void toggleUndoDiagPanel() { m_showPreferencesPanel = true; m_preferencesActiveTab = 4; }
-    void toggleDebugLogPanel() { m_showPreferencesPanel = true; m_preferencesActiveTab = 5; }
-    void toggleTabletDiagPanel() { m_showPreferencesPanel = true; m_preferencesActiveTab = 6; }
+    void toggleUndoDiagPanel() { m_showPreferencesPanel = true; m_preferencesActiveTab = PrefTab_Undo; }
+    void toggleDebugLogPanel() { m_showPreferencesPanel = true; m_preferencesActiveTab = PrefTab_DebugLog; }
+    void toggleTabletDiagPanel() { m_showPreferencesPanel = true; m_preferencesActiveTab = PrefTab_Tablet; }
     void toggleFloatingIsland() { m_showFloatingIsland = !m_showFloatingIsland; }
     void toggleTimelapsePanel() { m_showTimelapsePanel = !m_showTimelapsePanel; }
     void togglePreferencesPanel() { m_showPreferencesPanel = !m_showPreferencesPanel; }

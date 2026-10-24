@@ -750,6 +750,13 @@ void GuiManager::rebuildFontsAndStyles() {
     style.Colors[ImGuiCol_SeparatorActive] = ImVec4(0.00f, 0.39f, 0.30f, 1.00f);
     style.Colors[ImGuiCol_TextSelectedBg] = ImVec4(0.01f, 0.52f, 0.45f, 0.35f);
     style.Colors[ImGuiCol_NavHighlight] = tealAccent;
+    style.Colors[ImGuiCol_Tab] = ImVec4(0.01f, 0.52f, 0.45f, 0.35f);
+    style.Colors[ImGuiCol_TabHovered] = tealAccentHover;
+    style.Colors[ImGuiCol_TabSelected] = tealAccent;
+    style.Colors[ImGuiCol_TabSelectedOverline] = tealAccentHover;
+    style.Colors[ImGuiCol_TabDimmed] = ImVec4(0.01f, 0.52f, 0.45f, 0.20f);
+    style.Colors[ImGuiCol_TabDimmedSelected] = ImVec4(0.01f, 0.52f, 0.45f, 0.65f);
+    style.Colors[ImGuiCol_TabDimmedSelectedOverline] = tealAccent;
 
     if (combinedScale > 1.0f) {
         style.ScaleAllSizes(combinedScale);
@@ -10858,14 +10865,98 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
 
     float scale = getUiScale();
 
-    ImGui::SetNextWindowPos(ImVec2(120.0f * scale, 120.0f * scale), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(640.0f * scale, 520.0f * scale), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(100.0f * scale, 100.0f * scale), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(780.0f * scale, 560.0f * scale), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(650.0f * scale, 450.0f * scale), ImVec2(2500.0f * scale, 2500.0f * scale));
 
-    if (ImGui::Begin("Preferences & Application Settings", &m_showPreferencesPanel, ImGuiWindowFlags_NoCollapse)) {
-        if (ImGui::BeginTabBar("##PreferencesTabs")) {
+    if (ImGui::Begin("Preferences & Application Settings", &m_showPreferencesPanel, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+        struct PrefTabItem {
+            PrefTab id;
+            const char* label;
+            const char* icon;
+        };
+
+        static const PrefTabItem kPrefTabs[] = {
+            { PrefTab_Interface,    "Interface & Display", ICON_LC_LAYOUT },
+            { PrefTab_Camera,       "Camera & Viewport",   ICON_LC_CAMERA },
+            { PrefTab_Rendering,    "Rendering Quality",   ICON_LC_SUN },
+            { PrefTab_ToolOverlays, "Tool Overlays",       ICON_LC_PALETTE },
+            { PrefTab_Performance,  "Performance",         ICON_LC_GAUGE },
+            { PrefTab_Undo,         "Undo & System",       ICON_LC_UNDO_2 },
+            { PrefTab_DebugLog,     "Debug Log",           ICON_LC_TERMINAL },
+            { PrefTab_Tablet,       "Tablet & Stylus",     ICON_LC_TABLET },
+            { PrefTab_Hotkeys,      "Hotkeys",             ICON_LC_KEYBOARD },
+        };
+
+        if (m_preferencesActiveTab >= 0) {
+            if (m_preferencesActiveTab == 7) m_preferencesSelectedTab = PrefTab_Hotkeys;
+            else if (m_preferencesActiveTab == 4) m_preferencesSelectedTab = PrefTab_Undo;
+            else if (m_preferencesActiveTab == 5) m_preferencesSelectedTab = PrefTab_DebugLog;
+            else if (m_preferencesActiveTab == 6) m_preferencesSelectedTab = PrefTab_Tablet;
+            else if (m_preferencesActiveTab == 2) m_preferencesSelectedTab = PrefTab_Rendering;
+            else if (m_preferencesActiveTab == 1) m_preferencesSelectedTab = PrefTab_Camera;
+            else if (m_preferencesActiveTab == 0) m_preferencesSelectedTab = PrefTab_Interface;
+            else if (m_preferencesActiveTab == 3) m_preferencesSelectedTab = PrefTab_ToolOverlays;
+            else m_preferencesSelectedTab = static_cast<PrefTab>(m_preferencesActiveTab);
+            m_preferencesActiveTab = -1;
+        }
+
+        float sidebarWidth = 195.0f * scale;
+        const ImGuiStyle& style = ImGui::GetStyle();
+        float buttonHeight = 28.0f * scale;
+        float bottomBarHeight = buttonHeight + style.ItemSpacing.y * 2.0f + 10.0f * scale;
+        float availHeight = ImGui::GetContentRegionAvail().y;
+        float contentHeight = availHeight - bottomBarHeight;
+        if (contentHeight < 200.0f * scale) contentHeight = 200.0f * scale;
+
+        ImVec4 tealAccent = ImVec4(0.01f, 0.52f, 0.45f, 1.00f);
+        ImVec4 tealAccentHover = ImVec4(0.02f, 0.65f, 0.54f, 1.00f);
+        ImVec4 tealAccentActive = ImVec4(0.00f, 0.39f, 0.30f, 1.00f);
+
+        // --- Left Sidebar (Vertical Navigation Tabs) ---
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.0f);
+        if (ImGui::BeginChild("##PrefSidebar", ImVec2(sidebarWidth, contentHeight), true)) {
+            ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.06f, 0.5f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+
+            for (size_t i = 0; i < IM_ARRAYSIZE(kPrefTabs); ++i) {
+                bool isSelected = (m_preferencesSelectedTab == kPrefTabs[i].id);
+
+                if (isSelected) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, tealAccent);
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, tealAccentHover);
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, tealAccentActive);
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+                } else {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.11f, 0.12f, 0.14f, 0.60f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.01f, 0.52f, 0.45f, 0.35f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, tealAccentActive);
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.82f, 0.85f, 0.88f, 1.0f));
+                }
+
+                std::string btnLabel = std::string(kPrefTabs[i].icon) + "  " + kPrefTabs[i].label + "##PrefTabBtn";
+                if (ImGui::Button(btnLabel.c_str(), ImVec2(-1.0f, 32.0f * scale))) {
+                    m_preferencesSelectedTab = kPrefTabs[i].id;
+                }
+
+                ImGui::PopStyleColor(4);
+                ImGui::Spacing();
+            }
+
+            ImGui::PopStyleVar(2);
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleVar();
+
+        ImGui::SameLine();
+
+        // --- Right Content Area ---
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.0f);
+        if (ImGui::BeginChild("##PrefContentArea", ImVec2(0, contentHeight), true)) {
+            switch (m_preferencesSelectedTab) {
 
             // 1. Interface & Display Tab
-            if (ImGui::BeginTabItem("Interface & Display")) {
+            case PrefTab_Interface: {
                 ImGui::Spacing();
                 ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Scaling & Layout");
                 ImGui::Separator();
@@ -10929,12 +11020,11 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                 ImGui::Checkbox("Save PNG preview image alongside .spsculpt file", &m_savePngNextToProject);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("When saving a .spsculpt project, automatically write a PNG preview image file next to the project file");
 
-                ImGui::EndTabItem();
+                break;
             }
 
             // 2. Camera & Viewport Tab
-            ImGuiTabItemFlags cameraTabFlags = (m_preferencesActiveTab == 1) ? ImGuiTabItemFlags_SetSelected : 0;
-            if (ImGui::BeginTabItem("Camera & Viewport", nullptr, cameraTabFlags)) {
+            case PrefTab_Camera: {
                 Camera& camera = scene.getCamera();
 
                 ImGui::Spacing();
@@ -10984,7 +11074,7 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                     }
                     if (ImGui::Button("Customize Hotkeys & Keyboard...")) {
                         m_showPreferencesPanel = true;
-                        m_preferencesActiveTab = 7;
+                        m_preferencesSelectedTab = PrefTab_Hotkeys;
                     }
                 } else {
                     const char* navStyles[] = { "ZBrush Style", "Maya Style", "Blender Style" };
@@ -11182,19 +11272,18 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                     takeScreenshot(scene, renderer);
                 }
 
-                ImGui::EndTabItem();
+                break;
             }
 
             // 2.5 Tool Overlays & Colors Tab
-            if (ImGui::BeginTabItem("Tool Overlays & Colors")) {
+            case PrefTab_ToolOverlays: {
                 ImGui::Spacing();
                 gui::ToolOverlayTheme::get().drawSettingsUI();
-                ImGui::EndTabItem();
+                break;
             }
 
             // 3. Rendering Quality Tab
-            ImGuiTabItemFlags renderTabFlags = (m_preferencesActiveTab == 2) ? ImGuiTabItemFlags_SetSelected : 0;
-            if (ImGui::BeginTabItem("Rendering Quality", nullptr, renderTabFlags)) {
+            case PrefTab_Rendering: {
                 ImGui::Spacing();
                 ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Material & Shading Mode");
                 ImGui::Separator();
@@ -11718,11 +11807,11 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                     }
                 }
 
-                ImGui::EndTabItem();
+                break;
             }
 
             // 4. Performance Tab
-            if (ImGui::BeginTabItem("Performance")) {
+            case PrefTab_Performance: {
                 ImGui::Spacing();
                 ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Frame Rate Control");
                 ImGui::Separator();
@@ -11746,12 +11835,11 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
 
                 ImGui::Text("Current Measured Frame Rate: %d FPS", m_fpsValue);
 
-                ImGui::EndTabItem();
+                break;
             }
 
             // 5. Undo & System Tab
-            ImGuiTabItemFlags undoTabFlags = (m_preferencesActiveTab == 4) ? ImGuiTabItemFlags_SetSelected : 0;
-            if (ImGui::BeginTabItem("Undo & System", nullptr, undoTabFlags)) {
+            case PrefTab_Undo: {
                 ImGui::Spacing();
                 ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Undo / Redo Action Controls");
                 ImGui::Separator();
@@ -11894,12 +11982,11 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                     ImGui::EndChild();
                 }
 
-                ImGui::EndTabItem();
+                break;
             }
 
             // 6. Debug Log Tab
-            ImGuiTabItemFlags debugTabFlags = (m_preferencesActiveTab == 5) ? ImGuiTabItemFlags_SetSelected : 0;
-            if (ImGui::BeginTabItem("Debug Log", nullptr, debugTabFlags)) {
+            case PrefTab_DebugLog: {
                 ImGui::Spacing();
                 if (ImGui::Button(ICON_LC_TRASH_2 " Clear Log")) {
                     Logger::instance().clear();
@@ -11931,12 +12018,11 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                     ImGui::EndChild();
                 }
 
-                ImGui::EndTabItem();
+                break;
             }
 
             // 7. Tablet & Stylus Tab
-            ImGuiTabItemFlags tabletTabFlags = (m_preferencesActiveTab == 6) ? ImGuiTabItemFlags_SetSelected : 0;
-            if (ImGui::BeginTabItem("Tablet & Stylus", nullptr, tabletTabFlags)) {
+            case PrefTab_Tablet: {
                 ImGui::Spacing();
                 ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Graphics Tablet API & Diagnostics");
                 ImGui::Separator();
@@ -12268,28 +12354,27 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                     testPoints.clear();
                 }
 
-                ImGui::EndTabItem();
+                break;
             }
 
             // 8. Hotkeys & Navigation Tab
-            ImGuiTabItemFlags hotkeysTabFlags = (m_preferencesActiveTab == 7) ? ImGuiTabItemFlags_SetSelected : 0;
-            if (ImGui::BeginTabItem("Hotkeys", nullptr, hotkeysTabFlags)) {
+            case PrefTab_Hotkeys: {
                 drawHotkeysTab(scene, sculpt);
-                ImGui::EndTabItem();
+                break;
             }
 
-            if (m_preferencesActiveTab >= 0) {
-                m_preferencesActiveTab = -1;
+            default:
+                break;
             }
-
-            ImGui::EndTabBar();
         }
+        ImGui::EndChild();
+        ImGui::PopStyleVar();
 
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
 
-        if (ImGui::Button("Save Settings", ImVec2(130.0f * scale, 28.0f * scale))) {
+        if (ImGui::Button("Save Settings", ImVec2(130.0f * scale, buttonHeight))) {
             IniFile ini;
             saveSettings(ini);
             sculpt.saveSettings(ini);
@@ -12302,7 +12387,7 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save settings to app_settings.cfg");
 
         ImGui::SameLine();
-        if (ImGui::Button("Close", ImVec2(100.0f * scale, 28.0f * scale))) {
+        if (ImGui::Button("Close", ImVec2(100.0f * scale, buttonHeight))) {
             m_showPreferencesPanel = false;
         }
     }
