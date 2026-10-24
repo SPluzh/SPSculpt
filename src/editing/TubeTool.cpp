@@ -728,6 +728,9 @@ bool TubeTool::handleMouseDown(
     float mouseX, float mouseY,
     bool isCtrl, bool isAlt, bool isShift
 ) {
+    if (ImGui::GetIO().WantCaptureMouse) {
+        return false;
+    }
     if (m_baseMesh == nullptr) {
         m_baseMesh = scene.getSelected();
     }
@@ -991,6 +994,16 @@ bool TubeTool::handleMouseDown(
 }
 
 bool TubeTool::handleMouseMove(Scene& scene, const Camera& camera, float mouseX, float mouseY) {
+    if (!isInteracting() && ImGui::GetIO().WantCaptureMouse) {
+        m_hoveredPointIdx = -1;
+        m_hoveredRadiusHandleIdx = -1;
+        m_hoveredRadiusRing = false;
+        m_hoveredCurveSeg = -1;
+        m_hoveredProfilePtIdx = -1;
+        m_hoveredProfileSeg = -1;
+        return false;
+    }
+
     if (m_isDrawingStroke) {
         glm::vec3 hitPos, hitNorm;
         glm::vec3 ptPos;
@@ -2221,8 +2234,17 @@ void TubeTool::bakeAllTubes(Scene& scene) {
 void TubeTool::renderOverlay(
     Scene& scene, const Camera& camera, float viewportW, float viewportH
 ) {
-    ImDrawList* drawList = ImGui::GetForegroundDrawList();
+    ImDrawList* drawList = ImGui::GetBackgroundDrawList();
     if (!drawList) return;
+
+    if (!isInteracting() && ImGui::GetIO().WantCaptureMouse) {
+        m_hoveredPointIdx = -1;
+        m_hoveredRadiusHandleIdx = -1;
+        m_hoveredRadiusRing = false;
+        m_hoveredCurveSeg = -1;
+        m_hoveredProfilePtIdx = -1;
+        m_hoveredProfileSeg = -1;
+    }
 
     // 1. Draw raw freehand stroke in progress
     if (m_isDrawingStroke) {

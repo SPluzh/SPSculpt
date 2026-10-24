@@ -175,6 +175,7 @@ void PoseTool::mirrorLineAcrossSymmetry(Mesh* mesh) {
 }
 
 bool PoseTool::handleMouseDown(Scene& scene, const Camera& camera, float mouseX, float mouseY, bool isCtrl, bool isAlt, bool isShift) {
+    if (ImGui::GetIO().WantCaptureMouse) return false;
     Mesh* mesh = scene.getSelected();
     if (!mesh) return false;
 
@@ -663,7 +664,7 @@ void PoseTool::finalizeDeformation(Scene& scene, Mesh* mesh) {
 void PoseTool::renderOverlay(Scene& scene, const Camera& camera, float viewportW, float viewportH) {
     if (!m_line.isValid && !m_line.isDrawing) return;
 
-    ImDrawList* drawList = ImGui::GetForegroundDrawList();
+    ImDrawList* drawList = ImGui::GetBackgroundDrawList();
     if (!drawList) return;
 
     glm::vec3 sStart = camera.project(m_line.startWorld);
@@ -767,7 +768,7 @@ void PoseTool::renderGizmoAndDeform(Scene& scene, const Camera& camera, float vi
 
     ImGuizmo::BeginFrame();
     ImGuizmo::SetOrthographic(camera.isOrthographic());
-    ImGuizmo::SetDrawlist(ImGui::GetForegroundDrawList());
+    ImGuizmo::SetDrawlist(ImGui::GetBackgroundDrawList());
     ImGuizmo::SetRect(0.0f, 0.0f, viewportW, viewportH);
     ImGuizmo::AllowAxisFlip(false);
 

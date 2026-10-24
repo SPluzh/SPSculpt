@@ -449,6 +449,9 @@ bool PrimitiveTool::handleMouseDown(
     float mouseX, float mouseY,
     bool isCtrl, bool isAlt, bool isShift
 ) {
+    if (ImGui::GetIO().WantCaptureMouse) {
+        return false;
+    }
     (void)isCtrl; (void)isAlt; (void)isShift;
     Mesh* sel = scene.getSelected();
     if (!sel || !sel->isPrimitive || !sel->primitiveData) {
@@ -482,6 +485,11 @@ bool PrimitiveTool::handleMouseDown(
 }
 
 bool PrimitiveTool::handleMouseMove(Scene& scene, const Camera& camera, float mouseX, float mouseY) {
+    if (!m_isDraggingHandle && ImGui::GetIO().WantCaptureMouse) {
+        m_hoveredHandleIdx = -1;
+        return false;
+    }
+
     Mesh* sel = scene.getSelected();
     if (!sel || !sel->isPrimitive || !sel->primitiveData) {
         m_hoveredHandleIdx = -1;
@@ -549,8 +557,12 @@ void PrimitiveTool::renderOverlay(
     float viewportW, float viewportH
 ) {
     (void)viewportW; (void)viewportH;
-    ImDrawList* drawList = ImGui::GetForegroundDrawList();
+    ImDrawList* drawList = ImGui::GetBackgroundDrawList();
     if (!drawList) return;
+
+    if (!m_isDraggingHandle && ImGui::GetIO().WantCaptureMouse) {
+        m_hoveredHandleIdx = -1;
+    }
 
     Mesh* sel = scene.getSelected();
     if (!sel || !sel->isPrimitive || !sel->primitiveData) {

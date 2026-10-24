@@ -5713,7 +5713,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
 
     if (sculpt.getBrush() == BRUSH_MASK_GRADIENT_BLUR && sculpt.getGradActive()) {
-        ImDrawList* drawList = ImGui::GetForegroundDrawList();
+        ImDrawList* drawList = ImGui::GetBackgroundDrawList();
         ImVec2 pA = ImVec2(sculpt.getGradPointA().x, sculpt.getGradPointA().y);
         ImVec2 pB = ImVec2(sculpt.getGradPointB().x, sculpt.getGradPointB().y);
 
@@ -5756,7 +5756,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     if (sculpt.getBrush() == BRUSH_MEASURE || sculpt.getBrush() == BRUSH_DIVIDER ||
         !sculpt.getMeasureSegments().empty() || !sculpt.getDividerSegments().empty()) {
         sculpt.validateSegments(scene);
-        ImDrawList* drawList = ImGui::GetForegroundDrawList();
+        ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+        if (!drawList) return;
         bool useDistanceThickness = sculpt.getMeasureUseDistanceThickness();
 
         float viewportWidth = ImGui::GetIO().DisplaySize.x;
@@ -5790,6 +5791,9 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             }
         };
 
+        if (!sculpt.getDraggedSegment() && ImGui::GetIO().WantCaptureMouse) {
+            sculpt.clearHoveredSegment();
+        }
         const MeasurementSegment* hoveredSeg = sculpt.getHoveredSegment();
         std::string hoveredKey = sculpt.getHoveredVertexKey();
 

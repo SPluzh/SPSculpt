@@ -514,6 +514,10 @@ public:
     void clearAllMeasurements(Scene* scene = nullptr);
 
     const MeasurementSegment* getHoveredSegment() const { return m_hoveredSegment; }
+    void clearHoveredSegment() {
+        m_hoveredSegment = nullptr;
+        m_hoveredVertexKey = "";
+    }
 
     std::string getHoveredVertexKey() const { return m_hoveredVertexKey; }
     const MeasurementSegment* getDraggedSegment() const { return m_draggedSegment; }
