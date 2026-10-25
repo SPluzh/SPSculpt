@@ -1310,6 +1310,7 @@ void Mesh::rebuildDynamicTopology() {
             bool isSharp = (step <= dynamicSettings.creaseLevel);
 
             std::vector<uint8_t> outCreases;
+            std::vector<uint8_t> outCageEdges;
             dynamicCaches[step - 1].clear();
             Subdivision::fullSubdivisionWithCreases(
                 *prevLevel,
@@ -1318,9 +1319,12 @@ void Mesh::rebuildDynamicTopology() {
                 &outCreases,
                 isSharp,
                 isLinear,
-                &dynamicCaches[step - 1]
+                &dynamicCaches[step - 1],
+                step == 1 ? nullptr : &prevLevel->edgeIsCage,
+                &outCageEdges
             );
             curLevel->edgeCreases = std::move(outCreases);
+            curLevel->edgeIsCage = std::move(outCageEdges);
 
             curLevel->faceNormals.resize(curLevel->nbFaces * 3, 0.0f);
             curLevel->faceBoxes.resize(curLevel->nbFaces * 6, 0.0f);
@@ -1360,6 +1364,7 @@ void Mesh::rebuildDynamicTopology() {
                 bool isSharp = (step <= dynamicSettings.creaseLevel);
 
                 std::vector<uint8_t> outCreases;
+                std::vector<uint8_t> outCageEdges;
                 dynamicCaches[step - 1].clear();
                 Subdivision::fullSubdivisionWithCreases(
                     *prevLevel,
@@ -1368,9 +1373,12 @@ void Mesh::rebuildDynamicTopology() {
                     &outCreases,
                     isSharp,
                     isLinear,
-                    &dynamicCaches[step - 1]
+                    &dynamicCaches[step - 1],
+                    step == 1 ? (prevLevel->edgeIsCage.empty() ? nullptr : &prevLevel->edgeIsCage) : &prevLevel->edgeIsCage,
+                    &outCageEdges
                 );
                 curLevel->edgeCreases = std::move(outCreases);
+                curLevel->edgeIsCage = std::move(outCageEdges);
 
                 curLevel->faceNormals.resize(curLevel->nbFaces * 3, 0.0f);
                 curLevel->faceBoxes.resize(curLevel->nbFaces * 6, 0.0f);
@@ -1413,6 +1421,7 @@ void Mesh::rebuildDynamicTopology() {
                 bool isSharp = (step <= dynamicSettings.creaseLevel);
 
                 std::vector<uint8_t> outCreases;
+                std::vector<uint8_t> outCageEdges;
                 dynamicCaches[step - 1].clear();
                 Subdivision::fullSubdivisionWithCreases(
                     *prevLevel,
@@ -1421,9 +1430,12 @@ void Mesh::rebuildDynamicTopology() {
                     &outCreases,
                     isSharp,
                     isLinear,
-                    &dynamicCaches[step - 1]
+                    &dynamicCaches[step - 1],
+                    step == 1 ? nullptr : &prevLevel->edgeIsCage,
+                    &outCageEdges
                 );
                 curLevel->edgeCreases = std::move(outCreases);
+                curLevel->edgeIsCage = std::move(outCageEdges);
 
                 curLevel->faceNormals.resize(curLevel->nbFaces * 3, 0.0f);
                 curLevel->faceBoxes.resize(curLevel->nbFaces * 6, 0.0f);

@@ -540,7 +540,9 @@ void fullSubdivisionWithCreases(
     std::vector<uint8_t>* outCreases,
     bool isSharpStep,
     bool isLinear,
-    SubdivLevelCache* cache
+    SubdivLevelCache* cache,
+    const std::vector<uint8_t>* inCageEdges,
+    std::vector<uint8_t>* outCageEdges
 ) {
     if (baseMesh.vrfStartCount.size() != (size_t)(baseMesh.getNbVertices() * 2) || baseMesh.edges.empty()) {
         baseMesh.initTopology();
@@ -578,60 +580,82 @@ void fullSubdivisionWithCreases(
 
     newMesh.initTopology();
 
-    // Propagate creases to sub-edges in newMesh
-    if (outCreases) {
-        outCreases->assign(newMesh.getNbEdges(), 0);
-        if (inCreases && !inCreases->empty()) {
-            const auto& baseFaces = baseMesh.getFaces();
-            const auto& baseFaceEdges = baseMesh.faceEdges;
-            const auto& newFaceEdges = newMesh.faceEdges;
-            const auto& newFaces = newMesh.getFaces();
+    // Propagate creases and cage edges to sub-edges in newMesh
+    if (outCreases || outCageEdges) {
+        if (outCreases) outCreases->assign(newMesh.getNbEdges(), 0);
+        if (outCageEdges) outCageEdges->assign(newMesh.getNbEdges(), 0);
 
-            std::unordered_set<uint64_t> creasedSubEdges;
+        const auto& baseFaces = baseMesh.getFaces();
+        const auto& baseFaceEdges = baseMesh.faceEdges;
+        const auto& newFaceEdges = newMesh.faceEdges;
+        const auto& newFaces = newMesh.getFaces();
+
+        std::unordered_set<uint64_t> creasedSubEdges;
+        std::unordered_set<uint64_t> cageSubEdges;
+        if (outCreases && inCreases && !inCreases->empty()) {
             creasedSubEdges.reserve(inCreases->size() * 2);
+        }
+        if (outCageEdges) {
+            cageSubEdges.reserve((inCageEdges ? inCageEdges->size() : baseMesh.getNbEdges()) * 2);
+        }
 
-            int baseNbFaces = baseMesh.getNbFaces();
-            for (int f = 0; f < baseNbFaces; ++f) {
-                int id = f * 4;
-                uint32_t v[4] = { baseFaces[id], baseFaces[id + 1], baseFaces[id + 2], baseFaces[id + 3] };
-                bool isQuad = (v[3] != TRI_INDEX);
-                int numE = isQuad ? 4 : 3;
-                for (int e = 0; e < numE; ++e) {
-                    uint32_t ide = baseFaceEdges[id + e];
-                    if (ide < inCreases->size() && (*inCreases)[ide] > 0) {
-                        int32_t ivMid = tags[ide] - 1;
-                        if (ivMid >= 0) {
-                            uint32_t va = v[e];
-                            uint32_t vb = v[(e + 1) % numE];
-                            uint64_t k1 = ((uint64_t)std::min(va, (uint32_t)ivMid) << 32) | std::max(va, (uint32_t)ivMid);
-                            uint64_t k2 = ((uint64_t)std::min(vb, (uint32_t)ivMid) << 32) | std::max(vb, (uint32_t)ivMid);
-                            creasedSubEdges.insert(k1);
-                            creasedSubEdges.insert(k2);
-                        }
+        int baseNbFaces = baseMesh.getNbFaces();
+        for (int f = 0; f < baseNbFaces; ++f) {
+            int id = f * 4;
+            uint32_t v[4] = { baseFaces[id], baseFaces[id + 1], baseFaces[id + 2], baseFaces[id + 3] };
+            bool isQuad = (v[3] != TRI_INDEX);
+            int numE = isQuad ? 4 : 3;
+            for (int e = 0; e < numE; ++e) {
+                uint32_t ide = baseFaceEdges[id + e];
+                int32_t ivMid = (ide < tags.size()) ? (tags[ide] - 1) : -1;
+                if (ivMid >= 0) {
+                    uint32_t va = v[e];
+                    uint32_t vb = v[(e + 1) % numE];
+                    uint64_t k1 = ((uint64_t)std::min(va, (uint32_t)ivMid) << 32) | std::max(va, (uint32_t)ivMid);
+                    uint64_t k2 = ((uint64_t)std::min(vb, (uint32_t)ivMid) << 32) | std::max(vb, (uint32_t)ivMid);
+
+                    if (outCreases && inCreases && ide < inCreases->size() && (*inCreases)[ide] > 0) {
+                        creasedSubEdges.insert(k1);
+                        creasedSubEdges.insert(k2);
                     }
-                }
-            }
-
-            int newNbFaces = newMesh.getNbFaces();
-            for (int f = 0; f < newNbFaces; ++f) {
-                int id = f * 4;
-                uint32_t v[4] = { newFaces[id], newFaces[id + 1], newFaces[id + 2], newFaces[id + 3] };
-                bool isQuad = (v[3] != TRI_INDEX);
-                int numE = isQuad ? 4 : 3;
-                for (int e = 0; e < numE; ++e) {
-                    uint32_t edgeIdx = newFaceEdges[id + e];
-                    if (edgeIdx < outCreases->size() && (*outCreases)[edgeIdx] == 0) {
-                        uint32_t va = v[e];
-                        uint32_t vb = v[(e + 1) % numE];
-                        uint64_t k = ((uint64_t)std::min(va, vb) << 32) | std::max(va, vb);
-                        if (creasedSubEdges.find(k) != creasedSubEdges.end()) {
-                            (*outCreases)[edgeIdx] = 1;
+                    if (outCageEdges) {
+                        bool isCage = (!inCageEdges || (ide < inCageEdges->size() && (*inCageEdges)[ide] > 0));
+                        if (isCage) {
+                            cageSubEdges.insert(k1);
+                            cageSubEdges.insert(k2);
                         }
                     }
                 }
             }
         }
-        newMesh.edgeCreases = *outCreases;
+
+        int newNbFaces = newMesh.getNbFaces();
+        for (int f = 0; f < newNbFaces; ++f) {
+            int id = f * 4;
+            uint32_t v[4] = { newFaces[id], newFaces[id + 1], newFaces[id + 2], newFaces[id + 3] };
+            bool isQuad = (v[3] != TRI_INDEX);
+            int numE = isQuad ? 4 : 3;
+            for (int e = 0; e < numE; ++e) {
+                uint32_t edgeIdx = newFaceEdges[id + e];
+                uint32_t va = v[e];
+                uint32_t vb = v[(e + 1) % numE];
+                uint64_t k = ((uint64_t)std::min(va, vb) << 32) | std::max(va, vb);
+
+                if (outCreases && edgeIdx < outCreases->size() && (*outCreases)[edgeIdx] == 0) {
+                    if (creasedSubEdges.find(k) != creasedSubEdges.end()) {
+                        (*outCreases)[edgeIdx] = 1;
+                    }
+                }
+                if (outCageEdges && edgeIdx < outCageEdges->size() && (*outCageEdges)[edgeIdx] == 0) {
+                    if (cageSubEdges.find(k) != cageSubEdges.end()) {
+                        (*outCageEdges)[edgeIdx] = 1;
+                    }
+                }
+            }
+        }
+
+        if (outCreases) newMesh.edgeCreases = *outCreases;
+        if (outCageEdges) newMesh.edgeIsCage = *outCageEdges;
     }
 
     newMesh.postInit(false);
@@ -651,6 +675,7 @@ void computeDynamicSubdivision(
     if (smoothLevel <= 0 && flatLevel <= 0) {
         outMesh = baseMesh;
         outMesh.edgeCreases = baseMesh.edgeCreases;
+        outMesh.edgeIsCage = baseMesh.edgeIsCage;
         outMesh.postInit(false);
         return;
     }
@@ -668,16 +693,21 @@ void computeDynamicSubdivision(
         bool isSharp = (step <= creaseLevel);
 
         std::vector<uint8_t> outCreases;
+        std::vector<uint8_t> outCageEdges;
         fullSubdivisionWithCreases(
             *current,
             *next,
             &current->edgeCreases,
             &outCreases,
             isSharp,
-            isLinear
+            isLinear,
+            nullptr,
+            step == 1 ? nullptr : &current->edgeIsCage,
+            &outCageEdges
         );
 
         next->edgeCreases = std::move(outCreases);
+        next->edgeIsCage = std::move(outCageEdges);
         current = std::move(next);
     }
 

@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [0.3.14]
 - **Dynamic Subdivision**: Real-time non-destructive mesh smoothing preview without altering base geometry.
+- **Dual Wireframe (ZBrush Style)**: Clear visual hierarchy separating base cage edges on the smoothed surface from interior subdivision grid with adjustable `Subdiv Grid Opacity`.
+- **Dashed Crease Edges**: Sharp crease visualization rendered as vibrant dashed lines directly along the limit surface (both for base mesh and dynamic subdiv/thickness).
 - **Dynamic Thickness**: Non-destructive solid shell extrusion preview with customizable thickness, inward/outward offset, rim segments, and miter-angle compensation.
 - **Pre & Post Subdiv Pipeline**: Apply thickness on the coarse cage to get smoothly beveled rim corners (Pre-Subdiv) or extrude along smooth Catmull-Clark normals (Post-Subdiv).
 - **Auto-Crease Rims & PolyGroups**: Automatic boundary edge creasing to preserve crisp rim borders and distinct PolyGroup assignment for Front, Back, and Rim faces.

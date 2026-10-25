@@ -44,6 +44,7 @@ struct MeshRenderBuffers {
     GLuint vboTangents = 0;
     GLuint eboTriangles = 0;
     GLuint eboWireframe = 0;
+    GLuint eboSubdivWire = 0;
     
     // Dedicated expanded VAO/VBOs for PolyGroup rendering
     GLuint polygroupVao = 0;
@@ -69,6 +70,7 @@ struct MeshRenderBuffers {
     size_t vertCount = 0;
     size_t triIndexCount = 0;
     size_t wireIndexCount = 0;
+    size_t subdivWireIndexCount = 0;
 
     ~MeshRenderBuffers() {
         if (vao) glDeleteVertexArrays(1, &vao);
@@ -81,6 +83,7 @@ struct MeshRenderBuffers {
         if (vboTangents) glDeleteBuffers(1, &vboTangents);
         if (eboTriangles) glDeleteBuffers(1, &eboTriangles);
         if (eboWireframe) glDeleteBuffers(1, &eboWireframe);
+        if (eboSubdivWire) glDeleteBuffers(1, &eboSubdivWire);
 
         if (polygroupVao) glDeleteVertexArrays(1, &polygroupVao);
         if (polygroupVboVerts) glDeleteBuffers(1, &polygroupVboVerts);
@@ -305,6 +308,12 @@ public:
     const glm::vec4& getWireframeColor() const { return m_wireframeColor; }
     void setShowCreaseLines(bool show) { m_showCreaseLines = show; }
     bool getShowCreaseLines() const { return m_showCreaseLines; }
+    void setSubdivWireOpacity(float opacity) { m_subdivWireOpacity = std::clamp(opacity, 0.0f, 1.0f); }
+    float getSubdivWireOpacity() const { return m_subdivWireOpacity; }
+    void setDashedCreases(bool dashed) { m_dashedCreases = dashed; }
+    bool getDashedCreases() const { return m_dashedCreases; }
+    void setCreaseColor(const glm::vec4& color) { m_creaseColor = color; }
+    const glm::vec4& getCreaseColor() const { return m_creaseColor; }
 
     // X-Ray mode controls
     void setXrayEnabled(bool enable) { m_xrayEnabled = enable; }
@@ -465,6 +474,7 @@ public:
 private:
     void generateTriangleIndices(const Mesh* mesh, std::vector<uint32_t>& outIndices);
     void generateWireframeIndices(const Mesh* mesh, std::vector<uint32_t>& outEdges);
+    void generateWireframeIndices(const Mesh* mesh, std::vector<uint32_t>& outCageEdges, std::vector<uint32_t>& outSubdivEdges);
     void buildPolyGroupBuffers(const Mesh* mesh, MeshRenderBuffers* bufs);
 
     void drawBackground(const Scene& scene, const Camera& camera);
@@ -697,8 +707,11 @@ private:
     bool m_darkenUnselected = false;
     bool m_showWireframe = false;
     float m_wireframeOpacity = 0.6f;
+    float m_subdivWireOpacity = 0.30f;
     glm::vec4 m_wireframeColor{0.0f, 0.0f, 0.0f, 0.6f};
     bool m_showCreaseLines = true;
+    bool m_dashedCreases = true;
+    glm::vec4 m_creaseColor{1.0f, 0.15f, 0.65f, 1.0f};
     bool m_showPolyGroups = false;
     bool m_xrayEnabled = false;
     int m_xrayTarget = 0; // 0: Unselected (default), 1: Selected, 2: All

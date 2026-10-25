@@ -3748,6 +3748,13 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         }
                     }
 
+                    if (renderer.getShowWireframe()) {
+                        float subWf = renderer.getSubdivWireOpacity();
+                        if (ImGui::SliderFloat("Subdiv Wire", &subWf, 0.0f, 1.0f, "%.2f")) {
+                            renderer.setSubdivWireOpacity(subWf);
+                        }
+                    }
+
                     if (selectedMesh->dynamicCacheMesh) {
                         ImGui::TextDisabled("Preview: %d verts, %d faces",
                             selectedMesh->dynamicCacheMesh->getNbVertices(),
@@ -4581,6 +4588,13 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                 ImGui::SetNextItemWidth(90.0f * scale);
                                 if (ImGui::SliderFloat("Opacity", &mesh->dynamicSettings.cageAlpha, 0.1f, 1.0f, "%.2f")) {
                                     // Live opacity
+                                }
+                            }
+
+                            if (renderer.getShowWireframe()) {
+                                float subWf = renderer.getSubdivWireOpacity();
+                                if (ImGui::SliderFloat("Subdiv Wire##popup", &subWf, 0.0f, 1.0f, "%.2f")) {
+                                    renderer.setSubdivWireOpacity(subWf);
                                 }
                             }
 
@@ -11810,9 +11824,25 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                     if (ImGui::SliderFloat("Wireframe Opacity", &wfOpacity, 0.05f, 1.0f, "%.2f")) {
                         renderer.setWireframeOpacity(wfOpacity);
                     }
+                    float subWfOpacity = renderer.getSubdivWireOpacity();
+                    if (ImGui::SliderFloat("Subdiv Grid Opacity", &subWfOpacity, 0.0f, 1.0f, "%.2f")) {
+                        renderer.setSubdivWireOpacity(subWfOpacity);
+                    }
                     glm::vec4 wfColor = renderer.getWireframeColor();
                     if (ImGui::ColorEdit3("Wireframe Color", glm::value_ptr(wfColor))) {
                         renderer.setWireframeColor(wfColor);
+                    }
+                    ImGui::Unindent();
+                }
+                if (showCreases) {
+                    ImGui::Indent();
+                    bool dashed = renderer.getDashedCreases();
+                    if (ImGui::Checkbox("Dashed Creases (ZBrush)", &dashed)) {
+                        renderer.setDashedCreases(dashed);
+                    }
+                    glm::vec4 cCol = renderer.getCreaseColor();
+                    if (ImGui::ColorEdit3("Crease Color", glm::value_ptr(cCol))) {
+                        renderer.setCreaseColor(cCol);
                     }
                     ImGui::Unindent();
                 }

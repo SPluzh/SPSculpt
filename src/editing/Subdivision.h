@@ -17,7 +17,9 @@ namespace Subdivision {
         std::vector<uint8_t>* outCreases = nullptr,
         bool isSharpStep = false,
         bool isLinear = false,
-        SubdivLevelCache* cache = nullptr
+        SubdivLevelCache* cache = nullptr,
+        const std::vector<uint8_t>* inCageEdges = nullptr,
+        std::vector<uint8_t>* outCageEdges = nullptr
     );
 
     // Multi-level dynamic subdivision (ZBrush style)

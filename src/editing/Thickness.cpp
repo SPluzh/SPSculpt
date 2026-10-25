@@ -464,6 +464,48 @@ void generateThickness(
                 }
             }
         }
+
+        // Assign edgeIsCage for front, back, and rim faces
+        outMesh.edgeIsCage.assign(outMesh.nbEdges, 0);
+        for (int f = 0; f < N_f; ++f) {
+            for (int k = 0; k < 4; ++k) {
+                uint32_t baseEIdx = baseMesh.faceEdges[f * 4 + k];
+                if (baseEIdx == TRI_INDEX) continue;
+
+                bool isCage = baseMesh.edgeIsCage.empty() ||
+                              (baseEIdx < baseMesh.edgeIsCage.size() && baseMesh.edgeIsCage[baseEIdx] == 1);
+                if (isCage) {
+                    uint32_t frontE = outMesh.faceEdges[f * 4 + k];
+                    if (frontE < (uint32_t)outMesh.nbEdges) {
+                        outMesh.edgeIsCage[frontE] = 1;
+                    }
+                    uint32_t backE = outMesh.faceEdges[(N_f + f) * 4 + k];
+                    if (backE < (uint32_t)outMesh.nbEdges) {
+                        outMesh.edgeIsCage[backE] = 1;
+                    }
+                }
+            }
+        }
+
+        if (!isClosed) {
+            for (int b = 0; b < B; ++b) {
+                for (int s = 0; s < S; ++s) {
+                    int outFIdx = 2 * N_f + b * S + s;
+                    uint32_t e0 = outMesh.faceEdges[outFIdx * 4 + 0];
+                    if (e0 < (uint32_t)outMesh.nbEdges) {
+                        outMesh.edgeIsCage[e0] = 1;
+                    }
+                    uint32_t e1 = outMesh.faceEdges[outFIdx * 4 + 1];
+                    if (s == S - 1 && e1 < (uint32_t)outMesh.nbEdges) {
+                        outMesh.edgeIsCage[e1] = 1;
+                    }
+                    uint32_t e3 = outMesh.faceEdges[outFIdx * 4 + 3];
+                    if (s == 0 && e3 < (uint32_t)outMesh.nbEdges) {
+                        outMesh.edgeIsCage[e3] = 1;
+                    }
+                }
+            }
+        }
     }
 
     outMesh.matrix = baseMesh.matrix;

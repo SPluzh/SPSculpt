@@ -1467,7 +1467,8 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
                 if (mesh->dynamicSettings.enabled && mesh->dynamicSettings.showCage) {
                     showMeshWire = true;
                 }
-                if (m_showCreaseLines && mesh->hasCreases()) {
+                bool meshHasCreases = mesh->hasCreases() || (mesh->dynamicSettings.enabled && mesh->dynamicCacheMesh && mesh->dynamicCacheMesh->hasCreases());
+                if (m_showCreaseLines && meshHasCreases) {
                     showMeshWire = true;
                 }
                 if (showMeshWire) {
@@ -2067,8 +2068,9 @@ void AngleRenderer::drawMeshFlatColor(Mesh* mesh, const Scene& scene, const Came
 
 void AngleRenderer::drawWireframe(Mesh* mesh, const Scene& scene, const Camera& camera) {
     auto it = m_meshBuffers.find(mesh);
-    if (it == m_meshBuffers.end() || it->second->wireIndexCount == 0) return;
+    if (it == m_meshBuffers.end()) return;
     auto& bufs = it->second;
+    if (bufs->wireIndexCount == 0 && bufs->subdivWireIndexCount == 0 && bufs->cageWireIndexCount == 0 && bufs->creaseWireIndexCount == 0) return;
 
     if (m_wireframeProgram == 0) return;
 
@@ -2109,7 +2111,22 @@ void AngleRenderer::drawWireframe(Mesh* mesh, const Scene& scene, const Camera& 
     glUniform1i(glGetUniformLocation(m_wireframeProgram, "uCullBackfaces"), (isXRay || isPlane) ? 0 : 1);
 
 
-    // 1. Draw regular wireframe if enabled
+    // 1. Draw interior subdiv wireframe if present and enabled (ZBrush style faint subdiv grid)
+    if (m_showWireframe && bufs->subdivWireIndexCount > 0 && m_subdivWireOpacity > 1e-4f) {
+        float subAlpha = std::clamp(m_wireframeColor.a * m_wireframeOpacity * m_subdivWireOpacity, 0.0f, 1.0f);
+        glUniform4f(glGetUniformLocation(m_wireframeProgram, "uWireColor"),
+                    m_wireframeColor.r * subAlpha,
+                    m_wireframeColor.g * subAlpha,
+                    m_wireframeColor.b * subAlpha,
+                    subAlpha);
+        glUniform1i(glGetUniformLocation(m_wireframeProgram, "uDashed"), 0);
+
+        glBindVertexArray(bufs->vao);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboSubdivWire);
+        glDrawElements(GL_LINES, static_cast<GLsizei>(bufs->subdivWireIndexCount), GL_UNSIGNED_INT, nullptr);
+    }
+
+    // 2. Draw regular wireframe / cage wireframe on surface (full opacity primary polygon edges)
     if (m_showWireframe && bufs->wireIndexCount > 0) {
         float alpha = std::clamp(m_wireframeColor.a * m_wireframeOpacity, 0.0f, 1.0f);
         glUniform4f(glGetUniformLocation(m_wireframeProgram, "uWireColor"),
@@ -2117,13 +2134,14 @@ void AngleRenderer::drawWireframe(Mesh* mesh, const Scene& scene, const Camera& 
                     m_wireframeColor.g * alpha,
                     m_wireframeColor.b * alpha,
                     alpha);
+        glUniform1i(glGetUniformLocation(m_wireframeProgram, "uDashed"), 0);
 
         glBindVertexArray(bufs->vao);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboWireframe);
         glDrawElements(GL_LINES, static_cast<GLsizei>(bufs->wireIndexCount), GL_UNSIGNED_INT, nullptr);
     }
 
-    // 2. Draw cage wireframe if Dynamic Subdiv cage display is enabled
+    // 3. Draw cage wireframe if Dynamic Subdiv cage display is enabled (the floating 3D cage)
     if (bufs->cageWireIndexCount > 0 && mesh->dynamicSettings.enabled && mesh->dynamicSettings.showCage) {
         float cageA = std::clamp(mesh->dynamicSettings.cageAlpha, 0.0f, 1.0f);
         // High visibility warm orange for base cage
@@ -2133,25 +2151,31 @@ void AngleRenderer::drawWireframe(Mesh* mesh, const Scene& scene, const Camera& 
                     cageCol.g * cageA,
                     cageCol.b * cageA,
                     cageA);
+        glUniform1i(glGetUniformLocation(m_wireframeProgram, "uDashed"), 0);
 
         glBindVertexArray(bufs->cageVao);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->cageEboWire);
         glDrawElements(GL_LINES, static_cast<GLsizei>(bufs->cageWireIndexCount), GL_UNSIGNED_INT, nullptr);
     }
 
-    // 3. Draw crease lines if present and enabled (ZBrush-style vibrant pink sharp edge lines)
+    // 4. Draw crease lines if present and enabled (ZBrush-style dashed vibrant pink lines on surface)
     if (m_showCreaseLines && bufs->creaseWireIndexCount > 0) {
-        float creaseA = 1.0f;
-        glm::vec3 creaseCol(1.0f, 0.15f, 0.65f);
+        float creaseA = std::clamp(m_creaseColor.a, 0.0f, 1.0f);
         glUniform4f(glGetUniformLocation(m_wireframeProgram, "uWireColor"),
-                    creaseCol.r * creaseA,
-                    creaseCol.g * creaseA,
-                    creaseCol.b * creaseA,
+                    m_creaseColor.r * creaseA,
+                    m_creaseColor.g * creaseA,
+                    m_creaseColor.b * creaseA,
                     creaseA);
+        glUniform1i(glGetUniformLocation(m_wireframeProgram, "uDashed"), m_dashedCreases ? 1 : 0);
 
-        glBindVertexArray(bufs->creaseVao);
+        // Slight depth offset so crease dashed line floats right above solid wireframe lines
+        glPolygonOffset(-1.0f, -2.0f);
+
+        glBindVertexArray(bufs->vao);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->creaseEboWire);
         glDrawElements(GL_LINES, static_cast<GLsizei>(bufs->creaseWireIndexCount), GL_UNSIGNED_INT, nullptr);
+
+        glPolygonOffset(-0.5f, -1.0f);
     }
 
     glBindVertexArray(0);
@@ -2706,21 +2730,35 @@ void AngleRenderer::generateTriangleIndices(const Mesh* mesh, std::vector<uint32
 }
 
 void AngleRenderer::generateWireframeIndices(const Mesh* mesh, std::vector<uint32_t>& outEdges) {
-    outEdges.clear();
+    std::vector<uint32_t> unusedSubdiv;
+    generateWireframeIndices(mesh, outEdges, unusedSubdiv);
+}
+
+void AngleRenderer::generateWireframeIndices(
+    const Mesh* mesh,
+    std::vector<uint32_t>& outCageEdges,
+    std::vector<uint32_t>& outSubdivEdges
+) {
+    outCageEdges.clear();
+    outSubdivEdges.clear();
     if (!mesh || mesh->nbFaces <= 0) return;
     const auto& visible = mesh->vertVisible;
     const auto& fVisible = mesh->faceVisible;
     bool hasVisibility = !visible.empty();
     bool hasFaceVis = (fVisible.size() == (size_t)mesh->nbFaces);
 
-    std::vector<uint64_t> allEdges;
-    allEdges.reserve(mesh->nbFaces * 4);
+    bool hasCageFlags = (!mesh->edgeIsCage.empty() && mesh->faceEdges.size() >= (size_t)(mesh->nbFaces * 4));
 
-    auto addEdge = [&allEdges](uint32_t a, uint32_t b) {
+    std::vector<uint64_t> cageEdges;
+    std::vector<uint64_t> subdivEdges;
+    cageEdges.reserve(mesh->nbFaces * 4);
+    if (hasCageFlags) subdivEdges.reserve(mesh->nbFaces * 4);
+
+    auto addEdgeTo = [](std::vector<uint64_t>& list, uint32_t a, uint32_t b) {
         if (a != b) {
             uint32_t u = (a < b) ? a : b;
             uint32_t v = (a < b) ? b : a;
-            allEdges.push_back((static_cast<uint64_t>(u) << 32) | static_cast<uint64_t>(v));
+            list.push_back((static_cast<uint64_t>(u) << 32) | static_cast<uint64_t>(v));
         }
     };
 
@@ -2738,35 +2776,51 @@ void AngleRenderer::generateWireframeIndices(const Mesh* mesh, std::vector<uint3
             if (v3 != 0xffffffff && (v3 >= visible.size() || !visible[v3])) continue;
         }
 
-        uint32_t iv1 = mesh->faces[i * 4];
-        uint32_t iv2 = mesh->faces[i * 4 + 1];
-        uint32_t iv3 = mesh->faces[i * 4 + 2];
-        uint32_t iv4 = mesh->faces[i * 4 + 3];
-        bool isQuad = (iv4 != 0xffffffff);
+        uint32_t iv[4] = {
+            mesh->faces[i * 4],
+            mesh->faces[i * 4 + 1],
+            mesh->faces[i * 4 + 2],
+            mesh->faces[i * 4 + 3]
+        };
+        bool isQuad = (iv[3] != 0xffffffff);
+        int numE = isQuad ? 4 : 3;
 
-        addEdge(iv1, iv2);
-        addEdge(iv2, iv3);
-        if (isQuad) {
-            addEdge(iv3, iv4);
-            addEdge(iv4, iv1);
-        } else {
-            addEdge(iv3, iv1);
+        for (int k = 0; k < numE; ++k) {
+            uint32_t va = iv[k];
+            uint32_t vb = iv[(k + 1) % numE];
+
+            bool isCage = true;
+            if (hasCageFlags) {
+                uint32_t fe = mesh->faceEdges[i * 4 + k];
+                if (fe < mesh->edgeIsCage.size()) {
+                    isCage = (mesh->edgeIsCage[fe] == 1);
+                }
+            }
+
+            if (isCage) {
+                addEdgeTo(cageEdges, va, vb);
+            } else {
+                addEdgeTo(subdivEdges, va, vb);
+            }
         }
     }
 
-    if (allEdges.empty()) return;
-
-    std::sort(allEdges.begin(), allEdges.end());
-
-    outEdges.reserve(allEdges.size() * 2);
-    uint64_t prev = 0xFFFFFFFFFFFFFFFFULL;
-    for (uint64_t key : allEdges) {
-        if (key != prev) {
-            outEdges.push_back(static_cast<uint32_t>(key >> 32));
-            outEdges.push_back(static_cast<uint32_t>(key & 0xFFFFFFFFULL));
-            prev = key;
+    auto deduplicateEdges = [](std::vector<uint64_t>& inEdges, std::vector<uint32_t>& out) {
+        if (inEdges.empty()) return;
+        std::sort(inEdges.begin(), inEdges.end());
+        out.reserve(inEdges.size() * 2);
+        uint64_t prev = 0xFFFFFFFFFFFFFFFFULL;
+        for (uint64_t key : inEdges) {
+            if (key != prev) {
+                out.push_back(static_cast<uint32_t>(key >> 32));
+                out.push_back(static_cast<uint32_t>(key & 0xFFFFFFFFULL));
+                prev = key;
+            }
         }
-    }
+    };
+
+    deduplicateEdges(cageEdges, outCageEdges);
+    deduplicateEdges(subdivEdges, outSubdivEdges);
 }
 
 void AngleRenderer::buildPolyGroupBuffers(const Mesh* mesh, MeshRenderBuffers* bufs) {
@@ -2920,6 +2974,8 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
         glGenBuffers(1, &bufs->vboTangents);
         glGenBuffers(1, &bufs->eboTriangles);
         glGenBuffers(1, &bufs->eboWireframe);
+        glGenBuffers(1, &bufs->eboSubdivWire);
+        glGenBuffers(1, &bufs->creaseEboWire);
         mesh->isDirty = true;
     }
     
@@ -3017,11 +3073,21 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, triIndices.size() * sizeof(uint32_t), triIndices.data(), GL_DYNAMIC_DRAW);
         bufs->triIndexCount = triIndices.size();
         
-        std::vector<uint32_t> wireIndices;
-        generateWireframeIndices(uploadMesh, wireIndices);
+        std::vector<uint32_t> cageWireIndices;
+        std::vector<uint32_t> subdivWireIndices;
+        generateWireframeIndices(uploadMesh, cageWireIndices, subdivWireIndices);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboWireframe);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, wireIndices.size() * sizeof(uint32_t), wireIndices.data(), GL_DYNAMIC_DRAW);
-        bufs->wireIndexCount = wireIndices.size();
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, cageWireIndices.size() * sizeof(uint32_t), cageWireIndices.data(), GL_DYNAMIC_DRAW);
+        bufs->wireIndexCount = cageWireIndices.size();
+
+        if (!subdivWireIndices.empty()) {
+            if (!bufs->eboSubdivWire) glGenBuffers(1, &bufs->eboSubdivWire);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboSubdivWire);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, subdivWireIndices.size() * sizeof(uint32_t), subdivWireIndices.data(), GL_DYNAMIC_DRAW);
+            bufs->subdivWireIndexCount = subdivWireIndices.size();
+        } else {
+            bufs->subdivWireIndexCount = 0;
+        }
         
         glBindVertexArray(0);
         bufs->vertCount = uploadMesh->nbVerts;
@@ -3058,34 +3124,30 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
             bufs->cageWireIndexCount = 0;
         }
 
-        // Crease lines upload
-        if (mesh->hasCreases()) {
-            if (!bufs->creaseVao) {
-                glGenVertexArrays(1, &bufs->creaseVao);
-                glGenBuffers(1, &bufs->creaseVboVerts);
+        // Crease lines upload (ZBrush style directly on surface geometry)
+        bool hasAnyCreases = mesh->hasCreases() || (uploadMesh && uploadMesh->hasCreases());
+        if (hasAnyCreases && uploadMesh && uploadMesh->nbFaces > 0) {
+            if (!bufs->creaseEboWire) {
                 glGenBuffers(1, &bufs->creaseEboWire);
             }
-            glBindVertexArray(bufs->creaseVao);
-
-            glBindBuffer(GL_ARRAY_BUFFER, bufs->creaseVboVerts);
-            glBufferData(GL_ARRAY_BUFFER, mesh->verts.size() * sizeof(float), mesh->verts.data(), GL_DYNAMIC_DRAW);
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-            glEnableVertexAttribArray(0);
 
             std::vector<uint32_t> creaseLines;
-            creaseLines.reserve(mesh->getNbCreasedEdges() * 2);
+            creaseLines.reserve(uploadMesh->getNbCreasedEdges() * 2);
 
-            int nbF = mesh->nbFaces;
-            const auto& fAr = mesh->faces;
-            const auto& feAr = mesh->faceEdges;
-            std::vector<uint8_t> visited(mesh->nbEdges, 0);
+            int nbF = uploadMesh->nbFaces;
+            const auto& fAr = uploadMesh->faces;
+            const auto& feAr = uploadMesh->faceEdges;
+            const auto& fVis = uploadMesh->faceVisible;
+            bool hasFaceVis = (fVis.size() == (size_t)nbF);
+            std::vector<uint8_t> visited(uploadMesh->nbEdges, 0);
 
             for (int f = 0; f < nbF; ++f) {
+                if (hasFaceVis && !fVis[f]) continue;
                 int id = f * 4;
                 int numE = (fAr[id + 3] != 0xffffffff) ? 4 : 3;
                 for (int k = 0; k < numE; ++k) {
                     uint32_t e = feAr[id + k];
-                    if (e < mesh->edgeCreases.size() && mesh->edgeCreases[e] > 0 && !visited[e]) {
+                    if (e < uploadMesh->edgeCreases.size() && uploadMesh->edgeCreases[e] > 0 && !visited[e]) {
                         visited[e] = 1;
                         uint32_t va = fAr[id + k];
                         uint32_t vb = fAr[id + ((k + 1) % numE)];
@@ -3098,8 +3160,6 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->creaseEboWire);
             glBufferData(GL_ELEMENT_ARRAY_BUFFER, creaseLines.size() * sizeof(uint32_t), creaseLines.data(), GL_DYNAMIC_DRAW);
             bufs->creaseWireIndexCount = creaseLines.size();
-
-            glBindVertexArray(0);
         } else {
             bufs->creaseWireIndexCount = 0;
         }
@@ -3141,11 +3201,21 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
             glBufferData(GL_ELEMENT_ARRAY_BUFFER, triIndices.size() * sizeof(uint32_t), triIndices.data(), GL_DYNAMIC_DRAW);
             bufs->triIndexCount = triIndices.size();
 
-            std::vector<uint32_t> wireIndices;
-            generateWireframeIndices(uploadMesh, wireIndices);
+            std::vector<uint32_t> cageWireIndices;
+            std::vector<uint32_t> subdivWireIndices;
+            generateWireframeIndices(uploadMesh, cageWireIndices, subdivWireIndices);
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboWireframe);
-            glBufferData(GL_ELEMENT_ARRAY_BUFFER, wireIndices.size() * sizeof(uint32_t), wireIndices.data(), GL_DYNAMIC_DRAW);
-            bufs->wireIndexCount = wireIndices.size();
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, cageWireIndices.size() * sizeof(uint32_t), cageWireIndices.data(), GL_DYNAMIC_DRAW);
+            bufs->wireIndexCount = cageWireIndices.size();
+
+            if (!subdivWireIndices.empty()) {
+                if (!bufs->eboSubdivWire) glGenBuffers(1, &bufs->eboSubdivWire);
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboSubdivWire);
+                glBufferData(GL_ELEMENT_ARRAY_BUFFER, subdivWireIndices.size() * sizeof(uint32_t), subdivWireIndices.data(), GL_DYNAMIC_DRAW);
+                bufs->subdivWireIndexCount = subdivWireIndices.size();
+            } else {
+                bufs->subdivWireIndexCount = 0;
+            }
 
             bufs->polygroupDirty = true;
             if (m_showPolyGroups || m_activeBrush == BRUSH_POLYGROUP || m_shaderType == 5) {

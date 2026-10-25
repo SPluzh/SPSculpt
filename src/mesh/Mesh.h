@@ -89,6 +89,7 @@ public:
     std::vector<uint32_t> faceEdges;       // nbFaces * 4 (edge index per face edge)
     std::vector<uint32_t> vertTagFlags;    // nbVerts (tag flags for algorithms)
     std::vector<uint8_t>  edgeCreases;     // nbEdges (1 = creased, 0 = smooth)
+    std::vector<uint8_t>  edgeIsCage;      // nbEdges (1 = base cage edge on surface, 0 = interior subdiv edge)
 
     // Dynamic Subdivision & Thickness (ZBrush style)
     DynamicSubdivSettings dynamicSettings;

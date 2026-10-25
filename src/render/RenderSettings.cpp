@@ -40,8 +40,13 @@ bool RenderSettings::save(IniFile& ini, const AngleRenderer& renderer, const Sce
     ini.setInt(sec, "matcapIdx", renderer.getMatcap());
     ini.setBool(sec, "showWireframe", renderer.getShowWireframe());
     ini.setFloat(sec, "wireframeOpacity", renderer.getWireframeOpacity());
+    ini.setFloat(sec, "subdivWireOpacity", renderer.getSubdivWireOpacity());
     glm::vec4 wfColor = renderer.getWireframeColor();
     ini.set(sec, "wireframeColor", std::to_string(wfColor.r) + " " + std::to_string(wfColor.g) + " " + std::to_string(wfColor.b) + " " + std::to_string(wfColor.a));
+    ini.setBool(sec, "showCreaseLines", renderer.getShowCreaseLines());
+    ini.setBool(sec, "dashedCreases", renderer.getDashedCreases());
+    glm::vec4 crColor = renderer.getCreaseColor();
+    ini.set(sec, "creaseColor", std::to_string(crColor.r) + " " + std::to_string(crColor.g) + " " + std::to_string(crColor.b) + " " + std::to_string(crColor.a));
     ini.setBool(sec, "flatShading", renderer.getFlatShading());
     ini.setFloat(sec, "curvature", renderer.getCurvature());
     ini.setBool(sec, "bevelEnabled", renderer.getBevelEnabled());
@@ -236,11 +241,21 @@ bool RenderSettings::load(const IniFile& ini, AngleRenderer& renderer, Scene& sc
     }
     if (ini.hasKey(sec, "showWireframe")) renderer.setShowWireframe(ini.getBool(sec, "showWireframe"));
     if (ini.hasKey(sec, "wireframeOpacity")) renderer.setWireframeOpacity(ini.getFloat(sec, "wireframeOpacity", 0.60f));
+    if (ini.hasKey(sec, "subdivWireOpacity")) renderer.setSubdivWireOpacity(ini.getFloat(sec, "subdivWireOpacity", 0.30f));
     if (ini.hasKey(sec, "wireframeColor")) {
         std::stringstream ss(ini.get(sec, "wireframeColor"));
         float r, g, b, a;
         if (ss >> r >> g >> b >> a) {
             renderer.setWireframeColor(glm::vec4(r, g, b, a));
+        }
+    }
+    if (ini.hasKey(sec, "showCreaseLines")) renderer.setShowCreaseLines(ini.getBool(sec, "showCreaseLines", true));
+    if (ini.hasKey(sec, "dashedCreases")) renderer.setDashedCreases(ini.getBool(sec, "dashedCreases", true));
+    if (ini.hasKey(sec, "creaseColor")) {
+        std::stringstream ss(ini.get(sec, "creaseColor"));
+        float r, g, b, a;
+        if (ss >> r >> g >> b >> a) {
+            renderer.setCreaseColor(glm::vec4(r, g, b, a));
         }
     }
     if (ini.hasKey(sec, "flatShading")) renderer.setFlatShading(ini.getBool(sec, "flatShading"));
