@@ -1859,8 +1859,9 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
     glUniform1i(glGetUniformLocation(program, "uShowPolyGroups"), m_showPolyGroups ? 1 : 0);
 
     if (program == m_polygroupProgram) {
+        Mesh* renderMesh = mesh->getRenderMesh();
         if (bufs->polygroupVao == 0 || bufs->polygroupDirty) {
-            buildPolyGroupBuffers(mesh, bufs.get());
+            buildPolyGroupBuffers(renderMesh, bufs.get());
             bufs->polygroupDirty = false;
         }
         if (bufs->polygroupVao != 0 && bufs->polygroupVertCount > 0) {
@@ -2776,6 +2777,9 @@ void AngleRenderer::buildPolyGroupBuffers(const Mesh* mesh, MeshRenderBuffers* b
     const auto& visible = mesh->vertVisible;
     bool hasVertVis = !visible.empty();
     bool hasGroups = (mesh->faceGroups.size() == (size_t)mesh->nbFaces);
+    bool hasVerts = (mesh->verts.size() >= (size_t)mesh->nbVerts * 3);
+    bool hasNormals = (mesh->normals.size() >= (size_t)mesh->nbVerts * 3);
+    bool hasMaterials = (mesh->materials.size() >= (size_t)mesh->nbVerts * 3);
 
     std::vector<float> expandedVerts;
     std::vector<float> expandedNormals;
@@ -2810,16 +2814,22 @@ void AngleRenderer::buildPolyGroupBuffers(const Mesh* mesh, MeshRenderBuffers* b
         uint32_t gid = hasGroups ? mesh->faceGroups[i] : 0;
 
         auto addVertex = [&](uint32_t vid) {
-            if (vid < (uint32_t)mesh->nbVerts) {
+            if (vid < (uint32_t)mesh->nbVerts && hasVerts) {
                 expandedVerts.push_back(mesh->verts[vid * 3]);
                 expandedVerts.push_back(mesh->verts[vid * 3 + 1]);
                 expandedVerts.push_back(mesh->verts[vid * 3 + 2]);
 
-                expandedNormals.push_back(mesh->normals[vid * 3]);
-                expandedNormals.push_back(mesh->normals[vid * 3 + 1]);
-                expandedNormals.push_back(mesh->normals[vid * 3 + 2]);
+                if (hasNormals) {
+                    expandedNormals.push_back(mesh->normals[vid * 3]);
+                    expandedNormals.push_back(mesh->normals[vid * 3 + 1]);
+                    expandedNormals.push_back(mesh->normals[vid * 3 + 2]);
+                } else {
+                    expandedNormals.push_back(0.0f);
+                    expandedNormals.push_back(1.0f);
+                    expandedNormals.push_back(0.0f);
+                }
 
-                if (mesh->materials.size() == (size_t)mesh->nbVerts * 3) {
+                if (hasMaterials) {
                     expandedMaterials.push_back(mesh->materials[vid * 3]);
                     expandedMaterials.push_back(mesh->materials[vid * 3 + 1]);
                     expandedMaterials.push_back(mesh->materials[vid * 3 + 2]);
@@ -3017,7 +3027,7 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
         bufs->vertCount = uploadMesh->nbVerts;
 
         bufs->polygroupDirty = true;
-        if (bufs->polygroupVao != 0 && (m_showPolyGroups || m_activeBrush == BRUSH_POLYGROUP || m_shaderType == 5)) {
+        if (m_showPolyGroups || m_activeBrush == BRUSH_POLYGROUP || m_shaderType == 5) {
             buildPolyGroupBuffers(uploadMesh, bufs.get());
             bufs->polygroupDirty = false;
         }
@@ -3138,7 +3148,7 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
             bufs->wireIndexCount = wireIndices.size();
 
             bufs->polygroupDirty = true;
-            if (bufs->polygroupVao != 0 && (m_showPolyGroups || m_activeBrush == BRUSH_POLYGROUP || m_shaderType == 5)) {
+            if (m_showPolyGroups || m_activeBrush == BRUSH_POLYGROUP || m_shaderType == 5) {
                 buildPolyGroupBuffers(uploadMesh, bufs.get());
                 bufs->polygroupDirty = false;
             }
@@ -3163,7 +3173,7 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
                 }
 
                 bufs->polygroupDirty = true;
-                if (bufs->polygroupVao != 0 && (m_showPolyGroups || m_activeBrush == BRUSH_POLYGROUP || m_shaderType == 5)) {
+                if (m_showPolyGroups || m_activeBrush == BRUSH_POLYGROUP || m_shaderType == 5) {
                     buildPolyGroupBuffers(uploadMesh, bufs.get());
                     bufs->polygroupDirty = false;
                 }
@@ -3201,8 +3211,8 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
                                 mesh->normals.data() + mesh->dirtyVertMin * 3);
 
                 bufs->polygroupDirty = true;
-                if (bufs->polygroupVao != 0 && (m_showPolyGroups || m_activeBrush == BRUSH_POLYGROUP || m_shaderType == 5)) {
-                    buildPolyGroupBuffers(mesh, bufs.get());
+                if (m_showPolyGroups || m_activeBrush == BRUSH_POLYGROUP || m_shaderType == 5) {
+                    buildPolyGroupBuffers(mesh->getRenderMesh(), bufs.get());
                     bufs->polygroupDirty = false;
                 }
                 

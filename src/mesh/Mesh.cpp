@@ -1443,11 +1443,33 @@ void Mesh::rebuildDynamicTopology() {
     dynamicCacheMesh->faceBoxes.resize(dynamicCacheMesh->nbFaces * 6, 0.0f);
     dynamicCacheMesh->faceCenters.resize(dynamicCacheMesh->nbFaces * 3, 0.0f);
 
+    if (dynamicCacheMesh->normals.size() != (size_t)dynamicCacheMesh->nbVerts * 3) {
+        dynamicCacheMesh->normals.resize(dynamicCacheMesh->nbVerts * 3, 0.0f);
+    }
+    updateFaceNormalsOnly(
+        dynamicCacheMesh->verts.data(), dynamicCacheMesh->nbVerts,
+        dynamicCacheMesh->faces.data(), dynamicCacheMesh->nbFaces,
+        dynamicCacheMesh->faceNormals.data()
+    );
+    if (!dynamicCacheMesh->vertRingFace.empty() && dynamicCacheMesh->vrfStartCount.size() >= (size_t)(dynamicCacheMesh->nbVerts * 2)) {
+        updateVertexNormals(
+            nullptr, -1, dynamicCacheMesh->nbVerts,
+            dynamicCacheMesh->vrfStartCount.data(),
+            dynamicCacheMesh->vertRingFace.data(),
+            dynamicCacheMesh->faceNormals.data(),
+            dynamicCacheMesh->normals.data()
+        );
+    }
+
     dynamicCacheMesh->matrix = this->matrix;
     dynamicCacheMesh->editMatrix = this->editMatrix;
     dynamicCacheMesh->center = this->center;
     dynamicCacheMesh->scale = this->scale;
     dynamicCacheMesh->outlinerName = this->outlinerName + " [Dynamic]";
+
+    dynamicCacheMesh->isFaceGroupDirty = true;
+    dynamicCacheMesh->isDirty = true;
+    this->isFaceGroupDirty = true;
 
     isDynamicTopologyBuilt = true;
     isDynamicDirty = false;
@@ -1640,7 +1662,7 @@ void Mesh::updateDynamicMesh() {
         return;
     }
 
-    bool needsTopologyRebuild = (!dynamicCacheMesh || !isDynamicTopologyBuilt || isDynamicDirty || isTopologyDirty);
+    bool needsTopologyRebuild = (!dynamicCacheMesh || !isDynamicTopologyBuilt || isDynamicDirty || isTopologyDirty || isFaceGroupDirty);
     if (needsTopologyRebuild) {
         rebuildDynamicTopology();
     } else {

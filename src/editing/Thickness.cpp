@@ -377,6 +377,7 @@ void generateThickness(
             }
         }
     }
+    outMesh.isFaceGroupDirty = true;
 
     // 8. Initialize topology & edges on outMesh
     outMesh.postInit(false);

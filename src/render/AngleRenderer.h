@@ -219,9 +219,23 @@ public:
     float getSafeFramesMargin() const { return m_safeFramesMargin; }
     void setSafeFramesThickness(float thickness) { m_safeFramesThickness = std::max(0.01f, thickness); }
     float getSafeFramesThickness() const { return m_safeFramesThickness; }
-    void setShowPolyGroups(bool show) { m_showPolyGroups = show; }
+    void setShowPolyGroups(bool show) {
+        m_showPolyGroups = show;
+        if (show) {
+            for (auto& pair : m_meshBuffers) {
+                if (pair.second) pair.second->polygroupDirty = true;
+            }
+        }
+    }
     bool getShowPolyGroups() const { return m_showPolyGroups; }
-    void setActiveBrush(BrushType brush) { m_activeBrush = brush; }
+    void setActiveBrush(BrushType brush) {
+        m_activeBrush = brush;
+        if (brush == BRUSH_POLYGROUP) {
+            for (auto& pair : m_meshBuffers) {
+                if (pair.second) pair.second->polygroupDirty = true;
+            }
+        }
+    }
     BrushType getActiveBrush() const { return m_activeBrush; }
     void setShowSymmetryLine(bool show) { m_showSymmetryLine = show; }
     bool getShowSymmetryLine() const { return m_showSymmetryLine; }
@@ -265,7 +279,14 @@ public:
     glm::vec3 getWetClaySSSColor() const { return m_wetClaySSSColor; }
     void setWetClaySSSColor(const glm::vec3& col) { m_wetClaySSSColor = col; }
 
-    void setShaderType(int type) { m_shaderType = type; }
+    void setShaderType(int type) {
+        m_shaderType = type;
+        if (type == 5) {
+            for (auto& pair : m_meshBuffers) {
+                if (pair.second) pair.second->polygroupDirty = true;
+            }
+        }
+    }
     int getShaderType() const { return m_shaderType; }
     float getEnvRotation() const { return m_envRotation; }
     void setEnvRotation(float r) { m_envRotation = r; }
