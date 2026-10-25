@@ -425,7 +425,7 @@ void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std
         pickPivot(camera, mouseX, mouseY, meshes);
 
         camera.pushState();
-        camera.zoom(-static_cast<float>(e.wheel.y) * 0.05f, mouseX, mouseY);
+        camera.zoom(static_cast<float>(e.wheel.y) * 0.05f, mouseX, mouseY);
         camera.pushState();
     } else if (e.type == SDL_MOUSEMOTION) {
         if (m_drag != DragMode::None) {
