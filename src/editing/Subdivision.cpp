@@ -541,7 +541,7 @@ void fullSubdivisionWithCreases(
         newMesh.edgeCreases = *outCreases;
     }
 
-    newMesh.postInit();
+    newMesh.postInit(false);
 }
 
 void fullSubdivision(Mesh& baseMesh, Mesh& newMesh) {
@@ -558,7 +558,7 @@ void computeDynamicSubdivision(
     if (smoothLevel <= 0 && flatLevel <= 0) {
         outMesh = baseMesh;
         outMesh.edgeCreases = baseMesh.edgeCreases;
-        outMesh.postInit();
+        outMesh.postInit(false);
         return;
     }
 
@@ -589,7 +589,7 @@ void computeDynamicSubdivision(
     }
 
     outMesh = *current;
-    outMesh.postInit();
+    outMesh.postInit(false);
 }
 
 void partialSubdivision(Mesh& baseMesh, std::vector<float>& vertOut, std::vector<float>& colorOut, std::vector<float>& materialOut) {

@@ -212,7 +212,7 @@ void Mesh::allocate(int nbV, int nbF, int nbRF, int nbRV) {
     faceCenters.resize(nbFaces * 3, 0.0f);
 }
 
-void Mesh::postInit() {
+void Mesh::postInit(bool buildOctree) {
     auto tStart = std::chrono::high_resolution_clock::now();
 
     m_localRadiusDirty = true;
@@ -226,7 +226,7 @@ void Mesh::postInit() {
     if (faceGroups.size() != (size_t)nbFaces) {
         initFaceGroups();
     } else {
-        isFaceGroupDirty = true;
+        if (buildOctree) isFaceGroupDirty = true;
     }
 
     if (normals.size() != (size_t)nbVerts * 3) {
@@ -301,24 +301,30 @@ void Mesh::postInit() {
     }
     auto tVNormEnd = std::chrono::high_resolution_clock::now();
 
-    octree.build(
-        nbVerts, nbFaces,
-        faceCenters.data(),
-        faceBoxes.data(),
-        verts.data(),
-        faces.data()
-    );
+    double msOctree = 0.0;
+    if (buildOctree) {
+        octree.build(
+            nbVerts, nbFaces,
+            faceCenters.data(),
+            faceBoxes.data(),
+            verts.data(),
+            faces.data()
+        );
+        auto tOctreeEnd = std::chrono::high_resolution_clock::now();
+        msOctree = std::chrono::duration<double, std::milli>(tOctreeEnd - tVNormEnd).count();
+    }
     auto tEnd = std::chrono::high_resolution_clock::now();
 
     double msTopology = std::chrono::duration<double, std::milli>(tTopEnd - tTopStart).count();
     double msFNorm = std::chrono::duration<double, std::milli>(tFNormEnd - tTopEnd).count();
     double msVNorm = std::chrono::duration<double, std::milli>(tVNormEnd - tFNormEnd).count();
-    double msOctree = std::chrono::duration<double, std::milli>(tEnd - tVNormEnd).count();
     double msTotal = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
 
     if (msTotal > 5.0) {
-        sculpt_log("[Mesh Diagnostics] postInit | Verts: %d, Faces: %d | Total: %.2fms (Topology [%s]: %.2fms, FaceNorms: %.2fms, VertNorms: %.2fms, OctreeBuild: %.2fms)\n",
-                  nbVerts, nbFaces, msTotal, computedTopology ? "Build" : "EdgesOnly", msTopology, msFNorm, msVNorm, msOctree);
+        sculpt_log("[Mesh Diagnostics] postInit%s | Verts: %d, Faces: %d | Total: %.2fms (Topology [%s]: %.2fms, FaceNorms: %.2fms, VertNorms: %.2fms%s: %.2fms)\n",
+                  buildOctree ? "" : " (NoOctree)",
+                  nbVerts, nbFaces, msTotal, computedTopology ? "Build" : "EdgesOnly", msTopology, msFNorm, msVNorm,
+                  buildOctree ? ", OctreeBuild" : "", msOctree);
     }
 }
 
@@ -1243,28 +1249,187 @@ int Mesh::getNbCreasedEdges() const {
     return count;
 }
 
-void Mesh::updateDynamicMesh() {
+void Mesh::rebuildDynamicTopology() {
     if (!dynamicSettings.enabled) {
         dynamicCacheMesh.reset();
+        dynamicLevels.clear();
+        isDynamicTopologyBuilt = false;
         isDynamicDirty = false;
         return;
+    }
+
+    int totalSteps = dynamicSettings.flatLevel + dynamicSettings.smoothLevel;
+    if (totalSteps <= 0) {
+        if (!dynamicCacheMesh) dynamicCacheMesh = std::make_unique<Mesh>();
+        *dynamicCacheMesh = *this;
+        dynamicLevels.clear();
+        isDynamicTopologyBuilt = true;
+        isDynamicDirty = false;
+        return;
+    }
+
+    size_t expectedIntermediates = (totalSteps > 1) ? (totalSteps - 1) : 0;
+    dynamicLevels.resize(expectedIntermediates);
+    for (size_t i = 0; i < expectedIntermediates; ++i) {
+        if (!dynamicLevels[i]) dynamicLevels[i] = std::make_unique<Mesh>();
     }
     if (!dynamicCacheMesh) {
         dynamicCacheMesh = std::make_unique<Mesh>();
     }
-    Subdivision::computeDynamicSubdivision(
-        *this,
-        *dynamicCacheMesh,
-        dynamicSettings.smoothLevel,
-        dynamicSettings.flatLevel,
-        dynamicSettings.creaseLevel
-    );
+
+    if (edgeCreases.size() != (size_t)nbEdges) {
+        edgeCreases.resize(nbEdges, 0);
+    }
+
+    auto tStart = std::chrono::high_resolution_clock::now();
+
+    Mesh* prevLevel = this;
+    for (int step = 1; step <= totalSteps; ++step) {
+        Mesh* curLevel = (step == totalSteps) ? dynamicCacheMesh.get() : dynamicLevels[step - 1].get();
+        bool isLinear = (step <= dynamicSettings.flatLevel);
+        bool isSharp = (step <= dynamicSettings.creaseLevel);
+
+        std::vector<uint8_t> outCreases;
+        Subdivision::fullSubdivisionWithCreases(
+            *prevLevel,
+            *curLevel,
+            &prevLevel->edgeCreases,
+            &outCreases,
+            isSharp,
+            isLinear
+        );
+        curLevel->edgeCreases = std::move(outCreases);
+
+        // Pre-allocate normal & box buffers so updateDynamicGeometryOnly can reuse them without resizing
+        curLevel->faceNormals.resize(curLevel->nbFaces * 3, 0.0f);
+        curLevel->faceBoxes.resize(curLevel->nbFaces * 6, 0.0f);
+        curLevel->faceCenters.resize(curLevel->nbFaces * 3, 0.0f);
+
+        curLevel->isFaceGroupDirty = false;
+        curLevel->isDirty = false;
+
+        prevLevel = curLevel;
+    }
+
     dynamicCacheMesh->matrix = this->matrix;
     dynamicCacheMesh->editMatrix = this->editMatrix;
     dynamicCacheMesh->center = this->center;
     dynamicCacheMesh->scale = this->scale;
     dynamicCacheMesh->outlinerName = this->outlinerName + " [Dynamic]";
+
+    isDynamicTopologyBuilt = true;
     isDynamicDirty = false;
+
+    double msTotal = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStart).count();
+    sculpt_log("[Dynamic Subdiv] Rebuilt topology for %d levels (Verts: %d, Faces: %d) in %.2f ms\n",
+               totalSteps, dynamicCacheMesh->nbVerts, dynamicCacheMesh->nbFaces, msTotal);
+}
+
+void Mesh::updateDynamicGeometryOnly() {
+    if (!dynamicSettings.enabled || !dynamicCacheMesh || !isDynamicTopologyBuilt) {
+        rebuildDynamicTopology();
+        return;
+    }
+
+    int totalSteps = dynamicSettings.flatLevel + dynamicSettings.smoothLevel;
+    if (totalSteps <= 0) {
+        dynamicCacheMesh->verts = this->verts;
+        dynamicCacheMesh->normals = this->normals;
+        dynamicCacheMesh->colors = this->colors;
+        dynamicCacheMesh->materials = this->materials;
+        return;
+    }
+
+    size_t expectedIntermediates = (totalSteps > 1) ? (totalSteps - 1) : 0;
+    if (dynamicLevels.size() != expectedIntermediates) {
+        rebuildDynamicTopology();
+        return;
+    }
+
+    auto tGeomStart = std::chrono::high_resolution_clock::now();
+
+    const Mesh* prevLevel = this;
+    for (int step = 1; step <= totalSteps; ++step) {
+        Mesh* curLevel = (step == totalSteps) ? dynamicCacheMesh.get() : dynamicLevels[step - 1].get();
+        if (!curLevel) {
+            rebuildDynamicTopology();
+            return;
+        }
+
+        bool isLinear = (step <= dynamicSettings.flatLevel);
+        bool isSharp = (step <= dynamicSettings.creaseLevel);
+
+        Subdivision::applyEvenSmooth(
+            *const_cast<Mesh*>(prevLevel),
+            curLevel->verts,
+            curLevel->colors,
+            curLevel->materials,
+            &prevLevel->edgeCreases,
+            isSharp
+        );
+
+        Subdivision::applyOddSmooth(
+            *const_cast<Mesh*>(prevLevel),
+            curLevel->verts,
+            curLevel->colors,
+            curLevel->materials,
+            nullptr, // Fast geometry update: no face array writing!
+            &prevLevel->edgeCreases,
+            isSharp,
+            isLinear
+        );
+
+        prevLevel = curLevel;
+    }
+
+    // Compute normals only on the final render mesh
+    updateFaceNormalsAndBoxes(
+        dynamicCacheMesh->verts.data(), dynamicCacheMesh->nbVerts,
+        dynamicCacheMesh->faces.data(), dynamicCacheMesh->nbFaces,
+        nullptr, -1,
+        dynamicCacheMesh->faceNormals.data(),
+        dynamicCacheMesh->faceBoxes.data(),
+        dynamicCacheMesh->faceCenters.data()
+    );
+
+    updateVertexNormals(
+        nullptr, -1, dynamicCacheMesh->nbVerts,
+        dynamicCacheMesh->vrfStartCount.data(),
+        dynamicCacheMesh->vertRingFace.data(),
+        dynamicCacheMesh->faceNormals.data(),
+        dynamicCacheMesh->normals.data()
+    );
+
+    dynamicCacheMesh->matrix = this->matrix;
+    dynamicCacheMesh->editMatrix = this->editMatrix;
+    dynamicCacheMesh->center = this->center;
+    dynamicCacheMesh->scale = this->scale;
+
+    dynamicCacheMesh->isFaceGroupDirty = false;
+    dynamicCacheMesh->isDirty = false;
+
+    double msGeom = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tGeomStart).count();
+    if (msGeom > 2.0) {
+        sculpt_log("[Dynamic Subdiv] Geometry update (Levels: %d, Verts: %d): %.2f ms\n",
+                   totalSteps, dynamicCacheMesh->nbVerts, msGeom);
+    }
+}
+
+void Mesh::updateDynamicMesh() {
+    if (!dynamicSettings.enabled) {
+        dynamicCacheMesh.reset();
+        dynamicLevels.clear();
+        isDynamicTopologyBuilt = false;
+        isDynamicDirty = false;
+        return;
+    }
+
+    bool needsTopologyRebuild = (!dynamicCacheMesh || !isDynamicTopologyBuilt || isDynamicDirty || isTopologyDirty);
+    if (needsTopologyRebuild) {
+        rebuildDynamicTopology();
+    } else {
+        updateDynamicGeometryOnly();
+    }
 }
 
 void Mesh::applyDynamicSubdivision() {
@@ -1283,8 +1448,10 @@ void Mesh::applyDynamicSubdivision() {
 
     this->dynamicSettings.enabled = false;
     this->dynamicCacheMesh.reset();
+    this->dynamicLevels.clear();
+    this->isDynamicTopologyBuilt = false;
 
-    this->postInit();
+    this->postInit(true);
     this->isDirty = true;
     this->isDynamicDirty = false;
 }

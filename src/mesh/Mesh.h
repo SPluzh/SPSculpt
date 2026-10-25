@@ -73,7 +73,9 @@ public:
     // Dynamic Subdivision (ZBrush style)
     DynamicSubdivSettings dynamicSettings;
     std::unique_ptr<Mesh> dynamicCacheMesh;
+    std::vector<std::unique_ptr<Mesh>> dynamicLevels;
     bool isDynamicDirty = true;
+    bool isDynamicTopologyBuilt = false;
 
     // Octree
     Octree octree;
@@ -121,8 +123,14 @@ public:
     int getNbCreasedEdges() const;
 
     void updateDynamicMesh();
+    void updateDynamicGeometryOnly();
+    void rebuildDynamicTopology();
     void applyDynamicSubdivision();
-    void invalidateDynamicSubdiv() { isDynamicDirty = true; isDirty = true; }
+    void invalidateDynamicSubdiv() {
+        isDynamicDirty = true;
+        isDynamicTopologyBuilt = false;
+        isDirty = true;
+    }
     Mesh* getRenderMesh() { return (dynamicSettings.enabled && dynamicCacheMesh) ? dynamicCacheMesh.get() : this; }
     const Mesh* getRenderMesh() const { return (dynamicSettings.enabled && dynamicCacheMesh) ? dynamicCacheMesh.get() : this; }
 
@@ -243,6 +251,7 @@ public:
         edgeCreases = other.edgeCreases;
         dynamicSettings = other.dynamicSettings;
         isDynamicDirty = true;
+        isDynamicTopologyBuilt = false;
     }
 
     Mesh(const Mesh& other) {
@@ -261,7 +270,7 @@ public:
     // Initialization from JS-managed arrays
 
     void allocate(int nbV, int nbF, int nbRF, int nbRV);
-    void postInit();
+    void postInit(bool buildOctree = true);
     void updateAfterLayerBake();
 
     // Pointer getters for WASM / bindings
