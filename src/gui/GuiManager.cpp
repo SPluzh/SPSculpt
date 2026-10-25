@@ -5376,14 +5376,22 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         ImGui::SetNextWindowPos(ImVec2((float)wWidth - 150.0f * scale, 40.0f * scale), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(130.0f * scale, 130.0f * scale));
         
-        ImGui::Begin("Gizmo Cube", nullptr, 
-            ImGuiWindowFlags_NoTitleBar | 
-            ImGuiWindowFlags_NoResize | 
-            ImGuiWindowFlags_NoScrollbar | 
-            ImGuiWindowFlags_NoBackground | 
-            ImGuiWindowFlags_NoSavedSettings);
+        Camera& camera = (scene.getSplitMode() != Scene::SplitMode::OFF && scene.getActiveViewport() == 1 && scene.getCameraRight()) 
+                         ? *scene.getCameraRight() 
+                         : scene.getCamera();
+        bool is2DMode = camera.getRef2DMode();
 
-        Camera& camera = scene.getCamera();
+        ImGuiWindowFlags gizmoFlags = ImGuiWindowFlags_NoTitleBar | 
+                                      ImGuiWindowFlags_NoResize | 
+                                      ImGuiWindowFlags_NoScrollbar | 
+                                      ImGuiWindowFlags_NoBackground | 
+                                      ImGuiWindowFlags_NoSavedSettings;
+        if (is2DMode) {
+            gizmoFlags |= ImGuiWindowFlags_NoMouseInputs;
+        }
+
+        ImGui::Begin("Gizmo Cube", nullptr, gizmoFlags);
+
         ImDrawList* drawList = ImGui::GetWindowDrawList();
         
         // Cube half size in pixels on screen
@@ -5521,17 +5529,19 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         bool mouseClicked = ImGui::IsMouseClicked(0);
         int hoveredPartIdx = -1;
 
-        for (int i = (int)visiblePartIndices.size() - 1; i >= 0; --i) {
-            int partIdx = visiblePartIndices[i];
-            const auto& part = parts[partIdx];
-            ImVec2 poly[4];
-            for (int j = 0; j < part.numVerts; ++j) {
-                poly[j] = screenVerts[part.vIdx[j]];
-            }
+        if (!is2DMode) {
+            for (int i = (int)visiblePartIndices.size() - 1; i >= 0; --i) {
+                int partIdx = visiblePartIndices[i];
+                const auto& part = parts[partIdx];
+                ImVec2 poly[4];
+                for (int j = 0; j < part.numVerts; ++j) {
+                    poly[j] = screenVerts[part.vIdx[j]];
+                }
 
-            if (isPointInPolygon(mousePos, poly, part.numVerts)) {
-                hoveredPartIdx = partIdx;
-                break;
+                if (isPointInPolygon(mousePos, poly, part.numVerts)) {
+                    hoveredPartIdx = partIdx;
+                    break;
+                }
             }
         }
 
@@ -5542,14 +5552,29 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 poly[j] = screenVerts[part.vIdx[j]];
             }
 
-            bool isHovered = (partIdx == hoveredPartIdx);
-            ImU32 color = isHovered ? part.hoverColor : part.color;
+            bool isHovered = (!is2DMode && partIdx == hoveredPartIdx);
+            ImU32 color;
+            if (is2DMode) {
+                // Dimmed, desaturated / translucent appearance for inactive state
+                uint32_t r = (part.color) & 0xFF;
+                uint32_t g = (part.color >> 8) & 0xFF;
+                uint32_t b = (part.color >> 16) & 0xFF;
+                float gray = 0.299f * r + 0.587f * g + 0.114f * b;
+                uint32_t outR = static_cast<uint32_t>(gray * 0.75f + r * 0.25f);
+                uint32_t outG = static_cast<uint32_t>(gray * 0.75f + g * 0.25f);
+                uint32_t outB = static_cast<uint32_t>(gray * 0.75f + b * 0.25f);
+                uint32_t outA = 60; // Soft translucent inactive alpha
+                color = IM_COL32(outR, outG, outB, outA);
+            } else {
+                color = isHovered ? part.hoverColor : part.color;
+            }
 
             // Draw part polygon
             drawList->AddConvexPolyFilled(poly, part.numVerts, color);
 
             // Draw borders
-            drawList->AddPolyline(poly, part.numVerts, IM_COL32(220, 220, 220, 255), ImDrawFlags_Closed, 1.2f);
+            ImU32 borderColor = is2DMode ? IM_COL32(140, 140, 140, 70) : IM_COL32(220, 220, 220, 255);
+            drawList->AddPolyline(poly, part.numVerts, borderColor, ImDrawFlags_Closed, 1.2f);
 
             // Draw centered text if label is set and mostly facing the camera
             if (part.label[0] != '\0') {
@@ -5569,8 +5594,11 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
                     int vtxStart = drawList->VtxBuffer.Size;
 
-                    drawList->AddText(ImVec2(textPos.x + 1.0f, textPos.y + 1.0f), IM_COL32(0, 0, 0, 200), part.label);
-                    drawList->AddText(textPos, IM_COL32(255, 255, 255, 255), part.label);
+                    ImU32 textShadow = is2DMode ? IM_COL32(0, 0, 0, 50) : IM_COL32(0, 0, 0, 200);
+                    ImU32 textColor = is2DMode ? IM_COL32(170, 170, 170, 90) : IM_COL32(255, 255, 255, 255);
+
+                    drawList->AddText(ImVec2(textPos.x + 1.0f, textPos.y + 1.0f), textShadow, part.label);
+                    drawList->AddText(textPos, textColor, part.label);
 
                     int vtxEnd = drawList->VtxBuffer.Size;
 
@@ -5594,7 +5622,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 }
             }
 
-            if (isHovered && mouseClicked) {
+            if (!is2DMode && isHovered && mouseClicked) {
                 if (m_gizmoClickPending && std::abs(m_gizmoClickPartRotX - (-part.rotX)) < 1e-3f && std::abs(m_gizmoClickPartRotY - part.rotY) < 1e-3f) {
                     // Cancel pending view change on double-click
                     m_gizmoClickPending = false;
@@ -5609,7 +5637,9 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         }
 
         // Process pending gizmo click
-        if (m_gizmoClickPending) {
+        if (is2DMode) {
+            m_gizmoClickPending = false;
+        } else if (m_gizmoClickPending) {
             auto now = std::chrono::steady_clock::now();
             auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_gizmoClickTime).count();
             if (elapsedMs > 250) {
