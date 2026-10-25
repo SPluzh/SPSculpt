@@ -54,6 +54,18 @@ struct MeshRenderBuffers {
     size_t polygroupVertCount = 0;
     bool polygroupDirty = true;
     
+    // Dedicated cage buffers for Dynamic Subdiv cage display
+    GLuint cageVao = 0;
+    GLuint cageVboVerts = 0;
+    GLuint cageEboWire = 0;
+    size_t cageWireIndexCount = 0;
+
+    // Dedicated crease lines buffers for sharp edge visualization
+    GLuint creaseVao = 0;
+    GLuint creaseVboVerts = 0;
+    GLuint creaseEboWire = 0;
+    size_t creaseWireIndexCount = 0;
+    
     size_t vertCount = 0;
     size_t triIndexCount = 0;
     size_t wireIndexCount = 0;
@@ -75,6 +87,14 @@ struct MeshRenderBuffers {
         if (polygroupVboNormals) glDeleteBuffers(1, &polygroupVboNormals);
         if (polygroupVboMaterials) glDeleteBuffers(1, &polygroupVboMaterials);
         if (polygroupVboGroups) glDeleteBuffers(1, &polygroupVboGroups);
+
+        if (cageVao) glDeleteVertexArrays(1, &cageVao);
+        if (cageVboVerts) glDeleteBuffers(1, &cageVboVerts);
+        if (cageEboWire) glDeleteBuffers(1, &cageEboWire);
+
+        if (creaseVao) glDeleteVertexArrays(1, &creaseVao);
+        if (creaseVboVerts) glDeleteBuffers(1, &creaseVboVerts);
+        if (creaseEboWire) glDeleteBuffers(1, &creaseEboWire);
     }
 };
 

@@ -18,6 +18,15 @@
 
 class Camera;
 
+struct DynamicSubdivSettings {
+    bool enabled = false;
+    int  smoothLevel = 2;    // 1 to 6 (SmoothSubdiv)
+    int  flatLevel = 0;      // 0 to 4 (FlatSubdiv)
+    int  creaseLevel = 2;    // 1 to 15 (CreaseLvl in ZBrush)
+    bool showCage = true;    // Render base cage wireframe over smooth mesh
+    float cageAlpha = 0.6f;  // Cage wireframe opacity
+};
+
 class Mesh {
 public:
     // Armature support
@@ -59,6 +68,12 @@ public:
     std::vector<uint32_t> edges;           // nbEdges (valence per edge)
     std::vector<uint32_t> faceEdges;       // nbFaces * 4 (edge index per face edge)
     std::vector<uint32_t> vertTagFlags;    // nbVerts (tag flags for algorithms)
+    std::vector<uint8_t>  edgeCreases;     // nbEdges (1 = creased, 0 = smooth)
+
+    // Dynamic Subdivision (ZBrush style)
+    DynamicSubdivSettings dynamicSettings;
+    std::unique_ptr<Mesh> dynamicCacheMesh;
+    bool isDynamicDirty = true;
 
     // Octree
     Octree octree;
@@ -94,6 +109,22 @@ public:
     int getNbEdges() const { return nbEdges; }
     int getNbQuads() const;
     int getNbTriangles() const;
+
+    // Crease and Dynamic Subdivision methods
+    void initCreases();
+    void creaseEdge(uint32_t edgeIdx, bool creased);
+    bool isEdgeCreased(uint32_t edgeIdx) const;
+    void creaseByAngle(float angleThresholdDegrees);
+    void creaseByPolyGroups();
+    void uncreaseAll();
+    bool hasCreases() const;
+    int getNbCreasedEdges() const;
+
+    void updateDynamicMesh();
+    void applyDynamicSubdivision();
+    void invalidateDynamicSubdiv() { isDynamicDirty = true; isDirty = true; }
+    Mesh* getRenderMesh() { return (dynamicSettings.enabled && dynamicCacheMesh) ? dynamicCacheMesh.get() : this; }
+    const Mesh* getRenderMesh() const { return (dynamicSettings.enabled && dynamicCacheMesh) ? dynamicCacheMesh.get() : this; }
 
     // SGL/OBJ migration properties
     bool visibleV1 = true;
@@ -142,7 +173,7 @@ public:
         outlinerName = "Mesh " + std::to_string(m_id);
     }
 
-    Mesh(const Mesh& other) {
+    void copyDataFrom(const Mesh& other) {
         isArmature = false;
         armatureGraph = nullptr;
         isTube = other.isTube;
@@ -175,6 +206,7 @@ public:
         vertRingVert = other.vertRingVert;
         vertOnEdge = other.vertOnEdge;
         vertVisible = other.vertVisible;
+        faceVisible = other.faceVisible;
         edges = other.edges;
         faceEdges = other.faceEdges;
         vertTagFlags = other.vertTagFlags;
@@ -208,6 +240,20 @@ public:
         matrix = other.matrix;
         editMatrix = other.editMatrix;
         layerStack = other.layerStack;
+        edgeCreases = other.edgeCreases;
+        dynamicSettings = other.dynamicSettings;
+        isDynamicDirty = true;
+    }
+
+    Mesh(const Mesh& other) {
+        copyDataFrom(other);
+    }
+
+    Mesh& operator=(const Mesh& other) {
+        if (this != &other) {
+            copyDataFrom(other);
+        }
+        return *this;
     }
 
     virtual ~Mesh() = default;

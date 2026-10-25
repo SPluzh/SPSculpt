@@ -3483,8 +3483,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     // 3.5 Multiresolution Sculpting Panel
     if (m_showMultiresPanel) {
         ImGui::SetNextWindowPos({160.0f * scale, 450.0f * scale}, ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize({300.0f * scale, 300.0f * scale}, ImGuiCond_FirstUseEver);
-        ImGui::Begin("Multiresolution", &m_showMultiresPanel);
+        ImGui::SetNextWindowSize({320.0f * scale, 520.0f * scale}, ImGuiCond_FirstUseEver);
+        ImGui::Begin("Multiresolution & Dynamic Subdiv###MultiresPanel", &m_showMultiresPanel);
 
         Mesh* selectedMesh = scene.getSelected();
         if (!selectedMesh) {
@@ -3596,6 +3596,133 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 ImGui::BeginDisabled();
                 ImGui::Button("Delete Higher", ImVec2(135, 24));
                 ImGui::EndDisabled();
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            if (ImGui::CollapsingHeader("Dynamic Subdivision", ImGuiTreeNodeFlags_DefaultOpen)) {
+                bool dynEnabled = selectedMesh->dynamicSettings.enabled;
+                if (dynEnabled) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.08f, 0.55f, 0.40f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.12f, 0.65f, 0.48f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.06f, 0.45f, 0.32f, 1.0f));
+                }
+                if (ImGui::Button(dynEnabled ? "Dynamic: ON" : "Dynamic: OFF", ImVec2(-1, 28.0f * scale))) {
+                    scene.pushHistoryState();
+                    selectedMesh->dynamicSettings.enabled = !dynEnabled;
+                    selectedMesh->invalidateDynamicSubdiv();
+                    selectedMesh->isDirty = true;
+                    thumbInvalidate(selectedMesh->getID());
+                }
+                if (dynEnabled) {
+                    ImGui::PopStyleColor(3);
+                }
+
+                if (selectedMesh->dynamicSettings.enabled) {
+                    ImGui::Spacing();
+                    if (ImGui::SliderInt("SmoothSubdiv", &selectedMesh->dynamicSettings.smoothLevel, 1, 6)) {
+                        selectedMesh->invalidateDynamicSubdiv();
+                        selectedMesh->isDirty = true;
+                    }
+                    if (ImGui::SliderInt("CreaseLvl", &selectedMesh->dynamicSettings.creaseLevel, 1, 15)) {
+                        selectedMesh->invalidateDynamicSubdiv();
+                        selectedMesh->isDirty = true;
+                    }
+                    if (ImGui::SliderInt("FlatSubdiv", &selectedMesh->dynamicSettings.flatLevel, 0, 4)) {
+                        selectedMesh->invalidateDynamicSubdiv();
+                        selectedMesh->isDirty = true;
+                    }
+
+                    ImGui::Spacing();
+                    if (ImGui::Checkbox("Show Cage", &selectedMesh->dynamicSettings.showCage)) {
+                        selectedMesh->isDirty = true;
+                    }
+                    if (selectedMesh->dynamicSettings.showCage) {
+                        ImGui::SameLine();
+                        ImGui::SetNextItemWidth(100.0f * scale);
+                        if (ImGui::SliderFloat("Opacity", &selectedMesh->dynamicSettings.cageAlpha, 0.1f, 1.0f, "%.2f")) {
+                            // Redraw will show updated cage opacity
+                        }
+                    }
+
+                    if (selectedMesh->dynamicCacheMesh) {
+                        ImGui::TextDisabled("Subdivided: %d verts, %d faces",
+                            selectedMesh->dynamicCacheMesh->getNbVertices(),
+                            selectedMesh->dynamicCacheMesh->getNbFaces());
+                    }
+
+                    ImGui::Spacing();
+                    float halfActionW = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+                    if (ImGui::Button("Apply (Bake)", ImVec2(halfActionW, 26.0f * scale))) {
+                        scene.pushHistoryState();
+                        selectedMesh->applyDynamicSubdivision();
+                        selectedMesh->isDirty = true;
+                        thumbInvalidate(selectedMesh->getID());
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Permanently freeze dynamic subdivision into base mesh geometry");
+                    }
+
+                    ImGui::SameLine();
+                    if (ImGui::Button("To Multires", ImVec2(halfActionW, 26.0f * scale))) {
+                        scene.pushHistoryState();
+                        int targetLevels = selectedMesh->dynamicSettings.smoothLevel;
+                        selectedMesh->dynamicSettings.enabled = false;
+                        selectedMesh->invalidateDynamicSubdiv();
+                        selectedMesh->isDirty = true;
+                        Multimesh* mm = ensureMultimesh();
+                        if (mm) {
+                            for (int i = 0; i < targetLevels; ++i) {
+                                mm->addLevel();
+                            }
+                            multimesh = mm;
+                        }
+                        thumbInvalidate(selectedMesh->getID());
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Convert dynamic levels into editable Multiresolution sculpting levels");
+                    }
+                }
+            }
+
+            ImGui::Spacing();
+            if (ImGui::CollapsingHeader("Crease", ImGuiTreeNodeFlags_DefaultOpen)) {
+                static float creaseAngleDeg = 45.0f;
+                ImGui::SliderFloat("Crease Angle", &creaseAngleDeg, 1.0f, 179.0f, "%.0f deg");
+
+                float halfCreaseW = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+                if (ImGui::Button("Crease Angle", ImVec2(halfCreaseW, 26.0f * scale))) {
+                    scene.pushHistoryState();
+                    selectedMesh->creaseByAngle(creaseAngleDeg);
+                    selectedMesh->invalidateDynamicSubdiv();
+                    selectedMesh->isDirty = true;
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Crease edges with dihedral angle sharper than angle threshold");
+                }
+
+                ImGui::SameLine();
+                if (ImGui::Button("Crease PG", ImVec2(halfCreaseW, 26.0f * scale))) {
+                    scene.pushHistoryState();
+                    selectedMesh->creaseByPolyGroups();
+                    selectedMesh->invalidateDynamicSubdiv();
+                    selectedMesh->isDirty = true;
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Crease all boundary edges between different PolyGroups");
+                }
+
+                if (ImGui::Button("Uncrease All", ImVec2(-1, 26.0f * scale))) {
+                    scene.pushHistoryState();
+                    selectedMesh->uncreaseAll();
+                    selectedMesh->invalidateDynamicSubdiv();
+                    selectedMesh->isDirty = true;
+                }
+
+                int creasedCount = selectedMesh->getNbCreasedEdges();
+                ImGui::Text("Creased Edges: %d", creasedCount);
             }
         }
         ImGui::End();
@@ -8738,7 +8865,7 @@ void GuiManager::drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRend
         ImGui::MenuItem("Scene Outliner", "F1", &m_showScenePanel);
         ImGui::MenuItem("Topology & Remesh", nullptr, &m_showTopologyPanel);
         ImGui::MenuItem("Sculpt Layers", nullptr, &m_showLayersPanel);
-        ImGui::MenuItem("Multiresolution", nullptr, &m_showMultiresPanel);
+        ImGui::MenuItem("Multiresolution & Dynamic Subdiv", nullptr, &m_showMultiresPanel);
         ImGui::MenuItem("Camera Bookmarks", "F2", &m_showCameraBookmarksPanel);
         ImGui::MenuItem("Sculpt Timelapse", nullptr, &m_showTimelapsePanel);
         ImGui::MenuItem("Hotkey HUD", nullptr, &m_showHotkeyHUD);

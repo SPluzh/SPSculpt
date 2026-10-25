@@ -1,4 +1,5 @@
 #include "mesh/Mesh.h"
+#include "editing/Subdivision.h"
 #include <cstring>
 #include <algorithm>
 #include <map>
@@ -172,6 +173,9 @@ void Mesh::initEdges() {
         uint32_t i4 = faceEdges[idf + 3];
         if (i4 != TRI_INDEX && i4 < (uint32_t)nbEdges)
             edges[i4]++;
+    }
+    if (edgeCreases.size() != (size_t)nbEdges) {
+        edgeCreases.resize(nbEdges, 0);
     }
 }
 
@@ -1103,6 +1107,188 @@ void Mesh::scaleFaceNormalsBoxesCentersAndOctree(float scaleX, float scaleY, flo
         postInit();
     }
 }
+
+void Mesh::initCreases() {
+    edgeCreases.assign(nbEdges, 0);
+    invalidateDynamicSubdiv();
+}
+
+void Mesh::creaseEdge(uint32_t edgeIdx, bool creased) {
+    if (edgeIdx < (uint32_t)nbEdges) {
+        if (edgeCreases.size() != (size_t)nbEdges) {
+            edgeCreases.resize(nbEdges, 0);
+        }
+        edgeCreases[edgeIdx] = creased ? 1 : 0;
+        invalidateDynamicSubdiv();
+    }
+}
+
+bool Mesh::isEdgeCreased(uint32_t edgeIdx) const {
+    if (edgeIdx < edgeCreases.size()) {
+        return edgeCreases[edgeIdx] > 0;
+    }
+    return false;
+}
+
+void Mesh::creaseByAngle(float angleThresholdDegrees) {
+    if (nbEdges <= 0 || nbFaces <= 0) return;
+    if (edgeCreases.size() != (size_t)nbEdges) {
+        edgeCreases.resize(nbEdges, 0);
+    }
+    if (faceNormals.size() != (size_t)nbFaces * 3) {
+        faceNormals.resize(nbFaces * 3);
+        faceBoxes.resize(nbFaces * 6);
+        faceCenters.resize(nbFaces * 3);
+        updateFaceNormalsAndBoxes(
+            verts.data(), nbVerts,
+            faces.data(), nbFaces,
+            nullptr, -1,
+            faceNormals.data(),
+            faceBoxes.data(),
+            faceCenters.data()
+        );
+    }
+
+    std::vector<std::pair<int, int>> edgeFaces(nbEdges, {-1, -1});
+    for (int f = 0; f < nbFaces; ++f) {
+        int id = f * 4;
+        int numE = (faces[id + 3] != TRI_INDEX) ? 4 : 3;
+        for (int k = 0; k < numE; ++k) {
+            uint32_t e = faceEdges[id + k];
+            if (e < (uint32_t)nbEdges) {
+                if (edgeFaces[e].first == -1) edgeFaces[e].first = f;
+                else if (edgeFaces[e].second == -1) edgeFaces[e].second = f;
+            }
+        }
+    }
+
+    float cosThreshold = std::cos(glm::radians(angleThresholdDegrees));
+    for (int e = 0; e < nbEdges; ++e) {
+        int f1 = edgeFaces[e].first;
+        int f2 = edgeFaces[e].second;
+        if (f1 >= 0 && f2 >= 0) {
+            glm::vec3 n1(faceNormals[f1 * 3], faceNormals[f1 * 3 + 1], faceNormals[f1 * 3 + 2]);
+            glm::vec3 n2(faceNormals[f2 * 3], faceNormals[f2 * 3 + 1], faceNormals[f2 * 3 + 2]);
+            float len1 = glm::length(n1);
+            float len2 = glm::length(n2);
+            if (len1 > 1e-6f && len2 > 1e-6f) {
+                float d = glm::dot(n1 / len1, n2 / len2);
+                if (d < cosThreshold) {
+                    edgeCreases[e] = 1;
+                } else {
+                    edgeCreases[e] = 0;
+                }
+            }
+        }
+    }
+    invalidateDynamicSubdiv();
+}
+
+void Mesh::creaseByPolyGroups() {
+    if (nbEdges <= 0 || nbFaces <= 0) return;
+    if (edgeCreases.size() != (size_t)nbEdges) {
+        edgeCreases.resize(nbEdges, 0);
+    }
+    if (faceGroups.size() != (size_t)nbFaces) {
+        initFaceGroups();
+    }
+
+    std::vector<std::pair<int, int>> edgeFaces(nbEdges, {-1, -1});
+    for (int f = 0; f < nbFaces; ++f) {
+        int id = f * 4;
+        int numE = (faces[id + 3] != TRI_INDEX) ? 4 : 3;
+        for (int k = 0; k < numE; ++k) {
+            uint32_t e = faceEdges[id + k];
+            if (e < (uint32_t)nbEdges) {
+                if (edgeFaces[e].first == -1) edgeFaces[e].first = f;
+                else if (edgeFaces[e].second == -1) edgeFaces[e].second = f;
+            }
+        }
+    }
+
+    for (int e = 0; e < nbEdges; ++e) {
+        int f1 = edgeFaces[e].first;
+        int f2 = edgeFaces[e].second;
+        if (f1 >= 0 && f2 >= 0) {
+            if (faceGroups[f1] != faceGroups[f2]) {
+                edgeCreases[e] = 1;
+            } else {
+                edgeCreases[e] = 0;
+            }
+        } else if (f1 >= 0 && f2 == -1) {
+            // Boundary edge
+            edgeCreases[e] = 1;
+        }
+    }
+    invalidateDynamicSubdiv();
+}
+
+void Mesh::uncreaseAll() {
+    edgeCreases.assign(nbEdges, 0);
+    invalidateDynamicSubdiv();
+}
+
+bool Mesh::hasCreases() const {
+    for (uint8_t c : edgeCreases) {
+        if (c > 0) return true;
+    }
+    return false;
+}
+
+int Mesh::getNbCreasedEdges() const {
+    int count = 0;
+    for (uint8_t c : edgeCreases) {
+        if (c > 0) count++;
+    }
+    return count;
+}
+
+void Mesh::updateDynamicMesh() {
+    if (!dynamicSettings.enabled) {
+        dynamicCacheMesh.reset();
+        isDynamicDirty = false;
+        return;
+    }
+    if (!dynamicCacheMesh) {
+        dynamicCacheMesh = std::make_unique<Mesh>();
+    }
+    Subdivision::computeDynamicSubdivision(
+        *this,
+        *dynamicCacheMesh,
+        dynamicSettings.smoothLevel,
+        dynamicSettings.flatLevel,
+        dynamicSettings.creaseLevel
+    );
+    dynamicCacheMesh->matrix = this->matrix;
+    dynamicCacheMesh->editMatrix = this->editMatrix;
+    dynamicCacheMesh->center = this->center;
+    dynamicCacheMesh->scale = this->scale;
+    dynamicCacheMesh->outlinerName = this->outlinerName + " [Dynamic]";
+    isDynamicDirty = false;
+}
+
+void Mesh::applyDynamicSubdivision() {
+    if (!dynamicSettings.enabled || !dynamicCacheMesh) return;
+
+    this->verts = std::move(dynamicCacheMesh->verts);
+    this->normals = std::move(dynamicCacheMesh->normals);
+    this->colors = std::move(dynamicCacheMesh->colors);
+    this->materials = std::move(dynamicCacheMesh->materials);
+    this->faces = std::move(dynamicCacheMesh->faces);
+    this->faceGroups = std::move(dynamicCacheMesh->faceGroups);
+    this->nbVerts = dynamicCacheMesh->nbVerts;
+    this->nbFaces = dynamicCacheMesh->nbFaces;
+    this->nbEdges = dynamicCacheMesh->nbEdges;
+    this->edgeCreases = std::move(dynamicCacheMesh->edgeCreases);
+
+    this->dynamicSettings.enabled = false;
+    this->dynamicCacheMesh.reset();
+
+    this->postInit();
+    this->isDirty = true;
+    this->isDynamicDirty = false;
+}
+
 
 
 

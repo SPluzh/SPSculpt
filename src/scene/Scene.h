@@ -48,6 +48,9 @@ struct MeshState {
     bool symZ = false;
     int symMode = 0;
 
+    std::vector<uint8_t> edgeCreases;
+    DynamicSubdivSettings dynamicSettings;
+
     MeshState() = default;
     MeshState(const MeshState& o) {
         verts = o.verts;
@@ -85,6 +88,8 @@ struct MeshState {
         symY = o.symY;
         symZ = o.symZ;
         symMode = o.symMode;
+        edgeCreases = o.edgeCreases;
+        dynamicSettings = o.dynamicSettings;
     }
     MeshState(MeshState&&) noexcept = default;
     MeshState& operator=(const MeshState& o) {
@@ -128,6 +133,8 @@ struct MeshState {
             symY = o.symY;
             symZ = o.symZ;
             symMode = o.symMode;
+            edgeCreases = o.edgeCreases;
+            dynamicSettings = o.dynamicSettings;
         }
         return *this;
     }

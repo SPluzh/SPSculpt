@@ -223,6 +223,8 @@ HistoryState Scene::saveCurrentState(bool includeTopology) const {
         ms.symY = m->symY;
         ms.symZ = m->symZ;
         ms.symMode = m->symMode;
+        ms.edgeCreases = m->edgeCreases;
+        ms.dynamicSettings = m->dynamicSettings;
         
         hs.meshes.push_back(ms);
     }
@@ -324,6 +326,9 @@ void Scene::restoreState(const HistoryState& hs) {
         m->symY = ms.symY;
         m->symZ = ms.symZ;
         m->symMode = ms.symMode;
+        m->edgeCreases = ms.edgeCreases;
+        m->dynamicSettings = ms.dynamicSettings;
+        m->invalidateDynamicSubdiv();
 
         auto tPostInitStart = std::chrono::high_resolution_clock::now();
 

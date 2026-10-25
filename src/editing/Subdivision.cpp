@@ -3,6 +3,7 @@
 #include "common/Logger.h"
 #include <algorithm>
 #include <cmath>
+#include <unordered_set>
 
 namespace Subdivision {
 
@@ -17,10 +18,14 @@ public:
     const std::vector<float>& _cAr;
     const std::vector<float>& _mAr;
     const std::vector<uint32_t>& _eAr;
+    const std::vector<uint8_t>* _inCreases;
+    bool _isSharp;
+    bool _isLinear;
     int _nbVertices;
     std::vector<int32_t> _tagEdges;
 
-    OddVertexComputer(Mesh& mesh, std::vector<float>& vArOut, std::vector<float>& cArOut, std::vector<float>& mArOut)
+    OddVertexComputer(Mesh& mesh, std::vector<float>& vArOut, std::vector<float>& cArOut, std::vector<float>& mArOut,
+                      const std::vector<uint8_t>* inCreases = nullptr, bool isSharp = false, bool isLinear = false)
         : _vArOut(vArOut)
         , _cArOut(cArOut)
         , _mArOut(mArOut)
@@ -28,6 +33,9 @@ public:
         , _cAr(mesh.getColors())
         , _mAr(mesh.getMaterials())
         , _eAr(mesh.edges)
+        , _inCreases(inCreases)
+        , _isSharp(isSharp)
+        , _isLinear(isLinear)
         , _nbVertices(mesh.getNbVertices())
         , _tagEdges(mesh.getNbEdges(), 0)
     {}
@@ -40,6 +48,8 @@ public:
         uint32_t ivMid = (testEdge == -1) ? (uint32_t)_nbVertices++ : (uint32_t)testEdge;
         uint32_t idMid = ivMid * 3;
         uint32_t edgeValue = (ide < _eAr.size()) ? _eAr[ide] : 2;
+        bool isCrease = (_isSharp && _inCreases && ide < _inCreases->size() && (*_inCreases)[ide] > 0);
+        bool isSharpEdge = (edgeValue == 1 || isCrease || edgeValue >= 3 || Subdivision::LINEAR || _isLinear);
 
         if (idMid + 2 >= _vArOut.size()) {
             _vArOut.resize(idMid + 3, 0.0f);
@@ -47,7 +57,7 @@ public:
             _mArOut.resize(idMid + 3, 0.0f);
         }
 
-        if (edgeValue == 1 || edgeValue >= 3 || Subdivision::LINEAR) {
+        if (isSharpEdge) {
             if (testEdge != -1) return ivMid;
             _tagEdges[ide] = ivMid + 1;
             _vArOut[idMid]     = 0.5f * (_vAr[id1]     + _vAr[id2]);
@@ -99,6 +109,8 @@ public:
         uint32_t ivMid = (testEdge == -1) ? (uint32_t)_nbVertices++ : (uint32_t)testEdge;
         uint32_t idMid = ivMid * 3;
         uint32_t edgeValue = (ide < _eAr.size()) ? _eAr[ide] : 2;
+        bool isCrease = (_isSharp && _inCreases && ide < _inCreases->size() && (*_inCreases)[ide] > 0);
+        bool isSharpEdge = (edgeValue == 1 || isCrease || edgeValue >= 3 || Subdivision::LINEAR || _isLinear);
 
         if (idMid + 2 >= _vArOut.size()) {
             _vArOut.resize(idMid + 3, 0.0f);
@@ -106,7 +118,7 @@ public:
             _mArOut.resize(idMid + 3, 0.0f);
         }
 
-        if (edgeValue == 1 || edgeValue >= 3 || Subdivision::LINEAR) {
+        if (isSharpEdge) {
             if (testEdge != -1) return ivMid;
             _tagEdges[ide] = ivMid + 1;
             _vArOut[idMid]     = 0.5f * (_vAr[id1]     + _vAr[id2]);
@@ -178,7 +190,8 @@ public:
     }
 };
 
-void applyEvenSmooth(Mesh& baseMesh, std::vector<float>& even, std::vector<float>& colorOut, std::vector<float>& materialOut) {
+void applyEvenSmooth(Mesh& baseMesh, std::vector<float>& even, std::vector<float>& colorOut, std::vector<float>& materialOut,
+                     const std::vector<uint8_t>* inCreases, bool isSharp) {
     int nbVerts = baseMesh.getNbVertices();
     if ((int)even.size() < nbVerts * 3) even.resize(nbVerts * 3);
     if ((int)colorOut.size() < nbVerts * 3) colorOut.resize(nbVerts * 3);
@@ -207,50 +220,73 @@ void applyEvenSmooth(Mesh& baseMesh, std::vector<float>& even, std::vector<float
         float beta = 0.0f, alpha = 0.0f;
         uint32_t k = 0, id = 0;
 
-        if ((i < (int)vertOnEdgeOld.size() && vertOnEdgeOld[i]) || Subdivision::LINEAR) {
-            uint32_t startF = vrfStartCount[i * 2];
-            uint32_t endF = startF + vrfStartCount[i * 2 + 1];
-            for (k = startF; k < endF; ++k) {
-                uint32_t idFace = vertRingFace[k] * 4;
-                uint32_t i1 = fArOld[idFace];
-                uint32_t i2 = fArOld[idFace + 1];
-                uint32_t i3 = fArOld[idFace + 2];
-                uint32_t i4 = fArOld[idFace + 3];
-                bool isTri = (i4 == TRI_INDEX);
-                id = TRI_INDEX;
+        if (Subdivision::LINEAR) {
+            even[j]     = vArOld[j];
+            even[j + 1] = vArOld[j + 1];
+            even[j + 2] = vArOld[j + 2];
+            continue;
+        }
 
-                if (i1 == (uint32_t)i) {
-                    if (eArOld[feArOld[idFace]] == 1) id = i2;
-                    else if (eArOld[feArOld[isTri ? idFace + 2 : idFace + 3]] == 1) id = isTri ? i3 : i4;
-                } else if (i2 == (uint32_t)i) {
-                    if (eArOld[feArOld[idFace]] == 1) id = i1;
-                    else if (eArOld[feArOld[idFace + 1]] == 1) id = i3;
-                } else if (i3 == (uint32_t)i) {
-                    if (eArOld[feArOld[idFace + 1]] == 1) id = i2;
-                    else if (eArOld[feArOld[idFace + 2]] == 1) id = isTri ? i1 : i4;
-                } else if (i4 == (uint32_t)i) {
-                    if (eArOld[feArOld[idFace + 2]] == 1) id = i3;
-                    else if (eArOld[feArOld[idFace + 3]] == 1) id = i1;
+        uint32_t sharpNeighbors[16];
+        int numSharp = 0;
+
+        uint32_t startF = vrfStartCount[i * 2];
+        uint32_t endF = startF + vrfStartCount[i * 2 + 1];
+
+        for (k = startF; k < endF; ++k) {
+            uint32_t idFace = vertRingFace[k] * 4;
+            uint32_t i1 = fArOld[idFace];
+            uint32_t i2 = fArOld[idFace + 1];
+            uint32_t i3 = fArOld[idFace + 2];
+            uint32_t i4 = fArOld[idFace + 3];
+            bool isTri = (i4 == TRI_INDEX);
+
+            auto checkEdge = [&](uint32_t edgeIdx, uint32_t otherV) {
+                if (edgeIdx >= eArOld.size() || otherV == TRI_INDEX) return;
+                uint32_t edgeVal = eArOld[edgeIdx];
+                bool isCreased = (isSharp && inCreases && edgeIdx < inCreases->size() && (*inCreases)[edgeIdx] > 0);
+                if (edgeVal == 1 || isCreased) {
+                    bool found = false;
+                    for (int s = 0; s < numSharp; ++s) {
+                        if (sharpNeighbors[s] == otherV) { found = true; break; }
+                    }
+                    if (!found && numSharp < 16) {
+                        sharpNeighbors[numSharp++] = otherV;
+                    }
                 }
+            };
 
-                if (id == TRI_INDEX) continue;
-                id *= 3;
-                avx += vArOld[id];
-                avy += vArOld[id + 1];
-                avz += vArOld[id + 2];
-                beta += 1.0f;
+            if (i1 == (uint32_t)i) {
+                checkEdge(feArOld[idFace], i2);
+                checkEdge(feArOld[isTri ? idFace + 2 : idFace + 3], isTri ? i3 : i4);
+            } else if (i2 == (uint32_t)i) {
+                checkEdge(feArOld[idFace], i1);
+                checkEdge(feArOld[idFace + 1], i3);
+            } else if (i3 == (uint32_t)i) {
+                checkEdge(feArOld[idFace + 1], i2);
+                checkEdge(feArOld[idFace + 2], isTri ? i1 : i4);
+            } else if (i4 == (uint32_t)i) {
+                checkEdge(feArOld[idFace + 2], i3);
+                checkEdge(feArOld[idFace + 3], i1);
             }
-            if (beta < 2.0f) {
-                even[j]     = vArOld[j];
-                even[j + 1] = vArOld[j + 1];
-                even[j + 2] = vArOld[j + 2];
-            } else {
-                beta = 0.25f / beta;
-                alpha = 0.75f;
-                even[j]     = vArOld[j]     * alpha + avx * beta;
-                even[j + 1] = vArOld[j + 1] * alpha + avy * beta;
-                even[j + 2] = vArOld[j + 2] * alpha + avz * beta;
-            }
+        }
+
+        if (numSharp >= 3) {
+            even[j]     = vArOld[j];
+            even[j + 1] = vArOld[j + 1];
+            even[j + 2] = vArOld[j + 2];
+            continue;
+        } else if (numSharp == 2) {
+            uint32_t idA = sharpNeighbors[0] * 3;
+            uint32_t idB = sharpNeighbors[1] * 3;
+            even[j]     = 0.75f * vArOld[j]     + 0.125f * (vArOld[idA]     + vArOld[idB]);
+            even[j + 1] = 0.75f * vArOld[j + 1] + 0.125f * (vArOld[idA + 1] + vArOld[idB + 1]);
+            even[j + 2] = 0.75f * vArOld[j + 2] + 0.125f * (vArOld[idA + 2] + vArOld[idB + 2]);
+            continue;
+        } else if (numSharp == 1 && (i < (int)vertOnEdgeOld.size() && vertOnEdgeOld[i])) {
+            even[j]     = vArOld[j];
+            even[j + 1] = vArOld[j + 1];
+            even[j + 2] = vArOld[j + 2];
             continue;
         }
 
@@ -351,10 +387,11 @@ void applyEvenSmooth(Mesh& baseMesh, std::vector<float>& even, std::vector<float
     }
 }
 
-std::vector<int32_t> applyOddSmooth(Mesh& baseMesh, std::vector<float>& odds, std::vector<float>& colorOut, std::vector<float>& materialOut, std::vector<uint32_t>* fArOut) {
+std::vector<int32_t> applyOddSmooth(Mesh& baseMesh, std::vector<float>& odds, std::vector<float>& colorOut, std::vector<float>& materialOut,
+                                     std::vector<uint32_t>* fArOut, const std::vector<uint8_t>* inCreases, bool isSharp, bool isLinear) {
     const auto& fAr = baseMesh.getFaces();
     const auto& feAr = baseMesh.faceEdges;
-    OddVertexComputer oddComputer(baseMesh, odds, colorOut, materialOut);
+    OddVertexComputer oddComputer(baseMesh, odds, colorOut, materialOut, inCreases, isSharp, isLinear);
 
     int nbFaces = baseMesh.getNbFaces();
     for (int i = 0; i < nbFaces; ++i) {
@@ -404,30 +441,30 @@ std::vector<int32_t> applyOddSmooth(Mesh& baseMesh, std::vector<float>& odds, st
     return oddComputer._tagEdges;
 }
 
-void fullSubdivision(Mesh& baseMesh, Mesh& newMesh) {
-    sculpt_log("[Subdivision::fullSubdivision] Start. baseVerts=%d, baseEdges=%d, baseQuads=%d, baseFaces=%d\n",
-              baseMesh.getNbVertices(), baseMesh.getNbEdges(), baseMesh.getNbQuads(), baseMesh.getNbFaces());
-
+void fullSubdivisionWithCreases(
+    Mesh& baseMesh,
+    Mesh& newMesh,
+    const std::vector<uint8_t>* inCreases,
+    std::vector<uint8_t>* outCreases,
+    bool isSharpStep,
+    bool isLinear
+) {
     if (baseMesh.vrfStartCount.size() != (size_t)(baseMesh.getNbVertices() * 2) || baseMesh.edges.empty()) {
-        sculpt_log("[Subdivision::fullSubdivision] Base topology uninitialized. Calling initTopology()...\n");
         baseMesh.initTopology();
     }
 
     int nbVertices = baseMesh.getNbVertices() + baseMesh.getNbEdges() + baseMesh.getNbQuads();
     int nbFacesOut = baseMesh.getNbFaces() * 4;
 
-    sculpt_log("[Subdivision::fullSubdivision] Target nbVertices=%d, nbFacesOut=%d\n", nbVertices, nbFacesOut);
-
     newMesh.getVertices().resize(nbVertices * 3, 0.0f);
     newMesh.getColors().resize(nbVertices * 3, 0.0f);
     newMesh.getMaterials().resize(nbVertices * 3, 0.0f);
     newMesh.getFaces().resize(nbFacesOut * 4, TRI_INDEX);
 
-    sculpt_log("[Subdivision::fullSubdivision] Running applyEvenSmooth...\n");
-    applyEvenSmooth(baseMesh, newMesh.getVertices(), newMesh.getColors(), newMesh.getMaterials());
+    applyEvenSmooth(baseMesh, newMesh.getVertices(), newMesh.getColors(), newMesh.getMaterials(), inCreases, isSharpStep);
 
-    sculpt_log("[Subdivision::fullSubdivision] Running applyOddSmooth...\n");
-    auto tags = applyOddSmooth(baseMesh, newMesh.getVertices(), newMesh.getColors(), newMesh.getMaterials(), &newMesh.getFaces());
+    auto tags = applyOddSmooth(baseMesh, newMesh.getVertices(), newMesh.getColors(), newMesh.getMaterials(),
+                               &newMesh.getFaces(), inCreases, isSharpStep, isLinear);
 
     newMesh.nbVerts = nbVertices;
     newMesh.nbFaces = nbFacesOut;
@@ -446,9 +483,113 @@ void fullSubdivision(Mesh& baseMesh, Mesh& newMesh) {
         newMesh.initFaceGroups();
     }
 
-    sculpt_log("[Subdivision::fullSubdivision] Calling newMesh.postInit()...\n");
+    newMesh.initTopology();
+
+    // Propagate creases to sub-edges in newMesh
+    if (outCreases) {
+        outCreases->assign(newMesh.getNbEdges(), 0);
+        if (inCreases && !inCreases->empty()) {
+            const auto& baseFaces = baseMesh.getFaces();
+            const auto& baseFaceEdges = baseMesh.faceEdges;
+            const auto& newFaceEdges = newMesh.faceEdges;
+            const auto& newFaces = newMesh.getFaces();
+
+            std::unordered_set<uint64_t> creasedSubEdges;
+            creasedSubEdges.reserve(inCreases->size() * 2);
+
+            int baseNbFaces = baseMesh.getNbFaces();
+            for (int f = 0; f < baseNbFaces; ++f) {
+                int id = f * 4;
+                uint32_t v[4] = { baseFaces[id], baseFaces[id + 1], baseFaces[id + 2], baseFaces[id + 3] };
+                bool isQuad = (v[3] != TRI_INDEX);
+                int numE = isQuad ? 4 : 3;
+                for (int e = 0; e < numE; ++e) {
+                    uint32_t ide = baseFaceEdges[id + e];
+                    if (ide < inCreases->size() && (*inCreases)[ide] > 0) {
+                        int32_t ivMid = tags[ide] - 1;
+                        if (ivMid >= 0) {
+                            uint32_t va = v[e];
+                            uint32_t vb = v[(e + 1) % numE];
+                            uint64_t k1 = ((uint64_t)std::min(va, (uint32_t)ivMid) << 32) | std::max(va, (uint32_t)ivMid);
+                            uint64_t k2 = ((uint64_t)std::min(vb, (uint32_t)ivMid) << 32) | std::max(vb, (uint32_t)ivMid);
+                            creasedSubEdges.insert(k1);
+                            creasedSubEdges.insert(k2);
+                        }
+                    }
+                }
+            }
+
+            int newNbFaces = newMesh.getNbFaces();
+            for (int f = 0; f < newNbFaces; ++f) {
+                int id = f * 4;
+                uint32_t v[4] = { newFaces[id], newFaces[id + 1], newFaces[id + 2], newFaces[id + 3] };
+                bool isQuad = (v[3] != TRI_INDEX);
+                int numE = isQuad ? 4 : 3;
+                for (int e = 0; e < numE; ++e) {
+                    uint32_t edgeIdx = newFaceEdges[id + e];
+                    if (edgeIdx < outCreases->size() && (*outCreases)[edgeIdx] == 0) {
+                        uint32_t va = v[e];
+                        uint32_t vb = v[(e + 1) % numE];
+                        uint64_t k = ((uint64_t)std::min(va, vb) << 32) | std::max(va, vb);
+                        if (creasedSubEdges.find(k) != creasedSubEdges.end()) {
+                            (*outCreases)[edgeIdx] = 1;
+                        }
+                    }
+                }
+            }
+        }
+        newMesh.edgeCreases = *outCreases;
+    }
+
     newMesh.postInit();
-    sculpt_log("[Subdivision::fullSubdivision] fullSubdivision completed successfully.\n");
+}
+
+void fullSubdivision(Mesh& baseMesh, Mesh& newMesh) {
+    fullSubdivisionWithCreases(baseMesh, newMesh, nullptr, nullptr, false, false);
+}
+
+void computeDynamicSubdivision(
+    Mesh& baseMesh,
+    Mesh& outMesh,
+    int smoothLevel,
+    int flatLevel,
+    int creaseLevel
+) {
+    if (smoothLevel <= 0 && flatLevel <= 0) {
+        outMesh = baseMesh;
+        outMesh.edgeCreases = baseMesh.edgeCreases;
+        outMesh.postInit();
+        return;
+    }
+
+    int totalSteps = flatLevel + smoothLevel;
+    std::unique_ptr<Mesh> current = std::make_unique<Mesh>(baseMesh);
+    current->edgeCreases = baseMesh.edgeCreases;
+    if (current->edgeCreases.size() != (size_t)current->getNbEdges()) {
+        current->edgeCreases.resize(current->getNbEdges(), 0);
+    }
+
+    for (int step = 1; step <= totalSteps; ++step) {
+        auto next = std::make_unique<Mesh>();
+        bool isLinear = (step <= flatLevel);
+        bool isSharp = (step <= creaseLevel);
+
+        std::vector<uint8_t> outCreases;
+        fullSubdivisionWithCreases(
+            *current,
+            *next,
+            &current->edgeCreases,
+            &outCreases,
+            isSharp,
+            isLinear
+        );
+
+        next->edgeCreases = std::move(outCreases);
+        current = std::move(next);
+    }
+
+    outMesh = *current;
+    outMesh.postInit();
 }
 
 void partialSubdivision(Mesh& baseMesh, std::vector<float>& vertOut, std::vector<float>& colorOut, std::vector<float>& materialOut) {

@@ -1464,6 +1464,12 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
                 if (mesh->isPrimitive && mesh->primitiveData && mesh->primitiveData->showWireframe) {
                     showMeshWire = true;
                 }
+                if (mesh->dynamicSettings.enabled && mesh->dynamicSettings.showCage) {
+                    showMeshWire = true;
+                }
+                if (mesh->hasCreases()) {
+                    showMeshWire = true;
+                }
                 if (showMeshWire) {
                     drawWireframe(mesh, scene, camera);
                 }
@@ -2102,16 +2108,50 @@ void AngleRenderer::drawWireframe(Mesh* mesh, const Scene& scene, const Camera& 
     glUniform1i(glGetUniformLocation(m_wireframeProgram, "uCullBackfaces"), (isXRay || isPlane) ? 0 : 1);
 
 
-    float alpha = std::clamp(m_wireframeColor.a * m_wireframeOpacity, 0.0f, 1.0f);
-    glUniform4f(glGetUniformLocation(m_wireframeProgram, "uWireColor"),
-                m_wireframeColor.r * alpha,
-                m_wireframeColor.g * alpha,
-                m_wireframeColor.b * alpha,
-                alpha);
+    // 1. Draw regular wireframe if enabled
+    if (m_showWireframe && bufs->wireIndexCount > 0) {
+        float alpha = std::clamp(m_wireframeColor.a * m_wireframeOpacity, 0.0f, 1.0f);
+        glUniform4f(glGetUniformLocation(m_wireframeProgram, "uWireColor"),
+                    m_wireframeColor.r * alpha,
+                    m_wireframeColor.g * alpha,
+                    m_wireframeColor.b * alpha,
+                    alpha);
 
-    glBindVertexArray(bufs->vao);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboWireframe);
-    glDrawElements(GL_LINES, static_cast<GLsizei>(bufs->wireIndexCount), GL_UNSIGNED_INT, nullptr);
+        glBindVertexArray(bufs->vao);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboWireframe);
+        glDrawElements(GL_LINES, static_cast<GLsizei>(bufs->wireIndexCount), GL_UNSIGNED_INT, nullptr);
+    }
+
+    // 2. Draw cage wireframe if Dynamic Subdiv cage display is enabled
+    if (bufs->cageWireIndexCount > 0 && mesh->dynamicSettings.enabled && mesh->dynamicSettings.showCage) {
+        float cageA = std::clamp(mesh->dynamicSettings.cageAlpha, 0.0f, 1.0f);
+        // High visibility warm orange for base cage
+        glm::vec3 cageCol(1.0f, 0.65f, 0.15f);
+        glUniform4f(glGetUniformLocation(m_wireframeProgram, "uWireColor"),
+                    cageCol.r * cageA,
+                    cageCol.g * cageA,
+                    cageCol.b * cageA,
+                    cageA);
+
+        glBindVertexArray(bufs->cageVao);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->cageEboWire);
+        glDrawElements(GL_LINES, static_cast<GLsizei>(bufs->cageWireIndexCount), GL_UNSIGNED_INT, nullptr);
+    }
+
+    // 3. Draw crease lines if present (ZBrush-style vibrant pink sharp edge lines)
+    if (bufs->creaseWireIndexCount > 0) {
+        float creaseA = 1.0f;
+        glm::vec3 creaseCol(1.0f, 0.15f, 0.65f);
+        glUniform4f(glGetUniformLocation(m_wireframeProgram, "uWireColor"),
+                    creaseCol.r * creaseA,
+                    creaseCol.g * creaseA,
+                    creaseCol.b * creaseA,
+                    creaseA);
+
+        glBindVertexArray(bufs->creaseVao);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->creaseEboWire);
+        glDrawElements(GL_LINES, static_cast<GLsizei>(bufs->creaseWireIndexCount), GL_UNSIGNED_INT, nullptr);
+    }
 
     glBindVertexArray(0);
     glDisable(GL_POLYGON_OFFSET_LINE);
@@ -2848,6 +2888,15 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
     if (!mesh) return false;
     bool uploaded = false;
 
+    // Check dynamic subdivision
+    bool isDynamic = mesh->dynamicSettings.enabled;
+    if (isDynamic) {
+        if (mesh->isDirty || mesh->isVertexDirty || mesh->isTopologyDirty || mesh->isDynamicDirty || !mesh->dynamicCacheMesh) {
+            mesh->updateDynamicMesh();
+        }
+    }
+    Mesh* uploadMesh = (isDynamic && mesh->dynamicCacheMesh) ? mesh->dynamicCacheMesh.get() : mesh;
+
     auto& bufs = m_meshBuffers[mesh];
     if (!bufs) {
         bufs = std::make_unique<MeshRenderBuffers>();
@@ -2864,76 +2913,68 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
         mesh->isDirty = true;
     }
     
-    if (mesh->nbVerts < 0) {
-        mesh->nbVerts = 0;
+    if (uploadMesh->nbVerts < 0) {
+        uploadMesh->nbVerts = 0;
     }
-    size_t expectedSize = (size_t)mesh->nbVerts * 3;
-    if (mesh->verts.size() != expectedSize) {
-        sculpt_log("[WARNING uploadIfDirty] mesh->verts size mismatch: verts.size=%u, expected=%u. Correcting...\n",
-                   (unsigned int)mesh->verts.size(), (unsigned int)expectedSize);
-        mesh->verts.resize(expectedSize, 0.0f);
-        mesh->isDirty = true;
+    size_t expectedSize = (size_t)uploadMesh->nbVerts * 3;
+    if (uploadMesh->verts.size() != expectedSize) {
+        uploadMesh->verts.resize(expectedSize, 0.0f);
+        uploadMesh->isDirty = true;
     }
-    if (mesh->normals.size() != expectedSize) {
-        sculpt_log("[WARNING uploadIfDirty] mesh->normals size mismatch: normals.size=%u, expected=%u. Correcting...\n",
-                   (unsigned int)mesh->normals.size(), (unsigned int)expectedSize);
-        mesh->normals.resize(expectedSize, 0.0f);
-        mesh->isDirty = true;
+    if (uploadMesh->normals.size() != expectedSize) {
+        uploadMesh->normals.resize(expectedSize, 0.0f);
+        uploadMesh->isDirty = true;
     }
-    if (mesh->colors.size() != expectedSize) {
-        sculpt_log("[WARNING uploadIfDirty] mesh->colors size mismatch: colors.size=%u, expected=%u. Correcting...\n",
-                   (unsigned int)mesh->colors.size(), (unsigned int)expectedSize);
-        mesh->colors.assign(expectedSize, 1.0f);
-        mesh->isDirty = true;
+    if (uploadMesh->colors.size() != expectedSize) {
+        uploadMesh->colors.assign(expectedSize, 1.0f);
+        uploadMesh->isDirty = true;
     }
-    if (mesh->materials.size() != expectedSize) {
-        sculpt_log("[WARNING uploadIfDirty] mesh->materials size mismatch: materials.size=%u, expected=%u. Correcting...\n",
-                   (unsigned int)mesh->materials.size(), (unsigned int)expectedSize);
-        mesh->materials.resize(expectedSize);
-        for (int i = 0; i < mesh->nbVerts; ++i) {
-            mesh->materials[i * 3]     = 0.5f;
-            mesh->materials[i * 3 + 1] = 0.0f;
-            mesh->materials[i * 3 + 2] = 1.0f;
+    if (uploadMesh->materials.size() != expectedSize) {
+        uploadMesh->materials.resize(expectedSize);
+        for (int i = 0; i < uploadMesh->nbVerts; ++i) {
+            uploadMesh->materials[i * 3]     = 0.5f;
+            uploadMesh->materials[i * 3 + 1] = 0.0f;
+            uploadMesh->materials[i * 3 + 2] = 1.0f;
         }
-        mesh->isDirty = true;
+        uploadMesh->isDirty = true;
     }
 
     auto tUploadStart = std::chrono::high_resolution_clock::now();
-    bool isFullUpload = (mesh->isDirty || bufs->vertCount != (size_t)mesh->nbVerts || mesh->isFaceGroupDirty);
+    bool isFullUpload = (mesh->isDirty || mesh->isDynamicDirty || isDynamic || bufs->vertCount != (size_t)uploadMesh->nbVerts || mesh->isFaceGroupDirty);
 
-    if (mesh->isDirty || bufs->vertCount != (size_t)mesh->nbVerts || mesh->isFaceGroupDirty) {
+    if (isFullUpload) {
         uploaded = true;
         glBindVertexArray(bufs->vao);
         
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
-        glBufferData(GL_ARRAY_BUFFER, mesh->verts.size() * sizeof(float), mesh->verts.data(), GL_DYNAMIC_DRAW);
+        glBufferData(GL_ARRAY_BUFFER, uploadMesh->verts.size() * sizeof(float), uploadMesh->verts.data(), GL_DYNAMIC_DRAW);
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
         glEnableVertexAttribArray(0);
         
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
-        glBufferData(GL_ARRAY_BUFFER, mesh->normals.size() * sizeof(float), mesh->normals.data(), GL_DYNAMIC_DRAW);
+        glBufferData(GL_ARRAY_BUFFER, uploadMesh->normals.size() * sizeof(float), uploadMesh->normals.data(), GL_DYNAMIC_DRAW);
         glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
         glEnableVertexAttribArray(1);
         
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboColors);
-        glBufferData(GL_ARRAY_BUFFER, mesh->colors.size() * sizeof(float), mesh->colors.data(), GL_DYNAMIC_DRAW);
+        glBufferData(GL_ARRAY_BUFFER, uploadMesh->colors.size() * sizeof(float), uploadMesh->colors.data(), GL_DYNAMIC_DRAW);
         glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
         glEnableVertexAttribArray(2);
         
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
-        glBufferData(GL_ARRAY_BUFFER, mesh->materials.size() * sizeof(float), mesh->materials.data(), GL_DYNAMIC_DRAW);
+        glBufferData(GL_ARRAY_BUFFER, uploadMesh->materials.size() * sizeof(float), uploadMesh->materials.data(), GL_DYNAMIC_DRAW);
         glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
         glEnableVertexAttribArray(3);
 
-        std::vector<uint32_t> vertGroups(mesh->nbVerts, 0);
-        if (mesh->faceGroups.size() == (size_t)mesh->nbFaces) {
-            bool hasFaceVis = (mesh->faceVisible.size() == (size_t)mesh->nbFaces);
-            for (int f = 0; f < mesh->nbFaces; ++f) {
-                if (hasFaceVis && !mesh->faceVisible[f]) continue;
-                uint32_t gid = mesh->faceGroups[f];
+        std::vector<uint32_t> vertGroups(uploadMesh->nbVerts, 0);
+        if (uploadMesh->faceGroups.size() == (size_t)uploadMesh->nbFaces) {
+            bool hasFaceVis = (uploadMesh->faceVisible.size() == (size_t)uploadMesh->nbFaces);
+            for (int f = 0; f < uploadMesh->nbFaces; ++f) {
+                if (hasFaceVis && !uploadMesh->faceVisible[f]) continue;
+                uint32_t gid = uploadMesh->faceGroups[f];
                 for (int k = 0; k < 4; ++k) {
-                    uint32_t vid = mesh->faces[f * 4 + k];
-                    if (vid != 0xffffffff && vid < (uint32_t)mesh->nbVerts) {
+                    uint32_t vid = uploadMesh->faces[f * 4 + k];
+                    if (vid != 0xffffffff && vid < (uint32_t)uploadMesh->nbVerts) {
                         vertGroups[vid] = gid;
                     }
                 }
@@ -2944,48 +2985,120 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
         glVertexAttribIPointer(5, 1, GL_UNSIGNED_INT, sizeof(uint32_t), (void*)0);
         glEnableVertexAttribArray(5);
 
-        if (!mesh->uvFlat.empty()) {
+        if (!uploadMesh->uvFlat.empty()) {
             if (!bufs->vboTexCoords) glGenBuffers(1, &bufs->vboTexCoords);
             glBindBuffer(GL_ARRAY_BUFFER, bufs->vboTexCoords);
-            glBufferData(GL_ARRAY_BUFFER, mesh->uvFlat.size() * sizeof(float), mesh->uvFlat.data(), GL_DYNAMIC_DRAW);
+            glBufferData(GL_ARRAY_BUFFER, uploadMesh->uvFlat.size() * sizeof(float), uploadMesh->uvFlat.data(), GL_DYNAMIC_DRAW);
             glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
             glEnableVertexAttribArray(4);
         }
-        if (!mesh->tangents.empty()) {
+        if (!uploadMesh->tangents.empty()) {
             if (!bufs->vboTangents) glGenBuffers(1, &bufs->vboTangents);
             glBindBuffer(GL_ARRAY_BUFFER, bufs->vboTangents);
-            glBufferData(GL_ARRAY_BUFFER, mesh->tangents.size() * sizeof(float), mesh->tangents.data(), GL_DYNAMIC_DRAW);
+            glBufferData(GL_ARRAY_BUFFER, uploadMesh->tangents.size() * sizeof(float), uploadMesh->tangents.data(), GL_DYNAMIC_DRAW);
             glVertexAttribPointer(6, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
             glEnableVertexAttribArray(6);
         }
         
         std::vector<uint32_t> triIndices;
-        generateTriangleIndices(mesh, triIndices);
+        generateTriangleIndices(uploadMesh, triIndices);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, triIndices.size() * sizeof(uint32_t), triIndices.data(), GL_DYNAMIC_DRAW);
         bufs->triIndexCount = triIndices.size();
         
         std::vector<uint32_t> wireIndices;
-        generateWireframeIndices(mesh, wireIndices);
+        generateWireframeIndices(uploadMesh, wireIndices);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboWireframe);
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, wireIndices.size() * sizeof(uint32_t), wireIndices.data(), GL_DYNAMIC_DRAW);
         bufs->wireIndexCount = wireIndices.size();
         
         glBindVertexArray(0);
-        bufs->vertCount = mesh->nbVerts;
+        bufs->vertCount = uploadMesh->nbVerts;
 
         bufs->polygroupDirty = true;
         if (bufs->polygroupVao != 0 && (m_showPolyGroups || m_activeBrush == BRUSH_POLYGROUP || m_shaderType == 5)) {
-            buildPolyGroupBuffers(mesh, bufs.get());
+            buildPolyGroupBuffers(uploadMesh, bufs.get());
             bufs->polygroupDirty = false;
         }
         mesh->isFaceGroupDirty = false;
+
+        // Base Cage wireframe upload
+        if (isDynamic && mesh->dynamicSettings.showCage) {
+            if (!bufs->cageVao) {
+                glGenVertexArrays(1, &bufs->cageVao);
+                glGenBuffers(1, &bufs->cageVboVerts);
+                glGenBuffers(1, &bufs->cageEboWire);
+            }
+            glBindVertexArray(bufs->cageVao);
+
+            glBindBuffer(GL_ARRAY_BUFFER, bufs->cageVboVerts);
+            glBufferData(GL_ARRAY_BUFFER, mesh->verts.size() * sizeof(float), mesh->verts.data(), GL_DYNAMIC_DRAW);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+            glEnableVertexAttribArray(0);
+
+            std::vector<uint32_t> cageWireIndices;
+            generateWireframeIndices(mesh, cageWireIndices);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->cageEboWire);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, cageWireIndices.size() * sizeof(uint32_t), cageWireIndices.data(), GL_DYNAMIC_DRAW);
+            bufs->cageWireIndexCount = cageWireIndices.size();
+
+            glBindVertexArray(0);
+        } else {
+            bufs->cageWireIndexCount = 0;
+        }
+
+        // Crease lines upload
+        if (mesh->hasCreases()) {
+            if (!bufs->creaseVao) {
+                glGenVertexArrays(1, &bufs->creaseVao);
+                glGenBuffers(1, &bufs->creaseVboVerts);
+                glGenBuffers(1, &bufs->creaseEboWire);
+            }
+            glBindVertexArray(bufs->creaseVao);
+
+            glBindBuffer(GL_ARRAY_BUFFER, bufs->creaseVboVerts);
+            glBufferData(GL_ARRAY_BUFFER, mesh->verts.size() * sizeof(float), mesh->verts.data(), GL_DYNAMIC_DRAW);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+            glEnableVertexAttribArray(0);
+
+            std::vector<uint32_t> creaseLines;
+            creaseLines.reserve(mesh->getNbCreasedEdges() * 2);
+
+            int nbF = mesh->nbFaces;
+            const auto& fAr = mesh->faces;
+            const auto& feAr = mesh->faceEdges;
+            std::vector<uint8_t> visited(mesh->nbEdges, 0);
+
+            for (int f = 0; f < nbF; ++f) {
+                int id = f * 4;
+                int numE = (fAr[id + 3] != 0xffffffff) ? 4 : 3;
+                for (int k = 0; k < numE; ++k) {
+                    uint32_t e = feAr[id + k];
+                    if (e < mesh->edgeCreases.size() && mesh->edgeCreases[e] > 0 && !visited[e]) {
+                        visited[e] = 1;
+                        uint32_t va = fAr[id + k];
+                        uint32_t vb = fAr[id + ((k + 1) % numE)];
+                        creaseLines.push_back(va);
+                        creaseLines.push_back(vb);
+                    }
+                }
+            }
+
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->creaseEboWire);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, creaseLines.size() * sizeof(uint32_t), creaseLines.data(), GL_DYNAMIC_DRAW);
+            bufs->creaseWireIndexCount = creaseLines.size();
+
+            glBindVertexArray(0);
+        } else {
+            bufs->creaseWireIndexCount = 0;
+        }
         
         mesh->isDirty = false;
         mesh->isVertexDirty = false;
         mesh->isColorDirty = false;
         mesh->isMaterialDirty = false;
         mesh->isTopologyDirty = false;
+        mesh->isDynamicDirty = false;
     } else {
         if (mesh->isFaceGroupDirty) {
             uploaded = true;
