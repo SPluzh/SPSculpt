@@ -11799,6 +11799,11 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                 if (ImGui::Checkbox("Show PolyGroups", &polyGroups)) {
                     renderer.setShowPolyGroups(polyGroups);
                 }
+                ImGui::SameLine();
+                bool showCreases = renderer.getShowCreaseLines();
+                if (ImGui::Checkbox("Show Creases", &showCreases)) {
+                    renderer.setShowCreaseLines(showCreases);
+                }
                 if (wire) {
                     ImGui::Indent();
                     float wfOpacity = renderer.getWireframeOpacity();

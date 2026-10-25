@@ -1467,7 +1467,7 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
                 if (mesh->dynamicSettings.enabled && mesh->dynamicSettings.showCage) {
                     showMeshWire = true;
                 }
-                if (mesh->hasCreases()) {
+                if (m_showCreaseLines && mesh->hasCreases()) {
                     showMeshWire = true;
                 }
                 if (showMeshWire) {
@@ -2139,8 +2139,8 @@ void AngleRenderer::drawWireframe(Mesh* mesh, const Scene& scene, const Camera& 
         glDrawElements(GL_LINES, static_cast<GLsizei>(bufs->cageWireIndexCount), GL_UNSIGNED_INT, nullptr);
     }
 
-    // 3. Draw crease lines if present (ZBrush-style vibrant pink sharp edge lines)
-    if (bufs->creaseWireIndexCount > 0) {
+    // 3. Draw crease lines if present and enabled (ZBrush-style vibrant pink sharp edge lines)
+    if (m_showCreaseLines && bufs->creaseWireIndexCount > 0) {
         float creaseA = 1.0f;
         glm::vec3 creaseCol(1.0f, 0.15f, 0.65f);
         glUniform4f(glGetUniformLocation(m_wireframeProgram, "uWireColor"),

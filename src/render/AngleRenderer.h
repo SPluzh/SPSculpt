@@ -303,6 +303,8 @@ public:
     float getWireframeOpacity() const { return m_wireframeOpacity; }
     void setWireframeColor(const glm::vec4& color) { m_wireframeColor = color; }
     const glm::vec4& getWireframeColor() const { return m_wireframeColor; }
+    void setShowCreaseLines(bool show) { m_showCreaseLines = show; }
+    bool getShowCreaseLines() const { return m_showCreaseLines; }
 
     // X-Ray mode controls
     void setXrayEnabled(bool enable) { m_xrayEnabled = enable; }
@@ -696,6 +698,7 @@ private:
     bool m_showWireframe = false;
     float m_wireframeOpacity = 0.6f;
     glm::vec4 m_wireframeColor{0.0f, 0.0f, 0.0f, 0.6f};
+    bool m_showCreaseLines = true;
     bool m_showPolyGroups = false;
     bool m_xrayEnabled = false;
     int m_xrayTarget = 0; // 0: Unselected (default), 1: Selected, 2: All

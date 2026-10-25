@@ -1673,6 +1673,8 @@ void Mesh::updateDynamicMesh() {
 void Mesh::applyDynamicSubdivision() {
     if (!dynamicSettings.enabled || !dynamicCacheMesh) return;
 
+    bool hadOriginalCreases = this->hasCreases();
+
     this->verts = std::move(dynamicCacheMesh->verts);
     this->normals = std::move(dynamicCacheMesh->normals);
     this->colors = std::move(dynamicCacheMesh->colors);
@@ -1682,7 +1684,13 @@ void Mesh::applyDynamicSubdivision() {
     this->nbVerts = dynamicCacheMesh->nbVerts;
     this->nbFaces = dynamicCacheMesh->nbFaces;
     this->nbEdges = dynamicCacheMesh->nbEdges;
-    this->edgeCreases = std::move(dynamicCacheMesh->edgeCreases);
+
+    if (hadOriginalCreases && !dynamicSettings.enableThickness) {
+        this->edgeCreases = std::move(dynamicCacheMesh->edgeCreases);
+    } else {
+        // Clear temporary dynamic rim creases so baked mesh edges don't render as pink creases
+        this->edgeCreases.assign(this->nbEdges, 0);
+    }
 
     this->dynamicSettings.enabled = false;
     this->dynamicSettings.enableThickness = false;
