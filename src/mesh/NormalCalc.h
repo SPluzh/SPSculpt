@@ -10,6 +10,12 @@ void updateFaceNormalsAndBoxes(
     float* faceCenters
 );
 
+void updateFaceNormalsOnly(
+    const float* verts, int nbVerts,
+    const uint32_t* faces, int nbFaces,
+    float* faceNormals
+);
+
 void updateVertexNormals(
     const uint32_t* iVerts, int nbIVerts, int totalNbVerts,
     const uint32_t* vrfStartCount,

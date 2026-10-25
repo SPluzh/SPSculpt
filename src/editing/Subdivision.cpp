@@ -23,9 +23,12 @@ public:
     bool _isLinear;
     int _nbVertices;
     std::vector<int32_t> _tagEdges;
+    SubdivLevelCache* _cache;
+    std::vector<int32_t> _edgeToCacheIdx;
 
     OddVertexComputer(Mesh& mesh, std::vector<float>& vArOut, std::vector<float>& cArOut, std::vector<float>& mArOut,
-                      const std::vector<uint8_t>* inCreases = nullptr, bool isSharp = false, bool isLinear = false)
+                      const std::vector<uint8_t>* inCreases = nullptr, bool isSharp = false, bool isLinear = false,
+                      SubdivLevelCache* cache = nullptr)
         : _vArOut(vArOut)
         , _cArOut(cArOut)
         , _mArOut(mArOut)
@@ -38,7 +41,15 @@ public:
         , _isLinear(isLinear)
         , _nbVertices(mesh.getNbVertices())
         , _tagEdges(mesh.getNbEdges(), 0)
-    {}
+        , _cache(cache)
+    {
+        if (_cache) {
+            _cache->clear();
+            _cache->edges.reserve(mesh.getNbEdges());
+            _cache->quads.reserve(mesh.getNbQuads());
+            _edgeToCacheIdx.assign(mesh.getNbEdges(), -1);
+        }
+    }
 
     uint32_t computeTriangleEdgeVertex(uint32_t iv1, uint32_t iv2, uint32_t iv3, uint32_t ide) {
         uint32_t id1 = iv1 * 3;
@@ -60,6 +71,16 @@ public:
         if (isSharpEdge) {
             if (testEdge != -1) return ivMid;
             _tagEdges[ide] = ivMid + 1;
+            if (_cache && ide < _edgeToCacheIdx.size()) {
+                _edgeToCacheIdx[ide] = (int32_t)_cache->edges.size();
+                SubdivEdgeData ed;
+                ed.midVert = ivMid;
+                ed.v1 = iv1;
+                ed.v2 = iv2;
+                ed.wEnd = 0.5f;
+                ed.numOpp = 0;
+                _cache->edges.push_back(ed);
+            }
             _vArOut[idMid]     = 0.5f * (_vAr[id1]     + _vAr[id2]);
             _vArOut[idMid + 1] = 0.5f * (_vAr[id1 + 1] + _vAr[id2 + 1]);
             _vArOut[idMid + 2] = 0.5f * (_vAr[id1 + 2] + _vAr[id2 + 2]);
@@ -73,6 +94,18 @@ public:
             _mArOut[idMid + 2] = 0.5f * (_mAr[id1 + 2] + _mAr[id2 + 2]);
         } else if (testEdge == -1) {
             _tagEdges[ide] = ivMid + 1;
+            if (_cache && ide < _edgeToCacheIdx.size()) {
+                _edgeToCacheIdx[ide] = (int32_t)_cache->edges.size();
+                SubdivEdgeData ed;
+                ed.midVert = ivMid;
+                ed.v1 = iv1;
+                ed.v2 = iv2;
+                ed.wEnd = 0.375f;
+                ed.opp[0] = iv3;
+                ed.wOpp[0] = 0.125f;
+                ed.numOpp = 1;
+                _cache->edges.push_back(ed);
+            }
             _vArOut[idMid]     = 0.125f * _vAr[idOpp]     + 0.375f * (_vAr[id1]     + _vAr[id2]);
             _vArOut[idMid + 1] = 0.125f * _vAr[idOpp + 1] + 0.375f * (_vAr[id1 + 1] + _vAr[id2 + 1]);
             _vArOut[idMid + 2] = 0.125f * _vAr[idOpp + 2] + 0.375f * (_vAr[id1 + 2] + _vAr[id2 + 2]);
@@ -85,6 +118,17 @@ public:
             _mArOut[idMid + 1] = 0.125f * _mAr[idOpp + 1] + 0.375f * (_mAr[id1 + 1] + _mAr[id2 + 1]);
             _mArOut[idMid + 2] = 0.125f * _mAr[idOpp + 2] + 0.375f * (_mAr[id1 + 2] + _mAr[id2 + 2]);
         } else {
+            if (_cache && ide < _edgeToCacheIdx.size()) {
+                int32_t cIdx = _edgeToCacheIdx[ide];
+                if (cIdx >= 0 && cIdx < (int32_t)_cache->edges.size()) {
+                    auto& ed = _cache->edges[cIdx];
+                    if (ed.numOpp < 4) {
+                        ed.opp[ed.numOpp] = iv3;
+                        ed.wOpp[ed.numOpp] = 0.125f;
+                        ed.numOpp++;
+                    }
+                }
+            }
             _vArOut[idMid]     += 0.125f * _vAr[idOpp];
             _vArOut[idMid + 1] += 0.125f * _vAr[idOpp + 1];
             _vArOut[idMid + 2] += 0.125f * _vAr[idOpp + 2];
@@ -121,6 +165,16 @@ public:
         if (isSharpEdge) {
             if (testEdge != -1) return ivMid;
             _tagEdges[ide] = ivMid + 1;
+            if (_cache && ide < _edgeToCacheIdx.size()) {
+                _edgeToCacheIdx[ide] = (int32_t)_cache->edges.size();
+                SubdivEdgeData ed;
+                ed.midVert = ivMid;
+                ed.v1 = iv1;
+                ed.v2 = iv2;
+                ed.wEnd = 0.5f;
+                ed.numOpp = 0;
+                _cache->edges.push_back(ed);
+            }
             _vArOut[idMid]     = 0.5f * (_vAr[id1]     + _vAr[id2]);
             _vArOut[idMid + 1] = 0.5f * (_vAr[id1 + 1] + _vAr[id2 + 1]);
             _vArOut[idMid + 2] = 0.5f * (_vAr[id1 + 2] + _vAr[id2 + 2]);
@@ -134,6 +188,20 @@ public:
             _mArOut[idMid + 2] = 0.5f * (_mAr[id1 + 2] + _mAr[id2 + 2]);
         } else if (testEdge == -1) {
             _tagEdges[ide] = ivMid + 1;
+            if (_cache && ide < _edgeToCacheIdx.size()) {
+                _edgeToCacheIdx[ide] = (int32_t)_cache->edges.size();
+                SubdivEdgeData ed;
+                ed.midVert = ivMid;
+                ed.v1 = iv1;
+                ed.v2 = iv2;
+                ed.wEnd = 0.375f;
+                ed.opp[0] = iv3;
+                ed.wOpp[0] = 0.0625f;
+                ed.opp[1] = iv4;
+                ed.wOpp[1] = 0.0625f;
+                ed.numOpp = 2;
+                _cache->edges.push_back(ed);
+            }
             _vArOut[idMid]     = 0.0625f * (_vAr[idOpp]     + _vAr[idOpp2])     + 0.375f * (_vAr[id1]     + _vAr[id2]);
             _vArOut[idMid + 1] = 0.0625f * (_vAr[idOpp + 1] + _vAr[idOpp2 + 1]) + 0.375f * (_vAr[id1 + 1] + _vAr[id2 + 1]);
             _vArOut[idMid + 2] = 0.0625f * (_vAr[idOpp + 2] + _vAr[idOpp2 + 2]) + 0.375f * (_vAr[id1 + 2] + _vAr[id2 + 2]);
@@ -146,6 +214,19 @@ public:
             _mArOut[idMid + 1] = 0.0625f * (_mAr[idOpp + 1] + _mAr[idOpp2 + 1]) + 0.375f * (_mAr[id1 + 1] + _mAr[id2 + 1]);
             _mArOut[idMid + 2] = 0.0625f * (_mAr[idOpp + 2] + _mAr[idOpp2 + 2]) + 0.375f * (_mAr[id1 + 2] + _mAr[id2 + 2]);
         } else {
+            if (_cache && ide < _edgeToCacheIdx.size()) {
+                int32_t cIdx = _edgeToCacheIdx[ide];
+                if (cIdx >= 0 && cIdx < (int32_t)_cache->edges.size()) {
+                    auto& ed = _cache->edges[cIdx];
+                    if (ed.numOpp + 2 <= 4) {
+                        ed.opp[ed.numOpp] = iv3;
+                        ed.wOpp[ed.numOpp] = 0.0625f;
+                        ed.opp[ed.numOpp + 1] = iv4;
+                        ed.wOpp[ed.numOpp + 1] = 0.0625f;
+                        ed.numOpp += 2;
+                    }
+                }
+            }
             _vArOut[idMid]     += 0.0625f * (_vAr[idOpp]     + _vAr[idOpp2]);
             _vArOut[idMid + 1] += 0.0625f * (_vAr[idOpp + 1] + _vAr[idOpp2 + 1]);
             _vArOut[idMid + 2] += 0.0625f * (_vAr[idOpp + 2] + _vAr[idOpp2 + 2]);
@@ -169,6 +250,16 @@ public:
         uint32_t ivCen = (uint32_t)_nbVertices++;
         uint32_t idCen = ivCen * 3;
 
+        if (_cache) {
+            SubdivQuadData qd;
+            qd.cenVert = ivCen;
+            qd.v1 = iv1;
+            qd.v2 = iv2;
+            qd.v3 = iv3;
+            qd.v4 = iv4;
+            _cache->quads.push_back(qd);
+        }
+
         if (idCen + 2 >= _vArOut.size()) {
             _vArOut.resize(idCen + 3, 0.0f);
             _cArOut.resize(idCen + 3, 0.0f);
@@ -191,7 +282,7 @@ public:
 };
 
 void applyEvenSmooth(Mesh& baseMesh, std::vector<float>& even, std::vector<float>& colorOut, std::vector<float>& materialOut,
-                     const std::vector<uint8_t>* inCreases, bool isSharp) {
+                     const std::vector<uint8_t>* inCreases, bool isSharp, bool isLinear) {
     int nbVerts = baseMesh.getNbVertices();
     if ((int)even.size() < nbVerts * 3) even.resize(nbVerts * 3);
     if ((int)colorOut.size() < nbVerts * 3) colorOut.resize(nbVerts * 3);
@@ -220,7 +311,7 @@ void applyEvenSmooth(Mesh& baseMesh, std::vector<float>& even, std::vector<float
         float beta = 0.0f, alpha = 0.0f;
         uint32_t k = 0, id = 0;
 
-        if (Subdivision::LINEAR) {
+        if (Subdivision::LINEAR || isLinear) {
             even[j]     = vArOld[j];
             even[j + 1] = vArOld[j + 1];
             even[j + 2] = vArOld[j + 2];
@@ -388,10 +479,11 @@ void applyEvenSmooth(Mesh& baseMesh, std::vector<float>& even, std::vector<float
 }
 
 std::vector<int32_t> applyOddSmooth(Mesh& baseMesh, std::vector<float>& odds, std::vector<float>& colorOut, std::vector<float>& materialOut,
-                                     std::vector<uint32_t>* fArOut, const std::vector<uint8_t>* inCreases, bool isSharp, bool isLinear) {
+                                     std::vector<uint32_t>* fArOut, const std::vector<uint8_t>* inCreases, bool isSharp, bool isLinear,
+                                     SubdivLevelCache* cache) {
     const auto& fAr = baseMesh.getFaces();
     const auto& feAr = baseMesh.faceEdges;
-    OddVertexComputer oddComputer(baseMesh, odds, colorOut, materialOut, inCreases, isSharp, isLinear);
+    OddVertexComputer oddComputer(baseMesh, odds, colorOut, materialOut, inCreases, isSharp, isLinear, cache);
 
     int nbFaces = baseMesh.getNbFaces();
     for (int i = 0; i < nbFaces; ++i) {
@@ -447,7 +539,8 @@ void fullSubdivisionWithCreases(
     const std::vector<uint8_t>* inCreases,
     std::vector<uint8_t>* outCreases,
     bool isSharpStep,
-    bool isLinear
+    bool isLinear,
+    SubdivLevelCache* cache
 ) {
     if (baseMesh.vrfStartCount.size() != (size_t)(baseMesh.getNbVertices() * 2) || baseMesh.edges.empty()) {
         baseMesh.initTopology();
@@ -461,10 +554,10 @@ void fullSubdivisionWithCreases(
     newMesh.getMaterials().resize(nbVertices * 3, 0.0f);
     newMesh.getFaces().resize(nbFacesOut * 4, TRI_INDEX);
 
-    applyEvenSmooth(baseMesh, newMesh.getVertices(), newMesh.getColors(), newMesh.getMaterials(), inCreases, isSharpStep);
+    applyEvenSmooth(baseMesh, newMesh.getVertices(), newMesh.getColors(), newMesh.getMaterials(), inCreases, isSharpStep, isLinear);
 
     auto tags = applyOddSmooth(baseMesh, newMesh.getVertices(), newMesh.getColors(), newMesh.getMaterials(),
-                               &newMesh.getFaces(), inCreases, isSharpStep, isLinear);
+                               &newMesh.getFaces(), inCreases, isSharpStep, isLinear, cache);
 
     newMesh.nbVerts = nbVertices;
     newMesh.nbFaces = nbFacesOut;
@@ -590,6 +683,97 @@ void computeDynamicSubdivision(
 
     outMesh = *current;
     outMesh.postInit(false);
+}
+
+void evaluateCachedSubdivision(
+    const Mesh& baseMesh,
+    Mesh& outMesh,
+    const SubdivLevelCache& cache,
+    const std::vector<uint8_t>* inCreases,
+    bool isSharp,
+    bool isLinear
+) {
+    applyEvenSmooth(const_cast<Mesh&>(baseMesh), outMesh.getVertices(), outMesh.getColors(), outMesh.getMaterials(), inCreases, isSharp, isLinear);
+
+    const auto& vAr = baseMesh.getVertices();
+    const auto& cAr = baseMesh.getColors();
+    const auto& mAr = baseMesh.getMaterials();
+    auto& vOut = outMesh.getVertices();
+    auto& cOut = outMesh.getColors();
+    auto& mOut = outMesh.getMaterials();
+
+    int nbEdges = (int)cache.edges.size();
+    #pragma omp parallel for schedule(static) if(nbEdges > 500)
+    for (int i = 0; i < nbEdges; ++i) {
+        const auto& ed = cache.edges[i];
+        uint32_t idMid = ed.midVert * 3;
+        uint32_t id1 = ed.v1 * 3;
+        uint32_t id2 = ed.v2 * 3;
+        float wEnd = ed.wEnd;
+
+        float vx = wEnd * (vAr[id1]     + vAr[id2]);
+        float vy = wEnd * (vAr[id1 + 1] + vAr[id2 + 1]);
+        float vz = wEnd * (vAr[id1 + 2] + vAr[id2 + 2]);
+
+        float cx = wEnd * (cAr[id1]     + cAr[id2]);
+        float cy = wEnd * (cAr[id1 + 1] + cAr[id2 + 1]);
+        float cz = wEnd * (cAr[id1 + 2] + cAr[id2 + 2]);
+
+        float mx = wEnd * (mAr[id1]     + mAr[id2]);
+        float my = wEnd * (mAr[id1 + 1] + mAr[id2 + 1]);
+        float mz = wEnd * (mAr[id1 + 2] + mAr[id2 + 2]);
+
+        for (int k = 0; k < ed.numOpp; ++k) {
+            uint32_t idOpp = ed.opp[k] * 3;
+            float w = ed.wOpp[k];
+            vx += w * vAr[idOpp];
+            vy += w * vAr[idOpp + 1];
+            vz += w * vAr[idOpp + 2];
+
+            cx += w * cAr[idOpp];
+            cy += w * cAr[idOpp + 1];
+            cz += w * cAr[idOpp + 2];
+
+            mx += w * mAr[idOpp];
+            my += w * mAr[idOpp + 1];
+            mz += w * mAr[idOpp + 2];
+        }
+
+        vOut[idMid]     = vx;
+        vOut[idMid + 1] = vy;
+        vOut[idMid + 2] = vz;
+
+        cOut[idMid]     = cx;
+        cOut[idMid + 1] = cy;
+        cOut[idMid + 2] = cz;
+
+        mOut[idMid]     = mx;
+        mOut[idMid + 1] = my;
+        mOut[idMid + 2] = mz;
+    }
+
+    int nbQuads = (int)cache.quads.size();
+    #pragma omp parallel for schedule(static) if(nbQuads > 500)
+    for (int i = 0; i < nbQuads; ++i) {
+        const auto& qd = cache.quads[i];
+        uint32_t idCen = qd.cenVert * 3;
+        uint32_t id1 = qd.v1 * 3;
+        uint32_t id2 = qd.v2 * 3;
+        uint32_t id3 = qd.v3 * 3;
+        uint32_t id4 = qd.v4 * 3;
+
+        vOut[idCen]     = 0.25f * (vAr[id1]     + vAr[id2]     + vAr[id3]     + vAr[id4]);
+        vOut[idCen + 1] = 0.25f * (vAr[id1 + 1] + vAr[id2 + 1] + vAr[id3 + 1] + vAr[id4 + 1]);
+        vOut[idCen + 2] = 0.25f * (vAr[id1 + 2] + vAr[id2 + 2] + vAr[id3 + 2] + vAr[id4 + 2]);
+
+        cOut[idCen]     = 0.25f * (cAr[id1]     + cAr[id2]     + cAr[id3]     + cAr[id4]);
+        cOut[idCen + 1] = 0.25f * (cAr[id1 + 1] + cAr[id2 + 1] + cAr[id3 + 1] + cAr[id4 + 1]);
+        cOut[idCen + 2] = 0.25f * (cAr[id1 + 2] + cAr[id2 + 2] + cAr[id3 + 2] + cAr[id4 + 2]);
+
+        mOut[idCen]     = 0.25f * (mAr[id1]     + mAr[id2]     + mAr[id3]     + mAr[id4]);
+        mOut[idCen + 1] = 0.25f * (mAr[id1 + 1] + mAr[id2 + 1] + mAr[id3 + 1] + mAr[id4 + 1]);
+        mOut[idCen + 2] = 0.25f * (mAr[id1 + 2] + mAr[id2 + 2] + mAr[id3 + 2] + mAr[id4 + 2]);
+    }
 }
 
 void partialSubdivision(Mesh& baseMesh, std::vector<float>& vertOut, std::vector<float>& colorOut, std::vector<float>& materialOut) {

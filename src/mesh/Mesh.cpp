@@ -1253,6 +1253,7 @@ void Mesh::rebuildDynamicTopology() {
     if (!dynamicSettings.enabled) {
         dynamicCacheMesh.reset();
         dynamicLevels.clear();
+        dynamicCaches.clear();
         isDynamicTopologyBuilt = false;
         isDynamicDirty = false;
         return;
@@ -1263,6 +1264,7 @@ void Mesh::rebuildDynamicTopology() {
         if (!dynamicCacheMesh) dynamicCacheMesh = std::make_unique<Mesh>();
         *dynamicCacheMesh = *this;
         dynamicLevels.clear();
+        dynamicCaches.clear();
         isDynamicTopologyBuilt = true;
         isDynamicDirty = false;
         return;
@@ -1281,6 +1283,8 @@ void Mesh::rebuildDynamicTopology() {
         edgeCreases.resize(nbEdges, 0);
     }
 
+    dynamicCaches.resize(totalSteps);
+
     auto tStart = std::chrono::high_resolution_clock::now();
 
     Mesh* prevLevel = this;
@@ -1290,13 +1294,15 @@ void Mesh::rebuildDynamicTopology() {
         bool isSharp = (step <= dynamicSettings.creaseLevel);
 
         std::vector<uint8_t> outCreases;
+        dynamicCaches[step - 1].clear();
         Subdivision::fullSubdivisionWithCreases(
             *prevLevel,
             *curLevel,
             &prevLevel->edgeCreases,
             &outCreases,
             isSharp,
-            isLinear
+            isLinear,
+            &dynamicCaches[step - 1]
         );
         curLevel->edgeCreases = std::move(outCreases);
 
@@ -1341,7 +1347,7 @@ void Mesh::updateDynamicGeometryOnly() {
     }
 
     size_t expectedIntermediates = (totalSteps > 1) ? (totalSteps - 1) : 0;
-    if (dynamicLevels.size() != expectedIntermediates) {
+    if (dynamicLevels.size() != expectedIntermediates || dynamicCaches.size() != (size_t)totalSteps) {
         rebuildDynamicTopology();
         return;
     }
@@ -1359,21 +1365,10 @@ void Mesh::updateDynamicGeometryOnly() {
         bool isLinear = (step <= dynamicSettings.flatLevel);
         bool isSharp = (step <= dynamicSettings.creaseLevel);
 
-        Subdivision::applyEvenSmooth(
-            *const_cast<Mesh*>(prevLevel),
-            curLevel->verts,
-            curLevel->colors,
-            curLevel->materials,
-            &prevLevel->edgeCreases,
-            isSharp
-        );
-
-        Subdivision::applyOddSmooth(
-            *const_cast<Mesh*>(prevLevel),
-            curLevel->verts,
-            curLevel->colors,
-            curLevel->materials,
-            nullptr, // Fast geometry update: no face array writing!
+        Subdivision::evaluateCachedSubdivision(
+            *prevLevel,
+            *curLevel,
+            dynamicCaches[step - 1],
             &prevLevel->edgeCreases,
             isSharp,
             isLinear
@@ -1382,14 +1377,11 @@ void Mesh::updateDynamicGeometryOnly() {
         prevLevel = curLevel;
     }
 
-    // Compute normals only on the final render mesh
-    updateFaceNormalsAndBoxes(
+    // Compute face normals only on the final render mesh (bypassing unused faceBoxes & faceCenters)
+    updateFaceNormalsOnly(
         dynamicCacheMesh->verts.data(), dynamicCacheMesh->nbVerts,
         dynamicCacheMesh->faces.data(), dynamicCacheMesh->nbFaces,
-        nullptr, -1,
-        dynamicCacheMesh->faceNormals.data(),
-        dynamicCacheMesh->faceBoxes.data(),
-        dynamicCacheMesh->faceCenters.data()
+        dynamicCacheMesh->faceNormals.data()
     );
 
     updateVertexNormals(
@@ -1409,7 +1401,7 @@ void Mesh::updateDynamicGeometryOnly() {
     dynamicCacheMesh->isDirty = false;
 
     double msGeom = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tGeomStart).count();
-    if (msGeom > 2.0) {
+    if (msGeom > 1.0) {
         sculpt_log("[Dynamic Subdiv] Geometry update (Levels: %d, Verts: %d): %.2f ms\n",
                    totalSteps, dynamicCacheMesh->nbVerts, msGeom);
     }
@@ -1419,6 +1411,7 @@ void Mesh::updateDynamicMesh() {
     if (!dynamicSettings.enabled) {
         dynamicCacheMesh.reset();
         dynamicLevels.clear();
+        dynamicCaches.clear();
         isDynamicTopologyBuilt = false;
         isDynamicDirty = false;
         return;
@@ -1449,6 +1442,7 @@ void Mesh::applyDynamicSubdivision() {
     this->dynamicSettings.enabled = false;
     this->dynamicCacheMesh.reset();
     this->dynamicLevels.clear();
+    this->dynamicCaches.clear();
     this->isDynamicTopologyBuilt = false;
 
     this->postInit(true);

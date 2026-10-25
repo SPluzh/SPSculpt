@@ -16,7 +16,8 @@ namespace Subdivision {
         const std::vector<uint8_t>* inCreases = nullptr,
         std::vector<uint8_t>* outCreases = nullptr,
         bool isSharpStep = false,
-        bool isLinear = false
+        bool isLinear = false,
+        SubdivLevelCache* cache = nullptr
     );
 
     // Multi-level dynamic subdivision (ZBrush style)
@@ -26,6 +27,16 @@ namespace Subdivision {
         int smoothLevel,
         int flatLevel,
         int creaseLevel
+    );
+
+    // Fast parallel cached subdivision geometry update (zero topology overhead)
+    void evaluateCachedSubdivision(
+        const Mesh& baseMesh,
+        Mesh& outMesh,
+        const SubdivLevelCache& cache,
+        const std::vector<uint8_t>* inCreases = nullptr,
+        bool isSharp = false,
+        bool isLinear = false
     );
 
     // Partial subdivision (geometry smoothing only, keeping target topology buffers)
@@ -40,7 +51,8 @@ namespace Subdivision {
                          std::vector<float>& colorOut,
                          std::vector<float>& materialOut,
                          const std::vector<uint8_t>* inCreases = nullptr,
-                         bool isSharp = false);
+                         bool isSharp = false,
+                         bool isLinear = false);
 
     std::vector<int32_t> applyOddSmooth(Mesh& baseMesh,
                                          std::vector<float>& odds,
@@ -49,5 +61,6 @@ namespace Subdivision {
                                          std::vector<uint32_t>* fArOut = nullptr,
                                          const std::vector<uint8_t>* inCreases = nullptr,
                                          bool isSharp = false,
-                                         bool isLinear = false);
+                                         bool isLinear = false,
+                                         SubdivLevelCache* cache = nullptr);
 }

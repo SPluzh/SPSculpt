@@ -7,7 +7,11 @@ All notable changes to this project will be documented in this file.
 - **Crease Edge Support**: Dihedral angle creasing and PolyGroup boundary edge creasing (`Crease PG`) with customizable crease angle threshold and `CreaseLvl` tolerance.
 - **Base Cage & Crease Overlays**: Semi-transparent warm wireframe cage rendering over the subdivided geometry and vibrant crease line highlights in the viewport.
 - **Bake & Multiresolution Workflow**: "Apply (Bake)" to freeze subdivision directly into base mesh geometry, or "To Multires" to generate standard editable multiresolution sculpting levels.
-- **Dynamic Subdiv Performance Optimization**: Incremental GPU uploads (sub-millisecond VBO updates) and cached multi-level geometry smoothing without octree or topology rebuilds, boosting viewport performance by over 8x.
+- **Dynamic Subdiv Performance Optimization**:
+  - Incremental GPU uploads (sub-millisecond VBO updates).
+  - Cached multi-level geometry smoothing without octree or topology rebuilds.
+  - Pre-calculated subdivision level caching with parallel OpenMP edge midpoint & quad center evaluation (zero per-stroke allocations).
+  - High-performance face normal updates skipping bounding boxes and octree centers on dynamic preview meshes.
 - **Full Undo/Redo**: Dynamic subdivision settings and edge crease states are fully integrated into scene history.
 
 ## [0.3.13]

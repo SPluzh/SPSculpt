@@ -9,6 +9,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include "mesh/Octree.h"
 #include "mesh/Layer.h"
+#include "mesh/SubdivCache.h"
 
 #include "sculpt/ArmatureGraph.h"
 #include "sculpt/TubeData.h"
@@ -74,6 +75,7 @@ public:
     DynamicSubdivSettings dynamicSettings;
     std::unique_ptr<Mesh> dynamicCacheMesh;
     std::vector<std::unique_ptr<Mesh>> dynamicLevels;
+    std::vector<Subdivision::SubdivLevelCache> dynamicCaches;
     bool isDynamicDirty = true;
     bool isDynamicTopologyBuilt = false;
 
@@ -129,6 +131,7 @@ public:
     void invalidateDynamicSubdiv() {
         isDynamicDirty = true;
         isDynamicTopologyBuilt = false;
+        dynamicCaches.clear();
         isDirty = true;
     }
     Mesh* getRenderMesh() { return (dynamicSettings.enabled && dynamicCacheMesh) ? dynamicCacheMesh.get() : this; }
