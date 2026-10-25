@@ -3602,26 +3602,57 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGui::Separator();
             ImGui::Spacing();
 
-            if (ImGui::CollapsingHeader("Dynamic Subdivision", ImGuiTreeNodeFlags_DefaultOpen)) {
-                bool dynEnabled = selectedMesh->dynamicSettings.enabled;
-                if (dynEnabled) {
+            if (ImGui::CollapsingHeader("Dynamic Geometry (Subdiv & Thickness)", ImGuiTreeNodeFlags_DefaultOpen)) {
+                bool hasSubdiv = selectedMesh->dynamicSettings.enabled && selectedMesh->dynamicSettings.enableSubdiv;
+                bool hasThick  = selectedMesh->dynamicSettings.enabled && selectedMesh->dynamicSettings.enableThickness;
+
+                float halfBtnW = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+
+                // Subdiv Toggle Button
+                if (hasSubdiv) {
                     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.08f, 0.55f, 0.40f, 1.0f));
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.12f, 0.65f, 0.48f, 1.0f));
                     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.06f, 0.45f, 0.32f, 1.0f));
                 }
-                if (ImGui::Button(dynEnabled ? "Dynamic: ON" : "Dynamic: OFF", ImVec2(-1, 28.0f * scale))) {
+                if (ImGui::Button(hasSubdiv ? "Subdiv: ON" : "Subdiv: OFF", ImVec2(halfBtnW, 28.0f * scale))) {
                     scene.pushHistoryState();
-                    selectedMesh->dynamicSettings.enabled = !dynEnabled;
+                    selectedMesh->dynamicSettings.enableSubdiv = !hasSubdiv;
+                    if (selectedMesh->dynamicSettings.enableSubdiv) {
+                        selectedMesh->dynamicSettings.enabled = true;
+                    } else if (!selectedMesh->dynamicSettings.enableThickness) {
+                        selectedMesh->dynamicSettings.enabled = false;
+                    }
                     selectedMesh->invalidateDynamicSubdiv();
                     selectedMesh->isDirty = true;
                     thumbInvalidate(selectedMesh->getID());
                 }
-                if (dynEnabled) {
-                    ImGui::PopStyleColor(3);
-                }
+                if (hasSubdiv) ImGui::PopStyleColor(3);
 
-                if (selectedMesh->dynamicSettings.enabled) {
+                ImGui::SameLine();
+
+                // Thickness Toggle Button
+                if (hasThick) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.08f, 0.55f, 0.40f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.12f, 0.65f, 0.48f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.06f, 0.45f, 0.32f, 1.0f));
+                }
+                if (ImGui::Button(hasThick ? "Thickness: ON" : "Thickness: OFF", ImVec2(halfBtnW, 28.0f * scale))) {
+                    scene.pushHistoryState();
+                    selectedMesh->dynamicSettings.enableThickness = !hasThick;
+                    if (selectedMesh->dynamicSettings.enableThickness) {
+                        selectedMesh->dynamicSettings.enabled = true;
+                    } else if (!selectedMesh->dynamicSettings.enableSubdiv) {
+                        selectedMesh->dynamicSettings.enabled = false;
+                    }
+                    selectedMesh->invalidateDynamicSubdiv();
+                    selectedMesh->isDirty = true;
+                    thumbInvalidate(selectedMesh->getID());
+                }
+                if (hasThick) ImGui::PopStyleColor(3);
+
+                if (hasSubdiv) {
                     ImGui::Spacing();
+                    ImGui::TextDisabled("SUBDIVISION SETTINGS");
                     if (ImGui::SliderInt("SmoothSubdiv", &selectedMesh->dynamicSettings.smoothLevel, 1, 6)) {
                         selectedMesh->invalidateDynamicSubdiv();
                         selectedMesh->isDirty = true;
@@ -3634,8 +3665,78 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         selectedMesh->invalidateDynamicSubdiv();
                         selectedMesh->isDirty = true;
                     }
+                }
 
+                if (hasThick) {
                     ImGui::Spacing();
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    ImGui::TextDisabled("THICKNESS SETTINGS");
+
+                    if (ImGui::SliderFloat("Thickness", &selectedMesh->dynamicSettings.thickness, 0.001f, 25.0f, "%.3f", ImGuiSliderFlags_Logarithmic)) {
+                        selectedMesh->invalidateDynamicSubdiv();
+                        selectedMesh->isDirty = true;
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Dynamic shell thickness distance");
+                    }
+
+                    if (ImGui::SliderFloat("Offset", &selectedMesh->dynamicSettings.offset, -1.0f, 1.0f, "%.2f")) {
+                        selectedMesh->invalidateDynamicSubdiv();
+                        selectedMesh->isDirty = true;
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Extrusion direction: -1.0 = 100%% Inside, 0.0 = Centered, +1.0 = 100%% Outside");
+                    }
+
+                    if (hasSubdiv) {
+                        if (ImGui::Checkbox("Post Subdiv", &selectedMesh->dynamicSettings.postSubdiv)) {
+                            selectedMesh->invalidateDynamicSubdiv();
+                            selectedMesh->isDirty = true;
+                        }
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("When ON: Thickness is applied after subdivision (smooth shell).\nWhen OFF: Base cage is thickened first, then smoothed with Catmull-Clark (beveled corners).");
+                        }
+                        ImGui::SameLine();
+                    }
+
+                    if (ImGui::Checkbox("Even Thickness", &selectedMesh->dynamicSettings.evenThickness)) {
+                        selectedMesh->invalidateDynamicSubdiv();
+                        selectedMesh->isDirty = true;
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Miter angle compensation for uniform wall thickness at sharp corners");
+                    }
+
+                    if (ImGui::SliderInt("Rim Segments", &selectedMesh->dynamicSettings.rimSegments, 1, 4)) {
+                        selectedMesh->invalidateDynamicSubdiv();
+                        selectedMesh->isDirty = true;
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Number of quad strips along the rim side wall");
+                    }
+
+                    if (ImGui::Checkbox("Crease Rim", &selectedMesh->dynamicSettings.creaseRim)) {
+                        selectedMesh->invalidateDynamicSubdiv();
+                        selectedMesh->isDirty = true;
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Automatically crease the boundary edges of the rim to keep crisp borders");
+                    }
+
+                    ImGui::SameLine();
+                    if (ImGui::Checkbox("PolyGroups", &selectedMesh->dynamicSettings.generateGroups)) {
+                        selectedMesh->invalidateDynamicSubdiv();
+                        selectedMesh->isDirty = true;
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Assign distinct PolyGroups to Front, Back, and Rim faces");
+                    }
+                }
+
+                if (hasSubdiv || hasThick) {
+                    ImGui::Spacing();
+                    ImGui::Separator();
                     if (ImGui::Checkbox("Show Cage", &selectedMesh->dynamicSettings.showCage)) {
                         selectedMesh->isDirty = true;
                     }
@@ -3648,7 +3749,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     }
 
                     if (selectedMesh->dynamicCacheMesh) {
-                        ImGui::TextDisabled("Subdivided: %d verts, %d faces",
+                        ImGui::TextDisabled("Preview: %d verts, %d faces",
                             selectedMesh->dynamicCacheMesh->getNbVertices(),
                             selectedMesh->dynamicCacheMesh->getNbFaces());
                     }
@@ -3662,27 +3763,33 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         thumbInvalidate(selectedMesh->getID());
                     }
                     if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("Permanently freeze dynamic subdivision into base mesh geometry");
+                        ImGui::SetTooltip("Permanently freeze dynamic geometry into base mesh");
                     }
 
                     ImGui::SameLine();
-                    if (ImGui::Button("To Multires", ImVec2(halfActionW, 26.0f * scale))) {
-                        scene.pushHistoryState();
-                        int targetLevels = selectedMesh->dynamicSettings.smoothLevel;
-                        selectedMesh->dynamicSettings.enabled = false;
-                        selectedMesh->invalidateDynamicSubdiv();
-                        selectedMesh->isDirty = true;
-                        Multimesh* mm = ensureMultimesh();
-                        if (mm) {
-                            for (int i = 0; i < targetLevels; ++i) {
-                                mm->addLevel();
+                    if (hasSubdiv) {
+                        if (ImGui::Button("To Multires", ImVec2(halfActionW, 26.0f * scale))) {
+                            scene.pushHistoryState();
+                            int targetLevels = selectedMesh->dynamicSettings.smoothLevel;
+                            selectedMesh->dynamicSettings.enabled = false;
+                            selectedMesh->invalidateDynamicSubdiv();
+                            selectedMesh->isDirty = true;
+                            Multimesh* mm = ensureMultimesh();
+                            if (mm) {
+                                for (int i = 0; i < targetLevels; ++i) {
+                                    mm->addLevel();
+                                }
+                                multimesh = mm;
                             }
-                            multimesh = mm;
+                            thumbInvalidate(selectedMesh->getID());
                         }
-                        thumbInvalidate(selectedMesh->getID());
-                    }
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("Convert dynamic levels into editable Multiresolution sculpting levels");
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("Convert dynamic levels into editable Multiresolution sculpting levels");
+                        }
+                    } else {
+                        ImGui::BeginDisabled();
+                        ImGui::Button("To Multires", ImVec2(halfActionW, 26.0f * scale));
+                        ImGui::EndDisabled();
                     }
                 }
             }
@@ -4291,7 +4398,10 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         infoStr += "  " ICON_LC_BOX " [Procedural " + std::string(getPrimitiveTypeName(mesh->primitiveData->type)) + "]";
                     }
                     if (mesh->dynamicSettings.enabled && mesh->dynamicCacheMesh) {
-                        infoStr += "  " ICON_LC_LAYERS " [D-Sub L" + std::to_string(mesh->dynamicSettings.smoothLevel) + ": " + formatCount(mesh->dynamicCacheMesh->nbVerts) + "v]";
+                        std::string tag = (mesh->dynamicSettings.thickness > 1e-5f)
+                            ? ((mesh->dynamicSettings.smoothLevel > 0) ? "[D-Sub+Thk: " : "[D-Thk: ")
+                            : ("[D-Sub L" + std::to_string(mesh->dynamicSettings.smoothLevel) + ": ");
+                        infoStr += "  " ICON_LC_LAYERS " " + tag + formatCount(mesh->dynamicCacheMesh->nbVerts) + "v]";
                     }
                     if (isActive) infoStr += "  " ICON_LC_CHECK " Active";
                     ImGui::TextDisabled("%s", infoStr.c_str());
@@ -4354,7 +4464,16 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     if (dynOn) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.9f, 0.8f, 1.0f));
                     else ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
 
-                    std::string dynBtnLabel = dynOn ? (ICON_LC_LAYERS " D" + std::to_string(mesh->dynamicSettings.smoothLevel)) : (ICON_LC_LAYERS " Dyn");
+                    std::string dynBtnLabel = ICON_LC_LAYERS " Dyn";
+                    if (dynOn) {
+                        if (mesh->dynamicSettings.thickness > 1e-5f && mesh->dynamicSettings.smoothLevel == 0) {
+                            dynBtnLabel = ICON_LC_LAYERS " Thk";
+                        } else if (mesh->dynamicSettings.thickness > 1e-5f) {
+                            dynBtnLabel = ICON_LC_LAYERS " D" + std::to_string(mesh->dynamicSettings.smoothLevel) + "+T";
+                        } else {
+                            dynBtnLabel = ICON_LC_LAYERS " D" + std::to_string(mesh->dynamicSettings.smoothLevel);
+                        }
+                    }
                     if (ImGui::Button(dynBtnLabel.c_str(), ImVec2(btnSz * 2.1f, btnSz))) {
                         scene.pushHistoryState();
                         mesh->dynamicSettings.enabled = !dynOn;
@@ -4384,17 +4503,20 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         ImGui::TextDisabled("Mesh: %s", displayName.c_str());
                         ImGui::Separator();
 
-                        bool curDynEnabled = mesh->dynamicSettings.enabled;
-                        if (ImGui::Checkbox("Enable Dynamic Subdiv", &curDynEnabled)) {
+                        bool hasSub = mesh->dynamicSettings.enabled && mesh->dynamicSettings.enableSubdiv;
+                        bool hasThk = mesh->dynamicSettings.enabled && mesh->dynamicSettings.enableThickness;
+
+                        if (ImGui::Checkbox("Dynamic Subdiv", &hasSub)) {
                             scene.pushHistoryState();
-                            mesh->dynamicSettings.enabled = curDynEnabled;
+                            mesh->dynamicSettings.enableSubdiv = hasSub;
+                            if (hasSub) mesh->dynamicSettings.enabled = true;
+                            else if (!mesh->dynamicSettings.enableThickness) mesh->dynamicSettings.enabled = false;
                             mesh->invalidateDynamicSubdiv();
                             mesh->isDirty = true;
                             thumbInvalidate(mesh->getID());
                         }
 
-                        if (mesh->dynamicSettings.enabled) {
-                            ImGui::Spacing();
+                        if (hasSub) {
                             ImGui::SetNextItemWidth(130.0f * scale);
                             if (ImGui::SliderInt("SmoothSubdiv", &mesh->dynamicSettings.smoothLevel, 1, 6)) {
                                 mesh->invalidateDynamicSubdiv();
@@ -4410,7 +4532,46 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                 mesh->invalidateDynamicSubdiv();
                                 mesh->isDirty = true;
                             }
+                        }
 
+                        ImGui::Spacing();
+                        ImGui::Separator();
+
+                        if (ImGui::Checkbox("Dynamic Thickness", &hasThk)) {
+                            scene.pushHistoryState();
+                            mesh->dynamicSettings.enableThickness = hasThk;
+                            if (hasThk) mesh->dynamicSettings.enabled = true;
+                            else if (!mesh->dynamicSettings.enableSubdiv) mesh->dynamicSettings.enabled = false;
+                            mesh->invalidateDynamicSubdiv();
+                            mesh->isDirty = true;
+                            thumbInvalidate(mesh->getID());
+                        }
+
+                        if (hasThk) {
+                            ImGui::SetNextItemWidth(130.0f * scale);
+                            if (ImGui::SliderFloat("Thickness##popup", &mesh->dynamicSettings.thickness, 0.001f, 25.0f, "%.3f", ImGuiSliderFlags_Logarithmic)) {
+                                mesh->invalidateDynamicSubdiv();
+                                mesh->isDirty = true;
+                            }
+                            ImGui::SetNextItemWidth(130.0f * scale);
+                            if (ImGui::SliderFloat("Offset##popup", &mesh->dynamicSettings.offset, -1.0f, 1.0f, "%.2f")) {
+                                mesh->invalidateDynamicSubdiv();
+                                mesh->isDirty = true;
+                            }
+                            if (hasSub) {
+                                if (ImGui::Checkbox("Post Subdiv##popup", &mesh->dynamicSettings.postSubdiv)) {
+                                    mesh->invalidateDynamicSubdiv();
+                                    mesh->isDirty = true;
+                                }
+                                ImGui::SameLine();
+                            }
+                            if (ImGui::Checkbox("Crease Rim##popup", &mesh->dynamicSettings.creaseRim)) {
+                                mesh->invalidateDynamicSubdiv();
+                                mesh->isDirty = true;
+                            }
+                        }
+
+                        if (hasSub || hasThk) {
                             ImGui::Spacing();
                             if (ImGui::Checkbox("Show Cage", &mesh->dynamicSettings.showCage)) {
                                 mesh->isDirty = true;
@@ -4425,7 +4586,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
                             if (mesh->dynamicCacheMesh) {
                                 ImGui::Spacing();
-                                ImGui::TextDisabled("Subdivided: %s verts, %s faces",
+                                ImGui::TextDisabled("Preview: %s verts, %s faces",
                                     formatCount(mesh->dynamicCacheMesh->getNbVertices()).c_str(),
                                     formatCount(mesh->dynamicCacheMesh->getNbFaces()).c_str());
                             }
@@ -4439,7 +4600,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                 ImGui::CloseCurrentPopup();
                             }
                             if (ImGui::IsItemHovered()) {
-                                ImGui::SetTooltip("Permanently freeze dynamic subdivision into base mesh geometry");
+                                ImGui::SetTooltip("Permanently freeze dynamic geometry into base mesh");
                             }
                         }
 

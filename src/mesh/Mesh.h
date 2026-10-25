@@ -10,6 +10,7 @@
 #include "mesh/Octree.h"
 #include "mesh/Layer.h"
 #include "mesh/SubdivCache.h"
+#include "editing/Thickness.h"
 
 #include "sculpt/ArmatureGraph.h"
 #include "sculpt/TubeData.h"
@@ -20,12 +21,30 @@
 class Camera;
 
 struct DynamicSubdivSettings {
-    bool enabled = false;
-    int  smoothLevel = 2;    // 1 to 6 (SmoothSubdiv)
-    int  flatLevel = 0;      // 0 to 4 (FlatSubdiv)
-    int  creaseLevel = 2;    // 1 to 15 (CreaseLvl in ZBrush)
-    bool showCage = false;   // Render base cage wireframe over smooth mesh (Default: OFF)
-    float cageAlpha = 0.6f;  // Cage wireframe opacity
+    bool enabled = false;          // Master preview active
+    bool enableSubdiv = true;      // Enable subdivision smoothing
+    int  smoothLevel = 2;          // 1 to 6 (SmoothSubdiv)
+    int  flatLevel = 0;            // 0 to 4 (FlatSubdiv)
+    int  creaseLevel = 2;          // 1 to 15 (CreaseLvl in ZBrush)
+    bool showCage = false;         // Render base cage wireframe over smooth mesh (Default: OFF)
+    float cageAlpha = 0.6f;        // Cage wireframe opacity
+
+    // Dynamic Thickness (ZBrush style)
+    bool  enableThickness = false; // Independent toggle for thickness without subdiv
+    float thickness = 0.05f;       // Thickness distance
+    float offset = 0.0f;           // -1.0 (inward) to 1.0 (outward), 0.0 = centered
+    bool  postSubdiv = false;      // false = Pre-Subdiv (thicken then subdiv), true = Post-Subdiv (subdiv then thicken)
+    int   rimSegments = 1;         // 1 to 4 segments along rim
+    bool  creaseRim = true;        // Auto-crease rim boundaries to keep sharp edges
+    bool  generateGroups = true;   // Assign distinct PolyGroups for Front, Back, Rim
+    bool  evenThickness = true;    // Angle-weighted miter compensation for uniform wall thickness
+
+    bool hasAnyActive() const {
+        return enabled && (
+            (enableSubdiv && (smoothLevel > 0 || flatLevel > 0)) ||
+            (enableThickness && thickness > 1e-5f)
+        );
+    }
 };
 
 class Mesh {
@@ -71,9 +90,11 @@ public:
     std::vector<uint32_t> vertTagFlags;    // nbVerts (tag flags for algorithms)
     std::vector<uint8_t>  edgeCreases;     // nbEdges (1 = creased, 0 = smooth)
 
-    // Dynamic Subdivision (ZBrush style)
+    // Dynamic Subdivision & Thickness (ZBrush style)
     DynamicSubdivSettings dynamicSettings;
     std::unique_ptr<Mesh> dynamicCacheMesh;
+    std::unique_ptr<Mesh> dynamicThickMesh;
+    Thickness::ThicknessCache dynamicThickCache;
     std::vector<std::unique_ptr<Mesh>> dynamicLevels;
     std::vector<Subdivision::SubdivLevelCache> dynamicCaches;
     bool isDynamicDirty = true;
@@ -132,6 +153,7 @@ public:
         isDynamicDirty = true;
         isDynamicTopologyBuilt = false;
         dynamicCaches.clear();
+        dynamicThickCache.clear();
         isDirty = true;
     }
     Mesh* getRenderMesh() { return (dynamicSettings.enabled && dynamicCacheMesh) ? dynamicCacheMesh.get() : this; }

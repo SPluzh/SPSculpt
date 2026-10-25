@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [0.3.14]
 - **Dynamic Subdivision**: Real-time non-destructive mesh smoothing preview without altering base geometry.
+- **Dynamic Thickness**: Non-destructive solid shell extrusion preview with customizable thickness, inward/outward offset, rim segments, and miter-angle compensation.
+- **Pre & Post Subdiv Pipeline**: Apply thickness on the coarse cage to get smoothly beveled rim corners (Pre-Subdiv) or extrude along smooth Catmull-Clark normals (Post-Subdiv).
+- **Auto-Crease Rims & PolyGroups**: Automatic boundary edge creasing to preserve crisp rim borders and distinct PolyGroup assignment for Front, Back, and Rim faces.
 - **Crease Edges**: Preserve sharp hard edges and PolyGroup borders during subdivision with adjustable crease angles.
 - **Outliner Controls**: Toggle button and settings dropdown (`▼`) on each object card to quickly adjust levels or bake.
 - **Bake & Multiresolution**: Freeze subdivision into standard geometry or convert it into multiresolution sculpting levels.

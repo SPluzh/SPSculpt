@@ -1250,72 +1250,198 @@ int Mesh::getNbCreasedEdges() const {
 }
 
 void Mesh::rebuildDynamicTopology() {
-    if (!dynamicSettings.enabled) {
+    bool hasThickness = (dynamicSettings.enableThickness && dynamicSettings.thickness > 1e-5f);
+    int totalSubdivSteps = dynamicSettings.enableSubdiv ? (dynamicSettings.flatLevel + dynamicSettings.smoothLevel) : 0;
+
+    if (!dynamicSettings.enabled || (!hasThickness && totalSubdivSteps <= 0)) {
         dynamicCacheMesh.reset();
+        dynamicThickMesh.reset();
         dynamicLevels.clear();
         dynamicCaches.clear();
+        dynamicThickCache.clear();
         isDynamicTopologyBuilt = false;
         isDynamicDirty = false;
         return;
     }
 
-    int totalSteps = dynamicSettings.flatLevel + dynamicSettings.smoothLevel;
-    if (totalSteps <= 0) {
-        if (!dynamicCacheMesh) dynamicCacheMesh = std::make_unique<Mesh>();
-        *dynamicCacheMesh = *this;
-        dynamicLevels.clear();
-        dynamicCaches.clear();
-        isDynamicTopologyBuilt = true;
-        isDynamicDirty = false;
-        return;
-    }
-
-    size_t expectedIntermediates = (totalSteps > 1) ? (totalSteps - 1) : 0;
-    dynamicLevels.resize(expectedIntermediates);
-    for (size_t i = 0; i < expectedIntermediates; ++i) {
-        if (!dynamicLevels[i]) dynamicLevels[i] = std::make_unique<Mesh>();
-    }
-    if (!dynamicCacheMesh) {
-        dynamicCacheMesh = std::make_unique<Mesh>();
-    }
-
-    if (edgeCreases.size() != (size_t)nbEdges) {
-        edgeCreases.resize(nbEdges, 0);
-    }
-
-    dynamicCaches.resize(totalSteps);
-
     auto tStart = std::chrono::high_resolution_clock::now();
 
-    Mesh* prevLevel = this;
-    for (int step = 1; step <= totalSteps; ++step) {
-        Mesh* curLevel = (step == totalSteps) ? dynamicCacheMesh.get() : dynamicLevels[step - 1].get();
-        bool isLinear = (step <= dynamicSettings.flatLevel);
-        bool isSharp = (step <= dynamicSettings.creaseLevel);
+    Thickness::ThicknessParams thickParams;
+    thickParams.thickness = dynamicSettings.thickness;
+    thickParams.offset = dynamicSettings.offset;
+    thickParams.rimSegments = dynamicSettings.rimSegments;
+    thickParams.creaseRim = dynamicSettings.creaseRim;
+    thickParams.generateGroups = dynamicSettings.generateGroups;
+    thickParams.evenThickness = dynamicSettings.evenThickness;
 
-        std::vector<uint8_t> outCreases;
-        dynamicCaches[step - 1].clear();
-        Subdivision::fullSubdivisionWithCreases(
-            *prevLevel,
-            *curLevel,
-            &prevLevel->edgeCreases,
-            &outCreases,
-            isSharp,
-            isLinear,
-            &dynamicCaches[step - 1]
-        );
-        curLevel->edgeCreases = std::move(outCreases);
+    if (!hasThickness) {
+        dynamicThickMesh.reset();
+        dynamicThickCache.clear();
 
-        // Pre-allocate normal & box buffers so updateDynamicGeometryOnly can reuse them without resizing
-        curLevel->faceNormals.resize(curLevel->nbFaces * 3, 0.0f);
-        curLevel->faceBoxes.resize(curLevel->nbFaces * 6, 0.0f);
-        curLevel->faceCenters.resize(curLevel->nbFaces * 3, 0.0f);
+        if (totalSubdivSteps <= 0) {
+            if (!dynamicCacheMesh) dynamicCacheMesh = std::make_unique<Mesh>();
+            *dynamicCacheMesh = *this;
+            dynamicLevels.clear();
+            dynamicCaches.clear();
+            isDynamicTopologyBuilt = true;
+            isDynamicDirty = false;
+            return;
+        }
 
-        curLevel->isFaceGroupDirty = false;
-        curLevel->isDirty = false;
+        size_t expectedIntermediates = (totalSubdivSteps > 1) ? (totalSubdivSteps - 1) : 0;
+        dynamicLevels.resize(expectedIntermediates);
+        for (size_t i = 0; i < expectedIntermediates; ++i) {
+            if (!dynamicLevels[i]) dynamicLevels[i] = std::make_unique<Mesh>();
+        }
+        if (!dynamicCacheMesh) {
+            dynamicCacheMesh = std::make_unique<Mesh>();
+        }
 
-        prevLevel = curLevel;
+        if (edgeCreases.size() != (size_t)nbEdges) {
+            edgeCreases.resize(nbEdges, 0);
+        }
+
+        dynamicCaches.resize(totalSubdivSteps);
+
+        Mesh* prevLevel = this;
+        for (int step = 1; step <= totalSubdivSteps; ++step) {
+            Mesh* curLevel = (step == totalSubdivSteps) ? dynamicCacheMesh.get() : dynamicLevels[step - 1].get();
+            bool isLinear = (step <= dynamicSettings.flatLevel);
+            bool isSharp = (step <= dynamicSettings.creaseLevel);
+
+            std::vector<uint8_t> outCreases;
+            dynamicCaches[step - 1].clear();
+            Subdivision::fullSubdivisionWithCreases(
+                *prevLevel,
+                *curLevel,
+                &prevLevel->edgeCreases,
+                &outCreases,
+                isSharp,
+                isLinear,
+                &dynamicCaches[step - 1]
+            );
+            curLevel->edgeCreases = std::move(outCreases);
+
+            curLevel->faceNormals.resize(curLevel->nbFaces * 3, 0.0f);
+            curLevel->faceBoxes.resize(curLevel->nbFaces * 6, 0.0f);
+            curLevel->faceCenters.resize(curLevel->nbFaces * 3, 0.0f);
+
+            curLevel->isFaceGroupDirty = false;
+            curLevel->isDirty = false;
+
+            prevLevel = curLevel;
+        }
+    } else if (!dynamicSettings.postSubdiv) {
+        // Pre-Subdiv: Base Cage -> Thickness -> Dynamic Subdiv
+        if (!dynamicThickMesh) dynamicThickMesh = std::make_unique<Mesh>();
+        Thickness::generateThickness(*this, *dynamicThickMesh, thickParams, &dynamicThickCache);
+
+        if (totalSubdivSteps <= 0) {
+            if (!dynamicCacheMesh) dynamicCacheMesh = std::make_unique<Mesh>();
+            *dynamicCacheMesh = *dynamicThickMesh;
+            dynamicLevels.clear();
+            dynamicCaches.clear();
+        } else {
+            size_t expectedIntermediates = (totalSubdivSteps > 1) ? (totalSubdivSteps - 1) : 0;
+            dynamicLevels.resize(expectedIntermediates);
+            for (size_t i = 0; i < expectedIntermediates; ++i) {
+                if (!dynamicLevels[i]) dynamicLevels[i] = std::make_unique<Mesh>();
+            }
+            if (!dynamicCacheMesh) {
+                dynamicCacheMesh = std::make_unique<Mesh>();
+            }
+
+            dynamicCaches.resize(totalSubdivSteps);
+
+            Mesh* prevLevel = dynamicThickMesh.get();
+            for (int step = 1; step <= totalSubdivSteps; ++step) {
+                Mesh* curLevel = (step == totalSubdivSteps) ? dynamicCacheMesh.get() : dynamicLevels[step - 1].get();
+                bool isLinear = (step <= dynamicSettings.flatLevel);
+                bool isSharp = (step <= dynamicSettings.creaseLevel);
+
+                std::vector<uint8_t> outCreases;
+                dynamicCaches[step - 1].clear();
+                Subdivision::fullSubdivisionWithCreases(
+                    *prevLevel,
+                    *curLevel,
+                    &prevLevel->edgeCreases,
+                    &outCreases,
+                    isSharp,
+                    isLinear,
+                    &dynamicCaches[step - 1]
+                );
+                curLevel->edgeCreases = std::move(outCreases);
+
+                curLevel->faceNormals.resize(curLevel->nbFaces * 3, 0.0f);
+                curLevel->faceBoxes.resize(curLevel->nbFaces * 6, 0.0f);
+                curLevel->faceCenters.resize(curLevel->nbFaces * 3, 0.0f);
+
+                curLevel->isFaceGroupDirty = false;
+                curLevel->isDirty = false;
+
+                prevLevel = curLevel;
+            }
+        }
+    } else {
+        // Post-Subdiv: Base Cage -> Dynamic Subdiv -> Thickness
+        if (!dynamicCacheMesh) dynamicCacheMesh = std::make_unique<Mesh>();
+
+        if (totalSubdivSteps <= 0) {
+            dynamicThickMesh.reset();
+            dynamicLevels.clear();
+            dynamicCaches.clear();
+            Thickness::generateThickness(*this, *dynamicCacheMesh, thickParams, &dynamicThickCache);
+        } else {
+            if (!dynamicThickMesh) dynamicThickMesh = std::make_unique<Mesh>();
+
+            size_t expectedIntermediates = (totalSubdivSteps > 1) ? (totalSubdivSteps - 1) : 0;
+            dynamicLevels.resize(expectedIntermediates);
+            for (size_t i = 0; i < expectedIntermediates; ++i) {
+                if (!dynamicLevels[i]) dynamicLevels[i] = std::make_unique<Mesh>();
+            }
+
+            if (edgeCreases.size() != (size_t)nbEdges) {
+                edgeCreases.resize(nbEdges, 0);
+            }
+
+            dynamicCaches.resize(totalSubdivSteps);
+
+            Mesh* prevLevel = this;
+            for (int step = 1; step <= totalSubdivSteps; ++step) {
+                Mesh* curLevel = (step == totalSubdivSteps) ? dynamicThickMesh.get() : dynamicLevels[step - 1].get();
+                bool isLinear = (step <= dynamicSettings.flatLevel);
+                bool isSharp = (step <= dynamicSettings.creaseLevel);
+
+                std::vector<uint8_t> outCreases;
+                dynamicCaches[step - 1].clear();
+                Subdivision::fullSubdivisionWithCreases(
+                    *prevLevel,
+                    *curLevel,
+                    &prevLevel->edgeCreases,
+                    &outCreases,
+                    isSharp,
+                    isLinear,
+                    &dynamicCaches[step - 1]
+                );
+                curLevel->edgeCreases = std::move(outCreases);
+
+                curLevel->faceNormals.resize(curLevel->nbFaces * 3, 0.0f);
+                curLevel->faceBoxes.resize(curLevel->nbFaces * 6, 0.0f);
+                curLevel->faceCenters.resize(curLevel->nbFaces * 3, 0.0f);
+
+                curLevel->isFaceGroupDirty = false;
+                curLevel->isDirty = false;
+
+                prevLevel = curLevel;
+            }
+
+            Thickness::generateThickness(*dynamicThickMesh, *dynamicCacheMesh, thickParams, &dynamicThickCache);
+        }
     }
+
+    dynamicCacheMesh->faceNormals.resize(dynamicCacheMesh->nbFaces * 3, 0.0f);
+    dynamicCacheMesh->faceBoxes.resize(dynamicCacheMesh->nbFaces * 6, 0.0f);
+    dynamicCacheMesh->faceCenters.resize(dynamicCacheMesh->nbFaces * 3, 0.0f);
 
     dynamicCacheMesh->matrix = this->matrix;
     dynamicCacheMesh->editMatrix = this->editMatrix;
@@ -1327,8 +1453,8 @@ void Mesh::rebuildDynamicTopology() {
     isDynamicDirty = false;
 
     double msTotal = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStart).count();
-    sculpt_log("[Dynamic Subdiv] Rebuilt topology for %d levels (Verts: %d, Faces: %d) in %.2f ms\n",
-               totalSteps, dynamicCacheMesh->nbVerts, dynamicCacheMesh->nbFaces, msTotal);
+    sculpt_log("[Dynamic Subdiv/Thickness] Rebuilt topology (Verts: %d, Faces: %d) in %.2f ms\n",
+               dynamicCacheMesh->nbVerts, dynamicCacheMesh->nbFaces, msTotal);
 }
 
 void Mesh::updateDynamicGeometryOnly() {
@@ -1337,44 +1463,136 @@ void Mesh::updateDynamicGeometryOnly() {
         return;
     }
 
-    int totalSteps = dynamicSettings.flatLevel + dynamicSettings.smoothLevel;
-    if (totalSteps <= 0) {
-        dynamicCacheMesh->verts = this->verts;
-        dynamicCacheMesh->normals = this->normals;
-        dynamicCacheMesh->colors = this->colors;
-        dynamicCacheMesh->materials = this->materials;
-        return;
-    }
+    bool hasThickness = (dynamicSettings.enableThickness && dynamicSettings.thickness > 1e-5f);
+    int totalSubdivSteps = dynamicSettings.enableSubdiv ? (dynamicSettings.flatLevel + dynamicSettings.smoothLevel) : 0;
 
-    size_t expectedIntermediates = (totalSteps > 1) ? (totalSteps - 1) : 0;
-    if (dynamicLevels.size() != expectedIntermediates || dynamicCaches.size() != (size_t)totalSteps) {
-        rebuildDynamicTopology();
-        return;
-    }
+    Thickness::ThicknessParams thickParams;
+    thickParams.thickness = dynamicSettings.thickness;
+    thickParams.offset = dynamicSettings.offset;
+    thickParams.rimSegments = dynamicSettings.rimSegments;
+    thickParams.creaseRim = dynamicSettings.creaseRim;
+    thickParams.generateGroups = dynamicSettings.generateGroups;
+    thickParams.evenThickness = dynamicSettings.evenThickness;
 
     auto tGeomStart = std::chrono::high_resolution_clock::now();
 
-    const Mesh* prevLevel = this;
-    for (int step = 1; step <= totalSteps; ++step) {
-        Mesh* curLevel = (step == totalSteps) ? dynamicCacheMesh.get() : dynamicLevels[step - 1].get();
-        if (!curLevel) {
+    if (!hasThickness) {
+        if (totalSubdivSteps <= 0) {
+            dynamicCacheMesh->verts = this->verts;
+            dynamicCacheMesh->normals = this->normals;
+            dynamicCacheMesh->colors = this->colors;
+            dynamicCacheMesh->materials = this->materials;
+            return;
+        }
+
+        size_t expectedIntermediates = (totalSubdivSteps > 1) ? (totalSubdivSteps - 1) : 0;
+        if (dynamicLevels.size() != expectedIntermediates || dynamicCaches.size() != (size_t)totalSubdivSteps) {
             rebuildDynamicTopology();
             return;
         }
 
-        bool isLinear = (step <= dynamicSettings.flatLevel);
-        bool isSharp = (step <= dynamicSettings.creaseLevel);
+        const Mesh* prevLevel = this;
+        for (int step = 1; step <= totalSubdivSteps; ++step) {
+            Mesh* curLevel = (step == totalSubdivSteps) ? dynamicCacheMesh.get() : dynamicLevels[step - 1].get();
+            if (!curLevel) {
+                rebuildDynamicTopology();
+                return;
+            }
 
-        Subdivision::evaluateCachedSubdivision(
-            *prevLevel,
-            *curLevel,
-            dynamicCaches[step - 1],
-            &prevLevel->edgeCreases,
-            isSharp,
-            isLinear
-        );
+            bool isLinear = (step <= dynamicSettings.flatLevel);
+            bool isSharp = (step <= dynamicSettings.creaseLevel);
 
-        prevLevel = curLevel;
+            Subdivision::evaluateCachedSubdivision(
+                *prevLevel,
+                *curLevel,
+                dynamicCaches[step - 1],
+                &prevLevel->edgeCreases,
+                isSharp,
+                isLinear
+            );
+
+            prevLevel = curLevel;
+        }
+    } else if (!dynamicSettings.postSubdiv) {
+        if (totalSubdivSteps <= 0) {
+            Thickness::evaluateThicknessGeometry(*this, *dynamicCacheMesh, thickParams, dynamicThickCache);
+        } else {
+            if (!dynamicThickMesh || !dynamicThickCache.isValid) {
+                rebuildDynamicTopology();
+                return;
+            }
+            Thickness::evaluateThicknessGeometry(*this, *dynamicThickMesh, thickParams, dynamicThickCache);
+
+            size_t expectedIntermediates = (totalSubdivSteps > 1) ? (totalSubdivSteps - 1) : 0;
+            if (dynamicLevels.size() != expectedIntermediates || dynamicCaches.size() != (size_t)totalSubdivSteps) {
+                rebuildDynamicTopology();
+                return;
+            }
+
+            const Mesh* prevLevel = dynamicThickMesh.get();
+            for (int step = 1; step <= totalSubdivSteps; ++step) {
+                Mesh* curLevel = (step == totalSubdivSteps) ? dynamicCacheMesh.get() : dynamicLevels[step - 1].get();
+                if (!curLevel) {
+                    rebuildDynamicTopology();
+                    return;
+                }
+
+                bool isLinear = (step <= dynamicSettings.flatLevel);
+                bool isSharp = (step <= dynamicSettings.creaseLevel);
+
+                Subdivision::evaluateCachedSubdivision(
+                    *prevLevel,
+                    *curLevel,
+                    dynamicCaches[step - 1],
+                    &prevLevel->edgeCreases,
+                    isSharp,
+                    isLinear
+                );
+
+                prevLevel = curLevel;
+            }
+        }
+    } else {
+        // Post-Subdiv
+        if (totalSubdivSteps <= 0) {
+            Thickness::evaluateThicknessGeometry(*this, *dynamicCacheMesh, thickParams, dynamicThickCache);
+        } else {
+            if (!dynamicThickMesh) {
+                rebuildDynamicTopology();
+                return;
+            }
+
+            size_t expectedIntermediates = (totalSubdivSteps > 1) ? (totalSubdivSteps - 1) : 0;
+            if (dynamicLevels.size() != expectedIntermediates || dynamicCaches.size() != (size_t)totalSubdivSteps) {
+                rebuildDynamicTopology();
+                return;
+            }
+
+            const Mesh* prevLevel = this;
+            for (int step = 1; step <= totalSubdivSteps; ++step) {
+                Mesh* curLevel = (step == totalSubdivSteps) ? dynamicThickMesh.get() : dynamicLevels[step - 1].get();
+                if (!curLevel) {
+                    rebuildDynamicTopology();
+                    return;
+                }
+
+                bool isLinear = (step <= dynamicSettings.flatLevel);
+                bool isSharp = (step <= dynamicSettings.creaseLevel);
+
+                Subdivision::evaluateCachedSubdivision(
+                    *prevLevel,
+                    *curLevel,
+                    dynamicCaches[step - 1],
+                    &prevLevel->edgeCreases,
+                    isSharp,
+                    isLinear
+                );
+
+                prevLevel = curLevel;
+            }
+
+            Thickness::evaluateThicknessGeometry(*dynamicThickMesh, *dynamicCacheMesh, thickParams, dynamicThickCache);
+        }
     }
 
     // Compute face normals only on the final render mesh (bypassing unused faceBoxes & faceCenters)
@@ -1402,16 +1620,21 @@ void Mesh::updateDynamicGeometryOnly() {
 
     double msGeom = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tGeomStart).count();
     if (msGeom > 1.0) {
-        sculpt_log("[Dynamic Subdiv] Geometry update (Levels: %d, Verts: %d): %.2f ms\n",
-                   totalSteps, dynamicCacheMesh->nbVerts, msGeom);
+        sculpt_log("[Dynamic Subdiv/Thickness] Geometry update (Verts: %d): %.2f ms\n",
+                   dynamicCacheMesh->nbVerts, msGeom);
     }
 }
 
 void Mesh::updateDynamicMesh() {
-    if (!dynamicSettings.enabled) {
+    bool hasThickness = (dynamicSettings.enableThickness && dynamicSettings.thickness > 1e-5f);
+    int totalSubdivSteps = dynamicSettings.enableSubdiv ? (dynamicSettings.flatLevel + dynamicSettings.smoothLevel) : 0;
+
+    if (!dynamicSettings.enabled || (!hasThickness && totalSubdivSteps <= 0)) {
         dynamicCacheMesh.reset();
+        dynamicThickMesh.reset();
         dynamicLevels.clear();
         dynamicCaches.clear();
+        dynamicThickCache.clear();
         isDynamicTopologyBuilt = false;
         isDynamicDirty = false;
         return;
@@ -1440,9 +1663,13 @@ void Mesh::applyDynamicSubdivision() {
     this->edgeCreases = std::move(dynamicCacheMesh->edgeCreases);
 
     this->dynamicSettings.enabled = false;
+    this->dynamicSettings.enableThickness = false;
+    this->dynamicSettings.enableSubdiv = false;
     this->dynamicCacheMesh.reset();
+    this->dynamicThickMesh.reset();
     this->dynamicLevels.clear();
     this->dynamicCaches.clear();
+    this->dynamicThickCache.clear();
     this->isDynamicTopologyBuilt = false;
 
     this->postInit(true);

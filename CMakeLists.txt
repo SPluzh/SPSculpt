@@ -116,6 +116,7 @@ add_executable(SPSculpt
     src/sculpt/RelaxEngine.cpp
     src/sculpt/PrimitiveGenerator.cpp
     src/editing/Subdivision.cpp
+    src/editing/Thickness.cpp
     src/editing/Reversion.cpp
     # render
     src/render/AngleRenderer.cpp
