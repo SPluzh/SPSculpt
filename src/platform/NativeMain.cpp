@@ -475,7 +475,11 @@ int main(int argc, char* argv[]) {
 
     Scene scene;
     scene.getCamera().onResize(width, height);
-    scene.loadDefaultSphere();
+    if (fileToOpen.empty()) {
+        if (gui.getCreateDefaultSphereOnStartup()) {
+            scene.loadDefaultSphere();
+        }
+    }
 
 
     // Apply default matcap preset globally to the renderer
@@ -544,8 +548,11 @@ int main(int argc, char* argv[]) {
         std::cout << "Opening file from command line parameter: " << fileToOpen << std::endl;
         gui.openSceneFromPath(fileToOpen, scene, &sculpt, &renderer);
         if (scene.getMeshes().empty()) {
-            std::cerr << "Failed to open scene or file was empty. Restoring default sphere." << std::endl;
-            scene.loadDefaultSphere();
+            std::cerr << "Failed to open scene or file was empty." << std::endl;
+            if (gui.getCreateDefaultSphereOnStartup()) {
+                std::cerr << "Restoring default sphere." << std::endl;
+                scene.loadDefaultSphere();
+            }
         }
     }
 

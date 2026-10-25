@@ -15,6 +15,7 @@ All notable changes to this project will be documented in this file.
 - **Bake & Multiresolution**: Freeze subdivision into standard geometry or convert it into multiresolution sculpting levels.
 - **Fast & Responsive**: Real-time smoothing updates during sculpting with no stroke lag.
 - **Full Undo/Redo**: All subdivision settings and creases are fully tracked in undo/redo history.
+- **Startup Preferences**: Added a setting in Preferences ("Create default sphere on startup") to toggle creating the default sphere when launching with an empty scene.
 
 ## [0.3.13]
 - **Interactive Hotkeys Keyboard**: Physical key presses now light up on the virtual keyboard in Settings.

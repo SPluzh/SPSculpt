@@ -7996,6 +7996,7 @@ bool GuiManager::saveSettings(IniFile& ini) {
     ini.setInt(genSec, "fpsLimit", m_fpsLimit);
     ini.setBool(genSec, "animateBookmarks", m_animateBookmarks);
     ini.setBool(genSec, "savePngNextToProject", m_savePngNextToProject);
+    ini.setBool(genSec, "createDefaultSphereOnStartup", m_createDefaultSphereOnStartup);
 
     std::string remeshSec = "Remesh";
     ini.setInt(remeshSec, "resolution", m_remeshResolution);
@@ -8080,6 +8081,7 @@ bool GuiManager::loadSettings(const IniFile& ini) {
         }
         if (ini.hasKey(genSec, "animateBookmarks")) m_animateBookmarks = ini.getBool(genSec, "animateBookmarks");
         if (ini.hasKey(genSec, "savePngNextToProject")) m_savePngNextToProject = ini.getBool(genSec, "savePngNextToProject");
+        if (ini.hasKey(genSec, "createDefaultSphereOnStartup")) m_createDefaultSphereOnStartup = ini.getBool(genSec, "createDefaultSphereOnStartup");
     }
 
     std::string remeshSec = "Remesh";
@@ -11483,6 +11485,15 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
 
                 ImGui::Checkbox("Save PNG preview image alongside .spsculpt file", &m_savePngNextToProject);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("When saving a .spsculpt project, automatically write a PNG preview image file next to the project file");
+
+                ImGui::Spacing();
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Startup & Scene Defaults");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                ImGui::Checkbox("Create default sphere on startup", &m_createDefaultSphereOnStartup);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("When enabled, automatically generates a default sculpting sphere on startup if no file is opened");
 
                 break;
             }

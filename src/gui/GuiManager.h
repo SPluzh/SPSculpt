@@ -103,6 +103,7 @@ private:
     bool m_remeshAlignSymmetry = false;
     bool m_animateBookmarks = false;
     bool m_savePngNextToProject = true;
+    bool m_createDefaultSphereOnStartup = true;
     bool m_imguiInitialized = false;
     bool m_editPivot = false;
     float m_gizmoSize = 0.10f;
@@ -404,6 +405,9 @@ public:
 
     bool getSavePngNextToProject() const { return m_savePngNextToProject; }
     void setSavePngNextToProject(bool val) { m_savePngNextToProject = val; }
+
+    bool getCreateDefaultSphereOnStartup() const { return m_createDefaultSphereOnStartup; }
+    void setCreateDefaultSphereOnStartup(bool val) { m_createDefaultSphereOnStartup = val; }
 
     float getGizmoSize() const { return m_gizmoSize; }
     void setGizmoSize(float val) { m_gizmoSize = val; }
