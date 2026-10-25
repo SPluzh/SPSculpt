@@ -24,7 +24,7 @@ struct DynamicSubdivSettings {
     int  smoothLevel = 2;    // 1 to 6 (SmoothSubdiv)
     int  flatLevel = 0;      // 0 to 4 (FlatSubdiv)
     int  creaseLevel = 2;    // 1 to 15 (CreaseLvl in ZBrush)
-    bool showCage = true;    // Render base cage wireframe over smooth mesh
+    bool showCage = false;   // Render base cage wireframe over smooth mesh (Default: OFF)
     float cageAlpha = 0.6f;  // Cage wireframe opacity
 };
 

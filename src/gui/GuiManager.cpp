@@ -4290,6 +4290,9 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     if (mesh->isPrimitive && mesh->primitiveData) {
                         infoStr += "  " ICON_LC_BOX " [Procedural " + std::string(getPrimitiveTypeName(mesh->primitiveData->type)) + "]";
                     }
+                    if (mesh->dynamicSettings.enabled && mesh->dynamicCacheMesh) {
+                        infoStr += "  " ICON_LC_LAYERS " [D-Sub L" + std::to_string(mesh->dynamicSettings.smoothLevel) + ": " + formatCount(mesh->dynamicCacheMesh->nbVerts) + "v]";
+                    }
                     if (isActive) infoStr += "  " ICON_LC_CHECK " Active";
                     ImGui::TextDisabled("%s", infoStr.c_str());
 
@@ -4341,6 +4344,107 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     }
                     ImGui::PopStyleColor();
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip(symOn ? "Symmetry: Enabled (Click to toggle)" : "Symmetry: Disabled (Click to toggle)");
+                    ImGui::PopID();
+
+                    ImGui::SameLine();
+
+                    // Dynamic Subdiv Toggle Button + Settings Dropdown Arrow
+                    ImGui::PushID(4);
+                    bool dynOn = mesh->dynamicSettings.enabled;
+                    if (dynOn) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.9f, 0.8f, 1.0f));
+                    else ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
+
+                    std::string dynBtnLabel = dynOn ? (ICON_LC_LAYERS " D" + std::to_string(mesh->dynamicSettings.smoothLevel)) : (ICON_LC_LAYERS " Dyn");
+                    if (ImGui::Button(dynBtnLabel.c_str(), ImVec2(btnSz * 2.1f, btnSz))) {
+                        scene.pushHistoryState();
+                        mesh->dynamicSettings.enabled = !dynOn;
+                        mesh->invalidateDynamicSubdiv();
+                        mesh->isDirty = true;
+                        thumbInvalidate(mesh->getID());
+                    }
+                    ImGui::PopStyleColor();
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip(dynOn ? "Dynamic Subdiv: Enabled (Click to toggle)" : "Dynamic Subdiv: Disabled (Click to toggle)");
+                    }
+
+                    // Flush Arrow Dropdown Button
+                    ImGui::SameLine(0.0f, 1.0f * scale);
+                    if (dynOn) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.9f, 0.8f, 1.0f));
+                    else ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+                    if (ImGui::Button(ICON_LC_CHEVRON_DOWN "##dynSubdivArrow", ImVec2(btnSz * 0.75f, btnSz))) {
+                        ImGui::OpenPopup("##dynSubdivPopup");
+                    }
+                    ImGui::PopStyleColor();
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Dynamic Subdiv Settings");
+                    }
+
+                    if (ImGui::BeginPopup("##dynSubdivPopup")) {
+                        ImGui::Text(ICON_LC_LAYERS " Dynamic Subdivision");
+                        ImGui::TextDisabled("Mesh: %s", displayName.c_str());
+                        ImGui::Separator();
+
+                        bool curDynEnabled = mesh->dynamicSettings.enabled;
+                        if (ImGui::Checkbox("Enable Dynamic Subdiv", &curDynEnabled)) {
+                            scene.pushHistoryState();
+                            mesh->dynamicSettings.enabled = curDynEnabled;
+                            mesh->invalidateDynamicSubdiv();
+                            mesh->isDirty = true;
+                            thumbInvalidate(mesh->getID());
+                        }
+
+                        if (mesh->dynamicSettings.enabled) {
+                            ImGui::Spacing();
+                            ImGui::SetNextItemWidth(130.0f * scale);
+                            if (ImGui::SliderInt("SmoothSubdiv", &mesh->dynamicSettings.smoothLevel, 1, 6)) {
+                                mesh->invalidateDynamicSubdiv();
+                                mesh->isDirty = true;
+                            }
+                            ImGui::SetNextItemWidth(130.0f * scale);
+                            if (ImGui::SliderInt("CreaseLvl", &mesh->dynamicSettings.creaseLevel, 1, 15)) {
+                                mesh->invalidateDynamicSubdiv();
+                                mesh->isDirty = true;
+                            }
+                            ImGui::SetNextItemWidth(130.0f * scale);
+                            if (ImGui::SliderInt("FlatSubdiv", &mesh->dynamicSettings.flatLevel, 0, 4)) {
+                                mesh->invalidateDynamicSubdiv();
+                                mesh->isDirty = true;
+                            }
+
+                            ImGui::Spacing();
+                            if (ImGui::Checkbox("Show Cage", &mesh->dynamicSettings.showCage)) {
+                                mesh->isDirty = true;
+                            }
+                            if (mesh->dynamicSettings.showCage) {
+                                ImGui::SameLine();
+                                ImGui::SetNextItemWidth(90.0f * scale);
+                                if (ImGui::SliderFloat("Opacity", &mesh->dynamicSettings.cageAlpha, 0.1f, 1.0f, "%.2f")) {
+                                    // Live opacity
+                                }
+                            }
+
+                            if (mesh->dynamicCacheMesh) {
+                                ImGui::Spacing();
+                                ImGui::TextDisabled("Subdivided: %s verts, %s faces",
+                                    formatCount(mesh->dynamicCacheMesh->getNbVertices()).c_str(),
+                                    formatCount(mesh->dynamicCacheMesh->getNbFaces()).c_str());
+                            }
+
+                            ImGui::Separator();
+                            if (ImGui::Button(ICON_LC_CHECK " Apply (Bake)##dynBake", ImVec2(-1, 24.0f * scale))) {
+                                scene.pushHistoryState();
+                                mesh->applyDynamicSubdivision();
+                                mesh->isDirty = true;
+                                thumbInvalidate(mesh->getID());
+                                ImGui::CloseCurrentPopup();
+                            }
+                            if (ImGui::IsItemHovered()) {
+                                ImGui::SetTooltip("Permanently freeze dynamic subdivision into base mesh geometry");
+                            }
+                        }
+
+                        ImGui::EndPopup();
+                    }
                     ImGui::PopID();
 
                     ImGui::SameLine();
@@ -4461,6 +4565,23 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             }
                             ImGui::Separator();
                         }
+
+                        if (ImGui::MenuItem(mesh->dynamicSettings.enabled ? (ICON_LC_LAYERS " Disable Dynamic Subdiv") : (ICON_LC_LAYERS " Enable Dynamic Subdiv"))) {
+                            scene.pushHistoryState();
+                            mesh->dynamicSettings.enabled = !mesh->dynamicSettings.enabled;
+                            mesh->invalidateDynamicSubdiv();
+                            mesh->isDirty = true;
+                            thumbInvalidate(mesh->getID());
+                        }
+                        if (mesh->dynamicSettings.enabled) {
+                            if (ImGui::MenuItem(ICON_LC_CHECK " Apply Dynamic Subdiv (Bake)")) {
+                                scene.pushHistoryState();
+                                mesh->applyDynamicSubdivision();
+                                mesh->isDirty = true;
+                                thumbInvalidate(mesh->getID());
+                            }
+                        }
+                        ImGui::Separator();
 
                         if (ImGui::MenuItem(ICON_LC_COPY " Duplicate", "Ctrl+D")) {
                             scene.setOrUnsetMesh(mesh, false);
