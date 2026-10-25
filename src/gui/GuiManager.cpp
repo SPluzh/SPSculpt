@@ -5595,17 +5595,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             }
 
             if (isHovered && mouseClicked) {
-                std::ofstream logFile("c:\\Users\\user\\Desktop\\cpp\\sculptsp-native\\debug_log.txt", std::ios::app);
-                if (logFile.is_open()) {
-                    logFile << "Hovered and Clicked Part: " << part.label << std::endl;
-                    logFile << "  part.rotX: " << part.rotX << ", part.rotY: " << part.rotY << std::endl;
-                    logFile << "  m_gizmoClickPending: " << (m_gizmoClickPending ? "yes" : "no") << std::endl;
-                    if (m_gizmoClickPending) {
-                        logFile << "  pendingRotX: " << m_gizmoClickPartRotX << ", pendingRotY: " << m_gizmoClickPartRotY << std::endl;
-                    }
-                    logFile.close();
-                }
-
                 if (m_gizmoClickPending && std::abs(m_gizmoClickPartRotX - (-part.rotX)) < 1e-3f && std::abs(m_gizmoClickPartRotY - part.rotY) < 1e-3f) {
                     // Cancel pending view change on double-click
                     m_gizmoClickPending = false;

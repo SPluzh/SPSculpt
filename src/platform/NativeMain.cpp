@@ -46,12 +46,6 @@
 #include "brushes/BrushPresetManager.h"
 #include "files/FileManager.h"
 #include "stb_image.h"
-#include "manifold.h"
-#include "editing/manifold/ManifoldBridge.h"
-#include "editing/manifold/LassoCutter.h"
-#include "editing/TrimTool.h"
-#include "editing/SplitTool.h"
-#include "editing/BooleanTool.h"
 #include "editing/PrimitiveTool.h"
 #include <cctype>
 #ifndef _WIN32
@@ -367,9 +361,6 @@ int main(int argc, char* argv[]) {
     setvbuf(stderr, NULL, _IONBF, 0);
     sculpt_log_init();
 
-    auto testCube = manifold::Manifold::Cube(glm::vec3(10.0f));
-    sculpt_log("[SMOKE TEST] Manifold initialized successfully. Test cube volume: %.2f\n", (float)testCube.GetProperties().volume);
-
     // Register crash signal handlers
     std::signal(SIGSEGV, crashHandler);
     std::signal(SIGABRT, crashHandler);
@@ -456,14 +447,14 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
+    // Use adaptive vsync (0) so our SDL_Delay-based frame cap can actually control timing,
+    // and the early draw does not block inside the driver waiting for vertical sync.
+    SDL_GL_SetSwapInterval(0);
+
     // Early draw: clear background immediately to eliminate black screen during initialization
     glClearColor(0.12f, 0.12f, 0.14f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
     SDL_GL_SwapWindow(window);
-
-    // Use adaptive vsync (0) so our SDL_Delay-based frame cap can actually control timing.
-    // SwapInterval(1) would block inside the driver at monitor rate, making SDL_Delay useless.
-    SDL_GL_SetSwapInterval(0);
 
     // Calculate initial DPI scale and physical drawable size
     int drawableWidth = width;
