@@ -19,7 +19,7 @@ public:
     const std::vector<float>& _mAr;
     const std::vector<uint32_t>& _eAr;
     const std::vector<uint8_t>* _inCreases;
-    bool _isSharp;
+    float _sharpWeight;
     bool _isLinear;
     int _nbVertices;
     std::vector<int32_t> _tagEdges;
@@ -27,7 +27,7 @@ public:
     std::vector<int32_t> _edgeToCacheIdx;
 
     OddVertexComputer(Mesh& mesh, std::vector<float>& vArOut, std::vector<float>& cArOut, std::vector<float>& mArOut,
-                      const std::vector<uint8_t>* inCreases = nullptr, bool isSharp = false, bool isLinear = false,
+                      const std::vector<uint8_t>* inCreases = nullptr, float sharpWeight = 0.0f, bool isLinear = false,
                       SubdivLevelCache* cache = nullptr)
         : _vArOut(vArOut)
         , _cArOut(cArOut)
@@ -37,7 +37,7 @@ public:
         , _mAr(mesh.getMaterials())
         , _eAr(mesh.edges)
         , _inCreases(inCreases)
-        , _isSharp(isSharp)
+        , _sharpWeight(sharpWeight)
         , _isLinear(isLinear)
         , _nbVertices(mesh.getNbVertices())
         , _tagEdges(mesh.getNbEdges(), 0)
@@ -59,8 +59,8 @@ public:
         uint32_t ivMid = (testEdge == -1) ? (uint32_t)_nbVertices++ : (uint32_t)testEdge;
         uint32_t idMid = ivMid * 3;
         uint32_t edgeValue = (ide < _eAr.size()) ? _eAr[ide] : 2;
-        bool isCrease = (_isSharp && _inCreases && ide < _inCreases->size() && (*_inCreases)[ide] > 0);
-        bool isSharpEdge = (edgeValue == 1 || isCrease || edgeValue >= 3 || Subdivision::LINEAR || _isLinear);
+        bool isCrease = (_sharpWeight > 0.0f && _inCreases && ide < _inCreases->size() && (*_inCreases)[ide] > 0);
+        bool isSharpEdge = (edgeValue == 1 || edgeValue >= 3 || Subdivision::LINEAR || _isLinear || (isCrease && _sharpWeight >= 1.0f));
 
         if (idMid + 2 >= _vArOut.size()) {
             _vArOut.resize(idMid + 3, 0.0f);
@@ -93,6 +93,10 @@ public:
             _mArOut[idMid + 1] = 0.5f * (_mAr[id1 + 1] + _mAr[id2 + 1]);
             _mArOut[idMid + 2] = 0.5f * (_mAr[id1 + 2] + _mAr[id2 + 2]);
         } else if (testEdge == -1) {
+            float s = isCrease ? _sharpWeight : 0.0f;
+            float wEnd = 0.375f + 0.125f * s;
+            float wOpp = (1.0f - s) * 0.125f;
+
             _tagEdges[ide] = ivMid + 1;
             if (_cache && ide < _edgeToCacheIdx.size()) {
                 _edgeToCacheIdx[ide] = (int32_t)_cache->edges.size();
@@ -100,46 +104,49 @@ public:
                 ed.midVert = ivMid;
                 ed.v1 = iv1;
                 ed.v2 = iv2;
-                ed.wEnd = 0.375f;
+                ed.wEnd = wEnd;
                 ed.opp[0] = iv3;
-                ed.wOpp[0] = 0.125f;
+                ed.wOpp[0] = wOpp;
                 ed.numOpp = 1;
                 _cache->edges.push_back(ed);
             }
-            _vArOut[idMid]     = 0.125f * _vAr[idOpp]     + 0.375f * (_vAr[id1]     + _vAr[id2]);
-            _vArOut[idMid + 1] = 0.125f * _vAr[idOpp + 1] + 0.375f * (_vAr[id1 + 1] + _vAr[id2 + 1]);
-            _vArOut[idMid + 2] = 0.125f * _vAr[idOpp + 2] + 0.375f * (_vAr[id1 + 2] + _vAr[id2 + 2]);
+            _vArOut[idMid]     = wOpp * _vAr[idOpp]     + wEnd * (_vAr[id1]     + _vAr[id2]);
+            _vArOut[idMid + 1] = wOpp * _vAr[idOpp + 1] + wEnd * (_vAr[id1 + 1] + _vAr[id2 + 1]);
+            _vArOut[idMid + 2] = wOpp * _vAr[idOpp + 2] + wEnd * (_vAr[id1 + 2] + _vAr[id2 + 2]);
 
-            _cArOut[idMid]     = 0.125f * _cAr[idOpp]     + 0.375f * (_cAr[id1]     + _cAr[id2]);
-            _cArOut[idMid + 1] = 0.125f * _cAr[idOpp + 1] + 0.375f * (_cAr[id1 + 1] + _cAr[id2 + 1]);
-            _cArOut[idMid + 2] = 0.125f * _cAr[idOpp + 2] + 0.375f * (_cAr[id1 + 2] + _cAr[id2 + 2]);
+            _cArOut[idMid]     = wOpp * _cAr[idOpp]     + wEnd * (_cAr[id1]     + _cAr[id2]);
+            _cArOut[idMid + 1] = wOpp * _cAr[idOpp + 1] + wEnd * (_cAr[id1 + 1] + _cAr[id2 + 1]);
+            _cArOut[idMid + 2] = wOpp * _cAr[idOpp + 2] + wEnd * (_cAr[id1 + 2] + _cAr[id2 + 2]);
 
-            _mArOut[idMid]     = 0.125f * _mAr[idOpp]     + 0.375f * (_mAr[id1]     + _mAr[id2]);
-            _mArOut[idMid + 1] = 0.125f * _mAr[idOpp + 1] + 0.375f * (_mAr[id1 + 1] + _mAr[id2 + 1]);
-            _mArOut[idMid + 2] = 0.125f * _mAr[idOpp + 2] + 0.375f * (_mAr[id1 + 2] + _mAr[id2 + 2]);
+            _mArOut[idMid]     = wOpp * _mAr[idOpp]     + wEnd * (_mAr[id1]     + _mAr[id2]);
+            _mArOut[idMid + 1] = wOpp * _mAr[idOpp + 1] + wEnd * (_mAr[id1 + 1] + _mAr[id2 + 1]);
+            _mArOut[idMid + 2] = wOpp * _mAr[idOpp + 2] + wEnd * (_mAr[id1 + 2] + _mAr[id2 + 2]);
         } else {
+            float s = isCrease ? _sharpWeight : 0.0f;
+            float wOpp = (1.0f - s) * 0.125f;
+
             if (_cache && ide < _edgeToCacheIdx.size()) {
                 int32_t cIdx = _edgeToCacheIdx[ide];
                 if (cIdx >= 0 && cIdx < (int32_t)_cache->edges.size()) {
                     auto& ed = _cache->edges[cIdx];
                     if (ed.numOpp < 4) {
                         ed.opp[ed.numOpp] = iv3;
-                        ed.wOpp[ed.numOpp] = 0.125f;
+                        ed.wOpp[ed.numOpp] = wOpp;
                         ed.numOpp++;
                     }
                 }
             }
-            _vArOut[idMid]     += 0.125f * _vAr[idOpp];
-            _vArOut[idMid + 1] += 0.125f * _vAr[idOpp + 1];
-            _vArOut[idMid + 2] += 0.125f * _vAr[idOpp + 2];
+            _vArOut[idMid]     += wOpp * _vAr[idOpp];
+            _vArOut[idMid + 1] += wOpp * _vAr[idOpp + 1];
+            _vArOut[idMid + 2] += wOpp * _vAr[idOpp + 2];
 
-            _cArOut[idMid]     += 0.125f * _cAr[idOpp];
-            _cArOut[idMid + 1] += 0.125f * _cAr[idOpp + 1];
-            _cArOut[idMid + 2] += 0.125f * _cAr[idOpp + 2];
+            _cArOut[idMid]     += wOpp * _cAr[idOpp];
+            _cArOut[idMid + 1] += wOpp * _cAr[idOpp + 1];
+            _cArOut[idMid + 2] += wOpp * _cAr[idOpp + 2];
 
-            _mArOut[idMid]     += 0.125f * _mAr[idOpp];
-            _mArOut[idMid + 1] += 0.125f * _mAr[idOpp + 1];
-            _mArOut[idMid + 2] += 0.125f * _mAr[idOpp + 2];
+            _mArOut[idMid]     += wOpp * _mAr[idOpp];
+            _mArOut[idMid + 1] += wOpp * _mAr[idOpp + 1];
+            _mArOut[idMid + 2] += wOpp * _mAr[idOpp + 2];
         }
         return ivMid;
     }
@@ -153,8 +160,8 @@ public:
         uint32_t ivMid = (testEdge == -1) ? (uint32_t)_nbVertices++ : (uint32_t)testEdge;
         uint32_t idMid = ivMid * 3;
         uint32_t edgeValue = (ide < _eAr.size()) ? _eAr[ide] : 2;
-        bool isCrease = (_isSharp && _inCreases && ide < _inCreases->size() && (*_inCreases)[ide] > 0);
-        bool isSharpEdge = (edgeValue == 1 || isCrease || edgeValue >= 3 || Subdivision::LINEAR || _isLinear);
+        bool isCrease = (_sharpWeight > 0.0f && _inCreases && ide < _inCreases->size() && (*_inCreases)[ide] > 0);
+        bool isSharpEdge = (edgeValue == 1 || edgeValue >= 3 || Subdivision::LINEAR || _isLinear || (isCrease && _sharpWeight >= 1.0f));
 
         if (idMid + 2 >= _vArOut.size()) {
             _vArOut.resize(idMid + 3, 0.0f);
@@ -187,6 +194,10 @@ public:
             _mArOut[idMid + 1] = 0.5f * (_mAr[id1 + 1] + _mAr[id2 + 1]);
             _mArOut[idMid + 2] = 0.5f * (_mAr[id1 + 2] + _mAr[id2 + 2]);
         } else if (testEdge == -1) {
+            float s = isCrease ? _sharpWeight : 0.0f;
+            float wEnd = 0.375f + 0.125f * s;
+            float wOpp = (1.0f - s) * 0.0625f;
+
             _tagEdges[ide] = ivMid + 1;
             if (_cache && ide < _edgeToCacheIdx.size()) {
                 _edgeToCacheIdx[ide] = (int32_t)_cache->edges.size();
@@ -194,50 +205,53 @@ public:
                 ed.midVert = ivMid;
                 ed.v1 = iv1;
                 ed.v2 = iv2;
-                ed.wEnd = 0.375f;
+                ed.wEnd = wEnd;
                 ed.opp[0] = iv3;
-                ed.wOpp[0] = 0.0625f;
+                ed.wOpp[0] = wOpp;
                 ed.opp[1] = iv4;
-                ed.wOpp[1] = 0.0625f;
+                ed.wOpp[1] = wOpp;
                 ed.numOpp = 2;
                 _cache->edges.push_back(ed);
             }
-            _vArOut[idMid]     = 0.0625f * (_vAr[idOpp]     + _vAr[idOpp2])     + 0.375f * (_vAr[id1]     + _vAr[id2]);
-            _vArOut[idMid + 1] = 0.0625f * (_vAr[idOpp + 1] + _vAr[idOpp2 + 1]) + 0.375f * (_vAr[id1 + 1] + _vAr[id2 + 1]);
-            _vArOut[idMid + 2] = 0.0625f * (_vAr[idOpp + 2] + _vAr[idOpp2 + 2]) + 0.375f * (_vAr[id1 + 2] + _vAr[id2 + 2]);
+            _vArOut[idMid]     = wOpp * (_vAr[idOpp]     + _vAr[idOpp2])     + wEnd * (_vAr[id1]     + _vAr[id2]);
+            _vArOut[idMid + 1] = wOpp * (_vAr[idOpp + 1] + _vAr[idOpp2 + 1]) + wEnd * (_vAr[id1 + 1] + _vAr[id2 + 1]);
+            _vArOut[idMid + 2] = wOpp * (_vAr[idOpp + 2] + _vAr[idOpp2 + 2]) + wEnd * (_vAr[id1 + 2] + _vAr[id2 + 2]);
 
-            _cArOut[idMid]     = 0.0625f * (_cAr[idOpp]     + _cAr[idOpp2])     + 0.375f * (_cAr[id1]     + _cAr[id2]);
-            _cArOut[idMid + 1] = 0.0625f * (_cAr[idOpp + 1] + _cAr[idOpp2 + 1]) + 0.375f * (_cAr[id1 + 1] + _cAr[id2 + 1]);
-            _cArOut[idMid + 2] = 0.0625f * (_cAr[idOpp + 2] + _cAr[idOpp2 + 2]) + 0.375f * (_cAr[id1 + 2] + _cAr[id2 + 2]);
+            _cArOut[idMid]     = wOpp * (_cAr[idOpp]     + _cAr[idOpp2])     + wEnd * (_cAr[id1]     + _cAr[id2]);
+            _cArOut[idMid + 1] = wOpp * (_cAr[idOpp + 1] + _cAr[idOpp2 + 1]) + wEnd * (_cAr[id1 + 1] + _cAr[id2 + 1]);
+            _cArOut[idMid + 2] = wOpp * (_cAr[idOpp + 2] + _cAr[idOpp2 + 2]) + wEnd * (_cAr[id1 + 2] + _cAr[id2 + 2]);
 
-            _mArOut[idMid]     = 0.0625f * (_mAr[idOpp]     + _mAr[idOpp2])     + 0.375f * (_mAr[id1]     + _mAr[id2]);
-            _mArOut[idMid + 1] = 0.0625f * (_mAr[idOpp + 1] + _mAr[idOpp2 + 1]) + 0.375f * (_mAr[id1 + 1] + _mAr[id2 + 1]);
-            _mArOut[idMid + 2] = 0.0625f * (_mAr[idOpp + 2] + _mAr[idOpp2 + 2]) + 0.375f * (_mAr[id1 + 2] + _mAr[id2 + 2]);
+            _mArOut[idMid]     = wOpp * (_mAr[idOpp]     + _mAr[idOpp2])     + wEnd * (_mAr[id1]     + _mAr[id2]);
+            _mArOut[idMid + 1] = wOpp * (_mAr[idOpp + 1] + _mAr[idOpp2 + 1]) + wEnd * (_mAr[id1 + 1] + _mAr[id2 + 1]);
+            _mArOut[idMid + 2] = wOpp * (_mAr[idOpp + 2] + _mAr[idOpp2 + 2]) + wEnd * (_mAr[id1 + 2] + _mAr[id2 + 2]);
         } else {
+            float s = isCrease ? _sharpWeight : 0.0f;
+            float wOpp = (1.0f - s) * 0.0625f;
+
             if (_cache && ide < _edgeToCacheIdx.size()) {
                 int32_t cIdx = _edgeToCacheIdx[ide];
                 if (cIdx >= 0 && cIdx < (int32_t)_cache->edges.size()) {
                     auto& ed = _cache->edges[cIdx];
                     if (ed.numOpp + 2 <= 4) {
                         ed.opp[ed.numOpp] = iv3;
-                        ed.wOpp[ed.numOpp] = 0.0625f;
+                        ed.wOpp[ed.numOpp] = wOpp;
                         ed.opp[ed.numOpp + 1] = iv4;
-                        ed.wOpp[ed.numOpp + 1] = 0.0625f;
+                        ed.wOpp[ed.numOpp + 1] = wOpp;
                         ed.numOpp += 2;
                     }
                 }
             }
-            _vArOut[idMid]     += 0.0625f * (_vAr[idOpp]     + _vAr[idOpp2]);
-            _vArOut[idMid + 1] += 0.0625f * (_vAr[idOpp + 1] + _vAr[idOpp2 + 1]);
-            _vArOut[idMid + 2] += 0.0625f * (_vAr[idOpp + 2] + _vAr[idOpp2 + 2]);
+            _vArOut[idMid]     += wOpp * (_vAr[idOpp]     + _vAr[idOpp2]);
+            _vArOut[idMid + 1] += wOpp * (_vAr[idOpp + 1] + _vAr[idOpp2 + 1]);
+            _vArOut[idMid + 2] += wOpp * (_vAr[idOpp + 2] + _vAr[idOpp2 + 2]);
 
-            _cArOut[idMid]     += 0.0625f * (_cAr[idOpp]     + _cAr[idOpp2]);
-            _cArOut[idMid + 1] += 0.0625f * (_cAr[idOpp + 1] + _cAr[idOpp2 + 1]);
-            _cArOut[idMid + 2] += 0.0625f * (_cAr[idOpp + 2] + _cAr[idOpp2 + 2]);
+            _cArOut[idMid]     += wOpp * (_cAr[idOpp]     + _cAr[idOpp2]);
+            _cArOut[idMid + 1] += wOpp * (_cAr[idOpp + 1] + _cAr[idOpp2 + 1]);
+            _cArOut[idMid + 2] += wOpp * (_cAr[idOpp + 2] + _cAr[idOpp2 + 2]);
 
-            _mArOut[idMid]     += 0.0625f * (_mAr[idOpp]     + _mAr[idOpp2]);
-            _mArOut[idMid + 1] += 0.0625f * (_mAr[idOpp + 1] + _mAr[idOpp2 + 1]);
-            _mArOut[idMid + 2] += 0.0625f * (_mAr[idOpp + 2] + _mAr[idOpp2 + 2]);
+            _mArOut[idMid]     += wOpp * (_mAr[idOpp]     + _mAr[idOpp2]);
+            _mArOut[idMid + 1] += wOpp * (_mAr[idOpp + 1] + _mAr[idOpp2 + 1]);
+            _mArOut[idMid + 2] += wOpp * (_mAr[idOpp + 2] + _mAr[idOpp2 + 2]);
         }
         return ivMid;
     }
@@ -282,7 +296,7 @@ public:
 };
 
 void applyEvenSmooth(Mesh& baseMesh, std::vector<float>& even, std::vector<float>& colorOut, std::vector<float>& materialOut,
-                     const std::vector<uint8_t>* inCreases, bool isSharp, bool isLinear) {
+                     const std::vector<uint8_t>* inCreases, float sharpWeight, bool isLinear) {
     int nbVerts = baseMesh.getNbVertices();
     if ((int)even.size() < nbVerts * 3) even.resize(nbVerts * 3);
     if ((int)colorOut.size() < nbVerts * 3) colorOut.resize(nbVerts * 3);
@@ -320,6 +334,7 @@ void applyEvenSmooth(Mesh& baseMesh, std::vector<float>& even, std::vector<float
 
         uint32_t sharpNeighbors[16];
         int numSharp = 0;
+        bool vertexHasCrease = false;
 
         uint32_t startF = vrfStartCount[i * 2];
         uint32_t endF = startF + vrfStartCount[i * 2 + 1];
@@ -335,7 +350,8 @@ void applyEvenSmooth(Mesh& baseMesh, std::vector<float>& even, std::vector<float
             auto checkEdge = [&](uint32_t edgeIdx, uint32_t otherV) {
                 if (edgeIdx >= eArOld.size() || otherV == TRI_INDEX) return;
                 uint32_t edgeVal = eArOld[edgeIdx];
-                bool isCreased = (isSharp && inCreases && edgeIdx < inCreases->size() && (*inCreases)[edgeIdx] > 0);
+                bool isCreased = (sharpWeight > 0.0f && inCreases && edgeIdx < inCreases->size() && (*inCreases)[edgeIdx] > 0);
+                if (isCreased) vertexHasCrease = true;
                 if (edgeVal == 1 || isCreased) {
                     bool found = false;
                     for (int s = 0; s < numSharp; ++s) {
@@ -362,22 +378,30 @@ void applyEvenSmooth(Mesh& baseMesh, std::vector<float>& even, std::vector<float
             }
         }
 
+        float sharpX = vArOld[j];
+        float sharpY = vArOld[j + 1];
+        float sharpZ = vArOld[j + 2];
+
         if (numSharp >= 3) {
-            even[j]     = vArOld[j];
-            even[j + 1] = vArOld[j + 1];
-            even[j + 2] = vArOld[j + 2];
-            continue;
+            sharpX = vArOld[j];
+            sharpY = vArOld[j + 1];
+            sharpZ = vArOld[j + 2];
         } else if (numSharp == 2) {
             uint32_t idA = sharpNeighbors[0] * 3;
             uint32_t idB = sharpNeighbors[1] * 3;
-            even[j]     = 0.75f * vArOld[j]     + 0.125f * (vArOld[idA]     + vArOld[idB]);
-            even[j + 1] = 0.75f * vArOld[j + 1] + 0.125f * (vArOld[idA + 1] + vArOld[idB + 1]);
-            even[j + 2] = 0.75f * vArOld[j + 2] + 0.125f * (vArOld[idA + 2] + vArOld[idB + 2]);
-            continue;
+            sharpX = 0.75f * vArOld[j]     + 0.125f * (vArOld[idA]     + vArOld[idB]);
+            sharpY = 0.75f * vArOld[j + 1] + 0.125f * (vArOld[idA + 1] + vArOld[idB + 1]);
+            sharpZ = 0.75f * vArOld[j + 2] + 0.125f * (vArOld[idA + 2] + vArOld[idB + 2]);
         } else if (numSharp == 1 && (i < (int)vertOnEdgeOld.size() && vertOnEdgeOld[i])) {
-            even[j]     = vArOld[j];
-            even[j + 1] = vArOld[j + 1];
-            even[j + 2] = vArOld[j + 2];
+            sharpX = vArOld[j];
+            sharpY = vArOld[j + 1];
+            sharpZ = vArOld[j + 2];
+        }
+
+        if (numSharp > 0 && (!vertexHasCrease || sharpWeight >= 1.0f)) {
+            even[j]     = sharpX;
+            even[j + 1] = sharpY;
+            even[j + 2] = sharpZ;
             continue;
         }
 
@@ -406,6 +430,12 @@ void applyEvenSmooth(Mesh& baseMesh, std::vector<float>& even, std::vector<float
             even[j]     = vArOld[j]     * alpha + avx * beta;
             even[j + 1] = vArOld[j + 1] * alpha + avy * beta;
             even[j + 2] = vArOld[j + 2] * alpha + avz * beta;
+            if (numSharp > 0 && vertexHasCrease) {
+                float s = sharpWeight;
+                even[j]     = (1.0f - s) * even[j]     + s * sharpX;
+                even[j + 1] = (1.0f - s) * even[j + 1] + s * sharpY;
+                even[j + 2] = (1.0f - s) * even[j + 2] + s * sharpZ;
+            }
             continue;
         }
 
@@ -449,6 +479,12 @@ void applyEvenSmooth(Mesh& baseMesh, std::vector<float>& even, std::vector<float
             even[j]     = vArOld[j]     * alpha + avx * beta + oppx * gamma;
             even[j + 1] = vArOld[j + 1] * alpha + avy * beta + oppy * gamma;
             even[j + 2] = vArOld[j + 2] * alpha + avz * beta + oppz * gamma;
+            if (numSharp > 0 && vertexHasCrease) {
+                float s = sharpWeight;
+                even[j]     = (1.0f - s) * even[j]     + s * sharpX;
+                even[j + 1] = (1.0f - s) * even[j + 1] + s * sharpY;
+                even[j + 2] = (1.0f - s) * even[j + 2] + s * sharpZ;
+            }
             continue;
         }
 
@@ -466,6 +502,12 @@ void applyEvenSmooth(Mesh& baseMesh, std::vector<float>& even, std::vector<float
             even[j]     = vArOld[j]     * alpha + avx * beta;
             even[j + 1] = vArOld[j + 1] * alpha + avy * beta;
             even[j + 2] = vArOld[j + 2] * alpha + avz * beta;
+            if (numSharp > 0 && vertexHasCrease) {
+                float s = sharpWeight;
+                even[j]     = (1.0f - s) * even[j]     + s * sharpX;
+                even[j + 1] = (1.0f - s) * even[j + 1] + s * sharpY;
+                even[j + 2] = (1.0f - s) * even[j + 2] + s * sharpZ;
+            }
             continue;
         }
 
@@ -475,15 +517,21 @@ void applyEvenSmooth(Mesh& baseMesh, std::vector<float>& even, std::vector<float
         even[j]     = vArOld[j]     * alpha + avx * beta + oppx * gamma;
         even[j + 1] = vArOld[j + 1] * alpha + avy * beta + oppy * gamma;
         even[j + 2] = vArOld[j + 2] * alpha + avz * beta + oppz * gamma;
+        if (numSharp > 0 && vertexHasCrease) {
+            float s = sharpWeight;
+            even[j]     = (1.0f - s) * even[j]     + s * sharpX;
+            even[j + 1] = (1.0f - s) * even[j + 1] + s * sharpY;
+            even[j + 2] = (1.0f - s) * even[j + 2] + s * sharpZ;
+        }
     }
 }
 
 std::vector<int32_t> applyOddSmooth(Mesh& baseMesh, std::vector<float>& odds, std::vector<float>& colorOut, std::vector<float>& materialOut,
-                                     std::vector<uint32_t>* fArOut, const std::vector<uint8_t>* inCreases, bool isSharp, bool isLinear,
+                                     std::vector<uint32_t>* fArOut, const std::vector<uint8_t>* inCreases, float sharpWeight, bool isLinear,
                                      SubdivLevelCache* cache) {
     const auto& fAr = baseMesh.getFaces();
     const auto& feAr = baseMesh.faceEdges;
-    OddVertexComputer oddComputer(baseMesh, odds, colorOut, materialOut, inCreases, isSharp, isLinear, cache);
+    OddVertexComputer oddComputer(baseMesh, odds, colorOut, materialOut, inCreases, sharpWeight, isLinear, cache);
 
     int nbFaces = baseMesh.getNbFaces();
     for (int i = 0; i < nbFaces; ++i) {
@@ -538,7 +586,7 @@ void fullSubdivisionWithCreases(
     Mesh& newMesh,
     const std::vector<uint8_t>* inCreases,
     std::vector<uint8_t>* outCreases,
-    bool isSharpStep,
+    float sharpWeight,
     bool isLinear,
     SubdivLevelCache* cache,
     const std::vector<uint8_t>* inCageEdges,
@@ -556,10 +604,10 @@ void fullSubdivisionWithCreases(
     newMesh.getMaterials().resize(nbVertices * 3, 0.0f);
     newMesh.getFaces().resize(nbFacesOut * 4, TRI_INDEX);
 
-    applyEvenSmooth(baseMesh, newMesh.getVertices(), newMesh.getColors(), newMesh.getMaterials(), inCreases, isSharpStep, isLinear);
+    applyEvenSmooth(baseMesh, newMesh.getVertices(), newMesh.getColors(), newMesh.getMaterials(), inCreases, sharpWeight, isLinear);
 
     auto tags = applyOddSmooth(baseMesh, newMesh.getVertices(), newMesh.getColors(), newMesh.getMaterials(),
-                               &newMesh.getFaces(), inCreases, isSharpStep, isLinear, cache);
+                               &newMesh.getFaces(), inCreases, sharpWeight, isLinear, cache);
 
     newMesh.nbVerts = nbVertices;
     newMesh.nbFaces = nbFacesOut;
@@ -662,7 +710,7 @@ void fullSubdivisionWithCreases(
 }
 
 void fullSubdivision(Mesh& baseMesh, Mesh& newMesh) {
-    fullSubdivisionWithCreases(baseMesh, newMesh, nullptr, nullptr, false, false);
+    fullSubdivisionWithCreases(baseMesh, newMesh, nullptr, nullptr, 0.0f, false);
 }
 
 void computeDynamicSubdivision(
@@ -670,7 +718,7 @@ void computeDynamicSubdivision(
     Mesh& outMesh,
     int smoothLevel,
     int flatLevel,
-    int creaseLevel
+    float creaseLevel
 ) {
     if (smoothLevel <= 0 && flatLevel <= 0) {
         outMesh = baseMesh;
@@ -690,7 +738,8 @@ void computeDynamicSubdivision(
     for (int step = 1; step <= totalSteps; ++step) {
         auto next = std::make_unique<Mesh>();
         bool isLinear = (step <= flatLevel);
-        bool isSharp = (step <= creaseLevel);
+        float remaining = creaseLevel - (float)(step - 1);
+        float stepSharpness = std::clamp(remaining, 0.0f, 1.0f);
 
         std::vector<uint8_t> outCreases;
         std::vector<uint8_t> outCageEdges;
@@ -699,7 +748,7 @@ void computeDynamicSubdivision(
             *next,
             &current->edgeCreases,
             &outCreases,
-            isSharp,
+            stepSharpness,
             isLinear,
             nullptr,
             step == 1 ? nullptr : &current->edgeIsCage,
@@ -720,10 +769,10 @@ void evaluateCachedSubdivision(
     Mesh& outMesh,
     const SubdivLevelCache& cache,
     const std::vector<uint8_t>* inCreases,
-    bool isSharp,
+    float sharpWeight,
     bool isLinear
 ) {
-    applyEvenSmooth(const_cast<Mesh&>(baseMesh), outMesh.getVertices(), outMesh.getColors(), outMesh.getMaterials(), inCreases, isSharp, isLinear);
+    applyEvenSmooth(const_cast<Mesh&>(baseMesh), outMesh.getVertices(), outMesh.getColors(), outMesh.getMaterials(), inCreases, sharpWeight, isLinear);
 
     const auto& vAr = baseMesh.getVertices();
     const auto& cAr = baseMesh.getColors();

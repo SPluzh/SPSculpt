@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 - **Pre & Post Subdiv Pipeline**: Apply thickness on the coarse cage to get smoothly beveled rim corners (Pre-Subdiv) or extrude along smooth Catmull-Clark normals (Post-Subdiv).
 - **Auto-Crease Rims & PolyGroups**: Automatic boundary edge creasing to preserve crisp rim borders and distinct PolyGroup assignment for Front, Back, and Rim faces.
 - **Crease Edges**: Preserve sharp hard edges and PolyGroup borders during subdivision with adjustable crease angles.
+- **Continuous Crease Sharpness**: Fractional `CreaseLvl` slider for smooth, continuous edge bevel and rounding control at any subdivision level without dead zones.
 - **Outliner Controls**: Toggle button and settings dropdown (`▼`) on each object card to quickly adjust levels or bake.
 - **Bake & Multiresolution**: Freeze subdivision into standard geometry or convert it into multiresolution sculpting levels.
 - **Fast & Responsive**: Real-time smoothing updates during sculpting with no stroke lag.

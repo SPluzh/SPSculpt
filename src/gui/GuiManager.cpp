@@ -3654,12 +3654,23 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     ImGui::Spacing();
                     ImGui::TextDisabled("SUBDIVISION SETTINGS");
                     if (ImGui::SliderInt("SmoothSubdiv", &selectedMesh->dynamicSettings.smoothLevel, 1, 6)) {
+                        float maxC = (float)selectedMesh->dynamicSettings.smoothLevel;
+                        if (selectedMesh->dynamicSettings.creaseLevel > maxC) {
+                            selectedMesh->dynamicSettings.creaseLevel = maxC;
+                        }
                         selectedMesh->invalidateDynamicSubdiv();
                         selectedMesh->isDirty = true;
                     }
-                    if (ImGui::SliderInt("CreaseLvl", &selectedMesh->dynamicSettings.creaseLevel, 1, 15)) {
+                    float maxCrease = (float)std::max(1, selectedMesh->dynamicSettings.smoothLevel);
+                    if (selectedMesh->dynamicSettings.creaseLevel > maxCrease) {
+                        selectedMesh->dynamicSettings.creaseLevel = maxCrease;
+                    }
+                    if (ImGui::SliderFloat("CreaseLvl", &selectedMesh->dynamicSettings.creaseLevel, 0.0f, maxCrease, "%.2f")) {
                         selectedMesh->invalidateDynamicSubdiv();
                         selectedMesh->isDirty = true;
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Continuous crease sharpness (0 = smooth, %.0f = fully sharp across %d levels)", maxCrease, selectedMesh->dynamicSettings.smoothLevel);
                     }
                     if (ImGui::SliderInt("FlatSubdiv", &selectedMesh->dynamicSettings.flatLevel, 0, 4)) {
                         selectedMesh->invalidateDynamicSubdiv();
@@ -4526,13 +4537,24 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         if (hasSub) {
                             ImGui::SetNextItemWidth(130.0f * scale);
                             if (ImGui::SliderInt("SmoothSubdiv", &mesh->dynamicSettings.smoothLevel, 1, 6)) {
+                                float maxC = (float)mesh->dynamicSettings.smoothLevel;
+                                if (mesh->dynamicSettings.creaseLevel > maxC) {
+                                    mesh->dynamicSettings.creaseLevel = maxC;
+                                }
                                 mesh->invalidateDynamicSubdiv();
                                 mesh->isDirty = true;
                             }
+                            float maxCrease = (float)std::max(1, mesh->dynamicSettings.smoothLevel);
+                            if (mesh->dynamicSettings.creaseLevel > maxCrease) {
+                                mesh->dynamicSettings.creaseLevel = maxCrease;
+                            }
                             ImGui::SetNextItemWidth(130.0f * scale);
-                            if (ImGui::SliderInt("CreaseLvl", &mesh->dynamicSettings.creaseLevel, 1, 15)) {
+                            if (ImGui::SliderFloat("CreaseLvl", &mesh->dynamicSettings.creaseLevel, 0.0f, maxCrease, "%.2f")) {
                                 mesh->invalidateDynamicSubdiv();
                                 mesh->isDirty = true;
+                            }
+                            if (ImGui::IsItemHovered()) {
+                                ImGui::SetTooltip("Continuous crease sharpness (0 = smooth, %.0f = fully sharp across %d levels)", maxCrease, mesh->dynamicSettings.smoothLevel);
                             }
                             ImGui::SetNextItemWidth(130.0f * scale);
                             if (ImGui::SliderInt("FlatSubdiv", &mesh->dynamicSettings.flatLevel, 0, 4)) {

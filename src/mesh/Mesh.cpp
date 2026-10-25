@@ -1307,7 +1307,8 @@ void Mesh::rebuildDynamicTopology() {
         for (int step = 1; step <= totalSubdivSteps; ++step) {
             Mesh* curLevel = (step == totalSubdivSteps) ? dynamicCacheMesh.get() : dynamicLevels[step - 1].get();
             bool isLinear = (step <= dynamicSettings.flatLevel);
-            bool isSharp = (step <= dynamicSettings.creaseLevel);
+            float remaining = dynamicSettings.creaseLevel - (float)(step - 1);
+            float stepSharpness = std::clamp(remaining, 0.0f, 1.0f);
 
             std::vector<uint8_t> outCreases;
             std::vector<uint8_t> outCageEdges;
@@ -1317,7 +1318,7 @@ void Mesh::rebuildDynamicTopology() {
                 *curLevel,
                 &prevLevel->edgeCreases,
                 &outCreases,
-                isSharp,
+                stepSharpness,
                 isLinear,
                 &dynamicCaches[step - 1],
                 step == 1 ? nullptr : &prevLevel->edgeIsCage,
@@ -1361,7 +1362,8 @@ void Mesh::rebuildDynamicTopology() {
             for (int step = 1; step <= totalSubdivSteps; ++step) {
                 Mesh* curLevel = (step == totalSubdivSteps) ? dynamicCacheMesh.get() : dynamicLevels[step - 1].get();
                 bool isLinear = (step <= dynamicSettings.flatLevel);
-                bool isSharp = (step <= dynamicSettings.creaseLevel);
+                float remaining = dynamicSettings.creaseLevel - (float)(step - 1);
+                float stepSharpness = std::clamp(remaining, 0.0f, 1.0f);
 
                 std::vector<uint8_t> outCreases;
                 std::vector<uint8_t> outCageEdges;
@@ -1371,7 +1373,7 @@ void Mesh::rebuildDynamicTopology() {
                     *curLevel,
                     &prevLevel->edgeCreases,
                     &outCreases,
-                    isSharp,
+                    stepSharpness,
                     isLinear,
                     &dynamicCaches[step - 1],
                     step == 1 ? (prevLevel->edgeIsCage.empty() ? nullptr : &prevLevel->edgeIsCage) : &prevLevel->edgeIsCage,
@@ -1418,7 +1420,8 @@ void Mesh::rebuildDynamicTopology() {
             for (int step = 1; step <= totalSubdivSteps; ++step) {
                 Mesh* curLevel = (step == totalSubdivSteps) ? dynamicThickMesh.get() : dynamicLevels[step - 1].get();
                 bool isLinear = (step <= dynamicSettings.flatLevel);
-                bool isSharp = (step <= dynamicSettings.creaseLevel);
+                float remaining = dynamicSettings.creaseLevel - (float)(step - 1);
+                float stepSharpness = std::clamp(remaining, 0.0f, 1.0f);
 
                 std::vector<uint8_t> outCreases;
                 std::vector<uint8_t> outCageEdges;
@@ -1428,7 +1431,7 @@ void Mesh::rebuildDynamicTopology() {
                     *curLevel,
                     &prevLevel->edgeCreases,
                     &outCreases,
-                    isSharp,
+                    stepSharpness,
                     isLinear,
                     &dynamicCaches[step - 1],
                     step == 1 ? nullptr : &prevLevel->edgeIsCage,
@@ -1534,14 +1537,15 @@ void Mesh::updateDynamicGeometryOnly() {
             }
 
             bool isLinear = (step <= dynamicSettings.flatLevel);
-            bool isSharp = (step <= dynamicSettings.creaseLevel);
+            float remaining = dynamicSettings.creaseLevel - (float)(step - 1);
+            float stepSharpness = std::clamp(remaining, 0.0f, 1.0f);
 
             Subdivision::evaluateCachedSubdivision(
                 *prevLevel,
                 *curLevel,
                 dynamicCaches[step - 1],
                 &prevLevel->edgeCreases,
-                isSharp,
+                stepSharpness,
                 isLinear
             );
 
@@ -1572,14 +1576,15 @@ void Mesh::updateDynamicGeometryOnly() {
                 }
 
                 bool isLinear = (step <= dynamicSettings.flatLevel);
-                bool isSharp = (step <= dynamicSettings.creaseLevel);
+                float remaining = dynamicSettings.creaseLevel - (float)(step - 1);
+                float stepSharpness = std::clamp(remaining, 0.0f, 1.0f);
 
                 Subdivision::evaluateCachedSubdivision(
                     *prevLevel,
                     *curLevel,
                     dynamicCaches[step - 1],
                     &prevLevel->edgeCreases,
-                    isSharp,
+                    stepSharpness,
                     isLinear
                 );
 
@@ -1611,14 +1616,15 @@ void Mesh::updateDynamicGeometryOnly() {
                 }
 
                 bool isLinear = (step <= dynamicSettings.flatLevel);
-                bool isSharp = (step <= dynamicSettings.creaseLevel);
+                float remaining = dynamicSettings.creaseLevel - (float)(step - 1);
+                float stepSharpness = std::clamp(remaining, 0.0f, 1.0f);
 
                 Subdivision::evaluateCachedSubdivision(
                     *prevLevel,
                     *curLevel,
                     dynamicCaches[step - 1],
                     &prevLevel->edgeCreases,
-                    isSharp,
+                    stepSharpness,
                     isLinear
                 );
 
