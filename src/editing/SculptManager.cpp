@@ -9,6 +9,7 @@
 #include "editing/TubeTool.h"
 #include "editing/PrimitiveTool.h"
 #include "editing/QuadDrawTool.h"
+#include "editing/MaskExtractTool.h"
 #include "editing/ClipCurveTool.h"
 #include "editing/TrimTool.h"
 #include "editing/SplitTool.h"
@@ -201,6 +202,7 @@ SculptManager::SculptManager() {
     m_tubeTool = std::make_unique<TubeTool>(*this);
     m_primitiveTool = std::make_unique<PrimitiveTool>(*this);
     m_quadDrawTool = std::make_unique<retopo::QuadDrawTool>(*this);
+    m_maskExtractTool = std::make_unique<MaskExtractTool>(*this);
     // Initialise all brushes with baseline defaults
     for (int i = 0; i < BRUSH_COUNT; ++i) {
         m_brushSettings[i].radius = 50.0f;
@@ -394,6 +396,9 @@ SculptManager::SculptManager() {
 
     m_brushSettings[BRUSH_QUAD_DRAW].radius = 66.5f;
     m_brushSettings[BRUSH_QUAD_DRAW].culling = false;
+
+    m_brushSettings[BRUSH_EXTRACT].radius = 50.0f;
+    m_brushSettings[BRUSH_EXTRACT].culling = false;
 }
 
 std::vector<glm::vec3> SculptManager::getActiveSymmetryScales() const {
@@ -2472,6 +2477,11 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                      : scene.getCamera();
 
     if (event.type == SDL_KEYDOWN) {
+        if (m_maskExtractTool && m_maskExtractTool->isPreviewActive()) {
+            if (m_maskExtractTool->handleKeyDown(scene, event.key.keysym.sym)) {
+                return;
+            }
+        }
         if (m_currentBrush == BRUSH_QUAD_DRAW && m_quadDrawTool) {
             if (m_quadDrawTool->handleKeyDown(scene, event.key.keysym.sym)) {
                 return;
@@ -2768,6 +2778,25 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 m_pendingAnchorB = anchor;
                 m_hasPending = true;
                 scene.pushHistoryState();
+                return;
+            }
+
+            if (m_maskExtractTool && m_maskExtractTool->isPreviewActive()) {
+                if (m_maskExtractTool->handleMouseDown(scene, camera, (float)mouseX, (float)mouseY, (mod & KMOD_CTRL) != 0, (mod & KMOD_ALT) != 0, (mod & KMOD_SHIFT) != 0)) {
+                    return;
+                }
+            }
+
+            if (m_currentBrush == BRUSH_EXTRACT) {
+                if (m_maskExtractTool) {
+                    if (!m_maskExtractTool->isPreviewActive()) {
+                        Mesh* sel = scene.getSelected();
+                        if (sel) m_maskExtractTool->startPreview(scene, sel);
+                    }
+                    if (m_maskExtractTool->handleMouseDown(scene, camera, (float)mouseX, (float)mouseY, (mod & KMOD_CTRL) != 0, (mod & KMOD_ALT) != 0, (mod & KMOD_SHIFT) != 0)) {
+                        return;
+                    }
+                }
                 return;
             }
 
@@ -3342,6 +3371,21 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 return;
             }
 
+            return;
+        }
+
+        if (m_maskExtractTool && m_maskExtractTool->isPreviewActive()) {
+            if (event.button.button == SDL_BUTTON_LEFT) {
+                if (m_maskExtractTool->handleMouseUp(scene)) {
+                    return;
+                }
+            }
+        }
+
+        if (m_currentBrush == BRUSH_EXTRACT) {
+            if (event.button.button == SDL_BUTTON_LEFT && m_maskExtractTool) {
+                m_maskExtractTool->handleMouseUp(scene);
+            }
             return;
         }
 
@@ -4133,6 +4177,12 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             return;
         }
 
+        if (m_maskExtractTool && m_maskExtractTool->isPreviewActive()) {
+            if (m_maskExtractTool->handleMouseMove(scene, camera, (float)mouseX, (float)mouseY)) {
+                return;
+            }
+        }
+
         if (m_primitiveTool && m_primitiveTool->isInteracting()) {
             m_primitiveTool->handleMouseMove(scene, camera, (float)mouseX, (float)mouseY);
             return;
@@ -4181,6 +4231,15 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             } else {
                 SDL_Keymod mod = SDL_GetModState();
                 m_quadDrawTool->handleMouseMove(scene, camera, (float)mouseX, (float)mouseY, (mod & KMOD_CTRL) != 0, (mod & KMOD_ALT) != 0, (mod & KMOD_SHIFT) != 0);
+            }
+            return;
+        }
+
+        if (m_currentBrush == BRUSH_EXTRACT) {
+            if (m_cameraController.isDragging()) {
+                m_cameraController.handleEvent(event, camera, scene.getMeshes(), true, &scene, m_renderer);
+            } else if (m_maskExtractTool) {
+                m_maskExtractTool->handleMouseMove(scene, camera, (float)mouseX, (float)mouseY);
             }
             return;
         }
@@ -4464,7 +4523,7 @@ void SculptManager::processFrame(Scene& scene) {
     }
 
     bool isRefDragMode = (scene.getCamera().getRefDragEnabled() || (scene.getCameraRight() && scene.getCameraRight()->getRefDragEnabled())) && scene.areAnyReferenceImagesVisible();
-    if (isRefDragMode || m_cameraController.isDragging() || m_currentBrush == BRUSH_MEASURE || m_currentBrush == BRUSH_DIVIDER || m_currentBrush == BRUSH_TRANSFORM || m_currentBrush == BRUSH_POSE || m_currentBrush == BRUSH_TUBE || m_currentBrush == BRUSH_QUAD_DRAW) {
+    if (isRefDragMode || m_cameraController.isDragging() || m_currentBrush == BRUSH_MEASURE || m_currentBrush == BRUSH_DIVIDER || m_currentBrush == BRUSH_TRANSFORM || m_currentBrush == BRUSH_POSE || m_currentBrush == BRUSH_TUBE || m_currentBrush == BRUSH_QUAD_DRAW || m_currentBrush == BRUSH_EXTRACT) {
         m_cursor.hide();
     } else {
         // Resolve dynamic brush modifier swap (Shift->Smooth, Ctrl->Mask, Ctrl+Shift->Visibility)
@@ -4475,7 +4534,7 @@ void SculptManager::processFrame(Scene& scene) {
             m_armatureTool->preUpdate(scene, scene.getCamera(), (float)m_rawMouseX, (float)m_rawMouseY, (mod & KMOD_CTRL) != 0, (mod & KMOD_ALT) != 0);
         }
         bool isMayaNav = m_hotkeyManager ? m_hotkeyManager->getModifierBehavior().ctrlAltInvertsBrush : (scene.getCamera().getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
-        if (m_currentBrush != BRUSH_TUBE && m_currentBrush != BRUSH_POSE && m_currentBrush != BRUSH_TRANSFORM && m_currentBrush != BRUSH_QUAD_DRAW) {
+        if (m_currentBrush != BRUSH_TUBE && m_currentBrush != BRUSH_POSE && m_currentBrush != BRUSH_TRANSFORM && m_currentBrush != BRUSH_QUAD_DRAW && m_currentBrush != BRUSH_EXTRACT) {
             if ((mod & KMOD_CTRL) && (mod & KMOD_SHIFT)) {
                 activeBrush = BRUSH_VISIBILITY;
             } else if (mod & KMOD_SHIFT) {

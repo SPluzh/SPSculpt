@@ -154,6 +154,7 @@ add_executable(SPSculpt
     src/editing/PrimitiveTool.cpp
     src/editing/PolyGroupTool.cpp
     src/editing/QuadDrawTool.cpp
+    src/editing/MaskExtractTool.cpp
     src/editing/undo/UndoManager.cpp
     src/sculpt/ArmatureGraph.cpp
     src/sculpt/CurveSpline.cpp

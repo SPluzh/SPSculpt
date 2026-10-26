@@ -26,6 +26,7 @@ static const std::vector<HKActionInfo> s_actionInfoList = {
     { HKAction::ToolSnakeHook,    "ToolSnakeHook",    "SnakeHook",            "SNK", "Tools", false },
     { HKAction::ToolTube,         "ToolTube",         "Tube / Curve Tool",    "TUB", "Tools", false },
     { HKAction::ToolQuadDraw,     "ToolQuadDraw",     "Quad Draw (Retopo)",   "QDR", "Tools", false },
+    { HKAction::ToolExtract,      "ToolExtract",      "Mask Extract",         "EXT", "Tools", false },
 
     // Sculpting Parameters
     { HKAction::BrushIntensity,   "BrushIntensity",   "Brush Intensity",      "INT", "Parameters", true },

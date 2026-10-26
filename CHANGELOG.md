@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.15]
+- **Mask Extract Tool**: Create clothing, armor, and new parts directly from painted masks into a separate SubTool.
+- **Fill Modes**:
+  - `Shell`: Hollow layer with thickness (Front, Rim, Back).
+  - `Fill`: Watertight solid volume sealed at the base.
+  - `None`: Single-sided open surface sheet.
+- **3D Viewport Handle**: Drag the 3D handle on the mesh to adjust thickness live in the viewport.
+- **Smoothness Modes**: Smooth jagged mask edges (`Border Only`) or relax the entire extracted mesh (`All`).
+- **Auto-Creasing & PolyGroups**: Automatic PolyGroups for sides and caps, with optional sharp creases for subdivision.
+- **Live Preview & Shortcuts**: Top-center viewport HUD with quick `Enter` to Accept and `Esc` to Cancel.
+
 ## [0.3.14]
 - **Dynamic Subdivision**: Real-time non-destructive mesh smoothing preview without altering base geometry.
 - **Dual Wireframe (ZBrush Style)**: Clear visual hierarchy separating base cage edges on the smoothed surface from interior subdivision grid with adjustable `Subdiv Grid Opacity`.

@@ -9,7 +9,7 @@
 
 namespace Thickness {
 
-static void computeMiterNormals(
+void computeMiterNormals(
     const Mesh& baseMesh,
     const ThicknessParams& params,
     std::vector<glm::vec3>& outMiterNormals
@@ -72,8 +72,8 @@ static void computeMiterNormals(
                     }
                 }
                 float miterScale = 1.0f;
-                if (minDot > 0.15f) {
-                    miterScale = std::min(2.5f, 1.0f / minDot);
+                if (minDot > 0.35f) {
+                    miterScale = std::min(1.414f, 1.0f / minDot);
                 }
                 outMiterNormals[i] = vn * miterScale;
             } else {
@@ -420,7 +420,7 @@ void generateThickness(
                 // Front edge
                 uint32_t frontE = outMesh.faceEdges[f * 4 + k];
                 if (frontE < (uint32_t)outMesh.nbEdges) {
-                    if (wasCreased || (params.creaseRim && isBaseBoundary)) {
+                    if (params.creaseRim && (wasCreased || isBaseBoundary)) {
                         outMesh.edgeCreases[frontE] = 1;
                     }
                 }
@@ -428,7 +428,7 @@ void generateThickness(
                 // Back edge
                 uint32_t backE = outMesh.faceEdges[(N_f + f) * 4 + k];
                 if (backE < (uint32_t)outMesh.nbEdges) {
-                    if (wasCreased || (params.creaseRim && isBaseBoundary)) {
+                    if (params.creaseRim && (wasCreased || isBaseBoundary)) {
                         outMesh.edgeCreases[backE] = 1;
                     }
                 }
@@ -446,7 +446,7 @@ void generateThickness(
 
                     // Edge 0: along extrusion at va
                     uint32_t e0 = outMesh.faceEdges[outFIdx * 4 + 0];
-                    if (vaSharp && e0 < (uint32_t)outMesh.nbEdges) {
+                    if (params.creaseRim && vaSharp && e0 < (uint32_t)outMesh.nbEdges) {
                         outMesh.edgeCreases[e0] = 1;
                     }
 

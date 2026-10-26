@@ -6,6 +6,7 @@
 #include "common/Logger.h"
 #include "editing/TubeTool.h"
 #include "editing/QuadDrawTool.h"
+#include "editing/MaskExtractTool.h"
 #include <imgui.h>
 #include <algorithm>
 #include <cmath>
@@ -139,6 +140,7 @@ static BrushType hkActionToBrushType(HKAction act, BrushType fallback) {
         case HKAction::ToolSnakeHook: return BRUSH_SNAKEHOOK;
         case HKAction::ToolTube: return BRUSH_TUBE;
         case HKAction::ToolQuadDraw: return BRUSH_QUAD_DRAW;
+        case HKAction::ToolExtract: return BRUSH_EXTRACT;
         default: return fallback;
     }
 }
@@ -321,6 +323,17 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
                 gui.setShowSculptingPanel(true);
                 if (auto* qd = sculpt.getQuadDrawTool()) {
                     qd->onActivate(scene);
+                }
+                break;
+            }
+            case HKAction::ToolExtract: {
+                sculpt.setBrush(BRUSH_EXTRACT);
+                gui.setShowSculptingPanel(true);
+                Mesh* sel = scene.getSelected();
+                if (sel && sculpt.getMaskExtractTool()) {
+                    if (!sculpt.getMaskExtractTool()->isPreviewActive()) {
+                        sculpt.getMaskExtractTool()->startPreview(scene, sel);
+                    }
                 }
                 break;
             }

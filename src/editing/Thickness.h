@@ -63,4 +63,11 @@ namespace Thickness {
         ThicknessCache& cache
     );
 
+    // Computes miter-compensated extrusion normals for vertices
+    void computeMiterNormals(
+        const Mesh& baseMesh,
+        const ThicknessParams& params,
+        std::vector<glm::vec3>& outMiterNormals
+    );
+
 } // namespace Thickness

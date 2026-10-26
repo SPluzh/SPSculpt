@@ -15,6 +15,7 @@
 #include "editing/TubeTool.h"
 #include "editing/PrimitiveTool.h"
 #include "editing/QuadDrawTool.h"
+#include "editing/MaskExtractTool.h"
 
 
 Scene::Scene() {
@@ -103,6 +104,9 @@ void Scene::notifyMeshWillBeDeleted(Mesh* m) {
         }
         if (auto* qd = m_sculptManager->getQuadDrawTool()) {
             qd->notifyMeshDeleted(m);
+        }
+        if (auto* ext = m_sculptManager->getMaskExtractTool()) {
+            ext->notifyMeshDeleted(m);
         }
         m_sculptManager->notifyMeshDeleted(m);
     }

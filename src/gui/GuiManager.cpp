@@ -22,6 +22,7 @@
 #include "editing/TubeTool.h"
 #include "editing/PrimitiveTool.h"
 #include "editing/QuadDrawTool.h"
+#include "editing/MaskExtractTool.h"
 #include "editing/BooleanTool.h"
 #include "editing/undo/UndoManager.h"
 #include "gui/ToolOverlayTheme.h"
@@ -213,6 +214,7 @@ static const char* getBrushNameLocal(BrushType brush) {
         case BRUSH_SNAKEHOOK:   return "SnakeHook";
         case BRUSH_TUBE:        return "Tube";
         case BRUSH_QUAD_DRAW:   return "Quad Draw";
+        case BRUSH_EXTRACT:     return "Mask Extract";
     }
     return "Unknown";
 }
@@ -259,6 +261,7 @@ static const char* getBrushIconKey(BrushType brush) {
         case BRUSH_SNAKEHOOK:   return "snakehook_tool";
         case BRUSH_TUBE:        return "tubetool";
         case BRUSH_QUAD_DRAW:   return "quaddraw";
+        case BRUSH_EXTRACT:     return "extract_tool";
         default:                return nullptr;
     }
 }
@@ -1221,6 +1224,14 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     if (auto* qd = sculpt.getQuadDrawTool()) {
                         qd->onActivate(scene);
                     }
+                } else if (bType == BRUSH_EXTRACT) {
+                    m_showSculptingPanel = true;
+                    if (auto* ext = sculpt.getMaskExtractTool()) {
+                        Mesh* sel = scene.getSelected();
+                        if (sel && !ext->isPreviewActive()) {
+                            ext->startPreview(scene, sel);
+                        }
+                    }
                 }
             }
             if (selected) {
@@ -1244,6 +1255,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             winTitle = "Tube & Curve Settings###SculptingPanel";
         } else if (brushType == BRUSH_QUAD_DRAW) {
             winTitle = "Quad Draw Settings###SculptingPanel";
+        } else if (brushType == BRUSH_EXTRACT) {
+            winTitle = "Mask Extract Settings###SculptingPanel";
         } else if (isPrimActive) {
             winTitle = "Primitive Settings###SculptingPanel";
         }
@@ -2124,6 +2137,180 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
                 tubeTool->updateGeometryIfNeeded(scene);
             }
+        } else if (brushType == BRUSH_EXTRACT) {
+            MaskExtractTool* extractTool = sculpt.getMaskExtractTool();
+            if (extractTool) {
+                auto& eParams = extractTool->getParams();
+                bool isPreview = extractTool->isPreviewActive();
+
+                ImGui::TextColored(ImVec4(0.2f, 0.95f, 0.85f, 1.0f), "%s Mask Extract Tool", ICON_LC_LAYERS);
+                ImGui::TextWrapped("Extract clothing, armor, and panels from painted masks into a new solid SubTool with clean rim quads and PolyGroups.");
+                ImGui::Separator();
+
+                if (!selMesh) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "No mesh selected. Select a mesh with a painted mask.");
+                } else if (!isPreview) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Target Mesh: '%s'", selMesh->outlinerName.c_str());
+                    ImGui::TextDisabled("Paint a mask on the model, then click Start Extract (Preview).");
+                    ImGui::Spacing();
+                } else {
+                    ImGui::TextColored(ImVec4(0.2f, 0.9f, 0.4f, 1.0f), "Preview active on '%s'", selMesh->outlinerName.c_str());
+                    ImGui::TextDisabled("Drag cyan 3D handle in viewport along normal to adjust thickness live.");
+                    ImGui::Spacing();
+                }
+
+                // Fill Mode: Shell, Fill, None
+                ImGui::TextUnformatted("Fill Mode");
+                int fMode = static_cast<int>(eParams.fillMode);
+                if (ImGui::RadioButton("Shell", &fMode, 0)) {
+                    eParams.fillMode = ExtractFillMode::Shell;
+                    if (isPreview) extractTool->updateSmoothAndTopology();
+                }
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Fill", &fMode, 1)) {
+                    eParams.fillMode = ExtractFillMode::Fill;
+                    if (isPreview) extractTool->updateSmoothAndTopology();
+                }
+                ImGui::SameLine();
+                if (ImGui::RadioButton("None", &fMode, 2)) {
+                    eParams.fillMode = ExtractFillMode::None;
+                    if (isPreview) extractTool->updateSmoothAndTopology();
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Shell: Hollow 3D layer with double-walled thickness (Front + Rim + Back)\n"
+                                      "Fill: Solid watertight volume sealed across the boundary\n"
+                                      "None: Single-sided open surface without thickness or back");
+                }
+
+                bool isShell = (eParams.fillMode == ExtractFillMode::Shell);
+
+                // 1. Thickness
+                ImGui::TextUnformatted("Thickness");
+                if (ImGui::SliderFloat("##ExtractThickness", &eParams.thickness, 0.001f, 0.5f, "%.3f")) {
+                    settings.maskExtractThickness = eParams.thickness;
+                    if (isPreview) {
+                        extractTool->updateThicknessFast(eParams.thickness);
+                    }
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Extrusion thickness along surface normal (or drag handle in 3D viewport)");
+                }
+
+                // Direction / Offset
+                int offsetMode = (eParams.offset > 0.5f) ? 0 : ((eParams.offset < -0.5f) ? 2 : 1);
+                const char* offsetItems[] = { "Outward (+)", "Centered (0)", "Inward (-)" };
+                if (ImGui::Combo("Direction", &offsetMode, offsetItems, IM_ARRAYSIZE(offsetItems))) {
+                    if (offsetMode == 0) eParams.offset = 1.0f;
+                    else if (offsetMode == 1) eParams.offset = 0.0f;
+                    else eParams.offset = -1.0f;
+                    if (isPreview) extractTool->updateThicknessFast(eParams.thickness);
+                }
+
+                ImGui::Separator();
+                ImGui::TextUnformatted("Boundary & Surface Smoothness");
+
+                // Smoothness Mode: Border Only vs All
+                int sMode = (eParams.smoothMode == ExtractSmoothMode::All) ? 1 : 0;
+                if (ImGui::RadioButton("Border Only", &sMode, 0)) {
+                    eParams.smoothMode = ExtractSmoothMode::BorderOnly;
+                    if (isPreview) extractTool->updateSmoothAndTopology();
+                }
+                ImGui::SameLine();
+                if (ImGui::RadioButton("All (Surface + Border)", &sMode, 1)) {
+                    eParams.smoothMode = ExtractSmoothMode::All;
+                    if (isPreview) extractTool->updateSmoothAndTopology();
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Border Only: Smoothes only the boundary loop, preserving interior sculpt details.\nAll: Smoothes both boundary and relaxes the interior surface.");
+                }
+
+                // Smoothness Iterations
+                if (ImGui::SliderInt("Smooth Iterations", &eParams.smoothIterations, 0, 20)) {
+                    if (isPreview) extractTool->updateSmoothAndTopology();
+                }
+
+                ImGui::Separator();
+                ImGui::TextUnformatted("Rim & Topology");
+
+                // Rim Segments
+                if (!isShell) {
+                    ImGui::BeginDisabled();
+                    int dummyRim = 1;
+                    ImGui::SliderInt("Rim Segments", &dummyRim, 1, 4);
+                    ImGui::EndDisabled();
+                } else {
+                    if (ImGui::SliderInt("Rim Segments", &eParams.rimSegments, 1, 4)) {
+                        if (isPreview) extractTool->updateSmoothAndTopology();
+                    }
+                }
+
+                // Crease Rim / Border
+                const char* creaseLabel = isShell ? "Crease Rim" : "Crease Border";
+                if (eParams.fillMode == ExtractFillMode::None) {
+                    ImGui::BeginDisabled();
+                    bool falseCrease = false;
+                    ImGui::Checkbox(creaseLabel, &falseCrease);
+                    ImGui::EndDisabled();
+                } else if (eParams.smoothMode == ExtractSmoothMode::All) {
+                    ImGui::BeginDisabled();
+                    bool falseCrease = false;
+                    ImGui::Checkbox(creaseLabel, &falseCrease);
+                    ImGui::EndDisabled();
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                        ImGui::SetTooltip("Creases are disabled in 'All' mode so all edges and corners are smoothed.");
+                    }
+                } else {
+                    if (ImGui::Checkbox(creaseLabel, &eParams.creaseRim)) {
+                        if (isPreview) extractTool->updateSmoothAndTopology();
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip(isShell ? "Mark perimeter rim edges with sharp crease tags for subdivision modeling" : "Mark boundary seam between front surface and cap with sharp crease tags");
+                    }
+                }
+
+                // Mask Threshold
+                if (ImGui::SliderFloat("Mask Threshold", &eParams.maskThreshold, 0.01f, 0.99f, "%.2f")) {
+                    if (isPreview) extractTool->updateSmoothAndTopology();
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Minimum mask weight to include polygon in extraction (default: 0.5)");
+                }
+
+                ImGui::Separator();
+
+                // Action buttons
+                if (!isPreview) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.55f, 0.34f, 1.0f));
+                    if (ImGui::Button(ICON_LC_PLAY " Start Extract (Preview)", ImVec2(-1, 32))) {
+                        if (selMesh) {
+                            extractTool->startPreview(scene, selMesh);
+                        }
+                    }
+                    ImGui::PopStyleColor();
+                } else {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.65f, 0.34f, 1.0f));
+                    if (ImGui::Button(ICON_LC_CHECK " Accept (Enter)", ImVec2(ImGui::GetContentRegionAvail().x * 0.5f - 4, 32))) {
+                        extractTool->accept(scene);
+                    }
+                    ImGui::PopStyleColor();
+                    ImGui::SameLine();
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.22f, 0.22f, 1.0f));
+                    if (ImGui::Button(ICON_LC_X " Cancel (Esc)", ImVec2(-1, 32))) {
+                        extractTool->cancel(scene);
+                    }
+                    ImGui::PopStyleColor();
+
+                    if (ImGui::Button(ICON_LC_REFRESH_CW " Re-Extract from Mesh", ImVec2(-1, 26))) {
+                        if (selMesh) {
+                            extractTool->startPreview(scene, selMesh);
+                        }
+                    }
+                }
+
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::TextDisabled("Shortcuts:\n- Enter: Accept extraction\n- Esc: Cancel\n- Viewport: Drag cyan 3D handle along normal to adjust thickness");
+            }
         } else if (isPrimActive) {
             PrimitiveTool* primTool = sculpt.getPrimitiveTool();
             if (primTool) {
@@ -2850,7 +3037,20 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     ImGui::Separator();
                     ImGui::SliderInt("Iterations", &settings.maskSharpenBlurIterations, 1, 50);
                     ImGui::SliderFloat("Sharpen Factor", &settings.maskSharpenFactor, 0.1f, 5.0f, "%.2f");
-                    ImGui::SliderFloat("Extract Thickness", &settings.maskExtractThickness, -0.5f, 0.5f, "%.2f");
+
+                    ImGui::Separator();
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.85f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+                    if (ImGui::Button(ICON_LC_LAYERS " Extract Mask (Switch to Tool)...", ImVec2(-1, 28))) {
+                        sculpt.setBrush(BRUSH_EXTRACT);
+                        if (selectedMesh && sculpt.getMaskExtractTool()) {
+                            sculpt.getMaskExtractTool()->startPreview(scene, selectedMesh);
+                        }
+                    }
+                    ImGui::PopStyleColor(2);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Switch to the standalone Mask Extract Tool to extract painted mask into a solid SubTool");
+                    }
                 }
                 else if (brushType == BRUSH_MASK_GRADIENT_BLUR) {
                     Mesh* selectedMesh = scene.getSelected();
@@ -6557,6 +6757,16 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         }
     }
 
+    // Mask Extract Tool Viewport Manipulator Overlay
+    if (auto* extractTool = sculpt.getMaskExtractTool()) {
+        if (extractTool->isPreviewActive() || sculpt.getBrush() == BRUSH_EXTRACT) {
+            const Camera& camera = scene.getCamera();
+            float vW = (float)camera.getWidth();
+            float vH = (float)camera.getHeight();
+            extractTool->renderOverlay(scene, camera, vW, vH);
+        }
+    }
+
     if (sculpt.getBrush() == BRUSH_TRANSFORM) {
         Mesh* selectedMesh = scene.getSelected();
         const Camera& camera = scene.getCamera();
@@ -9266,7 +9476,8 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         } else {
             ImVec2 pMin = ImGui::GetItemRectMin();
             const char* label = (activeBrush == BRUSH_TUBE) ? ICON_LC_CYLINDER "\nTube" :
-                                (activeBrush == BRUSH_QUAD_DRAW) ? ICON_LC_SQUARE "\nQuad" : activeBrushName;
+                                (activeBrush == BRUSH_QUAD_DRAW) ? ICON_LC_SQUARE "\nQuad" :
+                                (activeBrush == BRUSH_EXTRACT) ? ICON_LC_LAYERS "\nExtract" : activeBrushName;
             ImVec2 textSz = ImGui::CalcTextSize(label);
             ImGui::GetWindowDrawList()->AddText(
                 ImVec2(pMin.x + (bigBtnSize - textSz.x) * 0.5f, pMin.y + (bigBtnSize - textSz.y) * 0.5f),
@@ -9312,6 +9523,14 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
                         m_showSculptingPanel = true;
                         if (auto* qd = sculpt.getQuadDrawTool()) {
                             qd->onActivate(scene);
+                        }
+                    } else if (bType == BRUSH_EXTRACT) {
+                        m_showSculptingPanel = true;
+                        if (auto* ext = sculpt.getMaskExtractTool()) {
+                            Mesh* sel = scene.getSelected();
+                            if (sel && !ext->isPreviewActive()) {
+                                ext->startPreview(scene, sel);
+                            }
                         }
                     }
                 }
@@ -9779,6 +9998,47 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         }
 
         if (isQuadDrawActive) {
+            ImGui::PopStyleColor(3);
+        }
+
+        // Mask Extract Tool Button
+        bool isExtractActive = (currentBrush == BRUSH_EXTRACT);
+        if (isExtractActive) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+
+        GLuint extTex = getIconTexture("extract_tool");
+        bool clickedExt = false;
+        if (extTex != 0) {
+            clickedExt = ImGui::Button("##hudVertExtractTool", ImVec2(squareSize, squareSize));
+            ImVec2 pMin = ImGui::GetItemRectMin();
+            ImVec2 pMax = ImGui::GetItemRectMax();
+            float pad = 1.0f * scale;
+            ImVec2 imgMin(pMin.x + pad, pMin.y + pad);
+            ImVec2 imgMax(pMax.x - pad, pMax.y - pad);
+            ImU32 tintCol = isExtractActive ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 240);
+            ImGui::GetWindowDrawList()->AddImage((ImTextureID)(uintptr_t)extTex, imgMin, imgMax, ImVec2(0, 1), ImVec2(1, 0), tintCol);
+        } else {
+            clickedExt = ImGui::Button(ICON_LC_LAYERS "##hudVertExtractTool", ImVec2(squareSize, squareSize));
+        }
+
+        if (clickedExt) {
+            sculpt.setBrush(BRUSH_EXTRACT);
+            m_showSculptingPanel = true;
+            Mesh* sel = scene.getSelected();
+            if (sel && sculpt.getMaskExtractTool()) {
+                if (!sculpt.getMaskExtractTool()->isPreviewActive()) {
+                    sculpt.getMaskExtractTool()->startPreview(scene, sel);
+                }
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Mask Extract Tool\nExtract clothing, armor, and panels from painted masks with adjustable thickness and live 3D manipulator");
+        }
+
+        if (isExtractActive) {
             ImGui::PopStyleColor(3);
         }
 
