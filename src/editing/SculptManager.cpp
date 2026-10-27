@@ -10,6 +10,8 @@
 #include "editing/PrimitiveTool.h"
 #include "editing/QuadDrawTool.h"
 #include "editing/MaskExtractTool.h"
+#include "editing/ComponentSelectTool.h"
+#include "editing/EdgeCreaseTool.h"
 #include "editing/ClipCurveTool.h"
 #include "editing/TrimTool.h"
 #include "editing/SplitTool.h"
@@ -203,6 +205,8 @@ SculptManager::SculptManager() {
     m_primitiveTool = std::make_unique<PrimitiveTool>(*this);
     m_quadDrawTool = std::make_unique<retopo::QuadDrawTool>(*this);
     m_maskExtractTool = std::make_unique<MaskExtractTool>(*this);
+    m_componentSelectTool = std::make_unique<ComponentSelectTool>(*this);
+    m_edgeCreaseTool = std::make_unique<EdgeCreaseTool>(*this);
     // Initialise all brushes with baseline defaults
     for (int i = 0; i < BRUSH_COUNT; ++i) {
         m_brushSettings[i].radius = 50.0f;
@@ -2525,6 +2529,28 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             return;
         }
 
+        if (m_currentBrush == BRUSH_COMPONENT_SELECT) {
+            if (m_componentSelectTool) {
+                SDL_Keymod mod = SDL_GetModState();
+                bool handled = m_componentSelectTool->handleMouseDown(scene, camera, (float)mouseX, (float)mouseY, (mod & KMOD_CTRL) != 0, (mod & KMOD_SHIFT) != 0, event.button.button);
+                if (!handled && m_cameraController.isNavigationEvent(event, camera.getRef2DMode())) {
+                    m_cameraController.handleEvent(event, camera, scene.getMeshes(), true, &scene, m_renderer);
+                }
+            }
+            return;
+        }
+
+        if (m_currentBrush == BRUSH_EDGE_CREASE) {
+            if (m_edgeCreaseTool) {
+                SDL_Keymod mod = SDL_GetModState();
+                bool handled = m_edgeCreaseTool->handleMouseDown(scene, camera, (float)mouseX, (float)mouseY, (mod & KMOD_CTRL) != 0, (mod & KMOD_SHIFT) != 0, event.button.button);
+                if (!handled && m_cameraController.isNavigationEvent(event, camera.getRef2DMode())) {
+                    m_cameraController.handleEvent(event, camera, scene.getMeshes(), true, &scene, m_renderer);
+                }
+            }
+            return;
+        }
+
         // Left button:
         if (event.button.button == SDL_BUTTON_LEFT) {
             if (camera.getRefDragEnabled()) {
@@ -3427,6 +3453,16 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             return;
         }
 
+        if (m_currentBrush == BRUSH_COMPONENT_SELECT && m_componentSelectTool) {
+            m_componentSelectTool->handleMouseUp(scene, camera, event.button.button);
+            return;
+        }
+
+        if (m_currentBrush == BRUSH_EDGE_CREASE && m_edgeCreaseTool) {
+            m_edgeCreaseTool->handleMouseUp(scene, camera, event.button.button);
+            return;
+        }
+
         if (m_currentBrush == BRUSH_MASK_GRADIENT_BLUR && mesh && event.button.button == SDL_BUTTON_LEFT) {
             if (m_gradIsDrawing) {
                 float dist = glm::distance(m_gradPointA, m_gradPointB);
@@ -4244,6 +4280,26 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             return;
         }
 
+        if (m_currentBrush == BRUSH_COMPONENT_SELECT && m_componentSelectTool) {
+            if (m_cameraController.isDragging()) {
+                m_cameraController.handleEvent(event, camera, scene.getMeshes(), true, &scene, m_renderer);
+            } else {
+                SDL_Keymod mod = SDL_GetModState();
+                m_componentSelectTool->handleMouseMove(scene, camera, (float)mouseX, (float)mouseY, (mod & KMOD_CTRL) != 0, (mod & KMOD_SHIFT) != 0);
+            }
+            return;
+        }
+
+        if (m_currentBrush == BRUSH_EDGE_CREASE && m_edgeCreaseTool) {
+            if (m_cameraController.isDragging()) {
+                m_cameraController.handleEvent(event, camera, scene.getMeshes(), true, &scene, m_renderer);
+            } else {
+                SDL_Keymod mod = SDL_GetModState();
+                m_edgeCreaseTool->handleMouseMove(scene, camera, (float)mouseX, (float)mouseY, (mod & KMOD_CTRL) != 0, (mod & KMOD_SHIFT) != 0);
+            }
+            return;
+        }
+
         if (mesh && mesh->isTube && mesh->tubeData != nullptr && m_tubeTool && !m_isSculpting && !m_cameraController.isDragging()) {
             if (!m_tubeTool->isInteracting() && m_tubeTool->getActiveTubeMesh() != mesh) {
                 m_tubeTool->loadFromMesh(mesh);
@@ -4523,7 +4579,7 @@ void SculptManager::processFrame(Scene& scene) {
     }
 
     bool isRefDragMode = (scene.getCamera().getRefDragEnabled() || (scene.getCameraRight() && scene.getCameraRight()->getRefDragEnabled())) && scene.areAnyReferenceImagesVisible();
-    if (isRefDragMode || m_cameraController.isDragging() || m_currentBrush == BRUSH_MEASURE || m_currentBrush == BRUSH_DIVIDER || m_currentBrush == BRUSH_TRANSFORM || m_currentBrush == BRUSH_POSE || m_currentBrush == BRUSH_TUBE || m_currentBrush == BRUSH_QUAD_DRAW || m_currentBrush == BRUSH_EXTRACT) {
+    if (isRefDragMode || m_cameraController.isDragging() || m_currentBrush == BRUSH_MEASURE || m_currentBrush == BRUSH_DIVIDER || m_currentBrush == BRUSH_TRANSFORM || m_currentBrush == BRUSH_POSE || m_currentBrush == BRUSH_TUBE || m_currentBrush == BRUSH_QUAD_DRAW || m_currentBrush == BRUSH_EXTRACT || m_currentBrush == BRUSH_COMPONENT_SELECT || m_currentBrush == BRUSH_EDGE_CREASE) {
         m_cursor.hide();
     } else {
         // Resolve dynamic brush modifier swap (Shift->Smooth, Ctrl->Mask, Ctrl+Shift->Visibility)
@@ -4534,7 +4590,7 @@ void SculptManager::processFrame(Scene& scene) {
             m_armatureTool->preUpdate(scene, scene.getCamera(), (float)m_rawMouseX, (float)m_rawMouseY, (mod & KMOD_CTRL) != 0, (mod & KMOD_ALT) != 0);
         }
         bool isMayaNav = m_hotkeyManager ? m_hotkeyManager->getModifierBehavior().ctrlAltInvertsBrush : (scene.getCamera().getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
-        if (m_currentBrush != BRUSH_TUBE && m_currentBrush != BRUSH_POSE && m_currentBrush != BRUSH_TRANSFORM && m_currentBrush != BRUSH_QUAD_DRAW && m_currentBrush != BRUSH_EXTRACT) {
+        if (m_currentBrush != BRUSH_TUBE && m_currentBrush != BRUSH_POSE && m_currentBrush != BRUSH_TRANSFORM && m_currentBrush != BRUSH_QUAD_DRAW && m_currentBrush != BRUSH_EXTRACT && m_currentBrush != BRUSH_COMPONENT_SELECT && m_currentBrush != BRUSH_EDGE_CREASE) {
             if ((mod & KMOD_CTRL) && (mod & KMOD_SHIFT)) {
                 activeBrush = BRUSH_VISIBILITY;
             } else if (mod & KMOD_SHIFT) {

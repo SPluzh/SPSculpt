@@ -23,6 +23,9 @@
 #include "editing/PrimitiveTool.h"
 #include "editing/QuadDrawTool.h"
 #include "editing/MaskExtractTool.h"
+#include "editing/ComponentSelectTool.h"
+#include "editing/EdgeCreaseTool.h"
+#include "editing/ComponentOps.h"
 #include "editing/BooleanTool.h"
 #include "editing/undo/UndoManager.h"
 #include "gui/ToolOverlayTheme.h"
@@ -215,6 +218,8 @@ static const char* getBrushNameLocal(BrushType brush) {
         case BRUSH_TUBE:        return "Tube";
         case BRUSH_QUAD_DRAW:   return "Quad Draw";
         case BRUSH_EXTRACT:     return "Mask Extract";
+        case BRUSH_COMPONENT_SELECT: return "Component Select";
+        case BRUSH_EDGE_CREASE: return "Edge Crease";
     }
     return "Unknown";
 }
@@ -1231,6 +1236,16 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         if (sel && !ext->isPreviewActive()) {
                             ext->startPreview(scene, sel);
                         }
+                    }
+                } else if (bType == BRUSH_COMPONENT_SELECT) {
+                    m_showComponentPanel = true;
+                    if (auto* selTool = sculpt.getComponentSelectTool()) {
+                        selTool->onActivate(scene);
+                    }
+                } else if (bType == BRUSH_EDGE_CREASE) {
+                    m_showComponentPanel = true;
+                    if (auto* crTool = sculpt.getEdgeCreaseTool()) {
+                        crTool->onActivate(scene);
                     }
                 }
             }
@@ -2651,7 +2666,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                  brushType == BRUSH_TRANSFORM || brushType == BRUSH_ARMATURE_SPHERES ||
                                  brushType == BRUSH_BRUSH || brushType == BRUSH_POLYGROUP ||
                                  brushType == BRUSH_TRIM || brushType == BRUSH_SPLIT || brushType == BRUSH_POSE ||
-                                 brushType == BRUSH_SNAKEHOOK || brushType == BRUSH_QUAD_DRAW);
+                                 brushType == BRUSH_SNAKEHOOK || brushType == BRUSH_QUAD_DRAW ||
+                                 brushType == BRUSH_COMPONENT_SELECT || brushType == BRUSH_EDGE_CREASE);
 
         if (hasSpecialParams) {
             if (ImGui::CollapsingHeader("Tool Specific Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -3673,6 +3689,12 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         }
                     }
                 }
+                else if (brushType == BRUSH_COMPONENT_SELECT || brushType == BRUSH_EDGE_CREASE) {
+                    ImGui::TextDisabled("Component tools are in the dedicated window.");
+                    if (ImGui::Button("Open Component Tools Window", ImVec2(-1, 26.0f))) {
+                        m_showComponentPanel = true;
+                    }
+                }
             }
         }
         } // end of else (standard sculpting settings)
@@ -4051,6 +4073,11 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             }
         }
         ImGui::End();
+    }
+
+    // 3.55 Component Tools Panel
+    if (m_showComponentPanel) {
+        drawComponentToolsPanel(sculpt, scene, renderer);
     }
 
     // 3.6 Sculpt Layers Panel
@@ -6767,6 +6794,27 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         }
     }
 
+    // Component Select Tool Viewport Overlay (also visible while Transforming components)
+    if (sculpt.getBrush() == BRUSH_COMPONENT_SELECT ||
+        (sculpt.getBrush() == BRUSH_TRANSFORM && sculpt.getSelectionManager().hasSelection())) {
+        if (auto* selTool = sculpt.getComponentSelectTool()) {
+            const Camera& camera = scene.getCamera();
+            float vW = (float)camera.getWidth();
+            float vH = (float)camera.getHeight();
+            selTool->renderOverlay(scene, camera, vW, vH);
+        }
+    }
+
+    // Edge Crease Tool Viewport Overlay
+    if (sculpt.getBrush() == BRUSH_EDGE_CREASE) {
+        if (auto* creaseTool = sculpt.getEdgeCreaseTool()) {
+            const Camera& camera = scene.getCamera();
+            float vW = (float)camera.getWidth();
+            float vH = (float)camera.getHeight();
+            creaseTool->renderOverlay(scene, camera, vW, vH);
+        }
+    }
+
     if (sculpt.getBrush() == BRUSH_TRANSFORM) {
         Mesh* selectedMesh = scene.getSelected();
         const Camera& camera = scene.getCamera();
@@ -6786,32 +6834,44 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             glm::mat4 view = camera.getViewMatrix();
             glm::mat4 proj = camera.getProjMatrix();
             glm::mat4 matrix = selectedMesh->matrix;
+            bool hasCompSelection = sculpt.getSelectionManager().hasSelection();
 
             static bool wasUsingGizmo = false;
             static bool draggedPivot = false;
             static glm::mat4 pivotStartMatrix = glm::mat4(1.0f);
             static glm::mat4 pivotStartLocalTransform = glm::mat4(1.0f);
             static glm::vec3 transformPivotStartLocal = glm::vec3(0.0f);
+            static glm::vec3 compCentroidStartLocal = glm::vec3(0.0f);
             static std::vector<float> transformStartVerts;
             static std::vector<float> transformStartNormals;
             static bool transformHasMask = false;
             static std::future<void> transformHistoryFuture;
 
-            bool isUsingGizmo = ImGuizmo::IsUsing();
+            glm::vec3 compCentroidLocal(0.0f);
+            if (hasCompSelection) {
+                if (!wasUsingGizmo) {
+                    compCentroidLocal = sculpt.getSelectionManager().computeCentroidLocal(*selectedMesh);
+                    compCentroidStartLocal = compCentroidLocal;
+                } else {
+                    compCentroidLocal = compCentroidStartLocal;
+                }
+                matrix[3] = selectedMesh->matrix * glm::vec4(compCentroidLocal, 1.0f);
+            }
+
             bool isMovingPivot = m_editPivot || ImGui::GetIO().KeyAlt;
 
-            if (isUsingGizmo && !wasUsingGizmo) {
+            auto onStartDrag = [&]() {
                 auto tStart = std::chrono::high_resolution_clock::now();
 
-                pivotStartMatrix = selectedMesh->matrix;
-                draggedPivot = isMovingPivot;
+                pivotStartMatrix = hasCompSelection ? matrix : selectedMesh->matrix;
+                draggedPivot = isMovingPivot && !hasCompSelection;
                 if (selectedMesh->isPrimitive && selectedMesh->primitiveData) {
                     pivotStartLocalTransform = selectedMesh->primitiveData->localTransform;
                 }
 
                 transformHasMask = false;
                 auto tMask0 = std::chrono::high_resolution_clock::now();
-                if (!draggedPivot && !selectedMesh->isPrimitive && !selectedMesh->materials.empty()) {
+                if (!hasCompSelection && !draggedPivot && !selectedMesh->isPrimitive && !selectedMesh->materials.empty()) {
                     for (int i = 0; i < selectedMesh->nbVerts; ++i) {
                         if (selectedMesh->materials[i * 3 + 2] < 0.999f) {
                             transformHasMask = true;
@@ -6822,7 +6882,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 double maskScanMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tMask0).count();
 
                 double vertCopyMs = 0.0;
-                if (draggedPivot || transformHasMask || (sculpt.getUseSym() && !selectedMesh->isPrimitive)) {
+                if (hasCompSelection || draggedPivot || transformHasMask || (sculpt.getUseSym() && !selectedMesh->isPrimitive)) {
                     auto tCopy0 = std::chrono::high_resolution_clock::now();
                     transformStartVerts = selectedMesh->verts;
                     transformStartNormals = selectedMesh->normals;
@@ -6840,6 +6900,11 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 sculpt_log("[TRANSFORM TOOL PROFILE] Drag Start | Mesh: '%s' (ID: %u, Verts: %d) | Total: %.2fms | BufferCopy: %.2fms | MaskScan: %.2fms (HasMask: %d, Sym: %d, DraggedPivot: %d)\n",
                           selectedMesh->outlinerName.c_str(), selectedMesh->m_id, selectedMesh->nbVerts,
                           totalStartMs, vertCopyMs, maskScanMs, transformHasMask ? 1 : 0, sculpt.getUseSym() ? 1 : 0, isMovingPivot ? 1 : 0);
+            };
+
+            bool isUsingGizmo = ImGuizmo::IsUsing();
+            if (isUsingGizmo && !wasUsingGizmo) {
+                onStartDrag();
             }
 
             ImGuizmo::OPERATION op = ImGuizmo::UNIVERSAL;
@@ -6867,9 +6932,38 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 glm::value_ptr(view), glm::value_ptr(proj),
                 op, ImGuizmo::LOCAL, glm::value_ptr(matrix)
             )) {
+                if (!wasUsingGizmo || (hasCompSelection && transformStartVerts.empty())) {
+                    onStartDrag();
+                }
                 auto tFrameStart = std::chrono::high_resolution_clock::now();
 
-                if (draggedPivot) {
+                if (hasCompSelection) {
+                    if (!transformStartVerts.empty() && transformStartVerts.size() == selectedMesh->verts.size()) {
+                        glm::mat4 deltaLocal = glm::inverse(pivotStartMatrix) * matrix;
+                        glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(deltaLocal)));
+                        auto selVerts = sculpt.getSelectionManager().getEffectiveVertexIndices(*selectedMesh);
+
+                        for (uint32_t vIdx : selVerts) {
+                            if (vIdx >= (uint32_t)selectedMesh->nbVerts) continue;
+                            glm::vec3 vStart(transformStartVerts[vIdx * 3], transformStartVerts[vIdx * 3 + 1], transformStartVerts[vIdx * 3 + 2]);
+                            glm::vec3 vRel = vStart - compCentroidStartLocal;
+                            glm::vec3 vNew = glm::vec3(deltaLocal * glm::vec4(vRel, 1.0f)) + compCentroidStartLocal;
+
+                            selectedMesh->verts[vIdx * 3]     = vNew.x;
+                            selectedMesh->verts[vIdx * 3 + 1] = vNew.y;
+                            selectedMesh->verts[vIdx * 3 + 2] = vNew.z;
+
+                            glm::vec3 nStart(transformStartNormals[vIdx * 3], transformStartNormals[vIdx * 3 + 1], transformStartNormals[vIdx * 3 + 2]);
+                            glm::vec3 nNew = glm::normalize(normalMatrix * nStart);
+                            selectedMesh->normals[vIdx * 3]     = nNew.x;
+                            selectedMesh->normals[vIdx * 3 + 1] = nNew.y;
+                            selectedMesh->normals[vIdx * 3 + 2] = nNew.z;
+                        }
+                        selectedMesh->isVertexDirty = true;
+                        selectedMesh->dirtyVertMin = 0;
+                        selectedMesh->dirtyVertMax = selectedMesh->nbVerts - 1;
+                    }
+                } else if (draggedPivot) {
                     glm::mat4 deltaLocalMatrix = glm::inverse(pivotStartMatrix) * matrix;
                     glm::mat4 deltaLocalMatrixInv = glm::inverse(deltaLocalMatrix);
                     selectedMesh->matrix = matrix;
@@ -7058,7 +7152,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             sculpt_log("[TRANSFORM TOOL PROFILE] Vert Deform Drag Frame | Mesh: '%s' (Verts: %d) | Total: %.2fms | Setup: %.2fms | VertLoop: %.2fms (HasMask: %d, Sym: %d)\n",
                                       selectedMesh->outlinerName.c_str(), nbVerts, totalFrameMs, setupMs, loopMs, transformHasMask ? 1 : 0, useSymTransform ? 1 : 0);
                         }
-                    } else {
+                    } else if (!hasCompSelection) {
                         selectedMesh->matrix = matrix;
                         double totalFrameMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tFrameStart).count();
                         if (totalFrameMs > 0.5) {
@@ -7069,7 +7163,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 }
             }
 
-            if (!isUsingGizmo && wasUsingGizmo) {
+            bool isUsingGizmoNow = ImGuizmo::IsUsing();
+            if (!isUsingGizmoNow && wasUsingGizmo) {
                 auto tEndStart = std::chrono::high_resolution_clock::now();
                 double applyVertsMs = 0.0;
                 double postInitMs = 0.0;
@@ -7080,7 +7175,48 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 meshUndoState.meshId = selectedMesh->getID();
                 meshUndoState.beforeMatrix = pivotStartMatrix;
 
-                if (draggedPivot) {
+                if (hasCompSelection) {
+                    auto tPI = std::chrono::high_resolution_clock::now();
+                    selectedMesh->vertProxy = selectedMesh->verts;
+                    selectedMesh->invalidateLocalRadius();
+                    selectedMesh->bumpVertsGeneration();
+                    if (!selectedMesh->faceNormals.empty() && !selectedMesh->faceBoxes.empty() && !selectedMesh->faceCenters.empty()) {
+                        updateFaceNormalsAndBoxes(
+                            selectedMesh->verts.data(), selectedMesh->nbVerts,
+                            selectedMesh->faces.data(), selectedMesh->nbFaces,
+                            nullptr, -1,
+                            selectedMesh->faceNormals.data(),
+                            selectedMesh->faceBoxes.data(),
+                            selectedMesh->faceCenters.data()
+                        );
+                        if (!selectedMesh->vrfStartCount.empty() && !selectedMesh->vertRingFace.empty()) {
+                            updateVertexNormals(
+                                nullptr, -1, selectedMesh->nbVerts,
+                                selectedMesh->vrfStartCount.data(),
+                                selectedMesh->vertRingFace.data(),
+                                selectedMesh->faceNormals.data(),
+                                selectedMesh->normals.data()
+                            );
+                        }
+                        selectedMesh->octree.update(
+                            selectedMesh->verts.data(), selectedMesh->nbVerts,
+                            selectedMesh->faces.data(), selectedMesh->nbFaces,
+                            selectedMesh->faceBoxes.data(),
+                            nullptr, -1
+                        );
+                    } else {
+                        selectedMesh->postInit();
+                    }
+                    postInitMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tPI).count();
+                    meshUndoState.hasVertexDeformation = true;
+                    meshUndoState.beforeMatrix = selectedMesh->matrix;
+                    meshUndoState.afterMatrix = selectedMesh->matrix;
+                    meshUndoState.beforeVerts = std::move(transformStartVerts);
+                    meshUndoState.afterVerts = selectedMesh->verts;
+                    meshUndoState.beforeNormals = std::move(transformStartNormals);
+                    meshUndoState.afterNormals = selectedMesh->normals;
+                    selectedMesh->isDirty = true;
+                } else if (draggedPivot) {
                     if (selectedMesh->editMatrix != glm::mat4(1.0f)) {
                         auto tV0 = std::chrono::high_resolution_clock::now();
 #pragma omp parallel for schedule(static) if(selectedMesh->nbVerts > 2000)
@@ -7231,10 +7367,10 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                           selectedMesh->outlinerName.c_str(), selectedMesh->m_id, selectedMesh->nbVerts,
                           totalReleaseMs, applyVertsMs, postInitMs, bakeScaleMs, undoMemBytes / 1024.0f);
             }
-            wasUsingGizmo = isUsingGizmo;
+            wasUsingGizmo = isUsingGizmoNow;
 
             // Draw floating pivot lock button near the gizmo center
-            glm::vec3 pivotWorldPos = glm::vec3(selectedMesh->matrix[3]);
+            glm::vec3 pivotWorldPos = hasCompSelection ? glm::vec3(matrix[3]) : glm::vec3(selectedMesh->matrix[3]);
             glm::vec3 screenPos = camera.project(pivotWorldPos);
 
             if (screenPos.z >= 0.0f && screenPos.z <= 1.0f &&
@@ -8197,6 +8333,7 @@ bool GuiManager::saveSettings(IniFile& ini) {
     ini.setBool(panelSec, "showPreferencesPanel", m_showPreferencesPanel);
     ini.setBool(panelSec, "showHotkeyHUD", m_showHotkeyHUD);
     ini.setBool(panelSec, "showCameraBookmarksPanel", m_showCameraBookmarksPanel);
+    ini.setBool(panelSec, "showComponentPanel", m_showComponentPanel);
 
     std::string genSec = "GuiGeneral";
     ini.setFloat(genSec, "uiScaleMultiplier", m_uiScale);
@@ -8263,6 +8400,7 @@ bool GuiManager::loadSettings(const IniFile& ini) {
         if (ini.hasKey(panelSec, "showPreferencesPanel")) m_showPreferencesPanel = ini.getBool(panelSec, "showPreferencesPanel");
         if (ini.hasKey(panelSec, "showHotkeyHUD")) m_showHotkeyHUD = ini.getBool(panelSec, "showHotkeyHUD");
         if (ini.hasKey(panelSec, "showCameraBookmarksPanel")) m_showCameraBookmarksPanel = ini.getBool(panelSec, "showCameraBookmarksPanel");
+        if (ini.hasKey(panelSec, "showComponentPanel")) m_showComponentPanel = ini.getBool(panelSec, "showComponentPanel");
     }
 
     std::string genSec = "GuiGeneral";
@@ -9394,6 +9532,7 @@ void GuiManager::drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRend
         ImGui::MenuItem("Sculpting Settings", nullptr, &m_showSculptingPanel);
         ImGui::MenuItem("Scene Outliner", "F1", &m_showScenePanel);
         ImGui::MenuItem("Topology & Remesh", nullptr, &m_showTopologyPanel);
+        ImGui::MenuItem("Component Tools", nullptr, &m_showComponentPanel);
         ImGui::MenuItem("Sculpt Layers", nullptr, &m_showLayersPanel);
         ImGui::MenuItem("Multiresolution & Dynamic Subdiv", nullptr, &m_showMultiresPanel);
         ImGui::MenuItem("Camera Bookmarks", "F2", &m_showCameraBookmarksPanel);
@@ -9477,7 +9616,9 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImVec2 pMin = ImGui::GetItemRectMin();
             const char* label = (activeBrush == BRUSH_TUBE) ? ICON_LC_CYLINDER "\nTube" :
                                 (activeBrush == BRUSH_QUAD_DRAW) ? ICON_LC_SQUARE "\nQuad" :
-                                (activeBrush == BRUSH_EXTRACT) ? ICON_LC_LAYERS "\nExtract" : activeBrushName;
+                                (activeBrush == BRUSH_EXTRACT) ? ICON_LC_LAYERS "\nExtract" :
+                                (activeBrush == BRUSH_COMPONENT_SELECT) ? ICON_LC_SQUARE_DASHED_MOUSE_POINTER "\nSelect" :
+                                (activeBrush == BRUSH_EDGE_CREASE) ? ICON_LC_SQUARE_SPLIT_VERTICAL "\nCrease" : activeBrushName;
             ImVec2 textSz = ImGui::CalcTextSize(label);
             ImGui::GetWindowDrawList()->AddText(
                 ImVec2(pMin.x + (bigBtnSize - textSz.x) * 0.5f, pMin.y + (bigBtnSize - textSz.y) * 0.5f),
@@ -10039,6 +10180,52 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         }
 
         if (isExtractActive) {
+            ImGui::PopStyleColor(3);
+        }
+
+        // Component Selection Tool Button
+        bool isCompSelectActive = (currentBrush == BRUSH_COMPONENT_SELECT);
+        if (isCompSelectActive) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+
+        bool clickedCompSel = ImGui::Button(ICON_LC_SQUARE_DASHED_MOUSE_POINTER "##hudVertCompSelectTool", ImVec2(squareSize, squareSize));
+        if (clickedCompSel) {
+            sculpt.setBrush(BRUSH_COMPONENT_SELECT);
+            m_showComponentPanel = true;
+            if (auto* selTool = sculpt.getComponentSelectTool()) {
+                selTool->onActivate(scene);
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Component Selection Tool\nSelect vertices, edges, loops, and polygons for editing or transformation");
+        }
+        if (isCompSelectActive) {
+            ImGui::PopStyleColor(3);
+        }
+
+        // Edge Crease Tool Button
+        bool isCreaseToolActive = (currentBrush == BRUSH_EDGE_CREASE);
+        if (isCreaseToolActive) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+
+        bool clickedEdgeCrease = ImGui::Button(ICON_LC_SQUARE_SPLIT_VERTICAL "##hudVertEdgeCreaseTool", ImVec2(squareSize, squareSize));
+        if (clickedEdgeCrease) {
+            sculpt.setBrush(BRUSH_EDGE_CREASE);
+            m_showComponentPanel = true;
+            if (auto* crTool = sculpt.getEdgeCreaseTool()) {
+                crTool->onActivate(scene);
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Edge Crease Tool\nTurn on/off creases on selected edges and interactively adjust Crease Level for Dynamic Subdivision");
+        }
+        if (isCreaseToolActive) {
             ImGui::PopStyleColor(3);
         }
 
@@ -10772,6 +10959,12 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::SameLine();
             ImGui::TextUnformatted("Color & Alpha");
 
+            ImGui::Separator();
+            bool showCreasesPopup = renderer.getShowCreaseLines();
+            if (ImGui::Checkbox("Show Crease Lines (Pink)", &showCreasesPopup)) {
+                renderer.setShowCreaseLines(showCreasesPopup);
+            }
+
             ImGui::EndPopup();
         }
 
@@ -10803,6 +10996,26 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle PolyGroups Display");
         if (showPolyGroups) {
+            ImGui::PopStyleColor(3);
+        }
+
+        ImGui::SameLine();
+
+        // Crease Lines Display Toggle
+        bool showCreases = renderer.getShowCreaseLines();
+        if (showCreases) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.15f, 0.55f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.25f, 0.65f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.70f, 0.10f, 0.45f, 1.0f));
+        }
+        bool clickedCreases = ImGui::Button(ICON_LC_SQUARE_SPLIT_VERTICAL "##hudCreases", squareBtn);
+        if (clickedCreases) {
+            renderer.setShowCreaseLines(!showCreases);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(showCreases ? "Hide Crease Lines (Pink Dashed Lines)" : "Show Crease Lines (Pink Dashed Lines)");
+        }
+        if (showCreases) {
             ImGui::PopStyleColor(3);
         }
 
@@ -14780,6 +14993,416 @@ void GuiManager::drawRecentFilesWindow(Scene& scene, SculptManager* sculpt, Rece
 
     if (!open) m_showRecentFilesWindow = false;
 }
+
+void GuiManager::drawComponentToolsPanel(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer) {
+    float scale = getUiScale();
+    ImGui::SetNextWindowPos({160.0f * scale, 350.0f * scale}, ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize({330.0f * scale, 640.0f * scale}, ImGuiCond_FirstUseEver);
+
+    if (ImGui::Begin(ICON_LC_SQUARE_DASHED_MOUSE_POINTER " Component Tools###ComponentPanel", &m_showComponentPanel)) {
+        Mesh* mesh = scene.getSelected();
+        if (!mesh) {
+            ImGui::TextDisabled("No mesh selected");
+            ImGui::End();
+            return;
+        }
+
+        auto& selMgr = sculpt.getSelectionManager();
+        auto* selTool = sculpt.getComponentSelectTool();
+        auto* creaseTool = sculpt.getEdgeCreaseTool();
+
+        ImGui::TextColored(ImVec4(0.2f, 0.95f, 0.85f, 1.0f), "%s %s", ICON_LC_BOX, mesh->outlinerName.c_str());
+        ImGui::TextDisabled("Verts: %d | Edges: %d | Faces: %d", mesh->nbVerts, mesh->nbEdges, mesh->nbFaces);
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // 1. Component Selection Mode: [ Points ] [ Edges ] [ Faces ]
+        ImGui::TextUnformatted("Selection Mode");
+        ComponentMode currentMode = selMgr.getMode();
+        float availW = ImGui::GetContentRegionAvail().x;
+        float modeBtnW = (availW - ImGui::GetStyle().ItemSpacing.x * 2.0f) / 3.0f;
+
+        auto pushModeStyle = [](bool active) {
+            if (active) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.2f, 0.7f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.3f, 0.9f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
+            }
+        };
+
+        pushModeStyle(currentMode == ComponentMode::Vertex);
+        if (ImGui::Button("Points", ImVec2(modeBtnW, 28.0f * scale))) {
+            selMgr.setMode(ComponentMode::Vertex);
+        }
+        ImGui::PopStyleColor(3);
+
+        ImGui::SameLine();
+        pushModeStyle(currentMode == ComponentMode::Edge);
+        if (ImGui::Button("Edges", ImVec2(modeBtnW, 28.0f * scale))) {
+            selMgr.setMode(ComponentMode::Edge);
+        }
+        ImGui::PopStyleColor(3);
+
+        ImGui::SameLine();
+        pushModeStyle(currentMode == ComponentMode::Face);
+        if (ImGui::Button("Faces", ImVec2(modeBtnW, 28.0f * scale))) {
+            selMgr.setMode(ComponentMode::Face);
+        }
+        ImGui::PopStyleColor(3);
+
+        ImGui::Spacing();
+
+        // 2. Active Tool Switcher: [ Select ] [ Transform ] [ Crease ]
+        ImGui::TextUnformatted("Active Tool");
+        BrushType curBrush = sculpt.getBrush();
+        float toolBtnW = (availW - ImGui::GetStyle().ItemSpacing.x * 2.0f) / 3.0f;
+
+        auto pushToolStyle = [](bool active) {
+            if (active) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.45f, 0.72f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.55f, 0.85f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.12f, 0.35f, 0.60f, 1.0f));
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.18f, 0.18f, 0.7f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.28f, 0.28f, 0.28f, 0.9f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.14f, 0.14f, 0.14f, 1.0f));
+            }
+        };
+
+        pushToolStyle(curBrush == BRUSH_COMPONENT_SELECT);
+        if (ImGui::Button(ICON_LC_SQUARE_DASHED_MOUSE_POINTER " Select", ImVec2(toolBtnW, 26.0f * scale))) {
+            sculpt.setBrush(BRUSH_COMPONENT_SELECT);
+            if (selTool) selTool->onActivate(scene);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Select components (Click, Shift+Click, Ctrl+Click, Marquee drag)");
+        }
+        ImGui::PopStyleColor(3);
+
+        ImGui::SameLine();
+        pushToolStyle(curBrush == BRUSH_TRANSFORM);
+        if (ImGui::Button(ICON_LC_MOVE " Transform", ImVec2(toolBtnW, 26.0f * scale))) {
+            sculpt.setBrush(BRUSH_TRANSFORM);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Transform selected components with Local gizmo centered at selection");
+        }
+        ImGui::PopStyleColor(3);
+
+        ImGui::SameLine();
+        pushToolStyle(curBrush == BRUSH_EDGE_CREASE);
+        if (ImGui::Button(ICON_LC_SQUARE_SPLIT_VERTICAL " Crease", ImVec2(toolBtnW, 26.0f * scale))) {
+            sculpt.setBrush(BRUSH_EDGE_CREASE);
+            if (creaseTool) creaseTool->onActivate(scene);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Crease tool (Interactive drag in viewport to adjust Crease Level)");
+        }
+        ImGui::PopStyleColor(3);
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // 3. Selection Actions: [ Select All ] [ Clear ] [ Invert ]
+        ImGui::TextUnformatted("Selection Actions");
+        float actBtnW = (availW - ImGui::GetStyle().ItemSpacing.x * 2.0f) / 3.0f;
+        if (ImGui::Button("Select All", ImVec2(actBtnW, 24.0f * scale))) {
+            selMgr.selectAll(*mesh);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Clear", ImVec2(actBtnW, 24.0f * scale))) {
+            selMgr.clear();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Invert", ImVec2(actBtnW, 24.0f * scale))) {
+            selMgr.invertSelection(*mesh);
+        }
+
+        // Loop / Ring buttons for Edges
+        if (currentMode == ComponentMode::Edge) {
+            float halfW = (availW - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+            if (ImGui::Button("Select Edge Loop", ImVec2(halfW, 26.0f * scale))) {
+                selMgr.expandCurrentEdgeLoops(*mesh);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Expand current edge selection along quad edge loops (or double-click an edge)");
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Select Edge Ring", ImVec2(halfW, 26.0f * scale))) {
+                selMgr.expandCurrentEdgeRings(*mesh);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Expand current edge selection along quad edge rings across parallel quads");
+            }
+        }
+
+        // Stats
+        size_t nV = selMgr.getSelectedVertexCount();
+        size_t nE = selMgr.getSelectedEdgeCount();
+        size_t nF = selMgr.getSelectedFaceCount();
+        ImGui::TextDisabled("Selected: %zu pts, %zu edges, %zu faces", nV, nE, nF);
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // 4. Component Modeling Operations (Extrude, Bevel, Delete)
+        ImGui::TextColored(ImVec4(0.2f, 0.95f, 0.85f, 1.0f), ICON_LC_HAMMER " Modeling Operations");
+        bool hasAnySel = selMgr.hasSelection();
+
+        static float s_extrudeOffset = 0.5f;
+        static float s_bevelWidth = 0.2f;
+        static float s_bevelHeight = 0.0f;
+
+        // Auto-scale defaults once based on mesh size
+        static uint32_t s_lastMeshId = 0;
+        if (s_lastMeshId != mesh->getID()) {
+            s_lastMeshId = mesh->getID();
+            float r = mesh->computeLocalRadius();
+            if (r > 0.01f) {
+                s_extrudeOffset = r * 0.08f;
+                s_bevelWidth = 0.2f;
+                s_bevelHeight = 0.0f;
+            }
+        }
+
+        if (!hasAnySel) ImGui::BeginDisabled();
+
+        // Extrude Row
+        ImGui::PushItemWidth(100.0f * scale);
+        ImGui::DragFloat("##extrudeOffset", &s_extrudeOffset, 0.05f, -100.0f, 100.0f, "Offset: %.2f");
+        ImGui::PopItemWidth();
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.08f, 0.52f, 0.40f, 0.85f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.12f, 0.65f, 0.50f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.05f, 0.40f, 0.30f, 1.0f));
+        if (ImGui::Button(ICON_LC_LAYERS " Extrude", ImVec2(-1, 24.0f * scale))) {
+            scene.pushHistoryState();
+            if (ComponentOps::extrudeSelection(*mesh, selMgr, s_extrudeOffset)) {
+                GuiManager::showToast("Extruded Selection", 1.5f);
+            }
+        }
+        ImGui::PopStyleColor(3);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Extrude selected faces or edges along normal with side walls");
+        }
+
+        // Bevel Row
+        ImGui::PushItemWidth(60.0f * scale);
+        ImGui::DragFloat("##bevelWidth", &s_bevelWidth, 0.01f, 0.01f, 0.95f, "W: %.2f");
+        ImGui::SameLine();
+        ImGui::DragFloat("##bevelHeight", &s_bevelHeight, 0.02f, -10.0f, 10.0f, "H: %.2f");
+        ImGui::PopItemWidth();
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.42f, 0.72f, 0.85f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.28f, 0.52f, 0.85f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.32f, 0.60f, 1.0f));
+        if (ImGui::Button(ICON_LC_SPLIT " Bevel", ImVec2(-1, 24.0f * scale))) {
+            scene.pushHistoryState();
+            if (ComponentOps::bevelSelection(*mesh, selMgr, s_bevelWidth, s_bevelHeight)) {
+                GuiManager::showToast("Beveled Selection", 1.5f);
+            }
+        }
+        ImGui::PopStyleColor(3);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Chamfer/Bevel selected edges into quad strips, or inset/bevel selected faces");
+        }
+
+        // Bridge Row
+        bool canBridge = (currentMode == ComponentMode::Face && selMgr.getSelectedFaceCount() == 2) ||
+                         (currentMode == ComponentMode::Edge && selMgr.getSelectedEdgeCount() >= 2);
+        if (!canBridge) ImGui::BeginDisabled();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.48f, 0.40f, 0.85f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.60f, 0.50f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.16f, 0.38f, 0.30f, 1.0f));
+        if (ImGui::Button(ICON_LC_LINK_2 " Bridge", ImVec2(-1, 24.0f * scale))) {
+            scene.pushHistoryState();
+            if (ComponentOps::bridgeSelection(*mesh, selMgr)) {
+                GuiManager::showToast("Bridged Components", 1.5f);
+            }
+        }
+        ImGui::PopStyleColor(3);
+        if (!canBridge) ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("Connect 2 selected faces (hollow quad tunnel) or pairs of selected edges (quad strip)");
+        }
+
+        // Merge to Center & Collapse Row
+        float halfOpW = (availW - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.35f, 0.28f, 0.55f, 0.85f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.45f, 0.36f, 0.68f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.26f, 0.20f, 0.42f, 1.0f));
+        if (ImGui::Button(ICON_LC_MINIMIZE_2 " Merge Center", ImVec2(halfOpW, 24.0f * scale))) {
+            scene.pushHistoryState();
+            if (ComponentOps::mergeToCenter(*mesh, selMgr)) {
+                GuiManager::showToast("Merged to Center", 1.5f);
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Merge all selected vertices / components into their centroid");
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_LC_MINIMIZE_2 " Collapse", ImVec2(halfOpW, 24.0f * scale))) {
+            scene.pushHistoryState();
+            if (ComponentOps::collapseEdges(*mesh, selMgr)) {
+                GuiManager::showToast("Collapsed Selection", 1.5f);
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Collapse selected edges / components and eliminate degenerate topology");
+        }
+        ImGui::PopStyleColor(3);
+
+        // Delete Row
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.18f, 0.18f, 0.85f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.85f, 0.25f, 0.25f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.55f, 0.12f, 0.12f, 1.0f));
+        if (ImGui::Button(ICON_LC_TRASH_2 " Delete Selected", ImVec2(-1, 24.0f * scale))) {
+            scene.pushHistoryState();
+            if (ComponentOps::deleteSelection(*mesh, selMgr)) {
+                GuiManager::showToast("Deleted Selection", 1.5f);
+            }
+        }
+        ImGui::PopStyleColor(3);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Delete selected vertices, edges, or faces and rebuild clean mesh topology");
+        }
+
+        if (!hasAnySel) ImGui::EndDisabled();
+
+        // Close Holes Row (Can run with selection or on entire mesh!)
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.45f, 0.55f, 0.85f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.55f, 0.68f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.16f, 0.35f, 0.44f, 1.0f));
+        if (ImGui::Button(ICON_LC_CIRCLE_DOT " Close Holes", ImVec2(-1, 24.0f * scale))) {
+            scene.pushHistoryState();
+            if (ComponentOps::closeHoles(*mesh, selMgr)) {
+                GuiManager::showToast("Closed Mesh Holes", 1.5f);
+            } else {
+                GuiManager::showToast("No open holes found", 1.5f);
+            }
+        }
+        ImGui::PopStyleColor(3);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Detect open boundary edge loops and seal holes with clean quad / triangle caps.\nIf components are selected, caps holes touching selection; otherwise caps all open holes in the mesh.");
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // 5. Edge Creasing & Dynamic Subdiv Section
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.8f, 1.0f), ICON_LC_SQUARE_SPLIT_VERTICAL " Edge Creases & Dynamic Subdiv");
+
+        auto effectiveEdges = selMgr.getEffectiveEdgeIndices(*mesh);
+        size_t totalEffEdges = effectiveEdges.size();
+        size_t creasedEffEdges = 0;
+        for (uint32_t e : effectiveEdges) {
+            if (mesh->isEdgeCreased(e)) creasedEffEdges++;
+        }
+
+        ImGui::Text("Selected Edges: %zu (Creased: %zu)", totalEffEdges, creasedEffEdges);
+
+        float halfW = (availW - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+        bool hasEdges = (totalEffEdges > 0);
+
+        if (!hasEdges) ImGui::BeginDisabled();
+        if (ImGui::Button("Crease On", ImVec2(halfW, 26.0f * scale))) {
+            scene.pushHistoryState();
+            if (creaseTool) creaseTool->applyCreaseToSelected(mesh, true);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Mark all selected edges as creased");
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Crease Off", ImVec2(halfW, 26.0f * scale))) {
+            scene.pushHistoryState();
+            if (creaseTool) creaseTool->applyCreaseToSelected(mesh, false);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Remove crease from all selected edges");
+        }
+
+        if (ImGui::Button("Toggle Crease", ImVec2(-1, 26.0f * scale))) {
+            scene.pushHistoryState();
+            if (creaseTool) creaseTool->toggleCreaseOnSelected(mesh);
+        }
+        if (!hasEdges) ImGui::EndDisabled();
+
+        ImGui::Spacing();
+
+        // Button to hide/show pink dashed crease lines
+        bool showCreaseLines = renderer.getShowCreaseLines();
+        if (showCreaseLines) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.15f, 0.55f, 0.85f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.25f, 0.65f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.70f, 0.10f, 0.45f, 1.0f));
+            if (ImGui::Button(ICON_LC_EYE " Hide Creases (Pink Dashed Lines)", ImVec2(-1, 28.0f * scale))) {
+                renderer.setShowCreaseLines(false);
+            }
+            ImGui::PopStyleColor(3);
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.22f, 0.22f, 0.85f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.32f, 0.32f, 0.32f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.18f, 0.18f, 0.18f, 1.0f));
+            if (ImGui::Button(ICON_LC_EYE_OFF " Show Creases (Pink Dashed Lines)", ImVec2(-1, 28.0f * scale))) {
+                renderer.setShowCreaseLines(true);
+            }
+            ImGui::PopStyleColor(3);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Toggle visibility of the pink dashed crease lines on the model surface");
+        }
+
+        ImGui::Spacing();
+
+        // Dynamic Subdiv Quick Controls
+        bool dynEnabled = mesh->dynamicSettings.enabled && mesh->dynamicSettings.enableSubdiv;
+        if (ImGui::Checkbox("Enable Dynamic Subdiv", &dynEnabled)) {
+            mesh->dynamicSettings.enabled = dynEnabled;
+            mesh->dynamicSettings.enableSubdiv = dynEnabled;
+            mesh->invalidateDynamicSubdiv();
+            mesh->isDirty = true;
+        }
+
+        float maxCrease = std::max(1.0f, (float)mesh->dynamicSettings.smoothLevel);
+        if (mesh->dynamicSettings.creaseLevel > maxCrease) {
+            mesh->dynamicSettings.creaseLevel = maxCrease;
+        }
+
+        if (ImGui::SliderInt("Smooth Level", &mesh->dynamicSettings.smoothLevel, 0, 4)) {
+            mesh->invalidateDynamicSubdiv();
+            mesh->isDirty = true;
+        }
+
+        if (ImGui::SliderFloat("Crease Level", &mesh->dynamicSettings.creaseLevel, 0.0f, maxCrease, "%.2f")) {
+            mesh->invalidateDynamicSubdiv();
+            mesh->isDirty = true;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Continuous crease sharpness level in Dynamic Subdiv.\nTip: In Crease Tool, drag LMB directly in viewport to adjust live!");
+        }
+
+        if (ImGui::Checkbox("Show Cage Wireframe", &mesh->dynamicSettings.showCage)) {
+            mesh->isDirty = true;
+        }
+
+        if (ImGui::Button("Uncrease Entire Mesh", ImVec2(-1, 24.0f * scale))) {
+            scene.pushHistoryState();
+            mesh->uncreaseAll();
+            mesh->invalidateDynamicSubdiv();
+            mesh->isDirty = true;
+        }
+    }
+    ImGui::End();
+}
+
 
 
 

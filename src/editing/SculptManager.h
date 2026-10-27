@@ -18,7 +18,10 @@ class PoseTool;
 class TubeTool;
 class PrimitiveTool;
 class MaskExtractTool;
+class ComponentSelectTool;
+class EdgeCreaseTool;
 namespace retopo { class QuadDrawTool; }
+#include "editing/SelectionManager.h"
 class IniFile;
 class HotkeyManager;
 
@@ -183,6 +186,9 @@ private:
     std::unique_ptr<PrimitiveTool> m_primitiveTool;
     std::unique_ptr<retopo::QuadDrawTool> m_quadDrawTool;
     std::unique_ptr<MaskExtractTool> m_maskExtractTool;
+    SelectionManager m_selectionManager;
+    std::unique_ptr<ComponentSelectTool> m_componentSelectTool;
+    std::unique_ptr<EdgeCreaseTool> m_edgeCreaseTool;
 
     CameraController m_cameraController;
     bool m_isSculpting = false;
@@ -541,6 +547,10 @@ public:
     PrimitiveTool* getPrimitiveTool() const { return m_primitiveTool.get(); }
     retopo::QuadDrawTool* getQuadDrawTool() const { return m_quadDrawTool.get(); }
     MaskExtractTool* getMaskExtractTool() const { return m_maskExtractTool.get(); }
+    SelectionManager& getSelectionManager() { return m_selectionManager; }
+    const SelectionManager& getSelectionManager() const { return m_selectionManager; }
+    ComponentSelectTool* getComponentSelectTool() const { return m_componentSelectTool.get(); }
+    EdgeCreaseTool* getEdgeCreaseTool() const { return m_edgeCreaseTool.get(); }
 
     void notifyMeshDeleted(Mesh* mesh) {
         if (m_lastActiveMesh == mesh) {

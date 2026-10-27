@@ -69,6 +69,7 @@ private:
     bool m_showPreferencesPanel = false;
     bool m_showHotkeyHUD = true;
     bool m_showCameraBookmarksPanel = false;
+    bool m_showComponentPanel = false;
 
     // Brush Icon Capture settings
     bool  m_showBrushIconCapture = false;
@@ -206,6 +207,7 @@ private:
 
     void drawReferenceImageManipulator(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer);
     void drawCameraBookmarksPanel(Scene& scene, AngleRenderer& renderer);
+    void drawComponentToolsPanel(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer);
 
 public:
     enum PrefTab {
@@ -341,6 +343,9 @@ public:
     void toggleCameraBookmarksPanel() { m_showCameraBookmarksPanel = !m_showCameraBookmarksPanel; }
     void toggleBrushIconCapturePanel();
     void toggleRecentFilesWindow() { m_showRecentFilesWindow = !m_showRecentFilesWindow; }
+    void toggleComponentPanel() { m_showComponentPanel = !m_showComponentPanel; }
+    bool getShowComponentPanel() const { return m_showComponentPanel; }
+    void setShowComponentPanel(bool show) { m_showComponentPanel = show; }
 
     void setRecentFiles(RecentFiles* rf) { m_recentFiles = rf; }
     RecentFiles* getRecentFiles() const { return m_recentFiles; }

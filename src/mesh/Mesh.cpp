@@ -3,6 +3,7 @@
 #include <cstring>
 #include <algorithm>
 #include <map>
+#include <unordered_map>
 #include <chrono>
 #include "mesh/NormalCalc.h"
 #include "mesh/Topology.h"
@@ -68,112 +69,66 @@ void Mesh::initTopology() {
 }
 
 void Mesh::initEdges() {
-    faceEdges.resize(nbFaces * 4, 0);
+    faceEdges.assign(nbFaces * 4, TRI_INDEX);
     nbEdges = 0;
-    if (nbVerts <= 0 || vrfStartCount.size() < (size_t)(nbVerts * 2)) {
+    if (nbFaces <= 0 || nbVerts <= 0) {
         edges.clear();
+        edgeCreases.clear();
         return;
     }
-    std::vector<uint32_t> vertEdgeTemp(nbVerts, 0);
 
-    for (int i = 0; i < nbVerts; ++i) {
-        uint32_t start = vrfStartCount[i * 2];
-        uint32_t end = start + vrfStartCount[i * 2 + 1];
-        uint32_t compTest = nbEdges;
-        for (uint32_t j = start; j < end; ++j) {
-            uint32_t id = vertRingFace[j] * 4;
-            uint32_t iv1 = faces[id];
-            uint32_t iv2 = faces[id + 1];
-            uint32_t iv3 = faces[id + 2];
-            uint32_t iv4 = faces[id + 3];
-            uint32_t t = 0;
-            uint32_t idEdge = 0;
-            if (iv4 == TRI_INDEX) {
-                if ((uint32_t)i > iv1) {
-                    t = vertEdgeTemp[iv1];
-                    idEdge = id + ((uint32_t)i == iv2 ? 0 : 2);
-                    if (t <= compTest) {
-                        faceEdges[idEdge] = nbEdges;
-                        vertEdgeTemp[iv1] = ++nbEdges;
-                    } else {
-                        faceEdges[idEdge] = t - 1;
-                    }
-                }
-                if ((uint32_t)i > iv2) {
-                    t = vertEdgeTemp[iv2];
-                    idEdge = id + ((uint32_t)i == iv1 ? 0 : 1);
-                    if (t <= compTest) {
-                        faceEdges[idEdge] = nbEdges;
-                        vertEdgeTemp[iv2] = ++nbEdges;
-                    } else {
-                        faceEdges[idEdge] = t - 1;
-                    }
-                }
-                if ((uint32_t)i > iv3) {
-                    t = vertEdgeTemp[iv3];
-                    idEdge = id + ((uint32_t)i == iv1 ? 2 : 1);
-                    if (t <= compTest) {
-                        faceEdges[idEdge] = nbEdges;
-                        vertEdgeTemp[iv3] = ++nbEdges;
-                    } else {
-                        faceEdges[idEdge] = t - 1;
-                    }
-                }
-                faceEdges[id + 3] = TRI_INDEX;
+    struct EdgeKeyHash {
+        uint64_t operator()(uint64_t k) const noexcept {
+            k ^= k >> 33;
+            k *= 0xff51afd7ed558ccdULL;
+            k ^= k >> 33;
+            k *= 0xc4ceb9fe1a85ec53ULL;
+            k ^= k >> 33;
+            return k;
+        }
+    };
+
+    std::unordered_map<uint64_t, uint32_t, EdgeKeyHash> edgeMap;
+    edgeMap.reserve(nbFaces * 2);
+
+    for (int f = 0; f < nbFaces; ++f) {
+        int id = f * 4;
+        int numE = (faces[id + 3] != TRI_INDEX) ? 4 : 3;
+        for (int k = 0; k < numE; ++k) {
+            uint32_t va = faces[id + k];
+            uint32_t vb = faces[id + ((k + 1) % numE)];
+            if (va >= (uint32_t)nbVerts || vb >= (uint32_t)nbVerts) continue;
+
+            uint32_t mn = std::min(va, vb);
+            uint32_t mx = std::max(va, vb);
+            uint64_t key = (uint64_t(mn) << 32) | uint64_t(mx);
+
+            auto it = edgeMap.find(key);
+            if (it == edgeMap.end()) {
+                uint32_t e = nbEdges++;
+                edgeMap[key] = e;
+                faceEdges[id + k] = e;
             } else {
-                if ((uint32_t)i > iv1 && (uint32_t)i != iv3) {
-                    t = vertEdgeTemp[iv1];
-                    idEdge = id + ((uint32_t)i == iv2 ? 0 : 3);
-                    if (t <= compTest) {
-                        faceEdges[idEdge] = nbEdges;
-                        vertEdgeTemp[iv1] = ++nbEdges;
-                    } else {
-                        faceEdges[idEdge] = t - 1;
-                    }
-                }
-                if ((uint32_t)i > iv2 && (uint32_t)i != iv4) {
-                    t = vertEdgeTemp[iv2];
-                    idEdge = id + ((uint32_t)i == iv1 ? 0 : 1);
-                    if (t <= compTest) {
-                        faceEdges[idEdge] = nbEdges;
-                        vertEdgeTemp[iv2] = ++nbEdges;
-                    } else {
-                        faceEdges[idEdge] = t - 1;
-                    }
-                }
-                if ((uint32_t)i > iv3 && (uint32_t)i != iv1) {
-                    t = vertEdgeTemp[iv3];
-                    idEdge = id + ((uint32_t)i == iv2 ? 1 : 2);
-                    if (t <= compTest) {
-                        faceEdges[idEdge] = nbEdges;
-                        vertEdgeTemp[iv3] = ++nbEdges;
-                    } else {
-                        faceEdges[idEdge] = t - 1;
-                    }
-                }
-                if ((uint32_t)i > iv4 && (uint32_t)i != iv2) {
-                    t = vertEdgeTemp[iv4];
-                    idEdge = id + ((uint32_t)i == iv1 ? 3 : 2);
-                    if (t <= compTest) {
-                        faceEdges[idEdge] = nbEdges;
-                        vertEdgeTemp[iv4] = ++nbEdges;
-                    } else {
-                        faceEdges[idEdge] = t - 1;
-                    }
-                }
+                faceEdges[id + k] = it->second;
+            }
+        }
+        if (numE == 3) {
+            faceEdges[id + 3] = TRI_INDEX;
+        }
+    }
+
+    edges.assign(nbEdges, 0);
+    for (int f = 0; f < nbFaces; ++f) {
+        int id = f * 4;
+        int numE = (faces[id + 3] != TRI_INDEX) ? 4 : 3;
+        for (int k = 0; k < numE; ++k) {
+            uint32_t e = faceEdges[id + k];
+            if (e < (uint32_t)nbEdges) {
+                edges[e]++;
             }
         }
     }
-    edges.assign(nbEdges, 0);
-    for (int k = 0; k < nbFaces; ++k) {
-        uint32_t idf = k * 4;
-        if (faceEdges[idf] < (uint32_t)nbEdges) edges[faceEdges[idf]]++;
-        if (faceEdges[idf + 1] < (uint32_t)nbEdges) edges[faceEdges[idf + 1]]++;
-        if (faceEdges[idf + 2] < (uint32_t)nbEdges) edges[faceEdges[idf + 2]]++;
-        uint32_t i4 = faceEdges[idf + 3];
-        if (i4 != TRI_INDEX && i4 < (uint32_t)nbEdges)
-            edges[i4]++;
-    }
+
     if (edgeCreases.size() != (size_t)nbEdges) {
         edgeCreases.resize(nbEdges, 0);
     }
@@ -270,7 +225,7 @@ void Mesh::postInit(bool buildOctree) {
 
     auto tTopStart = std::chrono::high_resolution_clock::now();
     bool computedTopology = false;
-    if (vrfStartCount.size() != (size_t)(nbVerts * 2) || vertRingFace.empty()) {
+    if (isTopologyDirty || vrfStartCount.size() != (size_t)(nbVerts * 2) || vertRingFace.empty()) {
         initTopology();
         computedTopology = true;
     } else {

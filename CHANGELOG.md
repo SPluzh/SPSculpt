@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.16]
+- **Modeling Tools**:
+  - `Extrude`: Extrude selected faces or open boundary edges into new geometry.
+  - `Bevel`: Inset faces and bevel sharp edges with smooth chamfers.
+  - `Bridge`: Connect pairs of faces or open edge loops with clean quad strips.
+  - `Merge / Collapse`: Merge vertices to center or collapse edges to midpoints.
+  - `Delete`: Cleanly remove faces, edges, or vertices without leaving orphaned points.
+  - `Close Holes`: Automatically detect and cap open boundary loops and holes.
+- **Crease Visibility**: Added a toggle button to show or hide pink dashed crease lines in the viewport.
+
+
 ## [0.3.15]
 - **Mask Extract Tool**: Create clothing, armor, and new parts directly from painted masks into a separate SubTool.
 - **Fill Modes**:
