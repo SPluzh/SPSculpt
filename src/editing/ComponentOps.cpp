@@ -183,6 +183,7 @@ bool ComponentOps::deleteSelection(Mesh& mesh, SelectionManager& selMgr) {
     mesh.vertVisible.assign(mesh.nbVerts, 1);
     mesh.faceVisible.assign(mesh.nbFaces, 1);
     mesh.isTopologyDirty = true;
+    mesh.hasCustomNormals = false;
 
     mesh.postInit(true);
     mesh.invalidateDynamicSubdiv();
@@ -364,6 +365,7 @@ bool ComponentOps::extrudeFaces(Mesh& mesh, SelectionManager& selMgr, float offs
     mesh.vertVisible.assign(mesh.nbVerts, 1);
     mesh.faceVisible.assign(mesh.nbFaces, 1);
     mesh.isTopologyDirty = true;
+    mesh.hasCustomNormals = false;
 
     mesh.postInit(true);
     mesh.invalidateDynamicSubdiv();
@@ -440,13 +442,50 @@ bool ComponentOps::extrudeEdges(Mesh& mesh, SelectionManager& selMgr, float offs
         uint32_t vb = edgeTop[e].v1;
         if (!oldToNew.count(va) || !oldToNew.count(vb)) continue;
 
+        // If edge has an incident face f0, ensure bottom edge is opposite to f0 for 2-manifold consistency
+        if (edgeTop[e].f0 >= 0) {
+            int id0 = edgeTop[e].f0 * 4;
+            int numV0 = (mesh.faces[id0 + 3] != 0xffffffff) ? 4 : 3;
+            for (int k = 0; k < numV0; ++k) {
+                if (mesh.faces[id0 + k] == va && mesh.faces[id0 + ((k + 1) % numV0)] == vb) {
+                    std::swap(va, vb);
+                    break;
+                }
+            }
+        }
+
         uint32_t va_ext = oldToNew[va];
         uint32_t vb_ext = oldToNew[vb];
 
-        mesh.faces.push_back(va);
-        mesh.faces.push_back(vb);
-        mesh.faces.push_back(vb_ext);
-        mesh.faces.push_back(va_ext);
+        glm::vec3 pva(mesh.verts[va * 3], mesh.verts[va * 3 + 1], mesh.verts[va * 3 + 2]);
+        glm::vec3 pvb(mesh.verts[vb * 3], mesh.verts[vb * 3 + 1], mesh.verts[vb * 3 + 2]);
+        glm::vec3 pva_ext(mesh.verts[va_ext * 3], mesh.verts[va_ext * 3 + 1], mesh.verts[va_ext * 3 + 2]);
+
+        // Quad normal: (pvb - pva) x (pva_ext - pva)
+        glm::vec3 nQuad = glm::cross(pvb - pva, pva_ext - pva);
+        glm::vec3 nRef(0.0f);
+        if (edgeTop[e].f0 >= 0 && (size_t)edgeTop[e].f0 * 3 + 2 < mesh.faceNormals.size()) {
+            nRef += glm::vec3(mesh.faceNormals[edgeTop[e].f0 * 3],
+                              mesh.faceNormals[edgeTop[e].f0 * 3 + 1],
+                              mesh.faceNormals[edgeTop[e].f0 * 3 + 2]);
+        }
+        if (glm::length(nRef) < 1e-4f) {
+            for (uint32_t v : {va, vb}) {
+                if ((size_t)v * 3 + 2 < mesh.normals.size()) {
+                    nRef += glm::vec3(mesh.normals[v * 3], mesh.normals[v * 3 + 1], mesh.normals[v * 3 + 2]);
+                }
+            }
+        }
+
+        uint32_t q0 = va, q1 = vb, q2 = vb_ext, q3 = va_ext;
+        if (glm::length(nQuad) > 1e-6f && glm::length(nRef) > 1e-4f && glm::dot(nQuad, nRef) < 0.0f) {
+            q0 = va; q1 = va_ext; q2 = vb_ext; q3 = vb;
+        }
+
+        mesh.faces.push_back(q0);
+        mesh.faces.push_back(q1);
+        mesh.faces.push_back(q2);
+        mesh.faces.push_back(q3);
         mesh.faceGroups.push_back(gid);
         mesh.nbFaces++;
     }
@@ -461,6 +500,7 @@ bool ComponentOps::extrudeEdges(Mesh& mesh, SelectionManager& selMgr, float offs
     mesh.vertVisible.assign(mesh.nbVerts, 1);
     mesh.faceVisible.assign(mesh.nbFaces, 1);
     mesh.isTopologyDirty = true;
+    mesh.hasCustomNormals = false;
 
     mesh.postInit(true);
     mesh.invalidateDynamicSubdiv();
@@ -577,6 +617,7 @@ bool ComponentOps::bevelFaces(Mesh& mesh, SelectionManager& selMgr, float width,
     mesh.vertVisible.assign(mesh.nbVerts, 1);
     mesh.faceVisible.assign(mesh.nbFaces, 1);
     mesh.isTopologyDirty = true;
+    mesh.hasCustomNormals = false;
 
     mesh.postInit(true);
     mesh.invalidateDynamicSubdiv();
@@ -686,10 +727,32 @@ bool ComponentOps::bevelEdges(Mesh& mesh, SelectionManager& selMgr, float width)
             }
 
             // Add bevel quad bridging newVa0, newVb0, newVb1, newVa1
-            mesh.faces.push_back(newVa0);
-            mesh.faces.push_back(newVb0);
-            mesh.faces.push_back(newVb1);
-            mesh.faces.push_back(newVa1);
+            // Check geometric normal against chamfer normal (incident face normals sum)
+            glm::vec3 nQuad = glm::cross(pVb0 - pVa0, pVa1 - pVa0) + glm::cross(pVa1 - pVa0, pVb1 - pVa0);
+            glm::vec3 nChamfer(0.0f);
+            if ((size_t)top.f0 * 3 + 2 < mesh.faceNormals.size()) {
+                nChamfer += glm::vec3(mesh.faceNormals[top.f0 * 3], mesh.faceNormals[top.f0 * 3 + 1], mesh.faceNormals[top.f0 * 3 + 2]);
+            }
+            if ((size_t)top.f1 * 3 + 2 < mesh.faceNormals.size()) {
+                nChamfer += glm::vec3(mesh.faceNormals[top.f1 * 3], mesh.faceNormals[top.f1 * 3 + 1], mesh.faceNormals[top.f1 * 3 + 2]);
+            }
+            if (glm::length(nChamfer) < 1e-4f) {
+                for (uint32_t v : {va, vb}) {
+                    if ((size_t)v * 3 + 2 < mesh.normals.size()) {
+                        nChamfer += glm::vec3(mesh.normals[v * 3], mesh.normals[v * 3 + 1], mesh.normals[v * 3 + 2]);
+                    }
+                }
+            }
+
+            uint32_t q0 = newVa0, q1 = newVb0, q2 = newVb1, q3 = newVa1;
+            if (glm::length(nQuad) > 1e-6f && glm::length(nChamfer) > 1e-4f && glm::dot(nQuad, nChamfer) < 0.0f) {
+                q0 = newVa0; q1 = newVa1; q2 = newVb1; q3 = newVb0;
+            }
+
+            mesh.faces.push_back(q0);
+            mesh.faces.push_back(q1);
+            mesh.faces.push_back(q2);
+            mesh.faces.push_back(q3);
             mesh.faceGroups.push_back(bevelGid);
             mesh.nbFaces++;
         }
@@ -705,6 +768,7 @@ bool ComponentOps::bevelEdges(Mesh& mesh, SelectionManager& selMgr, float width)
     mesh.vertVisible.assign(mesh.nbVerts, 1);
     mesh.faceVisible.assign(mesh.nbFaces, 1);
     mesh.isTopologyDirty = true;
+    mesh.hasCustomNormals = false;
 
     mesh.postInit(true);
     mesh.invalidateDynamicSubdiv();
@@ -754,24 +818,52 @@ bool ComponentOps::bridgeFaces(Mesh& mesh, SelectionManager& selMgr) {
         vB[k] = mesh.faces[idB + k];
     }
 
-    // Find best cyclic offset s to minimize bridge twist
+    // Find best cyclic offset s and direction to minimize bridge twist
     int bestS = 0;
+    bool bestReverse = true;
     float bestDistSq = std::numeric_limits<float>::max();
 
     for (int s = 0; s < N; ++s) {
-        float totalDistSq = 0.0f;
+        // Test reversed: (s - k + N) % N
+        float distSqRev = 0.0f;
         for (int k = 0; k < N; ++k) {
             uint32_t a = vA[k];
             uint32_t b = vB[(s - k + N) % N];
             glm::vec3 pa(mesh.verts[a * 3], mesh.verts[a * 3 + 1], mesh.verts[a * 3 + 2]);
             glm::vec3 pb(mesh.verts[b * 3], mesh.verts[b * 3 + 1], mesh.verts[b * 3 + 2]);
-            totalDistSq += glm::dot(pa - pb, pa - pb);
+            distSqRev += glm::dot(pa - pb, pa - pb);
         }
-        if (totalDistSq < bestDistSq) {
-            bestDistSq = totalDistSq;
+        if (distSqRev < bestDistSq) {
+            bestDistSq = distSqRev;
             bestS = s;
+            bestReverse = true;
+        }
+
+        // Test forward: (s + k) % N
+        float distSqFwd = 0.0f;
+        for (int k = 0; k < N; ++k) {
+            uint32_t a = vA[k];
+            uint32_t b = vB[(s + k) % N];
+            glm::vec3 pa(mesh.verts[a * 3], mesh.verts[a * 3 + 1], mesh.verts[a * 3 + 2]);
+            glm::vec3 pb(mesh.verts[b * 3], mesh.verts[b * 3 + 1], mesh.verts[b * 3 + 2]);
+            distSqFwd += glm::dot(pa - pb, pa - pb);
+        }
+        if (distSqFwd < bestDistSq) {
+            bestDistSq = distSqFwd;
+            bestS = s;
+            bestReverse = false;
         }
     }
+
+    glm::vec3 centerA(0.0f);
+    glm::vec3 centerB(0.0f);
+    for (int k = 0; k < N; ++k) {
+        centerA += glm::vec3(mesh.verts[vA[k] * 3], mesh.verts[vA[k] * 3 + 1], mesh.verts[vA[k] * 3 + 2]);
+        centerB += glm::vec3(mesh.verts[vB[k] * 3], mesh.verts[vB[k] * 3 + 1], mesh.verts[vB[k] * 3 + 2]);
+    }
+    centerA /= (float)N;
+    centerB /= (float)N;
+    glm::vec3 centerMid = (centerA + centerB) * 0.5f;
 
     uint32_t bridgeGid = mesh.getNextFreeGroupID();
     std::vector<std::vector<uint32_t>> bridgeQuads;
@@ -780,8 +872,37 @@ bool ComponentOps::bridgeFaces(Mesh& mesh, SelectionManager& selMgr) {
         int kNext = (k + 1) % N;
         uint32_t a0 = vA[k];
         uint32_t a1 = vA[kNext];
-        uint32_t b0 = vB[(bestS - k + N) % N];
-        uint32_t b1 = vB[(bestS - kNext + N) % N];
+        uint32_t b0 = bestReverse ? vB[(bestS - k + N) % N] : vB[(bestS + k) % N];
+        uint32_t b1 = bestReverse ? vB[(bestS - kNext + N) % N] : vB[(bestS + kNext) % N];
+
+        glm::vec3 pa0(mesh.verts[a0 * 3], mesh.verts[a0 * 3 + 1], mesh.verts[a0 * 3 + 2]);
+        glm::vec3 pa1(mesh.verts[a1 * 3], mesh.verts[a1 * 3 + 1], mesh.verts[a1 * 3 + 2]);
+        glm::vec3 pb0(mesh.verts[b0 * 3], mesh.verts[b0 * 3 + 1], mesh.verts[b0 * 3 + 2]);
+        glm::vec3 pb1(mesh.verts[b1 * 3], mesh.verts[b1 * 3 + 1], mesh.verts[b1 * 3 + 2]);
+
+        // Quad normal
+        glm::vec3 nQuad = glm::cross(pa1 - pa0, pb1 - pa0) + glm::cross(pb1 - pa0, pb0 - pa0);
+
+        // Outward radial direction from tunnel centerline to quad center
+        glm::vec3 quadCenter = (pa0 + pa1 + pb0 + pb1) * 0.25f;
+        glm::vec3 outwardDir = quadCenter - centerMid;
+
+        if (glm::length(outwardDir) < 1e-4f) {
+            outwardDir = glm::vec3(0.0f);
+            for (uint32_t v : {a0, a1, b0, b1}) {
+                if ((size_t)v * 3 + 2 < mesh.normals.size()) {
+                    outwardDir += glm::vec3(mesh.normals[v * 3], mesh.normals[v * 3 + 1], mesh.normals[v * 3 + 2]);
+                }
+            }
+        }
+
+        if (glm::length(nQuad) > 1e-6f && glm::length(outwardDir) > 1e-4f) {
+            if (glm::dot(nQuad, outwardDir) < 0.0f) {
+                // Inverted normal! Reverse quad winding: a0 -> b0 -> b1 -> a1
+                bridgeQuads.push_back({a0, b0, b1, a1});
+                continue;
+            }
+        }
 
         // Quad: a0 -> a1 -> b1 -> b0
         bridgeQuads.push_back({a0, a1, b1, b0});
@@ -824,6 +945,7 @@ bool ComponentOps::bridgeFaces(Mesh& mesh, SelectionManager& selMgr) {
     mesh.vertVisible.assign(mesh.nbVerts, 1);
     mesh.faceVisible.assign(mesh.nbFaces, 1);
     mesh.isTopologyDirty = true;
+    mesh.hasCustomNormals = false;
 
     mesh.postInit(true);
     mesh.invalidateDynamicSubdiv();
@@ -850,10 +972,49 @@ bool ComponentOps::bridgeEdges(Mesh& mesh, SelectionManager& selMgr) {
     uint32_t bridgeGid = mesh.getNextFreeGroupID();
     std::unordered_set<uint32_t> newSelectedFaces;
 
-    // Pair up edges (e.g. edge 0 with edge 1, edge 2 with edge 3, etc.)
-    for (size_t i = 0; i + 1 < edgesList.size(); i += 2) {
-        uint32_t eA = edgesList[i];
-        uint32_t eB = edgesList[i + 1];
+    std::vector<std::pair<uint32_t, uint32_t>> edgePairs;
+    if (edgesList.size() == 2) {
+        edgePairs.push_back({edgesList[0], edgesList[1]});
+    } else {
+        // Greedy minimum distance pairing between edge midpoints
+        std::vector<bool> edgePaired(edgesList.size(), false);
+        for (size_t i = 0; i < edgesList.size(); ++i) {
+            if (edgePaired[i]) continue;
+            uint32_t eA = edgesList[i];
+            if (eA >= edgeTop.size()) continue;
+
+            glm::vec3 midA = (glm::vec3(mesh.verts[edgeTop[eA].v0 * 3], mesh.verts[edgeTop[eA].v0 * 3 + 1], mesh.verts[edgeTop[eA].v0 * 3 + 2]) +
+                              glm::vec3(mesh.verts[edgeTop[eA].v1 * 3], mesh.verts[edgeTop[eA].v1 * 3 + 1], mesh.verts[edgeTop[eA].v1 * 3 + 2])) * 0.5f;
+
+            float bestD = std::numeric_limits<float>::max();
+            int bestJ = -1;
+
+            for (size_t j = i + 1; j < edgesList.size(); ++j) {
+                if (edgePaired[j]) continue;
+                uint32_t eB = edgesList[j];
+                if (eB >= edgeTop.size()) continue;
+
+                glm::vec3 midB = (glm::vec3(mesh.verts[edgeTop[eB].v0 * 3], mesh.verts[edgeTop[eB].v0 * 3 + 1], mesh.verts[edgeTop[eB].v0 * 3 + 2]) +
+                                  glm::vec3(mesh.verts[edgeTop[eB].v1 * 3], mesh.verts[edgeTop[eB].v1 * 3 + 1], mesh.verts[edgeTop[eB].v1 * 3 + 2])) * 0.5f;
+
+                float d = glm::distance(midA, midB);
+                if (d < bestD) {
+                    bestD = d;
+                    bestJ = (int)j;
+                }
+            }
+
+            if (bestJ != -1) {
+                edgePaired[i] = true;
+                edgePaired[bestJ] = true;
+                edgePairs.push_back({eA, edgesList[bestJ]});
+            }
+        }
+    }
+
+    for (const auto& pair : edgePairs) {
+        uint32_t eA = pair.first;
+        uint32_t eB = pair.second;
         if (eA >= edgeTop.size() || eB >= edgeTop.size()) continue;
 
         uint32_t a0 = edgeTop[eA].v0;
@@ -864,23 +1025,82 @@ bool ComponentOps::bridgeEdges(Mesh& mesh, SelectionManager& selMgr) {
         if (a0 >= (uint32_t)mesh.nbVerts || a1 >= (uint32_t)mesh.nbVerts ||
             b0 >= (uint32_t)mesh.nbVerts || b1 >= (uint32_t)mesh.nbVerts) continue;
 
+        // Determine correct direction for edge A based on incident face f0:
+        // For 2-manifold orientation, the bridge quad must traverse edge A in the OPPOSITE direction to f0.
+        if (edgeTop[eA].f0 >= 0) {
+            int id0 = edgeTop[eA].f0 * 4;
+            int numV0 = (mesh.faces[id0 + 3] != 0xffffffff) ? 4 : 3;
+            for (int k = 0; k < numV0; ++k) {
+                if (mesh.faces[id0 + k] == a0 && mesh.faces[id0 + ((k + 1) % numV0)] == a1) {
+                    // f0 uses a0 -> a1. Therefore new quad must use a1 -> a0.
+                    std::swap(a0, a1);
+                    break;
+                }
+            }
+        } else if (edgeTop[eB].f0 >= 0) {
+            // Edge A has no face, but edge B does: orient edge B opposite to its incident face
+            int id0 = edgeTop[eB].f0 * 4;
+            int numV0 = (mesh.faces[id0 + 3] != 0xffffffff) ? 4 : 3;
+            for (int k = 0; k < numV0; ++k) {
+                if (mesh.faces[id0 + k] == b0 && mesh.faces[id0 + ((k + 1) % numV0)] == b1) {
+                    std::swap(b0, b1);
+                    break;
+                }
+            }
+        }
+
         glm::vec3 pa0(mesh.verts[a0 * 3], mesh.verts[a0 * 3 + 1], mesh.verts[a0 * 3 + 2]);
         glm::vec3 pa1(mesh.verts[a1 * 3], mesh.verts[a1 * 3 + 1], mesh.verts[a1 * 3 + 2]);
         glm::vec3 pb0(mesh.verts[b0 * 3], mesh.verts[b0 * 3 + 1], mesh.verts[b0 * 3 + 2]);
         glm::vec3 pb1(mesh.verts[b1 * 3], mesh.verts[b1 * 3 + 1], mesh.verts[b1 * 3 + 2]);
 
+        // Connect a0 to pb0 and a1 to pb1 minimizing diagonal twist
         float dDirect = glm::distance(pa0, pb0) + glm::distance(pa1, pb1);
         float dCross  = glm::distance(pa0, pb1) + glm::distance(pa1, pb0);
 
         if (dCross < dDirect) {
             std::swap(b0, b1);
+            pb0 = glm::vec3(mesh.verts[b0 * 3], mesh.verts[b0 * 3 + 1], mesh.verts[b0 * 3 + 2]);
+            pb1 = glm::vec3(mesh.verts[b1 * 3], mesh.verts[b1 * 3 + 1], mesh.verts[b1 * 3 + 2]);
+        }
+
+        // Candidate quad: a0 -> a1 -> b1 -> b0
+        glm::vec3 nQuad = glm::cross(pa1 - pa0, pb1 - pa0) + glm::cross(pb1 - pa0, pb0 - pa0);
+
+        // Compute reference outward normal from incident faces and vertex normals
+        glm::vec3 nRef(0.0f);
+        if (edgeTop[eA].f0 >= 0 && (size_t)edgeTop[eA].f0 * 3 + 2 < mesh.faceNormals.size()) {
+            nRef += glm::vec3(mesh.faceNormals[edgeTop[eA].f0 * 3],
+                              mesh.faceNormals[edgeTop[eA].f0 * 3 + 1],
+                              mesh.faceNormals[edgeTop[eA].f0 * 3 + 2]);
+        }
+        if (edgeTop[eB].f0 >= 0 && (size_t)edgeTop[eB].f0 * 3 + 2 < mesh.faceNormals.size()) {
+            nRef += glm::vec3(mesh.faceNormals[edgeTop[eB].f0 * 3],
+                              mesh.faceNormals[edgeTop[eB].f0 * 3 + 1],
+                              mesh.faceNormals[edgeTop[eB].f0 * 3 + 2]);
+        }
+        if (glm::length(nRef) < 1e-4f) {
+            for (uint32_t v : {a0, a1, b0, b1}) {
+                if ((size_t)v * 3 + 2 < mesh.normals.size()) {
+                    nRef += glm::vec3(mesh.normals[v * 3], mesh.normals[v * 3 + 1], mesh.normals[v * 3 + 2]);
+                }
+            }
+        }
+
+        uint32_t q0 = a0, q1 = a1, q2 = b1, q3 = b0;
+        if (glm::length(nQuad) > 1e-6f && glm::length(nRef) > 1e-4f && glm::dot(nQuad, nRef) < 0.0f) {
+            // Flip quad winding to match outward reference normal
+            q0 = a0;
+            q1 = b0;
+            q2 = b1;
+            q3 = a1;
         }
 
         uint32_t newF = (uint32_t)mesh.nbFaces++;
-        mesh.faces.push_back(a0);
-        mesh.faces.push_back(a1);
-        mesh.faces.push_back(b1);
-        mesh.faces.push_back(b0);
+        mesh.faces.push_back(q0);
+        mesh.faces.push_back(q1);
+        mesh.faces.push_back(q2);
+        mesh.faces.push_back(q3);
         mesh.faceGroups.push_back(bridgeGid);
         newSelectedFaces.insert(newF);
     }
@@ -897,6 +1117,7 @@ bool ComponentOps::bridgeEdges(Mesh& mesh, SelectionManager& selMgr) {
     mesh.vertVisible.assign(mesh.nbVerts, 1);
     mesh.faceVisible.assign(mesh.nbFaces, 1);
     mesh.isTopologyDirty = true;
+    mesh.hasCustomNormals = false;
 
     mesh.postInit(true);
     mesh.invalidateDynamicSubdiv();
@@ -1049,6 +1270,7 @@ bool ComponentOps::mergeToCenter(Mesh& mesh, SelectionManager& selMgr) {
     mesh.vertVisible.assign(mesh.nbVerts, 1);
     mesh.faceVisible.assign(mesh.nbFaces, 1);
     mesh.isTopologyDirty = true;
+    mesh.hasCustomNormals = false;
 
     mesh.postInit(true);
     mesh.invalidateDynamicSubdiv();
@@ -1109,8 +1331,8 @@ bool ComponentOps::closeHoles(Mesh& mesh, SelectionManager& selMgr) {
         uint32_t v1;
         uint32_t edgeIdx;
     };
-    std::unordered_map<uint32_t, BoundaryHalfEdge> nextHalfEdge;
-    std::vector<uint32_t> startVertices;
+    std::unordered_map<uint32_t, std::vector<BoundaryHalfEdge>> outgoingHalfEdges;
+    std::vector<BoundaryHalfEdge> startEdges;
 
     for (size_t e = 0; e < edgeTop.size(); ++e) {
         const auto& top = edgeTop[e];
@@ -1128,40 +1350,52 @@ bool ComponentOps::closeHoles(Mesh& mesh, SelectionManager& selMgr) {
             }
             uint32_t bStart = f0UsesVaToVb ? vb : va;
             uint32_t bEnd   = f0UsesVaToVb ? va : vb;
-            nextHalfEdge[bStart] = {bStart, bEnd, (uint32_t)e};
-            startVertices.push_back(bStart);
+            BoundaryHalfEdge bhe{bStart, bEnd, (uint32_t)e};
+            outgoingHalfEdges[bStart].push_back(bhe);
+            startEdges.push_back(bhe);
         }
     }
 
-    if (nextHalfEdge.empty()) {
+    if (startEdges.empty()) {
         return false;
     }
 
-    // 2. Trace connected boundary loops
-    std::unordered_set<uint32_t> visitedVerts;
+    // 2. Trace connected boundary loops by edge
+    std::vector<bool> edgeUsed(edgeTop.size(), false);
     std::vector<std::vector<uint32_t>> loops;
 
-    for (uint32_t vStart : startVertices) {
-        if (visitedVerts.count(vStart)) continue;
+    for (const auto& startHe : startEdges) {
+        if (edgeUsed[startHe.edgeIdx]) continue;
 
         std::vector<uint32_t> loop;
-        uint32_t cur = vStart;
+        uint32_t cur = startHe.v0;
+        uint32_t target = cur;
         bool closed = false;
 
-        while (nextHalfEdge.count(cur)) {
-            if (visitedVerts.count(cur)) {
-                if (cur == vStart) closed = true;
-                break;
-            }
-            visitedVerts.insert(cur);
+        loop.push_back(cur);
+        edgeUsed[startHe.edgeIdx] = true;
+        cur = startHe.v1;
+
+        while (cur != target && loop.size() <= (size_t)mesh.nbVerts) {
             loop.push_back(cur);
-            cur = nextHalfEdge[cur].v1;
-            if (cur == vStart) {
+            bool found = false;
+            if (outgoingHalfEdges.count(cur)) {
+                for (const auto& he : outgoingHalfEdges[cur]) {
+                    if (!edgeUsed[he.edgeIdx]) {
+                        edgeUsed[he.edgeIdx] = true;
+                        cur = he.v1;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            if (!found) break;
+            if (cur == target) {
                 closed = true;
                 break;
             }
-            if (loop.size() > (size_t)mesh.nbVerts) break;
         }
+        if (cur == target) closed = true;
 
         if (closed && loop.size() >= 3) {
             loops.push_back(std::move(loop));
@@ -1190,8 +1424,45 @@ bool ComponentOps::closeHoles(Mesh& mesh, SelectionManager& selMgr) {
     uint32_t capGid = mesh.getNextFreeGroupID();
     std::unordered_set<uint32_t> newCapFaces;
 
-    for (const auto& loop : loopsToFill) {
+    for (auto& loop : loopsToFill) {
         size_t k = loop.size();
+        if (k < 3) continue;
+
+        // Compute Newell's 3D polygon normal and average surrounding vertex/face normal
+        glm::vec3 polyNormal(0.0f);
+        glm::vec3 centroid(0.0f);
+        glm::vec3 avgNormal(0.0f);
+
+        for (size_t i = 0; i < k; ++i) {
+            size_t nextI = (i + 1) % k;
+            uint32_t vCur = loop[i];
+            uint32_t vNext = loop[nextI];
+            glm::vec3 pCur(mesh.verts[vCur * 3], mesh.verts[vCur * 3 + 1], mesh.verts[vCur * 3 + 2]);
+            glm::vec3 pNext(mesh.verts[vNext * 3], mesh.verts[vNext * 3 + 1], mesh.verts[vNext * 3 + 2]);
+
+            // Newell's method for arbitrary 3D polygon normal
+            polyNormal.x += (pCur.y - pNext.y) * (pCur.z + pNext.z);
+            polyNormal.y += (pCur.z - pNext.z) * (pCur.x + pNext.x);
+            polyNormal.z += (pCur.x - pNext.x) * (pCur.y + pNext.y);
+
+            centroid += pCur;
+            if (mesh.normals.size() >= (size_t)(vCur + 1) * 3) {
+                avgNormal += glm::vec3(mesh.normals[vCur * 3], mesh.normals[vCur * 3 + 1], mesh.normals[vCur * 3 + 2]);
+            }
+        }
+        centroid /= (float)k;
+        if (glm::length(avgNormal) > 1e-4f) avgNormal = glm::normalize(avgNormal);
+        else avgNormal = glm::vec3(0.0f, 1.0f, 0.0f);
+
+        // Verify orientation: does the loop winding produce a normal that aligns with the surrounding surface?
+        if (glm::length(polyNormal) > 1e-6f) {
+            polyNormal = glm::normalize(polyNormal);
+            if (glm::dot(polyNormal, avgNormal) < 0.0f) {
+                // Inverted! Reverse the loop vertices so that the cap normal points outward with the mesh!
+                std::reverse(loop.begin(), loop.end());
+            }
+        }
+
         if (k == 3) {
             uint32_t newF = (uint32_t)mesh.nbFaces++;
             mesh.faces.push_back(loop[0]);
@@ -1210,18 +1481,6 @@ bool ComponentOps::closeHoles(Mesh& mesh, SelectionManager& selMgr) {
             newCapFaces.insert(newF);
         } else {
             // Triangle fan to centroid
-            glm::vec3 centroid(0.0f);
-            glm::vec3 avgNormal(0.0f);
-            for (uint32_t v : loop) {
-                centroid += glm::vec3(mesh.verts[v * 3], mesh.verts[v * 3 + 1], mesh.verts[v * 3 + 2]);
-                if (mesh.normals.size() >= (size_t)(v + 1) * 3) {
-                    avgNormal += glm::vec3(mesh.normals[v * 3], mesh.normals[v * 3 + 1], mesh.normals[v * 3 + 2]);
-                }
-            }
-            centroid /= (float)k;
-            if (glm::length(avgNormal) > 1e-4f) avgNormal = glm::normalize(avgNormal);
-            else avgNormal = glm::vec3(0.0f, 1.0f, 0.0f);
-
             uint32_t cIdx = (uint32_t)mesh.nbVerts++;
             mesh.verts.push_back(centroid.x);
             mesh.verts.push_back(centroid.y);
@@ -1257,6 +1516,7 @@ bool ComponentOps::closeHoles(Mesh& mesh, SelectionManager& selMgr) {
     mesh.vertVisible.assign(mesh.nbVerts, 1);
     mesh.faceVisible.assign(mesh.nbFaces, 1);
     mesh.isTopologyDirty = true;
+    mesh.hasCustomNormals = false;
 
     mesh.postInit(true);
     mesh.invalidateDynamicSubdiv();
