@@ -7,6 +7,11 @@
 class Mesh;
 class SelectionManager;
 
+enum class BevelType {
+    Chamfer = 0,
+    Solid = 1
+};
+
 class ComponentOps {
 public:
     // Delete selected components (vertices, edges, or faces).
@@ -18,9 +23,11 @@ public:
     static bool extrudeSelection(Mesh& mesh, SelectionManager& selMgr, float offsetMagnitude);
 
     // Bevel selected components (Face Inset/Bevel or Edge Chamfer).
-    // width: bevel width fraction (0.01 .. 0.95)
+    // width: bevel width/offset
+    // segments: number of cuts/divisions along the bevel profile (1..10)
+    // type: Chamfer (replaces edge with flat/rounded fillet) or Solid (keeps edge sharp, inserts support loops)
     // heightOffset: normal displacement offset (positive for outward bevel, negative for inset)
-    static bool bevelSelection(Mesh& mesh, SelectionManager& selMgr, float width, float heightOffset = 0.0f);
+    static bool bevelSelection(Mesh& mesh, SelectionManager& selMgr, float width, int segments = 1, BevelType type = BevelType::Chamfer, float heightOffset = 0.0f);
 
     // Bridge: Connects 2 selected faces (with a hollow quad tunnel) or 2 selected edges (with a quad strip)
     static bool bridgeSelection(Mesh& mesh, SelectionManager& selMgr);
@@ -41,6 +48,6 @@ public:
     // Specific helpers
     static bool extrudeFaces(Mesh& mesh, SelectionManager& selMgr, float offsetMagnitude);
     static bool extrudeEdges(Mesh& mesh, SelectionManager& selMgr, float offsetMagnitude);
-    static bool bevelFaces(Mesh& mesh, SelectionManager& selMgr, float width, float heightOffset);
-    static bool bevelEdges(Mesh& mesh, SelectionManager& selMgr, float width);
+    static bool bevelFaces(Mesh& mesh, SelectionManager& selMgr, float width, int segments = 1, BevelType type = BevelType::Chamfer, float heightOffset = 0.0f);
+    static bool bevelEdges(Mesh& mesh, SelectionManager& selMgr, float width, int segments = 1, BevelType type = BevelType::Chamfer, float heightOffset = 0.0f);
 };

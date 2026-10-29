@@ -1,9 +1,11 @@
 #include "editing/ComponentSelectTool.h"
 #include "editing/SculptManager.h"
+#include "editing/ComponentOps.h"
 #include "scene/Scene.h"
 #include "scene/Camera.h"
 #include "mesh/Mesh.h"
 #include "imgui.h"
+#include <SDL2/SDL.h>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -64,10 +66,163 @@ void ComponentSelectTool::onActivate(Scene& scene) {
 }
 
 void ComponentSelectTool::onDeactivate() {
+    if (m_isBevelActive) {
+        m_isBevelActive = false;
+        m_isBevelDragging = false;
+        m_bevelBackupMesh.reset();
+        m_bevelSavedVerts.clear();
+        m_bevelSavedEdges.clear();
+        m_bevelSavedFaces.clear();
+    }
     m_hoveredVert = 0xffffffff;
     m_hoveredEdge = 0xffffffff;
     m_hoveredFace = 0xffffffff;
     m_isBoxSelecting = false;
+}
+
+bool ComponentSelectTool::startInteractiveBevel(Scene& scene, float initWidth, int initSegments, BevelType initType, float initHeight) {
+    Mesh* mesh = scene.getSelected();
+    if (!mesh || mesh->nbVerts == 0 || mesh->nbFaces == 0) return false;
+
+    auto& selMgr = getSelectionManager();
+    if (!selMgr.hasSelection()) return false;
+
+    // Backup current mesh geometry, topology and selection state
+    m_bevelBackupMesh = std::make_unique<Mesh>();
+    m_bevelBackupMesh->copyDataFrom(*mesh);
+
+    m_bevelSavedMode = selMgr.getMode();
+    m_bevelSavedVerts = selMgr.getSelectedVertices();
+    m_bevelSavedEdges = selMgr.getSelectedEdges();
+    m_bevelSavedFaces = selMgr.getSelectedFaces();
+
+    m_bevelMeshRadius = mesh->computeLocalRadius();
+    if (m_bevelMeshRadius < 0.001f) m_bevelMeshRadius = 1.0f;
+
+    m_bevelWidth = std::clamp(initWidth, 0.005f, 0.99f);
+    m_bevelSegments = std::clamp(initSegments, 1, 10);
+    m_bevelType = initType;
+    m_bevelHeight = initHeight;
+
+    m_isBevelActive = true;
+    m_isBevelDragging = false;
+
+    // Perform initial live preview
+    updateBevelLive(scene, false);
+    return true;
+}
+
+void ComponentSelectTool::setBevelParams(Scene& scene, float width, int segments, BevelType type, float height) {
+    if (!m_isBevelActive) return;
+    m_bevelWidth = std::clamp(width, 0.005f, 0.99f);
+    m_bevelSegments = std::clamp(segments, 1, 10);
+    m_bevelType = type;
+    m_bevelHeight = height;
+    updateBevelLive(scene, false);
+}
+
+void ComponentSelectTool::updateBevelLive(Scene& scene, bool finalApply) {
+    if (!m_isBevelActive || !m_bevelBackupMesh) return;
+    Mesh* mesh = scene.getSelected();
+    if (!mesh) return;
+
+    // 1. Restore mesh from backup
+    mesh->copyDataFrom(*m_bevelBackupMesh);
+
+    // 2. Restore selection state into selection manager
+    auto& selMgr = getSelectionManager();
+    selMgr.clear();
+    selMgr.setMode(m_bevelSavedMode);
+    for (uint32_t v : m_bevelSavedVerts) selMgr.selectVertex(v, true);
+    for (uint32_t e : m_bevelSavedEdges) selMgr.selectEdge(e, true);
+    for (uint32_t f : m_bevelSavedFaces) selMgr.selectFace(f, true);
+
+    // 3. Apply bevel operation
+    ComponentOps::bevelSelection(*mesh, selMgr, m_bevelWidth, m_bevelSegments, m_bevelType, m_bevelHeight);
+
+    // 4. Update mesh state (fast update during live drag, full BVH build on final apply)
+    mesh->postInit(finalApply);
+    mesh->invalidateDynamicSubdiv();
+    mesh->isDirty = true;
+    mesh->isTopologyDirty = true;
+    selMgr.invalidateTopologyCache();
+}
+
+void ComponentSelectTool::applyInteractiveBevel(Scene& scene) {
+    if (!m_isBevelActive) return;
+    Mesh* mesh = scene.getSelected();
+    if (mesh && m_bevelBackupMesh) {
+        updateBevelLive(scene, true);
+        scene.pushHistoryState();
+    }
+    m_isBevelActive = false;
+    m_isBevelDragging = false;
+    m_bevelBackupMesh.reset();
+    m_bevelSavedVerts.clear();
+    m_bevelSavedEdges.clear();
+    m_bevelSavedFaces.clear();
+}
+
+void ComponentSelectTool::cancelInteractiveBevel(Scene& scene) {
+    if (!m_isBevelActive) return;
+    Mesh* mesh = scene.getSelected();
+    if (mesh && m_bevelBackupMesh) {
+        mesh->copyDataFrom(*m_bevelBackupMesh);
+        auto& selMgr = getSelectionManager();
+        selMgr.clear();
+        selMgr.setMode(m_bevelSavedMode);
+        for (uint32_t v : m_bevelSavedVerts) selMgr.selectVertex(v, true);
+        for (uint32_t e : m_bevelSavedEdges) selMgr.selectEdge(e, true);
+        for (uint32_t f : m_bevelSavedFaces) selMgr.selectFace(f, true);
+
+        mesh->postInit(true);
+        mesh->invalidateDynamicSubdiv();
+        mesh->isDirty = true;
+        mesh->isTopologyDirty = true;
+        selMgr.invalidateTopologyCache();
+    }
+    m_isBevelActive = false;
+    m_isBevelDragging = false;
+    m_bevelBackupMesh.reset();
+    m_bevelSavedVerts.clear();
+    m_bevelSavedEdges.clear();
+    m_bevelSavedFaces.clear();
+}
+
+bool ComponentSelectTool::handleKeyDown(Scene& scene, int keycode) {
+    if (m_isBevelActive) {
+        if (keycode == SDLK_RETURN || keycode == SDLK_KP_ENTER || keycode == SDLK_SPACE) {
+            applyInteractiveBevel(scene);
+            return true;
+        } else if (keycode == SDLK_ESCAPE) {
+            cancelInteractiveBevel(scene);
+            return true;
+        } else if (keycode == SDLK_TAB || keycode == SDLK_s) {
+            m_bevelType = (m_bevelType == BevelType::Chamfer) ? BevelType::Solid : BevelType::Chamfer;
+            updateBevelLive(scene, false);
+            return true;
+        } else if (keycode == SDLK_UP || keycode == SDLK_RIGHT || keycode == SDLK_PLUS || keycode == SDLK_KP_PLUS || keycode == SDLK_EQUALS) {
+            m_bevelSegments = std::clamp(m_bevelSegments + 1, 1, 10);
+            updateBevelLive(scene, false);
+            return true;
+        } else if (keycode == SDLK_DOWN || keycode == SDLK_LEFT || keycode == SDLK_MINUS || keycode == SDLK_KP_MINUS) {
+            m_bevelSegments = std::clamp(m_bevelSegments - 1, 1, 10);
+            updateBevelLive(scene, false);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ComponentSelectTool::handleMouseWheel(Scene& scene, int wheelY) {
+    if (!m_isBevelActive) return false;
+    if (wheelY > 0) {
+        m_bevelSegments = std::clamp(m_bevelSegments + 1, 1, 10);
+    } else if (wheelY < 0) {
+        m_bevelSegments = std::clamp(m_bevelSegments - 1, 1, 10);
+    }
+    updateBevelLive(scene, false);
+    return true;
 }
 
 void ComponentSelectTool::updateHover(Scene& scene, const Camera& camera, float mouseX, float mouseY) {
@@ -302,6 +457,20 @@ bool ComponentSelectTool::handleMouseDown(
     float mouseX, float mouseY,
     bool ctrl, bool shift, int button
 ) {
+    if (m_isBevelActive) {
+        if (button == 1) {
+            m_isBevelDragging = true;
+            m_bevelDragStartMouse = glm::vec2(mouseX, mouseY);
+            m_bevelDragStartWidth = m_bevelWidth;
+            m_bevelDragStartHeight = m_bevelHeight;
+            return true;
+        } else if (button == 3) {
+            cancelInteractiveBevel(scene);
+            return true;
+        }
+        return false;
+    }
+
     if (button != 1) return false; // Left mouse button only
 
     Mesh* mesh = scene.getSelected();
@@ -361,6 +530,22 @@ bool ComponentSelectTool::handleMouseMove(
     bool ctrl, bool shift
 ) {
     (void)ctrl; (void)shift;
+    if (m_isBevelActive) {
+        if (m_isBevelDragging) {
+            float dx = mouseX - m_bevelDragStartMouse.x;
+            float dy = mouseY - m_bevelDragStartMouse.y;
+            float deltaW = (dx / 250.0f);
+            m_bevelWidth = std::clamp(m_bevelDragStartWidth + deltaW, 0.005f, 0.99f);
+
+            float deltaH = (-dy / 200.0f) * m_bevelMeshRadius;
+            m_bevelHeight = m_bevelDragStartHeight + deltaH;
+
+            updateBevelLive(scene, false);
+            return true;
+        }
+        return false;
+    }
+
     if (m_isBoxSelecting) {
         m_boxCurrent = glm::vec2(mouseX, mouseY);
         return true;
@@ -371,6 +556,14 @@ bool ComponentSelectTool::handleMouseMove(
 }
 
 bool ComponentSelectTool::handleMouseUp(Scene& scene, const Camera& camera, int button) {
+    if (m_isBevelActive) {
+        if (button == 1 && m_isBevelDragging) {
+            m_isBevelDragging = false;
+            return true;
+        }
+        return false;
+    }
+
     if (button != 1) return false;
 
     if (m_isBoxSelecting) {
@@ -586,6 +779,32 @@ void ComponentSelectTool::renderOverlay(Scene& scene, const Camera& camera, floa
             drawList->AddConvexPolyFilled(poly, numV, IM_COL32(50, 255, 120, 110));
             drawList->AddPolyline(poly, numV, IM_COL32(50, 255, 120, 255), ImDrawFlags_Closed, 2.5f);
         }
+    }
+
+    // 6. Interactive Bevel Viewport HUD Badge
+    if (m_isBevelActive) {
+        const char* typeStr = (m_bevelType == BevelType::Solid) ? "SOLID" : "CHAMFER";
+        char buf[128];
+        std::snprintf(buf, sizeof(buf), "BEVEL [%s]: Size: %.2f | Segments: %d", typeStr, m_bevelWidth, m_bevelSegments);
+        const char* hint = "[LMB Drag] Size | [Wheel] Segments | [Tab/S] Mode | [Enter] Apply | [Esc] Cancel";
+
+        ImVec2 textSz1 = ImGui::CalcTextSize(buf);
+        ImVec2 textSz2 = ImGui::CalcTextSize(hint);
+        float boxW = std::max(textSz1.x, textSz2.x) + 32.0f;
+        float boxH = textSz1.y + textSz2.y + 22.0f;
+
+        float centerX = vW * 0.5f;
+        float topY = 45.0f;
+
+        ImVec2 rMin(centerX - boxW * 0.5f, topY);
+        ImVec2 rMax(centerX + boxW * 0.5f, topY + boxH);
+
+        drawList->AddRectFilled(ImVec2(rMin.x + 2, rMin.y + 2), ImVec2(rMax.x + 2, rMax.y + 2), IM_COL32(0, 0, 0, 120), 6.0f);
+        drawList->AddRectFilled(rMin, rMax, IM_COL32(20, 24, 32, 235), 6.0f);
+        drawList->AddRect(rMin, rMax, (m_bevelType == BevelType::Solid) ? IM_COL32(255, 170, 50, 255) : IM_COL32(60, 150, 255, 255), 6.0f, 0, 1.8f);
+
+        drawList->AddText(ImVec2(centerX - textSz1.x * 0.5f, topY + 7.0f), (m_bevelType == BevelType::Solid) ? IM_COL32(255, 200, 100, 255) : IM_COL32(100, 210, 255, 255), buf);
+        drawList->AddText(ImVec2(centerX - textSz2.x * 0.5f, topY + 9.0f + textSz1.y), IM_COL32(220, 220, 220, 230), hint);
     }
 }
 

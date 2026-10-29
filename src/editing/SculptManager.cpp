@@ -2491,6 +2491,11 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 return;
             }
         }
+        if (m_currentBrush == BRUSH_COMPONENT_SELECT && m_componentSelectTool && m_componentSelectTool->isBevelActive()) {
+            if (m_componentSelectTool->handleKeyDown(scene, event.key.keysym.sym)) {
+                return;
+            }
+        }
     }
 
     if (event.type == SDL_MOUSEBUTTONDOWN) {
@@ -4145,6 +4150,11 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
         }
         m_cameraController.handleEvent(event, camera, scene.getMeshes(), true, &scene, m_renderer);
     } else if (event.type == SDL_MOUSEWHEEL) {
+        if (m_currentBrush == BRUSH_COMPONENT_SELECT && m_componentSelectTool && m_componentSelectTool->isBevelActive()) {
+            if (m_componentSelectTool->handleMouseWheel(scene, event.wheel.y)) {
+                return;
+            }
+        }
         m_cameraController.handleEvent(event, camera, scene.getMeshes(), true, &scene, m_renderer);
     } else if (event.type == SDL_MOUSEMOTION) {
         int mouseX = event.motion.x;

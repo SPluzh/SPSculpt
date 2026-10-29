@@ -15171,6 +15171,8 @@ void GuiManager::drawComponentToolsPanel(SculptManager& sculpt, Scene& scene, An
 
         static float s_extrudeOffset = 0.5f;
         static float s_bevelWidth = 0.2f;
+        static int s_bevelSegments = 1;
+        static BevelType s_bevelType = BevelType::Chamfer;
         static float s_bevelHeight = 0.0f;
 
         // Auto-scale defaults once based on mesh size
@@ -15181,6 +15183,8 @@ void GuiManager::drawComponentToolsPanel(SculptManager& sculpt, Scene& scene, An
             if (r > 0.01f) {
                 s_extrudeOffset = r * 0.08f;
                 s_bevelWidth = 0.2f;
+                s_bevelSegments = 1;
+                s_bevelType = BevelType::Chamfer;
                 s_bevelHeight = 0.0f;
             }
         }
@@ -15206,25 +15210,131 @@ void GuiManager::drawComponentToolsPanel(SculptManager& sculpt, Scene& scene, An
             ImGui::SetTooltip("Extrude selected faces or edges along normal with side walls");
         }
 
-        // Bevel Row
-        ImGui::PushItemWidth(60.0f * scale);
-        ImGui::DragFloat("##bevelWidth", &s_bevelWidth, 0.01f, 0.01f, 0.95f, "W: %.2f");
-        ImGui::SameLine();
-        ImGui::DragFloat("##bevelHeight", &s_bevelHeight, 0.02f, -10.0f, 10.0f, "H: %.2f");
-        ImGui::PopItemWidth();
-        ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.42f, 0.72f, 0.85f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.28f, 0.52f, 0.85f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.32f, 0.60f, 1.0f));
-        if (ImGui::Button(ICON_LC_SPLIT " Bevel", ImVec2(-1, 24.0f * scale))) {
-            scene.pushHistoryState();
-            if (ComponentOps::bevelSelection(*mesh, selMgr, s_bevelWidth, s_bevelHeight)) {
-                GuiManager::showToast("Beveled Selection", 1.5f);
+        // Bevel Controls (Interactive & Configurable)
+        bool bevelActive = (selTool && selTool->isBevelActive());
+        BevelType curType = bevelActive ? selTool->getBevelType() : s_bevelType;
+        float curW = bevelActive ? selTool->getBevelWidth() : s_bevelWidth;
+        int curSeg = bevelActive ? selTool->getBevelSegments() : s_bevelSegments;
+        float curH = bevelActive ? selTool->getBevelHeight() : s_bevelHeight;
+        bool bevelParamChanged = false;
+
+        // 1. Mode Selector: Chamfer vs Solid
+        float halfModeW = (availW - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+        bool isChamfer = (curType == BevelType::Chamfer);
+        bool isSolid = (curType == BevelType::Solid);
+
+        if (isChamfer) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.45f, 0.78f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.52f, 0.88f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.14f, 0.38f, 0.68f, 1.0f));
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.24f, 0.28f, 0.75f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.32f, 0.38f, 0.95f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.16f, 0.18f, 0.22f, 1.0f));
+        }
+        if (ImGui::Button("Chamfer", ImVec2(halfModeW, 22.0f * scale))) {
+            if (curType != BevelType::Chamfer) {
+                curType = BevelType::Chamfer;
+                bevelParamChanged = true;
             }
         }
         ImGui::PopStyleColor(3);
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Chamfer/Bevel selected edges into quad strips, or inset/bevel selected faces");
+            ImGui::SetTooltip("Chamfer: flattens or rounds sharp edges with specified number of segments");
+        }
+
+        ImGui::SameLine();
+        if (isSolid) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.80f, 0.48f, 0.12f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.90f, 0.56f, 0.18f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.70f, 0.40f, 0.08f, 1.0f));
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.24f, 0.28f, 0.75f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.32f, 0.38f, 0.95f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.16f, 0.18f, 0.22f, 1.0f));
+        }
+        if (ImGui::Button("Solid", ImVec2(halfModeW, 22.0f * scale))) {
+            if (curType != BevelType::Solid) {
+                curType = BevelType::Solid;
+                bevelParamChanged = true;
+            }
+        }
+        ImGui::PopStyleColor(3);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Solid: keeps original edge sharp and inserts parallel supporting edge loops for hard-surface subdivision");
+        }
+
+        // 2. Size & Segments Row
+        float halfSliderW = (availW - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+        ImGui::PushItemWidth(halfSliderW);
+        if (ImGui::DragFloat("##bevelSize", &curW, 0.01f, 0.005f, 0.99f, "Size: %.2f")) {
+            bevelParamChanged = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bevel width / offset distance");
+
+        ImGui::SameLine();
+        if (ImGui::DragInt("##bevelSeg", &curSeg, 0.08f, 1, 10, "Seg: %d")) {
+            curSeg = std::clamp(curSeg, 1, 10);
+            bevelParamChanged = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Number of segments/sections (1 = flat chamfer, 2+ = rounded fillet)");
+        ImGui::PopItemWidth();
+
+        if (bevelParamChanged) {
+            s_bevelWidth = curW;
+            s_bevelSegments = curSeg;
+            s_bevelType = curType;
+            s_bevelHeight = curH;
+            if (bevelActive) {
+                selTool->setBevelParams(scene, curW, curSeg, curType, curH);
+            }
+        }
+
+        // 3. Action Buttons
+        if (bevelActive) {
+            float halfBtnW = (availW - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.55f, 0.30f, 0.90f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.68f, 0.38f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.08f, 0.42f, 0.22f, 1.0f));
+            if (ImGui::Button(ICON_LC_CHECK " Apply", ImVec2(halfBtnW, 24.0f * scale))) {
+                selTool->applyInteractiveBevel(scene);
+                GuiManager::showToast("Beveled Selection", 1.5f);
+            }
+            ImGui::PopStyleColor(3);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Commit Bevel (or press Enter / Space in viewport)");
+            }
+
+            ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.60f, 0.20f, 0.20f, 0.85f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.25f, 0.25f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.48f, 0.15f, 0.15f, 1.0f));
+            if (ImGui::Button(ICON_LC_X " Cancel", ImVec2(halfBtnW, 24.0f * scale))) {
+                selTool->cancelInteractiveBevel(scene);
+                GuiManager::showToast("Bevel Cancelled", 1.2f);
+            }
+            ImGui::PopStyleColor(3);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Discard Bevel (or press Esc / RMB in viewport)");
+            }
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.42f, 0.72f, 0.85f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.28f, 0.52f, 0.85f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.32f, 0.60f, 1.0f));
+            if (ImGui::Button(ICON_LC_SPLIT " Bevel", ImVec2(-1, 24.0f * scale))) {
+                if (selTool) {
+                    selTool->startInteractiveBevel(scene, s_bevelWidth, s_bevelSegments, s_bevelType, s_bevelHeight);
+                } else {
+                    scene.pushHistoryState();
+                    if (ComponentOps::bevelSelection(*mesh, selMgr, s_bevelWidth, s_bevelSegments, s_bevelType, s_bevelHeight)) {
+                        GuiManager::showToast("Beveled Selection", 1.5f);
+                    }
+                }
+            }
+            ImGui::PopStyleColor(3);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Interactive Bevel: click to start preview, drag LMB in viewport or use sliders, Enter to Apply");
+            }
         }
 
         // Bridge Row

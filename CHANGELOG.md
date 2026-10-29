@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [0.3.16]
 - **Modeling Tools**:
   - `Extrude`: Extrude selected faces or open boundary edges into new geometry.
-  - `Bevel`: Inset faces and bevel sharp edges with smooth chamfers.
+  - `Bevel`: Inset faces and bevel sharp edges with uniform perpendicular chamfers, miter corners, multi-segment fillets (1-10 segments), Chamfer/Solid modes, interactive live viewport preview, and watertight welded corner caps.
   - `Bridge`: Connect pairs of faces or open edge loops with clean quad strips.
   - `Merge / Collapse`: Merge vertices to center or collapse edges to midpoints.
   - `Delete`: Cleanly remove faces, edges, or vertices without leaving orphaned points.
