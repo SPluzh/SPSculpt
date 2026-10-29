@@ -800,10 +800,30 @@ bool ComponentOps::bevelFaces(Mesh& mesh, SelectionManager& selMgr, float width,
             glm::vec3 uNext = glm::cross(normal, posNext - posV);
             if (glm::length(uNext) > 1e-6f) uNext = glm::normalize(uNext);
 
-            float denom = std::max(0.15f, 1.0f + glm::dot(uPrev, uNext));
-            glm::vec3 shift = ((uPrev + uNext) / denom) * insetDist;
-            float maxShift = insetDist * 2.5f;
-            if (glm::length(shift) > maxShift) shift = glm::normalize(shift) * maxShift;
+            glm::vec3 fCenter(0.0f);
+            for (int j = 0; j < numV; ++j) {
+                uint32_t fv = mesh.faces[id + j];
+                fCenter += glm::vec3(mesh.verts[fv * 3], mesh.verts[fv * 3 + 1], mesh.verts[fv * 3 + 2]);
+            }
+            fCenter /= (float)numV;
+            glm::vec3 toCenter = fCenter - posV;
+            if (glm::length(toCenter) > 1e-6f) {
+                toCenter = glm::normalize(toCenter);
+                if (glm::dot(uPrev, toCenter) < -1e-4f) uPrev = -uPrev;
+                if (glm::dot(uNext, toCenter) < -1e-4f) uNext = -uNext;
+            }
+
+            glm::vec3 shift(0.0f);
+            glm::vec3 bisector = uPrev + uNext;
+            float bisLen = glm::length(bisector);
+            if (bisLen > 1e-4f) {
+                bisector /= bisLen;
+                float cosHalf = std::max(0.15f, glm::dot(bisector, uPrev));
+                float shiftLen = std::min(insetDist / cosHalf, insetDist * 2.5f);
+                shift = bisector * shiftLen;
+            } else {
+                shift = uPrev * insetDist;
+            }
 
             targetInnerPos[k] = posV + shift + normal * effHeight;
         }
@@ -1013,6 +1033,7 @@ bool ComponentOps::bevelEdges(Mesh& mesh, SelectionManager& selMgr, float width,
     // Also map (v, f) -> new displaced vertex index for fast quad building
     std::unordered_map<uint64_t, uint32_t> faceCornerNewV;
     std::unordered_map<uint64_t, uint32_t> vertFaceToNewV;
+    std::unordered_map<uint64_t, uint32_t> unbeveledEdgeCornerNewV;
 
     for (int f : affectedFaces) {
         int id = f * 4;
@@ -1057,14 +1078,24 @@ bool ComponentOps::bevelEdges(Mesh& mesh, SelectionManager& selMgr, float width,
                 if (glm::length(uNext) > 1e-6f) uNext = glm::normalize(uNext);
             }
 
+            glm::vec3 toCenter = faceCenters[f] - posV;
+            if (glm::length(toCenter) > 1e-6f) {
+                toCenter = glm::normalize(toCenter);
+                if (prevBevel && glm::dot(uPrev, toCenter) < -1e-4f) uPrev = -uPrev;
+                if (nextBevel && glm::dot(uNext, toCenter) < -1e-4f) uNext = -uNext;
+            }
+
             glm::vec3 shift(0.0f);
             if (prevBevel && nextBevel) {
-                float dotVal = glm::dot(uPrev, uNext);
-                float denom = std::max(0.15f, 1.0f + dotVal);
-                shift = ((uPrev + uNext) / denom) * baseDist;
-                float maxShift = baseDist * 2.5f;
-                if (glm::length(shift) > maxShift) {
-                    shift = glm::normalize(shift) * maxShift;
+                glm::vec3 bisector = uPrev + uNext;
+                float bisLen = glm::length(bisector);
+                if (bisLen > 1e-4f) {
+                    bisector /= bisLen;
+                    float cosHalf = std::max(0.15f, glm::dot(bisector, uPrev));
+                    float shiftLen = std::min(baseDist / cosHalf, baseDist * 2.5f);
+                    shift = bisector * shiftLen;
+                } else {
+                    shift = uPrev * baseDist;
                 }
             } else if (nextBevel) {
                 shift = uNext * baseDist;
@@ -1074,7 +1105,31 @@ bool ComponentOps::bevelEdges(Mesh& mesh, SelectionManager& selMgr, float width,
 
             glm::vec3 newPos = posV + shift + nF * ((type == BevelType::Solid) ? 0.0f : heightOffset);
 
-            uint32_t newV = createNewVert(v, newPos);
+            uint32_t newV = 0xffffffff;
+            if (prevBevel && nextBevel) {
+                newV = createNewVert(v, newPos);
+            } else if (prevBevel && !nextBevel) {
+                uint64_t unKey = (uint64_t(v) << 32) | uint64_t(vNext);
+                auto it = unbeveledEdgeCornerNewV.find(unKey);
+                if (it != unbeveledEdgeCornerNewV.end()) {
+                    newV = it->second;
+                } else {
+                    newV = createNewVert(v, newPos);
+                    unbeveledEdgeCornerNewV[unKey] = newV;
+                }
+            } else if (!prevBevel && nextBevel) {
+                uint64_t unKey = (uint64_t(v) << 32) | uint64_t(vPrev);
+                auto it = unbeveledEdgeCornerNewV.find(unKey);
+                if (it != unbeveledEdgeCornerNewV.end()) {
+                    newV = it->second;
+                } else {
+                    newV = createNewVert(v, newPos);
+                    unbeveledEdgeCornerNewV[unKey] = newV;
+                }
+            } else {
+                newV = createNewVert(v, newPos);
+            }
+
             faceCornerNewV[cornerKey] = newV;
             vertFaceToNewV[vfKey] = newV;
         }
@@ -1310,7 +1365,7 @@ bool ComponentOps::bevelEdges(Mesh& mesh, SelectionManager& selMgr, float width,
                 const auto& topB = edgeTop[eB];
 
                 const auto& polyA_raw = (v == topA.v0) ? edgePolyA[eA] : edgePolyB[eA];
-                const auto& polyB_raw = (v == topB.v0) ? edgePolyB[eB] : edgePolyB[eB];
+                const auto& polyB_raw = (v == topB.v0) ? edgePolyA[eB] : edgePolyB[eB];
 
                 int fA0 = topA.f0, fA1 = topA.f1;
                 int fB0 = topB.f0, fB1 = topB.f1;
@@ -1373,10 +1428,22 @@ bool ComponentOps::bevelEdges(Mesh& mesh, SelectionManager& selMgr, float width,
                             std::swap(q1, q3);
                         }
 
-                        mesh.faces.push_back(q0);
-                        mesh.faces.push_back(q1);
-                        mesh.faces.push_back(q2);
-                        mesh.faces.push_back(q3);
+                        if (q1 == q2) {
+                            mesh.faces.push_back(q0);
+                            mesh.faces.push_back(q1);
+                            mesh.faces.push_back(q3);
+                            mesh.faces.push_back(0xffffffff);
+                        } else if (q0 == q3) {
+                            mesh.faces.push_back(q0);
+                            mesh.faces.push_back(q1);
+                            mesh.faces.push_back(q2);
+                            mesh.faces.push_back(0xffffffff);
+                        } else {
+                            mesh.faces.push_back(q0);
+                            mesh.faces.push_back(q1);
+                            mesh.faces.push_back(q2);
+                            mesh.faces.push_back(q3);
+                        }
                         mesh.faceGroups.push_back(bevelGid);
                         mesh.nbFaces++;
                     }
@@ -1587,82 +1654,132 @@ bool ComponentOps::bevelEdges(Mesh& mesh, SelectionManager& selMgr, float width,
                 mesh.faces[id + k] = innerVerts[k];
             }
 
-            // Create supporting rim quads/triangles on face f
+            // Pre-generate corner profile vertices along each radial ray (origVerts[k] -> innerVerts[k])
+            // so adjacent bevel strips share the exact same profile vertices at common corners.
+            std::vector<std::vector<uint32_t>> cornerProfiles(numV, std::vector<uint32_t>(S + 1));
+            for (int k = 0; k < numV; ++k) {
+                uint32_t va = origVerts[k];
+                uint32_t va_in = innerVerts[k];
+                cornerProfiles[k][0] = va;
+                cornerProfiles[k][S] = va_in;
+                if (S > 1) {
+                    if (va == va_in) {
+                        for (int s = 1; s < S; ++s) {
+                            cornerProfiles[k][s] = va;
+                        }
+                    } else {
+                        glm::vec3 pa0(mesh.verts[va * 3], mesh.verts[va * 3 + 1], mesh.verts[va * 3 + 2]);
+                        glm::vec3 pa1(mesh.verts[va_in * 3], mesh.verts[va_in * 3 + 1], mesh.verts[va_in * 3 + 2]);
+                        for (int s = 1; s < S; ++s) {
+                            float t = (float)s / (float)S;
+                            glm::vec3 posA = (1.0f - t) * pa0 + t * pa1;
+                            cornerProfiles[k][s] = createNewVert(va, posA);
+                        }
+                    }
+                }
+            }
+
+            // Create supporting rim quads ONLY for selected bevel edges on face f.
+            // Non-beveled edges must not generate rim faces: their subdivision is already
+            // naturally formed by the inner face and adjacent bevel quad boundaries.
             for (int k = 0; k < numV; ++k) {
                 int kn = (k + 1) % numV;
                 uint32_t va = origVerts[k];
                 uint32_t vb = origVerts[kn];
-                uint32_t va_in = innerVerts[k];
-                uint32_t vb_in = innerVerts[kn];
 
-                if (va == va_in && vb == vb_in) {
+                uint64_t edgeKey = makeEdgeKey(va, vb);
+                bool isBevelEdge = (edgeLookup.count(edgeKey) && selEdgeSet.count(edgeLookup[edgeKey]));
+                if (!isBevelEdge) {
+                    uint32_t va_in = innerVerts[k];
+                    uint32_t vb_in = innerVerts[kn];
+                    if (va == va_in && vb == vb_in) {
+                        continue;
+                    }
+
+                    if (S == 1) {
+                        if (va == va_in) {
+                            mesh.faces.push_back(va);
+                            mesh.faces.push_back(vb);
+                            mesh.faces.push_back(vb_in);
+                            mesh.faces.push_back(0xffffffff);
+                            mesh.faceGroups.push_back(bevelGid);
+                            newBevelFaces.push_back((uint32_t)mesh.nbFaces++);
+                        } else if (vb == vb_in) {
+                            mesh.faces.push_back(va);
+                            mesh.faces.push_back(vb);
+                            mesh.faces.push_back(va_in);
+                            mesh.faces.push_back(0xffffffff);
+                            mesh.faceGroups.push_back(bevelGid);
+                            newBevelFaces.push_back((uint32_t)mesh.nbFaces++);
+                        } else {
+                            mesh.faces.push_back(va);
+                            mesh.faces.push_back(vb);
+                            mesh.faces.push_back(vb_in);
+                            mesh.faces.push_back(va_in);
+                            mesh.faceGroups.push_back(bevelGid);
+                            newBevelFaces.push_back((uint32_t)mesh.nbFaces++);
+                        }
+                    } else {
+                        const auto& rA = cornerProfiles[k];
+                        const auto& rB = cornerProfiles[kn];
+                        for (int s = 0; s < S; ++s) {
+                            uint32_t q0 = rA[s];
+                            uint32_t q1 = rB[s];
+                            uint32_t q2 = rB[s + 1];
+                            uint32_t q3 = rA[s + 1];
+
+                            if (q0 == q3 && q1 == q2) continue;
+                            if (q0 == q3) {
+                                mesh.faces.push_back(q0);
+                                mesh.faces.push_back(q1);
+                                mesh.faces.push_back(q2);
+                                mesh.faces.push_back(0xffffffff);
+                            } else if (q1 == q2) {
+                                mesh.faces.push_back(q0);
+                                mesh.faces.push_back(q1);
+                                mesh.faces.push_back(q3);
+                                mesh.faces.push_back(0xffffffff);
+                            } else {
+                                mesh.faces.push_back(q0);
+                                mesh.faces.push_back(q1);
+                                mesh.faces.push_back(q2);
+                                mesh.faces.push_back(q3);
+                            }
+                            mesh.faceGroups.push_back(bevelGid);
+                            newBevelFaces.push_back((uint32_t)mesh.nbFaces++);
+                        }
+                    }
                     continue;
                 }
 
-                if (S == 1) {
-                    if (va == va_in) {
-                        mesh.faces.push_back(va);
-                        mesh.faces.push_back(vb);
-                        mesh.faces.push_back(vb_in);
+                const auto& rA = cornerProfiles[k];
+                const auto& rB = cornerProfiles[kn];
+
+                for (int s = 0; s < S; ++s) {
+                    uint32_t q0 = rA[s];
+                    uint32_t q1 = rB[s];
+                    uint32_t q2 = rB[s + 1];
+                    uint32_t q3 = rA[s + 1];
+
+                    if (q0 == q3 && q1 == q2) continue;
+                    if (q0 == q3) {
+                        mesh.faces.push_back(q0);
+                        mesh.faces.push_back(q1);
+                        mesh.faces.push_back(q2);
                         mesh.faces.push_back(0xffffffff);
-                    } else if (vb == vb_in) {
-                        mesh.faces.push_back(va);
-                        mesh.faces.push_back(vb);
-                        mesh.faces.push_back(va_in);
+                    } else if (q1 == q2) {
+                        mesh.faces.push_back(q0);
+                        mesh.faces.push_back(q1);
+                        mesh.faces.push_back(q3);
                         mesh.faces.push_back(0xffffffff);
                     } else {
-                        mesh.faces.push_back(va);
-                        mesh.faces.push_back(vb);
-                        mesh.faces.push_back(vb_in);
-                        mesh.faces.push_back(va_in);
+                        mesh.faces.push_back(q0);
+                        mesh.faces.push_back(q1);
+                        mesh.faces.push_back(q2);
+                        mesh.faces.push_back(q3);
                     }
                     mesh.faceGroups.push_back(bevelGid);
                     newBevelFaces.push_back((uint32_t)mesh.nbFaces++);
-                } else {
-                    std::vector<uint32_t> rA(S + 1);
-                    std::vector<uint32_t> rB(S + 1);
-                    rA[0] = va; rA[S] = va_in;
-                    rB[0] = vb; rB[S] = vb_in;
-
-                    glm::vec3 pa0(mesh.verts[va * 3], mesh.verts[va * 3 + 1], mesh.verts[va * 3 + 2]);
-                    glm::vec3 pa1(mesh.verts[va_in * 3], mesh.verts[va_in * 3 + 1], mesh.verts[va_in * 3 + 2]);
-                    glm::vec3 pb0(mesh.verts[vb * 3], mesh.verts[vb * 3 + 1], mesh.verts[vb * 3 + 2]);
-                    glm::vec3 pb1(mesh.verts[vb_in * 3], mesh.verts[vb_in * 3 + 1], mesh.verts[vb_in * 3 + 2]);
-
-                    for (int s = 1; s < S; ++s) {
-                        float t = (float)s / (float)S;
-                        glm::vec3 posA = (1.0f - t) * pa0 + t * pa1;
-                        glm::vec3 posB = (1.0f - t) * pb0 + t * pb1;
-                        rA[s] = (va == va_in) ? va : createNewVert(va, posA);
-                        rB[s] = (vb == vb_in) ? vb : createNewVert(vb, posB);
-                    }
-
-                    for (int s = 0; s < S; ++s) {
-                        uint32_t q0 = rA[s];
-                        uint32_t q1 = rB[s];
-                        uint32_t q2 = rB[s + 1];
-                        uint32_t q3 = rA[s + 1];
-
-                        if (q0 == q3 && q1 == q2) continue;
-                        if (q0 == q3) {
-                            mesh.faces.push_back(q0);
-                            mesh.faces.push_back(q1);
-                            mesh.faces.push_back(q2);
-                            mesh.faces.push_back(0xffffffff);
-                        } else if (q1 == q2) {
-                            mesh.faces.push_back(q0);
-                            mesh.faces.push_back(q1);
-                            mesh.faces.push_back(q3);
-                            mesh.faces.push_back(0xffffffff);
-                        } else {
-                            mesh.faces.push_back(q0);
-                            mesh.faces.push_back(q1);
-                            mesh.faces.push_back(q2);
-                            mesh.faces.push_back(q3);
-                        }
-                        mesh.faceGroups.push_back(bevelGid);
-                        newBevelFaces.push_back((uint32_t)mesh.nbFaces++);
-                    }
                 }
             }
         }
