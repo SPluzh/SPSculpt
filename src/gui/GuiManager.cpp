@@ -12358,6 +12358,19 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                     renderer.setFlatShading(flat);
                 }
 
+                bool showInverted = renderer.getShowInvertedNormals();
+                if (ImGui::Checkbox("Show Inverted Normals", &showInverted)) {
+                    renderer.setShowInvertedNormals(showInverted);
+                }
+                if (showInverted) {
+                    ImGui::Indent();
+                    glm::vec4 invCol = renderer.getInvertedNormalColor();
+                    if (ImGui::ColorEdit4("Inverted Color", glm::value_ptr(invCol), ImGuiColorEditFlags_AlphaBar)) {
+                        renderer.setInvertedNormalColor(invCol);
+                    }
+                    ImGui::Unindent();
+                }
+
                 bool darkenUnselected = renderer.getDarkenUnselected();
                 if (ImGui::Checkbox("Darken unselected", &darkenUnselected)) {
                     renderer.setDarkenUnselected(darkenUnselected);

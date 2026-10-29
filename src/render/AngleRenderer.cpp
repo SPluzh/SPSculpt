@@ -1603,6 +1603,7 @@ void AngleRenderer::drawMeshForThumbnail(Mesh* mesh, const Camera& cam) {
     glUniform1i(glGetUniformLocation(m_matcapProgram, "uBevelEnabled"), 0);
     glUniform1i(glGetUniformLocation(m_matcapProgram, "uShowPolyGroups"), 0);
     glUniform1i(glGetUniformLocation(m_matcapProgram, "uIsThumbnail"), 1);
+    glUniform1i(glGetUniformLocation(m_matcapProgram, "uShowInvertedNormals"), 0);
 
     GLuint matcapTex = 0;
     if (m_matcapIdx >= 0 && m_matcapIdx < static_cast<int>(m_matcaps.size())) {
@@ -1746,6 +1747,8 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
     glUniform1i(glGetUniformLocation(program, "uDarken"), darken ? 1 : 0);
     glUniform1f(glGetUniformLocation(program, "uCurvature"), m_curvature);
     glUniform1f(glGetUniformLocation(program, "uFov"), camera.getFov());
+    glUniform1i(glGetUniformLocation(program, "uShowInvertedNormals"), m_showInvertedNormals ? 1 : 0);
+    glUniform4f(glGetUniformLocation(program, "uInvertedNormalColor"), m_invertedNormalColor.r, m_invertedNormalColor.g, m_invertedNormalColor.b, m_invertedNormalColor.a);
 
     bool useBevel = m_bevelEnabled && !isXRay;
     glUniform1i(glGetUniformLocation(program, "uBevelEnabled"), useBevel ? 1 : 0);

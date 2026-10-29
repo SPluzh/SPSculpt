@@ -15,6 +15,8 @@ uniform float uFov;
 uniform int uFlat;
 uniform int uIsXRay;
 uniform int uIsThumbnail;
+uniform int uShowInvertedNormals;
+uniform vec4 uInvertedNormalColor;
 
 uniform int uBevelEnabled;
 uniform sampler2D uBevelNormalMap;
@@ -122,6 +124,13 @@ vec4 encodeFragColor(const in vec3 frag, const in float alpha) {
     vec3 col = computeCurvature(vVertex, getAlignedNormal(), frag, uCurvature, uFov);
     if (uDarken == 1) col *= 0.3;
     col *= (0.15 + 0.85 * vMasking);
+    if (uShowInvertedNormals == 1 && !gl_FrontFacing) {
+        float luma = max(dot(col, vec3(0.2126, 0.7152, 0.0722)), 0.001);
+        vec3 invLinear = sRGBToLinear(uInvertedNormalColor.rgb);
+        float spec = pow(clamp((luma - 0.5) / 0.5, 0.0, 1.0), 3.0) * 0.25;
+        vec3 tinted = invLinear * (luma * 1.25 + 0.05) + vec3(spec);
+        col = mix(col, tinted, clamp(uInvertedNormalColor.a, 0.0, 1.0));
+    }
     int activePlanes = uSymCount > 0 ? uSymCount : (uSym == 1 ? 1 : 0);
     float symWidth = uSymLineWidth > 0.0001 ? uSymLineWidth : 0.11;
     float innerWidth = symWidth * (0.03 / 0.22);

@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
   - `Delete`: Cleanly remove faces, edges, or vertices without leaving orphaned points.
   - `Close Holes`: Automatically detect and cap open boundary loops and holes.
 - **Crease Visibility**: Added a toggle button to show or hide pink dashed crease lines in the viewport.
+- **Inverted Normals Display**: Viewport shading option to highlight flipped/inverted polygon normals with current shading/matcap preserved and customizable color.
 
 
 ## [0.3.15]

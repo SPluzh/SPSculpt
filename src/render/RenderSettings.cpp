@@ -47,6 +47,9 @@ bool RenderSettings::save(IniFile& ini, const AngleRenderer& renderer, const Sce
     ini.setBool(sec, "dashedCreases", renderer.getDashedCreases());
     glm::vec4 crColor = renderer.getCreaseColor();
     ini.set(sec, "creaseColor", std::to_string(crColor.r) + " " + std::to_string(crColor.g) + " " + std::to_string(crColor.b) + " " + std::to_string(crColor.a));
+    ini.setBool(sec, "showInvertedNormals", renderer.getShowInvertedNormals());
+    glm::vec4 invColor = renderer.getInvertedNormalColor();
+    ini.set(sec, "invertedNormalColor", std::to_string(invColor.r) + " " + std::to_string(invColor.g) + " " + std::to_string(invColor.b) + " " + std::to_string(invColor.a));
     ini.setBool(sec, "flatShading", renderer.getFlatShading());
     ini.setFloat(sec, "curvature", renderer.getCurvature());
     ini.setBool(sec, "bevelEnabled", renderer.getBevelEnabled());
@@ -256,6 +259,15 @@ bool RenderSettings::load(const IniFile& ini, AngleRenderer& renderer, Scene& sc
         float r, g, b, a;
         if (ss >> r >> g >> b >> a) {
             renderer.setCreaseColor(glm::vec4(r, g, b, a));
+        }
+    }
+    if (ini.hasKey(sec, "showInvertedNormals")) renderer.setShowInvertedNormals(ini.getBool(sec, "showInvertedNormals", true));
+    if (ini.hasKey(sec, "invertedNormalColor")) {
+        std::stringstream ss(ini.get(sec, "invertedNormalColor"));
+        float r, g, b, a = 1.0f;
+        if (ss >> r >> g >> b) {
+            if (!(ss >> a)) a = 1.0f;
+            renderer.setInvertedNormalColor(glm::vec4(r, g, b, a));
         }
     }
     if (ini.hasKey(sec, "flatShading")) renderer.setFlatShading(ini.getBool(sec, "flatShading"));

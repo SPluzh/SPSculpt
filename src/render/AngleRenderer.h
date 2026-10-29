@@ -315,6 +315,11 @@ public:
     void setCreaseColor(const glm::vec4& color) { m_creaseColor = color; }
     const glm::vec4& getCreaseColor() const { return m_creaseColor; }
 
+    void setShowInvertedNormals(bool show) { m_showInvertedNormals = show; }
+    bool getShowInvertedNormals() const { return m_showInvertedNormals; }
+    void setInvertedNormalColor(const glm::vec4& color) { m_invertedNormalColor = color; }
+    const glm::vec4& getInvertedNormalColor() const { return m_invertedNormalColor; }
+
     // X-Ray mode controls
     void setXrayEnabled(bool enable) { m_xrayEnabled = enable; }
     bool getXrayEnabled() const { return m_xrayEnabled; }
@@ -712,6 +717,8 @@ private:
     bool m_showCreaseLines = true;
     bool m_dashedCreases = true;
     glm::vec4 m_creaseColor{1.0f, 0.15f, 0.65f, 1.0f};
+    bool m_showInvertedNormals = true;
+    glm::vec4 m_invertedNormalColor{1.0f, 0.15f, 0.15f, 1.0f};
     bool m_showPolyGroups = false;
     bool m_xrayEnabled = false;
     int m_xrayTarget = 0; // 0: Unselected (default), 1: Selected, 2: All
