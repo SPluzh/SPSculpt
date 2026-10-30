@@ -13,6 +13,7 @@ All notable changes to this project will be documented in this file.
 - **Crease Visibility**: Added a toggle button to show or hide pink dashed crease lines in the viewport.
 - **Inverted Normals Display**: Viewport shading option to highlight flipped/inverted polygon normals with current shading/matcap preserved and customizable color.
 - **Primitives Normal Fix**: Fixed inverted normal face winding for `Capsule` and `Torus` primitives.
+- **Primitives Creation**: Removed automatic opening of the settings panel when adding primitives.
 
 
 ## [0.3.15]

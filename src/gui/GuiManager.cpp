@@ -4402,7 +4402,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 } else {
                     scene.addSphere();
                 }
-                m_showSculptingPanel = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sphere");
 
@@ -4413,7 +4412,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 } else {
                     scene.addGeosphere();
                 }
-                m_showSculptingPanel = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Geosphere");
 
@@ -4424,7 +4422,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 } else {
                     scene.addCube();
                 }
-                m_showSculptingPanel = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cube");
 
@@ -4435,7 +4432,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 } else {
                     scene.addCylinder();
                 }
-                m_showSculptingPanel = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cylinder");
 
@@ -4446,7 +4442,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 } else {
                     scene.addCone();
                 }
-                m_showSculptingPanel = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cone");
 
@@ -4457,7 +4452,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 } else {
                     scene.addTorus();
                 }
-                m_showSculptingPanel = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Torus");
 
@@ -4468,7 +4462,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 } else {
                     scene.addPlane();
                 }
-                m_showSculptingPanel = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Plane / Grid");
 
@@ -4479,7 +4472,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 } else {
                     scene.addCapsule();
                 }
-                m_showSculptingPanel = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Capsule");
 
