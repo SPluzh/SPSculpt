@@ -574,9 +574,9 @@ void generateTorus(
         for (int j = 0; j < nbRadial; ++j) {
             int jNext = (j + 1) % nbRadial;
             uint32_t v0 = startIdx + i * nbRadial + j;
-            uint32_t v1 = startIdx + iNext * nbRadial + j;
+            uint32_t v1 = startIdx + i * nbRadial + jNext;
             uint32_t v2 = startIdx + iNext * nbRadial + jNext;
-            uint32_t v3 = startIdx + i * nbRadial + jNext;
+            uint32_t v3 = startIdx + iNext * nbRadial + j;
 
             faces.push_back(v0);
             faces.push_back(v1);
@@ -596,8 +596,8 @@ void generateTorus(
         for (int j = 0; j < nbRadial; ++j) {
             int jNext = (j + 1) % nbRadial;
             faces.push_back(cap0Center);
-            faces.push_back(startIdx + j);
             faces.push_back(startIdx + jNext);
+            faces.push_back(startIdx + j);
             faces.push_back(TRI_INDEX);
         }
 
@@ -614,8 +614,8 @@ void generateTorus(
         for (int j = 0; j < nbRadial; ++j) {
             int jNext = (j + 1) % nbRadial;
             faces.push_back(cap1Center);
-            faces.push_back(lastRingStart + jNext);
             faces.push_back(lastRingStart + j);
+            faces.push_back(lastRingStart + jNext);
             faces.push_back(TRI_INDEX);
         }
     }
@@ -751,8 +751,8 @@ void generateCapsule(
     for (int s = 0; s < radSegments; ++s) {
         int sNext = (s + 1) % radSegments;
         faces.push_back(southPoleIdx);
-        faces.push_back(startIdx + 1 + s);
         faces.push_back(startIdx + 1 + sNext);
+        faces.push_back(startIdx + 1 + s);
         faces.push_back(TRI_INDEX);
     }
 
@@ -763,9 +763,9 @@ void generateCapsule(
         for (int s = 0; s < radSegments; ++s) {
             int sNext = (s + 1) % radSegments;
             faces.push_back(ring0 + s);
-            faces.push_back(ring1 + s);
-            faces.push_back(ring1 + sNext);
             faces.push_back(ring0 + sNext);
+            faces.push_back(ring1 + sNext);
+            faces.push_back(ring1 + s);
         }
     }
 
@@ -774,8 +774,8 @@ void generateCapsule(
     for (int s = 0; s < radSegments; ++s) {
         int sNext = (s + 1) % radSegments;
         faces.push_back(lastRingStart + s);
-        faces.push_back(northPoleIdx);
         faces.push_back(lastRingStart + sNext);
+        faces.push_back(northPoleIdx);
         faces.push_back(TRI_INDEX);
     }
 }
