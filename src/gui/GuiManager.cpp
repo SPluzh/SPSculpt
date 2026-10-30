@@ -4863,23 +4863,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     }
                     ImGui::PopID();
 
-                    ImGui::SameLine();
-
-                    // Frame Camera Button
-                    if (ImGui::Button(ICON_LC_CROSSHAIR "##frame", ImVec2(btnSz, btnSz))) {
-                        scene.getCamera().resetViewToMeshes({mesh}, m_animateBookmarks);
-                    }
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Focus camera on object (Hotkey F)");
-
-                    ImGui::SameLine();
-
-                    // Duplicate Mesh Button
-                    if (ImGui::Button(ICON_LC_COPY "##dup", ImVec2(btnSz, btnSz))) {
-                        scene.setOrUnsetMesh(mesh, false);
-                        scene.duplicateSelection();
-                    }
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Duplicate mesh (Ctrl+D)");
-
                     if (mesh->isTube) {
                         ImGui::SameLine();
                         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.48f, 0.72f, 0.85f));
@@ -4905,21 +4888,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         ImGui::PopStyleColor(2);
                         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bake procedural primitive into standard editable sculpt mesh");
                     }
-
-                    ImGui::SameLine();
-
-                    // Delete Mesh Button
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.12f, 0.12f, 1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.18f, 0.18f, 1.0f));
-                    if (ImGui::Button(ICON_LC_TRASH_2 "##del", ImVec2(btnSz, btnSz))) {
-                        scene.deleteMesh(mesh);
-                        ImGui::PopStyleColor(2);
-                        ImGui::EndGroup();
-                        ImGui::EndChild();
-                        ImGui::PopID();
-                        break;
-                    }
-                    ImGui::PopStyleColor(2);
 
                     ImGui::EndGroup();
                     ImGui::EndChild();

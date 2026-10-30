@@ -14,6 +14,7 @@ All notable changes to this project will be documented in this file.
 - **Inverted Normals Display**: Viewport shading option to highlight flipped/inverted polygon normals with current shading/matcap preserved and customizable color.
 - **Primitives Normal Fix**: Fixed inverted normal face winding for `Capsule` and `Torus` primitives.
 - **Primitives Creation**: Removed automatic opening of the settings panel when adding primitives.
+- **Scene Outliner**: Removed camera focus, duplicate, and delete buttons from object cards (kept in right-click context menu).
 
 
 ## [0.3.15]
