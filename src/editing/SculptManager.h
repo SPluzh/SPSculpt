@@ -587,6 +587,10 @@ private:
     // Cache buffers for fast dirty faces lookup
     std::vector<uint32_t> m_tagFlags;
     uint32_t m_tagEpoch = 0;
+    std::vector<uint32_t> m_vertTagFlags;
+    uint32_t m_vertTagEpoch = 0;
+    uint32_t m_affectedMinV = 0;
+    uint32_t m_affectedMaxV = 0;
     std::vector<uint32_t> m_iFacesCache;
     std::vector<uint32_t> m_pickedVerticesCache;
     std::vector<uint32_t> m_allAffectedVertsCache;

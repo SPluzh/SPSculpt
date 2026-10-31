@@ -81,6 +81,68 @@ glm::vec3 reflectVectorSymmetry(const glm::vec3& vec, const glm::vec3& sScale, c
 }
 
 
+static inline void radixSortVertices(std::vector<uint32_t>& verts, std::vector<uint32_t>& temp, uint32_t maxV) {
+    size_t n = verts.size();
+    if (n <= 1) return;
+    if (temp.size() < n) temp.resize(n);
+
+    uint32_t* src = verts.data();
+    uint32_t* dst = temp.data();
+
+    // Pass 1: bits 0..11 (4096 buckets = 16 KB histogram, 100% fits in L1 data cache)
+    {
+        uint32_t count[4096] = {0};
+        for (size_t i = 0; i < n; ++i) {
+            count[src[i] & 0xFFF]++;
+        }
+        uint32_t offset[4096];
+        offset[0] = 0;
+        for (int i = 1; i < 4096; ++i) {
+            offset[i] = offset[i - 1] + count[i - 1];
+        }
+        for (size_t i = 0; i < n; ++i) {
+            uint32_t v = src[i];
+            dst[offset[v & 0xFFF]++] = v;
+        }
+    }
+
+    // Pass 2: bits 12..23 (4096 buckets = 16 KB histogram, 100% fits in L1 data cache)
+    // Writes directly back into verts (src), eliminating memcpy for all meshes up to 16.7M vertices
+    {
+        uint32_t count[4096] = {0};
+        for (size_t i = 0; i < n; ++i) {
+            count[(dst[i] >> 12) & 0xFFF]++;
+        }
+        uint32_t offset[4096];
+        offset[0] = 0;
+        for (int i = 1; i < 4096; ++i) {
+            offset[i] = offset[i - 1] + count[i - 1];
+        }
+        for (size_t i = 0; i < n; ++i) {
+            uint32_t v = dst[i];
+            src[offset[(v >> 12) & 0xFFF]++] = v;
+        }
+    }
+
+    // Pass 3 (only for meshes > 16.7M vertices): bits 24..31 (256 buckets)
+    if (maxV >= (1u << 24)) {
+        uint32_t count[256] = {0};
+        for (size_t i = 0; i < n; ++i) {
+            count[(src[i] >> 24) & 0xFF]++;
+        }
+        uint32_t offset[256];
+        offset[0] = 0;
+        for (int i = 1; i < 256; ++i) {
+            offset[i] = offset[i - 1] + count[i - 1];
+        }
+        for (size_t i = 0; i < n; ++i) {
+            uint32_t v = src[i];
+            dst[offset[(v >> 24) & 0xFF]++] = v;
+        }
+        std::memcpy(verts.data(), temp.data(), n * sizeof(uint32_t));
+    }
+}
+
 static glm::vec3 vertexOnLine(const glm::vec3& vertex, const glm::vec3& vNear, const glm::vec3& vFar) {
     glm::vec3 ab = vFar - vNear;
     float len2 = glm::dot(ab, ab);
@@ -1859,8 +1921,8 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     m_lastFrameProfile.cullingMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
 
     std::vector<uint32_t> allAffectedVerts;
-
     if (!pickedVertices.empty()) {
+        allAffectedVerts.reserve(pickedVertices.size() * (m_useSym ? 2 : 1));
         bool isMayaNav = m_hotkeyManager ? m_hotkeyManager->getModifierBehavior().ctrlAltInvertsBrush : (camera.getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
         bool isCtrl = (SDL_GetModState() & KMOD_CTRL) != 0;
         bool isAlt = (SDL_GetModState() & KMOD_ALT) != 0;
@@ -2094,9 +2156,41 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         m_lastFrameProfile.sortDedupMs = 0.0;
     } else if (!allAffectedVerts.empty()) {
         tStage = std::chrono::high_resolution_clock::now();
-        // Sort and deduplicate affected vertices to ensure optimal L1/L2 cache locality during Face Lookup & Normals update
-        std::sort(allAffectedVerts.begin(), allAffectedVerts.end());
-        allAffectedVerts.erase(std::unique(allAffectedVerts.begin(), allAffectedVerts.end()), allAffectedVerts.end());
+
+        if (m_vertTagFlags.size() < (size_t)mesh->nbVerts) {
+            m_vertTagFlags.assign(mesh->nbVerts, 0);
+        }
+        m_vertTagEpoch++;
+        if (m_vertTagEpoch == 0) {
+            std::fill(m_vertTagFlags.begin(), m_vertTagFlags.end(), 0);
+            m_vertTagEpoch = 1;
+        }
+
+        uint32_t curEpoch = m_vertTagEpoch;
+        uint32_t* tagData = m_vertTagFlags.data();
+        uint32_t* pVerts = allAffectedVerts.data();
+        size_t total = allAffectedVerts.size();
+        size_t writeIdx = 0;
+
+        uint32_t minV = 0xFFFFFFFF;
+        uint32_t maxV = 0;
+
+        for (size_t i = 0; i < total; ++i) {
+            uint32_t v = pVerts[i];
+            if (v < (uint32_t)mesh->nbVerts && tagData[v] != curEpoch) {
+                tagData[v] = curEpoch;
+                pVerts[writeIdx++] = v;
+                minV = std::min(minV, v);
+                maxV = std::max(maxV, v);
+            }
+        }
+        allAffectedVerts.resize(writeIdx);
+        if (writeIdx > 1) {
+            radixSortVertices(allAffectedVerts, m_allAffectedVertsCache, maxV);
+        }
+        m_affectedMinV = minV;
+        m_affectedMaxV = maxV;
+
         m_lastFrameProfile.sortDedupMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
         if (isGrabBrush) {
             m_grabbedAffectedVerts = allAffectedVerts;
@@ -2178,8 +2272,12 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             }
         }
 
-        uint32_t minV = allAffectedVerts.front();
-        uint32_t maxV = allAffectedVerts.back();
+        uint32_t minV = m_affectedMinV;
+        uint32_t maxV = m_affectedMaxV;
+        if (minV > maxV && !allAffectedVerts.empty()) {
+            minV = allAffectedVerts.front();
+            maxV = allAffectedVerts.back();
+        }
 
         if (mesh->isVertexDirty || mesh->isColorDirty || mesh->isMaterialDirty) {
             mesh->dirtyVertMin = std::min(mesh->dirtyVertMin, minV);
