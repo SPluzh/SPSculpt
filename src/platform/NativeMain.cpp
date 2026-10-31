@@ -23,6 +23,7 @@
 
 #include "render/AngleRenderer.h"
 #include "mesh/Octree.h"
+#include "mesh/SculptBenchmark.h"
 #include "mesh/NormalCalc.h"
 #include "sculpt/SculptEngine.h"
 #include "mesh/Topology.h"
@@ -312,6 +313,8 @@ int main(int argc, char* argv[]) {
 #endif
 
     bool showConsole = false;
+    bool runBench = false;
+    int benchFaces = 4000000;
     std::string fileToOpen = "";
 
 #ifdef _WIN32
@@ -322,6 +325,17 @@ int main(int argc, char* argv[]) {
             std::string arg = wideToUtf8(szArgList[i]);
             if (arg == "--console" || arg == "-console" || arg == "-c" || arg == "--show-console") {
                 showConsole = true;
+            } else if (arg == "--test-claybuildup-50m") {
+                runBench = true;
+                benchFaces = 50000000;
+                showConsole = true;
+            } else if (arg == "--test-claybuildup-4m" || arg == "--bench-claybuildup") {
+                runBench = true;
+                showConsole = true;
+            } else if ((arg == "--bench-faces" || arg == "-bf") && i + 1 < numArgs) {
+                runBench = true;
+                showConsole = true;
+                benchFaces = std::atoi(wideToUtf8(szArgList[++i]).c_str());
             } else if (fileToOpen.empty() && !arg.empty() && arg[0] != '-') {
                 fileToOpen = arg;
             }
@@ -333,6 +347,17 @@ int main(int argc, char* argv[]) {
         std::string arg = argv[i];
         if (arg == "--console" || arg == "-console" || arg == "-c" || arg == "--show-console") {
             showConsole = true;
+        } else if (arg == "--test-claybuildup-50m") {
+            runBench = true;
+            benchFaces = 50000000;
+            showConsole = true;
+        } else if (arg == "--test-claybuildup-4m" || arg == "--bench-claybuildup") {
+            runBench = true;
+            showConsole = true;
+        } else if ((arg == "--bench-faces" || arg == "-bf") && i + 1 < argc) {
+            runBench = true;
+            showConsole = true;
+            benchFaces = std::atoi(argv[++i]);
         } else if (fileToOpen.empty() && !arg.empty() && arg[0] != '-') {
             fileToOpen = arg;
         }
@@ -341,16 +366,20 @@ int main(int argc, char* argv[]) {
 
 #ifdef _WIN32
     if (showConsole) {
-        if (!AttachConsole(ATTACH_PARENT_PROCESS)) {
-            AllocConsole();
+        HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+        DWORD outType = GetFileType(hOut);
+        if (hOut == NULL || hOut == INVALID_HANDLE_VALUE || (outType != FILE_TYPE_PIPE && outType != FILE_TYPE_DISK)) {
+            if (!AttachConsole(ATTACH_PARENT_PROCESS)) {
+                AllocConsole();
+            }
+            FILE* fp;
+            freopen_s(&fp, "CONOUT$", "w", stdout);
+            freopen_s(&fp, "CONOUT$", "w", stderr);
+            freopen_s(&fp, "CONIN$", "r", stdin);
+            std::cout.clear();
+            std::cerr.clear();
+            std::cin.clear();
         }
-        FILE* fp;
-        freopen_s(&fp, "CONOUT$", "w", stdout);
-        freopen_s(&fp, "CONOUT$", "w", stderr);
-        freopen_s(&fp, "CONIN$", "r", stdin);
-        std::cout.clear();
-        std::cerr.clear();
-        std::cin.clear();
     }
     SetUnhandledExceptionFilter(windowsExceptionFilter);
     // Configure Windows process-level DPI awareness to avoid system-level scaling blur
@@ -359,6 +388,18 @@ int main(int argc, char* argv[]) {
 
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
+
+    if (runBench) {
+        bool success = SculptBenchmark::run(benchFaces);
+        fflush(stdout);
+        fflush(stderr);
+#ifdef _WIN32
+        ExitProcess(success ? 0 : 1);
+#else
+        _exit(success ? 0 : 1);
+#endif
+    }
+
     sculpt_log_init();
 
     // Register crash signal handlers
