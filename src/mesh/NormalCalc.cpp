@@ -159,6 +159,21 @@ void updateFaceNormalsOnly(
     }
 }
 
+#if defined(__x86_64__) || defined(_M_X64)
+#include <xmmintrin.h>
+static inline float fastInvSqrt(float lenSq) {
+    if (lenSq <= 1e-12f) return 0.0f;
+    __m128 s = _mm_set_ss(lenSq);
+    __m128 r = _mm_rsqrt_ss(s);
+    float res = _mm_cvtss_f32(r);
+    return res * (1.5f - 0.5f * lenSq * res * res);
+}
+#else
+static inline float fastInvSqrt(float lenSq) {
+    return (lenSq > 1e-12f) ? (1.0f / std::sqrt(lenSq)) : 0.0f;
+}
+#endif
+
 void updateVertexNormals(
     const uint32_t* iVerts, int nbIVerts, int totalNbVerts,
     const uint32_t* vrfStartCount,
@@ -172,88 +187,161 @@ void updateVertexNormals(
 
     #pragma omp parallel for schedule(static) if(loopCount > 500)
     for (int i = 0; i < loopCount; ++i) {
+        if (i + 8 < loopCount) {
+            uint32_t nextInd = full ? (i + 8) : iVerts[i + 8];
+            if (nextInd < (uint32_t)totalNbVerts) {
+                __builtin_prefetch(&vrfStartCount[nextInd * 2], 0, 1);
+                __builtin_prefetch(&outNormals[nextInd * 3], 1, 1);
+            }
+        }
+
         uint32_t ind = full ? i : iVerts[i];
         if (ind >= (uint32_t)totalNbVerts) continue;
 
         uint32_t start = vrfStartCount[ind * 2];
         uint32_t count = vrfStartCount[ind * 2 + 1];
+        uint32_t ind3 = ind * 3;
+
         if (count == 0 || !vertRingFace || !faceNormals) {
-            outNormals[ind * 3]     = 0.0f;
-            outNormals[ind * 3 + 1] = 1.0f;
-            outNormals[ind * 3 + 2] = 0.0f;
+            outNormals[ind3]     = 0.0f;
+            outNormals[ind3 + 1] = 1.0f;
+            outNormals[ind3 + 2] = 0.0f;
             continue;
         }
 
-        if (count == 1) {
-            uint32_t id = vertRingFace[start] * 3;
-            float fx = faceNormals[id];
-            float fy = faceNormals[id + 1];
-            float fz = faceNormals[id + 2];
-            float flen = std::sqrt(fx * fx + fy * fy + fz * fz);
-            float inv = (flen > 1e-12f) ? (1.0f / flen) : 0.0f;
-            outNormals[ind * 3]     = fx * inv;
-            outNormals[ind * 3 + 1] = fy * inv;
-            outNormals[ind * 3 + 2] = fz * inv;
+        // Fast-path: count == 4 (predominant case in regular quad sculpt meshes)
+        if (count == 4) {
+            uint32_t id0 = vertRingFace[start] * 3;
+            uint32_t id1 = vertRingFace[start + 1] * 3;
+            uint32_t id2 = vertRingFace[start + 2] * 3;
+            uint32_t id3 = vertRingFace[start + 3] * 3;
+
+            float nx = faceNormals[id0]     + faceNormals[id1]     + faceNormals[id2]     + faceNormals[id3];
+            float ny = faceNormals[id0 + 1] + faceNormals[id1 + 1] + faceNormals[id2 + 1] + faceNormals[id3 + 1];
+            float nz = faceNormals[id0 + 2] + faceNormals[id1 + 2] + faceNormals[id2 + 2] + faceNormals[id3 + 2];
+
+            float lenSq = nx * nx + ny * ny + nz * nz;
+            float invLen = fastInvSqrt(lenSq);
+            if (invLen > 0.0f) {
+                outNormals[ind3]     = nx * invLen;
+                outNormals[ind3 + 1] = ny * invLen;
+                outNormals[ind3 + 2] = nz * invLen;
+            } else {
+                outNormals[ind3]     = 0.0f;
+                outNormals[ind3 + 1] = 1.0f;
+                outNormals[ind3 + 2] = 0.0f;
+            }
             continue;
         }
 
-        // Fetch and normalize each incident face normal
-        float fnx_stack[16], fny_stack[16], fnz_stack[16];
-        std::vector<float> fn_dyn;
-        float* pFnx = fnx_stack;
-        float* pFny = fny_stack;
-        float* pFnz = fnz_stack;
-        if (count > 16) {
-            fn_dyn.resize(count * 3);
-            pFnx = fn_dyn.data();
-            pFny = fn_dyn.data() + count;
-            pFnz = fn_dyn.data() + count * 2;
+        // Fast-path: count <= 4 (count == 1, 2, 3)
+        if (count <= 4) {
+            float nx = 0.0f, ny = 0.0f, nz = 0.0f;
+            for (uint32_t j = 0; j < count; ++j) {
+                uint32_t id = vertRingFace[start + j] * 3;
+                nx += faceNormals[id];
+                ny += faceNormals[id + 1];
+                nz += faceNormals[id + 2];
+            }
+            float lenSq = nx * nx + ny * ny + nz * nz;
+            float invLen = fastInvSqrt(lenSq);
+            if (invLen > 0.0f) {
+                outNormals[ind3]     = nx * invLen;
+                outNormals[ind3 + 1] = ny * invLen;
+                outNormals[ind3 + 2] = nz * invLen;
+            } else {
+                outNormals[ind3]     = 0.0f;
+                outNormals[ind3 + 1] = 1.0f;
+                outNormals[ind3 + 2] = 0.0f;
+            }
+            continue;
         }
+
+        // Fast-path: extreme count (> 32, e.g. UV sphere pole)
+        // Direct summation prevents O(N^2) stalls on thousands of incident faces
+        if (count > 32) {
+            float nx = 0.0f, ny = 0.0f, nz = 0.0f;
+            for (uint32_t j = 0; j < count; ++j) {
+                uint32_t id = vertRingFace[start + j] * 3;
+                nx += faceNormals[id];
+                ny += faceNormals[id + 1];
+                nz += faceNormals[id + 2];
+            }
+            float lenSq = nx * nx + ny * ny + nz * nz;
+            float invLen = fastInvSqrt(lenSq);
+            if (invLen > 0.0f) {
+                outNormals[ind3]     = nx * invLen;
+                outNormals[ind3 + 1] = ny * invLen;
+                outNormals[ind3 + 2] = nz * invLen;
+            } else {
+                outNormals[ind3]     = 0.0f;
+                outNormals[ind3 + 1] = 1.0f;
+                outNormals[ind3 + 2] = 0.0f;
+            }
+            continue;
+        }
+
+        // Irregular vertices (5 <= count <= 32)
+        // Fixed stack buffer to completely avoid dynamic vector allocations inside OpenMP threads
+        float fnx_stack[32], fny_stack[32], fnz_stack[32];
 
         for (uint32_t j = 0; j < count; ++j) {
             uint32_t id = vertRingFace[start + j] * 3;
             float fx = faceNormals[id];
             float fy = faceNormals[id + 1];
             float fz = faceNormals[id + 2];
-            float flen = std::sqrt(fx * fx + fy * fy + fz * fz);
-            if (flen > 1e-12f) {
-                float inv = 1.0f / flen;
-                pFnx[j] = fx * inv;
-                pFny[j] = fy * inv;
-                pFnz[j] = fz * inv;
+            float flenSq = fx * fx + fy * fy + fz * fz;
+            float inv = fastInvSqrt(flenSq);
+            if (inv > 0.0f) {
+                fnx_stack[j] = fx * inv;
+                fny_stack[j] = fy * inv;
+                fnz_stack[j] = fz * inv;
             } else {
-                pFnx[j] = 0.0f; pFny[j] = 1.0f; pFnz[j] = 0.0f;
+                fnx_stack[j] = 0.0f; fny_stack[j] = 1.0f; fnz_stack[j] = 0.0f;
             }
         }
 
-        // Cluster-weighted accumulation:
-        // When multiple coplanar faces (e.g. 3-6 fan triangles from CDT belt on a cut cap)
-        // meet 1 quad on the uncut mesh across a crease, naive summation gives 3-6x weight
-        // to the cap, pulling the vertex normal by up to 82 deg into the cut cavity.
-        // By scaling each face inversely by the density of its coplanar cluster (faces with dot > 0.707),
-        // each distinct geometric surface patch gets balanced 1:1 weight (true angle bisector at creases).
-        float nx = 0.0f;
-        float ny = 0.0f;
-        float nz = 0.0f;
-
+        // Check for creases (dot <= 0.707) across incident faces
+        bool hasCrease = false;
         for (uint32_t j = 0; j < count; ++j) {
-            float clusterWeight = 0.0f;
-            for (uint32_t k = 0; k < count; ++k) {
-                float dot = pFnx[j] * pFnx[k] + pFny[j] * pFny[k] + pFnz[j] * pFnz[k];
-                if (dot > 0.707f) {
-                    clusterWeight += dot;
+            for (uint32_t k = j + 1; k < count; ++k) {
+                float dot = fnx_stack[j] * fnx_stack[k] + fny_stack[j] * fny_stack[k] + fnz_stack[j] * fnz_stack[k];
+                if (dot <= 0.707f) {
+                    hasCrease = true;
+                    break;
                 }
             }
-            float w = (clusterWeight > 1e-4f) ? (1.0f / clusterWeight) : 1.0f;
-            nx += pFnx[j] * w;
-            ny += pFny[j] * w;
-            nz += pFnz[j] * w;
+            if (hasCrease) break;
         }
 
-        uint32_t ind3 = ind * 3;
+        float nx = 0.0f, ny = 0.0f, nz = 0.0f;
+        if (!hasCrease) {
+            // Smooth patch: all faces belong to the same cluster
+            for (uint32_t j = 0; j < count; ++j) {
+                nx += fnx_stack[j];
+                ny += fny_stack[j];
+                nz += fnz_stack[j];
+            }
+        } else {
+            // Cluster-weighted accumulation fallback for complex creases (e.g. after Boolean/Trim/CDT)
+            for (uint32_t j = 0; j < count; ++j) {
+                float clusterWeight = 0.0f;
+                for (uint32_t k = 0; k < count; ++k) {
+                    float dot = fnx_stack[j] * fnx_stack[k] + fny_stack[j] * fny_stack[k] + fnz_stack[j] * fnz_stack[k];
+                    if (dot > 0.707f) {
+                        clusterWeight += dot;
+                    }
+                }
+                float w = (clusterWeight > 1e-4f) ? (1.0f / clusterWeight) : 1.0f;
+                nx += fnx_stack[j] * w;
+                ny += fny_stack[j] * w;
+                nz += fnz_stack[j] * w;
+            }
+        }
+
         float lenSq = nx * nx + ny * ny + nz * nz;
-        if (lenSq > 1e-12f) {
-            float invLen = 1.0f / std::sqrt(lenSq);
+        float invLen = fastInvSqrt(lenSq);
+        if (invLen > 0.0f) {
             outNormals[ind3]     = nx * invLen;
             outNormals[ind3 + 1] = ny * invLen;
             outNormals[ind3 + 2] = nz * invLen;
