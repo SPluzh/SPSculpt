@@ -431,6 +431,11 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
                 mesh->verts[vi * 3 + 0] = srcVerts[i * 3 + 0];
                 mesh->verts[vi * 3 + 1] = srcVerts[i * 3 + 1];
                 mesh->verts[vi * 3 + 2] = srcVerts[i * 3 + 2];
+                if (vi * 3 + 2 < mesh->vertProxy.size()) {
+                    mesh->vertProxy[vi * 3 + 0] = srcVerts[i * 3 + 0];
+                    mesh->vertProxy[vi * 3 + 1] = srcVerts[i * 3 + 1];
+                    mesh->vertProxy[vi * 3 + 2] = srcVerts[i * 3 + 2];
+                }
 
                 if (targetLayer && i * 3 + 2 < srcLayerDeltas.size() && vi * 3 + 2 < targetLayer->deltaVerts.size()) {
                     targetLayer->deltaVerts[vi * 3 + 0] = srcLayerDeltas[i * 3 + 0];

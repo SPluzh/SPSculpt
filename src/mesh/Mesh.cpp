@@ -334,6 +334,8 @@ void Mesh::computeBbox(float* outBbox) const {
     float minX = verts[0], maxX = verts[0];
     float minY = verts[1], maxY = verts[1];
     float minZ = verts[2], maxZ = verts[2];
+
+    #pragma omp parallel for reduction(min:minX,minY,minZ) reduction(max:maxX,maxY,maxZ) schedule(static) if(nbVerts > 50000)
     for (int i = 1; i < nbVerts; ++i) {
         float x = verts[i * 3];
         float y = verts[i * 3 + 1];

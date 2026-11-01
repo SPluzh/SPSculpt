@@ -1347,6 +1347,7 @@ void SculptManager::cancelStroke() {
     m_relaxEngine.endStroke();
     m_grabbedVertices.clear();
     m_grabbedVerticesSyms.clear();
+    m_grabbedAffectedVerts.clear();
     m_snakeActiveVerts.clear();
     m_snakeActiveVertsSyms.clear();
     m_snakePrevTipPosSyms.clear();
@@ -1379,6 +1380,10 @@ void SculptManager::warmupMeshCaches(const Mesh* mesh) {
     if (m_allAffectedVertsCache.size() < (size_t)mesh->nbVerts) {
         m_allAffectedVertsCache.resize(mesh->nbVerts);
     }
+    if (mesh->vertProxy.size() != mesh->verts.size()) {
+        const_cast<Mesh*>(mesh)->vertProxy = mesh->verts;
+    }
+    mesh->computeLocalRadius();
     g_undoManager.warmupForMesh(mesh->m_id, mesh->nbVerts);
 }
 
@@ -3402,7 +3407,6 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                                                    (m_currentBrush == BRUSH_MASK || m_currentBrush == BRUSH_MASK_GRADIENT_BLUR);
                     g_undoManager.beginSculptStroke(scene, mesh->m_id, {}, strokeAffectsColors, strokeAffectsMaterials, "Sculpt Stroke");
                 }
-
                 m_isSculpting = true;
                 m_currentIntersectionValid = true;
                 m_firstStrokeFrame = true;
@@ -3431,9 +3435,11 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 m_lastStrokeX = mouseX;
                 m_lastStrokeY = mouseY;
 
-                // Copy vertices to proxy at start of stroke
+                // Ensure vertProxy is sized to mesh vertices without redundant copy on every click
                 if (mesh && !m_isTubeMoveStroke) {
-                    mesh->vertProxy = mesh->verts;
+                    if (mesh->vertProxy.size() != mesh->verts.size()) {
+                        mesh->vertProxy = mesh->verts;
+                    }
                 }
 
                 // Check stylus/tablet pressure
@@ -4119,6 +4125,21 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             m_snakeActiveVerts.clear();
             m_snakeActiveVertsSyms.clear();
             m_snakePrevTipPosSyms.clear();
+
+            if (!m_grabbedAffectedVerts.empty()) {
+                if (mesh && mesh->vertProxy.size() == mesh->verts.size()) {
+                    for (uint32_t v : m_grabbedAffectedVerts) {
+                        if (v * 3 + 2 < mesh->verts.size()) {
+                            mesh->vertProxy[v * 3 + 0] = mesh->verts[v * 3 + 0];
+                            mesh->vertProxy[v * 3 + 1] = mesh->verts[v * 3 + 1];
+                            mesh->vertProxy[v * 3 + 2] = mesh->verts[v * 3 + 2];
+                        }
+                    }
+                }
+                m_grabbedAffectedVerts.clear();
+            }
+            m_grabbedVertices.clear();
+            m_grabbedVerticesSyms.clear();
 
             if (m_isTubeMoveStroke) {
                 m_isTubeMoveStroke = false;
