@@ -6806,6 +6806,15 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             static std::vector<float> transformStartNormals;
             static bool transformHasMask = false;
             static std::future<void> transformHistoryFuture;
+            static Mesh* lastTransformMesh = nullptr;
+            if (selectedMesh != lastTransformMesh) {
+                wasUsingGizmo = false;
+                draggedPivot = false;
+                transformHasMask = false;
+                transformStartVerts.clear();
+                transformStartNormals.clear();
+                lastTransformMesh = selectedMesh;
+            }
 
             glm::vec3 compCentroidLocal(0.0f);
             if (hasCompSelection) {
@@ -6842,7 +6851,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 double maskScanMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tMask0).count();
 
                 double vertCopyMs = 0.0;
-                if (hasCompSelection || draggedPivot || transformHasMask || (sculpt.getUseSym() && !selectedMesh->isPrimitive)) {
+                if (hasCompSelection || draggedPivot || transformHasMask) {
                     auto tCopy0 = std::chrono::high_resolution_clock::now();
                     transformStartVerts = selectedMesh->verts;
                     transformStartNormals = selectedMesh->normals;
@@ -6865,6 +6874,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             bool isUsingGizmo = ImGuizmo::IsUsing();
             if (isUsingGizmo && !wasUsingGizmo) {
                 onStartDrag();
+                wasUsingGizmo = true;
             }
 
             ImGuizmo::OPERATION op = ImGuizmo::UNIVERSAL;
@@ -6892,8 +6902,9 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 glm::value_ptr(view), glm::value_ptr(proj),
                 op, ImGuizmo::LOCAL, glm::value_ptr(matrix)
             )) {
-                if (!wasUsingGizmo || (hasCompSelection && transformStartVerts.empty())) {
+                if (!wasUsingGizmo || (hasCompSelection && transformStartVerts.empty()) || (transformHasMask && transformStartVerts.empty())) {
                     onStartDrag();
+                    wasUsingGizmo = true;
                 }
                 auto tFrameStart = std::chrono::high_resolution_clock::now();
 
@@ -6936,8 +6947,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                   selectedMesh->outlinerName.c_str(), selectedMesh->nbVerts, frameMs);
                     }
                 } else {
-                    bool useSymTransform = sculpt.getUseSym() && !selectedMesh->isPrimitive;
-                    if ((transformHasMask || useSymTransform) && !transformStartVerts.empty() && transformStartVerts.size() == selectedMesh->verts.size()) {
+                    bool useSymTransform = sculpt.getUseSym() && transformHasMask && !selectedMesh->isPrimitive;
+                    if (transformHasMask && !transformStartVerts.empty() && transformStartVerts.size() == selectedMesh->verts.size()) {
                         auto tSetupStart = std::chrono::high_resolution_clock::now();
 
                         selectedMesh->matrix = pivotStartMatrix;
@@ -7124,6 +7135,10 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             }
 
             bool isUsingGizmoNow = ImGuizmo::IsUsing();
+            if (isUsingGizmoNow && !wasUsingGizmo) {
+                onStartDrag();
+                wasUsingGizmo = true;
+            }
             if (!isUsingGizmoNow && wasUsingGizmo) {
                 auto tEndStart = std::chrono::high_resolution_clock::now();
                 double applyVertsMs = 0.0;
@@ -7242,7 +7257,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     meshUndoState.afterVerts = selectedMesh->verts;
                     meshUndoState.beforeNormals = std::move(transformStartNormals);
                     meshUndoState.afterNormals = selectedMesh->normals;
-                } else if (!selectedMesh->isPrimitive && (transformHasMask || sculpt.getUseSym())) {
+                } else if (!selectedMesh->isPrimitive && transformHasMask) {
                     selectedMesh->matrix = pivotStartMatrix;
 
                     auto tPI = std::chrono::high_resolution_clock::now();
