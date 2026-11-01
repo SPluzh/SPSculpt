@@ -188,8 +188,13 @@ struct StrokeStepMeasurement {
     double totalMs = 0.0;
     double raycastMs = 0.0;
     double pickVertsMs = 0.0;
+    double pickCellsMs = 0.0;
+    double pickDedupMs = 0.0;
+    double pickFilterMs = 0.0;
     double areaComputeMs = 0.0;
     double primaryDeformMs = 0.0;
+    double symmetryMs = 0.0;
+    double sortDedupMs = 0.0;
     double undoRecordMs = 0.0;
     double faceLookupMs = 0.0;
     double faceNormalsMs = 0.0;
@@ -377,8 +382,13 @@ inline bool run(int targetFaces = 4000000) {
     m0.totalMs = step0TotalMs;
     m0.raycastMs = prof0.raycastMs;
     m0.pickVertsMs = prof0.pickVertsMs;
+    m0.pickCellsMs = prof0.pickCellsMs;
+    m0.pickDedupMs = prof0.pickDedupMs;
+    m0.pickFilterMs = prof0.pickFilterMs;
     m0.areaComputeMs = prof0.areaComputeMs;
     m0.primaryDeformMs = prof0.primaryDeformMs;
+    m0.symmetryMs = prof0.symmetryMs;
+    m0.sortDedupMs = prof0.sortDedupMs;
     m0.undoRecordMs = prof0.undoRecordMs;
     m0.faceLookupMs = prof0.faceLookupMs;
     m0.faceNormalsMs = prof0.faceNormalsMs;
@@ -407,8 +417,13 @@ inline bool run(int targetFaces = 4000000) {
         m.totalMs = stepTotalMs;
         m.raycastMs = prof.raycastMs;
         m.pickVertsMs = prof.pickVertsMs;
+        m.pickCellsMs = prof.pickCellsMs;
+        m.pickDedupMs = prof.pickDedupMs;
+        m.pickFilterMs = prof.pickFilterMs;
         m.areaComputeMs = prof.areaComputeMs;
         m.primaryDeformMs = prof.primaryDeformMs;
+        m.symmetryMs = prof.symmetryMs;
+        m.sortDedupMs = prof.sortDedupMs;
         m.undoRecordMs = prof.undoRecordMs;
         m.faceLookupMs = prof.faceLookupMs;
         m.faceNormalsMs = prof.faceNormalsMs;
@@ -434,12 +449,14 @@ inline bool run(int targetFaces = 4000000) {
 
     // Compute averages across steps
     double sumTotal = 0.0, sumRay = 0.0, sumPick = 0.0, sumDeform = 0.0, sumUndo = 0.0;
+    double sumSymmetry = 0.0, sumSortDedup = 0.0;
+    double sumPickCells = 0.0, sumPickDedup = 0.0, sumPickFilter = 0.0;
     double sumFaceLookup = 0.0, sumFaceNorm = 0.0, sumVertNorm = 0.0, sumSpatialUpdate = 0.0;
     int sumVerts = 0, sumFaces = 0;
 
-    std::cout << "\n----------------------------------------------------------------------------------------------------------------------------------\n";
-    std::cout << " Step | Total CPU | Raycast | PickVerts | Deform+Area | UndoRec | FaceLookup | FaceNorm | VertNorm | SpatialUpd | PickedV | Faces \n";
-    std::cout << "----------------------------------------------------------------------------------------------------------------------------------\n";
+    std::cout << "\n------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n";
+    std::cout << " Step | Total CPU | Raycast | PickVerts | Deform+Area | Symmetry | SortDedup | UndoRec | FaceLookup | FaceNorm | VertNorm | SpatialUpd | PickedV | Faces \n";
+    std::cout << "------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n";
 
     for (const auto& m : measurements) {
         std::cout << "  #" << std::setw(2) << m.stepIndex << " |"
@@ -447,6 +464,8 @@ inline bool run(int targetFaces = 4000000) {
                   << std::setw(6) << std::fixed << std::setprecision(2) << m.raycastMs << "ms |"
                   << std::setw(8) << std::fixed << std::setprecision(2) << m.pickVertsMs << "ms |"
                   << std::setw(10) << std::fixed << std::setprecision(2) << (m.primaryDeformMs + m.areaComputeMs) << "ms |"
+                  << std::setw(7) << std::fixed << std::setprecision(2) << m.symmetryMs << "ms |"
+                  << std::setw(8) << std::fixed << std::setprecision(2) << m.sortDedupMs << "ms |"
                   << std::setw(6) << std::fixed << std::setprecision(2) << m.undoRecordMs << "ms |"
                   << std::setw(9) << std::fixed << std::setprecision(2) << m.faceLookupMs << "ms |"
                   << std::setw(7) << std::fixed << std::setprecision(2) << m.faceNormalsMs << "ms |"
@@ -455,10 +474,22 @@ inline bool run(int targetFaces = 4000000) {
                   << std::setw(7) << m.pickedVerts << " |"
                   << std::setw(6) << m.affectedFaces << "\n";
 
+        if (m.totalMs > 30.0 || m.stepIndex == 0) {
+            std::cout << "      (Step #" << m.stepIndex << " Detail: Pick[Cells: " << std::fixed << std::setprecision(2) << m.pickCellsMs
+                      << "ms, Dedup: " << m.pickDedupMs << "ms, Radius: " << m.pickFilterMs
+                      << "ms] | Undo: " << m.undoRecordMs << "ms | Deform: " << m.primaryDeformMs
+                      << "ms | Sym: " << m.symmetryMs << "ms | FaceNorm: " << m.faceNormalsMs << "ms)\n";
+        }
+
         sumTotal += m.totalMs;
         sumRay += m.raycastMs;
         sumPick += m.pickVertsMs;
+        sumPickCells += m.pickCellsMs;
+        sumPickDedup += m.pickDedupMs;
+        sumPickFilter += m.pickFilterMs;
         sumDeform += (m.primaryDeformMs + m.areaComputeMs);
+        sumSymmetry += m.symmetryMs;
+        sumSortDedup += m.sortDedupMs;
         sumUndo += m.undoRecordMs;
         sumFaceLookup += m.faceLookupMs;
         sumFaceNorm += m.faceNormalsMs;
@@ -467,13 +498,18 @@ inline bool run(int targetFaces = 4000000) {
         sumVerts += m.pickedVerts;
         sumFaces += m.affectedFaces;
     }
-    std::cout << "----------------------------------------------------------------------------------------------------------------------------------\n";
+    std::cout << "------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n";
 
     double nSteps = (double)measurements.size();
     double avgTotal = sumTotal / nSteps;
     double avgRay = sumRay / nSteps;
     double avgPick = sumPick / nSteps;
+    double avgPickCells = sumPickCells / nSteps;
+    double avgPickDedup = sumPickDedup / nSteps;
+    double avgPickFilter = sumPickFilter / nSteps;
     double avgDeform = sumDeform / nSteps;
+    double avgSymmetry = sumSymmetry / nSteps;
+    double avgSortDedup = sumSortDedup / nSteps;
     double avgUndo = sumUndo / nSteps;
     double avgFaceLookup = sumFaceLookup / nSteps;
     double avgFaceNorm = sumFaceNorm / nSteps;
@@ -487,6 +523,8 @@ inline bool run(int targetFaces = 4000000) {
               << std::setw(6) << std::fixed << std::setprecision(2) << avgRay << "ms |"
               << std::setw(8) << std::fixed << std::setprecision(2) << avgPick << "ms |"
               << std::setw(10) << std::fixed << std::setprecision(2) << avgDeform << "ms |"
+              << std::setw(7) << std::fixed << std::setprecision(2) << avgSymmetry << "ms |"
+              << std::setw(8) << std::fixed << std::setprecision(2) << avgSortDedup << "ms |"
               << std::setw(6) << std::fixed << std::setprecision(2) << avgUndo << "ms |"
               << std::setw(9) << std::fixed << std::setprecision(2) << avgFaceLookup << "ms |"
               << std::setw(7) << std::fixed << std::setprecision(2) << avgFaceNorm << "ms |"
@@ -494,7 +532,15 @@ inline bool run(int targetFaces = 4000000) {
               << std::setw(9) << std::fixed << std::setprecision(2) << avgSpatialUpdate << "ms |"
               << std::setw(7) << (int)avgVerts << " |"
               << std::setw(6) << (int)avgFaces << "\n";
-    std::cout << "----------------------------------------------------------------------------------------------------------------------------------\n";
+    std::cout << "------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n";
+
+    double steadySumTotal = 0.0;
+    int steadyCount = 0;
+    for (size_t i = 1; i < measurements.size(); ++i) {
+        steadySumTotal += measurements[i].totalMs;
+        steadyCount++;
+    }
+    double steadyAvgTotal = steadyCount > 0 ? (steadySumTotal / steadyCount) : avgTotal;
 
     double spatialTotalMs = avgRay + avgPick + avgSpatialUpdate;
     double spatialPct = (spatialTotalMs / avgTotal) * 100.0;
@@ -508,15 +554,23 @@ inline bool run(int targetFaces = 4000000) {
     std::cout << "======================================================================\n";
     std::cout << " Average Stroke Step Time:    " << std::fixed << std::setprecision(2) << avgTotal << " ms\n";
     std::cout << " Effective Brush Response FPS:" << std::fixed << std::setprecision(1) << (1000.0 / avgTotal) << " FPS\n";
+    std::cout << " Steady-State Avg (Step 1-9): " << std::fixed << std::setprecision(2) << steadyAvgTotal << " ms ("
+              << std::fixed << std::setprecision(1) << (1000.0 / steadyAvgTotal) << " FPS)\n";
+    std::cout << " Step 0 Warmup (First Click): " << std::fixed << std::setprecision(2) << measurements[0].totalMs << " ms\n";
     std::cout << "\n Pipeline Breakdown:\n";
     std::cout << "   [Spatial Acceleration (Raycast + Pick + Update)]: "
               << std::fixed << std::setprecision(2) << spatialTotalMs << " ms ("
               << std::fixed << std::setprecision(1) << spatialPct << "% of total stroke time)\n";
     std::cout << "     |- Raycast:                 " << std::fixed << std::setprecision(2) << avgRay << " ms (" << std::setprecision(1) << (avgRay / avgTotal * 100.0) << "%)\n";
     std::cout << "     |- Pick Vertices in Sphere: " << std::fixed << std::setprecision(2) << avgPick << " ms (" << std::setprecision(1) << (avgPick / avgTotal * 100.0) << "%)\n";
+    std::cout << "     |    |- Collect Cells:      " << std::fixed << std::setprecision(2) << avgPickCells << " ms\n";
+    std::cout << "     |    |- Candidate Verts:    " << std::fixed << std::setprecision(2) << avgPickDedup << " ms\n";
+    std::cout << "     |    \\- Filter Sphere:      " << std::fixed << std::setprecision(2) << avgPickFilter << " ms\n";
     std::cout << "     \\- Spatial Index Update:    " << std::fixed << std::setprecision(2) << avgSpatialUpdate << " ms (" << std::setprecision(1) << (avgSpatialUpdate / avgTotal * 100.0) << "%)\n";
     std::cout << "\n   [Non-Spatial Pipeline (Mesh Deformation & Topology)]:\n";
     std::cout << "     |- Primary Deform + Area:   " << std::fixed << std::setprecision(2) << avgDeform << " ms (" << std::setprecision(1) << (avgDeform / avgTotal * 100.0) << "%)\n";
+    std::cout << "     |- Symmetry Pass:           " << std::fixed << std::setprecision(2) << avgSymmetry << " ms (" << std::setprecision(1) << (avgSymmetry / avgTotal * 100.0) << "%)\n";
+    std::cout << "     |- Sort & Dedup (Radix):    " << std::fixed << std::setprecision(2) << avgSortDedup << " ms (" << std::setprecision(1) << (avgSortDedup / avgTotal * 100.0) << "%)\n";
     std::cout << "     |- Undo Record:             " << std::fixed << std::setprecision(2) << avgUndo << " ms (" << std::setprecision(1) << (avgUndo / avgTotal * 100.0) << "%)\n";
     std::cout << "     |- Face Lookup (RingFaces): " << std::fixed << std::setprecision(2) << avgFaceLookup << " ms (" << std::setprecision(1) << (avgFaceLookup / avgTotal * 100.0) << "%)\n";
     std::cout << "     |- Face Normals Calc:       " << std::fixed << std::setprecision(2) << avgFaceNorm << " ms (" << std::setprecision(1) << (avgFaceNorm / avgTotal * 100.0) << "%)\n";

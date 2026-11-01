@@ -304,9 +304,15 @@ void Octree::pickVerticesInSphere(
     std::vector<uint32_t>& pickedVertices) {
     
     pickedVertices.clear();
-    if (!root) return;
+    if (!root) {
+        lastCollectCellsMs = lastCandidateVertsMs = lastFilterVertsMs = 0.0;
+        return;
+    }
 
+    auto t0 = std::chrono::high_resolution_clock::now();
     collectIntersectSphere(cx, cy, cz, radius2, m_tempFaces);
+    auto t1 = std::chrono::high_resolution_clock::now();
+    lastCollectCellsMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
 
     if (m_visitedFlags.size() < (size_t)nbVerts) {
         m_visitedFlags.assign(nbVerts, 0);
@@ -353,8 +359,14 @@ void Octree::pickVerticesInSphere(
         }
     }
 
+    auto t2 = std::chrono::high_resolution_clock::now();
+    lastCandidateVertsMs = std::chrono::duration<double, std::milli>(t2 - t1).count();
+
     const size_t totalCandidates = m_tempVerts.size();
-    if (totalCandidates == 0) return;
+    if (totalCandidates == 0) {
+        lastFilterVertsMs = 0.0;
+        return;
+    }
 
     if (totalCandidates < 2048) {
         pickedVertices.reserve(totalCandidates);
@@ -424,6 +436,9 @@ void Octree::pickVerticesInSphere(
             }
         }
     }
+
+    auto t3 = std::chrono::high_resolution_clock::now();
+    lastFilterVertsMs = std::chrono::duration<double, std::milli>(t3 - t2).count();
 }
 
 std::vector<uint32_t> Octree::pickVerticesInSphere(

@@ -68,7 +68,12 @@ void UndoManager::recordAffectedVertices(Scene& scene,
 
     auto& stamps = s_recordedStamps[meshId];
     if (stamps.size() < static_cast<size_t>(mesh->nbVerts)) {
+        auto tAlloc0 = std::chrono::high_resolution_clock::now();
         stamps.resize(mesh->nbVerts, 0);
+        auto tAlloc1 = std::chrono::high_resolution_clock::now();
+        double allocMs = std::chrono::duration<double, std::milli>(tAlloc1 - tAlloc0).count();
+        sculpt_log("[Undo Diagnostics] stamps.resize(%d) allocated %.2f MB in %.2f ms\n",
+                   mesh->nbVerts, (mesh->nbVerts * sizeof(uint32_t)) / (1024.0 * 1024.0), allocMs);
     }
     uint32_t currentStamp = s_recordedCurrentStamp;
 

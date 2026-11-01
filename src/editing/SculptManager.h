@@ -45,6 +45,10 @@ struct SculptFrameProfile {
     double octreeUpdateMs = 0.0;
     double gpuUploadMs = 0.0;
     double renderMs = 0.0;
+
+    double pickCellsMs = 0.0;
+    double pickDedupMs = 0.0;
+    double pickFilterMs = 0.0;
     
     int pickedVertCount = 0;
     int affectedVertCount = 0;
@@ -54,6 +58,7 @@ struct SculptFrameProfile {
         raycastMs = pickVertsMs = cullingMs = vertProxyResetMs = undoRecordMs = 0.0;
         primaryDeformMs = areaComputeMs = symmetryMs = sortDedupMs = faceLookupMs = faceNormalsMs = 0.0;
         vertNormalsMs = octreeUpdateMs = gpuUploadMs = renderMs = 0.0;
+        pickCellsMs = pickDedupMs = pickFilterMs = 0.0;
         pickedVertCount = affectedVertCount = affectedFaceCount = 0;
     }
 

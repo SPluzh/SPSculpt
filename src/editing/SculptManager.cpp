@@ -1906,6 +1906,9 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         }
     }
     m_lastFrameProfile.pickVertsMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
+    m_lastFrameProfile.pickCellsMs = mesh->octree.lastCollectCellsMs;
+    m_lastFrameProfile.pickDedupMs = mesh->octree.lastCandidateVertsMs;
+    m_lastFrameProfile.pickFilterMs = mesh->octree.lastFilterVertsMs;
     m_lastFrameProfile.pickedVertCount = (int)pickedVertices.size();
 
     // --- Stage 3: Culling & PolyGroup Filtering ---

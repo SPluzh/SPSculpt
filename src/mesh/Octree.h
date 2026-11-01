@@ -174,6 +174,10 @@ public:
 
     void rebuildInternal();
 
+    double lastCollectCellsMs = 0.0;
+    double lastCandidateVertsMs = 0.0;
+    double lastFilterVertsMs = 0.0;
+
 private:
     std::vector<uint32_t> m_visitedFlags;
     uint32_t m_visitedEpoch = 0;
