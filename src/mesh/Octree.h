@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <cstdint>
 #include <unordered_set>
+#include <atomic>
+#include <mutex>
 
 struct OctreeCell {
     OctreeCell* parent = nullptr;
@@ -184,6 +186,10 @@ private:
     std::vector<uint32_t> m_tempFaces;
     std::vector<uint32_t> m_tempVerts;
     std::vector<std::vector<uint32_t>> m_threadPicked;
+
+    std::mutex m_poolMutex;
+    void allocateChildren(OctreeCell* cell, std::atomic<int>& poolIndexAtomic);
+    void splitCellSequential(OctreeCell* cell, std::atomic<int>& poolIndexAtomic);
 
     void constructChildren(OctreeCell* cell);
     void constructLeaf(OctreeCell* cell);

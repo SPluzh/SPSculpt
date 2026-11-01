@@ -6,32 +6,137 @@
 #include <omp.h>
 #include <atomic>
 
+static inline void initCell(OctreeCell* cell, OctreeCell* parent, int depth) {
+    cell->parent = parent;
+    cell->depth = depth;
+    for (int i = 0; i < 8; ++i) cell->children[i] = nullptr;
+    cell->iFaces.clear();
+    cell->dirty = false;
+    cell->aabbLoose[0] = std::numeric_limits<float>::infinity();
+    cell->aabbLoose[1] = std::numeric_limits<float>::infinity();
+    cell->aabbLoose[2] = std::numeric_limits<float>::infinity();
+    cell->aabbSplit[0] = std::numeric_limits<float>::infinity();
+    cell->aabbSplit[1] = std::numeric_limits<float>::infinity();
+    cell->aabbSplit[2] = std::numeric_limits<float>::infinity();
+    cell->aabbLoose[3] = -std::numeric_limits<float>::infinity();
+    cell->aabbLoose[4] = -std::numeric_limits<float>::infinity();
+    cell->aabbLoose[5] = -std::numeric_limits<float>::infinity();
+    cell->aabbSplit[3] = -std::numeric_limits<float>::infinity();
+    cell->aabbSplit[4] = -std::numeric_limits<float>::infinity();
+    cell->aabbSplit[5] = -std::numeric_limits<float>::infinity();
+}
+
+static inline void setChildSplitBounds(OctreeCell* cell, float xmin, float ymin, float zmin, float xmax, float ymax, float zmax, float xcen, float ycen, float zcen) {
+    cell->children[0]->setAabbSplit(xmin, ymin, zmin, xcen, ycen, zcen);
+    cell->children[1]->setAabbSplit(xcen, ymin, zmin, xmax, ycen, zcen);
+    cell->children[2]->setAabbSplit(xcen, ymin, zcen, xmax, ycen, zmax);
+    cell->children[3]->setAabbSplit(xmin, ymin, zcen, xcen, ycen, zmax);
+    cell->children[4]->setAabbSplit(xmin, ycen, zmin, xcen, ymax, zcen);
+    cell->children[5]->setAabbSplit(xcen, ycen, zmin, xmax, ymax, zcen);
+    cell->children[6]->setAabbSplit(xcen, ycen, zcen, xmax, ymax, zmax);
+    cell->children[7]->setAabbSplit(xmin, ycen, zcen, xcen, ymax, zmax);
+}
+
+inline int getChildIndex(float cx, float cy, float cz, float xcen, float ycen, float zcen) {
+    static const int lut[8] = {0, 3, 4, 7, 1, 2, 5, 6};
+    int key = ((cx > xcen) << 2) | ((cy > ycen) << 1) | (cz > zcen);
+    return lut[key];
+}
+
 OctreeCell* Octree::getCell() {
     if (poolIndex < (int)cellPool.size()) {
         OctreeCell* cell = cellPool[poolIndex++];
-        cell->parent = nullptr;
-        cell->depth = 0;
-        for (int i = 0; i < 8; ++i) cell->children[i] = nullptr;
-        cell->iFaces.clear();
-        cell->dirty = false;
-        cell->aabbLoose[0] = std::numeric_limits<float>::infinity();
-        cell->aabbLoose[1] = std::numeric_limits<float>::infinity();
-        cell->aabbLoose[2] = std::numeric_limits<float>::infinity();
-        cell->aabbSplit[0] = std::numeric_limits<float>::infinity();
-        cell->aabbSplit[1] = std::numeric_limits<float>::infinity();
-        cell->aabbSplit[2] = std::numeric_limits<float>::infinity();
-        cell->aabbLoose[3] = -std::numeric_limits<float>::infinity();
-        cell->aabbLoose[4] = -std::numeric_limits<float>::infinity();
-        cell->aabbLoose[5] = -std::numeric_limits<float>::infinity();
-        cell->aabbSplit[3] = -std::numeric_limits<float>::infinity();
-        cell->aabbSplit[4] = -std::numeric_limits<float>::infinity();
-        cell->aabbSplit[5] = -std::numeric_limits<float>::infinity();
+        initCell(cell, nullptr, 0);
         return cell;
     } else {
         OctreeCell* cell = new OctreeCell();
         cellPool.push_back(cell);
         poolIndex++;
         return cell;
+    }
+}
+
+void Octree::allocateChildren(OctreeCell* cell, std::atomic<int>& poolIndexAtomic) {
+    int base = poolIndexAtomic.fetch_add(8, std::memory_order_relaxed);
+    if (base + 8 > (int)cellPool.size()) {
+        std::lock_guard<std::mutex> lock(m_poolMutex);
+        while ((int)cellPool.size() < base + 8 + 1024) {
+            cellPool.push_back(new OctreeCell());
+        }
+    }
+    for (int i = 0; i < 8; ++i) {
+        OctreeCell* child = cellPool[base + i];
+        initCell(child, cell, cell->depth + 1);
+        cell->children[i] = child;
+    }
+}
+
+void Octree::splitCellSequential(OctreeCell* cell, std::atomic<int>& poolIndexAtomic) {
+    float* split = cell->aabbSplit;
+    float xmin = split[0];
+    float ymin = split[1];
+    float zmin = split[2];
+    float xmax = split[3];
+    float ymax = split[4];
+    float zmax = split[5];
+    float xcen = (xmax + xmin) * 0.5f;
+    float ycen = (ymax + ymin) * 0.5f;
+    float zcen = (zmax + zmin) * 0.5f;
+
+    allocateChildren(cell, poolIndexAtomic);
+    setChildSplitBounds(cell, xmin, ymin, zmin, xmax, ymax, zmax, xcen, ycen, zcen);
+
+    int nbFacesLocal = (int)cell->iFaces.size();
+
+    int counts[8] = {0};
+    for (int i = 0; i < nbFacesLocal; ++i) {
+        uint32_t id = cell->iFaces[i] * 3;
+        counts[getChildIndex(faceCentersData[id], faceCentersData[id + 1], faceCentersData[id + 2], xcen, ycen, zcen)]++;
+    }
+
+    for (int i = 0; i < 8; ++i) {
+        cell->children[i]->iFaces.reserve(counts[i]);
+    }
+
+    for (int i = 0; i < nbFacesLocal; ++i) {
+        uint32_t iFace = cell->iFaces[i];
+        uint32_t id = iFace * 3;
+        int idx = getChildIndex(faceCentersData[id], faceCentersData[id + 1], faceCentersData[id + 2], xcen, ycen, zcen);
+        cell->children[idx]->iFaces.push_back(iFace);
+    }
+
+    cell->iFaces.clear();
+}
+
+static void updateAabbLooseRecursive(OctreeCell* cell) {
+    if (!cell || cell->children[0] == nullptr) return;
+
+    float bxmin = std::numeric_limits<float>::infinity();
+    float bymin = std::numeric_limits<float>::infinity();
+    float bzmin = std::numeric_limits<float>::infinity();
+    float bxmax = -std::numeric_limits<float>::infinity();
+    float bymax = -std::numeric_limits<float>::infinity();
+    float bzmax = -std::numeric_limits<float>::infinity();
+    bool hasValidChild = false;
+
+    for (int i = 0; i < 8; ++i) {
+        OctreeCell* child = cell->children[i];
+        if (child) {
+            updateAabbLooseRecursive(child);
+            float* cb = child->aabbLoose;
+            if (cb[0] <= cb[3]) {
+                hasValidChild = true;
+                if (cb[0] < bxmin) bxmin = cb[0];
+                if (cb[1] < bymin) bymin = cb[1];
+                if (cb[2] < bzmin) bzmin = cb[2];
+                if (cb[3] > bxmax) bxmax = cb[3];
+                if (cb[4] > bymax) bymax = cb[4];
+                if (cb[5] > bzmax) bzmax = cb[5];
+            }
+        }
+    }
+    if (hasValidChild) {
+        cell->setAabbLoose(bxmin, bymin, bzmin, bxmax, bymax, bzmax);
     }
 }
 
@@ -67,15 +172,6 @@ void Octree::rebuildInternal() {
         faceLeaf.clear();
         facePosInLeaf.clear();
         return;
-    }
-    root = getCell();
-
-    faceLeaf.assign(nbFaces, nullptr);
-    facePosInLeaf.assign(nbFaces, 0);
-
-    root->iFaces.resize(nbFaces);
-    for (int i = 0; i < nbFaces; ++i) {
-        root->iFaces[i] = i;
     }
 
     maxFaces = 100;
@@ -126,39 +222,226 @@ void Octree::rebuildInternal() {
     float zmin2 = zmin - dfz;
     float zmax2 = zmax + dfz;
 
+    if (cellPool.size() < 65536) {
+        cellPool.reserve(65536);
+        while (cellPool.size() < 65536) {
+            cellPool.push_back(new OctreeCell());
+        }
+    }
+    std::atomic<int> poolIndexAtomic(0);
+
+    root = cellPool[poolIndexAtomic.fetch_add(1, std::memory_order_relaxed)];
+    initCell(root, nullptr, 0);
     root->setAabbLoose(xmin, ymin, zmin, xmax, ymax, zmax);
     root->setAabbSplit(xmin2, ymin2, zmin2, xmax2, ymax2, zmax2);
 
-    std::vector<OctreeCell*> stack;
-    stack.push_back(root);
-    std::vector<OctreeCell*> leaves;
+    if ((int)faceLeaf.size() != nbFaces) {
+        faceLeaf.resize(nbFaces);
+    }
+    if ((int)facePosInLeaf.size() != nbFaces) {
+        facePosInLeaf.resize(nbFaces);
+    }
+#pragma omp parallel for if(nbFaces > 50000) schedule(static)
+    for (int i = 0; i < nbFaces; ++i) {
+        faceLeaf[i] = nullptr;
+        facePosInLeaf[i] = 0;
+    }
 
     const int MAX_DEPTH = 8;
+    if (nbFaces <= maxFaces) {
+        root->iFaces.resize(nbFaces);
+        for (int i = 0; i < nbFaces; ++i) {
+            root->iFaces[i] = i;
+        }
+        constructLeaf(root);
+        poolIndex = poolIndexAtomic.load(std::memory_order_relaxed);
+        return;
+    }
 
-    while (!stack.empty()) {
-        OctreeCell* cell = stack.back();
-        stack.pop_back();
+    float* split = root->aabbSplit;
+    float s_xmin = split[0], s_ymin = split[1], s_zmin = split[2];
+    float s_xmax = split[3], s_ymax = split[4], s_zmax = split[5];
+    float xcen = (s_xmax + s_xmin) * 0.5f;
+    float ycen = (s_ymax + s_ymin) * 0.5f;
+    float zcen = (s_zmax + s_zmin) * 0.5f;
 
-        int cellNbFaces = cell->iFaces.size();
-        if (cellNbFaces > maxFaces && cell->depth < MAX_DEPTH) {
-            constructChildren(cell);
-            for (int i = 0; i < 8; ++i) {
-                stack.push_back(cell->children[i]);
-            }
-        } else if (cellNbFaces > 0) {
-            leaves.push_back(cell);
+    allocateChildren(root, poolIndexAtomic);
+    setChildSplitBounds(root, s_xmin, s_ymin, s_zmin, s_xmax, s_ymax, s_zmax, xcen, ycen, zcen);
+
+    int numThreads = omp_get_max_threads();
+    std::vector<std::vector<int>> threadCounts(numThreads, std::vector<int>(8, 0));
+    std::vector<std::vector<int>> threadOffsets(numThreads, std::vector<int>(8, 0));
+    std::vector<int> totalCounts(8, 0);
+
+#pragma omp parallel num_threads(numThreads)
+    {
+        int tid = omp_get_thread_num();
+        int chunkSize = (nbFaces + numThreads - 1) / numThreads;
+        int start = tid * chunkSize;
+        int end = std::min(start + chunkSize, nbFaces);
+
+        int localCounts[8] = {0};
+        for (int i = start; i < end; ++i) {
+            uint32_t id = i * 3;
+            int idx = getChildIndex(faceCentersData[id], faceCentersData[id + 1], faceCentersData[id + 2], xcen, ycen, zcen);
+            localCounts[idx]++;
+        }
+        for (int k = 0; k < 8; ++k) {
+            threadCounts[tid][k] = localCounts[k];
         }
     }
 
-    for (auto* leaf : leaves) {
-        constructLeaf(leaf);
+    for (int k = 0; k < 8; ++k) {
+        int sum = 0;
+        for (int t = 0; t < numThreads; ++t) {
+            threadOffsets[t][k] = sum;
+            sum += threadCounts[t][k];
+        }
+        totalCounts[k] = sum;
+        root->children[k]->iFaces.resize(sum);
     }
-}
 
-inline int getChildIndex(float cx, float cy, float cz, float xcen, float ycen, float zcen) {
-    static const int lut[8] = {0, 3, 4, 7, 1, 2, 5, 6};
-    int key = ((cx > xcen) << 2) | ((cy > ycen) << 1) | (cz > zcen);
-    return lut[key];
+#pragma omp parallel num_threads(numThreads)
+    {
+        int tid = omp_get_thread_num();
+        int chunkSize = (nbFaces + numThreads - 1) / numThreads;
+        int start = tid * chunkSize;
+        int end = std::min(start + chunkSize, nbFaces);
+
+        int localWritePos[8];
+        for (int k = 0; k < 8; ++k) {
+            localWritePos[k] = threadOffsets[tid][k];
+        }
+
+        for (int i = start; i < end; ++i) {
+            uint32_t id = i * 3;
+            int idx = getChildIndex(faceCentersData[id], faceCentersData[id + 1], faceCentersData[id + 2], xcen, ycen, zcen);
+            root->children[idx]->iFaces[localWritePos[idx]++] = i;
+        }
+    }
+
+#pragma omp parallel for schedule(dynamic, 1)
+    for (int k = 0; k < 8; ++k) {
+        OctreeCell* child = root->children[k];
+        if ((int)child->iFaces.size() > maxFaces && child->depth < MAX_DEPTH) {
+            splitCellSequential(child, poolIndexAtomic);
+        }
+    }
+
+    std::vector<OctreeCell*> level2Nodes;
+    std::vector<OctreeCell*> leaves;
+    leaves.reserve(8192);
+
+    for (int k = 0; k < 8; ++k) {
+        OctreeCell* child = root->children[k];
+        if (child->children[0] != nullptr) {
+            for (int g = 0; g < 8; ++g) {
+                OctreeCell* grandchild = child->children[g];
+                if (!grandchild->iFaces.empty()) {
+                    level2Nodes.push_back(grandchild);
+                }
+            }
+        } else if (!child->iFaces.empty()) {
+            leaves.push_back(child);
+        }
+    }
+
+#pragma omp parallel
+    {
+        std::vector<OctreeCell*> threadLeaves;
+        std::vector<OctreeCell*> threadStack;
+        threadLeaves.reserve(1024);
+        threadStack.reserve(64);
+
+#pragma omp for schedule(dynamic, 1)
+        for (size_t i = 0; i < level2Nodes.size(); ++i) {
+            OctreeCell* subtreeNode = level2Nodes[i];
+            threadStack.push_back(subtreeNode);
+
+            while (!threadStack.empty()) {
+                OctreeCell* cell = threadStack.back();
+                threadStack.pop_back();
+
+                int cellNbFaces = (int)cell->iFaces.size();
+                if (cellNbFaces > maxFaces && cell->depth < MAX_DEPTH) {
+                    splitCellSequential(cell, poolIndexAtomic);
+                    for (int c = 0; c < 8; ++c) {
+                        if (!cell->children[c]->iFaces.empty()) {
+                            threadStack.push_back(cell->children[c]);
+                        }
+                    }
+                } else if (cellNbFaces > 0) {
+                    threadLeaves.push_back(cell);
+                }
+            }
+        }
+
+#pragma omp critical
+        {
+            leaves.insert(leaves.end(), threadLeaves.begin(), threadLeaves.end());
+        }
+    }
+
+#pragma omp parallel for schedule(static)
+    for (size_t i = 0; i < leaves.size(); ++i) {
+        OctreeCell* cell = leaves[i];
+        int nbFacesLocal = (int)cell->iFaces.size();
+        float bxmin = std::numeric_limits<float>::infinity();
+        float bymin = std::numeric_limits<float>::infinity();
+        float bzmin = std::numeric_limits<float>::infinity();
+        float bxmax = -std::numeric_limits<float>::infinity();
+        float bymax = -std::numeric_limits<float>::infinity();
+        float bzmax = -std::numeric_limits<float>::infinity();
+
+        for (int j = 0; j < nbFacesLocal; ++j) {
+            uint32_t id = cell->iFaces[j];
+            faceLeaf[id] = cell;
+            facePosInLeaf[id] = j;
+
+            uint32_t id6 = id * 6;
+            float f_xmin = faceBoxesData[id6];
+            float f_ymin = faceBoxesData[id6 + 1];
+            float f_zmin = faceBoxesData[id6 + 2];
+            float f_xmax = faceBoxesData[id6 + 3];
+            float f_ymax = faceBoxesData[id6 + 4];
+            float f_zmax = faceBoxesData[id6 + 5];
+            if (f_xmin < bxmin) bxmin = f_xmin;
+            if (f_xmax > bxmax) bxmax = f_xmax;
+            if (f_ymin < bymin) bymin = f_ymin;
+            if (f_ymax > bymax) bymax = f_ymax;
+            if (f_zmin < bzmin) bzmin = f_zmin;
+            if (f_zmax > bzmax) bzmax = f_zmax;
+        }
+        cell->setAabbLoose(bxmin, bymin, bzmin, bxmax, bymax, bzmax);
+    }
+
+#pragma omp parallel for schedule(dynamic, 1)
+    for (int k = 0; k < 8; ++k) {
+        if (root->children[k]) {
+            updateAabbLooseRecursive(root->children[k]);
+        }
+    }
+
+    float bxmin = root->aabbLoose[0];
+    float bymin = root->aabbLoose[1];
+    float bzmin = root->aabbLoose[2];
+    float bxmax = root->aabbLoose[3];
+    float bymax = root->aabbLoose[4];
+    float bzmax = root->aabbLoose[5];
+    for (int k = 0; k < 8; ++k) {
+        OctreeCell* child = root->children[k];
+        if (child && child->aabbLoose[0] <= child->aabbLoose[3]) {
+            if (child->aabbLoose[0] < bxmin) bxmin = child->aabbLoose[0];
+            if (child->aabbLoose[1] < bymin) bymin = child->aabbLoose[1];
+            if (child->aabbLoose[2] < bzmin) bzmin = child->aabbLoose[2];
+            if (child->aabbLoose[3] > bxmax) bxmax = child->aabbLoose[3];
+            if (child->aabbLoose[4] > bymax) bymax = child->aabbLoose[4];
+            if (child->aabbLoose[5] > bzmax) bzmax = child->aabbLoose[5];
+        }
+    }
+    root->setAabbLoose(bxmin, bymin, bzmin, bxmax, bymax, bzmax);
+
+    poolIndex = poolIndexAtomic.load(std::memory_order_relaxed);
 }
 
 void Octree::constructChildren(OctreeCell* cell) {
@@ -178,6 +461,7 @@ void Octree::constructChildren(OctreeCell* cell) {
         cell->children[i]->parent = cell;
         cell->children[i]->depth = cell->depth + 1;
     }
+    setChildSplitBounds(cell, xmin, ymin, zmin, xmax, ymax, zmax, xcen, ycen, zcen);
 
     int nbFacesLocal = cell->iFaces.size();
 
@@ -191,32 +475,12 @@ void Octree::constructChildren(OctreeCell* cell) {
         cell->children[i]->iFaces.reserve(counts[i]);
     }
 
-    std::vector<uint32_t>* childFaces[8] = {
-        &cell->children[0]->iFaces,
-        &cell->children[1]->iFaces,
-        &cell->children[2]->iFaces,
-        &cell->children[3]->iFaces,
-        &cell->children[4]->iFaces,
-        &cell->children[5]->iFaces,
-        &cell->children[6]->iFaces,
-        &cell->children[7]->iFaces
-    };
-
     for (int i = 0; i < nbFacesLocal; ++i) {
         uint32_t iFace = cell->iFaces[i];
         uint32_t id = iFace * 3;
         int idx = getChildIndex(faceCentersData[id], faceCentersData[id + 1], faceCentersData[id + 2], xcen, ycen, zcen);
-        childFaces[idx]->push_back(iFace);
+        cell->children[idx]->iFaces.push_back(iFace);
     }
-
-    cell->children[0]->setAabbSplit(xmin, ymin, zmin, xcen, ycen, zcen);
-    cell->children[1]->setAabbSplit(xcen, ymin, zmin, xmax, ycen, zcen);
-    cell->children[2]->setAabbSplit(xcen, ymin, zcen, xmax, ycen, zmax);
-    cell->children[3]->setAabbSplit(xmin, ymin, zcen, xcen, ycen, zmax);
-    cell->children[4]->setAabbSplit(xmin, ycen, zmin, xcen, ymax, zcen);
-    cell->children[5]->setAabbSplit(xcen, ycen, zmin, xmax, ymax, zcen);
-    cell->children[6]->setAabbSplit(xcen, ycen, zcen, xmax, ymax, zmax);
-    cell->children[7]->setAabbSplit(xmin, ycen, zcen, xcen, ymax, zmax);
 
     cell->iFaces.clear();
 }
