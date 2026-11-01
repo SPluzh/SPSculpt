@@ -1901,7 +1901,86 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     // --- Stage 2: Pick Vertices ---
     tStage = std::chrono::high_resolution_clock::now();
     std::vector<uint32_t> pickedVertices;
-    if (isSnakeBrush) {
+    std::vector<glm::vec3> symScales;
+    if (m_useSym) {
+        symScales = getActiveSymmetryScales();
+        if (m_firstStrokeFrame) {
+            m_initialSymIntersections.resize(symScales.size());
+            for (size_t sIdx = 0; sIdx < symScales.size(); ++sIdx) {
+                m_initialSymIntersections[sIdx] = reflectPointSymmetry(m_initialIntersection, symScales[sIdx], mesh, m_symmetryMode);
+            }
+            m_grabbedVerticesSyms.resize(symScales.size());
+            if (isSnakeBrush) {
+                m_snakeActiveVertsSyms.resize(symScales.size());
+                m_snakePrevTipPosSyms.resize(symScales.size());
+                for (size_t sIdx = 0; sIdx < symScales.size(); ++sIdx) {
+                    m_snakePrevTipPosSyms[sIdx] = m_initialSymIntersections[sIdx];
+                }
+            }
+        }
+        if (m_prePickedSymVerts.size() < symScales.size()) {
+            m_prePickedSymVerts.resize(symScales.size());
+        }
+        for (size_t sIdx = 0; sIdx < symScales.size(); ++sIdx) {
+            m_prePickedSymVerts[sIdx].clear();
+        }
+    }
+
+    bool culledAndFiltered = false;
+    bool canDualPick = m_useSym && (symScales.size() == 1) && (!isSnakeBrush || m_firstStrokeFrame) && (!isGrabBrush || m_firstStrokeFrame);
+
+    if (canDualPick) {
+        glm::vec3 symCenter0 = reflectPointSymmetry(m_currentIntersection, symScales[0], mesh, m_symmetryMode);
+        culledAndFiltered = true;
+
+        #pragma omp parallel sections
+        {
+            #pragma omp section
+            {
+                if (getSettings(activeBrush).topoCheck) {
+                    pickVerticesInSphereTopological(mesh, m_currentIntersection, radius2, intersectFaceId,
+                                                    m_topoVisitedFlags, m_topoVisitedEpoch, pickedVertices);
+                } else {
+                    mesh->octree.pickVerticesInSphere(
+                        m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z,
+                        radius2, mesh->vertVisible.data(), pickedVertices, 0
+                    );
+                }
+                if (getSettings(activeBrush).culling) {
+                    filterCullingVertices(pickedVertices, mesh, localRayDir);
+                }
+                if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty()) {
+                    filterPolyGroupVertices(pickedVertices, mesh, m_strokeTargetPolyGroup);
+                }
+                if (isSnakeBrush) {
+                    m_snakeActiveVerts = pickedVertices;
+                } else if (isGrabBrush) {
+                    m_grabbedVertices = pickedVertices;
+                }
+            }
+            #pragma omp section
+            {
+                mesh->octree.pickVerticesInSphere(
+                    symCenter0.x, symCenter0.y, symCenter0.z,
+                    radius2, mesh->vertVisible.data(), m_prePickedSymVerts[0], 1
+                );
+                if (getSettings(activeBrush).culling && !m_prePickedSymVerts[0].empty()) {
+                    glm::vec3 symRayDir = reflectVectorSymmetry(localRayDir, symScales[0], mesh, m_symmetryMode);
+                    filterCullingVertices(m_prePickedSymVerts[0], mesh, symRayDir);
+                }
+                if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty() && !m_prePickedSymVerts[0].empty()) {
+                    filterPolyGroupVertices(m_prePickedSymVerts[0], mesh, m_strokeTargetPolyGroup);
+                }
+                if (isSnakeBrush) {
+                    if (m_snakeActiveVertsSyms.size() < 1) m_snakeActiveVertsSyms.resize(1);
+                    m_snakeActiveVertsSyms[0] = m_prePickedSymVerts[0];
+                } else if (isGrabBrush) {
+                    if (m_grabbedVerticesSyms.size() < 1) m_grabbedVerticesSyms.resize(1);
+                    m_grabbedVerticesSyms[0] = m_prePickedSymVerts[0];
+                }
+            }
+        }
+    } else if (isSnakeBrush) {
         if (m_firstStrokeFrame) {
             if (getSettings(activeBrush).topoCheck) {
                 pickVerticesInSphereTopological(mesh, m_currentIntersection, radius2, intersectFaceId,
@@ -1909,7 +1988,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             } else {
                 mesh->octree.pickVerticesInSphere(
                     m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z, radius2, mesh->vertVisible.data(),
-                    pickedVertices
+                    pickedVertices, 0
                 );
             }
             if (getSettings(activeBrush).culling) {
@@ -1919,11 +1998,14 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 filterPolyGroupVertices(pickedVertices, mesh, m_strokeTargetPolyGroup);
             }
             m_snakeActiveVerts = pickedVertices;
+            culledAndFiltered = true;
         } else {
             pickedVertices = m_snakeActiveVerts;
+            culledAndFiltered = true;
         }
     } else if (isGrabBrush && !m_firstStrokeFrame) {
         pickedVertices = m_grabbedVertices;
+        culledAndFiltered = true;
     } else {
         if (getSettings(activeBrush).topoCheck) {
             pickVerticesInSphereTopological(mesh, m_currentIntersection, radius2, intersectFaceId,
@@ -1931,7 +2013,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         } else {
             mesh->octree.pickVerticesInSphere(
                 m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z, radius2, mesh->vertVisible.data(),
-                pickedVertices
+                pickedVertices, 0
             );
         }
     }
@@ -1943,7 +2025,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 
     // --- Stage 3: Culling & PolyGroup Filtering ---
     tStage = std::chrono::high_resolution_clock::now();
-    if (!isSnakeBrush && (!isGrabBrush || m_firstStrokeFrame)) {
+    if (!culledAndFiltered && (!isGrabBrush || m_firstStrokeFrame)) {
         if (getSettings(activeBrush).culling) {
             filterCullingVertices(pickedVertices, mesh, localRayDir);
         }
@@ -2043,6 +2125,13 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         // --- Stage 4: Undo Record ---
         tStage = std::chrono::high_resolution_clock::now();
         g_undoManager.recordAffectedVertices(scene, mesh->m_id, pickedVertices, strokeAffectsPositions, strokeAffectsColors, strokeAffectsMaterials);
+        if (m_useSym) {
+            for (const auto& symList : m_prePickedSymVerts) {
+                if (!symList.empty()) {
+                    g_undoManager.recordAffectedVertices(scene, mesh->m_id, symList, strokeAffectsPositions, strokeAffectsColors, strokeAffectsMaterials);
+                }
+            }
+        }
         m_lastFrameProfile.undoRecordMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
 
         // --- Stage 5: Primary Deform Pass ---
@@ -2073,9 +2162,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         // --- Stage 6: Symmetry Pass ---
         tStage = std::chrono::high_resolution_clock::now();
         if (m_useSym) {
-            std::vector<glm::vec3> symScales = getActiveSymmetryScales();
-
-            if (m_firstStrokeFrame) {
+            if (m_firstStrokeFrame && m_initialSymIntersections.empty()) {
                 m_initialSymIntersections.resize(symScales.size());
                 for (size_t sIdx = 0; sIdx < symScales.size(); ++sIdx) {
                     m_initialSymIntersections[sIdx] = reflectPointSymmetry(m_initialIntersection, symScales[sIdx], mesh, m_symmetryMode);
@@ -2094,20 +2181,26 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 glm::vec3 sScale = symScales[sIdx];
                 glm::vec3 symCenter;
                 std::vector<uint32_t> symVerts;
+                bool fromPrePicked = false;
 
                 if (isSnakeBrush) {
                     symCenter = reflectPointSymmetry(m_currentIntersection, sScale, mesh, m_symmetryMode);
                     if (m_firstStrokeFrame) {
-                        symVerts = mesh->octree.pickVerticesInSphere(
-                            symCenter.x, symCenter.y, symCenter.z,
-                            radius2, mesh->vertVisible.data()
-                        );
-                        if (getSettings(activeBrush).culling && !symVerts.empty()) {
-                            glm::vec3 symRayDir = reflectVectorSymmetry(localRayDir, sScale, mesh, m_symmetryMode);
-                            filterCullingVertices(symVerts, mesh, symRayDir);
-                        }
-                        if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty() && !symVerts.empty()) {
-                            filterPolyGroupVertices(symVerts, mesh, m_strokeTargetPolyGroup);
+                        if (sIdx < m_prePickedSymVerts.size() && !m_prePickedSymVerts[sIdx].empty()) {
+                            symVerts = std::move(m_prePickedSymVerts[sIdx]);
+                            fromPrePicked = true;
+                        } else {
+                            symVerts = mesh->octree.pickVerticesInSphere(
+                                symCenter.x, symCenter.y, symCenter.z,
+                                radius2, mesh->vertVisible.data(), 1
+                            );
+                            if (getSettings(activeBrush).culling && !symVerts.empty()) {
+                                glm::vec3 symRayDir = reflectVectorSymmetry(localRayDir, sScale, mesh, m_symmetryMode);
+                                filterCullingVertices(symVerts, mesh, symRayDir);
+                            }
+                            if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty() && !symVerts.empty()) {
+                                filterPolyGroupVertices(symVerts, mesh, m_strokeTargetPolyGroup);
+                            }
                         }
                         if (sIdx >= m_snakeActiveVertsSyms.size()) m_snakeActiveVertsSyms.resize(sIdx + 1);
                         m_snakeActiveVertsSyms[sIdx] = symVerts;
@@ -2134,20 +2227,24 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                     }
                 } else {
                     symCenter = reflectPointSymmetry(m_currentIntersection, sScale, mesh, m_symmetryMode);
+                    if (sIdx < m_prePickedSymVerts.size() && !m_prePickedSymVerts[sIdx].empty()) {
+                        symVerts = std::move(m_prePickedSymVerts[sIdx]);
+                        fromPrePicked = true;
+                    } else {
+                        mesh->octree.pickVerticesInSphere(
+                            symCenter.x, symCenter.y, symCenter.z,
+                            radius2, mesh->vertVisible.data(),
+                            symVerts, 1
+                        );
 
-                    mesh->octree.pickVerticesInSphere(
-                        symCenter.x, symCenter.y, symCenter.z,
-                        radius2, mesh->vertVisible.data(),
-                        symVerts
-                    );
+                        if (getSettings(activeBrush).culling && !symVerts.empty()) {
+                            glm::vec3 symRayDir = reflectVectorSymmetry(localRayDir, sScale, mesh, m_symmetryMode);
+                            filterCullingVertices(symVerts, mesh, symRayDir);
+                        }
 
-                    if (getSettings(activeBrush).culling && !symVerts.empty()) {
-                        glm::vec3 symRayDir = reflectVectorSymmetry(localRayDir, sScale, mesh, m_symmetryMode);
-                        filterCullingVertices(symVerts, mesh, symRayDir);
-                    }
-
-                    if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty() && !symVerts.empty()) {
-                        filterPolyGroupVertices(symVerts, mesh, m_strokeTargetPolyGroup);
+                        if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty() && !symVerts.empty()) {
+                            filterPolyGroupVertices(symVerts, mesh, m_strokeTargetPolyGroup);
+                        }
                     }
 
                     if (isGrabBrush) {
@@ -2162,9 +2259,11 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                     glm::vec3 symIntersectionNormal = reflectVectorSymmetry(m_currentIntersectionNormal, sScale, mesh, m_symmetryMode);
                     const glm::vec3& initSymInter = (sIdx < m_initialSymIntersections.size()) ? m_initialSymIntersections[sIdx] : reflectPointSymmetry(m_initialIntersection, sScale, mesh, m_symmetryMode);
 
-                    auto tUndoSym = std::chrono::high_resolution_clock::now();
-                    g_undoManager.recordAffectedVertices(scene, mesh->m_id, symVerts, strokeAffectsPositions, strokeAffectsColors, strokeAffectsMaterials);
-                    m_lastFrameProfile.undoRecordMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tUndoSym).count();
+                    if (!fromPrePicked) {
+                        auto tUndoSym = std::chrono::high_resolution_clock::now();
+                        g_undoManager.recordAffectedVertices(scene, mesh->m_id, symVerts, strokeAffectsPositions, strokeAffectsColors, strokeAffectsMaterials);
+                        m_lastFrameProfile.undoRecordMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tUndoSym).count();
+                    }
 
                     int symDeformed = doStrokePass(
                         scene,

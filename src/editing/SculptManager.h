@@ -637,6 +637,7 @@ private:
     std::vector<uint32_t> m_grabbedAffectedVerts;
     std::vector<uint32_t> m_grabbedIFacesCache;
     uint32_t              m_grabbedNumIFaces = 0;
+    std::vector<std::vector<uint32_t>> m_prePickedSymVerts;
 
     // Measurement & Divider states
     std::vector<MeasurementSegment> m_measureSegments;
