@@ -329,7 +329,7 @@ int main(int argc, char* argv[]) {
                 runBench = true;
                 benchFaces = 50000000;
                 showConsole = true;
-            } else if (arg == "--test-claybuildup-4m" || arg == "--bench-claybuildup") {
+            } else if (arg == "--test-claybuildup-4m" || arg == "--bench-claybuildup" || arg == "--bench-multitool" || arg == "--bench-all") {
                 runBench = true;
                 showConsole = true;
             } else if ((arg == "--bench-faces" || arg == "-bf") && i + 1 < numArgs) {
@@ -351,7 +351,7 @@ int main(int argc, char* argv[]) {
             runBench = true;
             benchFaces = 50000000;
             showConsole = true;
-        } else if (arg == "--test-claybuildup-4m" || arg == "--bench-claybuildup") {
+        } else if (arg == "--test-claybuildup-4m" || arg == "--bench-claybuildup" || arg == "--bench-multitool" || arg == "--bench-all") {
             runBench = true;
             showConsole = true;
         } else if ((arg == "--bench-faces" || arg == "-bf") && i + 1 < argc) {

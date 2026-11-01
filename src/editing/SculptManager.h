@@ -419,9 +419,13 @@ public:
     HotkeyManager* getHotkeyManager() const { return m_hotkeyManager; }
 
     bool isLassoActive() const { return m_isLassoActive; }
+    void setIsLassoActive(bool active) { m_isLassoActive = active; }
     const std::vector<glm::vec2>& getLassoPoints() const { return m_lassoPoints; }
+    void setLassoPoints(const std::vector<glm::vec2>& pts) { m_lassoPoints = pts; }
     bool getLassoAlt() const { return m_lassoAlt; }
+    void setLassoAlt(bool alt) { m_lassoAlt = alt; }
     bool isMaskLasso() const { return m_isMaskLasso; }
+    void setIsMaskLasso(bool isMask) { m_isMaskLasso = isMask; }
 
     bool isClipCurveActive() const { return m_isClipCurveActive; }
     const std::vector<glm::vec2>& getClipCurvePoints() const { return m_clipCurvePoints; }

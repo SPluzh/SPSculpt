@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <iomanip>
+#include <sstream>
 #include <vector>
 #include <chrono>
 #include <cmath>
@@ -14,10 +15,13 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "mesh/Mesh.h"
+#include "mesh/NormalCalc.h"
 #include "scene/Scene.h"
 #include "scene/Camera.h"
 #include "editing/SculptManager.h"
 #include "editing/undo/UndoManager.h"
+#include "editing/undo/TransformUndoEntry.h"
+#include "editing/undo/TopologyUndoEntry.h"
 #include "common/Enums.h"
 
 #if __has_include("mesh/BVH.h")
@@ -205,11 +209,55 @@ struct StrokeStepMeasurement {
     int affectedFaces = 0;
 };
 
+struct MultiToolBenchmarkRow {
+    std::string toolName;
+    bool hasStep0 = true;
+    double step0Ms = 0.0;
+    bool hasDrag = true;
+    double dragAvgMs = 0.0;
+    double finalizeMs = 0.0;
+    double totalStrokeMs = 0.0;
+    double undoMs = 0.0;
+    double redoMs = 0.0;
+    size_t undoRAMBytes = 0;
+    bool passed = false;
+    float maxUndoEps = 0.0f;
+    float maxRedoEps = 0.0f;
+};
+
+inline std::string padRight(const std::string& str, size_t totalWidth) {
+    if (str.length() >= totalWidth) return str;
+    return str + std::string(totalWidth - str.length(), ' ');
+}
+
+inline std::string padLeft(const std::string& str, size_t totalWidth) {
+    if (str.length() >= totalWidth) return str;
+    return std::string(totalWidth - str.length(), ' ') + str;
+}
+
+inline std::string formatMs(double ms, int decimals = 1) {
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(decimals) << ms << " ms";
+    return oss.str();
+}
+
+inline std::string formatBytes(size_t bytes) {
+    std::ostringstream oss;
+    if (bytes >= 1024 * 1024) {
+        oss << std::fixed << std::setprecision(1) << ((double)bytes / (1024.0 * 1024.0)) << " MB";
+    } else if (bytes >= 1024) {
+        oss << std::fixed << std::setprecision(1) << ((double)bytes / 1024.0) << " KB";
+    } else {
+        oss << bytes << " B";
+    }
+    return oss.str();
+}
+
 inline bool run(int targetFaces = 4000000) {
     const char* indexName = BENCH_USE_BVH ? "Linear BVH (feature/bvh-spatial-index)" : "Octree (master branch)";
     
     std::cout << "\n======================================================================\n";
-    std::cout << " SPSculpt ClayBuildup Sculpt Benchmark @ " << std::fixed << std::setprecision(1) << (targetFaces / 1000000.0) << "M Polygons\n";
+    std::cout << " SPSculpt Multi-Tool Performance & Undo Benchmark @ " << std::fixed << std::setprecision(1) << (targetFaces / 1000000.0) << "M Polygons\n";
     std::cout << " Spatial Acceleration Backend: " << indexName << "\n";
     std::cout << "======================================================================\n\n";
 
@@ -245,7 +293,7 @@ inline bool run(int targetFaces = 4000000) {
     // -------------------------------------------------------------
     // Micro-benchmarks: Isolated Raycast and Sphere Queries
     // -------------------------------------------------------------
-    std::cout << "\n[3/4] Running Isolated Spatial Queries on 4M Mesh...\n";
+    std::cout << "\n[3/4] Running Isolated Spatial Queries on Mesh...\n";
 
     // 1,000 Raycasts
     {
@@ -324,9 +372,9 @@ inline bool run(int targetFaces = 4000000) {
     }
 
     // -------------------------------------------------------------
-    // Full End-to-End Sculpt Stroke: BRUSH_CLAYBUILDUP
+    // Multi-Tool Interactive Pipeline & Undo/Redo Benchmark
     // -------------------------------------------------------------
-    std::cout << "\n[4/4] Simulating End-to-End ClayBuildup Sculpt Stroke on 4M Mesh...\n";
+    std::cout << "\n[4/4] Running Multi-Tool Pipeline & Undo/Redo Validation on Mesh...\n";
 
     Scene scene;
     scene.addMesh(meshPtr.get());
@@ -338,256 +386,878 @@ inline bool run(int targetFaces = 4000000) {
     camera.update(0.016f);
 
     SculptManager sculpt;
-    sculpt.setBrush(BRUSH_CLAYBUILDUP);
-    // Explicitly set baseline parameters matching user session
-    auto& settings = sculpt.getSettings(BRUSH_CLAYBUILDUP);
-    settings.radius = 134.0f;
-    settings.intensity = 1.0f;
-    settings.focalShift = -0.285f;
-    settings.spacing = 0.05f;
-    settings.clay = true;
-    settings.accumulate = false;
-    settings.culling = false;
+    sculpt.setRenderer(nullptr);
 
-    // Pre-warm tag buffers and Undo stamps for the active mesh (Recommendation 1)
-    sculpt.warmupMeshCaches(meshPtr.get());
-
-    // Stroke trajectory across screen center (960, 540) to (1060, 540)
     const int NUM_STROKE_STEPS = 10;
-    float startX = 960.0f;
-    float startY = 540.0f;
-    float endX = 1060.0f;
-    float endY = 540.0f;
-    float stepDx = (endX - startX) / (float)NUM_STROKE_STEPS;
-    float stepDy = (endY - startY) / (float)NUM_STROKE_STEPS;
+    const float startX = 960.0f;
+    const float startY = 540.0f;
+    const float endX = 1060.0f;
+    const float endY = 540.0f;
+    const float stepDx = (endX - startX) / (float)NUM_STROKE_STEPS;
+    const float stepDy = (endY - startY) / (float)NUM_STROKE_STEPS;
 
-    std::vector<StrokeStepMeasurement> measurements;
-    measurements.reserve(NUM_STROKE_STEPS);
+    std::vector<MultiToolBenchmarkRow> summaryRows;
+    summaryRows.reserve(6);
 
-    // Mouse Down: initiates the stroke
-    SDL_Event evDown;
-    std::memset(&evDown, 0, sizeof(evDown));
-    evDown.type = SDL_MOUSEBUTTONDOWN;
-    evDown.button.button = SDL_BUTTON_LEFT;
-    evDown.button.x = (int)startX;
-    evDown.button.y = (int)startY;
-    
-    auto tStep0Start = std::chrono::high_resolution_clock::now();
-    sculpt.handleEvent(evDown, scene);
-    auto tStep0End = std::chrono::high_resolution_clock::now();
-    double step0TotalMs = std::chrono::duration<double, std::milli>(tStep0End - tStep0Start).count();
+    // =========================================================================
+    // 1. Tool: ClayBuildup (Stroke 10x)
+    // =========================================================================
+    std::vector<StrokeStepMeasurement> clayMeasurements;
+    clayMeasurements.reserve(NUM_STROKE_STEPS);
+    {
+        std::cout << "  -> Benchmarking ClayBuildup (Stroke 10x)...\n";
+        sculpt.setBrush(BRUSH_CLAYBUILDUP);
+        auto& settings = sculpt.getSettings(BRUSH_CLAYBUILDUP);
+        settings.radius = 134.0f;
+        settings.intensity = 1.0f;
+        settings.focalShift = -0.285f;
+        settings.spacing = 0.05f;
+        settings.clay = true;
+        settings.accumulate = false;
+        settings.culling = false;
 
-    const SculptFrameProfile& prof0 = sculpt.getLastFrameProfile();
-    StrokeStepMeasurement m0;
-    m0.stepIndex = 0;
-    m0.mouseX = startX;
-    m0.mouseY = startY;
-    m0.totalMs = step0TotalMs;
-    m0.raycastMs = prof0.raycastMs;
-    m0.pickVertsMs = prof0.pickVertsMs;
-    m0.pickCellsMs = prof0.pickCellsMs;
-    m0.pickDedupMs = prof0.pickDedupMs;
-    m0.pickFilterMs = prof0.pickFilterMs;
-    m0.areaComputeMs = prof0.areaComputeMs;
-    m0.primaryDeformMs = prof0.primaryDeformMs;
-    m0.symmetryMs = prof0.symmetryMs;
-    m0.sortDedupMs = prof0.sortDedupMs;
-    m0.undoRecordMs = prof0.undoRecordMs;
-    m0.faceLookupMs = prof0.faceLookupMs;
-    m0.faceNormalsMs = prof0.faceNormalsMs;
-    m0.vertNormalsMs = prof0.vertNormalsMs;
-    m0.spatialUpdateMs = getSpatialUpdateMs(prof0);
-    m0.pickedVerts = prof0.pickedVertCount;
-    m0.affectedVerts = prof0.affectedVertCount;
-    m0.affectedFaces = prof0.affectedFaceCount;
-    measurements.push_back(m0);
+        sculpt.warmupMeshCaches(meshPtr.get());
+        std::vector<float> origVerts = mesh.verts;
 
-    // Subsequent continuous stroke steps
-    for (int step = 1; step < NUM_STROKE_STEPS; ++step) {
-        float curX = startX + step * stepDx;
-        float curY = startY + step * stepDy;
+        // Step 0: Mouse Down
+        SDL_Event evDown;
+        std::memset(&evDown, 0, sizeof(evDown));
+        evDown.type = SDL_MOUSEBUTTONDOWN;
+        evDown.button.button = SDL_BUTTON_LEFT;
+        evDown.button.x = (int)startX;
+        evDown.button.y = (int)startY;
 
-        auto tStepStart = std::chrono::high_resolution_clock::now();
-        sculpt.executeStroke(scene, meshPtr.get(), camera, curX, curY, 1.0f);
-        auto tStepEnd = std::chrono::high_resolution_clock::now();
-        double stepTotalMs = std::chrono::duration<double, std::milli>(tStepEnd - tStepStart).count();
+        auto tStep0Start = std::chrono::high_resolution_clock::now();
+        sculpt.handleEvent(evDown, scene);
+        auto tStep0End = std::chrono::high_resolution_clock::now();
+        double step0Ms = std::chrono::duration<double, std::milli>(tStep0End - tStep0Start).count();
 
-        const SculptFrameProfile& prof = sculpt.getLastFrameProfile();
-        StrokeStepMeasurement m;
-        m.stepIndex = step;
-        m.mouseX = curX;
-        m.mouseY = curY;
-        m.totalMs = stepTotalMs;
-        m.raycastMs = prof.raycastMs;
-        m.pickVertsMs = prof.pickVertsMs;
-        m.pickCellsMs = prof.pickCellsMs;
-        m.pickDedupMs = prof.pickDedupMs;
-        m.pickFilterMs = prof.pickFilterMs;
-        m.areaComputeMs = prof.areaComputeMs;
-        m.primaryDeformMs = prof.primaryDeformMs;
-        m.symmetryMs = prof.symmetryMs;
-        m.sortDedupMs = prof.sortDedupMs;
-        m.undoRecordMs = prof.undoRecordMs;
-        m.faceLookupMs = prof.faceLookupMs;
-        m.faceNormalsMs = prof.faceNormalsMs;
-        m.vertNormalsMs = prof.vertNormalsMs;
-        m.spatialUpdateMs = getSpatialUpdateMs(prof);
-        m.pickedVerts = prof.pickedVertCount;
-        m.affectedVerts = prof.affectedVertCount;
-        m.affectedFaces = prof.affectedFaceCount;
-        measurements.push_back(m);
+        const SculptFrameProfile& prof0 = sculpt.getLastFrameProfile();
+        StrokeStepMeasurement m0;
+        m0.stepIndex = 0;
+        m0.mouseX = startX;
+        m0.mouseY = startY;
+        m0.totalMs = step0Ms;
+        m0.raycastMs = prof0.raycastMs;
+        m0.pickVertsMs = prof0.pickVertsMs;
+        m0.pickCellsMs = prof0.pickCellsMs;
+        m0.pickDedupMs = prof0.pickDedupMs;
+        m0.pickFilterMs = prof0.pickFilterMs;
+        m0.areaComputeMs = prof0.areaComputeMs;
+        m0.primaryDeformMs = prof0.primaryDeformMs;
+        m0.symmetryMs = prof0.symmetryMs;
+        m0.sortDedupMs = prof0.sortDedupMs;
+        m0.undoRecordMs = prof0.undoRecordMs;
+        m0.faceLookupMs = prof0.faceLookupMs;
+        m0.faceNormalsMs = prof0.faceNormalsMs;
+        m0.vertNormalsMs = prof0.vertNormalsMs;
+        m0.spatialUpdateMs = getSpatialUpdateMs(prof0);
+        m0.pickedVerts = prof0.pickedVertCount;
+        m0.affectedVerts = prof0.affectedVertCount;
+        m0.affectedFaces = prof0.affectedFaceCount;
+        clayMeasurements.push_back(m0);
+
+        // Continuous Drag (Steps 1..9)
+        double sumDragMs = 0.0;
+        for (int step = 1; step < NUM_STROKE_STEPS; ++step) {
+            float curX = startX + step * stepDx;
+            float curY = startY + step * stepDy;
+
+            auto tStepStart = std::chrono::high_resolution_clock::now();
+            sculpt.executeStroke(scene, meshPtr.get(), camera, curX, curY, 1.0f);
+            auto tStepEnd = std::chrono::high_resolution_clock::now();
+            double stepMs = std::chrono::duration<double, std::milli>(tStepEnd - tStepStart).count();
+            sumDragMs += stepMs;
+
+            const SculptFrameProfile& prof = sculpt.getLastFrameProfile();
+            StrokeStepMeasurement m;
+            m.stepIndex = step;
+            m.mouseX = curX;
+            m.mouseY = curY;
+            m.totalMs = stepMs;
+            m.raycastMs = prof.raycastMs;
+            m.pickVertsMs = prof.pickVertsMs;
+            m.pickCellsMs = prof.pickCellsMs;
+            m.pickDedupMs = prof.pickDedupMs;
+            m.pickFilterMs = prof.pickFilterMs;
+            m.areaComputeMs = prof.areaComputeMs;
+            m.primaryDeformMs = prof.primaryDeformMs;
+            m.symmetryMs = prof.symmetryMs;
+            m.sortDedupMs = prof.sortDedupMs;
+            m.undoRecordMs = prof.undoRecordMs;
+            m.faceLookupMs = prof.faceLookupMs;
+            m.faceNormalsMs = prof.faceNormalsMs;
+            m.vertNormalsMs = prof.vertNormalsMs;
+            m.spatialUpdateMs = getSpatialUpdateMs(prof);
+            m.pickedVerts = prof.pickedVertCount;
+            m.affectedVerts = prof.affectedVertCount;
+            m.affectedFaces = prof.affectedFaceCount;
+            clayMeasurements.push_back(m);
+        }
+        double dragAvgMs = sumDragMs / (NUM_STROKE_STEPS - 1);
+
+        // Finalize: Mouse Up
+        SDL_Event evUp;
+        std::memset(&evUp, 0, sizeof(evUp));
+        evUp.type = SDL_MOUSEBUTTONUP;
+        evUp.button.button = SDL_BUTTON_LEFT;
+        evUp.button.x = (int)endX;
+        evUp.button.y = (int)endY;
+
+        auto tFinStart = std::chrono::high_resolution_clock::now();
+        sculpt.handleEvent(evUp, scene);
+        auto tFinEnd = std::chrono::high_resolution_clock::now();
+        double finalizeMs = std::chrono::duration<double, std::milli>(tFinEnd - tFinStart).count();
+
+        double totalStrokeMs = step0Ms + sumDragMs + finalizeMs;
+        size_t undoBytes = g_undoManager.getUndoStack().back()->getMemoryUsage();
+        std::vector<float> modifiedVerts = mesh.verts;
+
+        // Undo
+        auto tUndoStart = std::chrono::high_resolution_clock::now();
+        g_undoManager.undo(scene);
+        auto tUndoEnd = std::chrono::high_resolution_clock::now();
+        double undoMs = std::chrono::duration<double, std::milli>(tUndoEnd - tUndoStart).count();
+
+        float maxUndoDiff = 0.0f;
+        for (size_t i = 0; i < mesh.verts.size(); ++i) {
+            float d = std::abs(mesh.verts[i] - origVerts[i]);
+            if (d > maxUndoDiff) maxUndoDiff = d;
+        }
+
+        // Redo
+        auto tRedoStart = std::chrono::high_resolution_clock::now();
+        g_undoManager.redo(scene);
+        auto tRedoEnd = std::chrono::high_resolution_clock::now();
+        double redoMs = std::chrono::duration<double, std::milli>(tRedoEnd - tRedoStart).count();
+
+        float maxRedoDiff = 0.0f;
+        for (size_t i = 0; i < mesh.verts.size(); ++i) {
+            float d = std::abs(mesh.verts[i] - modifiedVerts[i]);
+            if (d > maxRedoDiff) maxRedoDiff = d;
+        }
+
+        // Reset mesh back to original
+        g_undoManager.undo(scene);
+        g_undoManager.clear();
+
+        MultiToolBenchmarkRow row;
+        row.toolName = "ClayBuildup (Stroke 10x)";
+        row.hasStep0 = true;
+        row.step0Ms = step0Ms;
+        row.hasDrag = true;
+        row.dragAvgMs = dragAvgMs;
+        row.finalizeMs = finalizeMs;
+        row.totalStrokeMs = totalStrokeMs;
+        row.undoMs = undoMs;
+        row.redoMs = redoMs;
+        row.undoRAMBytes = undoBytes;
+        row.maxUndoEps = maxUndoDiff;
+        row.maxRedoEps = maxRedoDiff;
+        row.passed = (maxUndoDiff == 0.0f && maxRedoDiff == 0.0f);
+        summaryRows.push_back(row);
     }
 
-    // Mouse Up: ends the stroke
-    SDL_Event evUp;
-    std::memset(&evUp, 0, sizeof(evUp));
-    evUp.type = SDL_MOUSEBUTTONUP;
-    evUp.button.button = SDL_BUTTON_LEFT;
-    evUp.button.x = (int)endX;
-    evUp.button.y = (int)endY;
-    sculpt.handleEvent(evUp, scene);
+    // =========================================================================
+    // 2. Tool: Move Tool (Drag 10x)
+    // =========================================================================
+    {
+        std::cout << "  -> Benchmarking Move Tool (Drag 10x)...\n";
+        sculpt.setBrush(BRUSH_MOVE);
+        auto& moveSettings = sculpt.getSettings(BRUSH_MOVE);
+        moveSettings.radius = 250.0f;
+        moveSettings.intensity = 1.0f;
+        moveSettings.topoCheck = true;
+        moveSettings.culling = false;
+
+        mesh.vertProxy = mesh.verts;
+        sculpt.warmupMeshCaches(meshPtr.get());
+        std::vector<float> origVerts = mesh.verts;
+
+        // Step 0: Mouse Down (vertex capture, falloff, deform prep)
+        SDL_Event evDown;
+        std::memset(&evDown, 0, sizeof(evDown));
+        evDown.type = SDL_MOUSEBUTTONDOWN;
+        evDown.button.button = SDL_BUTTON_LEFT;
+        evDown.button.x = (int)startX;
+        evDown.button.y = (int)startY;
+
+        auto tStep0Start = std::chrono::high_resolution_clock::now();
+        sculpt.handleEvent(evDown, scene);
+        auto tStep0End = std::chrono::high_resolution_clock::now();
+        double step0Ms = std::chrono::duration<double, std::milli>(tStep0End - tStep0Start).count();
+
+        // Continuous Drag (Steps 1..9)
+        double sumDragMs = 0.0;
+        for (int step = 1; step < NUM_STROKE_STEPS; ++step) {
+            float curX = startX + step * stepDx;
+            float curY = startY + step * stepDy;
+
+            auto tStepStart = std::chrono::high_resolution_clock::now();
+            sculpt.executeStroke(scene, meshPtr.get(), camera, curX, curY, 1.0f);
+            auto tStepEnd = std::chrono::high_resolution_clock::now();
+            sumDragMs += std::chrono::duration<double, std::milli>(tStepEnd - tStepStart).count();
+        }
+        double dragAvgMs = sumDragMs / (NUM_STROKE_STEPS - 1);
+
+        // Finalize: Mouse Up (clearing grab buffers and finalizing stroke state)
+        SDL_Event evUp;
+        std::memset(&evUp, 0, sizeof(evUp));
+        evUp.type = SDL_MOUSEBUTTONUP;
+        evUp.button.button = SDL_BUTTON_LEFT;
+        evUp.button.x = (int)endX;
+        evUp.button.y = (int)endY;
+
+        auto tFinStart = std::chrono::high_resolution_clock::now();
+        sculpt.handleEvent(evUp, scene);
+        auto tFinEnd = std::chrono::high_resolution_clock::now();
+        double finalizeMs = std::chrono::duration<double, std::milli>(tFinEnd - tFinStart).count();
+
+        double totalStrokeMs = step0Ms + sumDragMs + finalizeMs;
+        size_t undoBytes = g_undoManager.getUndoStack().back()->getMemoryUsage();
+        std::vector<float> modifiedVerts = mesh.verts;
+
+        // Undo
+        auto tUndoStart = std::chrono::high_resolution_clock::now();
+        g_undoManager.undo(scene);
+        auto tUndoEnd = std::chrono::high_resolution_clock::now();
+        double undoMs = std::chrono::duration<double, std::milli>(tUndoEnd - tUndoStart).count();
+
+        float maxUndoDiff = 0.0f;
+        for (size_t i = 0; i < mesh.verts.size(); ++i) {
+            float d = std::abs(mesh.verts[i] - origVerts[i]);
+            if (d > maxUndoDiff) maxUndoDiff = d;
+        }
+
+        // Redo
+        auto tRedoStart = std::chrono::high_resolution_clock::now();
+        g_undoManager.redo(scene);
+        auto tRedoEnd = std::chrono::high_resolution_clock::now();
+        double redoMs = std::chrono::duration<double, std::milli>(tRedoEnd - tRedoStart).count();
+
+        float maxRedoDiff = 0.0f;
+        for (size_t i = 0; i < mesh.verts.size(); ++i) {
+            float d = std::abs(mesh.verts[i] - modifiedVerts[i]);
+            if (d > maxRedoDiff) maxRedoDiff = d;
+        }
+
+        // Reset mesh back to original
+        g_undoManager.undo(scene);
+        g_undoManager.clear();
+        mesh.vertProxy = mesh.verts;
+
+        MultiToolBenchmarkRow row;
+        row.toolName = "Move Tool (Drag 10x)";
+        row.hasStep0 = true;
+        row.step0Ms = step0Ms;
+        row.hasDrag = true;
+        row.dragAvgMs = dragAvgMs;
+        row.finalizeMs = finalizeMs;
+        row.totalStrokeMs = totalStrokeMs;
+        row.undoMs = undoMs;
+        row.redoMs = redoMs;
+        row.undoRAMBytes = undoBytes;
+        row.maxUndoEps = maxUndoDiff;
+        row.maxRedoEps = maxRedoDiff;
+        row.passed = (maxUndoDiff == 0.0f && maxRedoDiff == 0.0f);
+        summaryRows.push_back(row);
+    }
+
+    // =========================================================================
+    // 3. Tool: Mask Brush (Stroke 10x)
+    // =========================================================================
+    {
+        std::cout << "  -> Benchmarking Mask Brush (Stroke 10x)...\n";
+        sculpt.setBrush(BRUSH_MASK);
+        auto& maskSettings = sculpt.getSettings(BRUSH_MASK);
+        maskSettings.radius = 150.0f;
+        maskSettings.intensity = 1.0f;
+        maskSettings.culling = true;
+
+        sculpt.warmupMeshCaches(meshPtr.get());
+        std::vector<float> origMats = mesh.materials;
+
+        // Step 0: Mouse Down
+        SDL_Event evDown;
+        std::memset(&evDown, 0, sizeof(evDown));
+        evDown.type = SDL_MOUSEBUTTONDOWN;
+        evDown.button.button = SDL_BUTTON_LEFT;
+        evDown.button.x = (int)startX;
+        evDown.button.y = (int)startY;
+
+        auto tStep0Start = std::chrono::high_resolution_clock::now();
+        sculpt.handleEvent(evDown, scene);
+        auto tStep0End = std::chrono::high_resolution_clock::now();
+        double step0Ms = std::chrono::duration<double, std::milli>(tStep0End - tStep0Start).count();
+
+        // Continuous Drag (Steps 1..9)
+        double sumDragMs = 0.0;
+        for (int step = 1; step < NUM_STROKE_STEPS; ++step) {
+            float curX = startX + step * stepDx;
+            float curY = startY + step * stepDy;
+
+            auto tStepStart = std::chrono::high_resolution_clock::now();
+            sculpt.executeStroke(scene, meshPtr.get(), camera, curX, curY, 1.0f);
+            auto tStepEnd = std::chrono::high_resolution_clock::now();
+            sumDragMs += std::chrono::duration<double, std::milli>(tStepEnd - tStepStart).count();
+        }
+        double dragAvgMs = sumDragMs / (NUM_STROKE_STEPS - 1);
+
+        // Finalize: Mouse Up
+        SDL_Event evUp;
+        std::memset(&evUp, 0, sizeof(evUp));
+        evUp.type = SDL_MOUSEBUTTONUP;
+        evUp.button.button = SDL_BUTTON_LEFT;
+        evUp.button.x = (int)endX;
+        evUp.button.y = (int)endY;
+
+        auto tFinStart = std::chrono::high_resolution_clock::now();
+        sculpt.handleEvent(evUp, scene);
+        auto tFinEnd = std::chrono::high_resolution_clock::now();
+        double finalizeMs = std::chrono::duration<double, std::milli>(tFinEnd - tFinStart).count();
+
+        double totalStrokeMs = step0Ms + sumDragMs + finalizeMs;
+        size_t undoBytes = g_undoManager.getUndoStack().back()->getMemoryUsage();
+        std::vector<float> modifiedMats = mesh.materials;
+
+        // Undo
+        auto tUndoStart = std::chrono::high_resolution_clock::now();
+        g_undoManager.undo(scene);
+        auto tUndoEnd = std::chrono::high_resolution_clock::now();
+        double undoMs = std::chrono::duration<double, std::milli>(tUndoEnd - tUndoStart).count();
+
+        float maxUndoDiff = 0.0f;
+        for (size_t i = 0; i < mesh.materials.size(); ++i) {
+            float d = std::abs(mesh.materials[i] - origMats[i]);
+            if (d > maxUndoDiff) maxUndoDiff = d;
+        }
+
+        // Redo
+        auto tRedoStart = std::chrono::high_resolution_clock::now();
+        g_undoManager.redo(scene);
+        auto tRedoEnd = std::chrono::high_resolution_clock::now();
+        double redoMs = std::chrono::duration<double, std::milli>(tRedoEnd - tRedoStart).count();
+
+        float maxRedoDiff = 0.0f;
+        for (size_t i = 0; i < mesh.materials.size(); ++i) {
+            float d = std::abs(mesh.materials[i] - modifiedMats[i]);
+            if (d > maxRedoDiff) maxRedoDiff = d;
+        }
+
+        // Reset mesh back to original
+        g_undoManager.undo(scene);
+        g_undoManager.clear();
+
+        MultiToolBenchmarkRow row;
+        row.toolName = "Mask Brush (Stroke 10x)";
+        row.hasStep0 = true;
+        row.step0Ms = step0Ms;
+        row.hasDrag = true;
+        row.dragAvgMs = dragAvgMs;
+        row.finalizeMs = finalizeMs;
+        row.totalStrokeMs = totalStrokeMs;
+        row.undoMs = undoMs;
+        row.redoMs = redoMs;
+        row.undoRAMBytes = undoBytes;
+        row.maxUndoEps = maxUndoDiff;
+        row.maxRedoEps = maxRedoDiff;
+        row.passed = (maxUndoDiff == 0.0f && maxRedoDiff == 0.0f);
+        summaryRows.push_back(row);
+    }
+
+    // =========================================================================
+    // 4. Tool: Mask Lasso (Screen Poly)
+    // =========================================================================
+    {
+        std::cout << "  -> Benchmarking Mask Lasso (Screen Poly)...\n";
+        std::vector<float> origMats = mesh.materials;
+
+        std::vector<glm::vec2> lassoPoly = {
+            { 960.0f, 540.0f },
+            { 960.0f, 250.0f },
+            { 1100.0f, 200.0f },
+            { 1280.0f, 240.0f },
+            { 1420.0f, 350.0f },
+            { 1480.0f, 500.0f },
+            { 1450.0f, 650.0f },
+            { 1350.0f, 750.0f },
+            { 1200.0f, 800.0f },
+            { 1050.0f, 750.0f },
+            { 980.0f, 660.0f },
+            { 960.0f, 540.0f }
+        };
+        sculpt.setLassoPoints(lassoPoly);
+        sculpt.setIsMaskLasso(true);
+        sculpt.setLassoAlt(false);
+
+        auto tLassoStart = std::chrono::high_resolution_clock::now();
+
+        // 1. History state push
+        scene.pushHistoryState();
+
+        // 2. Vertex projection & point-in-polygon test
+        std::vector<uint32_t> selectedVertices = sculpt.getVerticesInLasso(meshPtr.get(), camera);
+
+        // 3. Batch write mask
+        float* materials = mesh.materials.data();
+#pragma omp parallel for schedule(static) if(selectedVertices.size() > 1000)
+        for (size_t i = 0; i < selectedVertices.size(); ++i) {
+            uint32_t vid = selectedVertices[i];
+            materials[vid * 3 + 2] = 0.0f; // Masked
+        }
+        mesh.isMaterialDirty = true;
+        mesh.dirtyVertMin = 0;
+        mesh.dirtyVertMax = mesh.nbVerts - 1;
+        mesh.isDirty = true;
+
+        if (!g_undoManager.getUndoStack().empty()) {
+            if (auto* topEntry = dynamic_cast<TopologyUndoEntry*>(g_undoManager.getUndoStack().back().get())) {
+                topEntry->after = scene.saveCurrentState(false);
+            }
+        }
+
+        auto tLassoEnd = std::chrono::high_resolution_clock::now();
+        double finalizeMs = std::chrono::duration<double, std::milli>(tLassoEnd - tLassoStart).count();
+        double totalStrokeMs = finalizeMs;
+
+        size_t undoBytes = g_undoManager.getUndoStack().back()->getMemoryUsage();
+        std::vector<float> modifiedMats = mesh.materials;
+
+        // Undo
+        auto tUndoStart = std::chrono::high_resolution_clock::now();
+        scene.undo();
+        auto tUndoEnd = std::chrono::high_resolution_clock::now();
+        double undoMs = std::chrono::duration<double, std::milli>(tUndoEnd - tUndoStart).count();
+
+        float maxUndoDiff = 0.0f;
+        for (size_t i = 0; i < mesh.materials.size(); ++i) {
+            float d = std::abs(mesh.materials[i] - origMats[i]);
+            if (d > maxUndoDiff) maxUndoDiff = d;
+        }
+
+        // Redo
+        auto tRedoStart = std::chrono::high_resolution_clock::now();
+        scene.redo();
+        auto tRedoEnd = std::chrono::high_resolution_clock::now();
+        double redoMs = std::chrono::duration<double, std::milli>(tRedoEnd - tRedoStart).count();
+
+        float maxRedoDiff = 0.0f;
+        for (size_t i = 0; i < mesh.materials.size(); ++i) {
+            float d = std::abs(mesh.materials[i] - modifiedMats[i]);
+            if (d > maxRedoDiff) maxRedoDiff = d;
+        }
+
+        // Reset mesh back to original
+        scene.undo();
+        g_undoManager.clear();
+
+        MultiToolBenchmarkRow row;
+        row.toolName = "Mask Lasso (Screen Poly)";
+        row.hasStep0 = false;
+        row.step0Ms = 0.0;
+        row.hasDrag = false;
+        row.dragAvgMs = 0.0;
+        row.finalizeMs = finalizeMs;
+        row.totalStrokeMs = totalStrokeMs;
+        row.undoMs = undoMs;
+        row.redoMs = redoMs;
+        row.undoRAMBytes = undoBytes;
+        row.maxUndoEps = maxUndoDiff;
+        row.maxRedoEps = maxRedoDiff;
+        row.passed = (maxUndoDiff == 0.0f && maxRedoDiff == 0.0f);
+        summaryRows.push_back(row);
+    }
+
+    // =========================================================================
+    // 5. Tool: Transform (Pure Matrix)
+    // =========================================================================
+    {
+        std::cout << "  -> Benchmarking Transform Tool (Pure Matrix)...\n";
+        glm::mat4 startMatrix = mesh.matrix;
+
+        // Step 0: Check mask (fast check)
+        auto tInitStart = std::chrono::high_resolution_clock::now();
+        glm::mat4 pivotStartMatrix = mesh.matrix;
+        bool transformHasMask = false;
+        for (int i = 0; i < mesh.nbVerts; ++i) {
+            if (mesh.materials[i * 3 + 2] < 0.999f) {
+                transformHasMask = true;
+                break;
+            }
+        }
+        auto tInitEnd = std::chrono::high_resolution_clock::now();
+        double step0Ms = std::chrono::duration<double, std::milli>(tInitEnd - tInitStart).count();
+
+        // Drag (10 steps pure matrix update)
+        double sumDragMs = 0.0;
+        for (int step = 1; step <= 10; ++step) {
+            auto tStepStart = std::chrono::high_resolution_clock::now();
+            glm::mat4 curMatrix = glm::translate(pivotStartMatrix, glm::vec3(0.05f * step, 0.02f * step, 0.0f));
+            mesh.matrix = curMatrix;
+            auto tStepEnd = std::chrono::high_resolution_clock::now();
+            sumDragMs += std::chrono::duration<double, std::milli>(tStepEnd - tStepStart).count();
+        }
+        double dragAvgMs = sumDragMs / 10.0;
+
+        // Finalize: bakeScale + pushTransformChange
+        auto tFinStart = std::chrono::high_resolution_clock::now();
+        TransformUndoEntry undoEntry("Transform Tool");
+        TransformMeshState meshUndoState;
+        meshUndoState.meshId = mesh.getID();
+        meshUndoState.beforeMatrix = pivotStartMatrix;
+
+        float sx = glm::length(glm::vec3(mesh.matrix[0]));
+        float sy = glm::length(glm::vec3(mesh.matrix[1]));
+        float sz = glm::length(glm::vec3(mesh.matrix[2]));
+
+        mesh.bakeScale();
+        if (std::abs(sx - 1.0f) > 1e-4f || std::abs(sy - 1.0f) > 1e-4f || std::abs(sz - 1.0f) > 1e-4f) {
+            meshUndoState.bakedScale = true;
+            meshUndoState.scaleX = sx;
+            meshUndoState.scaleY = sy;
+            meshUndoState.scaleZ = sz;
+        }
+        meshUndoState.afterMatrix = mesh.matrix;
+        undoEntry.m_meshStates.push_back(std::move(meshUndoState));
+        g_undoManager.pushTransformChange(scene, std::move(undoEntry));
+        auto tFinEnd = std::chrono::high_resolution_clock::now();
+        double finalizeMs = std::chrono::duration<double, std::milli>(tFinEnd - tFinStart).count();
+
+        double totalStrokeMs = step0Ms + sumDragMs + finalizeMs;
+        size_t undoBytes = g_undoManager.getUndoStack().back()->getMemoryUsage();
+        glm::mat4 modifiedMatrix = mesh.matrix;
+
+        // Undo
+        auto tUndoStart = std::chrono::high_resolution_clock::now();
+        g_undoManager.undo(scene);
+        auto tUndoEnd = std::chrono::high_resolution_clock::now();
+        double undoMs = std::chrono::duration<double, std::milli>(tUndoEnd - tUndoStart).count();
+
+        float maxUndoDiff = 0.0f;
+        for (int c = 0; c < 4; ++c) {
+            for (int r = 0; r < 4; ++r) {
+                float d = std::abs(mesh.matrix[c][r] - startMatrix[c][r]);
+                if (d > maxUndoDiff) maxUndoDiff = d;
+            }
+        }
+
+        // Redo
+        auto tRedoStart = std::chrono::high_resolution_clock::now();
+        g_undoManager.redo(scene);
+        auto tRedoEnd = std::chrono::high_resolution_clock::now();
+        double redoMs = std::chrono::duration<double, std::milli>(tRedoEnd - tRedoStart).count();
+
+        float maxRedoDiff = 0.0f;
+        for (int c = 0; c < 4; ++c) {
+            for (int r = 0; r < 4; ++r) {
+                float d = std::abs(mesh.matrix[c][r] - modifiedMatrix[c][r]);
+                if (d > maxRedoDiff) maxRedoDiff = d;
+            }
+        }
+
+        // Reset back to original matrix
+        g_undoManager.undo(scene);
+        g_undoManager.clear();
+
+        MultiToolBenchmarkRow row;
+        row.toolName = "Transform (Pure Matrix)";
+        row.hasStep0 = true;
+        row.step0Ms = step0Ms;
+        row.hasDrag = true;
+        row.dragAvgMs = dragAvgMs;
+        row.finalizeMs = finalizeMs;
+        row.totalStrokeMs = totalStrokeMs;
+        row.undoMs = undoMs;
+        row.redoMs = redoMs;
+        row.undoRAMBytes = undoBytes;
+        row.maxUndoEps = maxUndoDiff;
+        row.maxRedoEps = maxRedoDiff;
+        row.passed = (maxUndoDiff < 1e-6f && maxRedoDiff < 1e-6f);
+        summaryRows.push_back(row);
+    }
+
+    // =========================================================================
+    // 6. Tool: Transform (Masked Deform)
+    // =========================================================================
+    {
+        std::cout << "  -> Benchmarking Transform Tool (Masked Deform)...\n";
+        // Pre-apply mask: vertices with X <= 0 are masked (m = 0.0), X > 0 unmasked (m = 1.0)
+        for (int i = 0; i < mesh.nbVerts; ++i) {
+            mesh.materials[i * 3 + 2] = (mesh.verts[i * 3] > 0.0f) ? 1.0f : 0.0f;
+        }
+        mesh.isMaterialDirty = true;
+
+        // Step 0: Check mask + Buffer copy (transformStartVerts & transformStartNormals)
+        auto tInitStart = std::chrono::high_resolution_clock::now();
+        glm::mat4 pivotStartMatrix = mesh.matrix;
+        bool transformHasMask = true;
+        std::vector<float> transformStartVerts = mesh.verts;
+        std::vector<float> transformStartNormals = mesh.normals;
+        auto tInitEnd = std::chrono::high_resolution_clock::now();
+        double step0Ms = std::chrono::duration<double, std::milli>(tInitEnd - tInitStart).count();
+
+        // Drag (10 steps vertex deformation)
+        double sumDragMs = 0.0;
+        int nbVerts = mesh.nbVerts;
+        for (int step = 1; step <= 10; ++step) {
+            glm::mat4 curMatrix = glm::translate(pivotStartMatrix, glm::vec3(0.02f * step, 0.01f * step, 0.0f));
+            glm::mat4 deltaLocal = glm::inverse(pivotStartMatrix) * curMatrix;
+            glm::mat3 normalMatrixPrimary = glm::transpose(glm::inverse(glm::mat3(deltaLocal)));
+
+            auto tDragStart = std::chrono::high_resolution_clock::now();
+#pragma omp parallel for schedule(static) if(nbVerts > 2000)
+            for (int i = 0; i < nbVerts; ++i) {
+                float m = mesh.materials[i * 3 + 2];
+                if (m <= 0.001f) {
+                    mesh.verts[i * 3]     = transformStartVerts[i * 3];
+                    mesh.verts[i * 3 + 1] = transformStartVerts[i * 3 + 1];
+                    mesh.verts[i * 3 + 2] = transformStartVerts[i * 3 + 2];
+                    mesh.normals[i * 3]     = transformStartNormals[i * 3];
+                    mesh.normals[i * 3 + 1] = transformStartNormals[i * 3 + 1];
+                    mesh.normals[i * 3 + 2] = transformStartNormals[i * 3 + 2];
+                    continue;
+                }
+                glm::vec4 vStart(transformStartVerts[i * 3], transformStartVerts[i * 3 + 1], transformStartVerts[i * 3 + 2], 1.0f);
+                glm::vec3 nStart(transformStartNormals[i * 3], transformStartNormals[i * 3 + 1], transformStartNormals[i * 3 + 2]);
+                glm::vec4 vTransformed = deltaLocal * vStart;
+                glm::vec3 nTransformed = normalMatrixPrimary * nStart;
+                glm::vec4 vNew = m * vTransformed + (1.0f - m) * vStart;
+                glm::vec3 nNew = glm::normalize(m * nTransformed + (1.0f - m) * nStart);
+                mesh.verts[i * 3]     = vNew.x;
+                mesh.verts[i * 3 + 1] = vNew.y;
+                mesh.verts[i * 3 + 2] = vNew.z;
+                mesh.normals[i * 3]     = nNew.x;
+                mesh.normals[i * 3 + 1] = nNew.y;
+                mesh.normals[i * 3 + 2] = nNew.z;
+            }
+            mesh.isVertexDirty = true;
+            auto tDragEnd = std::chrono::high_resolution_clock::now();
+            sumDragMs += std::chrono::duration<double, std::milli>(tDragEnd - tDragStart).count();
+        }
+        double dragAvgMs = sumDragMs / 10.0;
+
+        // Finalize: Normals calc + Octree update + pushTransformChange
+        auto tFinStart = std::chrono::high_resolution_clock::now();
+        mesh.matrix = pivotStartMatrix;
+        mesh.vertProxy = mesh.verts;
+        mesh.invalidateLocalRadius();
+        mesh.bumpVertsGeneration();
+
+        updateFaceNormalsAndBoxes(
+            mesh.verts.data(), mesh.nbVerts,
+            mesh.faces.data(), mesh.nbFaces,
+            nullptr, -1,
+            mesh.faceNormals.data(),
+            mesh.faceBoxes.data(),
+            mesh.faceCenters.data()
+        );
+        updateVertexNormals(
+            nullptr, -1, mesh.nbVerts,
+            mesh.vrfStartCount.data(),
+            mesh.vertRingFace.data(),
+            mesh.faceNormals.data(),
+            mesh.normals.data()
+        );
+        mesh.octree.update(
+            mesh.verts.data(), mesh.nbVerts,
+            mesh.faces.data(), mesh.nbFaces,
+            mesh.faceBoxes.data(),
+            nullptr, -1
+        );
+
+        TransformUndoEntry undoEntry("Transform Tool");
+        TransformMeshState meshUndoState;
+        meshUndoState.meshId = mesh.getID();
+        meshUndoState.beforeMatrix = pivotStartMatrix;
+        meshUndoState.afterMatrix = mesh.matrix;
+        meshUndoState.hasVertexDeformation = true;
+        meshUndoState.beforeVerts = transformStartVerts;
+        meshUndoState.afterVerts = mesh.verts;
+        meshUndoState.beforeNormals = transformStartNormals;
+        meshUndoState.afterNormals = mesh.normals;
+        undoEntry.m_meshStates.push_back(std::move(meshUndoState));
+        g_undoManager.pushTransformChange(scene, std::move(undoEntry));
+        auto tFinEnd = std::chrono::high_resolution_clock::now();
+        double finalizeMs = std::chrono::duration<double, std::milli>(tFinEnd - tFinStart).count();
+
+        double totalStrokeMs = step0Ms + sumDragMs + finalizeMs;
+        size_t undoBytes = g_undoManager.getUndoStack().back()->getMemoryUsage();
+        std::vector<float> modifiedVerts = mesh.verts;
+
+        // Undo
+        auto tUndoStart = std::chrono::high_resolution_clock::now();
+        g_undoManager.undo(scene);
+        auto tUndoEnd = std::chrono::high_resolution_clock::now();
+        double undoMs = std::chrono::duration<double, std::milli>(tUndoEnd - tUndoStart).count();
+
+        float maxUndoDiff = 0.0f;
+        for (size_t i = 0; i < mesh.verts.size(); ++i) {
+            float d = std::abs(mesh.verts[i] - transformStartVerts[i]);
+            if (d > maxUndoDiff) maxUndoDiff = d;
+        }
+
+        // Redo
+        auto tRedoStart = std::chrono::high_resolution_clock::now();
+        g_undoManager.redo(scene);
+        auto tRedoEnd = std::chrono::high_resolution_clock::now();
+        double redoMs = std::chrono::duration<double, std::milli>(tRedoEnd - tRedoStart).count();
+
+        float maxRedoDiff = 0.0f;
+        for (size_t i = 0; i < mesh.verts.size(); ++i) {
+            float d = std::abs(mesh.verts[i] - modifiedVerts[i]);
+            if (d > maxRedoDiff) maxRedoDiff = d;
+        }
+
+        // Reset mesh back to original
+        g_undoManager.undo(scene);
+        g_undoManager.clear();
+        for (size_t i = 0; i < mesh.materials.size(); i += 3) {
+            mesh.materials[i + 2] = 1.0f;
+        }
+        mesh.isMaterialDirty = true;
+
+        MultiToolBenchmarkRow row;
+        row.toolName = "Transform (Masked Deform)";
+        row.hasStep0 = true;
+        row.step0Ms = step0Ms;
+        row.hasDrag = true;
+        row.dragAvgMs = dragAvgMs;
+        row.finalizeMs = finalizeMs;
+        row.totalStrokeMs = totalStrokeMs;
+        row.undoMs = undoMs;
+        row.redoMs = redoMs;
+        row.undoRAMBytes = undoBytes;
+        row.maxUndoEps = maxUndoDiff;
+        row.maxRedoEps = maxRedoDiff;
+        row.passed = (maxUndoDiff == 0.0f && maxRedoDiff == 0.0f);
+        summaryRows.push_back(row);
+    }
 
     scene.removeMesh(meshPtr.get());
     g_undoManager.clear();
 
-    // Compute averages across steps
-    double sumTotal = 0.0, sumRay = 0.0, sumPick = 0.0, sumDeform = 0.0, sumUndo = 0.0;
-    double sumSymmetry = 0.0, sumSortDedup = 0.0;
-    double sumPickCells = 0.0, sumPickDedup = 0.0, sumPickFilter = 0.0;
-    double sumFaceLookup = 0.0, sumFaceNorm = 0.0, sumVertNorm = 0.0, sumSpatialUpdate = 0.0;
-    int sumVerts = 0, sumFaces = 0;
+    // -------------------------------------------------------------------------
+    // Detailed ClayBuildup Diagnostic & Amdahl's Law Breakdown
+    // -------------------------------------------------------------------------
+    if (!clayMeasurements.empty()) {
+        std::cout << "\n------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n";
+        std::cout << " Step | Total CPU | Raycast | PickVerts | Deform+Area | Symmetry | SortDedup | UndoRec | FaceLookup | FaceNorm | VertNorm | SpatialUpd | PickedV | Faces \n";
+        std::cout << "------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n";
 
-    std::cout << "\n------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n";
-    std::cout << " Step | Total CPU | Raycast | PickVerts | Deform+Area | Symmetry | SortDedup | UndoRec | FaceLookup | FaceNorm | VertNorm | SpatialUpd | PickedV | Faces \n";
-    std::cout << "------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n";
+        double sumTotal = 0.0, sumRay = 0.0, sumPick = 0.0, sumDeform = 0.0, sumUndo = 0.0;
+        double sumSymmetry = 0.0, sumSortDedup = 0.0;
+        double sumPickCells = 0.0, sumPickDedup = 0.0, sumPickFilter = 0.0;
+        double sumFaceLookup = 0.0, sumFaceNorm = 0.0, sumVertNorm = 0.0, sumSpatialUpdate = 0.0;
+        int sumVerts = 0, sumFaces = 0;
 
-    for (const auto& m : measurements) {
-        std::cout << "  #" << std::setw(2) << m.stepIndex << " |"
-                  << std::setw(8) << std::fixed << std::setprecision(2) << m.totalMs << "ms |"
-                  << std::setw(6) << std::fixed << std::setprecision(2) << m.raycastMs << "ms |"
-                  << std::setw(8) << std::fixed << std::setprecision(2) << m.pickVertsMs << "ms |"
-                  << std::setw(10) << std::fixed << std::setprecision(2) << (m.primaryDeformMs + m.areaComputeMs) << "ms |"
-                  << std::setw(7) << std::fixed << std::setprecision(2) << m.symmetryMs << "ms |"
-                  << std::setw(8) << std::fixed << std::setprecision(2) << m.sortDedupMs << "ms |"
-                  << std::setw(6) << std::fixed << std::setprecision(2) << m.undoRecordMs << "ms |"
-                  << std::setw(9) << std::fixed << std::setprecision(2) << m.faceLookupMs << "ms |"
-                  << std::setw(7) << std::fixed << std::setprecision(2) << m.faceNormalsMs << "ms |"
-                  << std::setw(7) << std::fixed << std::setprecision(2) << m.vertNormalsMs << "ms |"
-                  << std::setw(9) << std::fixed << std::setprecision(2) << m.spatialUpdateMs << "ms |"
-                  << std::setw(7) << m.pickedVerts << " |"
-                  << std::setw(6) << m.affectedFaces << "\n";
+        for (const auto& m : clayMeasurements) {
+            std::cout << "  #" << std::setw(2) << m.stepIndex << " |"
+                      << std::setw(8) << std::fixed << std::setprecision(2) << m.totalMs << "ms |"
+                      << std::setw(6) << std::fixed << std::setprecision(2) << m.raycastMs << "ms |"
+                      << std::setw(8) << std::fixed << std::setprecision(2) << m.pickVertsMs << "ms |"
+                      << std::setw(10) << std::fixed << std::setprecision(2) << (m.primaryDeformMs + m.areaComputeMs) << "ms |"
+                      << std::setw(7) << std::fixed << std::setprecision(2) << m.symmetryMs << "ms |"
+                      << std::setw(8) << std::fixed << std::setprecision(2) << m.sortDedupMs << "ms |"
+                      << std::setw(6) << std::fixed << std::setprecision(2) << m.undoRecordMs << "ms |"
+                      << std::setw(9) << std::fixed << std::setprecision(2) << m.faceLookupMs << "ms |"
+                      << std::setw(7) << std::fixed << std::setprecision(2) << m.faceNormalsMs << "ms |"
+                      << std::setw(7) << std::fixed << std::setprecision(2) << m.vertNormalsMs << "ms |"
+                      << std::setw(9) << std::fixed << std::setprecision(2) << m.spatialUpdateMs << "ms |"
+                      << std::setw(7) << m.pickedVerts << " |"
+                      << std::setw(6) << m.affectedFaces << "\n";
 
-        if (m.totalMs > 30.0 || m.stepIndex == 0) {
-            std::cout << "      (Step #" << m.stepIndex << " Detail: Pick[Cells: " << std::fixed << std::setprecision(2) << m.pickCellsMs;
-            if (m.pickDedupMs > 0.001) {
-                std::cout << "ms, Dedup: " << m.pickDedupMs << "ms, Radius: " << m.pickFilterMs << "ms]";
-            } else {
-                std::cout << "ms, FusedFilter: " << m.pickFilterMs << "ms]";
-            }
-            std::cout << " | Undo: " << m.undoRecordMs << "ms | Deform: " << m.primaryDeformMs
-                      << "ms | Sym: " << m.symmetryMs << "ms | FaceNorm: " << m.faceNormalsMs << "ms)\n";
+            sumTotal += m.totalMs;
+            sumRay += m.raycastMs;
+            sumPick += m.pickVertsMs;
+            sumPickCells += m.pickCellsMs;
+            sumPickDedup += m.pickDedupMs;
+            sumPickFilter += m.pickFilterMs;
+            sumDeform += (m.primaryDeformMs + m.areaComputeMs);
+            sumSymmetry += m.symmetryMs;
+            sumSortDedup += m.sortDedupMs;
+            sumUndo += m.undoRecordMs;
+            sumFaceLookup += m.faceLookupMs;
+            sumFaceNorm += m.faceNormalsMs;
+            sumVertNorm += m.vertNormalsMs;
+            sumSpatialUpdate += m.spatialUpdateMs;
+            sumVerts += m.pickedVerts;
+            sumFaces += m.affectedFaces;
         }
+        std::cout << "------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n";
 
-        sumTotal += m.totalMs;
-        sumRay += m.raycastMs;
-        sumPick += m.pickVertsMs;
-        sumPickCells += m.pickCellsMs;
-        sumPickDedup += m.pickDedupMs;
-        sumPickFilter += m.pickFilterMs;
-        sumDeform += (m.primaryDeformMs + m.areaComputeMs);
-        sumSymmetry += m.symmetryMs;
-        sumSortDedup += m.sortDedupMs;
-        sumUndo += m.undoRecordMs;
-        sumFaceLookup += m.faceLookupMs;
-        sumFaceNorm += m.faceNormalsMs;
-        sumVertNorm += m.vertNormalsMs;
-        sumSpatialUpdate += m.spatialUpdateMs;
-        sumVerts += m.pickedVerts;
-        sumFaces += m.affectedFaces;
+        double nSteps = (double)clayMeasurements.size();
+        double avgTotal = sumTotal / nSteps;
+        double avgRay = sumRay / nSteps;
+        double avgPick = sumPick / nSteps;
+        double avgDeform = sumDeform / nSteps;
+        double avgSymmetry = sumSymmetry / nSteps;
+        double avgSortDedup = sumSortDedup / nSteps;
+        double avgUndo = sumUndo / nSteps;
+        double avgFaceLookup = sumFaceLookup / nSteps;
+        double avgFaceNorm = sumFaceNorm / nSteps;
+        double avgVertNorm = sumVertNorm / nSteps;
+        double avgSpatialUpdate = sumSpatialUpdate / nSteps;
+        double avgVerts = (double)sumVerts / nSteps;
+        double avgFaces = (double)sumFaces / nSteps;
+
+        std::cout << "  AVG |"
+                  << std::setw(8) << std::fixed << std::setprecision(2) << avgTotal << "ms |"
+                  << std::setw(6) << std::fixed << std::setprecision(2) << avgRay << "ms |"
+                  << std::setw(8) << std::fixed << std::setprecision(2) << avgPick << "ms |"
+                  << std::setw(10) << std::fixed << std::setprecision(2) << avgDeform << "ms |"
+                  << std::setw(7) << std::fixed << std::setprecision(2) << avgSymmetry << "ms |"
+                  << std::setw(8) << std::fixed << std::setprecision(2) << avgSortDedup << "ms |"
+                  << std::setw(6) << std::fixed << std::setprecision(2) << avgUndo << "ms |"
+                  << std::setw(9) << std::fixed << std::setprecision(2) << avgFaceLookup << "ms |"
+                  << std::setw(7) << std::fixed << std::setprecision(2) << avgFaceNorm << "ms |"
+                  << std::setw(7) << std::fixed << std::setprecision(2) << avgVertNorm << "ms |"
+                  << std::setw(9) << std::fixed << std::setprecision(2) << avgSpatialUpdate << "ms |"
+                  << std::setw(7) << (int)avgVerts << " |"
+                  << std::setw(6) << (int)avgFaces << "\n";
+        std::cout << "------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n";
     }
-    std::cout << "------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n";
 
-    double nSteps = (double)measurements.size();
-    double avgTotal = sumTotal / nSteps;
-    double avgRay = sumRay / nSteps;
-    double avgPick = sumPick / nSteps;
-    double avgPickCells = sumPickCells / nSteps;
-    double avgPickDedup = sumPickDedup / nSteps;
-    double avgPickFilter = sumPickFilter / nSteps;
-    double avgDeform = sumDeform / nSteps;
-    double avgSymmetry = sumSymmetry / nSteps;
-    double avgSortDedup = sumSortDedup / nSteps;
-    double avgUndo = sumUndo / nSteps;
-    double avgFaceLookup = sumFaceLookup / nSteps;
-    double avgFaceNorm = sumFaceNorm / nSteps;
-    double avgVertNorm = sumVertNorm / nSteps;
-    double avgSpatialUpdate = sumSpatialUpdate / nSteps;
-    double avgVerts = (double)sumVerts / nSteps;
-    double avgFaces = (double)sumFaces / nSteps;
+    // =========================================================================
+    // GRAND SUMMARY TABLE: SPSculpt Multi-Tool Performance & Undo Benchmark
+    // =========================================================================
+    std::cout << "\n===========================================================================================================\n";
+    std::cout << " SPSculpt Multi-Tool Performance & Undo Benchmark @ " << std::fixed << std::setprecision(1) << (targetFaces / 1000000.0) << "M Polygons\n";
+    std::cout << "===========================================================================================================\n";
+    std::cout << " Tool / Operation          | Step 0 (Init) | Drag Avg | Finalize | Total Stroke | Undo Time | Redo Time | Undo RAM | Status \n";
+    std::cout << "---------------------------+---------------+----------+----------+--------------+-----------+-----------+----------+--------\n";
 
-    std::cout << "  AVG |"
-              << std::setw(8) << std::fixed << std::setprecision(2) << avgTotal << "ms |"
-              << std::setw(6) << std::fixed << std::setprecision(2) << avgRay << "ms |"
-              << std::setw(8) << std::fixed << std::setprecision(2) << avgPick << "ms |"
-              << std::setw(10) << std::fixed << std::setprecision(2) << avgDeform << "ms |"
-              << std::setw(7) << std::fixed << std::setprecision(2) << avgSymmetry << "ms |"
-              << std::setw(8) << std::fixed << std::setprecision(2) << avgSortDedup << "ms |"
-              << std::setw(6) << std::fixed << std::setprecision(2) << avgUndo << "ms |"
-              << std::setw(9) << std::fixed << std::setprecision(2) << avgFaceLookup << "ms |"
-              << std::setw(7) << std::fixed << std::setprecision(2) << avgFaceNorm << "ms |"
-              << std::setw(7) << std::fixed << std::setprecision(2) << avgVertNorm << "ms |"
-              << std::setw(9) << std::fixed << std::setprecision(2) << avgSpatialUpdate << "ms |"
-              << std::setw(7) << (int)avgVerts << " |"
-              << std::setw(6) << (int)avgFaces << "\n";
-    std::cout << "------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n";
+    bool allIntegrityPassed = true;
+    for (const auto& r : summaryRows) {
+        if (!r.passed) allIntegrityPassed = false;
 
-    double steadySumTotal = 0.0;
-    int steadyCount = 0;
-    for (size_t i = 1; i < measurements.size(); ++i) {
-        steadySumTotal += measurements[i].totalMs;
-        steadyCount++;
+        std::string toolCell = padRight(" " + r.toolName, 27);
+        std::string step0Cell = r.hasStep0 ? padLeft(formatMs(r.step0Ms) + "  ", 15) : padLeft("-     ", 15);
+        std::string dragCell  = r.hasDrag  ? padLeft(formatMs(r.dragAvgMs) + " ", 10)  : padLeft("-     ", 10);
+        std::string finCell   = padLeft(formatMs(r.finalizeMs) + " ", 10);
+        std::string totalCell = padLeft(formatMs(r.totalStrokeMs) + " ", 14);
+        std::string undoCell  = padLeft(formatMs(r.undoMs) + " ", 11);
+        std::string redoCell  = padLeft(formatMs(r.redoMs) + " ", 11);
+        std::string ramCell   = padLeft(formatBytes(r.undoRAMBytes) + " ", 10);
+        std::string statusCell = padRight(" " + std::string(r.passed ? "PASSED" : "FAILED"), 8);
+
+        std::cout << toolCell << "|"
+                  << step0Cell << "|"
+                  << dragCell << "|"
+                  << finCell << "|"
+                  << totalCell << "|"
+                  << undoCell << "|"
+                  << redoCell << "|"
+                  << ramCell << "|"
+                  << statusCell << "\n";
     }
-    double steadyAvgTotal = steadyCount > 0 ? (steadySumTotal / steadyCount) : avgTotal;
 
-    double spatialTotalMs = avgRay + avgPick + avgSpatialUpdate;
-    double spatialPct = (spatialTotalMs / avgTotal) * 100.0;
-    double normalsTotalMs = avgFaceNorm + avgVertNorm;
-    double normalsPct = (normalsTotalMs / avgTotal) * 100.0;
-    double pipelineOtherMs = avgTotal - spatialTotalMs;
-    double pipelineOtherPct = (pipelineOtherMs / avgTotal) * 100.0;
-
-    std::cout << "\n======================================================================\n";
-    std::cout << " BENCHMARK SUMMARY & AMDAHL'S LAW BREAKDOWN\n";
-    std::cout << "======================================================================\n";
-    std::cout << " Average Stroke Step Time:    " << std::fixed << std::setprecision(2) << avgTotal << " ms\n";
-    std::cout << " Effective Brush Response FPS:" << std::fixed << std::setprecision(1) << (1000.0 / avgTotal) << " FPS\n";
-    std::cout << " Steady-State Avg (Step 1-9): " << std::fixed << std::setprecision(2) << steadyAvgTotal << " ms ("
-              << std::fixed << std::setprecision(1) << (1000.0 / steadyAvgTotal) << " FPS)\n";
-    std::cout << " Step 0 Warmup (First Click): " << std::fixed << std::setprecision(2) << measurements[0].totalMs << " ms\n";
-    std::cout << "\n Pipeline Breakdown:\n";
-    std::cout << "   [Spatial Acceleration (Raycast + Pick + Update)]: "
-              << std::fixed << std::setprecision(2) << spatialTotalMs << " ms ("
-              << std::fixed << std::setprecision(1) << spatialPct << "% of total stroke time)\n";
-    std::cout << "     |- Raycast:                 " << std::fixed << std::setprecision(2) << avgRay << " ms (" << std::setprecision(1) << (avgRay / avgTotal * 100.0) << "%)\n";
-    std::cout << "     |- Pick Vertices in Sphere: " << std::fixed << std::setprecision(2) << avgPick << " ms (" << std::setprecision(1) << (avgPick / avgTotal * 100.0) << "%)\n";
-    std::cout << "     |    |- Collect Cells:      " << std::fixed << std::setprecision(2) << avgPickCells << " ms\n";
-    if (avgPickDedup > 0.001) {
-        std::cout << "     |    |- Candidate Verts:    " << std::fixed << std::setprecision(2) << avgPickDedup << " ms\n";
-        std::cout << "     |    \\- Filter Sphere:      " << std::fixed << std::setprecision(2) << avgPickFilter << " ms\n";
+    std::cout << "-----------------------------------------------------------------------------------------------------------\n";
+    if (allIntegrityPassed) {
+        std::cout << " All Undo/Redo integrity checks PASSED (0 epsilon discrepancies).\n";
     } else {
-        std::cout << "     |    \\- Fused Pick & Filter:" << std::fixed << std::setprecision(2) << avgPickFilter << " ms\n";
+        std::cout << " [FAIL] Some Undo/Redo integrity checks failed!\n";
     }
-    std::cout << "     \\- Spatial Index Update:    " << std::fixed << std::setprecision(2) << avgSpatialUpdate << " ms (" << std::setprecision(1) << (avgSpatialUpdate / avgTotal * 100.0) << "%)\n";
-    std::cout << "\n   [Non-Spatial Pipeline (Mesh Deformation & Topology)]:\n";
-    std::cout << "     |- Primary Deform + Area:   " << std::fixed << std::setprecision(2) << avgDeform << " ms (" << std::setprecision(1) << (avgDeform / avgTotal * 100.0) << "%)\n";
-    std::cout << "     |- Symmetry Pass:           " << std::fixed << std::setprecision(2) << avgSymmetry << " ms (" << std::setprecision(1) << (avgSymmetry / avgTotal * 100.0) << "%)\n";
-    std::cout << "     |- Sort & Dedup (Radix):    " << std::fixed << std::setprecision(2) << avgSortDedup << " ms (" << std::setprecision(1) << (avgSortDedup / avgTotal * 100.0) << "%)\n";
-    std::cout << "     |- Undo Record:             " << std::fixed << std::setprecision(2) << avgUndo << " ms (" << std::setprecision(1) << (avgUndo / avgTotal * 100.0) << "%)\n";
-    std::cout << "     |- Face Lookup (RingFaces): " << std::fixed << std::setprecision(2) << avgFaceLookup << " ms (" << std::setprecision(1) << (avgFaceLookup / avgTotal * 100.0) << "%)\n";
-    std::cout << "     |- Face Normals Calc:       " << std::fixed << std::setprecision(2) << avgFaceNorm << " ms (" << std::setprecision(1) << (avgFaceNorm / avgTotal * 100.0) << "%)\n";
-    std::cout << "     \\- Vert Normals Calc:       " << std::fixed << std::setprecision(2) << avgVertNorm << " ms (" << std::setprecision(1) << (avgVertNorm / avgTotal * 100.0) << "%)\n";
-    std::cout << "   Total Non-Spatial Overhead:   " << std::fixed << std::setprecision(2) << pipelineOtherMs << " ms (" << std::setprecision(1) << pipelineOtherPct << "% of total stroke time)\n";
-    std::cout << "======================================================================\n\n";
+    std::cout << "===========================================================================================================\n\n";
     std::cout.flush();
 
     _Exit(0);
