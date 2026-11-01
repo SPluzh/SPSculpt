@@ -960,7 +960,7 @@ bool QuadDrawTool::handleMouseDown(
                 m_hoverPoly = -1;
 
                 std::vector<uint32_t> affected(vertIndices.begin(), vertIndices.end());
-                g_undoManager.beginSculptStroke(scene, m_retopoMesh->getID(), affected, false, false, "Tweak Move Selected Edges");
+                g_undoManager.beginSculptStroke(scene, m_retopoMesh->getID(), affected, true, false, false, "Tweak Move Selected Edges");
                 return true;
             }
         }
@@ -982,7 +982,7 @@ bool QuadDrawTool::handleMouseDown(
             m_hoverPoly = -1;
 
             std::vector<uint32_t> affected = { (uint32_t)m_hoverVertex };
-            g_undoManager.beginSculptStroke(scene, m_retopoMesh->getID(), affected, false, false, "Tweak Move Vertex");
+            g_undoManager.beginSculptStroke(scene, m_retopoMesh->getID(), affected, true, false, false, "Tweak Move Vertex");
             return true;
         }
 
@@ -1015,7 +1015,7 @@ bool QuadDrawTool::handleMouseDown(
                 m_hoverPoly = -1;
 
                 std::vector<uint32_t> affected(vertIndices.begin(), vertIndices.end());
-                g_undoManager.beginSculptStroke(scene, m_retopoMesh->getID(), affected, false, false, "Tweak Move Edge");
+                g_undoManager.beginSculptStroke(scene, m_retopoMesh->getID(), affected, true, false, false, "Tweak Move Edge");
                 return true;
             }
         }
@@ -1058,7 +1058,7 @@ bool QuadDrawTool::handleMouseDown(
                 m_hoverPoly = -1;
 
                 std::vector<uint32_t> affected(vertIndices.begin(), vertIndices.end());
-                g_undoManager.beginSculptStroke(scene, m_retopoMesh->getID(), affected, false, false, "Tweak Move Polygon");
+                g_undoManager.beginSculptStroke(scene, m_retopoMesh->getID(), affected, true, false, false, "Tweak Move Polygon");
                 return true;
             }
         }
@@ -1136,7 +1136,7 @@ bool QuadDrawTool::handleMouseDown(
         m_hoverVertex = -1;
         m_hoverPoly = -1;
         std::vector<uint32_t> affected = { (uint32_t)m_hoverVertex };
-        g_undoManager.beginSculptStroke(scene, m_retopoMesh->getID(), affected, false, false, "Tweak Move Vertex");
+        g_undoManager.beginSculptStroke(scene, m_retopoMesh->getID(), affected, true, false, false, "Tweak Move Vertex");
         return true;
     }
 
@@ -1228,7 +1228,7 @@ bool QuadDrawTool::handleMouseDown(
                 m_hoverPoly = -1;
 
                 std::vector<uint32_t> affected(vertIndices.begin(), vertIndices.end());
-                g_undoManager.beginSculptStroke(scene, m_retopoMesh->getID(), affected, false, false, "Tweak Move Edge");
+                g_undoManager.beginSculptStroke(scene, m_retopoMesh->getID(), affected, true, false, false, "Tweak Move Edge");
                 return true;
             }
         }

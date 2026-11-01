@@ -24,12 +24,24 @@ struct TransformMeshState {
     bool isPrimitive = false;
     glm::mat4 beforeLocalTransform = glm::mat4(1.0f);
     glm::mat4 afterLocalTransform = glm::mat4(1.0f);
+
+    TransformMeshState() = default;
+    TransformMeshState(TransformMeshState&&) noexcept = default;
+    TransformMeshState& operator=(TransformMeshState&&) noexcept = default;
+    TransformMeshState(const TransformMeshState&) = default;
+    TransformMeshState& operator=(const TransformMeshState&) = default;
 };
 
 class TransformUndoEntry : public UndoEntry {
 public:
     TransformUndoEntry(const std::string& desc = "Transform")
         : m_description(desc) {}
+    ~TransformUndoEntry() override = default;
+
+    TransformUndoEntry(TransformUndoEntry&&) noexcept = default;
+    TransformUndoEntry& operator=(TransformUndoEntry&&) noexcept = default;
+    TransformUndoEntry(const TransformUndoEntry&) = default;
+    TransformUndoEntry& operator=(const TransformUndoEntry&) = default;
 
     UndoEntryType getType() const override { return UndoEntryType::SceneMeta; }
     std::string getDescription() const override { return m_description; }

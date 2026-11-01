@@ -2019,13 +2019,14 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             m_strokeFrameCounter++;
         }
 
+        bool strokeAffectsPositions = (activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_MASK_GRADIENT_BLUR);
         bool strokeAffectsColors = (activeBrush == BRUSH_PAINT && getCurrentSettings().writeAlbedo);
         bool strokeAffectsMaterials = (activeBrush == BRUSH_PAINT && (getCurrentSettings().writeRoughness || getCurrentSettings().writeMetalness)) ||
                                        (activeBrush == BRUSH_MASK || activeBrush == BRUSH_MASK_GRADIENT_BLUR);
 
         // --- Stage 4: Undo Record ---
         tStage = std::chrono::high_resolution_clock::now();
-        g_undoManager.recordAffectedVertices(scene, mesh->m_id, pickedVertices, strokeAffectsColors, strokeAffectsMaterials);
+        g_undoManager.recordAffectedVertices(scene, mesh->m_id, pickedVertices, strokeAffectsPositions, strokeAffectsColors, strokeAffectsMaterials);
         m_lastFrameProfile.undoRecordMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
 
         // --- Stage 5: Primary Deform Pass ---
@@ -2146,7 +2147,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                     const glm::vec3& initSymInter = (sIdx < m_initialSymIntersections.size()) ? m_initialSymIntersections[sIdx] : reflectPointSymmetry(m_initialIntersection, sScale, mesh, m_symmetryMode);
 
                     auto tUndoSym = std::chrono::high_resolution_clock::now();
-                    g_undoManager.recordAffectedVertices(scene, mesh->m_id, symVerts, strokeAffectsColors, strokeAffectsMaterials);
+                    g_undoManager.recordAffectedVertices(scene, mesh->m_id, symVerts, strokeAffectsPositions, strokeAffectsColors, strokeAffectsMaterials);
                     m_lastFrameProfile.undoRecordMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tUndoSym).count();
 
                     int symDeformed = doStrokePass(
@@ -3402,10 +3403,11 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 }
 
                 if (!m_isTubeMoveStroke) {
+                    bool strokeAffectsPositions = (m_currentBrush != BRUSH_PAINT && m_currentBrush != BRUSH_MASK && m_currentBrush != BRUSH_MASK_GRADIENT_BLUR);
                     bool strokeAffectsColors = (m_currentBrush == BRUSH_PAINT && getCurrentSettings().writeAlbedo);
                     bool strokeAffectsMaterials = (m_currentBrush == BRUSH_PAINT && (getCurrentSettings().writeRoughness || getCurrentSettings().writeMetalness)) ||
                                                    (m_currentBrush == BRUSH_MASK || m_currentBrush == BRUSH_MASK_GRADIENT_BLUR);
-                    g_undoManager.beginSculptStroke(scene, mesh->m_id, {}, strokeAffectsColors, strokeAffectsMaterials, "Sculpt Stroke");
+                    g_undoManager.beginSculptStroke(scene, mesh->m_id, {}, strokeAffectsPositions, strokeAffectsColors, strokeAffectsMaterials, "Sculpt Stroke");
                 }
                 m_isSculpting = true;
                 m_currentIntersectionValid = true;
@@ -3685,13 +3687,15 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 if (m_isMaskLasso) {
                     if (!selectedVertices.empty()) {
                         auto tHistStart = std::chrono::high_resolution_clock::now();
-                        scene.pushHistoryState();
+                        g_undoManager.beginSculptStroke(scene, mesh->getID(), selectedVertices, false, false, true, "Mask Lasso");
                         auto tHistEnd = std::chrono::high_resolution_clock::now();
                         double histMs = std::chrono::duration<double, std::milli>(tHistEnd - tHistStart).count();
 
                         float maskVal = m_lassoAlt ? 1.0f : 0.0f;
                         float* materials = mesh->materials.data();
-                        for (uint32_t vid : selectedVertices) {
+#pragma omp parallel for schedule(static) if(selectedVertices.size() > 1000)
+                        for (size_t i = 0; i < selectedVertices.size(); ++i) {
+                            uint32_t vid = selectedVertices[i];
                             materials[vid * 3 + 2] = maskVal;
                         }
                         mesh->isMaterialDirty = true;
@@ -3699,9 +3703,11 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                         mesh->dirtyVertMax = mesh->nbVerts - 1;
                         mesh->isDirty = true;
 
+                        g_undoManager.endSculptStroke(scene);
+
                         auto tLassoEnd = std::chrono::high_resolution_clock::now();
                         double totalMs = std::chrono::duration<double, std::milli>(tLassoEnd - tLassoStart).count();
-                        sculpt_log("[LassoRelease] Mask Applied: %zu / %d verts (HistoryPush: %.2f ms, Total: %.2f ms)\n",
+                        sculpt_log("[LassoRelease] Mask Applied: %zu / %d verts (DeltaRecord: %.2f ms, Total: %.2f ms)\n",
                                   selectedVertices.size(), mesh->nbVerts, histMs, totalMs);
                     } else {
                         sculpt_log("[LassoRelease] Empty lasso selection -> clearing mask\n");

@@ -30,6 +30,7 @@ public:
     void beginSculptStroke(Scene& scene,
                            uint32_t meshId,
                            const std::vector<uint32_t>& affectedVerts,
+                           bool affectsPositions = true,
                            bool affectsColors = false,
                            bool affectsMaterials = true,
                            const std::string& description = "Sculpt stroke");
@@ -37,6 +38,7 @@ public:
     void recordAffectedVertices(Scene& scene,
                                 uint32_t meshId,
                                 const std::vector<uint32_t>& affectedVerts,
+                                bool affectsPositions = true,
                                 bool affectsColors = false,
                                 bool affectsMaterials = true);
 
@@ -67,7 +69,8 @@ public:
                         const std::string& description,
                         std::function<void()> operation);
 
-    void pushTransformChange(Scene& scene, TransformUndoEntry entry);
+    void pushTransformChange(Scene& scene, TransformUndoEntry&& entry);
+    void pushTransformChange(Scene& scene, const TransformUndoEntry& entry);
 
     // --- API for measurement/divider changes ---
     void pushMeasurementChange(Scene& scene,

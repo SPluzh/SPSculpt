@@ -273,7 +273,8 @@ inline bool run(int targetFaces = 4000000) {
 
     auto tGenStart = std::chrono::high_resolution_clock::now();
     auto meshPtr = createSphereMesh(rings, sectors);
-    Mesh& mesh = *meshPtr;
+    Mesh* meshRaw = meshPtr.release();
+    Mesh& mesh = *meshRaw;
     auto tGenEnd = std::chrono::high_resolution_clock::now();
     double genMs = std::chrono::duration<double, std::milli>(tGenEnd - tGenStart).count();
     std::cout << "      Sphere generation completed in " << std::fixed << std::setprecision(2) << genMs << " ms\n";
@@ -377,12 +378,12 @@ inline bool run(int targetFaces = 4000000) {
     std::cout << "\n[4/4] Running Multi-Tool Pipeline & Undo/Redo Validation on Mesh...\n";
 
     Scene scene;
-    scene.addMesh(meshPtr.get());
-    scene.selectMesh(meshPtr.get());
+    scene.addMesh(meshRaw);
+    scene.selectMesh(meshRaw);
 
     Camera& camera = scene.getCamera();
     camera.onResize(1920, 1080);
-    camera.resetViewToMesh(meshPtr.get(), false);
+    camera.resetViewToMesh(meshRaw, false);
     camera.update(0.016f);
 
     SculptManager sculpt;
@@ -416,8 +417,7 @@ inline bool run(int targetFaces = 4000000) {
         settings.accumulate = false;
         settings.culling = false;
 
-        sculpt.warmupMeshCaches(meshPtr.get());
-        std::vector<float> origVerts = mesh.verts;
+        sculpt.warmupMeshCaches(meshRaw);
 
         // Step 0: Mouse Down
         SDL_Event evDown;
@@ -464,7 +464,7 @@ inline bool run(int targetFaces = 4000000) {
             float curY = startY + step * stepDy;
 
             auto tStepStart = std::chrono::high_resolution_clock::now();
-            sculpt.executeStroke(scene, meshPtr.get(), camera, curX, curY, 1.0f);
+            sculpt.executeStroke(scene, meshRaw, camera, curX, curY, 1.0f);
             auto tStepEnd = std::chrono::high_resolution_clock::now();
             double stepMs = std::chrono::duration<double, std::milli>(tStepEnd - tStepStart).count();
             sumDragMs += stepMs;
@@ -510,8 +510,7 @@ inline bool run(int targetFaces = 4000000) {
         double finalizeMs = std::chrono::duration<double, std::milli>(tFinEnd - tFinStart).count();
 
         double totalStrokeMs = step0Ms + sumDragMs + finalizeMs;
-        size_t undoBytes = g_undoManager.getUndoStack().back()->getMemoryUsage();
-        std::vector<float> modifiedVerts = mesh.verts;
+        size_t undoBytes = !g_undoManager.getUndoStack().empty() ? g_undoManager.getUndoStack().back()->getMemoryUsage() : 0;
 
         // Undo
         auto tUndoStart = std::chrono::high_resolution_clock::now();
@@ -520,9 +519,21 @@ inline bool run(int targetFaces = 4000000) {
         double undoMs = std::chrono::duration<double, std::milli>(tUndoEnd - tUndoStart).count();
 
         float maxUndoDiff = 0.0f;
-        for (size_t i = 0; i < mesh.verts.size(); ++i) {
-            float d = std::abs(mesh.verts[i] - origVerts[i]);
-            if (d > maxUndoDiff) maxUndoDiff = d;
+        auto* redoEntry = !g_undoManager.getRedoStack().empty()
+            ? dynamic_cast<SculptUndoEntry*>(g_undoManager.getRedoStack().back().get())
+            : nullptr;
+        if (redoEntry && !redoEntry->deltas.empty()) {
+            const auto& d = redoEntry->deltas[0];
+            size_t n = d.indices.size();
+#pragma omp parallel for reduction(max:maxUndoDiff) schedule(static) if(n > 10000)
+            for (size_t i = 0; i < n; ++i) {
+                uint32_t vid = d.indices[i];
+                float d0 = std::abs(mesh.verts[vid * 3 + 0] - d.prevVerts[i * 3 + 0]);
+                float d1 = std::abs(mesh.verts[vid * 3 + 1] - d.prevVerts[i * 3 + 1]);
+                float d2 = std::abs(mesh.verts[vid * 3 + 2] - d.prevVerts[i * 3 + 2]);
+                float m = std::max({d0, d1, d2});
+                if (m > maxUndoDiff) maxUndoDiff = m;
+            }
         }
 
         // Redo
@@ -532,9 +543,21 @@ inline bool run(int targetFaces = 4000000) {
         double redoMs = std::chrono::duration<double, std::milli>(tRedoEnd - tRedoStart).count();
 
         float maxRedoDiff = 0.0f;
-        for (size_t i = 0; i < mesh.verts.size(); ++i) {
-            float d = std::abs(mesh.verts[i] - modifiedVerts[i]);
-            if (d > maxRedoDiff) maxRedoDiff = d;
+        auto* undoEntryAfterRedo = !g_undoManager.getUndoStack().empty()
+            ? dynamic_cast<SculptUndoEntry*>(g_undoManager.getUndoStack().back().get())
+            : nullptr;
+        if (undoEntryAfterRedo && !undoEntryAfterRedo->deltas.empty()) {
+            const auto& d = undoEntryAfterRedo->deltas[0];
+            size_t n = d.indices.size();
+#pragma omp parallel for reduction(max:maxRedoDiff) schedule(static) if(n > 10000)
+            for (size_t i = 0; i < n; ++i) {
+                uint32_t vid = d.indices[i];
+                float d0 = std::abs(mesh.verts[vid * 3 + 0] - d.nextVerts[i * 3 + 0]);
+                float d1 = std::abs(mesh.verts[vid * 3 + 1] - d.nextVerts[i * 3 + 1]);
+                float d2 = std::abs(mesh.verts[vid * 3 + 2] - d.nextVerts[i * 3 + 2]);
+                float m = std::max({d0, d1, d2});
+                if (m > maxRedoDiff) maxRedoDiff = m;
+            }
         }
 
         // Reset mesh back to original
@@ -571,8 +594,7 @@ inline bool run(int targetFaces = 4000000) {
         moveSettings.culling = false;
 
         mesh.vertProxy = mesh.verts;
-        sculpt.warmupMeshCaches(meshPtr.get());
-        std::vector<float> origVerts = mesh.verts;
+        sculpt.warmupMeshCaches(meshRaw);
 
         // Step 0: Mouse Down (vertex capture, falloff, deform prep)
         SDL_Event evDown;
@@ -594,7 +616,7 @@ inline bool run(int targetFaces = 4000000) {
             float curY = startY + step * stepDy;
 
             auto tStepStart = std::chrono::high_resolution_clock::now();
-            sculpt.executeStroke(scene, meshPtr.get(), camera, curX, curY, 1.0f);
+            sculpt.executeStroke(scene, meshRaw, camera, curX, curY, 1.0f);
             auto tStepEnd = std::chrono::high_resolution_clock::now();
             sumDragMs += std::chrono::duration<double, std::milli>(tStepEnd - tStepStart).count();
         }
@@ -614,8 +636,7 @@ inline bool run(int targetFaces = 4000000) {
         double finalizeMs = std::chrono::duration<double, std::milli>(tFinEnd - tFinStart).count();
 
         double totalStrokeMs = step0Ms + sumDragMs + finalizeMs;
-        size_t undoBytes = g_undoManager.getUndoStack().back()->getMemoryUsage();
-        std::vector<float> modifiedVerts = mesh.verts;
+        size_t undoBytes = !g_undoManager.getUndoStack().empty() ? g_undoManager.getUndoStack().back()->getMemoryUsage() : 0;
 
         // Undo
         auto tUndoStart = std::chrono::high_resolution_clock::now();
@@ -624,9 +645,21 @@ inline bool run(int targetFaces = 4000000) {
         double undoMs = std::chrono::duration<double, std::milli>(tUndoEnd - tUndoStart).count();
 
         float maxUndoDiff = 0.0f;
-        for (size_t i = 0; i < mesh.verts.size(); ++i) {
-            float d = std::abs(mesh.verts[i] - origVerts[i]);
-            if (d > maxUndoDiff) maxUndoDiff = d;
+        auto* redoEntry = !g_undoManager.getRedoStack().empty()
+            ? dynamic_cast<SculptUndoEntry*>(g_undoManager.getRedoStack().back().get())
+            : nullptr;
+        if (redoEntry && !redoEntry->deltas.empty()) {
+            const auto& d = redoEntry->deltas[0];
+            size_t n = d.indices.size();
+#pragma omp parallel for reduction(max:maxUndoDiff) schedule(static) if(n > 10000)
+            for (size_t i = 0; i < n; ++i) {
+                uint32_t vid = d.indices[i];
+                float d0 = std::abs(mesh.verts[vid * 3 + 0] - d.prevVerts[i * 3 + 0]);
+                float d1 = std::abs(mesh.verts[vid * 3 + 1] - d.prevVerts[i * 3 + 1]);
+                float d2 = std::abs(mesh.verts[vid * 3 + 2] - d.prevVerts[i * 3 + 2]);
+                float m = std::max({d0, d1, d2});
+                if (m > maxUndoDiff) maxUndoDiff = m;
+            }
         }
 
         // Redo
@@ -636,9 +669,21 @@ inline bool run(int targetFaces = 4000000) {
         double redoMs = std::chrono::duration<double, std::milli>(tRedoEnd - tRedoStart).count();
 
         float maxRedoDiff = 0.0f;
-        for (size_t i = 0; i < mesh.verts.size(); ++i) {
-            float d = std::abs(mesh.verts[i] - modifiedVerts[i]);
-            if (d > maxRedoDiff) maxRedoDiff = d;
+        auto* undoEntryAfterRedo = !g_undoManager.getUndoStack().empty()
+            ? dynamic_cast<SculptUndoEntry*>(g_undoManager.getUndoStack().back().get())
+            : nullptr;
+        if (undoEntryAfterRedo && !undoEntryAfterRedo->deltas.empty()) {
+            const auto& d = undoEntryAfterRedo->deltas[0];
+            size_t n = d.indices.size();
+#pragma omp parallel for reduction(max:maxRedoDiff) schedule(static) if(n > 10000)
+            for (size_t i = 0; i < n; ++i) {
+                uint32_t vid = d.indices[i];
+                float d0 = std::abs(mesh.verts[vid * 3 + 0] - d.nextVerts[i * 3 + 0]);
+                float d1 = std::abs(mesh.verts[vid * 3 + 1] - d.nextVerts[i * 3 + 1]);
+                float d2 = std::abs(mesh.verts[vid * 3 + 2] - d.nextVerts[i * 3 + 2]);
+                float m = std::max({d0, d1, d2});
+                if (m > maxRedoDiff) maxRedoDiff = m;
+            }
         }
 
         // Reset mesh back to original
@@ -674,8 +719,7 @@ inline bool run(int targetFaces = 4000000) {
         maskSettings.intensity = 1.0f;
         maskSettings.culling = true;
 
-        sculpt.warmupMeshCaches(meshPtr.get());
-        std::vector<float> origMats = mesh.materials;
+        sculpt.warmupMeshCaches(meshRaw);
 
         // Step 0: Mouse Down
         SDL_Event evDown;
@@ -697,7 +741,7 @@ inline bool run(int targetFaces = 4000000) {
             float curY = startY + step * stepDy;
 
             auto tStepStart = std::chrono::high_resolution_clock::now();
-            sculpt.executeStroke(scene, meshPtr.get(), camera, curX, curY, 1.0f);
+            sculpt.executeStroke(scene, meshRaw, camera, curX, curY, 1.0f);
             auto tStepEnd = std::chrono::high_resolution_clock::now();
             sumDragMs += std::chrono::duration<double, std::milli>(tStepEnd - tStepStart).count();
         }
@@ -717,8 +761,7 @@ inline bool run(int targetFaces = 4000000) {
         double finalizeMs = std::chrono::duration<double, std::milli>(tFinEnd - tFinStart).count();
 
         double totalStrokeMs = step0Ms + sumDragMs + finalizeMs;
-        size_t undoBytes = g_undoManager.getUndoStack().back()->getMemoryUsage();
-        std::vector<float> modifiedMats = mesh.materials;
+        size_t undoBytes = !g_undoManager.getUndoStack().empty() ? g_undoManager.getUndoStack().back()->getMemoryUsage() : 0;
 
         // Undo
         auto tUndoStart = std::chrono::high_resolution_clock::now();
@@ -727,9 +770,21 @@ inline bool run(int targetFaces = 4000000) {
         double undoMs = std::chrono::duration<double, std::milli>(tUndoEnd - tUndoStart).count();
 
         float maxUndoDiff = 0.0f;
-        for (size_t i = 0; i < mesh.materials.size(); ++i) {
-            float d = std::abs(mesh.materials[i] - origMats[i]);
-            if (d > maxUndoDiff) maxUndoDiff = d;
+        auto* redoEntry = !g_undoManager.getRedoStack().empty()
+            ? dynamic_cast<SculptUndoEntry*>(g_undoManager.getRedoStack().back().get())
+            : nullptr;
+        if (redoEntry && !redoEntry->deltas.empty()) {
+            const auto& d = redoEntry->deltas[0];
+            size_t n = d.indices.size();
+#pragma omp parallel for reduction(max:maxUndoDiff) schedule(static) if(n > 10000)
+            for (size_t i = 0; i < n; ++i) {
+                uint32_t vid = d.indices[i];
+                float d0 = std::abs(mesh.materials[vid * 3 + 0] - d.prevMaterials[i * 3 + 0]);
+                float d1 = std::abs(mesh.materials[vid * 3 + 1] - d.prevMaterials[i * 3 + 1]);
+                float d2 = std::abs(mesh.materials[vid * 3 + 2] - d.prevMaterials[i * 3 + 2]);
+                float m = std::max({d0, d1, d2});
+                if (m > maxUndoDiff) maxUndoDiff = m;
+            }
         }
 
         // Redo
@@ -739,9 +794,21 @@ inline bool run(int targetFaces = 4000000) {
         double redoMs = std::chrono::duration<double, std::milli>(tRedoEnd - tRedoStart).count();
 
         float maxRedoDiff = 0.0f;
-        for (size_t i = 0; i < mesh.materials.size(); ++i) {
-            float d = std::abs(mesh.materials[i] - modifiedMats[i]);
-            if (d > maxRedoDiff) maxRedoDiff = d;
+        auto* undoEntryAfterRedo = !g_undoManager.getUndoStack().empty()
+            ? dynamic_cast<SculptUndoEntry*>(g_undoManager.getUndoStack().back().get())
+            : nullptr;
+        if (undoEntryAfterRedo && !undoEntryAfterRedo->deltas.empty()) {
+            const auto& d = undoEntryAfterRedo->deltas[0];
+            size_t n = d.indices.size();
+#pragma omp parallel for reduction(max:maxRedoDiff) schedule(static) if(n > 10000)
+            for (size_t i = 0; i < n; ++i) {
+                uint32_t vid = d.indices[i];
+                float d0 = std::abs(mesh.materials[vid * 3 + 0] - d.nextMaterials[i * 3 + 0]);
+                float d1 = std::abs(mesh.materials[vid * 3 + 1] - d.nextMaterials[i * 3 + 1]);
+                float d2 = std::abs(mesh.materials[vid * 3 + 2] - d.nextMaterials[i * 3 + 2]);
+                float m = std::max({d0, d1, d2});
+                if (m > maxRedoDiff) maxRedoDiff = m;
+            }
         }
 
         // Reset mesh back to original
@@ -770,7 +837,6 @@ inline bool run(int targetFaces = 4000000) {
     // =========================================================================
     {
         std::cout << "  -> Benchmarking Mask Lasso (Screen Poly)...\n";
-        std::vector<float> origMats = mesh.materials;
 
         std::vector<glm::vec2> lassoPoly = {
             { 960.0f, 540.0f },
@@ -792,11 +858,11 @@ inline bool run(int targetFaces = 4000000) {
 
         auto tLassoStart = std::chrono::high_resolution_clock::now();
 
-        // 1. History state push
-        scene.pushHistoryState();
+        // 1. Vertex projection & point-in-polygon test
+        std::vector<uint32_t> selectedVertices = sculpt.getVerticesInLasso(meshRaw, camera);
 
-        // 2. Vertex projection & point-in-polygon test
-        std::vector<uint32_t> selectedVertices = sculpt.getVerticesInLasso(meshPtr.get(), camera);
+        // 2. Delta undo recording
+        g_undoManager.beginSculptStroke(scene, mesh.getID(), selectedVertices, false, false, true, "Mask Lasso");
 
         // 3. Batch write mask
         float* materials = mesh.materials.data();
@@ -810,45 +876,64 @@ inline bool run(int targetFaces = 4000000) {
         mesh.dirtyVertMax = mesh.nbVerts - 1;
         mesh.isDirty = true;
 
-        if (!g_undoManager.getUndoStack().empty()) {
-            if (auto* topEntry = dynamic_cast<TopologyUndoEntry*>(g_undoManager.getUndoStack().back().get())) {
-                topEntry->after = scene.saveCurrentState(false);
-            }
-        }
+        g_undoManager.endSculptStroke(scene);
 
         auto tLassoEnd = std::chrono::high_resolution_clock::now();
         double finalizeMs = std::chrono::duration<double, std::milli>(tLassoEnd - tLassoStart).count();
         double totalStrokeMs = finalizeMs;
 
-        size_t undoBytes = g_undoManager.getUndoStack().back()->getMemoryUsage();
-        std::vector<float> modifiedMats = mesh.materials;
+        size_t undoBytes = !g_undoManager.getUndoStack().empty() ? g_undoManager.getUndoStack().back()->getMemoryUsage() : 0;
 
         // Undo
         auto tUndoStart = std::chrono::high_resolution_clock::now();
-        scene.undo();
+        g_undoManager.undo(scene);
         auto tUndoEnd = std::chrono::high_resolution_clock::now();
         double undoMs = std::chrono::duration<double, std::milli>(tUndoEnd - tUndoStart).count();
 
         float maxUndoDiff = 0.0f;
-        for (size_t i = 0; i < mesh.materials.size(); ++i) {
-            float d = std::abs(mesh.materials[i] - origMats[i]);
-            if (d > maxUndoDiff) maxUndoDiff = d;
+        auto* redoEntry = !g_undoManager.getRedoStack().empty()
+            ? dynamic_cast<SculptUndoEntry*>(g_undoManager.getRedoStack().back().get())
+            : nullptr;
+        if (redoEntry && !redoEntry->deltas.empty()) {
+            const auto& d = redoEntry->deltas[0];
+            size_t n = d.indices.size();
+#pragma omp parallel for reduction(max:maxUndoDiff) schedule(static) if(n > 10000)
+            for (size_t i = 0; i < n; ++i) {
+                uint32_t vid = d.indices[i];
+                float d0 = std::abs(mesh.materials[vid * 3 + 0] - d.prevMaterials[i * 3 + 0]);
+                float d1 = std::abs(mesh.materials[vid * 3 + 1] - d.prevMaterials[i * 3 + 1]);
+                float d2 = std::abs(mesh.materials[vid * 3 + 2] - d.prevMaterials[i * 3 + 2]);
+                float m = std::max({d0, d1, d2});
+                if (m > maxUndoDiff) maxUndoDiff = m;
+            }
         }
 
         // Redo
         auto tRedoStart = std::chrono::high_resolution_clock::now();
-        scene.redo();
+        g_undoManager.redo(scene);
         auto tRedoEnd = std::chrono::high_resolution_clock::now();
         double redoMs = std::chrono::duration<double, std::milli>(tRedoEnd - tRedoStart).count();
 
         float maxRedoDiff = 0.0f;
-        for (size_t i = 0; i < mesh.materials.size(); ++i) {
-            float d = std::abs(mesh.materials[i] - modifiedMats[i]);
-            if (d > maxRedoDiff) maxRedoDiff = d;
+        auto* undoEntryAfterRedo = !g_undoManager.getUndoStack().empty()
+            ? dynamic_cast<SculptUndoEntry*>(g_undoManager.getUndoStack().back().get())
+            : nullptr;
+        if (undoEntryAfterRedo && !undoEntryAfterRedo->deltas.empty()) {
+            const auto& d = undoEntryAfterRedo->deltas[0];
+            size_t n = d.indices.size();
+#pragma omp parallel for reduction(max:maxRedoDiff) schedule(static) if(n > 10000)
+            for (size_t i = 0; i < n; ++i) {
+                uint32_t vid = d.indices[i];
+                float d0 = std::abs(mesh.materials[vid * 3 + 0] - d.nextMaterials[i * 3 + 0]);
+                float d1 = std::abs(mesh.materials[vid * 3 + 1] - d.nextMaterials[i * 3 + 1]);
+                float d2 = std::abs(mesh.materials[vid * 3 + 2] - d.nextMaterials[i * 3 + 2]);
+                float m = std::max({d0, d1, d2});
+                if (m > maxRedoDiff) maxRedoDiff = m;
+            }
         }
 
         // Reset mesh back to original
-        scene.undo();
+        g_undoManager.undo(scene);
         g_undoManager.clear();
 
         MultiToolBenchmarkRow row;
@@ -924,7 +1009,7 @@ inline bool run(int targetFaces = 4000000) {
         double finalizeMs = std::chrono::duration<double, std::milli>(tFinEnd - tFinStart).count();
 
         double totalStrokeMs = step0Ms + sumDragMs + finalizeMs;
-        size_t undoBytes = g_undoManager.getUndoStack().back()->getMemoryUsage();
+        size_t undoBytes = !g_undoManager.getUndoStack().empty() ? g_undoManager.getUndoStack().back()->getMemoryUsage() : 0;
         glm::mat4 modifiedMatrix = mesh.matrix;
 
         // Undo
@@ -987,12 +1072,11 @@ inline bool run(int targetFaces = 4000000) {
         }
         mesh.isMaterialDirty = true;
 
-        // Step 0: Check mask + Buffer copy (transformStartVerts & transformStartNormals)
+        // Step 0: Check mask + Buffer copy (transformStartVerts)
         auto tInitStart = std::chrono::high_resolution_clock::now();
         glm::mat4 pivotStartMatrix = mesh.matrix;
         bool transformHasMask = true;
         std::vector<float> transformStartVerts = mesh.verts;
-        std::vector<float> transformStartNormals = mesh.normals;
         auto tInitEnd = std::chrono::high_resolution_clock::now();
         double step0Ms = std::chrono::duration<double, std::milli>(tInitEnd - tInitStart).count();
 
@@ -1002,7 +1086,6 @@ inline bool run(int targetFaces = 4000000) {
         for (int step = 1; step <= 10; ++step) {
             glm::mat4 curMatrix = glm::translate(pivotStartMatrix, glm::vec3(0.02f * step, 0.01f * step, 0.0f));
             glm::mat4 deltaLocal = glm::inverse(pivotStartMatrix) * curMatrix;
-            glm::mat3 normalMatrixPrimary = glm::transpose(glm::inverse(glm::mat3(deltaLocal)));
 
             auto tDragStart = std::chrono::high_resolution_clock::now();
 #pragma omp parallel for schedule(static) if(nbVerts > 2000)
@@ -1012,23 +1095,14 @@ inline bool run(int targetFaces = 4000000) {
                     mesh.verts[i * 3]     = transformStartVerts[i * 3];
                     mesh.verts[i * 3 + 1] = transformStartVerts[i * 3 + 1];
                     mesh.verts[i * 3 + 2] = transformStartVerts[i * 3 + 2];
-                    mesh.normals[i * 3]     = transformStartNormals[i * 3];
-                    mesh.normals[i * 3 + 1] = transformStartNormals[i * 3 + 1];
-                    mesh.normals[i * 3 + 2] = transformStartNormals[i * 3 + 2];
                     continue;
                 }
                 glm::vec4 vStart(transformStartVerts[i * 3], transformStartVerts[i * 3 + 1], transformStartVerts[i * 3 + 2], 1.0f);
-                glm::vec3 nStart(transformStartNormals[i * 3], transformStartNormals[i * 3 + 1], transformStartNormals[i * 3 + 2]);
                 glm::vec4 vTransformed = deltaLocal * vStart;
-                glm::vec3 nTransformed = normalMatrixPrimary * nStart;
                 glm::vec4 vNew = m * vTransformed + (1.0f - m) * vStart;
-                glm::vec3 nNew = glm::normalize(m * nTransformed + (1.0f - m) * nStart);
                 mesh.verts[i * 3]     = vNew.x;
                 mesh.verts[i * 3 + 1] = vNew.y;
                 mesh.verts[i * 3 + 2] = vNew.z;
-                mesh.normals[i * 3]     = nNew.x;
-                mesh.normals[i * 3 + 1] = nNew.y;
-                mesh.normals[i * 3 + 2] = nNew.z;
             }
             mesh.isVertexDirty = true;
             auto tDragEnd = std::chrono::high_resolution_clock::now();
@@ -1071,18 +1145,17 @@ inline bool run(int targetFaces = 4000000) {
         meshUndoState.beforeMatrix = pivotStartMatrix;
         meshUndoState.afterMatrix = mesh.matrix;
         meshUndoState.hasVertexDeformation = true;
-        meshUndoState.beforeVerts = transformStartVerts;
+        meshUndoState.beforeVerts = std::move(transformStartVerts);
         meshUndoState.afterVerts = mesh.verts;
-        meshUndoState.beforeNormals = transformStartNormals;
-        meshUndoState.afterNormals = mesh.normals;
+        // beforeNormals and afterNormals are omitted to conserve RAM;
+        // applyTransformEntry recalculates face/vertex normals dynamically on undo/redo.
         undoEntry.m_meshStates.push_back(std::move(meshUndoState));
         g_undoManager.pushTransformChange(scene, std::move(undoEntry));
         auto tFinEnd = std::chrono::high_resolution_clock::now();
         double finalizeMs = std::chrono::duration<double, std::milli>(tFinEnd - tFinStart).count();
 
         double totalStrokeMs = step0Ms + sumDragMs + finalizeMs;
-        size_t undoBytes = g_undoManager.getUndoStack().back()->getMemoryUsage();
-        std::vector<float> modifiedVerts = mesh.verts;
+        size_t undoBytes = !g_undoManager.getUndoStack().empty() ? g_undoManager.getUndoStack().back()->getMemoryUsage() : 0;
 
         // Undo
         auto tUndoStart = std::chrono::high_resolution_clock::now();
@@ -1090,10 +1163,19 @@ inline bool run(int targetFaces = 4000000) {
         auto tUndoEnd = std::chrono::high_resolution_clock::now();
         double undoMs = std::chrono::duration<double, std::milli>(tUndoEnd - tUndoStart).count();
 
+        // Validate Undo against beforeVerts stored in the redo entry
         float maxUndoDiff = 0.0f;
-        for (size_t i = 0; i < mesh.verts.size(); ++i) {
-            float d = std::abs(mesh.verts[i] - transformStartVerts[i]);
-            if (d > maxUndoDiff) maxUndoDiff = d;
+        auto* redoEntry = !g_undoManager.getRedoStack().empty()
+            ? dynamic_cast<TransformUndoEntry*>(g_undoManager.getRedoStack().back().get())
+            : nullptr;
+        if (redoEntry && !redoEntry->m_meshStates.empty()) {
+            const auto& bVerts = redoEntry->m_meshStates[0].beforeVerts;
+            size_t n = mesh.verts.size();
+#pragma omp parallel for reduction(max:maxUndoDiff) schedule(static) if(n > 10000)
+            for (size_t i = 0; i < n; ++i) {
+                float d = std::abs(mesh.verts[i] - bVerts[i]);
+                if (d > maxUndoDiff) maxUndoDiff = d;
+            }
         }
 
         // Redo
@@ -1102,10 +1184,19 @@ inline bool run(int targetFaces = 4000000) {
         auto tRedoEnd = std::chrono::high_resolution_clock::now();
         double redoMs = std::chrono::duration<double, std::milli>(tRedoEnd - tRedoStart).count();
 
+        // Validate Redo against afterVerts stored in the undo entry
         float maxRedoDiff = 0.0f;
-        for (size_t i = 0; i < mesh.verts.size(); ++i) {
-            float d = std::abs(mesh.verts[i] - modifiedVerts[i]);
-            if (d > maxRedoDiff) maxRedoDiff = d;
+        auto* undoEntryAfterRedo = !g_undoManager.getUndoStack().empty()
+            ? dynamic_cast<TransformUndoEntry*>(g_undoManager.getUndoStack().back().get())
+            : nullptr;
+        if (undoEntryAfterRedo && !undoEntryAfterRedo->m_meshStates.empty()) {
+            const auto& aVerts = undoEntryAfterRedo->m_meshStates[0].afterVerts;
+            size_t n = mesh.verts.size();
+#pragma omp parallel for reduction(max:maxRedoDiff) schedule(static) if(n > 10000)
+            for (size_t i = 0; i < n; ++i) {
+                float d = std::abs(mesh.verts[i] - aVerts[i]);
+                if (d > maxRedoDiff) maxRedoDiff = d;
+            }
         }
 
         // Reset mesh back to original
@@ -1133,7 +1224,7 @@ inline bool run(int targetFaces = 4000000) {
         summaryRows.push_back(row);
     }
 
-    scene.removeMesh(meshPtr.get());
+    scene.removeMesh(meshRaw);
     g_undoManager.clear();
 
     // -------------------------------------------------------------------------

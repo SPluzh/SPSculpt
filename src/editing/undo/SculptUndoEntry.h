@@ -19,6 +19,7 @@ struct VertexDelta {
     std::vector<float> nextColors;
     std::vector<float> nextMaterials;
 
+    bool hasPositions = true;
     bool hasColors    = false;
     bool hasMaterials = false;
 
@@ -40,8 +41,10 @@ public:
         size_t total = sizeof(*this);
         for (const auto& d : deltas) {
             total += d.indices.capacity() * sizeof(uint32_t);
-            total += d.prevVerts.capacity() * sizeof(float);
-            total += d.nextVerts.capacity() * sizeof(float);
+            if (d.hasPositions) {
+                total += d.prevVerts.capacity() * sizeof(float);
+                total += d.nextVerts.capacity() * sizeof(float);
+            }
             if (d.hasColors) {
                 total += d.prevColors.capacity() * sizeof(float);
                 total += d.nextColors.capacity() * sizeof(float);

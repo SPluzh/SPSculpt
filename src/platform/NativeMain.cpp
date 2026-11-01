@@ -93,11 +93,24 @@ static void setAppWindowIcon(SDL_Window* window, const char* iconPath) {
 #ifdef _WIN32
 #include <windows.h>
 #include <shellapi.h>
+#include <io.h>
+#include <fcntl.h>
 #include <SDL2/SDL_syswm.h>
 
 LONG WINAPI windowsExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo) {
+    DWORD code = ExceptionInfo->ExceptionRecord->ExceptionCode;
+    void* addr = ExceptionInfo->ExceptionRecord->ExceptionAddress;
+    HMODULE hMod = GetModuleHandleA(NULL);
+    uintptr_t rva = (uintptr_t)addr - (uintptr_t)hMod;
     sculpt_log("\n=============================================\n");
-    sculpt_log("[CRITICAL ERROR] Windows Unhandled Exception! Code: 0x%X\n", (unsigned int)ExceptionInfo->ExceptionRecord->ExceptionCode);
+    sculpt_log("[CRITICAL ERROR] Windows Unhandled Exception! Code: 0x%X at address %p (Module Base: %p, RVA: 0x%llX)\n",
+               (unsigned int)code, addr, (void*)hMod, (unsigned long long)rva);
+    if (code == EXCEPTION_ACCESS_VIOLATION && ExceptionInfo->ExceptionRecord->NumberParameters >= 2) {
+        ULONG_PTR op = ExceptionInfo->ExceptionRecord->ExceptionInformation[0];
+        ULONG_PTR targetAddr = ExceptionInfo->ExceptionRecord->ExceptionInformation[1];
+        const char* opStr = (op == 0) ? "Read" : (op == 1 ? "Write" : (op == 8 ? "Execute" : "Unknown"));
+        sculpt_log("[CRITICAL ERROR] Access Violation: %s access on memory address %p\n", opStr, (void*)targetAddr);
+    }
     sculpt_log("=============================================\n");
     system("pause");
     return EXCEPTION_EXECUTE_HANDLER;
@@ -376,15 +389,29 @@ int main(int argc, char* argv[]) {
             freopen_s(&fp, "CONOUT$", "w", stdout);
             freopen_s(&fp, "CONOUT$", "w", stderr);
             freopen_s(&fp, "CONIN$", "r", stdin);
-            std::cout.clear();
-            std::cerr.clear();
-            std::cin.clear();
+        } else {
+            int fdOut = _open_osfhandle((intptr_t)hOut, _O_TEXT);
+            if (fdOut >= 0) {
+                _dup2(fdOut, 1);
+            }
+            HANDLE hErr = GetStdHandle(STD_ERROR_HANDLE);
+            if (hErr && hErr != INVALID_HANDLE_VALUE) {
+                int fdErr = _open_osfhandle((intptr_t)hErr, _O_TEXT);
+                if (fdErr >= 0) {
+                    _dup2(fdErr, 2);
+                }
+            }
         }
+        std::cout.clear();
+        std::cerr.clear();
+        std::cin.clear();
     }
     SetUnhandledExceptionFilter(windowsExceptionFilter);
     // Configure Windows process-level DPI awareness to avoid system-level scaling blur
     SetProcessDPIAware();
 #endif
+
+    sculpt_log_init();
 
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
@@ -399,8 +426,6 @@ int main(int argc, char* argv[]) {
         _exit(success ? 0 : 1);
 #endif
     }
-
-    sculpt_log_init();
 
     // Register crash signal handlers
     std::signal(SIGSEGV, crashHandler);

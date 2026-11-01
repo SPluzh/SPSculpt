@@ -34,6 +34,7 @@ UndoManager::UndoManager() {}
 void UndoManager::beginSculptStroke(Scene& scene,
                                      uint32_t meshId,
                                      const std::vector<uint32_t>& affectedVerts,
+                                     bool affectsPositions,
                                      bool affectsColors,
                                      bool affectsMaterials,
                                      const std::string& description) {
@@ -48,12 +49,13 @@ void UndoManager::beginSculptStroke(Scene& scene,
         }
         sculpt_log_lvl(LogLevel::Debug, "[Undo] Begin sculpt stroke: '%s'\n", description.c_str());
     }
-    recordAffectedVertices(scene, meshId, affectedVerts, affectsColors, affectsMaterials);
+    recordAffectedVertices(scene, meshId, affectedVerts, affectsPositions, affectsColors, affectsMaterials);
 }
 
 void UndoManager::recordAffectedVertices(Scene& scene,
                                          uint32_t meshId,
                                          const std::vector<uint32_t>& affectedVerts,
+                                         bool affectsPositions,
                                          bool affectsColors,
                                          bool affectsMaterials) {
     if (!m_activeSculptEntry || affectedVerts.empty()) return;
@@ -66,6 +68,7 @@ void UndoManager::recordAffectedVertices(Scene& scene,
     if (mapIt == m_activeMeshDeltaMap.end()) {
         VertexDelta newDelta;
         newDelta.meshId = meshId;
+        newDelta.hasPositions = affectsPositions;
         newDelta.hasColors = affectsColors;
         newDelta.hasMaterials = affectsMaterials;
         m_activeSculptEntry->deltas.push_back(newDelta);
@@ -76,6 +79,7 @@ void UndoManager::recordAffectedVertices(Scene& scene,
     }
 
     VertexDelta& delta = m_activeSculptEntry->deltas[deltaIdx];
+    if (affectsPositions) delta.hasPositions = true;
     if (affectsColors) delta.hasColors = true;
     if (affectsMaterials) delta.hasMaterials = true;
 
@@ -101,7 +105,7 @@ void UndoManager::recordAffectedVertices(Scene& scene,
     if (delta.indices.capacity() < delta.indices.size() + count) {
         delta.indices.reserve(delta.indices.size() + count);
     }
-    if (delta.prevVerts.capacity() < delta.prevVerts.size() + count * 3) {
+    if (delta.hasPositions && delta.prevVerts.capacity() < delta.prevVerts.size() + count * 3) {
         delta.prevVerts.reserve(delta.prevVerts.size() + count * 3);
     }
     if (activeLayer && delta.prevLayerDeltas.capacity() < delta.prevLayerDeltas.size() + count * 3) {
@@ -120,9 +124,11 @@ void UndoManager::recordAffectedVertices(Scene& scene,
             stamps[v] = currentStamp;
             // First time this vertex is recorded in this stroke
             delta.indices.push_back(v);
-            delta.prevVerts.push_back(mesh->verts[v * 3 + 0]);
-            delta.prevVerts.push_back(mesh->verts[v * 3 + 1]);
-            delta.prevVerts.push_back(mesh->verts[v * 3 + 2]);
+            if (delta.hasPositions) {
+                delta.prevVerts.push_back(mesh->verts[v * 3 + 0]);
+                delta.prevVerts.push_back(mesh->verts[v * 3 + 1]);
+                delta.prevVerts.push_back(mesh->verts[v * 3 + 2]);
+            }
 
             if (activeLayer) {
                 if (v * 3 + 2 < activeLayer->deltaVerts.size()) {
@@ -173,8 +179,10 @@ void UndoManager::endSculptStroke(Scene& scene) {
         if (!mesh) continue;
 
         totalRecordedVerts += delta.indices.size();
-        delta.nextVerts.clear();
-        delta.nextVerts.reserve(delta.indices.size() * 3);
+        if (delta.hasPositions) {
+            delta.nextVerts.clear();
+            delta.nextVerts.reserve(delta.indices.size() * 3);
+        }
         if (delta.hasColors) {
             delta.nextColors.clear();
             delta.nextColors.reserve(delta.indices.size() * 3);
@@ -194,9 +202,11 @@ void UndoManager::endSculptStroke(Scene& scene) {
         }
 
         for (uint32_t v : delta.indices) {
-            delta.nextVerts.push_back(mesh->verts[v * 3 + 0]);
-            delta.nextVerts.push_back(mesh->verts[v * 3 + 1]);
-            delta.nextVerts.push_back(mesh->verts[v * 3 + 2]);
+            if (delta.hasPositions) {
+                delta.nextVerts.push_back(mesh->verts[v * 3 + 0]);
+                delta.nextVerts.push_back(mesh->verts[v * 3 + 1]);
+                delta.nextVerts.push_back(mesh->verts[v * 3 + 2]);
+            }
 
             if (activeLayer) {
                 if (v * 3 + 2 < activeLayer->deltaVerts.size()) {
@@ -222,7 +232,7 @@ void UndoManager::endSculptStroke(Scene& scene) {
             }
         }
 
-        if (delta.prevVerts != delta.nextVerts ||
+        if ((delta.hasPositions && delta.prevVerts != delta.nextVerts) ||
             (delta.hasLayerDeltas && delta.prevLayerDeltas != delta.nextLayerDeltas) ||
             (delta.hasColors && delta.prevColors != delta.nextColors) ||
             (delta.hasMaterials && delta.prevMaterials != delta.nextMaterials)) {
@@ -266,7 +276,7 @@ void UndoManager::pushSculptOperation(Scene& scene,
     std::vector<uint32_t> allVerts(mesh->nbVerts);
     for (uint32_t i = 0; i < (uint32_t)mesh->nbVerts; ++i) allVerts[i] = i;
 
-    beginSculptStroke(scene, meshId, allVerts, affectsColors, affectsMaterials, description);
+    beginSculptStroke(scene, meshId, allVerts, true, affectsColors, affectsMaterials, description);
     operation();
     endSculptStroke(scene);
 }
@@ -440,23 +450,24 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
             for (size_t i = 0; i < count; ++i) {
                 uint32_t vi = delta.indices[i];
                 if (vi >= (uint32_t)mesh->nbVerts) continue;
-                if (i * 3 + 2 >= srcVerts.size()) continue;
 
-                float nx = srcVerts[i * 3 + 0];
-                float ny = srcVerts[i * 3 + 1];
-                float nz = srcVerts[i * 3 + 2];
-                if (mesh->verts[vi * 3 + 0] != nx ||
-                    mesh->verts[vi * 3 + 1] != ny ||
-                    mesh->verts[vi * 3 + 2] != nz) {
-                    vertsMoved = true;
-                    mesh->verts[vi * 3 + 0] = nx;
-                    mesh->verts[vi * 3 + 1] = ny;
-                    mesh->verts[vi * 3 + 2] = nz;
-                }
-                if (vi * 3 + 2 < mesh->vertProxy.size()) {
-                    mesh->vertProxy[vi * 3 + 0] = nx;
-                    mesh->vertProxy[vi * 3 + 1] = ny;
-                    mesh->vertProxy[vi * 3 + 2] = nz;
+                if (delta.hasPositions && i * 3 + 2 < srcVerts.size()) {
+                    float nx = srcVerts[i * 3 + 0];
+                    float ny = srcVerts[i * 3 + 1];
+                    float nz = srcVerts[i * 3 + 2];
+                    if (mesh->verts[vi * 3 + 0] != nx ||
+                        mesh->verts[vi * 3 + 1] != ny ||
+                        mesh->verts[vi * 3 + 2] != nz) {
+                        vertsMoved = true;
+                        mesh->verts[vi * 3 + 0] = nx;
+                        mesh->verts[vi * 3 + 1] = ny;
+                        mesh->verts[vi * 3 + 2] = nz;
+                    }
+                    if (vi * 3 + 2 < mesh->vertProxy.size()) {
+                        mesh->vertProxy[vi * 3 + 0] = nx;
+                        mesh->vertProxy[vi * 3 + 1] = ny;
+                        mesh->vertProxy[vi * 3 + 2] = nz;
+                    }
                 }
 
                 if (targetLayer && i * 3 + 2 < srcLayerDeltas.size() && vi * 3 + 2 < targetLayer->deltaVerts.size()) {
@@ -747,7 +758,7 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
     }
 }
 
-void UndoManager::pushTransformChange(Scene& scene, TransformUndoEntry entry) {
+void UndoManager::pushTransformChange(Scene& scene, TransformUndoEntry&& entry) {
     if (m_activeSculptEntry) {
         endSculptStroke(scene);
     }
@@ -763,6 +774,11 @@ void UndoManager::pushTransformChange(Scene& scene, TransformUndoEntry entry) {
                    entry.getDescription().c_str(), targetMeshId, hasDeform ? 1 : 0, hasScale ? 1 : 0, memBytes / 1024.0f);
     pushEntry(std::make_unique<TransformUndoEntry>(std::move(entry)));
     scene.setModified(true);
+}
+
+void UndoManager::pushTransformChange(Scene& scene, const TransformUndoEntry& entry) {
+    TransformUndoEntry copy = entry;
+    pushTransformChange(scene, std::move(copy));
 }
 
 
