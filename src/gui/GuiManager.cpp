@@ -28,6 +28,8 @@
 #include "editing/ComponentOps.h"
 #include "editing/BooleanTool.h"
 #include "editing/undo/UndoManager.h"
+#include "sculpt/SculptEngine.h"
+#include <omp.h>
 #include "gui/ToolOverlayTheme.h"
 #include <imgui.h>
 #include "gui/IconsLucide.h"
@@ -7264,7 +7266,101 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     selectedMesh->vertProxy = selectedMesh->verts;
                     selectedMesh->invalidateLocalRadius();
                     selectedMesh->bumpVertsGeneration();
-                    if (!selectedMesh->faceNormals.empty() && !selectedMesh->faceBoxes.empty() && !selectedMesh->faceCenters.empty()) {
+
+                    meshUndoState.hasVertexDeformation = true;
+                    meshUndoState.isSparse = true;
+
+                    int maxThreads = omp_get_max_threads();
+                    std::vector<std::vector<uint32_t>> threadVerts(maxThreads);
+                    int nbVerts = selectedMesh->nbVerts;
+                    #pragma omp parallel
+                    {
+                        int tid = omp_get_thread_num();
+                        #pragma omp for schedule(static)
+                        for (int i = 0; i < nbVerts; ++i) {
+                            float dx = selectedMesh->verts[i * 3]     - transformStartVerts[i * 3];
+                            float dy = selectedMesh->verts[i * 3 + 1] - transformStartVerts[i * 3 + 1];
+                            float dz = selectedMesh->verts[i * 3 + 2] - transformStartVerts[i * 3 + 2];
+                            if (dx != 0.0f || dy != 0.0f || dz != 0.0f) {
+                                threadVerts[tid].push_back((uint32_t)i);
+                            }
+                        }
+                    }
+
+                    size_t totalDeformed = 0;
+                    for (int t = 0; t < maxThreads; ++t) totalDeformed += threadVerts[t].size();
+                    meshUndoState.sparseVertIndices.resize(totalDeformed);
+                    size_t curOffset = 0;
+                    for (int t = 0; t < maxThreads; ++t) {
+                        if (!threadVerts[t].empty()) {
+                            std::memcpy(meshUndoState.sparseVertIndices.data() + curOffset, threadVerts[t].data(), threadVerts[t].size() * sizeof(uint32_t));
+                            curOffset += threadVerts[t].size();
+                        }
+                    }
+
+                    meshUndoState.sparseBeforeCoords.resize(totalDeformed * 3);
+                    meshUndoState.sparseAfterCoords.resize(totalDeformed * 3);
+                    const float* startVertsPtr = transformStartVerts.data();
+                    const float* curVertsPtr = selectedMesh->verts.data();
+                    const uint32_t* defIndices = meshUndoState.sparseVertIndices.data();
+                    float* sBefore = meshUndoState.sparseBeforeCoords.data();
+                    float* sAfter = meshUndoState.sparseAfterCoords.data();
+
+                    #pragma omp parallel for schedule(static) if(totalDeformed > 2000)
+                    for (int64_t i = 0; i < (int64_t)totalDeformed; ++i) {
+                        uint32_t v = defIndices[i];
+                        uint32_t v3 = v * 3;
+                        uint32_t i3 = (uint32_t)(i * 3);
+                        sBefore[i3 + 0] = startVertsPtr[v3 + 0];
+                        sBefore[i3 + 1] = startVertsPtr[v3 + 1];
+                        sBefore[i3 + 2] = startVertsPtr[v3 + 2];
+                        sAfter[i3 + 0]  = curVertsPtr[v3 + 0];
+                        sAfter[i3 + 1]  = curVertsPtr[v3 + 1];
+                        sAfter[i3 + 2]  = curVertsPtr[v3 + 2];
+                    }
+
+                    if (!selectedMesh->vrfStartCount.empty() && !selectedMesh->vertRingFace.empty() && selectedMesh->nbFaces > 0) {
+                        std::vector<uint32_t> tempFaces(selectedMesh->nbFaces);
+                        std::vector<uint32_t> tagFlags(selectedMesh->nbFaces, 0);
+                        uint32_t tagEpoch = 1;
+                        uint32_t numIFaces = getFacesFromVerticesFast(
+                            meshUndoState.sparseVertIndices.data(),
+                            (uint32_t)meshUndoState.sparseVertIndices.size(),
+                            selectedMesh->vrfStartCount.data(),
+                            selectedMesh->vertRingFace.data(),
+                            tempFaces.data(),
+                            tagFlags.data(),
+                            &tagEpoch,
+                            selectedMesh->nbFaces
+                        );
+                        meshUndoState.affectedFaces.assign(tempFaces.begin(), tempFaces.begin() + numIFaces);
+                    }
+
+                    if (!meshUndoState.affectedFaces.empty() && !selectedMesh->faceNormals.empty() && !selectedMesh->faceBoxes.empty() && !selectedMesh->faceCenters.empty()) {
+                        updateFaceNormalsAndBoxes(
+                            selectedMesh->verts.data(), selectedMesh->nbVerts,
+                            selectedMesh->faces.data(), selectedMesh->nbFaces,
+                            meshUndoState.affectedFaces.data(), (int)meshUndoState.affectedFaces.size(),
+                            selectedMesh->faceNormals.data(),
+                            selectedMesh->faceBoxes.data(),
+                            selectedMesh->faceCenters.data()
+                        );
+                        if (!selectedMesh->vrfStartCount.empty() && !selectedMesh->vertRingFace.empty()) {
+                            updateVertexNormals(
+                                meshUndoState.sparseVertIndices.data(), (int)meshUndoState.sparseVertIndices.size(), selectedMesh->nbVerts,
+                                selectedMesh->vrfStartCount.data(),
+                                selectedMesh->vertRingFace.data(),
+                                selectedMesh->faceNormals.data(),
+                                selectedMesh->normals.data()
+                            );
+                        }
+                        selectedMesh->octree.update(
+                            selectedMesh->verts.data(), selectedMesh->nbVerts,
+                            selectedMesh->faces.data(), selectedMesh->nbFaces,
+                            selectedMesh->faceBoxes.data(),
+                            meshUndoState.affectedFaces.data(), (int)meshUndoState.affectedFaces.size()
+                        );
+                    } else if (!selectedMesh->faceNormals.empty()) {
                         updateFaceNormalsAndBoxes(
                             selectedMesh->verts.data(), selectedMesh->nbVerts,
                             selectedMesh->faces.data(), selectedMesh->nbFaces,
@@ -7293,12 +7389,6 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     }
                     postInitMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tPI).count();
                     selectedMesh->isDirty = true;
-
-                    meshUndoState.hasVertexDeformation = true;
-                    meshUndoState.beforeVerts = std::move(transformStartVerts);
-                    meshUndoState.afterVerts = selectedMesh->verts;
-                    meshUndoState.beforeNormals = std::move(transformStartNormals);
-                    meshUndoState.afterNormals = selectedMesh->normals;
                 } else {
                     float sx = 1.0f, sy = 1.0f, sz = 1.0f;
                     if (selectedMesh && !selectedMesh->isPrimitive) {

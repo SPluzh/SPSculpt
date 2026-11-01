@@ -21,6 +21,13 @@ struct TransformMeshState {
     std::vector<float> beforeNormals;
     std::vector<float> afterNormals;
 
+    // Sparse vertex delta tracking (conserves RAM and enables incremental updates on 10M+ meshes)
+    bool isSparse = false;
+    std::vector<uint32_t> sparseVertIndices;
+    std::vector<float> sparseBeforeCoords; // 3 floats per sparse vertex
+    std::vector<float> sparseAfterCoords;  // 3 floats per sparse vertex
+    std::vector<uint32_t> affectedFaces;   // Faces adjacent to sparse vertices for fast normal & octree updates
+
     bool isPrimitive = false;
     glm::mat4 beforeLocalTransform = glm::mat4(1.0f);
     glm::mat4 afterLocalTransform = glm::mat4(1.0f);
@@ -54,6 +61,10 @@ public:
             bytes += item.afterVerts.capacity() * sizeof(float);
             bytes += item.beforeNormals.capacity() * sizeof(float);
             bytes += item.afterNormals.capacity() * sizeof(float);
+            bytes += item.sparseVertIndices.capacity() * sizeof(uint32_t);
+            bytes += item.sparseBeforeCoords.capacity() * sizeof(float);
+            bytes += item.sparseAfterCoords.capacity() * sizeof(float);
+            bytes += item.affectedFaces.capacity() * sizeof(uint32_t);
         }
         return bytes;
     }

@@ -15,6 +15,8 @@
 
 #include <algorithm>
 #include <unordered_set>
+#include <cstring>
+#include <omp.h>
 
 UndoManager g_undoManager;
 
@@ -102,55 +104,161 @@ void UndoManager::recordAffectedVertices(Scene& scene,
     }
 
     size_t count = affectedVerts.size();
-    if (delta.indices.capacity() < delta.indices.size() + count) {
-        delta.indices.reserve(delta.indices.size() + count);
-    }
-    if (delta.hasPositions && delta.prevVerts.capacity() < delta.prevVerts.size() + count * 3) {
-        delta.prevVerts.reserve(delta.prevVerts.size() + count * 3);
-    }
-    if (activeLayer && delta.prevLayerDeltas.capacity() < delta.prevLayerDeltas.size() + count * 3) {
-        delta.prevLayerDeltas.reserve(delta.prevLayerDeltas.size() + count * 3);
-    }
-    if (affectsColors && !mesh->colors.empty() && delta.prevColors.capacity() < delta.prevColors.size() + count * 3) {
-        delta.prevColors.reserve(delta.prevColors.size() + count * 3);
-    }
-    if (affectsMaterials && !mesh->materials.empty() && delta.prevMaterials.capacity() < delta.prevMaterials.size() + count * 3) {
-        delta.prevMaterials.reserve(delta.prevMaterials.size() + count * 3);
-    }
+    if (count < 2048) {
+        if (delta.indices.capacity() < delta.indices.size() + count) {
+            delta.indices.reserve(delta.indices.size() + count);
+        }
+        if (delta.hasPositions && delta.prevVerts.capacity() < delta.prevVerts.size() + count * 3) {
+            delta.prevVerts.reserve(delta.prevVerts.size() + count * 3);
+        }
+        if (activeLayer && delta.prevLayerDeltas.capacity() < delta.prevLayerDeltas.size() + count * 3) {
+            delta.prevLayerDeltas.reserve(delta.prevLayerDeltas.size() + count * 3);
+        }
+        if (affectsColors && !mesh->colors.empty() && delta.prevColors.capacity() < delta.prevColors.size() + count * 3) {
+            delta.prevColors.reserve(delta.prevColors.size() + count * 3);
+        }
+        if (affectsMaterials && !mesh->materials.empty() && delta.prevMaterials.capacity() < delta.prevMaterials.size() + count * 3) {
+            delta.prevMaterials.reserve(delta.prevMaterials.size() + count * 3);
+        }
 
-    for (uint32_t v : affectedVerts) {
-        if (v >= (uint32_t)mesh->nbVerts) continue;
-        if (stamps[v] != currentStamp) {
-            stamps[v] = currentStamp;
-            // First time this vertex is recorded in this stroke
-            delta.indices.push_back(v);
-            if (delta.hasPositions) {
-                delta.prevVerts.push_back(mesh->verts[v * 3 + 0]);
-                delta.prevVerts.push_back(mesh->verts[v * 3 + 1]);
-                delta.prevVerts.push_back(mesh->verts[v * 3 + 2]);
+        for (uint32_t v : affectedVerts) {
+            if (v >= (uint32_t)mesh->nbVerts) continue;
+            if (stamps[v] != currentStamp) {
+                stamps[v] = currentStamp;
+                // First time this vertex is recorded in this stroke
+                delta.indices.push_back(v);
+                if (delta.hasPositions) {
+                    delta.prevVerts.push_back(mesh->verts[v * 3 + 0]);
+                    delta.prevVerts.push_back(mesh->verts[v * 3 + 1]);
+                    delta.prevVerts.push_back(mesh->verts[v * 3 + 2]);
+                }
+
+                if (activeLayer) {
+                    if (v * 3 + 2 < activeLayer->deltaVerts.size()) {
+                        delta.prevLayerDeltas.push_back(activeLayer->deltaVerts[v * 3 + 0]);
+                        delta.prevLayerDeltas.push_back(activeLayer->deltaVerts[v * 3 + 1]);
+                        delta.prevLayerDeltas.push_back(activeLayer->deltaVerts[v * 3 + 2]);
+                    } else {
+                        delta.prevLayerDeltas.push_back(0.0f);
+                        delta.prevLayerDeltas.push_back(0.0f);
+                        delta.prevLayerDeltas.push_back(0.0f);
+                    }
+                }
+
+                if (affectsColors && !mesh->colors.empty()) {
+                    delta.prevColors.push_back(mesh->colors[v * 3 + 0]);
+                    delta.prevColors.push_back(mesh->colors[v * 3 + 1]);
+                    delta.prevColors.push_back(mesh->colors[v * 3 + 2]);
+                }
+                if (affectsMaterials && !mesh->materials.empty()) {
+                    delta.prevMaterials.push_back(mesh->materials[v * 3 + 0]);
+                    delta.prevMaterials.push_back(mesh->materials[v * 3 + 1]);
+                    delta.prevMaterials.push_back(mesh->materials[v * 3 + 2]);
+                }
             }
+        }
+    } else {
+        int maxThreads = omp_get_max_threads();
+        static std::vector<std::vector<uint32_t>> s_threadNewVerts;
+        if ((int)s_threadNewVerts.size() < maxThreads) {
+            s_threadNewVerts.resize(maxThreads);
+        }
 
-            if (activeLayer) {
-                if (v * 3 + 2 < activeLayer->deltaVerts.size()) {
-                    delta.prevLayerDeltas.push_back(activeLayer->deltaVerts[v * 3 + 0]);
-                    delta.prevLayerDeltas.push_back(activeLayer->deltaVerts[v * 3 + 1]);
-                    delta.prevLayerDeltas.push_back(activeLayer->deltaVerts[v * 3 + 2]);
-                } else {
-                    delta.prevLayerDeltas.push_back(0.0f);
-                    delta.prevLayerDeltas.push_back(0.0f);
-                    delta.prevLayerDeltas.push_back(0.0f);
+        uint32_t* stampPtr = stamps.data();
+        uint32_t curStamp = currentStamp;
+        uint32_t maxLimit = (uint32_t)mesh->nbVerts;
+        const uint32_t* affPtr = affectedVerts.data();
+
+        #pragma omp parallel
+        {
+            int tid = omp_get_thread_num();
+            auto& localList = s_threadNewVerts[tid];
+            localList.clear();
+            size_t estCap = (count / maxThreads) + 64;
+            if (localList.capacity() < estCap) localList.reserve(estCap);
+
+            #pragma omp for schedule(static)
+            for (int64_t i = 0; i < (int64_t)count; ++i) {
+                if (i + 8 < (int64_t)count) {
+                    __builtin_prefetch(&stampPtr[affPtr[i + 8]], 1, 1);
+                }
+                uint32_t v = affPtr[i];
+                if (v >= maxLimit) continue;
+                if (stampPtr[v] != curStamp) {
+                    if (__atomic_exchange_n(&stampPtr[v], curStamp, __ATOMIC_RELAXED) != curStamp) {
+                        localList.push_back(v);
+                    }
+                }
+            }
+        }
+
+        size_t totalNew = 0;
+        for (int t = 0; t < maxThreads; ++t) {
+            totalNew += s_threadNewVerts[t].size();
+        }
+
+        if (totalNew > 0) {
+            size_t baseIdx = delta.indices.size();
+            delta.indices.resize(baseIdx + totalNew);
+            if (delta.hasPositions) delta.prevVerts.resize((baseIdx + totalNew) * 3);
+            if (activeLayer) delta.prevLayerDeltas.resize((baseIdx + totalNew) * 3);
+            if (affectsColors && !mesh->colors.empty()) delta.prevColors.resize((baseIdx + totalNew) * 3);
+            if (affectsMaterials && !mesh->materials.empty()) delta.prevMaterials.resize((baseIdx + totalNew) * 3);
+
+            size_t curOffset = baseIdx;
+            for (int t = 0; t < maxThreads; ++t) {
+                size_t num = s_threadNewVerts[t].size();
+                if (num > 0) {
+                    std::memcpy(delta.indices.data() + curOffset, s_threadNewVerts[t].data(), num * sizeof(uint32_t));
+                    curOffset += num;
                 }
             }
 
-            if (affectsColors && !mesh->colors.empty()) {
-                delta.prevColors.push_back(mesh->colors[v * 3 + 0]);
-                delta.prevColors.push_back(mesh->colors[v * 3 + 1]);
-                delta.prevColors.push_back(mesh->colors[v * 3 + 2]);
-            }
-            if (affectsMaterials && !mesh->materials.empty()) {
-                delta.prevMaterials.push_back(mesh->materials[v * 3 + 0]);
-                delta.prevMaterials.push_back(mesh->materials[v * 3 + 1]);
-                delta.prevMaterials.push_back(mesh->materials[v * 3 + 2]);
+            const float* vertsData = mesh->verts.data();
+            const float* colorsData = mesh->colors.data();
+            const float* matsData = mesh->materials.data();
+            const float* layerData = activeLayer ? activeLayer->deltaVerts.data() : nullptr;
+            size_t layerSize = activeLayer ? activeLayer->deltaVerts.size() : 0;
+            bool hasPos = delta.hasPositions;
+            bool hasCol = affectsColors && !mesh->colors.empty();
+            bool hasMat = affectsMaterials && !mesh->materials.empty();
+            const uint32_t* indData = delta.indices.data();
+            float* pVerts = delta.prevVerts.data();
+            float* pColors = delta.prevColors.data();
+            float* pMats = delta.prevMaterials.data();
+            float* pLayer = delta.prevLayerDeltas.data();
+
+            #pragma omp parallel for schedule(static) if(totalNew > 1000)
+            for (int64_t k = (int64_t)baseIdx; k < (int64_t)(baseIdx + totalNew); ++k) {
+                uint32_t v = indData[k];
+                uint32_t v3 = v * 3;
+                uint32_t k3 = (uint32_t)(k * 3);
+                if (hasPos) {
+                    pVerts[k3 + 0] = vertsData[v3 + 0];
+                    pVerts[k3 + 1] = vertsData[v3 + 1];
+                    pVerts[k3 + 2] = vertsData[v3 + 2];
+                }
+                if (activeLayer) {
+                    if (v3 + 2 < layerSize) {
+                        pLayer[k3 + 0] = layerData[v3 + 0];
+                        pLayer[k3 + 1] = layerData[v3 + 1];
+                        pLayer[k3 + 2] = layerData[v3 + 2];
+                    } else {
+                        pLayer[k3 + 0] = 0.0f;
+                        pLayer[k3 + 1] = 0.0f;
+                        pLayer[k3 + 2] = 0.0f;
+                    }
+                }
+                if (hasCol) {
+                    pColors[k3 + 0] = colorsData[v3 + 0];
+                    pColors[k3 + 1] = colorsData[v3 + 1];
+                    pColors[k3 + 2] = colorsData[v3 + 2];
+                }
+                if (hasMat) {
+                    pMats[k3 + 0] = matsData[v3 + 0];
+                    pMats[k3 + 1] = matsData[v3 + 1];
+                    pMats[k3 + 2] = matsData[v3 + 2];
+                }
             }
         }
     }
@@ -178,18 +286,16 @@ void UndoManager::endSculptStroke(Scene& scene) {
         Mesh* mesh = scene.getMeshById(delta.meshId);
         if (!mesh) continue;
 
-        totalRecordedVerts += delta.indices.size();
+        size_t nIndices = delta.indices.size();
+        totalRecordedVerts += nIndices;
         if (delta.hasPositions) {
-            delta.nextVerts.clear();
-            delta.nextVerts.reserve(delta.indices.size() * 3);
+            delta.nextVerts.resize(nIndices * 3);
         }
-        if (delta.hasColors) {
-            delta.nextColors.clear();
-            delta.nextColors.reserve(delta.indices.size() * 3);
+        if (delta.hasColors && !mesh->colors.empty()) {
+            delta.nextColors.resize(nIndices * 3);
         }
-        if (delta.hasMaterials) {
-            delta.nextMaterials.clear();
-            delta.nextMaterials.reserve(delta.indices.size() * 3);
+        if (delta.hasMaterials && !mesh->materials.empty()) {
+            delta.nextMaterials.resize(nIndices * 3);
         }
 
         Layer* activeLayer = (delta.hasLayerDeltas && mesh->hasLayers()) ? mesh->layerStack.getLayer(delta.activeLayerIdx) : nullptr;
@@ -197,38 +303,53 @@ void UndoManager::endSculptStroke(Scene& scene) {
             activeLayer = mesh->layerStack.getActive();
         }
         if (activeLayer) {
-            delta.nextLayerDeltas.clear();
-            delta.nextLayerDeltas.reserve(delta.indices.size() * 3);
+            delta.nextLayerDeltas.resize(nIndices * 3);
         }
 
-        for (uint32_t v : delta.indices) {
-            if (delta.hasPositions) {
-                delta.nextVerts.push_back(mesh->verts[v * 3 + 0]);
-                delta.nextVerts.push_back(mesh->verts[v * 3 + 1]);
-                delta.nextVerts.push_back(mesh->verts[v * 3 + 2]);
-            }
+        const uint32_t* indPtr = delta.indices.data();
+        const float* vertsPtr = mesh->verts.data();
+        const float* colorsPtr = mesh->colors.data();
+        const float* matsPtr = mesh->materials.data();
+        const float* layerPtr = activeLayer ? activeLayer->deltaVerts.data() : nullptr;
+        size_t layerSize = activeLayer ? activeLayer->deltaVerts.size() : 0;
+        bool hasPos = delta.hasPositions;
+        bool hasCol = delta.hasColors && !mesh->colors.empty();
+        bool hasMat = delta.hasMaterials && !mesh->materials.empty();
+        float* nVerts = delta.nextVerts.data();
+        float* nCols = delta.nextColors.data();
+        float* nMats = delta.nextMaterials.data();
+        float* nLayers = delta.nextLayerDeltas.data();
 
+        #pragma omp parallel for schedule(static) if(nIndices > 1000)
+        for (int64_t i = 0; i < (int64_t)nIndices; ++i) {
+            uint32_t v = indPtr[i];
+            uint32_t v3 = v * 3;
+            uint32_t i3 = (uint32_t)(i * 3);
+            if (hasPos) {
+                nVerts[i3 + 0] = vertsPtr[v3 + 0];
+                nVerts[i3 + 1] = vertsPtr[v3 + 1];
+                nVerts[i3 + 2] = vertsPtr[v3 + 2];
+            }
             if (activeLayer) {
-                if (v * 3 + 2 < activeLayer->deltaVerts.size()) {
-                    delta.nextLayerDeltas.push_back(activeLayer->deltaVerts[v * 3 + 0]);
-                    delta.nextLayerDeltas.push_back(activeLayer->deltaVerts[v * 3 + 1]);
-                    delta.nextLayerDeltas.push_back(activeLayer->deltaVerts[v * 3 + 2]);
+                if (v3 + 2 < layerSize) {
+                    nLayers[i3 + 0] = layerPtr[v3 + 0];
+                    nLayers[i3 + 1] = layerPtr[v3 + 1];
+                    nLayers[i3 + 2] = layerPtr[v3 + 2];
                 } else {
-                    delta.nextLayerDeltas.push_back(0.0f);
-                    delta.nextLayerDeltas.push_back(0.0f);
-                    delta.nextLayerDeltas.push_back(0.0f);
+                    nLayers[i3 + 0] = 0.0f;
+                    nLayers[i3 + 1] = 0.0f;
+                    nLayers[i3 + 2] = 0.0f;
                 }
             }
-
-            if (delta.hasColors && !mesh->colors.empty()) {
-                delta.nextColors.push_back(mesh->colors[v * 3 + 0]);
-                delta.nextColors.push_back(mesh->colors[v * 3 + 1]);
-                delta.nextColors.push_back(mesh->colors[v * 3 + 2]);
+            if (hasCol) {
+                nCols[i3 + 0] = colorsPtr[v3 + 0];
+                nCols[i3 + 1] = colorsPtr[v3 + 1];
+                nCols[i3 + 2] = colorsPtr[v3 + 2];
             }
-            if (delta.hasMaterials && !mesh->materials.empty()) {
-                delta.nextMaterials.push_back(mesh->materials[v * 3 + 0]);
-                delta.nextMaterials.push_back(mesh->materials[v * 3 + 1]);
-                delta.nextMaterials.push_back(mesh->materials[v * 3 + 2]);
+            if (hasMat) {
+                nMats[i3 + 0] = matsPtr[v3 + 0];
+                nMats[i3 + 1] = matsPtr[v3 + 1];
+                nMats[i3 + 2] = matsPtr[v3 + 2];
             }
         }
 
@@ -520,6 +641,7 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
 
                 // Incremental update: find unique affected faces around restored vertices
                 uint32_t numIFaces = 0;
+                auto tFaceLookupStart = std::chrono::high_resolution_clock::now();
                 if (!mesh->vrfStartCount.empty() && !mesh->vertRingFace.empty() && mesh->nbFaces > 0) {
                     if (s_undoTagFlags.size() < (size_t)mesh->nbFaces) {
                         s_undoTagFlags.assign(mesh->nbFaces, 0);
@@ -539,6 +661,7 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
                         mesh->nbFaces
                     );
                 }
+                auto tFaceLookupEnd = std::chrono::high_resolution_clock::now();
 
                 auto tFNormsStart = std::chrono::high_resolution_clock::now();
                 if (numIFaces > 0 && !mesh->faceNormals.empty() && !mesh->faceBoxes.empty() && !mesh->faceCenters.empty()) {
@@ -607,14 +730,15 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
                 auto tDone = std::chrono::high_resolution_clock::now();
 
                 double msCopy = std::chrono::duration<double, std::milli>(tCopyEnd - tCopyStart).count();
+                double msFaceLookup = std::chrono::duration<double, std::milli>(tFaceLookupEnd - tFaceLookupStart).count();
                 double msFNorms = std::chrono::duration<double, std::milli>(tVNormsStart - tFNormsStart).count();
                 double msVNorms = std::chrono::duration<double, std::milli>(tSpatialStart - tVNormsStart).count();
                 double msOctree = std::chrono::duration<double, std::milli>(tDone - tSpatialStart).count();
                 double msTotal = std::chrono::duration<double, std::milli>(tDone - tStart).count();
 
                 sculpt_log_lvl(LogLevel::Info,
-                    "[Undo Diagnostics] Sculpt apply (%s): %zu verts restored in %.2f ms (Copy: %.2fms, FaceNorms: %.2fms, VertNorms: %.2fms, OctreeBuild: %.2fms)\n",
-                    isUndo ? "UNDO" : "REDO", count, msTotal, msCopy, msFNorms, msVNorms, msOctree);
+                    "[Undo Diagnostics] Sculpt apply (%s): %zu verts restored in %.2f ms (Copy: %.2fms, FaceLookup: %.2fms, FaceNorms: %.2fms, VertNorms: %.2fms, OctreeBuild: %.2fms)\n",
+                    isUndo ? "UNDO" : "REDO", count, msTotal, msCopy, msFaceLookup, msFNorms, msVNorms, msOctree);
             }
         }
     } else if (entry->getType() == UndoEntryType::Topology) {
@@ -640,52 +764,123 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
 
                 auto tStateStart = std::chrono::high_resolution_clock::now();
                 const char* modeStr = "PureMatrix";
+                double msFNorms = 0.0, msVNorms = 0.0, msOctree = 0.0;
 
                 if (item.hasVertexDeformation) {
-                    modeStr = "VertexDeform";
-                    mesh->verts = isUndo ? item.beforeVerts : item.afterVerts;
-                    if (!item.beforeNormals.empty() && !item.afterNormals.empty()) {
-                        mesh->normals = isUndo ? item.beforeNormals : item.afterNormals;
-                    }
-                    mesh->matrix = isUndo ? item.beforeMatrix : item.afterMatrix;
-                    mesh->vertProxy = mesh->verts;
-                    mesh->invalidateLocalRadius();
-                    mesh->bumpVertsGeneration();
-
-                    if (!mesh->faceNormals.empty() && !mesh->faceBoxes.empty() && !mesh->faceCenters.empty()) {
-                        updateFaceNormalsAndBoxes(
-                            mesh->verts.data(), mesh->nbVerts,
-                            mesh->faces.data(), mesh->nbFaces,
-                            nullptr, -1,
-                            mesh->faceNormals.data(),
-                            mesh->faceBoxes.data(),
-                            mesh->faceCenters.data()
-                        );
-                        if (!mesh->vrfStartCount.empty() && !mesh->vertRingFace.empty()) {
-                            updateVertexNormals(
-                                nullptr, -1, mesh->nbVerts,
-                                mesh->vrfStartCount.data(),
-                                mesh->vertRingFace.data(),
-                                mesh->faceNormals.data(),
-                                mesh->normals.data()
-                            );
+                    modeStr = item.isSparse ? "SparseVertexDeform" : "VertexDeform";
+                    if (item.isSparse) {
+                        const float* src = isUndo ? item.sparseBeforeCoords.data() : item.sparseAfterCoords.data();
+                        int numSparse = (int)item.sparseVertIndices.size();
+#pragma omp parallel for schedule(static) if(numSparse > 2000)
+                        for (int i = 0; i < numSparse; ++i) {
+                            uint32_t v = item.sparseVertIndices[i];
+                            uint32_t dstIdx = v * 3;
+                            uint32_t srcIdx = i * 3;
+                            mesh->verts[dstIdx + 0] = src[srcIdx + 0];
+                            mesh->verts[dstIdx + 1] = src[srcIdx + 1];
+                            mesh->verts[dstIdx + 2] = src[srcIdx + 2];
+                            mesh->vertProxy[dstIdx + 0] = src[srcIdx + 0];
+                            mesh->vertProxy[dstIdx + 1] = src[srcIdx + 1];
+                            mesh->vertProxy[dstIdx + 2] = src[srcIdx + 2];
                         }
-                        mesh->octree.update(
-                            mesh->verts.data(), mesh->nbVerts,
-                            mesh->faces.data(), mesh->nbFaces,
-                            mesh->faceBoxes.data(),
-                            nullptr, -1
-                        );
-#if UNDO_HAS_BVH
-                        mesh->bvh.refitAll(*mesh);
-#endif
-                    } else {
-                        mesh->postInit();
-                    }
+                        mesh->matrix = isUndo ? item.beforeMatrix : item.afterMatrix;
+                        mesh->invalidateLocalRadius();
+                        mesh->bumpVertsGeneration();
 
-                    mesh->dirtyVertMin = 0;
-                    mesh->dirtyVertMax = std::max(0, mesh->nbVerts - 1);
-                    mesh->isVertexDirty = true;
+                        if (!item.affectedFaces.empty() && !mesh->faceNormals.empty() && !mesh->faceBoxes.empty() && !mesh->faceCenters.empty()) {
+                            auto tFN0 = std::chrono::high_resolution_clock::now();
+                            updateFaceNormalsAndBoxes(
+                                mesh->verts.data(), mesh->nbVerts,
+                                mesh->faces.data(), mesh->nbFaces,
+                                item.affectedFaces.data(), (int)item.affectedFaces.size(),
+                                mesh->faceNormals.data(),
+                                mesh->faceBoxes.data(),
+                                mesh->faceCenters.data()
+                            );
+                            auto tVN0 = std::chrono::high_resolution_clock::now();
+                            msFNorms = std::chrono::duration<double, std::milli>(tVN0 - tFN0).count();
+
+                            if (!mesh->vrfStartCount.empty() && !mesh->vertRingFace.empty()) {
+                                updateVertexNormals(
+                                    item.sparseVertIndices.data(), (int)item.sparseVertIndices.size(), mesh->nbVerts,
+                                    mesh->vrfStartCount.data(),
+                                    mesh->vertRingFace.data(),
+                                    mesh->faceNormals.data(),
+                                    mesh->normals.data()
+                                );
+                            }
+                            auto tOct0 = std::chrono::high_resolution_clock::now();
+                            msVNorms = std::chrono::duration<double, std::milli>(tOct0 - tVN0).count();
+
+                            mesh->octree.update(
+                                mesh->verts.data(), mesh->nbVerts,
+                                mesh->faces.data(), mesh->nbFaces,
+                                mesh->faceBoxes.data(),
+                                item.affectedFaces.data(), (int)item.affectedFaces.size()
+                            );
+#if UNDO_HAS_BVH
+                            mesh->bvh.refit(*mesh, item.affectedFaces.data(), (int)item.affectedFaces.size());
+#endif
+                            auto tOct1 = std::chrono::high_resolution_clock::now();
+                            msOctree = std::chrono::duration<double, std::milli>(tOct1 - tOct0).count();
+                        }
+                        if (!item.sparseVertIndices.empty()) {
+                            mesh->dirtyVertMin = item.sparseVertIndices.front();
+                            mesh->dirtyVertMax = item.sparseVertIndices.back();
+                        }
+                        mesh->isVertexDirty = true;
+                    } else {
+                        mesh->verts = isUndo ? item.beforeVerts : item.afterVerts;
+                        if (!item.beforeNormals.empty() && !item.afterNormals.empty()) {
+                            mesh->normals = isUndo ? item.beforeNormals : item.afterNormals;
+                        }
+                        mesh->matrix = isUndo ? item.beforeMatrix : item.afterMatrix;
+                        mesh->vertProxy = mesh->verts;
+                        mesh->invalidateLocalRadius();
+                        mesh->bumpVertsGeneration();
+
+                        if (!mesh->faceNormals.empty() && !mesh->faceBoxes.empty() && !mesh->faceCenters.empty()) {
+                            auto tFN0 = std::chrono::high_resolution_clock::now();
+                            updateFaceNormalsAndBoxes(
+                                mesh->verts.data(), mesh->nbVerts,
+                                mesh->faces.data(), mesh->nbFaces,
+                                nullptr, -1,
+                                mesh->faceNormals.data(),
+                                mesh->faceBoxes.data(),
+                                mesh->faceCenters.data()
+                            );
+                            auto tVN0 = std::chrono::high_resolution_clock::now();
+                            msFNorms = std::chrono::duration<double, std::milli>(tVN0 - tFN0).count();
+                            if (!mesh->vrfStartCount.empty() && !mesh->vertRingFace.empty()) {
+                                updateVertexNormals(
+                                    nullptr, -1, mesh->nbVerts,
+                                    mesh->vrfStartCount.data(),
+                                    mesh->vertRingFace.data(),
+                                    mesh->faceNormals.data(),
+                                    mesh->normals.data()
+                                );
+                            }
+                            auto tOct0 = std::chrono::high_resolution_clock::now();
+                            msVNorms = std::chrono::duration<double, std::milli>(tOct0 - tVN0).count();
+                            mesh->octree.update(
+                                mesh->verts.data(), mesh->nbVerts,
+                                mesh->faces.data(), mesh->nbFaces,
+                                mesh->faceBoxes.data(),
+                                nullptr, -1
+                            );
+#if UNDO_HAS_BVH
+                            mesh->bvh.refitAll(*mesh);
+#endif
+                            auto tOct1 = std::chrono::high_resolution_clock::now();
+                            msOctree = std::chrono::duration<double, std::milli>(tOct1 - tOct0).count();
+                        } else {
+                            mesh->postInit();
+                        }
+
+                        mesh->dirtyVertMin = 0;
+                        mesh->dirtyVertMax = std::max(0, mesh->nbVerts - 1);
+                        mesh->isVertexDirty = true;
+                    }
                 } else if (item.bakedScale) {
                     modeStr = "BakedScale";
                     float sx = isUndo ? (1.0f / item.scaleX) : item.scaleX;
@@ -719,8 +914,13 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
 
                 auto tStateDone = std::chrono::high_resolution_clock::now();
                 double msState = std::chrono::duration<double, std::milli>(tStateDone - tStateStart).count();
-                sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] Applied Transform (%s) | Mesh ID: %u | Mode: %s | Verts: %d | Time: %.2fms\n",
-                               isUndo ? "UNDO" : "REDO", item.meshId, modeStr, mesh->nbVerts, msState);
+                if (item.hasVertexDeformation) {
+                    sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] Applied Transform (%s) | Mesh ID: %u | Mode: %s | Verts: %d | Time: %.2fms (FaceNorms: %.2fms, VertNorms: %.2fms, Octree: %.2fms)\n",
+                                   isUndo ? "UNDO" : "REDO", item.meshId, modeStr, mesh->nbVerts, msState, msFNorms, msVNorms, msOctree);
+                } else {
+                    sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] Applied Transform (%s) | Mesh ID: %u | Mode: %s | Verts: %d | Time: %.2fms\n",
+                                   isUndo ? "UNDO" : "REDO", item.meshId, modeStr, mesh->nbVerts, msState);
+                }
             }
 
             auto tDone = std::chrono::high_resolution_clock::now();

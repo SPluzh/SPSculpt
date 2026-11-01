@@ -1344,6 +1344,7 @@ int SculptManager::doStrokePass(
 void SculptManager::cancelStroke() {
     m_isSculpting = false;
     m_pendingOctreeUpdate = false;
+    m_grabbedNumIFaces = 0;
     m_relaxEngine.endStroke();
     m_grabbedVertices.clear();
     m_grabbedVerticesSyms.clear();
@@ -2215,7 +2216,8 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             }
         }
         allAffectedVerts.resize(writeIdx);
-        if (writeIdx > 1) {
+        bool isSculptDeform = (activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_MASK_GRADIENT_BLUR && activeBrush != BRUSH_POLYGROUP);
+        if (isSculptDeform && writeIdx > 1) {
             radixSortVertices(allAffectedVerts, m_allAffectedVertsCache, maxV);
         }
         m_affectedMinV = minV;
@@ -3413,6 +3415,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 m_currentIntersectionValid = true;
                 m_firstStrokeFrame = true;
                 m_pendingOctreeUpdate = false;
+                m_grabbedNumIFaces = 0;
                 m_hasAlphaOrigin = false;
                 if (!m_isTubeMoveStroke) {
                     m_initialIntersection = localRayOrigin + minT * localRayDir;
@@ -4283,13 +4286,28 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             } else {
                 g_undoManager.endSculptStroke(scene);
                 if (mesh && m_pendingOctreeUpdate) {
-                    mesh->octree.update(
-                        mesh->verts.data(), mesh->nbVerts,
-                        mesh->faces.data(), mesh->nbFaces,
-                        mesh->faceBoxes.data(),
-                        nullptr, -1
-                    );
+                    auto tOctStart = std::chrono::high_resolution_clock::now();
+                    if (m_grabbedNumIFaces > 0) {
+                        mesh->octree.update(
+                            mesh->verts.data(), mesh->nbVerts,
+                            mesh->faces.data(), mesh->nbFaces,
+                            mesh->faceBoxes.data(),
+                            m_iFacesCache.data(), (int)m_grabbedNumIFaces
+                        );
+                        double octMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tOctStart).count();
+                        sculpt_log("[Stroke Release] Deferred Incremental Octree Update completed in %.2f ms (%d faces)\n", octMs, m_grabbedNumIFaces);
+                    } else {
+                        mesh->octree.update(
+                            mesh->verts.data(), mesh->nbVerts,
+                            mesh->faces.data(), mesh->nbFaces,
+                            mesh->faceBoxes.data(),
+                            nullptr, -1
+                        );
+                        double octMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tOctStart).count();
+                        sculpt_log("[Stroke Release] Deferred Full Octree Update completed in %.2f ms (all %d faces)\n", octMs, mesh->nbFaces);
+                    }
                     m_pendingOctreeUpdate = false;
+                    m_grabbedNumIFaces = 0;
                 }
                 if (mesh && mesh->isLayerRecording()) {
                     mesh->layerStack.bake(mesh->layerStack.getBase(), mesh->verts);

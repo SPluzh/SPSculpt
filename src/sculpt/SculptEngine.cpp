@@ -6,6 +6,8 @@
 #include <vector>
 #include <chrono>
 #include <atomic>
+#include <cstring>
+#include <omp.h>
 
 static void radixSort(uint32_t* arr, uint32_t n) {
     if (n < 2) return;
@@ -403,7 +405,6 @@ uint32_t getFacesFromVerticesFast(
     uint32_t* tagEpoch,
     uint32_t nbFaces
 ) {
-
     if (!tagEpoch || !tagFlags || !iVerts || !vrfStartCount || !vertRingFace || !outIFaces) {
         return 0;
     }
@@ -415,30 +416,81 @@ uint32_t getFacesFromVerticesFast(
     }
     *tagEpoch = epoch;
 
-    uint32_t acc = 0;
+    if (nbIVerts < 2048) {
+        uint32_t acc = 0;
+        for (uint32_t i = 0; i < nbIVerts; ++i) {
+            if (i + 4 < nbIVerts) {
+                uint32_t nextId = iVerts[i + 4];
+                __builtin_prefetch(&vrfStartCount[nextId * 2], 0, 2);
+            }
 
-    for (uint32_t i = 0; i < nbIVerts; ++i) {
-        if (i + 4 < nbIVerts) {
-            uint32_t nextId = iVerts[i + 4];
-            __builtin_prefetch(&vrfStartCount[nextId * 2], 0, 2);
+            uint32_t idVert = iVerts[i];
+            uint32_t start = vrfStartCount[idVert * 2];
+            uint32_t count = vrfStartCount[idVert * 2 + 1];
+
+            for (uint32_t j = start; j < start + count; ++j) {
+                if (j + 4 < start + count) {
+                    __builtin_prefetch(&tagFlags[vertRingFace[j + 4]], 1, 2);
+                }
+                uint32_t iFace = vertRingFace[j];
+                if (tagFlags[iFace] != epoch) {
+                    tagFlags[iFace] = epoch;
+                    outIFaces[acc++] = iFace;
+                }
+            }
+        }
+        return acc;
+    }
+
+    int maxThreads = omp_get_max_threads();
+    static std::vector<std::vector<uint32_t>> s_threadFaces;
+    if ((int)s_threadFaces.size() < maxThreads) {
+        s_threadFaces.resize(maxThreads);
+    }
+
+    #pragma omp parallel
+    {
+        int tid = omp_get_thread_num();
+        auto& localFaces = s_threadFaces[tid];
+        localFaces.clear();
+        size_t estCount = (nbIVerts * 6 / maxThreads) + 128;
+        if (localFaces.capacity() < estCount) {
+            localFaces.reserve(estCount);
         }
 
-        uint32_t idVert = iVerts[i];
-        uint32_t start = vrfStartCount[idVert * 2];
-        uint32_t count = vrfStartCount[idVert * 2 + 1];
-
-        for (uint32_t j = start; j < start + count; ++j) {
-            if (j + 4 < start + count) {
-                __builtin_prefetch(&tagFlags[vertRingFace[j + 4]], 1, 2);
+        #pragma omp for schedule(static)
+        for (int64_t i = 0; i < (int64_t)nbIVerts; ++i) {
+            if (i + 4 < (int64_t)nbIVerts) {
+                uint32_t nextId = iVerts[i + 4];
+                __builtin_prefetch(&vrfStartCount[nextId * 2], 0, 2);
             }
-            uint32_t iFace = vertRingFace[j];
-            if (tagFlags[iFace] != epoch) {
-                tagFlags[iFace] = epoch;
-                outIFaces[acc++] = iFace;
+
+            uint32_t idVert = iVerts[i];
+            uint32_t start = vrfStartCount[idVert * 2];
+            uint32_t count = vrfStartCount[idVert * 2 + 1];
+
+            for (uint32_t j = start; j < start + count; ++j) {
+                if (j + 4 < start + count) {
+                    __builtin_prefetch(&tagFlags[vertRingFace[j + 4]], 1, 2);
+                }
+                uint32_t iFace = vertRingFace[j];
+                if (tagFlags[iFace] != epoch) {
+                    if (__atomic_exchange_n(&tagFlags[iFace], epoch, __ATOMIC_RELAXED) != epoch) {
+                        localFaces.push_back(iFace);
+                    }
+                }
             }
         }
     }
 
+    uint32_t acc = 0;
+    for (int t = 0; t < maxThreads; ++t) {
+        size_t sz = s_threadFaces[t].size();
+        if (sz > 0) {
+            std::memcpy(outIFaces + acc, s_threadFaces[t].data(), sz * sizeof(uint32_t));
+            acc += (uint32_t)sz;
+        }
+    }
     return acc;
 }
 

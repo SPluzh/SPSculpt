@@ -22,7 +22,9 @@
 #include "editing/undo/UndoManager.h"
 #include "editing/undo/TransformUndoEntry.h"
 #include "editing/undo/TopologyUndoEntry.h"
+#include "sculpt/SculptEngine.h"
 #include "common/Enums.h"
+#include <omp.h>
 
 #if __has_include("mesh/BVH.h")
 #define BENCH_USE_BVH 1
@@ -634,6 +636,9 @@ inline bool run(int targetFaces = 4000000) {
         sculpt.handleEvent(evUp, scene);
         auto tFinEnd = std::chrono::high_resolution_clock::now();
         double finalizeMs = std::chrono::duration<double, std::milli>(tFinEnd - tFinStart).count();
+        if (finalizeMs > 5.0) {
+            std::cout << "      [Move Tool Finalize Detail] handleEvent(evUp): " << std::fixed << std::setprecision(2) << finalizeMs << " ms\n";
+        }
 
         double totalStrokeMs = step0Ms + sumDragMs + finalizeMs;
         size_t undoBytes = !g_undoManager.getUndoStack().empty() ? g_undoManager.getUndoStack().back()->getMemoryUsage() : 0;
@@ -1110,34 +1115,11 @@ inline bool run(int targetFaces = 4000000) {
         }
         double dragAvgMs = sumDragMs / 10.0;
 
-        // Finalize: Normals calc + Octree update + pushTransformChange
         auto tFinStart = std::chrono::high_resolution_clock::now();
         mesh.matrix = pivotStartMatrix;
         mesh.vertProxy = mesh.verts;
         mesh.invalidateLocalRadius();
         mesh.bumpVertsGeneration();
-
-        updateFaceNormalsAndBoxes(
-            mesh.verts.data(), mesh.nbVerts,
-            mesh.faces.data(), mesh.nbFaces,
-            nullptr, -1,
-            mesh.faceNormals.data(),
-            mesh.faceBoxes.data(),
-            mesh.faceCenters.data()
-        );
-        updateVertexNormals(
-            nullptr, -1, mesh.nbVerts,
-            mesh.vrfStartCount.data(),
-            mesh.vertRingFace.data(),
-            mesh.faceNormals.data(),
-            mesh.normals.data()
-        );
-        mesh.octree.update(
-            mesh.verts.data(), mesh.nbVerts,
-            mesh.faces.data(), mesh.nbFaces,
-            mesh.faceBoxes.data(),
-            nullptr, -1
-        );
 
         TransformUndoEntry undoEntry("Transform Tool");
         TransformMeshState meshUndoState;
@@ -1145,14 +1127,118 @@ inline bool run(int targetFaces = 4000000) {
         meshUndoState.beforeMatrix = pivotStartMatrix;
         meshUndoState.afterMatrix = mesh.matrix;
         meshUndoState.hasVertexDeformation = true;
-        meshUndoState.beforeVerts = std::move(transformStartVerts);
-        meshUndoState.afterVerts = mesh.verts;
-        // beforeNormals and afterNormals are omitted to conserve RAM;
-        // applyTransformEntry recalculates face/vertex normals dynamically on undo/redo.
+        meshUndoState.isSparse = true;
+
+        // Detect deformed vertices in parallel
+        int maxThreads = omp_get_max_threads();
+        std::vector<std::vector<uint32_t>> threadVerts(maxThreads);
+        #pragma omp parallel
+        {
+            int tid = omp_get_thread_num();
+            #pragma omp for schedule(static)
+            for (int i = 0; i < nbVerts; ++i) {
+                float dx = mesh.verts[i * 3]     - transformStartVerts[i * 3];
+                float dy = mesh.verts[i * 3 + 1] - transformStartVerts[i * 3 + 1];
+                float dz = mesh.verts[i * 3 + 2] - transformStartVerts[i * 3 + 2];
+                if (dx != 0.0f || dy != 0.0f || dz != 0.0f) {
+                    threadVerts[tid].push_back((uint32_t)i);
+                }
+            }
+        }
+
+        size_t totalDeformed = 0;
+        for (int t = 0; t < maxThreads; ++t) totalDeformed += threadVerts[t].size();
+        meshUndoState.sparseVertIndices.resize(totalDeformed);
+        size_t curOffset = 0;
+        for (int t = 0; t < maxThreads; ++t) {
+            if (!threadVerts[t].empty()) {
+                std::memcpy(meshUndoState.sparseVertIndices.data() + curOffset, threadVerts[t].data(), threadVerts[t].size() * sizeof(uint32_t));
+                curOffset += threadVerts[t].size();
+            }
+        }
+
+        meshUndoState.sparseBeforeCoords.resize(totalDeformed * 3);
+        meshUndoState.sparseAfterCoords.resize(totalDeformed * 3);
+        const float* startVertsPtr = transformStartVerts.data();
+        const float* curVertsPtr = mesh.verts.data();
+        const uint32_t* defIndices = meshUndoState.sparseVertIndices.data();
+        float* sBefore = meshUndoState.sparseBeforeCoords.data();
+        float* sAfter = meshUndoState.sparseAfterCoords.data();
+
+        #pragma omp parallel for schedule(static) if(totalDeformed > 2000)
+        for (int64_t i = 0; i < (int64_t)totalDeformed; ++i) {
+            uint32_t v = defIndices[i];
+            uint32_t v3 = v * 3;
+            uint32_t i3 = (uint32_t)(i * 3);
+            sBefore[i3 + 0] = startVertsPtr[v3 + 0];
+            sBefore[i3 + 1] = startVertsPtr[v3 + 1];
+            sBefore[i3 + 2] = startVertsPtr[v3 + 2];
+            sAfter[i3 + 0]  = curVertsPtr[v3 + 0];
+            sAfter[i3 + 1]  = curVertsPtr[v3 + 1];
+            sAfter[i3 + 2]  = curVertsPtr[v3 + 2];
+        }
+
+        // Incremental face lookup for affected faces
+        if (!mesh.vrfStartCount.empty() && !mesh.vertRingFace.empty() && mesh.nbFaces > 0) {
+            std::vector<uint32_t> tempFaces(mesh.nbFaces);
+            std::vector<uint32_t> tagFlags(mesh.nbFaces, 0);
+            uint32_t tagEpoch = 1;
+            uint32_t numIFaces = getFacesFromVerticesFast(
+                meshUndoState.sparseVertIndices.data(),
+                (uint32_t)meshUndoState.sparseVertIndices.size(),
+                mesh.vrfStartCount.data(),
+                mesh.vertRingFace.data(),
+                tempFaces.data(),
+                tagFlags.data(),
+                &tagEpoch,
+                mesh.nbFaces
+            );
+            meshUndoState.affectedFaces.assign(tempFaces.begin(), tempFaces.begin() + numIFaces);
+        }
+
+        auto tFNStart = std::chrono::high_resolution_clock::now();
+        if (!meshUndoState.affectedFaces.empty() && !mesh.faceNormals.empty() && !mesh.faceBoxes.empty() && !mesh.faceCenters.empty()) {
+            updateFaceNormalsAndBoxes(
+                mesh.verts.data(), mesh.nbVerts,
+                mesh.faces.data(), mesh.nbFaces,
+                meshUndoState.affectedFaces.data(), (int)meshUndoState.affectedFaces.size(),
+                mesh.faceNormals.data(),
+                mesh.faceBoxes.data(),
+                mesh.faceCenters.data()
+            );
+        }
+        auto tVNStart = std::chrono::high_resolution_clock::now();
+        if (!meshUndoState.sparseVertIndices.empty() && !mesh.normals.empty() && !mesh.vrfStartCount.empty() && !mesh.vertRingFace.empty()) {
+            updateVertexNormals(
+                meshUndoState.sparseVertIndices.data(), (int)meshUndoState.sparseVertIndices.size(), mesh.nbVerts,
+                mesh.vrfStartCount.data(),
+                mesh.vertRingFace.data(),
+                mesh.faceNormals.data(),
+                mesh.normals.data()
+            );
+        }
+        auto tOctStart = std::chrono::high_resolution_clock::now();
+        if (!meshUndoState.affectedFaces.empty()) {
+            mesh.octree.update(
+                mesh.verts.data(), mesh.nbVerts,
+                mesh.faces.data(), mesh.nbFaces,
+                mesh.faceBoxes.data(),
+                meshUndoState.affectedFaces.data(), (int)meshUndoState.affectedFaces.size()
+            );
+        }
+        auto tUndoPrepStart = std::chrono::high_resolution_clock::now();
+
         undoEntry.m_meshStates.push_back(std::move(meshUndoState));
         g_undoManager.pushTransformChange(scene, std::move(undoEntry));
         auto tFinEnd = std::chrono::high_resolution_clock::now();
         double finalizeMs = std::chrono::duration<double, std::milli>(tFinEnd - tFinStart).count();
+        double fnMs = std::chrono::duration<double, std::milli>(tVNStart - tFNStart).count();
+        double vnMs = std::chrono::duration<double, std::milli>(tOctStart - tVNStart).count();
+        double octMs = std::chrono::duration<double, std::milli>(tUndoPrepStart - tOctStart).count();
+        double undoPushMs = std::chrono::duration<double, std::milli>(tFinEnd - tUndoPrepStart).count();
+        std::cout << "      [Transform Masked Finalize Detail] Total: " << std::fixed << std::setprecision(2) << finalizeMs
+                  << " ms (FaceNorms: " << fnMs << " ms, VertNorms: " << vnMs
+                  << " ms, Octree: " << octMs << " ms, UndoPush: " << undoPushMs << " ms)\n";
 
         double totalStrokeMs = step0Ms + sumDragMs + finalizeMs;
         size_t undoBytes = !g_undoManager.getUndoStack().empty() ? g_undoManager.getUndoStack().back()->getMemoryUsage() : 0;
@@ -1163,18 +1249,32 @@ inline bool run(int targetFaces = 4000000) {
         auto tUndoEnd = std::chrono::high_resolution_clock::now();
         double undoMs = std::chrono::duration<double, std::milli>(tUndoEnd - tUndoStart).count();
 
-        // Validate Undo against beforeVerts stored in the redo entry
+        // Validate Undo against beforeVerts or sparseBeforeCoords stored in the redo entry
         float maxUndoDiff = 0.0f;
         auto* redoEntry = !g_undoManager.getRedoStack().empty()
             ? dynamic_cast<TransformUndoEntry*>(g_undoManager.getRedoStack().back().get())
             : nullptr;
         if (redoEntry && !redoEntry->m_meshStates.empty()) {
-            const auto& bVerts = redoEntry->m_meshStates[0].beforeVerts;
-            size_t n = mesh.verts.size();
+            const auto& state = redoEntry->m_meshStates[0];
+            if (state.isSparse) {
+                size_t n = state.sparseVertIndices.size();
 #pragma omp parallel for reduction(max:maxUndoDiff) schedule(static) if(n > 10000)
-            for (size_t i = 0; i < n; ++i) {
-                float d = std::abs(mesh.verts[i] - bVerts[i]);
-                if (d > maxUndoDiff) maxUndoDiff = d;
+                for (size_t i = 0; i < n; ++i) {
+                    uint32_t vid = state.sparseVertIndices[i];
+                    float d0 = std::abs(mesh.verts[vid * 3 + 0] - state.sparseBeforeCoords[i * 3 + 0]);
+                    float d1 = std::abs(mesh.verts[vid * 3 + 1] - state.sparseBeforeCoords[i * 3 + 1]);
+                    float d2 = std::abs(mesh.verts[vid * 3 + 2] - state.sparseBeforeCoords[i * 3 + 2]);
+                    float m = std::max({d0, d1, d2});
+                    if (m > maxUndoDiff) maxUndoDiff = m;
+                }
+            } else {
+                const auto& bVerts = state.beforeVerts;
+                size_t n = mesh.verts.size();
+#pragma omp parallel for reduction(max:maxUndoDiff) schedule(static) if(n > 10000)
+                for (size_t i = 0; i < n; ++i) {
+                    float d = std::abs(mesh.verts[i] - bVerts[i]);
+                    if (d > maxUndoDiff) maxUndoDiff = d;
+                }
             }
         }
 
@@ -1184,18 +1284,32 @@ inline bool run(int targetFaces = 4000000) {
         auto tRedoEnd = std::chrono::high_resolution_clock::now();
         double redoMs = std::chrono::duration<double, std::milli>(tRedoEnd - tRedoStart).count();
 
-        // Validate Redo against afterVerts stored in the undo entry
+        // Validate Redo against afterVerts or sparseAfterCoords stored in the undo entry
         float maxRedoDiff = 0.0f;
         auto* undoEntryAfterRedo = !g_undoManager.getUndoStack().empty()
             ? dynamic_cast<TransformUndoEntry*>(g_undoManager.getUndoStack().back().get())
             : nullptr;
         if (undoEntryAfterRedo && !undoEntryAfterRedo->m_meshStates.empty()) {
-            const auto& aVerts = undoEntryAfterRedo->m_meshStates[0].afterVerts;
-            size_t n = mesh.verts.size();
+            const auto& state = undoEntryAfterRedo->m_meshStates[0];
+            if (state.isSparse) {
+                size_t n = state.sparseVertIndices.size();
 #pragma omp parallel for reduction(max:maxRedoDiff) schedule(static) if(n > 10000)
-            for (size_t i = 0; i < n; ++i) {
-                float d = std::abs(mesh.verts[i] - aVerts[i]);
-                if (d > maxRedoDiff) maxRedoDiff = d;
+                for (size_t i = 0; i < n; ++i) {
+                    uint32_t vid = state.sparseVertIndices[i];
+                    float d0 = std::abs(mesh.verts[vid * 3 + 0] - state.sparseAfterCoords[i * 3 + 0]);
+                    float d1 = std::abs(mesh.verts[vid * 3 + 1] - state.sparseAfterCoords[i * 3 + 1]);
+                    float d2 = std::abs(mesh.verts[vid * 3 + 2] - state.sparseAfterCoords[i * 3 + 2]);
+                    float m = std::max({d0, d1, d2});
+                    if (m > maxRedoDiff) maxRedoDiff = m;
+                }
+            } else {
+                const auto& aVerts = state.afterVerts;
+                size_t n = mesh.verts.size();
+#pragma omp parallel for reduction(max:maxRedoDiff) schedule(static) if(n > 10000)
+                for (size_t i = 0; i < n; ++i) {
+                    float d = std::abs(mesh.verts[i] - aVerts[i]);
+                    if (d > maxRedoDiff) maxRedoDiff = d;
+                }
             }
         }
 
