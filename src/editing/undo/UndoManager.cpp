@@ -4,6 +4,14 @@
 #include "mesh/NormalCalc.h"
 #include "common/Logger.h"
 #include "editing/SculptManager.h"
+#include "sculpt/SculptEngine.h"
+
+#if __has_include("mesh/BVH.h")
+#define UNDO_HAS_BVH 1
+#include "mesh/BVH.h"
+#else
+#define UNDO_HAS_BVH 0
+#endif
 
 #include <algorithm>
 #include <unordered_set>
@@ -14,6 +22,11 @@ namespace {
     // Helper to keep track of recorded vertex indices per mesh during an active stroke using fast array stamps
     static std::unordered_map<uint32_t, std::vector<uint32_t>> s_recordedStamps;
     static uint32_t s_recordedCurrentStamp = 0;
+
+    // Fast face lookup caches for incremental undo/redo normal and spatial structure updates
+    static std::vector<uint32_t> s_undoIFaces;
+    static std::vector<uint32_t> s_undoTagFlags;
+    static uint32_t s_undoTagEpoch = 0;
 }
 
 UndoManager::UndoManager() {}
@@ -423,18 +436,27 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
 
             auto tCopyStart = std::chrono::high_resolution_clock::now();
             size_t count = delta.indices.size();
+            bool vertsMoved = false;
             for (size_t i = 0; i < count; ++i) {
                 uint32_t vi = delta.indices[i];
                 if (vi >= (uint32_t)mesh->nbVerts) continue;
                 if (i * 3 + 2 >= srcVerts.size()) continue;
 
-                mesh->verts[vi * 3 + 0] = srcVerts[i * 3 + 0];
-                mesh->verts[vi * 3 + 1] = srcVerts[i * 3 + 1];
-                mesh->verts[vi * 3 + 2] = srcVerts[i * 3 + 2];
+                float nx = srcVerts[i * 3 + 0];
+                float ny = srcVerts[i * 3 + 1];
+                float nz = srcVerts[i * 3 + 2];
+                if (mesh->verts[vi * 3 + 0] != nx ||
+                    mesh->verts[vi * 3 + 1] != ny ||
+                    mesh->verts[vi * 3 + 2] != nz) {
+                    vertsMoved = true;
+                    mesh->verts[vi * 3 + 0] = nx;
+                    mesh->verts[vi * 3 + 1] = ny;
+                    mesh->verts[vi * 3 + 2] = nz;
+                }
                 if (vi * 3 + 2 < mesh->vertProxy.size()) {
-                    mesh->vertProxy[vi * 3 + 0] = srcVerts[i * 3 + 0];
-                    mesh->vertProxy[vi * 3 + 1] = srcVerts[i * 3 + 1];
-                    mesh->vertProxy[vi * 3 + 2] = srcVerts[i * 3 + 2];
+                    mesh->vertProxy[vi * 3 + 0] = nx;
+                    mesh->vertProxy[vi * 3 + 1] = ny;
+                    mesh->vertProxy[vi * 3 + 2] = nz;
                 }
 
                 if (targetLayer && i * 3 + 2 < srcLayerDeltas.size() && vi * 3 + 2 < targetLayer->deltaVerts.size()) {
@@ -463,46 +485,120 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
 
             if (!delta.indices.empty()) {
                 auto [minIt, maxIt] = std::minmax_element(delta.indices.begin(), delta.indices.end());
-                mesh->dirtyVertMin = *minIt;
-                mesh->dirtyVertMax = *maxIt;
-                mesh->isVertexDirty = true;
+                if (mesh->isVertexDirty || mesh->isColorDirty || mesh->isMaterialDirty) {
+                    mesh->dirtyVertMin = std::min(mesh->dirtyVertMin, *minIt);
+                    mesh->dirtyVertMax = std::max(mesh->dirtyVertMax, *maxIt);
+                } else {
+                    mesh->dirtyVertMin = *minIt;
+                    mesh->dirtyVertMax = *maxIt;
+                }
+                if (vertsMoved) mesh->isVertexDirty = true;
                 if (delta.hasColors) mesh->isColorDirty = true;
                 if (delta.hasMaterials) mesh->isMaterialDirty = true;
                 mesh->isDirty = true;
 
+                if (!vertsMoved) {
+                    auto tDone = std::chrono::high_resolution_clock::now();
+                    double msCopy = std::chrono::duration<double, std::milli>(tCopyEnd - tCopyStart).count();
+                    double msTotal = std::chrono::duration<double, std::milli>(tDone - tStart).count();
+                    sculpt_log_lvl(LogLevel::Info,
+                        "[Undo Diagnostics] Sculpt apply (%s): %zu verts restored in %.2f ms (Copy: %.2fms, FaceNorms: 0.00ms, VertNorms: 0.00ms, OctreeBuild: 0.00ms)\n",
+                        isUndo ? "UNDO" : "REDO", count, msTotal, msCopy);
+                    continue;
+                }
+
+                // Incremental update: find unique affected faces around restored vertices
+                uint32_t numIFaces = 0;
+                if (!mesh->vrfStartCount.empty() && !mesh->vertRingFace.empty() && mesh->nbFaces > 0) {
+                    if (s_undoTagFlags.size() < (size_t)mesh->nbFaces) {
+                        s_undoTagFlags.assign(mesh->nbFaces, 0);
+                        s_undoTagEpoch = 1;
+                    }
+                    if (s_undoIFaces.size() < (size_t)mesh->nbFaces) {
+                        s_undoIFaces.resize(mesh->nbFaces);
+                    }
+                    numIFaces = getFacesFromVerticesFast(
+                        delta.indices.data(),
+                        (uint32_t)delta.indices.size(),
+                        mesh->vrfStartCount.data(),
+                        mesh->vertRingFace.data(),
+                        s_undoIFaces.data(),
+                        s_undoTagFlags.data(),
+                        &s_undoTagEpoch,
+                        mesh->nbFaces
+                    );
+                }
+
                 auto tFNormsStart = std::chrono::high_resolution_clock::now();
-                updateFaceNormalsAndBoxes(
-                    mesh->verts.data(), mesh->nbVerts,
-                    mesh->faces.data(), mesh->nbFaces,
-                    nullptr, -1,
-                    mesh->faceNormals.data(),
-                    mesh->faceBoxes.data(),
-                    mesh->faceCenters.data()
-                );
+                if (numIFaces > 0 && !mesh->faceNormals.empty() && !mesh->faceBoxes.empty() && !mesh->faceCenters.empty()) {
+                    updateFaceNormalsAndBoxes(
+                        mesh->verts.data(), mesh->nbVerts,
+                        mesh->faces.data(), mesh->nbFaces,
+                        s_undoIFaces.data(), (int)numIFaces,
+                        mesh->faceNormals.data(),
+                        mesh->faceBoxes.data(),
+                        mesh->faceCenters.data()
+                    );
+                } else if (numIFaces == 0 && mesh->nbFaces > 0 && !mesh->faceNormals.empty()) {
+                    updateFaceNormalsAndBoxes(
+                        mesh->verts.data(), mesh->nbVerts,
+                        mesh->faces.data(), mesh->nbFaces,
+                        nullptr, -1,
+                        mesh->faceNormals.data(),
+                        mesh->faceBoxes.data(),
+                        mesh->faceCenters.data()
+                    );
+                }
                 auto tVNormsStart = std::chrono::high_resolution_clock::now();
 
-                updateVertexNormals(
-                    nullptr, -1, mesh->nbVerts,
-                    mesh->vrfStartCount.data(),
-                    mesh->vertRingFace.data(),
-                    mesh->faceNormals.data(),
-                    mesh->normals.data()
-                );
-                auto tOctreeStart = std::chrono::high_resolution_clock::now();
+                if (!mesh->normals.empty() && !mesh->vrfStartCount.empty() && !mesh->vertRingFace.empty()) {
+                    updateVertexNormals(
+                        delta.indices.data(), (int)delta.indices.size(), mesh->nbVerts,
+                        mesh->vrfStartCount.data(),
+                        mesh->vertRingFace.data(),
+                        mesh->faceNormals.data(),
+                        mesh->normals.data()
+                    );
+                } else if (!mesh->normals.empty()) {
+                    updateVertexNormals(
+                        nullptr, -1, mesh->nbVerts,
+                        mesh->vrfStartCount.data(),
+                        mesh->vertRingFace.data(),
+                        mesh->faceNormals.data(),
+                        mesh->normals.data()
+                    );
+                }
+                auto tSpatialStart = std::chrono::high_resolution_clock::now();
 
-                mesh->octree.build(
-                    mesh->nbVerts, mesh->nbFaces,
-                    mesh->faceCenters.data(),
-                    mesh->faceBoxes.data(),
-                    mesh->verts.data(),
-                    mesh->faces.data()
-                );
+#if UNDO_HAS_BVH
+                if (numIFaces > 0) {
+                    mesh->bvh.refit(*mesh, s_undoIFaces.data(), numIFaces);
+                } else {
+                    mesh->bvh.refitAll(*mesh);
+                }
+#else
+                if (numIFaces > 0 && !mesh->faceBoxes.empty()) {
+                    mesh->octree.update(
+                        mesh->verts.data(), mesh->nbVerts,
+                        mesh->faces.data(), mesh->nbFaces,
+                        mesh->faceBoxes.data(),
+                        s_undoIFaces.data(), (int)numIFaces
+                    );
+                } else if (!mesh->faceBoxes.empty()) {
+                    mesh->octree.update(
+                        mesh->verts.data(), mesh->nbVerts,
+                        mesh->faces.data(), mesh->nbFaces,
+                        mesh->faceBoxes.data(),
+                        nullptr, -1
+                    );
+                }
+#endif
                 auto tDone = std::chrono::high_resolution_clock::now();
 
                 double msCopy = std::chrono::duration<double, std::milli>(tCopyEnd - tCopyStart).count();
                 double msFNorms = std::chrono::duration<double, std::milli>(tVNormsStart - tFNormsStart).count();
-                double msVNorms = std::chrono::duration<double, std::milli>(tOctreeStart - tVNormsStart).count();
-                double msOctree = std::chrono::duration<double, std::milli>(tDone - tOctreeStart).count();
+                double msVNorms = std::chrono::duration<double, std::milli>(tSpatialStart - tVNormsStart).count();
+                double msOctree = std::chrono::duration<double, std::milli>(tDone - tSpatialStart).count();
                 double msTotal = std::chrono::duration<double, std::milli>(tDone - tStart).count();
 
                 sculpt_log_lvl(LogLevel::Info,
@@ -569,6 +665,9 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
                             mesh->faceBoxes.data(),
                             nullptr, -1
                         );
+#if UNDO_HAS_BVH
+                        mesh->bvh.refitAll(*mesh);
+#endif
                     } else {
                         mesh->postInit();
                     }
