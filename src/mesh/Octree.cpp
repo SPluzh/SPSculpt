@@ -4,6 +4,7 @@
 #include <chrono>
 #include <iostream>
 #include <omp.h>
+#include <atomic>
 
 OctreeCell* Octree::getCell() {
     if (poolIndex < (int)cellPool.size()) {
@@ -50,6 +51,10 @@ void Octree::build(int nbVertsVal, int nbFacesVal,
         faceLeaf.clear();
         facePosInLeaf.clear();
         return;
+    }
+
+    if (m_visitedFlags.size() < (size_t)nbVerts) {
+        m_visitedFlags.assign(nbVerts, 0);
     }
 
     rebuildInternal();
@@ -251,8 +256,8 @@ void Octree::collectIntersectSphere(float vx, float vy, float vz, float radiusSq
     iFacesInCells.clear();
     if (!root) return;
 
-    if (iFacesInCells.capacity() < 4096) {
-        iFacesInCells.reserve(16384);
+    if (iFacesInCells.capacity() < 65536) {
+        iFacesInCells.reserve(131072);
     }
 
     OctreeCell* stack[256];
@@ -323,9 +328,11 @@ void Octree::pickVerticesInSphere(
         m_visitedEpoch = 1;
     }
 
-    m_tempVerts.clear();
-    if (m_tempVerts.capacity() < m_tempFaces.size()) {
-        m_tempVerts.reserve(m_tempFaces.size());
+    const size_t numFaces = m_tempFaces.size();
+    if (numFaces == 0) {
+        lastCandidateVertsMs = 0.0;
+        lastFilterVertsMs = 0.0;
+        return;
     }
 
     const uint32_t curEpoch = m_visitedEpoch;
@@ -333,58 +340,30 @@ void Octree::pickVerticesInSphere(
     const uint32_t limitVerts = (uint32_t)nbVerts;
     const uint32_t limitFaces = (uint32_t)nbFaces;
 
-    for (uint32_t iFace : m_tempFaces) {
-        if (iFace >= limitFaces) continue;
-        const uint32_t* fv = facesData + (iFace << 2);
-        uint32_t v0 = fv[0];
-        uint32_t v1 = fv[1];
-        uint32_t v2 = fv[2];
-        uint32_t v3 = fv[3];
+    lastCandidateVertsMs = 0.0;
 
-        if (v0 < limitVerts && vFlags[v0] != curEpoch) {
-            vFlags[v0] = curEpoch;
-            m_tempVerts.push_back(v0);
-        }
-        if (v1 < limitVerts && vFlags[v1] != curEpoch) {
-            vFlags[v1] = curEpoch;
-            m_tempVerts.push_back(v1);
-        }
-        if (v2 < limitVerts && vFlags[v2] != curEpoch) {
-            vFlags[v2] = curEpoch;
-            m_tempVerts.push_back(v2);
-        }
-        if (v3 < limitVerts && vFlags[v3] != curEpoch) {
-            vFlags[v3] = curEpoch;
-            m_tempVerts.push_back(v3);
-        }
-    }
-
-    auto t2 = std::chrono::high_resolution_clock::now();
-    lastCandidateVertsMs = std::chrono::duration<double, std::milli>(t2 - t1).count();
-
-    const size_t totalCandidates = m_tempVerts.size();
-    if (totalCandidates == 0) {
-        lastFilterVertsMs = 0.0;
-        return;
-    }
-
-    if (totalCandidates < 2048) {
-        pickedVertices.reserve(totalCandidates);
-        for (size_t i = 0; i < totalCandidates; ++i) {
-            uint32_t ind = m_tempVerts[i];
-            if (vertVisible && vertVisible[ind] == 0) {
-                continue;
-            }
-            uint32_t j = ind * 3;
-            float dx = cx - vertsData[j];
-            float dx2 = dx * dx;
-            if (dx2 >= radius2) continue;
-            float dy = cy - vertsData[j + 1];
-            float dy2 = dy * dy;
-            if (dx2 + dy2 >= radius2) continue;
-            float dz = cz - vertsData[j + 2];
-            if (dx2 + dy2 + dz * dz < radius2) {
-                pickedVertices.push_back(ind);
+    if (numFaces < 2048) {
+        pickedVertices.reserve(numFaces);
+        for (uint32_t iFace : m_tempFaces) {
+            if (iFace >= limitFaces) continue;
+            const uint32_t* fv = facesData + (iFace << 2);
+            for (int k = 0; k < 4; ++k) {
+                uint32_t v = fv[k];
+                if (v < limitVerts && vFlags[v] != curEpoch) {
+                    vFlags[v] = curEpoch;
+                    if (vertVisible && vertVisible[v] == 0) continue;
+                    uint32_t j = v * 3;
+                    float dx = cx - vertsData[j];
+                    float dx2 = dx * dx;
+                    if (dx2 >= radius2) continue;
+                    float dy = cy - vertsData[j + 1];
+                    float dy2 = dy * dy;
+                    if (dx2 + dy2 >= radius2) continue;
+                    float dz = cz - vertsData[j + 2];
+                    if (dx2 + dy2 + dz * dz < radius2) {
+                        pickedVertices.push_back(v);
+                    }
+                }
             }
         }
     } else {
@@ -398,26 +377,36 @@ void Octree::pickVerticesInSphere(
             int tid = omp_get_thread_num();
             auto& localPicked = m_threadPicked[tid];
             localPicked.clear();
-            if (localPicked.capacity() < (totalCandidates / maxThreads + 64)) {
-                localPicked.reserve(totalCandidates / maxThreads + 64);
+            size_t estCount = (numFaces / maxThreads) + 64;
+            if (localPicked.capacity() < estCount) {
+                localPicked.reserve(estCount);
             }
 
             #pragma omp for schedule(static)
-            for (int64_t i = 0; i < (int64_t)totalCandidates; ++i) {
-                uint32_t ind = m_tempVerts[i];
-                if (vertVisible && vertVisible[ind] == 0) {
-                    continue;
-                }
-                uint32_t j = ind * 3;
-                float dx = cx - vertsData[j];
-                float dx2 = dx * dx;
-                if (dx2 >= radius2) continue;
-                float dy = cy - vertsData[j + 1];
-                float dy2 = dy * dy;
-                if (dx2 + dy2 >= radius2) continue;
-                float dz = cz - vertsData[j + 2];
-                if (dx2 + dy2 + dz * dz < radius2) {
-                    localPicked.push_back(ind);
+            for (int64_t i = 0; i < (int64_t)numFaces; ++i) {
+                uint32_t iFace = m_tempFaces[i];
+                if (iFace >= limitFaces) continue;
+                const uint32_t* fv = facesData + (iFace << 2);
+                for (int k = 0; k < 4; ++k) {
+                    uint32_t v = fv[k];
+                    if (v >= limitVerts) continue;
+                    if (vFlags[v] == curEpoch) continue;
+
+                    std::atomic_ref<uint32_t> ref(vFlags[v]);
+                    if (ref.exchange(curEpoch, std::memory_order_relaxed) != curEpoch) {
+                        if (vertVisible && vertVisible[v] == 0) continue;
+                        uint32_t j = v * 3;
+                        float dx = cx - vertsData[j];
+                        float dx2 = dx * dx;
+                        if (dx2 >= radius2) continue;
+                        float dy = cy - vertsData[j + 1];
+                        float dy2 = dy * dy;
+                        if (dx2 + dy2 >= radius2) continue;
+                        float dz = cz - vertsData[j + 2];
+                        if (dx2 + dy2 + dz * dz < radius2) {
+                            localPicked.push_back(v);
+                        }
+                    }
                 }
             }
         }
@@ -437,8 +426,8 @@ void Octree::pickVerticesInSphere(
         }
     }
 
-    auto t3 = std::chrono::high_resolution_clock::now();
-    lastFilterVertsMs = std::chrono::duration<double, std::milli>(t3 - t2).count();
+    auto t2 = std::chrono::high_resolution_clock::now();
+    lastFilterVertsMs = std::chrono::duration<double, std::milli>(t2 - t1).count();
 }
 
 std::vector<uint32_t> Octree::pickVerticesInSphere(

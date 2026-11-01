@@ -478,9 +478,13 @@ inline bool run(int targetFaces = 4000000) {
                   << std::setw(6) << m.affectedFaces << "\n";
 
         if (m.totalMs > 30.0 || m.stepIndex == 0) {
-            std::cout << "      (Step #" << m.stepIndex << " Detail: Pick[Cells: " << std::fixed << std::setprecision(2) << m.pickCellsMs
-                      << "ms, Dedup: " << m.pickDedupMs << "ms, Radius: " << m.pickFilterMs
-                      << "ms] | Undo: " << m.undoRecordMs << "ms | Deform: " << m.primaryDeformMs
+            std::cout << "      (Step #" << m.stepIndex << " Detail: Pick[Cells: " << std::fixed << std::setprecision(2) << m.pickCellsMs;
+            if (m.pickDedupMs > 0.001) {
+                std::cout << "ms, Dedup: " << m.pickDedupMs << "ms, Radius: " << m.pickFilterMs << "ms]";
+            } else {
+                std::cout << "ms, FusedFilter: " << m.pickFilterMs << "ms]";
+            }
+            std::cout << " | Undo: " << m.undoRecordMs << "ms | Deform: " << m.primaryDeformMs
                       << "ms | Sym: " << m.symmetryMs << "ms | FaceNorm: " << m.faceNormalsMs << "ms)\n";
         }
 
@@ -567,8 +571,12 @@ inline bool run(int targetFaces = 4000000) {
     std::cout << "     |- Raycast:                 " << std::fixed << std::setprecision(2) << avgRay << " ms (" << std::setprecision(1) << (avgRay / avgTotal * 100.0) << "%)\n";
     std::cout << "     |- Pick Vertices in Sphere: " << std::fixed << std::setprecision(2) << avgPick << " ms (" << std::setprecision(1) << (avgPick / avgTotal * 100.0) << "%)\n";
     std::cout << "     |    |- Collect Cells:      " << std::fixed << std::setprecision(2) << avgPickCells << " ms\n";
-    std::cout << "     |    |- Candidate Verts:    " << std::fixed << std::setprecision(2) << avgPickDedup << " ms\n";
-    std::cout << "     |    \\- Filter Sphere:      " << std::fixed << std::setprecision(2) << avgPickFilter << " ms\n";
+    if (avgPickDedup > 0.001) {
+        std::cout << "     |    |- Candidate Verts:    " << std::fixed << std::setprecision(2) << avgPickDedup << " ms\n";
+        std::cout << "     |    \\- Filter Sphere:      " << std::fixed << std::setprecision(2) << avgPickFilter << " ms\n";
+    } else {
+        std::cout << "     |    \\- Fused Pick & Filter:" << std::fixed << std::setprecision(2) << avgPickFilter << " ms\n";
+    }
     std::cout << "     \\- Spatial Index Update:    " << std::fixed << std::setprecision(2) << avgSpatialUpdate << " ms (" << std::setprecision(1) << (avgSpatialUpdate / avgTotal * 100.0) << "%)\n";
     std::cout << "\n   [Non-Spatial Pipeline (Mesh Deformation & Topology)]:\n";
     std::cout << "     |- Primary Deform + Area:   " << std::fixed << std::setprecision(2) << avgDeform << " ms (" << std::setprecision(1) << (avgDeform / avgTotal * 100.0) << "%)\n";
