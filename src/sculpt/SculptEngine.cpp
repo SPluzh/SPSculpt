@@ -1874,52 +1874,63 @@ int strokeSquareBrush(
     float invAlphaSideX = 1.0f / (alphaXSym ? -alphaSide : alphaSide);
     float invAlphaSideY = 1.0f / alphaSide;
 
-    std::atomic<int> atomicWriteIdx{0};
+    int writeIdx = 0;
 
-    #pragma omp parallel for schedule(static) if(nbIVerts > 500)
-    for (int i = 0; i < nbIVerts; ++i) {
-        if (i + 8 < nbIVerts) {
-            uint32_t nextId = iVerts[i + 8];
-            __builtin_prefetch(&verts[nextId * 3], 1, 1);
-            __builtin_prefetch(&materials[nextId * 3], 0, 1);
+    #pragma omp parallel if(nbIVerts > 500)
+    {
+        std::vector<uint32_t> localVerts;
+
+        #pragma omp for schedule(static)
+        for (int i = 0; i < nbIVerts; ++i) {
+            if (i + 8 < nbIVerts) {
+                uint32_t nextId = iVerts[i + 8];
+                __builtin_prefetch(&verts[nextId * 3], 1, 1);
+                __builtin_prefetch(&materials[nextId * 3], 0, 1);
+            }
+
+            uint32_t id = iVerts[i];
+            int ind = id * 3;
+
+            float matVal = materials[ind + 2];
+            if (matVal <= 0.0f) continue;
+
+            float vx = verts[ind];
+            float vy = verts[ind + 1];
+            float vz = verts[ind + 2];
+
+            float distToPlane = (vx - ax) * anx + (vy - ay) * any + (vz - az) * anz;
+            if (distToPlane * comp > 0.0f) {
+                continue;
+            }
+
+            float xn = alphaRatioY * (alphaLookAt[0] * vx + alphaLookAt[4] * vy + alphaLookAt[8] * vz + alphaLookAt[12]) * invAlphaSideX;
+            float yn = alphaRatioX * (alphaLookAt[1] * vx + alphaLookAt[5] * vy + alphaLookAt[9] * vz + alphaLookAt[13]) * invAlphaSideY;
+
+            float dist = std::max(std::abs(xn), std::abs(yn));
+            if (dist >= 1.0f) {
+                continue;
+            }
+
+            float fallOff = getFallOff(dist, fs, false, nullptr);
+            fallOff *= distToPlane * intensity * matVal;
+
+            if (fallOff == 0.0f) continue;
+
+            verts[ind] -= anx * fallOff;
+            verts[ind + 1] -= any * fallOff;
+            verts[ind + 2] -= anz * fallOff;
+
+            localVerts.push_back(id);
         }
 
-        uint32_t id = iVerts[i];
-        int ind = id * 3;
-
-        float matVal = materials[ind + 2];
-        if (matVal <= 0.0f) continue;
-
-        float vx = verts[ind];
-        float vy = verts[ind + 1];
-        float vz = verts[ind + 2];
-
-        float distToPlane = (vx - ax) * anx + (vy - ay) * any + (vz - az) * anz;
-        if (distToPlane * comp > 0.0f) {
-            continue;
+        #pragma omp critical
+        {
+            for (uint32_t id : localVerts) {
+                iVerts[writeIdx++] = id;
+            }
         }
-
-        float xn = alphaRatioY * (alphaLookAt[0] * vx + alphaLookAt[4] * vy + alphaLookAt[8] * vz + alphaLookAt[12]) * invAlphaSideX;
-        float yn = alphaRatioX * (alphaLookAt[1] * vx + alphaLookAt[5] * vy + alphaLookAt[9] * vz + alphaLookAt[13]) * invAlphaSideY;
-
-        float dist = std::max(std::abs(xn), std::abs(yn));
-        if (dist >= 1.0f) {
-            continue;
-        }
-
-        float fallOff = getFallOff(dist, fs, false, nullptr);
-        fallOff *= distToPlane * intensity * matVal;
-
-        if (fallOff == 0.0f) continue;
-
-        verts[ind] -= anx * fallOff;
-        verts[ind + 1] -= any * fallOff;
-        verts[ind + 2] -= anz * fallOff;
-
-        int slot = atomicWriteIdx.fetch_add(1, std::memory_order_relaxed);
-        iVerts[slot] = id;
     }
-    return atomicWriteIdx.load(std::memory_order_relaxed);
+    return writeIdx;
 }
 
 int strokeBrush(
@@ -1941,6 +1952,8 @@ int strokeBrush(
     float angleRad = stampAngle * (3.1415926535f / 180.0f);
     float cosA = std::cos(angleRad);
     float sinA = std::sin(angleRad);
+    float invRadiusX = 1.0f / (alphaXSym ? -radius : radius);
+    float invRadiusY = 1.0f / radius;
     int writeIdx = 0;
 
     #pragma omp parallel if(nbIVerts > 500)
@@ -1970,8 +1983,8 @@ int strokeBrush(
             }
 
             // Project onto brush local coordinates (xn_proj, yn_proj)
-            float xn_proj = (alphaLookAt[0] * vx + alphaLookAt[4] * vy + alphaLookAt[8] * vz + alphaLookAt[12]) / (alphaXSym ? -radius : radius);
-            float yn_proj = (alphaLookAt[1] * vx + alphaLookAt[5] * vy + alphaLookAt[9] * vz + alphaLookAt[13]) / radius;
+            float xn_proj = (alphaLookAt[0] * vx + alphaLookAt[4] * vy + alphaLookAt[8] * vz + alphaLookAt[12]) * invRadiusX;
+            float yn_proj = (alphaLookAt[1] * vx + alphaLookAt[5] * vy + alphaLookAt[9] * vz + alphaLookAt[13]) * invRadiusY;
 
             // Pre-rotate coordinates by stampAngle
             float xn = xn_proj * cosA - yn_proj * sinA;

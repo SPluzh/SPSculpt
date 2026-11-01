@@ -108,7 +108,7 @@ inline void queryPickVerticesInSphere(const Mesh& mesh, const glm::vec3& center,
 #if BENCH_USE_BVH
     mesh.bvh.pickVerticesInSphere(mesh, center, r2, outVerts);
 #else
-    outVerts = const_cast<Mesh&>(mesh).octree.pickVerticesInSphere(center.x, center.y, center.z, r2, mesh.vertVisible.data());
+    const_cast<Mesh&>(mesh).octree.pickVerticesInSphere(center.x, center.y, center.z, r2, mesh.vertVisible.data(), outVerts);
 #endif
 }
 

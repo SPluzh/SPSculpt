@@ -521,6 +521,7 @@ int SculptManager::doStrokePass(
     }
 
     int deformedCount = 0;
+    bool alphaXSym = isSymmetry && ((sScale.x * sScale.y * sScale.z) < 0.0f);
 
     switch (activeBrush) {
         case BRUSH_FLATTEN: {
@@ -960,7 +961,7 @@ int SculptManager::doStrokePass(
             glm::vec3 areaNormal = cachedAreaNormal;
             glm::vec3 areaCenter = cachedAreaCenter;
 
-            if (!m_firstStrokeFrame && (!getCurrentSettings().flattenLockNormal || !getCurrentSettings().flattenLockOrigin)) {
+            if (!isSymmetry && !m_firstStrokeFrame && (!getCurrentSettings().flattenLockNormal || !getCurrentSettings().flattenLockOrigin)) {
                 bool moved = glm::distance(currentIntersection, m_prevClayIntersection) > localRadius * 0.15f;
                 bool intervalElapsed = (m_strokeFrameCounter - m_clayAreaNormalFrame) >= 3;
                 if (moved || intervalElapsed) {
@@ -995,14 +996,14 @@ int SculptManager::doStrokePass(
             glm::vec3 strokeDir(0.0f);
             bool hasStrokeDir = false;
 
-            glm::vec3 passAlphaOrigin = isSymmetry ? (m_alphaOrigin * sScale) : m_alphaOrigin;
+            glm::vec3 passAlphaOrigin = isSymmetry ? reflectPointSymmetry(m_alphaOrigin, sScale, mesh, m_symmetryMode) : m_alphaOrigin;
 
             if (m_firstStrokeFrame || !m_hasAlphaOrigin) {
                 // Fallback to screen-space alignment
                 const glm::mat4& invMeshMatrix = m_cachedInvMatrix;
                 const glm::mat4& camWorld = m_cachedCamWorldMatrix;
                 glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
-                if (isSymmetry) camRightLocal = camRightLocal * sScale;
+                if (isSymmetry) camRightLocal = reflectVectorSymmetry(camRightLocal, sScale, mesh, m_symmetryMode);
                 strokeDir = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
             } else {
                 glm::vec3 movement = currentIntersection - passAlphaOrigin;
@@ -1021,7 +1022,7 @@ int SculptManager::doStrokePass(
                     const glm::mat4& invMeshMatrix = m_cachedInvMatrix;
                     const glm::mat4& camWorld = m_cachedCamWorldMatrix;
                     glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
-                    if (isSymmetry) camRightLocal = camRightLocal * sScale;
+                    if (isSymmetry) camRightLocal = reflectVectorSymmetry(camRightLocal, sScale, mesh, m_symmetryMode);
                     strokeDir = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
                 }
             }
@@ -1045,7 +1046,7 @@ int SculptManager::doStrokePass(
                 negative,
                 getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
                 1.0f, 1.0f, localRadius * 0.70710678f,
-                alphaLookAt, false
+                alphaLookAt, alphaXSym
             );
             break;
         }
@@ -1138,7 +1139,7 @@ int SculptManager::doStrokePass(
                 negative,
                 getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
                 1.0f, 1.0f, localRadius * 0.70710678f,
-                alphaLookAt, false
+                alphaLookAt, alphaXSym
             );
             break;
         }
@@ -1240,7 +1241,7 @@ int SculptManager::doStrokePass(
                 getCurrentSettings().stampInnerRatio,
                 finalAngle,
                 getCurrentSettings().stampBlur,
-                alphaLookAt, false
+                alphaLookAt, alphaXSym
             );
             break;
         }
@@ -1877,8 +1878,9 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             if (getSettings(activeBrush).topoCheck) {
                 pickedVertices = pickVerticesInSphereTopological(mesh, m_currentIntersection, radius2, intersectFaceId);
             } else {
-                pickedVertices = mesh->octree.pickVerticesInSphere(
-                    m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z, radius2, mesh->vertVisible.data()
+                mesh->octree.pickVerticesInSphere(
+                    m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z, radius2, mesh->vertVisible.data(),
+                    pickedVertices
                 );
             }
             if (getSettings(activeBrush).culling) {
@@ -1897,8 +1899,9 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         if (getSettings(activeBrush).topoCheck) {
             pickedVertices = pickVerticesInSphereTopological(mesh, m_currentIntersection, radius2, intersectFaceId);
         } else {
-            pickedVertices = mesh->octree.pickVerticesInSphere(
-                m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z, radius2, mesh->vertVisible.data()
+            mesh->octree.pickVerticesInSphere(
+                m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z, radius2, mesh->vertVisible.data(),
+                pickedVertices
             );
         }
     }
@@ -2090,9 +2093,10 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 } else {
                     symCenter = reflectPointSymmetry(m_currentIntersection, sScale, mesh, m_symmetryMode);
 
-                    symVerts = mesh->octree.pickVerticesInSphere(
+                    mesh->octree.pickVerticesInSphere(
                         symCenter.x, symCenter.y, symCenter.z,
-                        radius2, mesh->vertVisible.data()
+                        radius2, mesh->vertVisible.data(),
+                        symVerts
                     );
 
                     if (getSettings(activeBrush).culling && !symVerts.empty()) {

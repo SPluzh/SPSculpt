@@ -99,6 +99,11 @@ public:
         maxFaces = other.maxFaces;
         cellPool = std::move(other.cellPool);
         poolIndex = other.poolIndex; other.poolIndex = 0;
+        m_visitedFlags = std::move(other.m_visitedFlags);
+        m_visitedEpoch = other.m_visitedEpoch; other.m_visitedEpoch = 0;
+        m_tempFaces = std::move(other.m_tempFaces);
+        m_tempVerts = std::move(other.m_tempVerts);
+        m_threadPicked = std::move(other.m_threadPicked);
     }
 
     Octree& operator=(Octree&& other) noexcept {
@@ -116,6 +121,11 @@ public:
             maxFaces = other.maxFaces;
             cellPool = std::move(other.cellPool);
             poolIndex = other.poolIndex; other.poolIndex = 0;
+            m_visitedFlags = std::move(other.m_visitedFlags);
+            m_visitedEpoch = other.m_visitedEpoch; other.m_visitedEpoch = 0;
+            m_tempFaces = std::move(other.m_tempFaces);
+            m_tempVerts = std::move(other.m_tempVerts);
+            m_threadPicked = std::move(other.m_threadPicked);
         }
         return *this;
     }
@@ -129,6 +139,11 @@ public:
         root = nullptr;
         faceLeaf.clear();
         facePosInLeaf.clear();
+        m_visitedFlags.clear();
+        m_visitedEpoch = 0;
+        m_tempFaces.clear();
+        m_tempVerts.clear();
+        m_threadPicked.clear();
     }
 
     ~Octree() {
@@ -144,6 +159,10 @@ public:
     std::vector<uint32_t> pickVerticesInSphere(
         float cx, float cy, float cz, float radius2, const uint8_t* vertVisible);
 
+    void pickVerticesInSphere(
+        float cx, float cy, float cz, float radius2, const uint8_t* vertVisible,
+        std::vector<uint32_t>& pickedVertices);
+
     std::vector<uint32_t> collectIntersectRay(
         float vx, float vy, float vz, float rx, float ry, float rz);
 
@@ -158,9 +177,13 @@ public:
 private:
     std::vector<uint32_t> m_visitedFlags;
     uint32_t m_visitedEpoch = 0;
+    std::vector<uint32_t> m_tempFaces;
+    std::vector<uint32_t> m_tempVerts;
+    std::vector<std::vector<uint32_t>> m_threadPicked;
 
     void constructChildren(OctreeCell* cell);
     void constructLeaf(OctreeCell* cell);
+    void collectIntersectSphere(float vx, float vy, float vz, float radiusSquared, std::vector<uint32_t>& iFacesInCells);
     std::vector<uint32_t> collectIntersectSphere(float vx, float vy, float vz, float radiusSquared);
     void pruneIfPossible(OctreeCell* cell, std::unordered_set<OctreeCell*>& deletedCells);
     void balanceOctree(std::vector<OctreeCell*>& leavesToUpdate);

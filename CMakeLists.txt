@@ -199,6 +199,11 @@ endif()
 target_link_libraries(SPSculpt PRIVATE imgui ${EGL_LIBRARY} ${GLES_LIBRARY} glm::glm nlohmann_json::nlohmann_json ufbx manifold Clipper2 CDT)
 target_compile_options(SPSculpt PRIVATE -O3)
 
+find_package(OpenMP)
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(SPSculpt PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
 if(MINGW)
     target_link_options(SPSculpt PRIVATE -static-libgcc -static-libstdc++)
 endif()

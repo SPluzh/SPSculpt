@@ -3,6 +3,7 @@
 #include <cstring>
 #include <chrono>
 #include <iostream>
+#include <omp.h>
 
 OctreeCell* Octree::getCell() {
     if (poolIndex < (int)cellPool.size()) {
@@ -246,9 +247,13 @@ void Octree::constructLeaf(OctreeCell* cell) {
     cell->expandsAabbLoose(bxmin, bymin, bzmin, bxmax, bymax, bzmax);
 }
 
-std::vector<uint32_t> Octree::collectIntersectSphere(float vx, float vy, float vz, float radiusSquared) {
-    std::vector<uint32_t> iFacesInCells;
-    if (!root) return iFacesInCells;
+void Octree::collectIntersectSphere(float vx, float vy, float vz, float radiusSquared, std::vector<uint32_t>& iFacesInCells) {
+    iFacesInCells.clear();
+    if (!root) return;
+
+    if (iFacesInCells.capacity() < 4096) {
+        iFacesInCells.reserve(16384);
+    }
 
     OctreeCell* stack[256];
     int stackPtr = 0;
@@ -259,19 +264,21 @@ std::vector<uint32_t> Octree::collectIntersectSphere(float vx, float vy, float v
 
         float* loose = cell->aabbLoose;
         float dx = 0.0f;
-        float dy = 0.0f;
-        float dz = 0.0f;
-
         if (loose[0] > vx) dx = loose[0] - vx;
         else if (loose[3] < vx) dx = loose[3] - vx;
+        float dx2 = dx * dx;
+        if (dx2 > radiusSquared) continue;
 
+        float dy = 0.0f;
         if (loose[1] > vy) dy = loose[1] - vy;
         else if (loose[4] < vy) dy = loose[4] - vy;
+        float dy2 = dy * dy;
+        if (dx2 + dy2 > radiusSquared) continue;
 
+        float dz = 0.0f;
         if (loose[2] > vz) dz = loose[2] - vz;
         else if (loose[5] < vz) dz = loose[5] - vz;
-
-        if ((dx * dx + dy * dy + dz * dz) > radiusSquared)
+        if (dx2 + dy2 + dz * dz > radiusSquared)
             continue;
 
         if (cell->children[0] != nullptr) {
@@ -284,16 +291,22 @@ std::vector<uint32_t> Octree::collectIntersectSphere(float vx, float vy, float v
             iFacesInCells.insert(iFacesInCells.end(), cell->iFaces.begin(), cell->iFaces.end());
         }
     }
+}
+
+std::vector<uint32_t> Octree::collectIntersectSphere(float vx, float vy, float vz, float radiusSquared) {
+    std::vector<uint32_t> iFacesInCells;
+    collectIntersectSphere(vx, vy, vz, radiusSquared, iFacesInCells);
     return iFacesInCells;
 }
 
-std::vector<uint32_t> Octree::pickVerticesInSphere(
-    float cx, float cy, float cz, float radius2, const uint8_t* vertVisible) {
+void Octree::pickVerticesInSphere(
+    float cx, float cy, float cz, float radius2, const uint8_t* vertVisible,
+    std::vector<uint32_t>& pickedVertices) {
     
-    std::vector<uint32_t> pickedVertices;
-    if (!root) return pickedVertices;
+    pickedVertices.clear();
+    if (!root) return;
 
-    std::vector<uint32_t> iFacesInCells = collectIntersectSphere(cx, cy, cz, radius2);
+    collectIntersectSphere(cx, cy, cz, radius2, m_tempFaces);
 
     if (m_visitedFlags.size() < (size_t)nbVerts) {
         m_visitedFlags.assign(nbVerts, 0);
@@ -304,34 +317,120 @@ std::vector<uint32_t> Octree::pickVerticesInSphere(
         m_visitedEpoch = 1;
     }
 
-    std::vector<uint32_t> iVerts;
+    m_tempVerts.clear();
+    if (m_tempVerts.capacity() < m_tempFaces.size()) {
+        m_tempVerts.reserve(m_tempFaces.size());
+    }
 
-    for (uint32_t iFace : iFacesInCells) {
-        if (iFace >= (uint32_t)nbFaces) continue;
-        uint32_t ind = iFace * 4;
-        for (int k = 0; k < 4; ++k) {
-            uint32_t iVer = facesData[ind + k];
-            if (iVer == 4294967295) continue;
-            if (iVer < (uint32_t)nbVerts && m_visitedFlags[iVer] != m_visitedEpoch) {
-                m_visitedFlags[iVer] = m_visitedEpoch;
-                iVerts.push_back(iVer);
+    const uint32_t curEpoch = m_visitedEpoch;
+    uint32_t* const vFlags = m_visitedFlags.data();
+    const uint32_t limitVerts = (uint32_t)nbVerts;
+    const uint32_t limitFaces = (uint32_t)nbFaces;
+
+    for (uint32_t iFace : m_tempFaces) {
+        if (iFace >= limitFaces) continue;
+        const uint32_t* fv = facesData + (iFace << 2);
+        uint32_t v0 = fv[0];
+        uint32_t v1 = fv[1];
+        uint32_t v2 = fv[2];
+        uint32_t v3 = fv[3];
+
+        if (v0 < limitVerts && vFlags[v0] != curEpoch) {
+            vFlags[v0] = curEpoch;
+            m_tempVerts.push_back(v0);
+        }
+        if (v1 < limitVerts && vFlags[v1] != curEpoch) {
+            vFlags[v1] = curEpoch;
+            m_tempVerts.push_back(v1);
+        }
+        if (v2 < limitVerts && vFlags[v2] != curEpoch) {
+            vFlags[v2] = curEpoch;
+            m_tempVerts.push_back(v2);
+        }
+        if (v3 < limitVerts && vFlags[v3] != curEpoch) {
+            vFlags[v3] = curEpoch;
+            m_tempVerts.push_back(v3);
+        }
+    }
+
+    const size_t totalCandidates = m_tempVerts.size();
+    if (totalCandidates == 0) return;
+
+    if (totalCandidates < 2048) {
+        pickedVertices.reserve(totalCandidates);
+        for (size_t i = 0; i < totalCandidates; ++i) {
+            uint32_t ind = m_tempVerts[i];
+            if (vertVisible && vertVisible[ind] == 0) {
+                continue;
+            }
+            uint32_t j = ind * 3;
+            float dx = cx - vertsData[j];
+            float dx2 = dx * dx;
+            if (dx2 >= radius2) continue;
+            float dy = cy - vertsData[j + 1];
+            float dy2 = dy * dy;
+            if (dx2 + dy2 >= radius2) continue;
+            float dz = cz - vertsData[j + 2];
+            if (dx2 + dy2 + dz * dz < radius2) {
+                pickedVertices.push_back(ind);
+            }
+        }
+    } else {
+        int maxThreads = omp_get_max_threads();
+        if ((int)m_threadPicked.size() < maxThreads) {
+            m_threadPicked.resize(maxThreads);
+        }
+
+        #pragma omp parallel
+        {
+            int tid = omp_get_thread_num();
+            auto& localPicked = m_threadPicked[tid];
+            localPicked.clear();
+            if (localPicked.capacity() < (totalCandidates / maxThreads + 64)) {
+                localPicked.reserve(totalCandidates / maxThreads + 64);
+            }
+
+            #pragma omp for schedule(static)
+            for (int64_t i = 0; i < (int64_t)totalCandidates; ++i) {
+                uint32_t ind = m_tempVerts[i];
+                if (vertVisible && vertVisible[ind] == 0) {
+                    continue;
+                }
+                uint32_t j = ind * 3;
+                float dx = cx - vertsData[j];
+                float dx2 = dx * dx;
+                if (dx2 >= radius2) continue;
+                float dy = cy - vertsData[j + 1];
+                float dy2 = dy * dy;
+                if (dx2 + dy2 >= radius2) continue;
+                float dz = cz - vertsData[j + 2];
+                if (dx2 + dy2 + dz * dz < radius2) {
+                    localPicked.push_back(ind);
+                }
+            }
+        }
+
+        size_t totalFound = 0;
+        for (int t = 0; t < maxThreads; ++t) {
+            totalFound += m_threadPicked[t].size();
+        }
+        pickedVertices.resize(totalFound);
+        size_t offset = 0;
+        for (int t = 0; t < maxThreads; ++t) {
+            size_t count = m_threadPicked[t].size();
+            if (count > 0) {
+                std::memcpy(pickedVertices.data() + offset, m_threadPicked[t].data(), count * sizeof(uint32_t));
+                offset += count;
             }
         }
     }
+}
 
-    for (uint32_t ind : iVerts) {
-        if (vertVisible && vertVisible[ind] == 0) {
-            continue;
-        }
-        uint32_t j = ind * 3;
-        float dx = cx - vertsData[j];
-        float dy = cy - vertsData[j + 1];
-        float dz = cz - vertsData[j + 2];
-        if ((dx * dx + dy * dy + dz * dz) < radius2) {
-            pickedVertices.push_back(ind);
-        }
-    }
-
+std::vector<uint32_t> Octree::pickVerticesInSphere(
+    float cx, float cy, float cz, float radius2, const uint8_t* vertVisible) {
+    
+    std::vector<uint32_t> pickedVertices;
+    pickVerticesInSphere(cx, cy, cz, radius2, vertVisible, pickedVertices);
     return pickedVertices;
 }
 
