@@ -251,6 +251,7 @@ public:
     void processFrame(Scene& scene);
     void executeStroke(Scene& scene, Mesh* mesh, Camera& camera, float mouseX, float mouseY, float currentPressure);
     void cancelStroke();
+    void warmupMeshCaches(const Mesh* mesh);
 
     bool saveSettings(IniFile& ini);
     bool loadSettings(const IniFile& ini);

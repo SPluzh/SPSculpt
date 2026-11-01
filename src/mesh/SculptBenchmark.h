@@ -349,6 +349,9 @@ inline bool run(int targetFaces = 4000000) {
     settings.accumulate = false;
     settings.culling = false;
 
+    // Pre-warm tag buffers and Undo stamps for the active mesh (Recommendation 1)
+    sculpt.warmupMeshCaches(meshPtr.get());
+
     // Stroke trajectory across screen center (960, 540) to (1060, 540)
     const int NUM_STROKE_STEPS = 10;
     float startX = 960.0f;

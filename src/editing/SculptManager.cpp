@@ -1365,6 +1365,23 @@ void SculptManager::cancelStroke() {
     }
 }
 
+void SculptManager::warmupMeshCaches(const Mesh* mesh) {
+    if (!mesh) return;
+    if (m_vertTagFlags.size() < (size_t)mesh->nbVerts) {
+        m_vertTagFlags.assign(mesh->nbVerts, 0);
+    }
+    if (m_tagFlags.size() < (size_t)mesh->nbFaces) {
+        m_tagFlags.assign(mesh->nbFaces, 0);
+    }
+    if (m_iFacesCache.size() < (size_t)mesh->nbFaces) {
+        m_iFacesCache.resize(mesh->nbFaces);
+    }
+    if (m_allAffectedVertsCache.size() < (size_t)mesh->nbVerts) {
+        m_allAffectedVertsCache.resize(mesh->nbVerts);
+    }
+    g_undoManager.warmupForMesh(mesh->m_id, mesh->nbVerts);
+}
+
 void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, float mouseX, float mouseY, float currentPressure) {
     m_lastFrameProfile.reset();
     
@@ -4669,6 +4686,7 @@ void SculptManager::processFrame(Scene& scene) {
         m_lastActiveMesh = activeMeshSelected;
         if (m_lastActiveMesh != nullptr) {
             loadSymmetryFromMesh(m_lastActiveMesh);
+            warmupMeshCaches(m_lastActiveMesh);
             if (m_tubeTool && !m_tubeTool->isInteracting()) {
                 if (m_lastActiveMesh->isTube && m_lastActiveMesh->tubeData != nullptr) {
                     m_tubeTool->loadFromMesh(m_lastActiveMesh);

@@ -84,6 +84,23 @@ void UndoManager::recordAffectedVertices(Scene& scene,
         delta.activeLayerIdx = activeLayerIdx;
     }
 
+    size_t count = affectedVerts.size();
+    if (delta.indices.capacity() < delta.indices.size() + count) {
+        delta.indices.reserve(delta.indices.size() + count);
+    }
+    if (delta.prevVerts.capacity() < delta.prevVerts.size() + count * 3) {
+        delta.prevVerts.reserve(delta.prevVerts.size() + count * 3);
+    }
+    if (activeLayer && delta.prevLayerDeltas.capacity() < delta.prevLayerDeltas.size() + count * 3) {
+        delta.prevLayerDeltas.reserve(delta.prevLayerDeltas.size() + count * 3);
+    }
+    if (affectsColors && !mesh->colors.empty() && delta.prevColors.capacity() < delta.prevColors.size() + count * 3) {
+        delta.prevColors.reserve(delta.prevColors.size() + count * 3);
+    }
+    if (affectsMaterials && !mesh->materials.empty() && delta.prevMaterials.capacity() < delta.prevMaterials.size() + count * 3) {
+        delta.prevMaterials.reserve(delta.prevMaterials.size() + count * 3);
+    }
+
     for (uint32_t v : affectedVerts) {
         if (v >= (uint32_t)mesh->nbVerts) continue;
         if (stamps[v] != currentStamp) {
@@ -117,6 +134,19 @@ void UndoManager::recordAffectedVertices(Scene& scene,
                 delta.prevMaterials.push_back(mesh->materials[v * 3 + 2]);
             }
         }
+    }
+}
+
+void UndoManager::warmupForMesh(uint32_t meshId, int nbVerts) {
+    if (nbVerts <= 0) return;
+    auto& stamps = s_recordedStamps[meshId];
+    if (stamps.size() < static_cast<size_t>(nbVerts)) {
+        auto tAlloc0 = std::chrono::high_resolution_clock::now();
+        stamps.resize(nbVerts, 0);
+        auto tAlloc1 = std::chrono::high_resolution_clock::now();
+        double allocMs = std::chrono::duration<double, std::milli>(tAlloc1 - tAlloc0).count();
+        sculpt_log("[Undo Diagnostics] warmupForMesh(%d) pre-allocated %.2f MB in %.2f ms\n",
+                   nbVerts, (nbVerts * sizeof(uint32_t)) / (1024.0 * 1024.0), allocMs);
     }
 }
 
