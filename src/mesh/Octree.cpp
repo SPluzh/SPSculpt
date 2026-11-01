@@ -520,8 +520,8 @@ void Octree::collectIntersectSphere(float vx, float vy, float vz, float radiusSq
     iFacesInCells.clear();
     if (!root) return;
 
-    if (iFacesInCells.capacity() < 65536) {
-        iFacesInCells.reserve(131072);
+    if (iFacesInCells.capacity() < 262144) {
+        iFacesInCells.reserve(524288);
     }
 
     OctreeCell* stack[256];

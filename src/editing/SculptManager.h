@@ -599,6 +599,8 @@ private:
     uint32_t m_tagEpoch = 0;
     std::vector<uint32_t> m_vertTagFlags;
     uint32_t m_vertTagEpoch = 0;
+    std::vector<uint32_t> m_topoVisitedFlags;
+    uint32_t m_topoVisitedEpoch = 0;
     uint32_t m_affectedMinV = 0;
     uint32_t m_affectedMaxV = 0;
     std::vector<uint32_t> m_iFacesCache;

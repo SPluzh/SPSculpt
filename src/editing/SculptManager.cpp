@@ -178,68 +178,73 @@ static float safe_stof(const std::string& str, float defaultVal = 0.0f) {
     }
 }
 
-static std::vector<uint32_t> pickVerticesInSphereTopological(
-    Mesh* mesh, const glm::vec3& center, float radius2, uint32_t startFaceId
+static void pickVerticesInSphereTopological(
+    Mesh* mesh, const glm::vec3& center, float radius2, uint32_t startFaceId,
+    std::vector<uint32_t>& topoVisitedFlags, uint32_t& topoVisitedEpoch,
+    std::vector<uint32_t>& picked
 ) {
-    std::vector<uint32_t> picked;
-    if (!mesh || startFaceId == 0xffffffff || startFaceId >= (uint32_t)mesh->nbFaces) return picked;
+    picked.clear();
+    if (!mesh || startFaceId == 0xffffffff || startFaceId >= (uint32_t)mesh->nbFaces) return;
 
-    uint32_t nbVerts = mesh->nbVerts;
-    std::vector<uint8_t> visited(nbVerts, 0);
-    std::vector<uint32_t> queue;
-    queue.reserve(1024);
+    uint32_t nbVerts = (uint32_t)mesh->nbVerts;
+    if (topoVisitedFlags.size() < (size_t)nbVerts) {
+        topoVisitedFlags.assign(nbVerts, 0);
+    }
+    topoVisitedEpoch++;
+    if (topoVisitedEpoch == 0) {
+        std::fill(topoVisitedFlags.begin(), topoVisitedFlags.end(), 0);
+        topoVisitedEpoch = 1;
+    }
+    uint32_t curEpoch = topoVisitedEpoch;
+    uint32_t* visited = topoVisitedFlags.data();
 
-    uint32_t fv[4] = {
-        mesh->faces[startFaceId * 4],
-        mesh->faces[startFaceId * 4 + 1],
-        mesh->faces[startFaceId * 4 + 2],
-        mesh->faces[startFaceId * 4 + 3]
-    };
+    const float* verts = mesh->verts.data();
+    const uint8_t* vertVisible = mesh->vertVisible.data();
+    const uint32_t* vrvStartCount = mesh->vrvStartCount.data();
+    const uint32_t* vertRingVert = mesh->vertRingVert.data();
 
+    if (picked.capacity() < 65536) {
+        picked.reserve(131072);
+    }
+
+    const uint32_t* fv = mesh->faces.data() + (startFaceId << 2);
     for (int i = 0; i < 4; ++i) {
         uint32_t vid = fv[i];
-        if (vid == 0xffffffff) continue;
-        if (!mesh->vertVisible[vid]) continue;
+        if (vid == 0xffffffff || vid >= nbVerts) continue;
+        if (vertVisible && !vertVisible[vid]) continue;
 
-        float vx = mesh->verts[vid * 3];
-        float vy = mesh->verts[vid * 3 + 1];
-        float vz = mesh->verts[vid * 3 + 2];
-        float dx = vx - center.x;
-        float dy = vy - center.y;
-        float dz = vz - center.z;
-        if (dx*dx + dy*dy + dz*dz <= radius2) {
-            queue.push_back(vid);
-            visited[vid] = 1;
+        uint32_t vid3 = vid * 3;
+        float dx = verts[vid3] - center.x;
+        float dy = verts[vid3 + 1] - center.y;
+        float dz = verts[vid3 + 2] - center.z;
+        if (dx * dx + dy * dy + dz * dz <= radius2) {
+            picked.push_back(vid);
+            visited[vid] = curEpoch;
         }
     }
 
     size_t head = 0;
-    while (head < queue.size()) {
-        uint32_t u = queue[head++];
-        picked.push_back(u);
+    while (head < picked.size()) {
+        uint32_t u = picked[head++];
 
-        uint32_t start = mesh->vrvStartCount[u * 2];
-        uint32_t count = mesh->vrvStartCount[u * 2 + 1];
+        uint32_t start = vrvStartCount[u * 2];
+        uint32_t count = vrvStartCount[u * 2 + 1];
         for (uint32_t j = 0; j < count; ++j) {
-            uint32_t v = mesh->vertRingVert[start + j];
-            if (visited[v]) continue;
-            visited[v] = 1;
+            uint32_t v = vertRingVert[start + j];
+            if (v >= nbVerts || visited[v] == curEpoch) continue;
+            visited[v] = curEpoch;
 
-            if (!mesh->vertVisible[v]) continue;
+            if (vertVisible && !vertVisible[v]) continue;
 
-            float vx = mesh->verts[v * 3];
-            float vy = mesh->verts[v * 3 + 1];
-            float vz = mesh->verts[v * 3 + 2];
-            float dx = vx - center.x;
-            float dy = vy - center.y;
-            float dz = vz - center.z;
-            if (dx*dx + dy*dy + dz*dz <= radius2) {
-                queue.push_back(v);
+            uint32_t v3 = v * 3;
+            float dx = verts[v3] - center.x;
+            float dy = verts[v3 + 1] - center.y;
+            float dz = verts[v3 + 2] - center.z;
+            if (dx * dx + dy * dy + dz * dz <= radius2) {
+                picked.push_back(v);
             }
         }
     }
-
-    return picked;
 }
 
 static void filterCullingVertices(
@@ -1899,7 +1904,8 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     if (isSnakeBrush) {
         if (m_firstStrokeFrame) {
             if (getSettings(activeBrush).topoCheck) {
-                pickedVertices = pickVerticesInSphereTopological(mesh, m_currentIntersection, radius2, intersectFaceId);
+                pickVerticesInSphereTopological(mesh, m_currentIntersection, radius2, intersectFaceId,
+                                                m_topoVisitedFlags, m_topoVisitedEpoch, pickedVertices);
             } else {
                 mesh->octree.pickVerticesInSphere(
                     m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z, radius2, mesh->vertVisible.data(),
@@ -1920,7 +1926,8 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         pickedVertices = m_grabbedVertices;
     } else {
         if (getSettings(activeBrush).topoCheck) {
-            pickedVertices = pickVerticesInSphereTopological(mesh, m_currentIntersection, radius2, intersectFaceId);
+            pickVerticesInSphereTopological(mesh, m_currentIntersection, radius2, intersectFaceId,
+                                            m_topoVisitedFlags, m_topoVisitedEpoch, pickedVertices);
         } else {
             mesh->octree.pickVerticesInSphere(
                 m_currentIntersection.x, m_currentIntersection.y, m_currentIntersection.z, radius2, mesh->vertVisible.data(),
@@ -1960,33 +1967,41 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 
         if (isGrabBrush) {
             tStage = std::chrono::high_resolution_clock::now();
-            const float* vertProxyData = mesh->vertProxy.data();
-            float* vertsData = mesh->verts.data();
-            if (!m_firstStrokeFrame && !m_grabbedAffectedVerts.empty()) {
-                const uint32_t* affVerts = m_grabbedAffectedVerts.data();
-                int nbAff = (int)m_grabbedAffectedVerts.size();
-                #pragma omp parallel for schedule(static) if(nbAff > 1000)
-                for (int i = 0; i < nbAff; ++i) {
-                    uint32_t v = affVerts[i];
-                    uint32_t idx = v * 3;
-                    vertsData[idx]     = vertProxyData[idx];
-                    vertsData[idx + 1] = vertProxyData[idx + 1];
-                    vertsData[idx + 2] = vertProxyData[idx + 2];
-                }
-            } else {
-                for (uint32_t v : pickedVertices) {
-                    uint32_t idx = v * 3;
-                    vertsData[idx]     = vertProxyData[idx];
-                    vertsData[idx + 1] = vertProxyData[idx + 1];
-                    vertsData[idx + 2] = vertProxyData[idx + 2];
-                }
-                if (m_useSym) {
-                    for (const auto& symVertsList : m_grabbedVerticesSyms) {
-                        for (uint32_t v : symVertsList) {
-                            uint32_t idx = v * 3;
-                            vertsData[idx]     = vertProxyData[idx];
-                            vertsData[idx + 1] = vertProxyData[idx + 1];
-                            vertsData[idx + 2] = vertProxyData[idx + 2];
+            if (!m_firstStrokeFrame) {
+                const float* vertProxyData = mesh->vertProxy.data();
+                float* vertsData = mesh->verts.data();
+                if (!m_grabbedAffectedVerts.empty()) {
+                    const uint32_t* affVerts = m_grabbedAffectedVerts.data();
+                    int nbAff = (int)m_grabbedAffectedVerts.size();
+                    #pragma omp parallel for schedule(static) if(nbAff > 1000)
+                    for (int i = 0; i < nbAff; ++i) {
+                        uint32_t v = affVerts[i];
+                        uint32_t idx = v * 3;
+                        vertsData[idx]     = vertProxyData[idx];
+                        vertsData[idx + 1] = vertProxyData[idx + 1];
+                        vertsData[idx + 2] = vertProxyData[idx + 2];
+                    }
+                } else {
+                    int nbPicked = (int)pickedVertices.size();
+                    #pragma omp parallel for schedule(static) if(nbPicked > 1000)
+                    for (int i = 0; i < nbPicked; ++i) {
+                        uint32_t v = pickedVertices[i];
+                        uint32_t idx = v * 3;
+                        vertsData[idx]     = vertProxyData[idx];
+                        vertsData[idx + 1] = vertProxyData[idx + 1];
+                        vertsData[idx + 2] = vertProxyData[idx + 2];
+                    }
+                    if (m_useSym) {
+                        for (const auto& symVertsList : m_grabbedVerticesSyms) {
+                            int nbSym = (int)symVertsList.size();
+                            #pragma omp parallel for schedule(static) if(nbSym > 1000)
+                            for (int i = 0; i < nbSym; ++i) {
+                                uint32_t v = symVertsList[i];
+                                uint32_t idx = v * 3;
+                                vertsData[idx]     = vertProxyData[idx];
+                                vertsData[idx + 1] = vertProxyData[idx + 1];
+                                vertsData[idx + 2] = vertProxyData[idx + 2];
+                            }
                         }
                     }
                 }
@@ -2289,7 +2304,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             m_lastFrameProfile.vertNormalsMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
 
             // --- Stage 10: Octree Update ---
-            if (isGrabBrush && !m_firstStrokeFrame) {
+            if (isGrabBrush) {
                 m_pendingOctreeUpdate = true;
                 m_lastFrameProfile.octreeUpdateMs = 0.0;
             } else {
