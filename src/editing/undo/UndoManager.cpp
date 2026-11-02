@@ -164,6 +164,14 @@ void UndoManager::recordAffectedVertices(Scene& scene,
             s_threadNewVerts.resize(maxThreads);
         }
 
+        size_t estCap = (count / maxThreads) + 64;
+        #pragma omp parallel for schedule(static)
+        for (int t = 0; t < maxThreads; ++t) {
+            if (s_threadNewVerts[t].size() < estCap) {
+                s_threadNewVerts[t].resize(estCap);
+            }
+        }
+
         uint32_t* stampPtr = stamps.data();
         uint32_t curStamp = currentStamp;
         uint32_t maxLimit = (uint32_t)mesh->nbVerts;
@@ -172,10 +180,8 @@ void UndoManager::recordAffectedVertices(Scene& scene,
         #pragma omp parallel
         {
             int tid = omp_get_thread_num();
-            auto& localList = s_threadNewVerts[tid];
-            localList.clear();
-            size_t estCap = (count / maxThreads) + 64;
-            if (localList.capacity() < estCap) localList.reserve(estCap);
+            uint32_t* thPtr = s_threadNewVerts[tid].data();
+            size_t thCount = 0;
 
             #pragma omp for schedule(static)
             for (int64_t i = 0; i < (int64_t)count; ++i) {
@@ -186,10 +192,11 @@ void UndoManager::recordAffectedVertices(Scene& scene,
                 if (v >= maxLimit) continue;
                 if (stampPtr[v] != curStamp) {
                     if (__atomic_exchange_n(&stampPtr[v], curStamp, __ATOMIC_RELAXED) != curStamp) {
-                        localList.push_back(v);
+                        thPtr[thCount++] = v;
                     }
                 }
             }
+            s_threadNewVerts[tid].resize(thCount);
         }
 
         size_t totalNew = 0;
@@ -205,12 +212,15 @@ void UndoManager::recordAffectedVertices(Scene& scene,
             if (affectsColors && !mesh->colors.empty()) delta.prevColors.resize((baseIdx + totalNew) * 3);
             if (affectsMaterials && !mesh->materials.empty()) delta.prevMaterials.resize((baseIdx + totalNew) * 3);
 
-            size_t curOffset = baseIdx;
+            std::vector<size_t> thOffsets(maxThreads + 1, baseIdx);
+            for (int t = 0; t < maxThreads; ++t) {
+                thOffsets[t + 1] = thOffsets[t] + s_threadNewVerts[t].size();
+            }
+            #pragma omp parallel for schedule(static)
             for (int t = 0; t < maxThreads; ++t) {
                 size_t num = s_threadNewVerts[t].size();
                 if (num > 0) {
-                    std::memcpy(delta.indices.data() + curOffset, s_threadNewVerts[t].data(), num * sizeof(uint32_t));
-                    curOffset += num;
+                    std::memcpy(delta.indices.data() + thOffsets[t], s_threadNewVerts[t].data(), num * sizeof(uint32_t));
                 }
             }
 
@@ -320,43 +330,51 @@ void UndoManager::endSculptStroke(Scene& scene) {
         float* nMats = delta.nextMaterials.data();
         float* nLayers = delta.nextLayerDeltas.data();
 
-        #pragma omp parallel for schedule(static) if(nIndices > 1000)
+        const float* pVerts = delta.prevVerts.data();
+        const float* pCols = delta.prevColors.data();
+        const float* pMats = delta.prevMaterials.data();
+        const float* pLayers = delta.prevLayerDeltas.data();
+        bool deltaChanged = false;
+
+        #pragma omp parallel for schedule(static) reduction(||:deltaChanged) if(nIndices > 1000)
         for (int64_t i = 0; i < (int64_t)nIndices; ++i) {
             uint32_t v = indPtr[i];
             uint32_t v3 = v * 3;
             uint32_t i3 = (uint32_t)(i * 3);
             if (hasPos) {
-                nVerts[i3 + 0] = vertsPtr[v3 + 0];
-                nVerts[i3 + 1] = vertsPtr[v3 + 1];
-                nVerts[i3 + 2] = vertsPtr[v3 + 2];
+                float x = vertsPtr[v3 + 0], y = vertsPtr[v3 + 1], z = vertsPtr[v3 + 2];
+                nVerts[i3 + 0] = x; nVerts[i3 + 1] = y; nVerts[i3 + 2] = z;
+                if (!deltaChanged && (x != pVerts[i3 + 0] || y != pVerts[i3 + 1] || z != pVerts[i3 + 2])) {
+                    deltaChanged = true;
+                }
             }
             if (activeLayer) {
+                float lx = 0.0f, ly = 0.0f, lz = 0.0f;
                 if (v3 + 2 < layerSize) {
-                    nLayers[i3 + 0] = layerPtr[v3 + 0];
-                    nLayers[i3 + 1] = layerPtr[v3 + 1];
-                    nLayers[i3 + 2] = layerPtr[v3 + 2];
-                } else {
-                    nLayers[i3 + 0] = 0.0f;
-                    nLayers[i3 + 1] = 0.0f;
-                    nLayers[i3 + 2] = 0.0f;
+                    lx = layerPtr[v3 + 0]; ly = layerPtr[v3 + 1]; lz = layerPtr[v3 + 2];
+                }
+                nLayers[i3 + 0] = lx; nLayers[i3 + 1] = ly; nLayers[i3 + 2] = lz;
+                if (!deltaChanged && (lx != pLayers[i3 + 0] || ly != pLayers[i3 + 1] || lz != pLayers[i3 + 2])) {
+                    deltaChanged = true;
                 }
             }
             if (hasCol) {
-                nCols[i3 + 0] = colorsPtr[v3 + 0];
-                nCols[i3 + 1] = colorsPtr[v3 + 1];
-                nCols[i3 + 2] = colorsPtr[v3 + 2];
+                float cr = colorsPtr[v3 + 0], cg = colorsPtr[v3 + 1], cb = colorsPtr[v3 + 2];
+                nCols[i3 + 0] = cr; nCols[i3 + 1] = cg; nCols[i3 + 2] = cb;
+                if (!deltaChanged && (cr != pCols[i3 + 0] || cg != pCols[i3 + 1] || cb != pCols[i3 + 2])) {
+                    deltaChanged = true;
+                }
             }
             if (hasMat) {
-                nMats[i3 + 0] = matsPtr[v3 + 0];
-                nMats[i3 + 1] = matsPtr[v3 + 1];
-                nMats[i3 + 2] = matsPtr[v3 + 2];
+                float mr = matsPtr[v3 + 0], mm = matsPtr[v3 + 1], ms = matsPtr[v3 + 2];
+                nMats[i3 + 0] = mr; nMats[i3 + 1] = mm; nMats[i3 + 2] = ms;
+                if (!deltaChanged && (mr != pMats[i3 + 0] || mm != pMats[i3 + 1] || ms != pMats[i3 + 2])) {
+                    deltaChanged = true;
+                }
             }
         }
 
-        if ((delta.hasPositions && delta.prevVerts != delta.nextVerts) ||
-            (delta.hasLayerDeltas && delta.prevLayerDeltas != delta.nextLayerDeltas) ||
-            (delta.hasColors && delta.prevColors != delta.nextColors) ||
-            (delta.hasMaterials && delta.prevMaterials != delta.nextMaterials)) {
+        if (deltaChanged) {
             hasAnyChange = true;
         }
     }
@@ -372,14 +390,12 @@ void UndoManager::endSculptStroke(Scene& scene) {
     }
 
     m_activeMeshDeltaMap.clear();
-    s_recordedStamps.clear();
 }
 
 void UndoManager::cancelSculptStroke() {
     sculpt_log_lvl(LogLevel::Debug, "[Undo] Sculpt stroke canceled\n");
     m_activeSculptEntry.reset();
     m_activeMeshDeltaMap.clear();
-    s_recordedStamps.clear();
 }
 
 void UndoManager::pushSculptOperation(Scene& scene,
@@ -537,7 +553,6 @@ void UndoManager::clear() {
     m_redoStack.clear();
     m_activeSculptEntry.reset();
     m_activeMeshDeltaMap.clear();
-    s_recordedStamps.clear();
 }
 
 void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
