@@ -53,6 +53,16 @@ struct BenchmarkRow {
     int capPatchesSuccess = 0;
     int capPatchesFallback = 0;
     std::string capFallbackReason;
+
+    // Polygon quality & elongation diagnostics (detecting stretched/needle polygons)
+    int totalElongatedFaces = 0;   // Cap faces with aspect ratio > 3.0x
+    int severeElongatedFaces = 0;  // Cap faces with aspect ratio > 6.0x
+    int midElongatedFaces = 0;     // Faces in the middle (interior) of patch with aspect ratio > 2.5x
+    int midSevereElongated = 0;    // Faces in the middle with aspect ratio > 5.0x
+    int midElongQuads = 0;         // Quads in middle with aspect > 2.5x
+    int midElongTris = 0;          // Tris in middle with aspect > 2.5x
+    float maxCapAspect = 1.0f;
+    float maxMidCapAspect = 1.0f;
 };
 
 inline std::string padRight(const std::string& str, size_t totalWidth) {
@@ -121,6 +131,128 @@ inline std::unique_ptr<Mesh> createSphereMesh(int rings, int sectors) {
     mesh->vertVisible.assign(mesh->nbVerts, 1);
     mesh->faceVisible.assign(mesh->nbFaces, 1);
     return mesh;
+}
+
+struct CapElongationStats {
+    int totalCapFaces = 0;
+    int midFaces = 0;
+    int boundaryFaces = 0;
+
+    int totalElongated = 0;       // Aspect > 3.0x
+    int severeElongated = 0;      // Aspect > 6.0x
+    float maxAspect = 1.0f;
+
+    int midElongated = 0;         // Aspect > 2.5x in middle (interior)
+    int midSevere = 0;            // Aspect > 5.0x in middle
+    int midElongQuads = 0;        // Quads in middle with aspect > 2.5x
+    int midElongTris = 0;         // Tris in middle with aspect > 2.5x
+    float maxMidAspect = 1.0f;
+
+    int boundaryElongated = 0;
+    float maxBoundaryAspect = 1.0f;
+};
+
+inline CapElongationStats analyzeCapElongation(const Mesh& mesh, uint32_t capGid) {
+    CapElongationStats stats;
+    if (mesh.nbFaces == 0 || mesh.faceGroups.empty() || capGid == 0) return stats;
+
+    const int nbV = mesh.nbVerts;
+    const int nbF = mesh.nbFaces;
+
+    // 1. Mark vertices that belong to non-cap faces (defining the cut boundary perimeter)
+    std::vector<uint8_t> isBoundaryVert(nbV, 0);
+    for (int f = 0; f < nbF; ++f) {
+        if (f >= (int)mesh.faceGroups.size() || mesh.faceGroups[f] != capGid) {
+            uint32_t v0 = mesh.faces[f * 4 + 0];
+            uint32_t v1 = mesh.faces[f * 4 + 1];
+            uint32_t v2 = mesh.faces[f * 4 + 2];
+            uint32_t v3 = mesh.faces[f * 4 + 3];
+            if (v0 < (uint32_t)nbV) isBoundaryVert[v0] = 1;
+            if (v1 < (uint32_t)nbV) isBoundaryVert[v1] = 1;
+            if (v2 < (uint32_t)nbV) isBoundaryVert[v2] = 1;
+            if (v3 != TRI_INDEX && v3 < (uint32_t)nbV) isBoundaryVert[v3] = 1;
+        }
+    }
+
+    auto getV = [&](uint32_t idx) -> glm::vec3 {
+        return glm::vec3(mesh.verts[idx * 3 + 0], mesh.verts[idx * 3 + 1], mesh.verts[idx * 3 + 2]);
+    };
+
+    // 2. Measure aspect ratio and spatial location of each cap face
+    for (int f = 0; f < nbF; ++f) {
+        if (f >= (int)mesh.faceGroups.size() || mesh.faceGroups[f] != capGid) continue;
+        stats.totalCapFaces++;
+
+        uint32_t v0 = mesh.faces[f * 4 + 0];
+        uint32_t v1 = mesh.faces[f * 4 + 1];
+        uint32_t v2 = mesh.faces[f * 4 + 2];
+        uint32_t v3 = mesh.faces[f * 4 + 3];
+        if (v0 >= (uint32_t)nbV || v1 >= (uint32_t)nbV || v2 >= (uint32_t)nbV) continue;
+
+        bool touchesBoundary = (isBoundaryVert[v0] || isBoundaryVert[v1] || isBoundaryVert[v2]);
+        if (v3 != TRI_INDEX && v3 < (uint32_t)nbV) {
+            touchesBoundary |= (isBoundaryVert[v3] != 0);
+        }
+
+        bool isMiddle = !touchesBoundary;
+        if (isMiddle) stats.midFaces++;
+        else stats.boundaryFaces++;
+
+        float aspect = 1.0f;
+        glm::vec3 p0 = getV(v0);
+        glm::vec3 p1 = getV(v1);
+        glm::vec3 p2 = getV(v2);
+
+        if (v3 == TRI_INDEX) {
+            // Triangle altitude aspect ratio
+            float l0 = glm::distance(p0, p1);
+            float l1 = glm::distance(p1, p2);
+            float l2 = glm::distance(p2, p0);
+            float lMax = std::max({l0, l1, l2});
+            glm::vec3 crossP = glm::cross(p1 - p0, p2 - p0);
+            float area = 0.5f * glm::length(crossP);
+            float alt = (lMax > 1e-6f) ? (2.0f * area / lMax) : 0.0f;
+            aspect = (alt > 1e-6f) ? (lMax / alt) : 999.0f;
+        } else {
+            // Quad edge & diagonal aspect ratio
+            if (v3 >= (uint32_t)nbV) continue;
+            glm::vec3 p3 = getV(v3);
+            float l0 = glm::distance(p0, p1);
+            float l1 = glm::distance(p1, p2);
+            float l2 = glm::distance(p2, p3);
+            float l3 = glm::distance(p3, p0);
+            float lMin = std::min({l0, l1, l2, l3});
+            float lMax = std::max({l0, l1, l2, l3});
+            float d1 = glm::distance(p0, p2);
+            float d2 = glm::distance(p1, p3);
+            float dMin = std::min(d1, d2);
+            float dMax = std::max(d1, d2);
+
+            float edgeAsp = (lMin > 1e-6f) ? (lMax / lMin) : 999.0f;
+            float diagAsp = (dMin > 1e-6f) ? (dMax / dMin) : 999.0f;
+            aspect = std::max(edgeAsp, diagAsp);
+        }
+
+        stats.maxAspect = std::max(stats.maxAspect, aspect);
+
+        if (isMiddle) {
+            stats.maxMidAspect = std::max(stats.maxMidAspect, aspect);
+            if (aspect > 2.5f) {
+                stats.midElongated++;
+                if (v3 == TRI_INDEX) stats.midElongTris++;
+                else stats.midElongQuads++;
+            }
+            if (aspect > 5.0f) stats.midSevere++;
+        } else {
+            stats.maxBoundaryAspect = std::max(stats.maxBoundaryAspect, aspect);
+            if (aspect > 3.0f) stats.boundaryElongated++;
+        }
+
+        if (aspect > 3.0f) stats.totalElongated++;
+        if (aspect > 6.0f) stats.severeElongated++;
+    }
+
+    return stats;
 }
 
 inline bool run(int targetFaces = 100000) {
@@ -277,10 +409,23 @@ inline bool run(int targetFaces = 100000) {
                 }
             }
 
+            CapElongationStats elongStats;
+            if (curMesh && capGid > 0) {
+                elongStats = analyzeCapElongation(*curMesh, capGid);
+            }
+
             std::cout << "      [Quad Cap Check] Cap Faces: " << totalCapFaces
                       << " (" << capQuads << " quads, " << capTris << " tris -> "
                       << std::fixed << std::setprecision(1) << (quadRatio * 100.0f) << "% quads) | "
                       << (quadCapPassed ? "CLOSED WITH QUAD GRID [OK]" : "NOT CLOSED WITH QUAD GRID [NO QUAD]") << "\n";
+            std::cout << "      [Elongation Check] Mid Faces: " << elongStats.midFaces
+                      << " (Elong >2.5x: " << elongStats.midElongated
+                      << " [" << elongStats.midElongQuads << " quads, " << elongStats.midElongTris << " tris]"
+                      << ", Severe >5x: " << elongStats.midSevere
+                      << ", Max Mid AR: " << std::fixed << std::setprecision(1) << elongStats.maxMidAspect << "x)"
+                      << " | Boundary Faces: " << elongStats.boundaryFaces
+                      << " (Elong >3x: " << elongStats.boundaryElongated
+                      << ", Max Bnd AR: " << std::fixed << std::setprecision(1) << elongStats.maxBoundaryAspect << "x)\n";
             std::cout << "      [Manifold Check] Mesh -> Manifold: Status " << (int)checkM.Status()
                       << " (" << (isManifold ? "VALID 2-MANIFOLD [OK]" : "NOT MANIFOLD [ERROR]") << ") | Open HE: "
                       << openEdges << ", Non-Manifold HE: " << nonManifoldEdges << "\n";
@@ -347,6 +492,14 @@ inline bool run(int targetFaces = 100000) {
             row.capPatchesSuccess = capRes.patchesQuadCapped;
             row.capPatchesFallback = capRes.patchesFellBack;
             row.capFallbackReason = capRes.fallbackReason;
+            row.totalElongatedFaces = elongStats.totalElongated;
+            row.severeElongatedFaces = elongStats.severeElongated;
+            row.midElongatedFaces = elongStats.midElongated;
+            row.midSevereElongated = elongStats.midSevere;
+            row.midElongQuads = elongStats.midElongQuads;
+            row.midElongTris = elongStats.midElongTris;
+            row.maxCapAspect = elongStats.maxAspect;
+            row.maxMidCapAspect = elongStats.maxMidAspect;
             row.passed = modified && (maxUndoDiff == 0.0f) && (maxRedoDiff == 0.0f);
             return row;
         };
@@ -496,10 +649,23 @@ inline bool run(int targetFaces = 100000) {
             float quadRatio2 = totalCap2 > 0 ? (float)capQuads2 / (float)totalCap2 : 0.0f;
             bool quadCapPassed2 = capRes2.success && (capQuads2 > 0) && (quadRatio2 >= 0.50f);
 
+            CapElongationStats elongStats2;
+            if (curMesh && capGid2 > 0) {
+                elongStats2 = analyzeCapElongation(*curMesh, capGid2);
+            }
+
             std::cout << "      [Cut 2/2 Check] Cap Faces: " << totalCap2
                       << " (" << capQuads2 << " quads, " << capTris2 << " tris -> "
                       << std::fixed << std::setprecision(1) << (quadRatio2 * 100.0f) << "% quads) | "
                       << (quadCapPassed2 ? "CLOSED WITH QUAD GRID [OK]" : "NOT CLOSED WITH QUAD GRID [NO QUAD]") << "\n";
+            std::cout << "      [Cut 2/2 Elongation Check] Mid Faces: " << elongStats2.midFaces
+                      << " (Elong >2.5x: " << elongStats2.midElongated
+                      << " [" << elongStats2.midElongQuads << " quads, " << elongStats2.midElongTris << " tris]"
+                      << ", Severe >5x: " << elongStats2.midSevere
+                      << ", Max Mid AR: " << std::fixed << std::setprecision(1) << elongStats2.maxMidAspect << "x)"
+                      << " | Boundary Faces: " << elongStats2.boundaryFaces
+                      << " (Elong >3x: " << elongStats2.boundaryElongated
+                      << ", Max Bnd AR: " << std::fixed << std::setprecision(1) << elongStats2.maxBoundaryAspect << "x)\n";
             std::cout << "      [Cut 2/2 Check] Mesh -> Manifold: Status " << (int)checkM2.Status()
                       << " (" << (isManifold2 ? "VALID 2-MANIFOLD [OK]" : "NOT MANIFOLD [ERROR]") << ") | Open HE: "
                       << openEdges << ", Non-Manifold HE: " << nonManifoldEdges << "\n";
@@ -568,6 +734,14 @@ inline bool run(int targetFaces = 100000) {
             row.capPatchesSuccess = capRes2.patchesQuadCapped;
             row.capPatchesFallback = capRes2.patchesFellBack;
             row.capFallbackReason = capRes2.fallbackReason;
+            row.totalElongatedFaces = elongStats2.totalElongated;
+            row.severeElongatedFaces = elongStats2.severeElongated;
+            row.midElongatedFaces = elongStats2.midElongated;
+            row.midSevereElongated = elongStats2.midSevere;
+            row.midElongQuads = elongStats2.midElongQuads;
+            row.midElongTris = elongStats2.midElongTris;
+            row.maxCapAspect = elongStats2.maxAspect;
+            row.maxMidCapAspect = elongStats2.maxMidAspect;
             row.passed = mod1 && mod2 && isManifold1 && isManifold2 && (maxUndoDiff == 0.0f) && (maxRedoDiff == 0.0f);
             return row;
         };
@@ -886,29 +1060,32 @@ inline bool run(int targetFaces = 100000) {
         // =========================================================================
         // Print Summary Table
         // =========================================================================
-        std::cout << "\n==================================================================================================================================\n";
+        std::cout << "\n===================================================================================================================================================\n";
         std::cout << " SPSculpt Trim Tool & Clip Curve Benchmark Summary @ "
                   << std::fixed << std::setprecision(1) << (targetFaces / 1000000.0) << "M Polygons\n";
-        std::cout << "==================================================================================================================================\n";
-        std::cout << " " << padRight("Tool / Operation", 32) << " | "
+        std::cout << "===================================================================================================================================================\n";
+        std::cout << " " << padRight("Tool / Operation", 31) << " | "
                   << padLeft("Execution", 11) << " | "
                   << padLeft("Undo Time", 10) << " | "
                   << padLeft("Redo Time", 10) << " | "
                   << padLeft("Undo RAM", 10) << " | "
-                  << padLeft("Quad Cap Grid", 20) << " | "
+                  << padLeft("Quad Cap Grid", 22) << " | "
+                  << padLeft("Mid Elong (AR)", 16) << " | "
                   << padLeft("Flying", 8) << " | "
                   << padLeft("Integrity", 11) << " | "
                   << "Status \n";
-        std::cout << "---------------------------------+-------------+------------+------------+------------+----------------------+----------+-------------+--------\n";
+        std::cout << "---------------------------------+-------------+------------+------------+------------+------------------------+------------------+----------+-------------+--------\n";
 
         bool allIntegrityPassed = true;
         bool allQuadCapsPassed = true;
+        bool hasMidElongation = false;
 
         for (const auto& r : rows) {
             std::string flyStr = (r.flyingVerts < 0) ? "    -   " : std::to_string(r.flyingVerts);
             std::string epsStr = (r.maxUndoEps == 0.0f && r.maxRedoEps == 0.0f) ? "0 eps diff" : "MISMATCH";
 
             std::string quadCapStr;
+            std::string midElongStr;
             if (r.isTrim) {
                 if (r.quadCapPassed) {
                     std::ostringstream ss;
@@ -919,8 +1096,18 @@ inline bool run(int targetFaces = 100000) {
                     ss << "NO (" << std::fixed << std::setprecision(1) << (r.capQuadRatio * 100.0f) << "% Q)";
                     quadCapStr = ss.str();
                 }
+
+                std::ostringstream ssElong;
+                if (r.midElongatedFaces == 0) {
+                    ssElong << "0 (" << std::fixed << std::setprecision(1) << r.maxMidCapAspect << "x)";
+                } else {
+                    hasMidElongation = true;
+                    ssElong << r.midElongatedFaces << " (! " << std::fixed << std::setprecision(1) << r.maxMidCapAspect << "x)";
+                }
+                midElongStr = ssElong.str();
             } else {
-                quadCapStr = "         -          ";
+                quadCapStr = "          -           ";
+                midElongStr = "       -        ";
             }
 
             bool integrityPassed = r.passed && (r.flyingVerts <= 0);
@@ -935,24 +1122,25 @@ inline bool run(int targetFaces = 100000) {
                 allIntegrityPassed = false;
             }
 
-            std::cout << " " << padRight(r.toolName, 32) << " | "
+            std::cout << " " << padRight(r.toolName, 31) << " | "
                       << padLeft(formatMs(r.executionMs), 11) << " | "
                       << padLeft(formatMs(r.undoMs), 10) << " | "
                       << padLeft(formatMs(r.redoMs), 10) << " | "
                       << padLeft(formatBytes(r.undoRAMBytes), 10) << " | "
-                      << padLeft(quadCapStr, 20) << " | "
+                      << padLeft(quadCapStr, 22) << " | "
+                      << padLeft(midElongStr, 16) << " | "
                       << padLeft(flyStr, 8) << " | "
                       << padLeft(epsStr, 11) << " | "
                       << statusStr << " \n";
         }
-        std::cout << "----------------------------------------------------------------------------------------------------------------------------------\n";
+        std::cout << "---------------------------------+-------------+------------+------------+------------+------------------------+------------------+----------+-------------+--------\n";
 
         // =========================================================================
         // Print Detailed Quad Cap Diagnostics Breakdown
         // =========================================================================
-        std::cout << "\n==================================================================================================================================\n";
+        std::cout << "\n===================================================================================================================================================\n";
         std::cout << " SPSculpt Quad Cap Verification & Diagnostic Breakdown:\n";
-        std::cout << "==================================================================================================================================\n";
+        std::cout << "===================================================================================================================================================\n";
         for (const auto& r : rows) {
             if (!r.isTrim) continue;
             std::cout << " * " << r.toolName << ":\n";
@@ -960,6 +1148,15 @@ inline bool run(int targetFaces = 100000) {
             std::cout << "   - Cap Face Analysis:  " << (r.capQuads + r.capTris) << " total cap faces ("
                       << r.capQuads << " quads, " << r.capTris << " triangles -> "
                       << std::fixed << std::setprecision(1) << (r.capQuadRatio * 100.0f) << "% quad ratio)\n";
+            std::cout << "   - Elongation (Middle):"
+                      << (r.midElongatedFaces == 0 ? " NONE [CLEAN OK]" : " DETECTED [WARNING]")
+                      << " -> " << r.midElongatedFaces << " elongated faces (>2.5x)"
+                      << " (" << r.midElongQuads << " quads, " << r.midElongTris << " tris)"
+                      << ", " << r.midSevereElongated << " severe (>5.0x), Max Mid AR: "
+                      << std::fixed << std::setprecision(1) << r.maxMidCapAspect << "x\n";
+            std::cout << "   - Elongation (Total): " << r.totalElongatedFaces << " faces (>3.0x), "
+                      << r.severeElongatedFaces << " severe needle (>6.0x), Max Overall AR: "
+                      << std::fixed << std::setprecision(1) << r.maxCapAspect << "x\n";
             std::cout << "   - Patch Components:   " << r.capPatches << " patch(es) detected ("
                       << r.capPatchesSuccess << " quad-capped, " << r.capPatchesFallback << " fell back)\n";
             if (!r.quadCapPassed || !r.capFallbackReason.empty()) {
@@ -968,17 +1165,21 @@ inline bool run(int targetFaces = 100000) {
             }
             std::cout << "\n";
         }
-        std::cout << "==================================================================================================================================\n";
+        std::cout << "===================================================================================================================================================\n";
 
         if (allIntegrityPassed && allQuadCapsPassed) {
             std::cout << " [SUCCESS] All Trim Tool & Clip Curve operations, Undo/Redo & Quad Cap checks PASSED!\n";
+            if (hasMidElongation) {
+                std::cout << " [NOTICE] Elongated polygons were detected in the middle of one or more Quad Cap patch(es).\n";
+                std::cout << "          (Inspect Detailed Diagnostics above for counts and max aspect ratios to guide grid improvements)\n";
+            }
         } else if (allIntegrityPassed && !allQuadCapsPassed) {
             std::cout << " [ATTENTION] Undo/Redo & geometry integrity PASSED, but one or more cuts failed to close with a quad grid!\n";
             std::cout << "             (See Quad Cap Diagnostic Breakdown above for details to guide quad meshing fixes)\n";
         } else {
             std::cout << " [FAILURE] One or more benchmark operations or integrity checks failed!\n";
         }
-        std::cout << "==================================================================================================================================\n\n";
+        std::cout << "===================================================================================================================================================\n\n";
 
         return allIntegrityPassed;
     } catch (const std::exception& e) {
