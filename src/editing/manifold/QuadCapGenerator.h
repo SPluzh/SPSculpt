@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vector>
+#include <string>
 #include <cstdint>
 #include <glm/glm.hpp>
 
@@ -14,6 +15,10 @@ struct QuadCapResult {
     float quadRatio = 0.0f; // numQuads / totalFaces
     double executionTimeMs = 0.0;
     bool success = false;
+    int numPatches = 0;
+    int patchesQuadCapped = 0;
+    int patchesFellBack = 0;
+    std::string fallbackReason;
 };
 
 class QuadCapGenerator {

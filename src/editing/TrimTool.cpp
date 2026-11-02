@@ -220,6 +220,12 @@ bool TrimTool::execute(
 
     // 7. Generate Nomad Sculpt-style regular quad cap with CDT transition belt
     sculpt::QuadCapResult capRes = sculpt::QuadCapGenerator::generateQuadCap(*mesh, newCapGid, targetEdgeLen);
+    if (config.outCapResult) {
+        *config.outCapResult = capRes;
+    }
+    if (config.outCapGid) {
+        *config.outCapGid = newCapGid;
+    }
 
     // 8. Synchronize sculpt layer stack with the new vertex count
     mesh->layerStack.onRemesh(mesh->verts);

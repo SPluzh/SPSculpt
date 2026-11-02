@@ -4,6 +4,8 @@
 #include <glm/glm.hpp>
 #include "common/Enums.h"
 
+#include "editing/manifold/QuadCapGenerator.h"
+
 class Mesh;
 class Camera;
 
@@ -12,6 +14,8 @@ struct TrimConfig {
     bool remeshFilled = true;
     float joinAngleDegree = 45.0f;
     int maxSubdivisions = 3;
+    sculpt::QuadCapResult* outCapResult = nullptr;
+    uint32_t* outCapGid = nullptr;
 };
 
 class TrimTool {

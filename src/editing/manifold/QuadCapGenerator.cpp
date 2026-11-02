@@ -234,6 +234,7 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
     auto tStart = std::chrono::high_resolution_clock::now();
 
     if (mesh.nbFaces == 0 || mesh.faceGroups.empty()) {
+        result.fallbackReason = "Empty mesh or empty faceGroups";
         return result;
     }
 
@@ -252,6 +253,7 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
 
     if (capFaceIndices.empty()) {
         sculpt_log("[QUAD CAP] No faces found with capGroupID: %u (total faces: %d)\n", capGroupID, nbFaces);
+        result.fallbackReason = "No faces found with capGroupID";
         return result;
     }
 
@@ -333,6 +335,8 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
         patches[rootToPatchIdx[r]].push_back(f);
     }
 
+    result.numPatches = static_cast<int>(patches.size());
+
     sculpt_log("[QUAD CAP] Total mesh faces: %d | Cap faces (ID %u): %zu across %zu separate patch(es)\n",
                nbFaces, capGroupID, capFaceIndices.size(), patches.size());
 
@@ -390,6 +394,12 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
 
         // Helper to keep original Manifold faces for this patch upon fallback
         auto fallbackPatch = [&](const char* reason) {
+            result.patchesFellBack++;
+            if (result.fallbackReason.empty()) {
+                result.fallbackReason = reason;
+            } else if (result.fallbackReason.find(reason) == std::string::npos) {
+                result.fallbackReason += "; " + std::string(reason);
+            }
             int origQ = 0, origT = 0;
             for (int f : patchFaces) {
                 if (mesh.faces[f * 4 + 3] != TRI_INDEX) origQ++;
@@ -2093,6 +2103,7 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
         totalQuadsGenerated += patchQuads;
         totalTrisGenerated += patchTrisGenerated;
         anyPatchQuadCapped = true;
+        result.patchesQuadCapped++;
 
         int totalPatchFaces = patchQuads + patchTrisGenerated;
         float patchQuadRatio = totalPatchFaces > 0 ? (float)patchQuads / (float)totalPatchFaces : 0.0f;

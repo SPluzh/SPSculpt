@@ -22,6 +22,7 @@
 #include "editing/undo/UndoManager.h"
 #include "editing/undo/TopologyUndoEntry.h"
 #include "common/Enums.h"
+#include "common/Constants.h"
 #include <omp.h>
 
 namespace TrimClipBenchmark {
@@ -39,6 +40,18 @@ struct BenchmarkRow {
     float maxRedoEps = 0.0f;
     bool passed = false;
     std::string notes;
+
+    // Quad Cap validation
+    bool isTrim = false;
+    bool quadCapChecked = false;
+    bool quadCapPassed = false;    // Whether cut was closed with a regular quad grid
+    int capQuads = 0;              // Quads on cap
+    int capTris = 0;               // Triangles on cap
+    float capQuadRatio = 0.0f;     // Quad ratio [0.0..1.0]
+    int capPatches = 0;
+    int capPatchesSuccess = 0;
+    int capPatchesFallback = 0;
+    std::string capFallbackReason;
 };
 
 inline std::string padRight(const std::string& str, size_t totalWidth) {
@@ -170,190 +183,183 @@ inline bool run(int targetFaces = 100000) {
         std::cout << "\n[4/4] Executing Trim Tool & Clip Curve Operations...\n";
 
         // =========================================================================
-        // 1. Tool: Trim Tool (Default: Cut & Fill Hole with QuadCap)
+        // Helper to run, analyze and verify Trim Tool operations
         // =========================================================================
-        {
-            std::cout << "  -> [1/5] Benchmarking Trim Tool (Default: Cut & QuadCap)...\n";
+        auto runTrimBenchmark = [&](const std::string& name,
+                                    const std::vector<glm::vec2>& lasso,
+                                    bool isAlt,
+                                    int stepIdx,
+                                    int totalSteps) -> BenchmarkRow {
+            std::cout << "  -> [" << stepIdx << "/" << totalSteps << "] Benchmarking " << name << "...\n";
             Mesh* curMesh = getActiveMesh();
 
-            std::vector<glm::vec2> trimLasso = {
+            HistoryState beforeState = scene.saveCurrentState(true);
+
+            TrimConfig config;
+            config.fillHole = true;
+            config.remeshFilled = true;
+            sculpt::QuadCapResult capRes;
+            uint32_t capGid = 0;
+            config.outCapResult = &capRes;
+            config.outCapGid = &capGid;
+
+            auto tStart = std::chrono::high_resolution_clock::now();
+            bool modified = TrimTool::execute(
+                curMesh,
+                camera,
+                lasso,
+                isAlt,
+                false, // useSym = false
+                SymmetryMode::Local,
+                {},
+                config
+            );
+            auto tEnd = std::chrono::high_resolution_clock::now();
+            double execMs = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
+
+            curMesh = getActiveMesh();
+            int trimmedVerts = curMesh ? curMesh->nbVerts : 0;
+            int trimmedFaces = curMesh ? curMesh->nbFaces : 0;
+
+            // Direct topological inspection of cap faces on mesh
+            int capQuads = 0;
+            int capTris = 0;
+            if (curMesh && capGid > 0) {
+                for (int f = 0; f < curMesh->nbFaces; ++f) {
+                    if (f < (int)curMesh->faceGroups.size() && curMesh->faceGroups[f] == capGid) {
+                        if (curMesh->faces[f * 4 + 3] != TRI_INDEX) {
+                            capQuads++;
+                        } else {
+                            capTris++;
+                        }
+                    }
+                }
+            }
+            int totalCapFaces = capQuads + capTris;
+            float quadRatio = totalCapFaces > 0 ? (float)capQuads / (float)totalCapFaces : 0.0f;
+            // Quad cap passed if generator succeeded, created quads, and quad ratio >= 50%
+            bool quadCapPassed = capRes.success && (capQuads > 0) && (quadRatio >= 0.50f);
+
+            std::cout << "      [Quad Cap Check] Cap Faces: " << totalCapFaces
+                      << " (" << capQuads << " quads, " << capTris << " tris -> "
+                      << std::fixed << std::setprecision(1) << (quadRatio * 100.0f) << "% quads) | "
+                      << (quadCapPassed ? "CLOSED WITH QUAD GRID [OK]" : "NOT CLOSED WITH QUAD GRID [NO QUAD]") << "\n";
+            if (!quadCapPassed) {
+                std::cout << "      [Quad Cap Diagnostic] "
+                          << (!capRes.fallbackReason.empty() ? capRes.fallbackReason : "No quads on cap / fell back to raw triangles") << "\n";
+            }
+
+            HistoryState afterState = scene.saveCurrentState(true);
+            g_undoManager.pushTopologyChange(scene, name, std::move(beforeState), std::move(afterState));
+            size_t undoBytes = !g_undoManager.getUndoStack().empty() ? g_undoManager.getUndoStack().back()->getMemoryUsage() : 0;
+
+            // Undo
+            auto tUndoStart = std::chrono::high_resolution_clock::now();
+            g_undoManager.undo(scene);
+            auto tUndoEnd = std::chrono::high_resolution_clock::now();
+            double undoMs = std::chrono::duration<double, std::milli>(tUndoEnd - tUndoStart).count();
+
+            curMesh = getActiveMesh();
+            float maxUndoDiff = 0.0f;
+            if (curMesh && curMesh->nbVerts == origVertCount) {
+                for (size_t i = 0; i < pristineVerts.size(); ++i) {
+                    float diff = std::abs(curMesh->verts[i] - pristineVerts[i]);
+                    if (diff > maxUndoDiff) maxUndoDiff = diff;
+                }
+            } else {
+                maxUndoDiff = 999.0f;
+            }
+
+            // Redo
+            auto tRedoStart = std::chrono::high_resolution_clock::now();
+            g_undoManager.redo(scene);
+            auto tRedoEnd = std::chrono::high_resolution_clock::now();
+            double redoMs = std::chrono::duration<double, std::milli>(tRedoEnd - tRedoStart).count();
+
+            curMesh = getActiveMesh();
+            float maxRedoDiff = 0.0f;
+            if (!curMesh || curMesh->nbVerts != trimmedVerts || curMesh->nbFaces != trimmedFaces) {
+                maxRedoDiff = 999.0f;
+            }
+
+            // Revert back to pristine mesh
+            g_undoManager.undo(scene);
+            g_undoManager.clear();
+
+            BenchmarkRow row;
+            row.toolName = name;
+            row.executionMs = execMs;
+            row.undoMs = undoMs;
+            row.redoMs = redoMs;
+            row.undoRAMBytes = undoBytes;
+            row.inVerts = origVertCount;
+            row.outVerts = trimmedVerts;
+            row.flyingVerts = -1;
+            row.maxUndoEps = maxUndoDiff;
+            row.maxRedoEps = maxRedoDiff;
+            row.isTrim = true;
+            row.quadCapChecked = true;
+            row.quadCapPassed = quadCapPassed;
+            row.capQuads = capQuads;
+            row.capTris = capTris;
+            row.capQuadRatio = quadRatio;
+            row.capPatches = capRes.numPatches;
+            row.capPatchesSuccess = capRes.patchesQuadCapped;
+            row.capPatchesFallback = capRes.patchesFellBack;
+            row.capFallbackReason = capRes.fallbackReason;
+            row.passed = modified && (maxUndoDiff == 0.0f) && (maxRedoDiff == 0.0f);
+            return row;
+        };
+
+        // 1. Tool: Trim Tool (Default: Cut & Fill Hole with QuadCap)
+        {
+            std::vector<glm::vec2> trimCornerLasso = {
                 { 960.0f, 540.0f },
                 { 960.0f, 260.0f },
                 { 1240.0f, 260.0f },
                 { 1240.0f, 540.0f }
             };
-
-            HistoryState beforeState = scene.saveCurrentState(true);
-
-            TrimConfig config;
-            config.fillHole = true;
-            config.remeshFilled = true;
-
-            auto tStart = std::chrono::high_resolution_clock::now();
-            bool modified = TrimTool::execute(
-                curMesh,
-                camera,
-                trimLasso,
-                false, // isAlt = false (cut out)
-                false, // useSym = false
-                SymmetryMode::Local,
-                {},
-                config
-            );
-            auto tEnd = std::chrono::high_resolution_clock::now();
-            double execMs = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
-
-            curMesh = getActiveMesh();
-            int trimmedVerts = curMesh ? curMesh->nbVerts : 0;
-            int trimmedFaces = curMesh ? curMesh->nbFaces : 0;
-
-            HistoryState afterState = scene.saveCurrentState(true);
-            g_undoManager.pushTopologyChange(scene, "Trim Tool (Default)", std::move(beforeState), std::move(afterState));
-            size_t undoBytes = !g_undoManager.getUndoStack().empty() ? g_undoManager.getUndoStack().back()->getMemoryUsage() : 0;
-
-            // Undo
-            auto tUndoStart = std::chrono::high_resolution_clock::now();
-            g_undoManager.undo(scene);
-            auto tUndoEnd = std::chrono::high_resolution_clock::now();
-            double undoMs = std::chrono::duration<double, std::milli>(tUndoEnd - tUndoStart).count();
-
-            curMesh = getActiveMesh();
-            float maxUndoDiff = 0.0f;
-            if (curMesh && curMesh->nbVerts == origVertCount) {
-                for (size_t i = 0; i < pristineVerts.size(); ++i) {
-                    float diff = std::abs(curMesh->verts[i] - pristineVerts[i]);
-                    if (diff > maxUndoDiff) maxUndoDiff = diff;
-                }
-            } else {
-                maxUndoDiff = 999.0f;
-            }
-
-            // Redo
-            auto tRedoStart = std::chrono::high_resolution_clock::now();
-            g_undoManager.redo(scene);
-            auto tRedoEnd = std::chrono::high_resolution_clock::now();
-            double redoMs = std::chrono::duration<double, std::milli>(tRedoEnd - tRedoStart).count();
-
-            curMesh = getActiveMesh();
-            float maxRedoDiff = 0.0f;
-            if (!curMesh || curMesh->nbVerts != trimmedVerts || curMesh->nbFaces != trimmedFaces) {
-                maxRedoDiff = 999.0f;
-            }
-
-            // Revert back to pristine mesh
-            g_undoManager.undo(scene);
-            g_undoManager.clear();
-
-            BenchmarkRow row;
-            row.toolName = "Trim Tool (Default Cut & Cap)";
-            row.executionMs = execMs;
-            row.undoMs = undoMs;
-            row.redoMs = redoMs;
-            row.undoRAMBytes = undoBytes;
-            row.inVerts = origVertCount;
-            row.outVerts = trimmedVerts;
-            row.flyingVerts = -1;
-            row.maxUndoEps = maxUndoDiff;
-            row.maxRedoEps = maxRedoDiff;
-            row.passed = modified && (maxUndoDiff == 0.0f) && (maxRedoDiff == 0.0f);
-            rows.push_back(row);
+            rows.push_back(runTrimBenchmark("Trim Tool (Default Cut & Cap)", trimCornerLasso, false, 1, 7));
         }
 
-        // =========================================================================
         // 2. Tool: Trim Tool (Alt Mode: Keep Inside Volume with QuadCap)
-        // =========================================================================
         {
-            std::cout << "  -> [2/5] Benchmarking Trim Tool (Alt Mode: Keep Inside)...\n";
-            Mesh* curMesh = getActiveMesh();
-
-            std::vector<glm::vec2> trimLasso = {
+            std::vector<glm::vec2> trimAltLasso = {
                 { 860.0f, 440.0f },
                 { 1060.0f, 440.0f },
                 { 1060.0f, 640.0f },
                 { 860.0f, 640.0f }
             };
+            rows.push_back(runTrimBenchmark("Trim Tool (Alt: Keep Inside)", trimAltLasso, true, 2, 7));
+        }
 
-            HistoryState beforeState = scene.saveCurrentState(true);
+        // 3. Tool: Trim Tool (Hole in Sphere Center - Through-Hole Cutout)
+        {
+            std::vector<glm::vec2> trimHoleLasso = {
+                { 880.0f, 460.0f },
+                { 1040.0f, 460.0f },
+                { 1040.0f, 620.0f },
+                { 880.0f, 620.0f }
+            };
+            rows.push_back(runTrimBenchmark("Trim Tool (Hole in Center)", trimHoleLasso, false, 3, 7));
+        }
 
-            TrimConfig config;
-            config.fillHole = true;
-            config.remeshFilled = true;
-
-            auto tStart = std::chrono::high_resolution_clock::now();
-            bool modified = TrimTool::execute(
-                curMesh,
-                camera,
-                trimLasso,
-                true,  // isAlt = true (keep inside)
-                false, // useSym = false
-                SymmetryMode::Local,
-                {},
-                config
-            );
-            auto tEnd = std::chrono::high_resolution_clock::now();
-            double execMs = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
-
-            curMesh = getActiveMesh();
-            int trimmedVerts = curMesh ? curMesh->nbVerts : 0;
-            int trimmedFaces = curMesh ? curMesh->nbFaces : 0;
-
-            HistoryState afterState = scene.saveCurrentState(true);
-            g_undoManager.pushTopologyChange(scene, "Trim Tool (Alt)", std::move(beforeState), std::move(afterState));
-            size_t undoBytes = !g_undoManager.getUndoStack().empty() ? g_undoManager.getUndoStack().back()->getMemoryUsage() : 0;
-
-            // Undo
-            auto tUndoStart = std::chrono::high_resolution_clock::now();
-            g_undoManager.undo(scene);
-            auto tUndoEnd = std::chrono::high_resolution_clock::now();
-            double undoMs = std::chrono::duration<double, std::milli>(tUndoEnd - tUndoStart).count();
-
-            curMesh = getActiveMesh();
-            float maxUndoDiff = 0.0f;
-            if (curMesh && curMesh->nbVerts == origVertCount) {
-                for (size_t i = 0; i < pristineVerts.size(); ++i) {
-                    float diff = std::abs(curMesh->verts[i] - pristineVerts[i]);
-                    if (diff > maxUndoDiff) maxUndoDiff = diff;
-                }
-            } else {
-                maxUndoDiff = 999.0f;
-            }
-
-            // Redo
-            auto tRedoStart = std::chrono::high_resolution_clock::now();
-            g_undoManager.redo(scene);
-            auto tRedoEnd = std::chrono::high_resolution_clock::now();
-            double redoMs = std::chrono::duration<double, std::milli>(tRedoEnd - tRedoStart).count();
-
-            curMesh = getActiveMesh();
-            float maxRedoDiff = 0.0f;
-            if (!curMesh || curMesh->nbVerts != trimmedVerts || curMesh->nbFaces != trimmedFaces) {
-                maxRedoDiff = 999.0f;
-            }
-
-            // Revert back to pristine mesh
-            g_undoManager.undo(scene);
-            g_undoManager.clear();
-
-            BenchmarkRow row;
-            row.toolName = "Trim Tool (Alt: Keep Inside)";
-            row.executionMs = execMs;
-            row.undoMs = undoMs;
-            row.redoMs = redoMs;
-            row.undoRAMBytes = undoBytes;
-            row.inVerts = origVertCount;
-            row.outVerts = trimmedVerts;
-            row.flyingVerts = -1;
-            row.maxUndoEps = maxUndoDiff;
-            row.maxRedoEps = maxRedoDiff;
-            row.passed = modified && (maxUndoDiff == 0.0f) && (maxRedoDiff == 0.0f);
-            rows.push_back(row);
+        // 4. Tool: Trim Tool (Elongated Cutout / Narrow Slot Notch)
+        {
+            std::vector<glm::vec2> trimSlotLasso = {
+                { 740.0f, 520.0f },
+                { 1180.0f, 520.0f },
+                { 1180.0f, 560.0f },
+                { 740.0f, 560.0f }
+            };
+            rows.push_back(runTrimBenchmark("Trim Tool (Elongated Cutout)", trimSlotLasso, false, 4, 7));
         }
 
         // =========================================================================
-        // 3. Tool: Clip Curve (Straight Line Across Sphere)
+        // 5. Tool: Clip Curve (Straight Line Across Sphere)
         // =========================================================================
         {
-            std::cout << "  -> [3/5] Benchmarking Clip Curve (Straight Line)...\n";
+            std::cout << "  -> [5/7] Benchmarking Clip Curve (Straight Line)...\n";
             Mesh* curMesh = getActiveMesh();
 
             std::vector<glm::vec2> clipLine = {
@@ -448,10 +454,10 @@ inline bool run(int targetFaces = 100000) {
         }
 
         // =========================================================================
-        // 4. Tool: Clip Curve (Polyline with Angle / Bend)
+        // 6. Tool: Clip Curve (Polyline with Angle / Bend)
         // =========================================================================
         {
-            std::cout << "  -> [4/5] Benchmarking Clip Curve (Polyline Angle / Bend)...\n";
+            std::cout << "  -> [6/7] Benchmarking Clip Curve (Polyline Angle / Bend)...\n";
             Mesh* curMesh = getActiveMesh();
 
             std::vector<glm::vec2> clipPoly = {
@@ -546,10 +552,10 @@ inline bool run(int targetFaces = 100000) {
         }
 
         // =========================================================================
-        // 5. Tool: Clip Curve (with Symmetry)
+        // 7. Tool: Clip Curve (with Symmetry)
         // =========================================================================
         {
-            std::cout << "  -> [5/5] Benchmarking Clip Curve (with X Symmetry)...\n";
+            std::cout << "  -> [7/7] Benchmarking Clip Curve (with X Symmetry)...\n";
             Mesh* curMesh = getActiveMesh();
 
             std::vector<glm::vec2> clipLine = {
@@ -647,46 +653,101 @@ inline bool run(int targetFaces = 100000) {
         // =========================================================================
         // Print Summary Table
         // =========================================================================
-        std::cout << "\n====================================================================================================================\n";
+        std::cout << "\n==================================================================================================================================\n";
         std::cout << " SPSculpt Trim Tool & Clip Curve Benchmark Summary @ "
                   << std::fixed << std::setprecision(1) << (targetFaces / 1000000.0) << "M Polygons\n";
-        std::cout << "====================================================================================================================\n";
-        std::cout << " " << padRight("Tool / Operation", 30) << " | "
+        std::cout << "==================================================================================================================================\n";
+        std::cout << " " << padRight("Tool / Operation", 32) << " | "
                   << padLeft("Execution", 11) << " | "
                   << padLeft("Undo Time", 10) << " | "
                   << padLeft("Redo Time", 10) << " | "
                   << padLeft("Undo RAM", 10) << " | "
-                  << padLeft("Flying Verts", 12) << " | "
+                  << padLeft("Quad Cap Grid", 20) << " | "
+                  << padLeft("Flying", 8) << " | "
                   << padLeft("Integrity", 11) << " | "
                   << "Status \n";
-        std::cout << "-------------------------------+-------------+------------+------------+------------+--------------+-------------+--------\n";
+        std::cout << "---------------------------------+-------------+------------+------------+------------+----------------------+----------+-------------+--------\n";
 
-        bool allPassed = true;
+        bool allIntegrityPassed = true;
+        bool allQuadCapsPassed = true;
+
         for (const auto& r : rows) {
-            std::string flyStr = (r.flyingVerts < 0) ? "     -    " : std::to_string(r.flyingVerts);
+            std::string flyStr = (r.flyingVerts < 0) ? "    -   " : std::to_string(r.flyingVerts);
             std::string epsStr = (r.maxUndoEps == 0.0f && r.maxRedoEps == 0.0f) ? "0 eps diff" : "MISMATCH";
-            std::string statusStr = r.passed ? "PASSED" : "FAILED";
-            if (!r.passed) allPassed = false;
 
-            std::cout << " " << padRight(r.toolName, 30) << " | "
+            std::string quadCapStr;
+            if (r.isTrim) {
+                if (r.quadCapPassed) {
+                    std::ostringstream ss;
+                    ss << std::fixed << std::setprecision(1) << (r.capQuadRatio * 100.0f) << "% Q (" << r.capQuads << "/" << r.capTris << ")";
+                    quadCapStr = ss.str();
+                } else {
+                    std::ostringstream ss;
+                    ss << "NO (" << std::fixed << std::setprecision(1) << (r.capQuadRatio * 100.0f) << "% Q)";
+                    quadCapStr = ss.str();
+                }
+            } else {
+                quadCapStr = "         -          ";
+            }
+
+            bool integrityPassed = r.passed && (r.flyingVerts <= 0);
+            std::string statusStr;
+            if (integrityPassed && (!r.isTrim || r.quadCapPassed)) {
+                statusStr = "PASSED";
+            } else if (integrityPassed && r.isTrim && !r.quadCapPassed) {
+                statusStr = "NO QUAD";
+                allQuadCapsPassed = false;
+            } else {
+                statusStr = "FAILED";
+                allIntegrityPassed = false;
+            }
+
+            std::cout << " " << padRight(r.toolName, 32) << " | "
                       << padLeft(formatMs(r.executionMs), 11) << " | "
                       << padLeft(formatMs(r.undoMs), 10) << " | "
                       << padLeft(formatMs(r.redoMs), 10) << " | "
                       << padLeft(formatBytes(r.undoRAMBytes), 10) << " | "
-                      << padLeft(flyStr, 12) << " | "
+                      << padLeft(quadCapStr, 20) << " | "
+                      << padLeft(flyStr, 8) << " | "
                       << padLeft(epsStr, 11) << " | "
                       << statusStr << " \n";
         }
-        std::cout << "--------------------------------------------------------------------------------------------------------------------\n";
+        std::cout << "----------------------------------------------------------------------------------------------------------------------------------\n";
 
-        if (allPassed) {
-            std::cout << " [SUCCESS] All Trim Tool & Clip Curve operations, Undo/Redo & flying points checks PASSED!\n";
+        // =========================================================================
+        // Print Detailed Quad Cap Diagnostics Breakdown
+        // =========================================================================
+        std::cout << "\n==================================================================================================================================\n";
+        std::cout << " SPSculpt Quad Cap Verification & Diagnostic Breakdown:\n";
+        std::cout << "==================================================================================================================================\n";
+        for (const auto& r : rows) {
+            if (!r.isTrim) continue;
+            std::cout << " * " << r.toolName << ":\n";
+            std::cout << "   - Quad Grid Status:   " << (r.quadCapPassed ? "CLOSED WITH QUAD GRID [OK]" : "NOT CLOSED WITH QUAD GRID [NO QUAD]") << "\n";
+            std::cout << "   - Cap Face Analysis:  " << (r.capQuads + r.capTris) << " total cap faces ("
+                      << r.capQuads << " quads, " << r.capTris << " triangles -> "
+                      << std::fixed << std::setprecision(1) << (r.capQuadRatio * 100.0f) << "% quad ratio)\n";
+            std::cout << "   - Patch Components:   " << r.capPatches << " patch(es) detected ("
+                      << r.capPatchesSuccess << " quad-capped, " << r.capPatchesFallback << " fell back)\n";
+            if (!r.quadCapPassed || !r.capFallbackReason.empty()) {
+                std::cout << "   - Fallback Reason:    "
+                          << (!r.capFallbackReason.empty() ? r.capFallbackReason : "Insufficient quad ratio / no regular quads generated") << "\n";
+            }
+            std::cout << "\n";
+        }
+        std::cout << "==================================================================================================================================\n";
+
+        if (allIntegrityPassed && allQuadCapsPassed) {
+            std::cout << " [SUCCESS] All Trim Tool & Clip Curve operations, Undo/Redo & Quad Cap checks PASSED!\n";
+        } else if (allIntegrityPassed && !allQuadCapsPassed) {
+            std::cout << " [ATTENTION] Undo/Redo & geometry integrity PASSED, but one or more cuts failed to close with a quad grid!\n";
+            std::cout << "             (See Quad Cap Diagnostic Breakdown above for details to guide quad meshing fixes)\n";
         } else {
             std::cout << " [FAILURE] One or more benchmark operations or integrity checks failed!\n";
         }
-        std::cout << "====================================================================================================================\n\n";
+        std::cout << "==================================================================================================================================\n\n";
 
-        return allPassed;
+        return allIntegrityPassed;
     } catch (const std::exception& e) {
         std::cerr << "EXCEPTION during Trim & Clip Curve benchmark: " << e.what() << std::endl;
         return false;
