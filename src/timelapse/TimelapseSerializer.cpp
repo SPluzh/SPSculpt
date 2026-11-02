@@ -218,8 +218,8 @@ bool TimelapseSerializer::saveToFile(
             auto* topoEntry = dynamic_cast<TopologyUndoEntry*>(entry.get());
             if (topoEntry) {
                 writeString(os, topoEntry->description);
-                writeHistoryState(os, topoEntry->before);
-                writeHistoryState(os, topoEntry->after);
+                writeHistoryState(os, topoEntry->getBeforeState());
+                writeHistoryState(os, topoEntry->getAfterState());
             }
         } else if (tag == 0x03) {
             auto* metaEntry = dynamic_cast<SceneMetaUndoEntry*>(entry.get());
@@ -291,8 +291,10 @@ bool TimelapseSerializer::loadFromFile(
         } else if (tag == 0x02) {
             auto topoEntry = std::make_unique<TopologyUndoEntry>();
             readString(is, topoEntry->description);
-            readHistoryState(is, topoEntry->before);
-            readHistoryState(is, topoEntry->after);
+            HistoryState beforeState, afterState;
+            readHistoryState(is, beforeState);
+            readHistoryState(is, afterState);
+            topoEntry->setStates(beforeState, afterState);
             outTimeline.push_back(std::move(topoEntry));
         } else if (tag == 0x03) {
             auto metaEntry = std::make_unique<SceneMetaUndoEntry>();

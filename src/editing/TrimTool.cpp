@@ -133,14 +133,7 @@ bool TrimTool::execute(
     uint32_t newCapGid = mesh->getNextFreeGroupID();
     if (newCapGid == 0) newCapGid = 1;
 
-    // 3. Convert source mesh to Manifold
-    manifold::Manifold target = sculpt::ManifoldBridge::fromMesh(*mesh);
-    if (target.IsEmpty() || target.Status() != manifold::Manifold::Error::NoError) {
-        sculpt_log("[TrimTool] Failed to convert mesh to valid Manifold. Status: %d\n", (int)target.Status());
-        return false;
-    }
-
-    // 4. Build 3D cutter prism in mesh local space with regular quad grid
+    // 3. Build 3D cutter prism in mesh local space with regular quad grid
     glm::mat4 invMeshMatrix = glm::inverse(mesh->matrix);
     manifold::Manifold cutter = sculpt::LassoCutter::build3DCutterPrism(
         lassoPoints,
@@ -157,7 +150,7 @@ bool TrimTool::execute(
         return false;
     }
 
-    // 5. Handle symmetry (mirror cutter prism across symmetry axes)
+    // 4. Handle symmetry (mirror cutter prism across symmetry axes)
     if (useSym && !symScales.empty()) {
         std::vector<manifold::Manifold> symCutters;
         symCutters.push_back(cutter);
@@ -178,6 +171,23 @@ bool TrimTool::execute(
             cutter = manifold::Manifold::BatchBoolean(symCutters, manifold::OpType::Add);
             sculpt_log("[TrimTool] Applied symmetry: combined %zu cutter prisms.\n", symCutters.size());
         }
+    }
+
+    // 5. 3D Bounding Box intersection early-out check before expensive fromMesh conversion
+    manifold::Box meshBox(bMin, bMax);
+    manifold::Box cutterBox = cutter.BoundingBox();
+    if (!cutterBox.DoesOverlap(meshBox)) {
+        sculpt_log("[TrimTool] Early out: Cutter 3D BBox [%.1f, %.1f, %.1f - %.1f, %.1f, %.1f] does not intersect Mesh 3D BBox [%.1f, %.1f, %.1f - %.1f, %.1f, %.1f]\n",
+                   cutterBox.min.x, cutterBox.min.y, cutterBox.min.z, cutterBox.max.x, cutterBox.max.y, cutterBox.max.z,
+                   meshBox.min.x, meshBox.min.y, meshBox.min.z, meshBox.max.x, meshBox.max.y, meshBox.max.z);
+        return false;
+    }
+
+    // 6. Convert source mesh to Manifold (only after cutter is confirmed valid and intersecting)
+    manifold::Manifold target = sculpt::ManifoldBridge::fromMesh(*mesh);
+    if (target.IsEmpty() || target.Status() != manifold::Manifold::Error::NoError) {
+        sculpt_log("[TrimTool] Failed to convert mesh to valid Manifold. Status: %d\n", (int)target.Status());
+        return false;
     }
 
     cutter = cutter.AsOriginal();

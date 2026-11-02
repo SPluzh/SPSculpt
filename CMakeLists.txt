@@ -196,7 +196,7 @@ else()
     include_directories(${SDL2_INCLUDE_DIRS})
 endif()
 
-target_link_libraries(SPSculpt PRIVATE imgui ${EGL_LIBRARY} ${GLES_LIBRARY} glm::glm nlohmann_json::nlohmann_json ufbx manifold Clipper2 CDT)
+target_link_libraries(SPSculpt PRIVATE imgui ${EGL_LIBRARY} ${GLES_LIBRARY} glm::glm nlohmann_json::nlohmann_json ufbx manifold Clipper2 CDT lz4)
 target_compile_options(SPSculpt PRIVATE -O3)
 
 find_package(OpenMP)

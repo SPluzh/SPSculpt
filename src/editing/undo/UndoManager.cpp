@@ -423,13 +423,14 @@ void UndoManager::pushTopologyChange(Scene& scene,
                                       std::function<void()> operation) {
     auto entry = std::make_unique<TopologyUndoEntry>();
     entry->description = description;
-    entry->before = scene.saveCurrentState(true);
+    HistoryState beforeState = scene.saveCurrentState(true);
     
     if (operation) {
         operation();
     }
 
-    entry->after = scene.saveCurrentState(true);
+    HistoryState afterState = scene.saveCurrentState(true);
+    entry->setStates(beforeState, afterState);
     sculpt_log_lvl(LogLevel::Info, "[Undo] Topology change pushed: '%s' (size: %.2f MB)\n",
                    description.c_str(), entry->getMemoryUsage() / (1024.0f * 1024.0f));
     pushEntry(std::move(entry));
@@ -442,8 +443,7 @@ void UndoManager::pushTopologyChange(Scene& scene,
                                       HistoryState afterState) {
     auto entry = std::make_unique<TopologyUndoEntry>();
     entry->description = description;
-    entry->before = std::move(beforeState);
-    entry->after = std::move(afterState);
+    entry->setStates(beforeState, afterState);
     sculpt_log_lvl(LogLevel::Info, "[Undo] Topology change pushed: '%s' (size: %.2f MB)\n",
                    description.c_str(), entry->getMemoryUsage() / (1024.0f * 1024.0f));
     pushEntry(std::move(entry));
@@ -496,8 +496,8 @@ void UndoManager::pushMeasurementChange(Scene& scene,
 void UndoManager::pushLegacyState(Scene& scene, const std::string& description) {
     auto entry = std::make_unique<TopologyUndoEntry>();
     entry->description = description;
-    entry->before = scene.saveCurrentState(false);
-    entry->after = entry->before;
+    HistoryState s = scene.saveCurrentState(false);
+    entry->setStates(s, s);
     sculpt_log_lvl(LogLevel::Info, "[Undo] Legacy/Transform change pushed: '%s' (size: %.2f MB)\n",
                    description.c_str(), entry->getMemoryUsage() / (1024.0f * 1024.0f));
     pushEntry(std::move(entry));
@@ -760,7 +760,7 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
         auto* e = static_cast<TopologyUndoEntry*>(entry);
         sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] Applying Topology %s: '%s'\n",
                        isUndo ? "UNDO" : "REDO", e->getDescription().c_str());
-        scene.restoreState(isUndo ? e->before : e->after);
+        scene.restoreState(isUndo ? e->getBeforeState() : e->getAfterState());
         auto tDone = std::chrono::high_resolution_clock::now();
         double msTotal = std::chrono::duration<double, std::milli>(tDone - tStart).count();
         sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] Topology apply (%s) completed in %.2f ms\n",
