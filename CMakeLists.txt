@@ -6,6 +6,10 @@ add_library(ufbx STATIC third_party/ufbx/ufbx.c)
 target_include_directories(ufbx PUBLIC third_party/ufbx)
 target_compile_options(ufbx PRIVATE -O3)
 
+add_library(lz4 STATIC third_party/lz4/lz4.c)
+target_include_directories(lz4 PUBLIC third_party/lz4)
+target_compile_options(lz4 PRIVATE -O3)
+
 find_package(glm REQUIRED)
 
 include(FetchContent)
