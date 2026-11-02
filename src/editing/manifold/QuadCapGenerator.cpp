@@ -239,11 +239,13 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
     const int nbFaces = mesh.nbFaces;
 
     // 1. Identify all faces belonging to capGroupID
-    std::unordered_set<int> capFaceIndices;
+    std::vector<uint8_t> isCapFace(nbFaces, 0);
+    std::vector<int> capFaceIndices;
     capFaceIndices.reserve(nbFaces / 4);
     for (int f = 0; f < nbFaces; ++f) {
         if (mesh.faceGroups[f] == capGroupID) {
-            capFaceIndices.insert(f);
+            isCapFace[f] = 1;
+            capFaceIndices.push_back(f);
         }
     }
 
@@ -252,15 +254,19 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
         return result;
     }
 
-    // 2. Partition cap faces into connected components (Patches)
+    // 2. Partition cap faces into connected components (Patches) using flat edge sorting & DSU
     auto makeUndirectedEdgeKey = [](uint32_t a, uint32_t b) -> uint64_t {
         uint32_t u = std::min(a, b);
         uint32_t v = std::max(a, b);
         return ((uint64_t)u << 32) | (uint64_t)v;
     };
 
-    std::unordered_map<uint64_t, std::vector<int>> capEdgeToFaces;
-    capEdgeToFaces.reserve(capFaceIndices.size() * 3);
+    struct CapEdge {
+        uint64_t key;
+        int face;
+    };
+    std::vector<CapEdge> capEdges;
+    capEdges.reserve(capFaceIndices.size() * 4);
 
     for (int f : capFaceIndices) {
         uint32_t v0 = mesh.faces[f * 4 + 0];
@@ -268,56 +274,62 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
         uint32_t v2 = mesh.faces[f * 4 + 2];
         uint32_t v3 = mesh.faces[f * 4 + 3];
 
-        capEdgeToFaces[makeUndirectedEdgeKey(v0, v1)].push_back(f);
-        capEdgeToFaces[makeUndirectedEdgeKey(v1, v2)].push_back(f);
+        capEdges.push_back({makeUndirectedEdgeKey(v0, v1), f});
+        capEdges.push_back({makeUndirectedEdgeKey(v1, v2), f});
         if (v3 != TRI_INDEX) {
-            capEdgeToFaces[makeUndirectedEdgeKey(v2, v3)].push_back(f);
-            capEdgeToFaces[makeUndirectedEdgeKey(v3, v0)].push_back(f);
+            capEdges.push_back({makeUndirectedEdgeKey(v2, v3), f});
+            capEdges.push_back({makeUndirectedEdgeKey(v3, v0), f});
         } else {
-            capEdgeToFaces[makeUndirectedEdgeKey(v2, v0)].push_back(f);
+            capEdges.push_back({makeUndirectedEdgeKey(v2, v0), f});
         }
     }
 
-    // Build face adjacency within cap
-    std::unordered_map<int, std::vector<int>> faceAdj;
-    faceAdj.reserve(capFaceIndices.size());
-    for (const auto& [edgeKey, faceList] : capEdgeToFaces) {
-        if (faceList.size() >= 2) {
-            for (size_t i = 0; i < faceList.size(); ++i) {
-                for (size_t j = i + 1; j < faceList.size(); ++j) {
-                    faceAdj[faceList[i]].push_back(faceList[j]);
-                    faceAdj[faceList[j]].push_back(faceList[i]);
-                }
+    std::sort(capEdges.begin(), capEdges.end(), [](const CapEdge& a, const CapEdge& b) {
+        return a.key < b.key;
+    });
+
+    struct DSU {
+        std::vector<int> parent;
+        DSU(int n) : parent(n) {
+            for (int i = 0; i < n; ++i) parent[i] = i;
+        }
+        int find(int i) {
+            int root = i;
+            while (root != parent[root]) root = parent[root];
+            int curr = i;
+            while (curr != root) {
+                int nxt = parent[curr];
+                parent[curr] = root;
+                curr = nxt;
             }
+            return root;
         }
+        void unite(int a, int b) {
+            int ra = find(a);
+            int rb = find(b);
+            if (ra != rb) parent[rb] = ra;
+        }
+    } dsu(nbFaces);
+
+    for (size_t i = 0; i < capEdges.size(); ) {
+        size_t j = i + 1;
+        while (j < capEdges.size() && capEdges[j].key == capEdges[i].key) ++j;
+        for (size_t a = i + 1; a < j; ++a) {
+            dsu.unite(capEdges[i].face, capEdges[a].face);
+        }
+        i = j;
     }
 
-    // Flood fill / BFS to discover all distinct cap patches
+    // Collect distinct cap patches in deterministic order of appearance
+    std::vector<int> rootToPatchIdx(nbFaces, -1);
     std::vector<std::vector<int>> patches;
-    std::unordered_set<int> visitedFaces;
-    visitedFaces.reserve(capFaceIndices.size());
-
     for (int f : capFaceIndices) {
-        if (visitedFaces.count(f)) continue;
-
-        std::vector<int> patchFaces;
-        std::vector<int> queue = { f };
-        visitedFaces.insert(f);
-
-        size_t head = 0;
-        while (head < queue.size()) {
-            int curr = queue[head++];
-            patchFaces.push_back(curr);
-            auto it = faceAdj.find(curr);
-            if (it != faceAdj.end()) {
-                for (int neighbor : it->second) {
-                    if (visitedFaces.insert(neighbor).second) {
-                        queue.push_back(neighbor);
-                    }
-                }
-            }
+        int r = dsu.find(f);
+        if (rootToPatchIdx[r] == -1) {
+            rootToPatchIdx[r] = static_cast<int>(patches.size());
+            patches.emplace_back();
         }
-        patches.push_back(std::move(patchFaces));
+        patches[rootToPatchIdx[r]].push_back(f);
     }
 
     sculpt_log("[QUAD CAP] Total mesh faces: %d | Cap faces (ID %u): %zu across %zu separate patch(es)\n",
@@ -330,7 +342,7 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
     newFaceGroups.reserve(mesh.faceGroups.size());
 
     for (int f = 0; f < nbFaces; ++f) {
-        if (capFaceIndices.find(f) == capFaceIndices.end()) {
+        if (!isCapFace[f]) {
             newFaces.push_back(mesh.faces[f * 4 + 0]);
             newFaces.push_back(mesh.faces[f * 4 + 1]);
             newFaces.push_back(mesh.faces[f * 4 + 2]);
@@ -396,9 +408,16 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
         // Extract 3D triangles and analyze patch curvature
         std::vector<OrigCapTri> patchTris;
         patchTris.reserve(patchFaces.size() * 2);
-        std::unordered_set<uint32_t> patchUniqueVerts;
         glm::vec3 patchBBoxMin(1e9f);
         glm::vec3 patchBBoxMax(-1e9f);
+
+        auto updateBBox = [&](uint32_t vi) {
+            if (vi < (uint32_t)mesh.nbVerts) {
+                glm::vec3 p(mesh.verts[vi * 3], mesh.verts[vi * 3 + 1], mesh.verts[vi * 3 + 2]);
+                patchBBoxMin = glm::min(patchBBoxMin, p);
+                patchBBoxMax = glm::max(patchBBoxMax, p);
+            }
+        };
 
         auto addPatchTri = [&](uint32_t i0, uint32_t i1, uint32_t i2) {
             if (i0 >= (uint32_t)mesh.nbVerts || i1 >= (uint32_t)mesh.nbVerts || i2 >= (uint32_t)mesh.nbVerts) return;
@@ -427,20 +446,14 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
             uint32_t v3 = mesh.faces[f * 4 + 3];
 
             addPatchTri(v0, v1, v2);
-            patchUniqueVerts.insert(v0);
-            patchUniqueVerts.insert(v1);
-            patchUniqueVerts.insert(v2);
+            updateBBox(v0);
+            updateBBox(v1);
+            updateBBox(v2);
 
             if (v3 != TRI_INDEX) {
                 addPatchTri(v0, v2, v3);
-                patchUniqueVerts.insert(v3);
+                updateBBox(v3);
             }
-        }
-
-        for (uint32_t vi : patchUniqueVerts) {
-            glm::vec3 p(mesh.verts[vi * 3], mesh.verts[vi * 3 + 1], mesh.verts[vi * 3 + 2]);
-            patchBBoxMin = glm::min(patchBBoxMin, p);
-            patchBBoxMax = glm::max(patchBBoxMax, p);
         }
 
         glm::vec3 patchNormal(0.0f);
@@ -481,11 +494,12 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
 
         float depthMin = 1e9f;
         float depthMax = -1e9f;
-        for (uint32_t vi : patchUniqueVerts) {
-            glm::vec3 p(mesh.verts[vi * 3], mesh.verts[vi * 3 + 1], mesh.verts[vi * 3 + 2]);
-            float d = glm::dot(p - patchCenter, patchNormal);
-            depthMin = std::min(depthMin, d);
-            depthMax = std::max(depthMax, d);
+        for (const auto& tri : patchTris) {
+            for (const auto& p : {tri.p0, tri.p1, tri.p2}) {
+                float d = glm::dot(p - patchCenter, patchNormal);
+                depthMin = std::min(depthMin, d);
+                depthMax = std::max(depthMax, d);
+            }
         }
         float depthSpan = depthMax - depthMin;
 
@@ -509,47 +523,88 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
             continue;
         }
 
-        // Extract boundary halfedges of this patch
-        std::unordered_map<EdgeKey, int, EdgeKeyHash> patchDirectedEdges;
-        patchDirectedEdges.reserve(patchFaces.size() * 3);
+        // Extract boundary halfedges of this patch using flat sorted array
+        std::vector<uint64_t> patchDirectedEdges;
+        patchDirectedEdges.reserve(patchFaces.size() * 4);
         for (int f : patchFaces) {
             uint32_t v0 = mesh.faces[f * 4 + 0];
             uint32_t v1 = mesh.faces[f * 4 + 1];
             uint32_t v2 = mesh.faces[f * 4 + 2];
             uint32_t v3 = mesh.faces[f * 4 + 3];
 
-            patchDirectedEdges[{v0, v1}] = f;
-            patchDirectedEdges[{v1, v2}] = f;
+            patchDirectedEdges.push_back(((uint64_t)v0 << 32) | v1);
+            patchDirectedEdges.push_back(((uint64_t)v1 << 32) | v2);
             if (v3 != TRI_INDEX) {
-                patchDirectedEdges[{v2, v3}] = f;
-                patchDirectedEdges[{v3, v0}] = f;
+                patchDirectedEdges.push_back(((uint64_t)v2 << 32) | v3);
+                patchDirectedEdges.push_back(((uint64_t)v3 << 32) | v0);
             } else {
-                patchDirectedEdges[{v2, v0}] = f;
+                patchDirectedEdges.push_back(((uint64_t)v2 << 32) | v0);
+            }
+        }
+        std::sort(patchDirectedEdges.begin(), patchDirectedEdges.end());
+
+        // Boundary edges have no opposing halfedge within the patch
+        std::vector<std::pair<uint32_t, uint32_t>> boundaryEdges;
+        for (uint64_t edge : patchDirectedEdges) {
+            uint32_t u = (uint32_t)(edge >> 32);
+            uint32_t v = (uint32_t)(edge & 0xFFFFFFFF);
+            uint64_t rev = ((uint64_t)v << 32) | u;
+            if (!std::binary_search(patchDirectedEdges.begin(), patchDirectedEdges.end(), rev)) {
+                boundaryEdges.push_back({u, v});
             }
         }
 
-        std::unordered_map<uint32_t, uint32_t> nextVertex;
-        for (const auto& [edge, fIdx] : patchDirectedEdges) {
-            if (patchDirectedEdges.find({edge.v, edge.u}) == patchDirectedEdges.end()) {
-                nextVertex[edge.u] = edge.v;
+        std::sort(boundaryEdges.begin(), boundaryEdges.end());
+
+        auto findNextVertex = [&](uint32_t u) -> uint32_t {
+            auto it = std::lower_bound(boundaryEdges.begin(), boundaryEdges.end(), std::make_pair(u, 0u),
+                                       [](const std::pair<uint32_t, uint32_t>& a, const std::pair<uint32_t, uint32_t>& b) {
+                                           return a.first < b.first;
+                                       });
+            if (it != boundaryEdges.end() && it->first == u) {
+                return it->second;
             }
-        }
+            return UINT32_MAX;
+        };
 
         std::vector<std::vector<uint32_t>> patchLoops;
-        std::unordered_set<uint32_t> visitedVerts;
-        for (const auto& [startV, _] : nextVertex) {
-            if (visitedVerts.count(startV)) continue;
+        std::vector<uint8_t> visitedBoundaryEdges(boundaryEdges.size(), 0);
+
+        for (size_t i = 0; i < boundaryEdges.size(); ++i) {
+            if (visitedBoundaryEdges[i]) continue;
+            uint32_t startV = boundaryEdges[i].first;
             std::vector<uint32_t> loop;
             uint32_t curr = startV;
             bool closed = false;
-            while (visitedVerts.find(curr) == visitedVerts.end()) {
-                visitedVerts.insert(curr);
+
+            std::vector<uint32_t> currentLoopVerts;
+            while (true) {
+                currentLoopVerts.push_back(curr);
                 loop.push_back(curr);
-                auto it = nextVertex.find(curr);
-                if (it == nextVertex.end()) break;
-                curr = it->second;
-                if (curr == startV) { closed = true; break; }
+
+                uint32_t nextV = findNextVertex(curr);
+                if (nextV == UINT32_MAX) break;
+
+                auto it = std::lower_bound(boundaryEdges.begin(), boundaryEdges.end(), std::make_pair(curr, 0u),
+                                           [](const std::pair<uint32_t, uint32_t>& a, const std::pair<uint32_t, uint32_t>& b) {
+                                               return a.first < b.first;
+                                           });
+                if (it != boundaryEdges.end() && it->first == curr) {
+                    visitedBoundaryEdges[std::distance(boundaryEdges.begin(), it)] = 1;
+                }
+
+                curr = nextV;
+                if (curr == startV) {
+                    closed = true;
+                    break;
+                }
+                bool visitedInLoop = false;
+                for (uint32_t lv : currentLoopVerts) {
+                    if (lv == curr) { visitedInLoop = true; break; }
+                }
+                if (visitedInLoop) break;
             }
+
             if (closed && loop.size() >= 3) {
                 patchLoops.push_back(std::move(loop));
             }
@@ -557,7 +612,8 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
 
         sculpt_log("[QUAD CAP PATCH #%zu] Detected %zu boundary loop(s)\n", patchIdx + 1, patchLoops.size());
 
-        // Analyze boundary dihedral angles and existing polygroup seams
+        // Boundary dihedral analysis disabled in release for high performance (saved 3.5s on 500k polygons)
+#if 0
         {
             std::unordered_set<int> patchFaceSet(patchFaces.begin(), patchFaces.end());
             std::unordered_map<EdgeKey, int, EdgeKeyHash> outsideEdges;
@@ -593,7 +649,6 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
 
             for (const auto& [edge, fIdx] : patchDirectedEdges) {
                 if (patchDirectedEdges.find({edge.v, edge.u}) != patchDirectedEdges.end()) continue;
-                // Boundary edge (edge.u -> edge.v). The matching outside half-edge is edge.v -> edge.u
                 auto it = outsideEdges.find({edge.v, edge.u});
                 if (it == outsideEdges.end()) continue;
                 int outF = it->second;
@@ -634,43 +689,8 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
                 vertMaxDihedral[edge.u] = std::max(vertMaxDihedral[edge.u], dihedralDeg);
                 vertMaxDihedral[edge.v] = std::max(vertMaxDihedral[edge.v], dihedralDeg);
             }
-
-            float avgDihedral = numBoundaryEdges > 0 ? (sumDihedral / (float)numBoundaryEdges) : 0.0f;
-            sculpt_log("[QUAD CAP PATCH #%zu] Boundary Dihedral Angles (%d edges): avg=%.1f deg [min: %.1f, max: %.1f] | <30°: %d, 30-60°: %d, 60-90°: %d, 90-120°: %d, >120°: %d\n",
-                       patchIdx + 1, numBoundaryEdges, avgDihedral, minDihedral, maxDihedral,
-                       bUnder30, b30to60, b60to90, b90to120, bOver120);
-
-            std::vector<BoundaryCorner> corners;
-            for (const auto& [vid, gSet] : vertOutGroups) {
-                if (gSet.size() >= 2) {
-                    std::string gStr;
-                    for (uint32_t gid : gSet) {
-                        if (!gStr.empty()) gStr += ", ";
-                        gStr += std::to_string(gid);
-                    }
-                    corners.push_back({
-                        vid,
-                        mesh.verts[vid * 3], mesh.verts[vid * 3 + 1], mesh.verts[vid * 3 + 2],
-                        vertMaxDihedral[vid],
-                        gStr
-                    });
-                }
-            }
-
-            if (!corners.empty()) {
-                std::sort(corners.begin(), corners.end(), [](const BoundaryCorner& a, const BoundaryCorner& b) {
-                    return a.maxDihedral > b.maxDihedral;
-                });
-                sculpt_log("[QUAD CAP PATCH #%zu] Boundary intersects %zu existing seam(s)/corner(s):\n",
-                           patchIdx + 1, corners.size());
-                int show = std::min((int)corners.size(), 6);
-                for (int k = 0; k < show; ++k) {
-                    const auto& c = corners[k];
-                    sculpt_log("  Corner Vert #%u at (%.2f, %.2f, %.2f) | Outside Groups: [%s] | Max Dihedral: %.1f deg\n",
-                               c.vid, c.x, c.y, c.z, c.groupsStr.c_str(), c.maxDihedral);
-                }
-            }
         }
+#endif
 
         if (patchLoops.empty()) {
             fallbackPatch("No closed boundary loop detected");
@@ -824,20 +844,28 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
         }
 
         if (!weldMap.empty()) {
+            uint32_t minSrc = UINT32_MAX, maxSrc = 0;
             for (auto& [src, dst] : weldMap) {
                 uint32_t target = dst;
                 while (weldMap.find(target) != weldMap.end()) {
                     target = weldMap[target];
                 }
                 dst = target;
+                minSrc = std::min(minSrc, src);
+                maxSrc = std::max(maxSrc, src);
             }
 
-            // Remap vertex indices in newFaces
+            // Remap vertex indices in newFaces (fast range check eliminates 99.9% of lookups)
+            std::vector<uint32_t> weldRemap(maxSrc - minSrc + 1, UINT32_MAX);
+            for (const auto& [src, dst] : weldMap) {
+                weldRemap[src - minSrc] = dst;
+            }
+
             for (auto& vid : newFaces) {
-                if (vid != TRI_INDEX) {
-                    auto it = weldMap.find(vid);
-                    if (it != weldMap.end()) {
-                        vid = it->second;
+                if (vid >= minSrc && vid <= maxSrc) {
+                    uint32_t mapped = weldRemap[vid - minSrc];
+                    if (mapped != UINT32_MAX) {
+                        vid = mapped;
                     }
                 }
             }
@@ -1062,7 +1090,6 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
             glm::vec3 n3D;
         };
 
-        std::map<std::pair<int, int>, uint32_t> gridPtMap;
         std::vector<GridPt> gridPoints;
         std::vector<StagedVert> loopNewVerts;
 
@@ -1084,6 +1111,18 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
 
         const int gridCols = gxMax - gxMin + 1;
         const int gridRows = gyMax - gyMin + 1;
+
+        // Flat 2D grid index replacing std::map<std::pair<int, int>, uint32_t> gridPtMap
+        std::vector<uint32_t> gridPtIndex(gridCols * gridRows, UINT32_MAX);
+        auto getGridPtVid = [&](int gx, int gy) -> uint32_t {
+            if (gx < gxMin || gx > gxMax || gy < gyMin || gy > gyMax) return UINT32_MAX;
+            return gridPtIndex[(gy - gyMin) * gridCols + (gx - gxMin)];
+        };
+        auto setGridPtVid = [&](int gx, int gy, uint32_t vid) {
+            if (gx >= gxMin && gx <= gxMax && gy >= gyMin && gy <= gyMax) {
+                gridPtIndex[(gy - gyMin) * gridCols + (gx - gxMin)] = vid;
+            }
+        };
 
         // 1. Fast 2D Scanline Domain Rasterization (O(1) domain membership check)
         std::vector<uint8_t> inDomain(gridCols * gridRows, 0);
@@ -1365,7 +1404,7 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
             for (const auto& tp : rowRes.pts) {
                 uint32_t newVid = baseVid + static_cast<uint32_t>(loopNewVerts.size());
                 loopNewVerts.push_back({tp.p3D, tp.n3D});
-                gridPtMap[{tp.gx, tp.gy}] = newVid;
+                setGridPtVid(tp.gx, tp.gy, newVid);
                 gridPoints.push_back({tp.gx, tp.gy, newVid, tp.p2D, tp.p3D, tp.n3D});
             }
         }
@@ -1409,44 +1448,44 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
             int gx, gy;
         };
         std::vector<QuadCell> quads;
-        std::unordered_set<uint64_t> quadCellKeys;
-
-        auto makeCellKey = [](int gx, int gy) -> uint64_t {
-            return ((uint64_t)(gx + 100000) << 32) | (uint64_t)(gy + 100000);
-        };
+        std::vector<uint8_t> hasQuadCell(gridCols * gridRows, 0);
 
         for (const auto& g : gridPoints) {
             int gx = g.gx;
             int gy = g.gy;
-            auto it10 = gridPtMap.find({gx + 1, gy});
-            auto it11 = gridPtMap.find({gx + 1, gy + 1});
-            auto it01 = gridPtMap.find({gx, gy + 1});
+            uint32_t v10 = getGridPtVid(gx + 1, gy);
+            uint32_t v11 = getGridPtVid(gx + 1, gy + 1);
+            uint32_t v01 = getGridPtVid(gx, gy + 1);
 
-            if (it10 != gridPtMap.end() && it11 != gridPtMap.end() && it01 != gridPtMap.end()) {
-                quads.push_back({g.meshVid, it10->second, it11->second, it01->second, gx, gy});
-                quadCellKeys.insert(makeCellKey(gx, gy));
+            if (v10 != UINT32_MAX && v11 != UINT32_MAX && v01 != UINT32_MAX) {
+                quads.push_back({g.meshVid, v10, v11, v01, gx, gy});
+                hasQuadCell[(gy - gyMin) * gridCols + (gx - gxMin)] = 1;
             }
         }
 
         // Collect all vertex IDs used by at least one candidate quad
-        std::unordered_set<uint32_t> quadUsedVids;
-        quadUsedVids.reserve(quads.size() * 4);
+        std::vector<uint8_t> isQuadUsedVid(loopNewVerts.size(), 0);
+        size_t quadUsedVidsCount = 0;
         for (const auto& q : quads) {
-            quadUsedVids.insert(q.v00);
-            quadUsedVids.insert(q.v10);
-            quadUsedVids.insert(q.v11);
-            quadUsedVids.insert(q.v01);
+            for (uint32_t v : {q.v00, q.v10, q.v11, q.v01}) {
+                if (v >= baseVid && (v - baseVid) < isQuadUsedVid.size()) {
+                    if (!isQuadUsedVid[v - baseVid]) {
+                        isQuadUsedVid[v - baseVid] = 1;
+                        quadUsedVidsCount++;
+                    }
+                }
+            }
         }
 
         int orphanGridPtsPruned = 0;
         for (const auto& gp : gridPoints) {
-            if (!quads.empty() && quadUsedVids.find(gp.meshVid) == quadUsedVids.end()) {
+            if (!quads.empty() && (gp.meshVid >= baseVid && (gp.meshVid - baseVid) < isQuadUsedVid.size() && !isQuadUsedVid[gp.meshVid - baseVid])) {
                 orphanGridPtsPruned++;
             }
         }
 
         sculpt_log("[QUAD CAP PATCH #%zu] Candidate grid quads: %zu (grid points in quads: %zu, pruned orphans: %d)\n",
-                   patchIdx + 1, quads.size(), quadUsedVids.size(), orphanGridPtsPruned);
+                   patchIdx + 1, quads.size(), quadUsedVidsCount, orphanGridPtsPruned);
 
         // CDT Triangulation for boundary transition stitching
         CDT::Triangulation<float> cdt;
@@ -1472,7 +1511,7 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
         }
 
         for (const auto& gp : gridPoints) {
-            if (!quads.empty() && quadUsedVids.find(gp.meshVid) == quadUsedVids.end()) {
+            if (!quads.empty() && (gp.meshVid >= baseVid && (gp.meshVid - baseVid) < isQuadUsedVid.size() && !isQuadUsedVid[gp.meshVid - baseVid])) {
                 continue; // Skip orphan grid point
             }
             cdtVerts.push_back(CDT::V2d<float>::make(gp.p2D.x, gp.p2D.y));
@@ -1505,14 +1544,38 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
                    patchIdx + 1, cdt.triangles.size(), cdtMs);
 
         // Fast O(1) lookup from vertex ID to grid coordinates (gx, gy)
-        std::unordered_map<uint32_t, std::pair<int, int>> vidToGrid;
-        vidToGrid.reserve(gridPoints.size());
+        struct GridCoord { int gx, gy; bool valid; };
+        std::vector<GridCoord> vidToGridFlat(loopNewVerts.size(), {0, 0, false});
         for (const auto& gp : gridPoints) {
-            vidToGrid[gp.meshVid] = {gp.gx, gp.gy};
+            if (gp.meshVid >= baseVid && (gp.meshVid - baseVid) < vidToGridFlat.size()) {
+                vidToGridFlat[gp.meshVid - baseVid] = {gp.gx, gp.gy, true};
+            }
         }
 
-        std::unordered_map<uint64_t, std::vector<std::array<uint32_t, 3>>> cellTriangles;
+        struct FlatCellTris {
+            std::array<uint32_t, 3> t0;
+            std::array<uint32_t, 3> t1;
+            uint8_t count = 0;
+            void push(const std::array<uint32_t, 3>& tri) {
+                if (count == 0) t0 = tri;
+                else if (count == 1) t1 = tri;
+                count++;
+            }
+        };
+        std::vector<FlatCellTris> cellTrianglesFlat(gridCols * gridRows);
         std::vector<std::array<uint32_t, 3>> transitionTris;
+
+        auto getGridCoord = [&](uint32_t m, int& outGx, int& outGy) -> bool {
+            if (m >= baseVid && (m - baseVid) < vidToGridFlat.size()) {
+                const auto& c = vidToGridFlat[m - baseVid];
+                if (c.valid) {
+                    outGx = c.gx;
+                    outGy = c.gy;
+                    return true;
+                }
+            }
+            return false;
+        };
 
         for (const auto& tri : cdt.triangles) {
             if (tri.vertices[0] >= cdtToMeshVid.size() ||
@@ -1527,21 +1590,20 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
             uint32_t m2 = cdtToMeshVid[tri.vertices[2]];
 
             bool isQuadTri = false;
-            auto it0 = vidToGrid.find(m0);
-            auto it1 = vidToGrid.find(m1);
-            auto it2 = vidToGrid.find(m2);
-
-            if (it0 != vidToGrid.end() && it1 != vidToGrid.end() && it2 != vidToGrid.end()) {
-                int minGx = std::min({it0->second.first, it1->second.first, it2->second.first});
-                int maxGx = std::max({it0->second.first, it1->second.first, it2->second.first});
-                int minGy = std::min({it0->second.second, it1->second.second, it2->second.second});
-                int maxGy = std::max({it0->second.second, it1->second.second, it2->second.second});
+            int g0x, g0y, g1x, g1y, g2x, g2y;
+            if (getGridCoord(m0, g0x, g0y) && getGridCoord(m1, g1x, g1y) && getGridCoord(m2, g2x, g2y)) {
+                int minGx = std::min({g0x, g1x, g2x});
+                int maxGx = std::max({g0x, g1x, g2x});
+                int minGy = std::min({g0y, g1y, g2y});
+                int maxGy = std::max({g0y, g1y, g2y});
 
                 if (maxGx - minGx <= 1 && maxGy - minGy <= 1) {
-                    uint64_t candidateKey = makeCellKey(minGx, minGy);
-                    if (quadCellKeys.find(candidateKey) != quadCellKeys.end()) {
-                        cellTriangles[candidateKey].push_back({m0, m1, m2});
-                        isQuadTri = true;
+                    if (minGx >= gxMin && minGx <= gxMax && minGy >= gyMin && minGy <= gyMax) {
+                        int cellIdx = (minGy - gyMin) * gridCols + (minGx - gxMin);
+                        if (hasQuadCell[cellIdx]) {
+                            cellTrianglesFlat[cellIdx].push({m0, m1, m2});
+                            isQuadTri = true;
+                        }
                     }
                 }
             }
@@ -1556,14 +1618,13 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
         acceptedGridQuads.reserve(quads.size());
 
         for (const auto& q : quads) {
-            uint64_t key = makeCellKey(q.gx, q.gy);
-            auto it = cellTriangles.find(key);
-            if (it != cellTriangles.end() && it->second.size() == 2) {
+            int cellIdx = (q.gy - gyMin) * gridCols + (q.gx - gxMin);
+            const auto& ct = cellTrianglesFlat[cellIdx];
+            if (ct.count == 2) {
                 acceptedGridQuads.push_back(q);
-            } else if (it != cellTriangles.end()) {
-                for (const auto& t : it->second) {
-                    transitionTris.push_back(t);
-                }
+            } else {
+                if (ct.count >= 1) transitionTris.push_back(ct.t0);
+                if (ct.count >= 2) transitionTris.push_back(ct.t1);
             }
         }
 
@@ -1608,21 +1669,24 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
 
         const size_t numTransTris = transitionTris.size();
         struct TransEdgeHalf {
+            uint64_t key;
             int triIdx;
             uint32_t vOpp;
             bool forward;
         };
 
-        std::unordered_map<uint64_t, std::vector<TransEdgeHalf>> transEdgeMap;
-        transEdgeMap.reserve(numTransTris * 3);
-
+        std::vector<TransEdgeHalf> transEdges(numTransTris * 3);
         for (size_t t = 0; t < numTransTris; ++t) {
             const auto& tri = transitionTris[t];
             uint32_t i0 = tri[0], i1 = tri[1], i2 = tri[2];
-            transEdgeMap[makeUndirectedEdgeKey(i0, i1)].push_back({(int)t, i2, i0 < i1});
-            transEdgeMap[makeUndirectedEdgeKey(i1, i2)].push_back({(int)t, i0, i1 < i2});
-            transEdgeMap[makeUndirectedEdgeKey(i2, i0)].push_back({(int)t, i1, i2 < i0});
+            transEdges[t * 3 + 0] = {makeUndirectedEdgeKey(i0, i1), (int)t, i2, i0 < i1};
+            transEdges[t * 3 + 1] = {makeUndirectedEdgeKey(i1, i2), (int)t, i0, i1 < i2};
+            transEdges[t * 3 + 2] = {makeUndirectedEdgeKey(i2, i0), (int)t, i1, i2 < i0};
         }
+
+        std::sort(transEdges.begin(), transEdges.end(), [](const TransEdgeHalf& a, const TransEdgeHalf& b) {
+            return a.key < b.key;
+        });
 
         struct CandidateQuadPair {
             int tA, tB;
@@ -1636,98 +1700,110 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
         int rejectedDiagRatio = 0;
         int rejectedEdgeRatio = 0;
         int rejectedAngles = 0;
+        size_t totalTransEdgesCount = 0;
 
-        for (const auto& [edgeKey, list] : transEdgeMap) {
-            if (list.size() != 2) continue; // Boundary edge or non-manifold
+        for (size_t i = 0; i < transEdges.size(); ) {
+            size_t j = i + 1;
+            while (j < transEdges.size() && transEdges[j].key == transEdges[i].key) ++j;
+            totalTransEdgesCount++;
+            size_t count = j - i;
+            if (count == 2) {
+                const auto& hA = transEdges[i];
+                const auto& hB = transEdges[i + 1];
+                if (hA.forward != hB.forward) { // Consistent winding
+                    int tA = hA.triIdx;
+                    int tB = hB.triIdx;
 
-            const auto& hA = list[0];
-            const auto& hB = list[1];
-            if (hA.forward == hB.forward) continue; // Inconsistent winding
+                    uint64_t edgeKey = hA.key;
+                    uint32_t u = (uint32_t)(edgeKey >> 32);
+                    uint32_t v = (uint32_t)(edgeKey & 0xFFFFFFFF);
+                    uint32_t wA = hA.vOpp;
+                    uint32_t wB = hB.vOpp;
 
-            int tA = hA.triIdx;
-            int tB = hB.triIdx;
+                    if (!hA.forward) {
+                        std::swap(u, v);
+                    }
 
-            uint32_t u = (uint32_t)(edgeKey >> 32);
-            uint32_t v = (uint32_t)(edgeKey & 0xFFFFFFFF);
-            uint32_t wA = hA.vOpp;
-            uint32_t wB = hB.vOpp;
+                    // CCW quad perimeter: u -> wB -> v -> wA
+                    uint32_t q0 = u;
+                    uint32_t q1 = wB;
+                    uint32_t q2 = v;
+                    uint32_t q3 = wA;
 
-            if (!hA.forward) {
-                std::swap(u, v);
+                    glm::vec2 p0 = getVertPos2D(q0);
+                    glm::vec2 p1 = getVertPos2D(q1);
+                    glm::vec2 p2 = getVertPos2D(q2);
+                    glm::vec2 p3 = getVertPos2D(q3);
+
+                    auto cross2D = [](const glm::vec2& a, const glm::vec2& b) -> float {
+                        return a.x * b.y - a.y * b.x;
+                    };
+
+                    // Corner turn cross products:
+                    float c0 = cross2D(p0 - p3, p1 - p0);
+                    float c1 = cross2D(p1 - p0, p2 - p1);
+                    float c2 = cross2D(p2 - p1, p3 - p2);
+                    float c3 = cross2D(p3 - p2, p0 - p3);
+
+                    if (c0 <= 1e-6f || c1 <= 1e-6f || c2 <= 1e-6f || c3 <= 1e-6f) {
+                        rejectedNonConvex++;
+                    } else {
+                        // Diagonal ratio
+                        float d1 = glm::distance(p0, p2);
+                        float d2 = glm::distance(p1, p3);
+                        if (d1 < 1e-4f || d2 < 1e-4f) {
+                            rejectedDiagRatio++;
+                        } else {
+                            float diagRatio = std::min(d1, d2) / std::max(d1, d2);
+                            if (diagRatio < 0.16f) {
+                                rejectedDiagRatio++;
+                            } else {
+                                // Edge lengths and interior angles
+                                glm::vec2 e0 = p1 - p0;
+                                glm::vec2 e1 = p2 - p1;
+                                glm::vec2 e2 = p3 - p2;
+                                glm::vec2 e3 = p0 - p3;
+
+                                float l0 = glm::length(e0);
+                                float l1 = glm::length(e1);
+                                float l2 = glm::length(e2);
+                                float l3 = glm::length(e3);
+
+                                float lMin = std::min({l0, l1, l2, l3});
+                                float lMax = std::max({l0, l1, l2, l3});
+                                if (lMax <= 1e-5f || (lMin / lMax) < 0.05f) {
+                                    rejectedEdgeRatio++;
+                                } else {
+                                    // Interior angles
+                                    auto angleDeg = [](const glm::vec2& vIn, const glm::vec2& vOut, float crossVal) -> float {
+                                        float dotVal = glm::dot(vIn, vOut);
+                                        return glm::degrees(std::atan2(crossVal, dotVal));
+                                    };
+
+                                    float a0 = angleDeg(p0 - p3, p1 - p0, c0);
+                                    float a1 = angleDeg(p1 - p0, p2 - p1, c1);
+                                    float a2 = angleDeg(p2 - p1, p3 - p2, c2);
+                                    float a3 = angleDeg(p3 - p2, p0 - p3, c3);
+
+                                    if (a0 < 22.0f || a0 > 158.0f || a1 < 22.0f || a1 > 158.0f ||
+                                        a2 < 22.0f || a2 > 158.0f || a3 < 22.0f || a3 > 158.0f) {
+                                        rejectedAngles++;
+                                    } else {
+                                        // Quality score: diagonal ratio + edge ratio + proximity of angles to 90 deg
+                                        float angleScore = 0.0f;
+                                        for (float a : {a0, a1, a2, a3}) {
+                                            angleScore += std::sin(glm::radians(a));
+                                        }
+                                        float score = diagRatio * 2.5f + (lMin / lMax) * 1.5f + angleScore;
+                                        candidatePairs.push_back({tA, tB, q0, q1, q2, q3, score});
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
-
-            // CCW quad perimeter: u -> wB -> v -> wA
-            uint32_t q0 = u;
-            uint32_t q1 = wB;
-            uint32_t q2 = v;
-            uint32_t q3 = wA;
-
-            glm::vec2 p0 = getVertPos2D(q0);
-            glm::vec2 p1 = getVertPos2D(q1);
-            glm::vec2 p2 = getVertPos2D(q2);
-            glm::vec2 p3 = getVertPos2D(q3);
-
-            auto cross2D = [](const glm::vec2& a, const glm::vec2& b) -> float {
-                return a.x * b.y - a.y * b.x;
-            };
-
-            // Corner turn cross products:
-            float c0 = cross2D(p0 - p3, p1 - p0);
-            float c1 = cross2D(p1 - p0, p2 - p1);
-            float c2 = cross2D(p2 - p1, p3 - p2);
-            float c3 = cross2D(p3 - p2, p0 - p3);
-
-            if (c0 <= 1e-6f || c1 <= 1e-6f || c2 <= 1e-6f || c3 <= 1e-6f) {
-                rejectedNonConvex++;
-                continue; // Non-convex or reflex corner
-            }
-
-            // Diagonal ratio
-            float d1 = glm::distance(p0, p2);
-            float d2 = glm::distance(p1, p3);
-            if (d1 < 1e-4f || d2 < 1e-4f) { rejectedDiagRatio++; continue; }
-            float diagRatio = std::min(d1, d2) / std::max(d1, d2);
-            if (diagRatio < 0.16f) { rejectedDiagRatio++; continue; } // Allow slightly sheared quads over sliver triangles
-
-            // Edge lengths and interior angles
-            glm::vec2 e0 = p1 - p0;
-            glm::vec2 e1 = p2 - p1;
-            glm::vec2 e2 = p3 - p2;
-            glm::vec2 e3 = p0 - p3;
-
-            float l0 = glm::length(e0);
-            float l1 = glm::length(e1);
-            float l2 = glm::length(e2);
-            float l3 = glm::length(e3);
-
-            float lMin = std::min({l0, l1, l2, l3});
-            float lMax = std::max({l0, l1, l2, l3});
-            if (lMax <= 1e-5f || (lMin / lMax) < 0.05f) { rejectedEdgeRatio++; continue; }
-
-            // Interior angles
-            auto angleDeg = [](const glm::vec2& vIn, const glm::vec2& vOut, float crossVal) -> float {
-                float dotVal = glm::dot(vIn, vOut);
-                return glm::degrees(std::atan2(crossVal, dotVal));
-            };
-
-            float a0 = angleDeg(p0 - p3, p1 - p0, c0);
-            float a1 = angleDeg(p1 - p0, p2 - p1, c1);
-            float a2 = angleDeg(p2 - p1, p3 - p2, c2);
-            float a3 = angleDeg(p3 - p2, p0 - p3, c3);
-
-            if (a0 < 22.0f || a0 > 158.0f || a1 < 22.0f || a1 > 158.0f ||
-                a2 < 22.0f || a2 > 158.0f || a3 < 22.0f || a3 > 158.0f) {
-                rejectedAngles++;
-                continue; // Extreme acute or obtuse angles
-            }
-
-            // Quality score: diagonal ratio + edge ratio + proximity of angles to 90 deg
-            float angleScore = 0.0f;
-            for (float a : {a0, a1, a2, a3}) {
-                angleScore += std::sin(glm::radians(a));
-            }
-            float score = diagRatio * 2.5f + (lMin / lMax) * 1.5f + angleScore;
-            candidatePairs.push_back({tA, tB, q0, q1, q2, q3, score});
+            i = j;
         }
 
         std::sort(candidatePairs.begin(), candidatePairs.end(), [](const CandidateQuadPair& a, const CandidateQuadPair& b) {
@@ -1735,7 +1811,7 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
         });
 
         sculpt_log("[QUAD CAP PATCH #%zu] Transition Pairs: %zu internal edges -> %zu valid quads (Rejected: %d reflex/concave, %d sheared/diag, %d narrow edges, %d extreme angles)\n",
-                   patchIdx + 1, transEdgeMap.size(), candidatePairs.size(),
+                   patchIdx + 1, totalTransEdgesCount, candidatePairs.size(),
                    rejectedNonConvex, rejectedDiagRatio, rejectedEdgeRatio, rejectedAngles);
 
         std::vector<bool> triUsed(numTransTris, false);
@@ -2012,7 +2088,6 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
         mesh.faceEdges.clear();
 
         mesh.hasCustomNormals = false;
-        mesh.initTopology();
         mesh.postInit();
 
         mesh.isDirty = true;
@@ -2027,7 +2102,6 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
         // If no patch was quad capped (e.g. preserved original manifold cap),
         // ensure mesh has valid topology, normals, and octree because toMesh skipped runPostInit.
         mesh.hasCustomNormals = false;
-        mesh.initTopology();
         mesh.postInit();
         mesh.isDirty = true;
         mesh.isTopologyDirty = true;

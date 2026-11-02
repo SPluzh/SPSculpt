@@ -5,6 +5,7 @@
 #include <numeric>
 #include <map>
 #include <unordered_map>
+#include <omp.h>
 
 namespace sculpt {
 
@@ -21,6 +22,7 @@ manifold::Manifold ManifoldBridge::fromMesh(const Mesh& mesh, uint32_t originalI
     const bool hasMaterials = (mesh.materials.size() == (size_t)(nbV * 3));
     const bool hasNormals = (mesh.normals.size() == (size_t)(nbV * 3));
 
+    #pragma omp parallel for schedule(static) if(nbV > 1000)
     for (int i = 0; i < nbV; ++i) {
         int base = i * 12;
         gl.vertProperties[base + 0] = mesh.verts[i * 3 + 0];
@@ -60,27 +62,39 @@ manifold::Manifold ManifoldBridge::fromMesh(const Mesh& mesh, uint32_t originalI
 
     const int nbF = mesh.nbFaces;
 
-    gl.triVerts.reserve(nbF * 6);
-    gl.faceID.reserve(nbF * 2);
+    std::vector<int> triOffsets(nbF + 1, 0);
+    #pragma omp parallel for schedule(static) if(nbF > 2000)
+    for (int f = 0; f < nbF; ++f) {
+        triOffsets[f + 1] = (mesh.faces[f * 4 + 3] != TRI_INDEX) ? 2 : 1;
+    }
+    for (int f = 0; f < nbF; ++f) {
+        triOffsets[f + 1] += triOffsets[f];
+    }
+    const int totalTris = triOffsets[nbF];
 
+    gl.triVerts.resize(totalTris * 3);
+    gl.faceID.resize(totalTris);
+
+    #pragma omp parallel for schedule(static) if(nbF > 2000)
     for (int f = 0; f < nbF; ++f) {
         uint32_t i0 = mesh.faces[f * 4 + 0];
         uint32_t i1 = mesh.faces[f * 4 + 1];
         uint32_t i2 = mesh.faces[f * 4 + 2];
         uint32_t i3 = mesh.faces[f * 4 + 3];
 
+        int outTriIdx = triOffsets[f];
         // Tri 1: i0, i1, i2
-        gl.triVerts.push_back(i0);
-        gl.triVerts.push_back(i1);
-        gl.triVerts.push_back(i2);
-        gl.faceID.push_back((uint32_t)f);
+        gl.triVerts[outTriIdx * 3 + 0] = i0;
+        gl.triVerts[outTriIdx * 3 + 1] = i1;
+        gl.triVerts[outTriIdx * 3 + 2] = i2;
+        gl.faceID[outTriIdx] = (uint32_t)f;
 
         // Tri 2: i0, i2, i3 (if quad)
         if (i3 != TRI_INDEX) {
-            gl.triVerts.push_back(i0);
-            gl.triVerts.push_back(i2);
-            gl.triVerts.push_back(i3);
-            gl.faceID.push_back((uint32_t)f);
+            gl.triVerts[(outTriIdx + 1) * 3 + 0] = i0;
+            gl.triVerts[(outTriIdx + 1) * 3 + 1] = i2;
+            gl.triVerts[(outTriIdx + 1) * 3 + 2] = i3;
+            gl.faceID[outTriIdx + 1] = (uint32_t)f;
         }
     }
 
@@ -168,11 +182,14 @@ void ManifoldBridge::toMesh(
     }
 
     std::vector<int> compactIndex(rawNumV, -1);
+    std::vector<int> uniqueToRaw;
+    uniqueToRaw.reserve(rawNumV);
     int numUniqueV = 0;
     for (int i = 0; i < rawNumV; ++i) {
         int root = findRoot(i);
         if (compactIndex[root] == -1) {
             compactIndex[root] = numUniqueV++;
+            uniqueToRaw.push_back(root);
         }
         compactIndex[i] = compactIndex[root];
     }
@@ -185,8 +202,9 @@ void ManifoldBridge::toMesh(
 
     const int propStride = gl.numProp;
 
-    for (int i = 0; i < rawNumV; ++i) {
-        int u = compactIndex[i];
+    #pragma omp parallel for schedule(static) if(numUniqueV > 2000)
+    for (int u = 0; u < numUniqueV; ++u) {
+        int i = uniqueToRaw[u];
         int base = i * propStride;
         outMesh.verts[u * 3 + 0] = gl.vertProperties[base + 0];
         outMesh.verts[u * 3 + 1] = gl.vertProperties[base + 1];
@@ -298,8 +316,9 @@ void ManifoldBridge::toMesh(
 
     const size_t VT = validTris.size();
 
-    // Map undirected edges to adjacent triangles for quadification
+    // Map undirected edges to adjacent triangles for quadification using a flat sorted array
     struct EdgeHalf {
+        uint64_t key;
         int triIdx;
         uint32_t vOpp;
         bool forward; // true if tri has min(a,b) -> max(a,b)
@@ -311,15 +330,18 @@ void ManifoldBridge::toMesh(
         return ((uint64_t)u << 32) | (uint64_t)v;
     };
 
-    std::unordered_map<uint64_t, std::vector<EdgeHalf>> edgeMap;
-    edgeMap.reserve(VT * 3 / 2);
-
+    std::vector<EdgeHalf> halfEdges(VT * 3);
+    #pragma omp parallel for schedule(static) if(VT > 2000)
     for (size_t t = 0; t < VT; ++t) {
         const auto& tri = validTris[t];
-        edgeMap[makeEdgeKey(tri.i0, tri.i1)].push_back({(int)t, tri.i2, tri.i0 < tri.i1});
-        edgeMap[makeEdgeKey(tri.i1, tri.i2)].push_back({(int)t, tri.i0, tri.i1 < tri.i2});
-        edgeMap[makeEdgeKey(tri.i2, tri.i0)].push_back({(int)t, tri.i1, tri.i2 < tri.i0});
+        halfEdges[t * 3 + 0] = {makeEdgeKey(tri.i0, tri.i1), (int)t, tri.i2, tri.i0 < tri.i1};
+        halfEdges[t * 3 + 1] = {makeEdgeKey(tri.i1, tri.i2), (int)t, tri.i0, tri.i1 < tri.i2};
+        halfEdges[t * 3 + 2] = {makeEdgeKey(tri.i2, tri.i0), (int)t, tri.i1, tri.i2 < tri.i0};
     }
+
+    std::sort(halfEdges.begin(), halfEdges.end(), [](const EdgeHalf& a, const EdgeHalf& b) {
+        return a.key < b.key;
+    });
 
     struct CandidatePair {
         int tA, tB;
@@ -330,65 +352,67 @@ void ManifoldBridge::toMesh(
     std::vector<CandidatePair> candidates;
     candidates.reserve(VT / 2);
 
-    for (const auto& [key, list] : edgeMap) {
-        if (list.size() != 2) continue;
+    for (size_t i = 0; i < halfEdges.size(); ) {
+        size_t j = i + 1;
+        while (j < halfEdges.size() && halfEdges[j].key == halfEdges[i].key) ++j;
+        size_t count = j - i;
+        if (count == 2) {
+            const auto& hA = halfEdges[i];
+            const auto& hB = halfEdges[i + 1];
+            if (hA.forward != hB.forward) { // Consistent winding
+                int tA = hA.triIdx;
+                int tB = hB.triIdx;
+                if (validTris[tA].gid == validTris[tB].gid) { // Keep polygroups separate
+                    // Pruning: skip quadification for cap triangles if capGroupID is specified
+                    if (capGroupID == 0 || validTris[tA].gid != capGroupID) {
+                        float dotN = glm::dot(validTris[tA].normal, validTris[tB].normal);
+                        if (dotN >= 0.80f) { // Crease angle <= ~36 deg
+                            uint64_t key = hA.key;
+                            uint32_t u = (uint32_t)(key >> 32);
+                            uint32_t v = (uint32_t)(key & 0xFFFFFFFF);
+                            uint32_t wA = hA.vOpp;
+                            uint32_t wB = hB.vOpp;
 
-        const auto& hA = list[0];
-        const auto& hB = list[1];
-        if (hA.forward == hB.forward) continue; // Non-manifold or inverted
+                            // In tA, ensure edge is directed u -> v
+                            if (!hA.forward) {
+                                std::swap(u, v);
+                            }
+                            // CCW quad perimeter: u -> wB -> v -> wA
+                            uint32_t q0 = u;
+                            uint32_t q1 = wB;
+                            uint32_t q2 = v;
+                            uint32_t q3 = wA;
 
-        int tA = hA.triIdx;
-        int tB = hB.triIdx;
-        if (validTris[tA].gid != validTris[tB].gid) continue; // Keep polygroups separate
+                            glm::vec3 p0(outMesh.verts[q0 * 3], outMesh.verts[q0 * 3 + 1], outMesh.verts[q0 * 3 + 2]);
+                            glm::vec3 p1(outMesh.verts[q1 * 3], outMesh.verts[q1 * 3 + 1], outMesh.verts[q1 * 3 + 2]);
+                            glm::vec3 p2(outMesh.verts[q2 * 3], outMesh.verts[q2 * 3 + 1], outMesh.verts[q2 * 3 + 2]);
+                            glm::vec3 p3(outMesh.verts[q3 * 3], outMesh.verts[q3 * 3 + 1], outMesh.verts[q3 * 3 + 2]);
 
-        // Pruning: skip quadification for cap triangles if capGroupID is specified,
-        // since they will immediately be replaced by QuadCapGenerator.
-        if (capGroupID != 0 && validTris[tA].gid == capGroupID) continue;
+                            glm::vec3 avgN = glm::normalize(validTris[tA].normal + validTris[tB].normal);
 
-        float dotN = glm::dot(validTris[tA].normal, validTris[tB].normal);
-        if (dotN < 0.80f) continue; // Crease angle > ~36 deg
+                            // Check strict convexity at all 4 corners
+                            glm::vec3 c0 = glm::cross(p1 - p0, p3 - p0);
+                            glm::vec3 c1 = glm::cross(p2 - p1, p0 - p1);
+                            glm::vec3 c2 = glm::cross(p3 - p2, p1 - p2);
+                            glm::vec3 c3 = glm::cross(p0 - p3, p2 - p3);
 
-        uint32_t u = (uint32_t)(key >> 32);
-        uint32_t v = (uint32_t)(key & 0xFFFFFFFF);
-        uint32_t wA = hA.vOpp;
-        uint32_t wB = hB.vOpp;
-
-        // In tA, ensure edge is directed u -> v
-        if (!hA.forward) {
-            std::swap(u, v);
+                            if (glm::dot(c0, avgN) > 1e-5f && glm::dot(c1, avgN) > 1e-5f &&
+                                glm::dot(c2, avgN) > 1e-5f && glm::dot(c3, avgN) > 1e-5f) {
+                                // Check diagonals: aspect ratio must not be extremely skewed
+                                float d1 = glm::distance(p0, p2);
+                                float d2 = glm::distance(p1, p3);
+                                float diagRatio = (d1 > 1e-5f && d2 > 1e-5f) ? std::min(d1, d2) / std::max(d1, d2) : 0.0f;
+                                if (diagRatio >= 0.20f) {
+                                    float score = dotN * 2.0f + diagRatio;
+                                    candidates.push_back({tA, tB, q0, q1, q2, q3, score});
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
-        // CCW quad perimeter: u -> wB -> v -> wA
-        uint32_t q0 = u;
-        uint32_t q1 = wB;
-        uint32_t q2 = v;
-        uint32_t q3 = wA;
-
-        glm::vec3 p0(outMesh.verts[q0 * 3], outMesh.verts[q0 * 3 + 1], outMesh.verts[q0 * 3 + 2]);
-        glm::vec3 p1(outMesh.verts[q1 * 3], outMesh.verts[q1 * 3 + 1], outMesh.verts[q1 * 3 + 2]);
-        glm::vec3 p2(outMesh.verts[q2 * 3], outMesh.verts[q2 * 3 + 1], outMesh.verts[q2 * 3 + 2]);
-        glm::vec3 p3(outMesh.verts[q3 * 3], outMesh.verts[q3 * 3 + 1], outMesh.verts[q3 * 3 + 2]);
-
-        glm::vec3 avgN = glm::normalize(validTris[tA].normal + validTris[tB].normal);
-
-        // Check strict convexity at all 4 corners
-        glm::vec3 c0 = glm::cross(p1 - p0, p3 - p0);
-        glm::vec3 c1 = glm::cross(p2 - p1, p0 - p1);
-        glm::vec3 c2 = glm::cross(p3 - p2, p1 - p2);
-        glm::vec3 c3 = glm::cross(p0 - p3, p2 - p3);
-
-        if (glm::dot(c0, avgN) <= 1e-5f || glm::dot(c1, avgN) <= 1e-5f ||
-            glm::dot(c2, avgN) <= 1e-5f || glm::dot(c3, avgN) <= 1e-5f) {
-            continue;
-        }
-
-        // Check diagonals: aspect ratio must not be extremely skewed
-        float d1 = glm::distance(p0, p2);
-        float d2 = glm::distance(p1, p3);
-        float diagRatio = (d1 > 1e-5f && d2 > 1e-5f) ? std::min(d1, d2) / std::max(d1, d2) : 0.0f;
-        if (diagRatio < 0.20f) continue;
-
-        float score = dotN * 2.0f + diagRatio;
-        candidates.push_back({tA, tB, q0, q1, q2, q3, score});
+        i = j;
     }
 
     std::sort(candidates.begin(), candidates.end(), [](const CandidatePair& a, const CandidatePair& b) {
@@ -447,7 +471,6 @@ void ManifoldBridge::toMesh(
 
     if (runPostInit) {
         outMesh.hasCustomNormals = false;
-        outMesh.initTopology();
         outMesh.postInit();
     }
 
@@ -924,7 +947,6 @@ void ManifoldBridge::toMeshBooleanMultiple(
 
     if (runPostInit) {
         outMesh.hasCustomNormals = false;
-        outMesh.initTopology();
         outMesh.postInit();
     }
 
