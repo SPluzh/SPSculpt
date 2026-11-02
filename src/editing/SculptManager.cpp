@@ -4114,7 +4114,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                        m_clipCurvePoints.size(), (void*)mesh, mesh ? mesh->nbVerts : 0);
 
             if (m_clipCurvePoints.size() >= 2 && mesh) {
-                scene.pushHistoryState();
+                HistoryState beforeState = scene.saveCurrentState(false);
                 std::vector<glm::vec3> symScales = getActiveSymmetryScales();
                 bool modified = ClipCurveTool::execute(
                     mesh,
@@ -4127,6 +4127,8 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 );
                 sculpt_log("[SculptManager] ClipCurveTool::execute result = %s\n", modified ? "TRUE (modified)" : "FALSE (unmodified)");
                 if (modified) {
+                    HistoryState afterState = scene.saveCurrentState(false);
+                    g_undoManager.pushTopologyChange(scene, "Clip Curve", std::move(beforeState), std::move(afterState));
                     scene.setModified(true);
                 }
             } else {

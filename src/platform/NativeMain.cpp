@@ -24,6 +24,7 @@
 #include "render/AngleRenderer.h"
 #include "mesh/Octree.h"
 #include "mesh/SculptBenchmark.h"
+#include "mesh/TrimClipBenchmark.h"
 #include "mesh/NormalCalc.h"
 #include "sculpt/SculptEngine.h"
 #include "mesh/Topology.h"
@@ -327,6 +328,7 @@ int main(int argc, char* argv[]) {
 
     bool showConsole = false;
     bool runBench = false;
+    bool runTrimClipBench = false;
     int benchFaces = 4000000;
     std::string fileToOpen = "";
 
@@ -342,11 +344,17 @@ int main(int argc, char* argv[]) {
                 runBench = true;
                 benchFaces = 50000000;
                 showConsole = true;
-            } else if (arg == "--test-claybuildup-4m" || arg == "--bench-claybuildup" || arg == "--bench-multitool" || arg == "--bench-all") {
+            } else if (arg == "--bench-trim" || arg == "--bench-clip" || arg == "--bench-trim-clip" || arg == "--bench-curves") {
+                runTrimClipBench = true;
+                showConsole = true;
+            } else if (arg == "--bench-all") {
+                runBench = true;
+                runTrimClipBench = true;
+                showConsole = true;
+            } else if (arg == "--test-claybuildup-4m" || arg == "--bench-claybuildup" || arg == "--bench-multitool" || arg == "--benchmark") {
                 runBench = true;
                 showConsole = true;
             } else if ((arg == "--bench-faces" || arg == "-bf") && i + 1 < numArgs) {
-                runBench = true;
                 showConsole = true;
                 benchFaces = std::atoi(wideToUtf8(szArgList[++i]).c_str());
             } else if (fileToOpen.empty() && !arg.empty() && arg[0] != '-') {
@@ -364,11 +372,17 @@ int main(int argc, char* argv[]) {
             runBench = true;
             benchFaces = 50000000;
             showConsole = true;
-        } else if (arg == "--test-claybuildup-4m" || arg == "--bench-claybuildup" || arg == "--bench-multitool" || arg == "--bench-all") {
+        } else if (arg == "--bench-trim" || arg == "--bench-clip" || arg == "--bench-trim-clip" || arg == "--bench-curves") {
+            runTrimClipBench = true;
+            showConsole = true;
+        } else if (arg == "--bench-all") {
+            runBench = true;
+            runTrimClipBench = true;
+            showConsole = true;
+        } else if (arg == "--test-claybuildup-4m" || arg == "--bench-claybuildup" || arg == "--bench-multitool" || arg == "--benchmark") {
             runBench = true;
             showConsole = true;
         } else if ((arg == "--bench-faces" || arg == "-bf") && i + 1 < argc) {
-            runBench = true;
             showConsole = true;
             benchFaces = std::atoi(argv[++i]);
         } else if (fileToOpen.empty() && !arg.empty() && arg[0] != '-') {
@@ -416,8 +430,22 @@ int main(int argc, char* argv[]) {
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
 
+    if (runTrimClipBench && !runBench) {
+        bool success = TrimClipBenchmark::run(benchFaces);
+        fflush(stdout);
+        fflush(stderr);
+#ifdef _WIN32
+        ExitProcess(success ? 0 : 1);
+#else
+        _exit(success ? 0 : 1);
+#endif
+    }
+
     if (runBench) {
         bool success = SculptBenchmark::run(benchFaces);
+        if (runTrimClipBench) {
+            success = TrimClipBenchmark::run(benchFaces) && success;
+        }
         fflush(stdout);
         fflush(stderr);
 #ifdef _WIN32

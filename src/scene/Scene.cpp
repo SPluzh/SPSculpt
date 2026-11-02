@@ -287,6 +287,7 @@ void Scene::restoreState(const HistoryState& hs) {
         }
 
         if (vertsChanged) m->verts = ms.verts;
+        m->setVertsGeneration(ms.vertsGeneration);
         if (!inPlace || m->colors != ms.colors) m->colors = ms.colors;
         if (!inPlace || m->materials != ms.materials) m->materials = ms.materials;
         if (!inPlace || m->faces != ms.faces) m->faces = ms.faces;

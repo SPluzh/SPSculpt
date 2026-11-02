@@ -356,6 +356,7 @@ public:
 
     uint64_t getVertsGeneration() const { return m_vertsGeneration; }
     void bumpVertsGeneration() { m_vertsGeneration++; }
+    void setVertsGeneration(uint64_t gen) { m_vertsGeneration = gen; }
 
     void initTexCoordsDataFromOBJData(const std::vector<float>& uvAr, const std::vector<uint32_t>& uvfArOrig);
     void updateMatrices(const Camera& camera);

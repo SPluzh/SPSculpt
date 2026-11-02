@@ -151,13 +151,13 @@ static bool projectToPolylineMiter(
         glm::vec2 closestOnSeg = seg.pA + tClamped * seg.dir;
         float dist = glm::distance(p, closestOnSeg);
 
-        // Additional penalty if point falls outside segment's miter sector
+        // Penalty if point falls outside segment's miter sector
         if (tAlong < 0.0f) {
             float mDot = glm::dot(p - seg.pA, seg.miterNormStart);
-            if (mDot < 0.0f) dist += 1000.0f;
+            if (mDot < 0.0f) dist += 1e6f;
         } else if (tAlong > seg.len) {
             float mDot = glm::dot(p - seg.pB, seg.miterNormEnd);
-            if (mDot < 0.0f) dist += 1000.0f;
+            if (mDot < 0.0f) dist += 1e6f;
         }
 
         if (dist < bestScore) {
@@ -172,6 +172,14 @@ static bool projectToPolylineMiter(
 
     // Continuous orthogonal projection onto segment line plane (miter sector defines sector ownership)
     outTargetScreen = p - outSignedDist * seg.norm2D;
+
+    // Safety clamp: if curve is a finite polyline (more than 1 segment), clamp target screen coordinates
+    // to segment extent so points beyond the end don't shoot out into empty space (flying points)
+    if (segments.size() > 1) {
+        float t = glm::dot(outTargetScreen - seg.pA, seg.dir);
+        float tClamped = std::clamp(t, -20.0f, seg.len + 20.0f);
+        outTargetScreen = seg.pA + tClamped * seg.dir;
+    }
 
     return true;
 }
@@ -264,23 +272,28 @@ static void constrainedLaplacianRelax(
 
             glm::vec3 bEvalLocal = isSymPass ? reflectPointSymmetry(bLocal, sScale, mesh, symMode) : bLocal;
             glm::vec3 bWorld = glm::vec3(localToWorld * glm::vec4(bEvalLocal, 1.0f));
-            glm::vec3 bProj = camera.project(bWorld);
+            glm::vec4 scrB = camera.computeWorldToScreenMatrix() * glm::vec4(bWorld, 1.0f);
+            if (scrB.w <= 0.001f) continue;
 
+            glm::vec3 bProj = camera.project(bWorld);
             if (bProj.z <= 0.0f || bProj.z >= 1.0f) continue;
 
             glm::vec2 targetScreen;
             float sDist;
             size_t segIdx;
             if (projectToPolylineMiter(glm::vec2(bProj.x, bProj.y), segments, targetScreen, sDist, segIdx)) {
-                // Tangential relaxation: project all affected vertices onto the cut plane so they slide in-plane
-                float safeZ = std::clamp(bProj.z, 0.0001f, 0.9999f);
-                glm::vec3 wCut = camera.unproject(targetScreen.x, targetScreen.y, safeZ);
-                glm::vec3 vCutLocal = glm::vec3(worldToLocal * glm::vec4(wCut, 1.0f));
-                glm::vec3 finalLocal = isSymPass ? reflectPointSymmetry(vCutLocal, sScale, mesh, symMode) : vCutLocal;
+                // Tangential relaxation: project affected vertices onto the cut plane so they slide in-plane
+                // Do not re-project vertices that relaxed well inside the unclipped region (> 2px)
+                if (sDist <= 2.0f) {
+                    float safeZ = std::clamp(bProj.z, 0.0001f, 0.9999f);
+                    glm::vec3 wCut = camera.unproject(targetScreen.x, targetScreen.y, safeZ);
+                    glm::vec3 vCutLocal = glm::vec3(worldToLocal * glm::vec4(wCut, 1.0f));
+                    glm::vec3 finalLocal = isSymPass ? reflectPointSymmetry(vCutLocal, sScale, mesh, symMode) : vCutLocal;
 
-                mesh->verts[i3]     = finalLocal.x;
-                mesh->verts[i3 + 1] = finalLocal.y;
-                mesh->verts[i3 + 2] = finalLocal.z;
+                    mesh->verts[i3]     = finalLocal.x;
+                    mesh->verts[i3 + 1] = finalLocal.y;
+                    mesh->verts[i3 + 2] = finalLocal.z;
+                }
             }
         }
     }
@@ -359,6 +372,8 @@ bool ClipCurveTool::execute(
     // Run 2 projection passes to handle overlapping clipped half-spaces at 90° / acute corners
     constexpr int NUM_PROJECTION_PASSES = 2;
 
+    glm::mat4 w2s = camera.computeWorldToScreenMatrix();
+
     for (int projPass = 0; projPass < NUM_PROJECTION_PASSES; ++projPass) {
         for (size_t passIdx = 0; passIdx < passes.size(); ++passIdx) {
             const auto& sScale = passes[passIdx];
@@ -375,6 +390,9 @@ bool ClipCurveTool::execute(
                 glm::vec3 vLocal = isSymPass ? reflectPointSymmetry(vLocalCurrent, sScale, mesh, symMode) : vLocalCurrent;
 
                 glm::vec3 vWorld = glm::vec3(localToWorld * glm::vec4(vLocal, 1.0f));
+                glm::vec4 scr = w2s * glm::vec4(vWorld, 1.0f);
+                if (scr.w <= 0.001f) continue;
+
                 glm::vec3 vProj = camera.project(vWorld);
                 if (vProj.z <= 0.0f || vProj.z >= 1.0f) continue;
 
@@ -397,10 +415,8 @@ bool ClipCurveTool::execute(
                         mesh->verts[i * 3 + 1] = finalLocal.y;
                         mesh->verts[i * 3 + 2] = finalLocal.z;
 
-                        if (!vertAffected[i] || !isSymPass) {
-                            vertAffected[i] = 1;
-                            vertSymScale[i] = sScale;
-                        }
+                        vertAffected[i] = 1;
+                        vertSymScale[i] = sScale;
 
                         if (signedDist > -BOUNDARY_THRESHOLD_PX) {
                             vertBoundary[i] = 1;
@@ -451,8 +467,10 @@ bool ClipCurveTool::execute(
         glm::vec3 vLocal(mesh->verts[i3], mesh->verts[i3 + 1], mesh->verts[i3 + 2]);
         glm::vec3 vEvalLocal = isSymPass ? reflectPointSymmetry(vLocal, sScale, mesh, symMode) : vLocal;
         glm::vec3 vWorld = glm::vec3(localToWorld * glm::vec4(vEvalLocal, 1.0f));
-        glm::vec3 vProj = camera.project(vWorld);
+        glm::vec4 scrSnap = w2s * glm::vec4(vWorld, 1.0f);
+        if (scrSnap.w <= 0.001f) continue;
 
+        glm::vec3 vProj = camera.project(vWorld);
         if (vProj.z <= 0.0f || vProj.z >= 1.0f) continue;
 
         glm::vec2 targetScreen;
@@ -532,7 +550,9 @@ bool ClipCurveTool::execute(
 
     mesh->isDirty = true;
     mesh->isVertexDirty = true;
+    mesh->vertProxy = mesh->verts;
     mesh->invalidateLocalRadius();
+    mesh->bumpVertsGeneration();
 
     sculpt_log("[ClipCurveTool] ClipCurve Tool successfully modified mesh and updated dirty flags.\n");
 
