@@ -77,19 +77,13 @@ void Mesh::initEdges() {
         return;
     }
 
-    struct EdgeKeyHash {
-        uint64_t operator()(uint64_t k) const noexcept {
-            k ^= k >> 33;
-            k *= 0xff51afd7ed558ccdULL;
-            k ^= k >> 33;
-            k *= 0xc4ceb9fe1a85ec53ULL;
-            k ^= k >> 33;
-            return k;
-        }
+    struct FaceEdgeSlot {
+        uint64_t key;
+        int slot;
     };
 
-    std::unordered_map<uint64_t, uint32_t, EdgeKeyHash> edgeMap;
-    edgeMap.reserve(nbFaces * 2);
+    std::vector<FaceEdgeSlot> slots;
+    slots.reserve(nbFaces * 4);
 
     for (int f = 0; f < nbFaces; ++f) {
         int id = f * 4;
@@ -102,32 +96,31 @@ void Mesh::initEdges() {
             uint32_t mn = std::min(va, vb);
             uint32_t mx = std::max(va, vb);
             uint64_t key = (uint64_t(mn) << 32) | uint64_t(mx);
-
-            auto it = edgeMap.find(key);
-            if (it == edgeMap.end()) {
-                uint32_t e = nbEdges++;
-                edgeMap[key] = e;
-                faceEdges[id + k] = e;
-            } else {
-                faceEdges[id + k] = it->second;
-            }
-        }
-        if (numE == 3) {
-            faceEdges[id + 3] = TRI_INDEX;
+            slots.push_back({key, id + k});
         }
     }
 
-    edges.assign(nbEdges, 0);
-    for (int f = 0; f < nbFaces; ++f) {
-        int id = f * 4;
-        int numE = (faces[id + 3] != TRI_INDEX) ? 4 : 3;
-        for (int k = 0; k < numE; ++k) {
-            uint32_t e = faceEdges[id + k];
-            if (e < (uint32_t)nbEdges) {
-                edges[e]++;
-            }
+    std::sort(slots.begin(), slots.end(), [](const FaceEdgeSlot& a, const FaceEdgeSlot& b) {
+        return a.key < b.key;
+    });
+
+    uint32_t edgeIdx = 0;
+    std::vector<uint32_t> edgeValence;
+    edgeValence.reserve(slots.size() / 2);
+
+    for (size_t i = 0; i < slots.size(); ) {
+        size_t j = i + 1;
+        while (j < slots.size() && slots[j].key == slots[i].key) ++j;
+        for (size_t k = i; k < j; ++k) {
+            faceEdges[slots[k].slot] = edgeIdx;
         }
+        edgeValence.push_back(static_cast<uint32_t>(j - i));
+        edgeIdx++;
+        i = j;
     }
+
+    nbEdges = static_cast<int>(edgeIdx);
+    edges = std::move(edgeValence);
 
     if (edgeCreases.size() != (size_t)nbEdges) {
         edgeCreases.resize(nbEdges, 0);

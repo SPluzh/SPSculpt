@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <algorithm>
+#include <omp.h>
 #include <glm/gtc/matrix_transform.hpp>
 
 namespace sculpt {
@@ -810,7 +811,7 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
         // 3. Boundary Loop Micro-Edge Welding:
         // Eliminate ultra-short edges (< weldDist) produced by boolean cuts.
         float weldDist = std::min(0.08f, 0.12f * step);
-        std::unordered_map<uint32_t, uint32_t> weldMap;
+        std::vector<std::pair<uint32_t, uint32_t>> weldPairs;
 
         for (auto& lp : patchLoops) {
             std::vector<uint32_t> cleanLp;
@@ -823,7 +824,7 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
                 glm::vec3 pPrev(mesh.verts[vPrev * 3], mesh.verts[vPrev * 3 + 1], mesh.verts[vPrev * 3 + 2]);
                 glm::vec3 pCurr(mesh.verts[vCurr * 3], mesh.verts[vCurr * 3 + 1], mesh.verts[vCurr * 3 + 2]);
                 if (glm::distance(pPrev, pCurr) < weldDist) {
-                    weldMap[vCurr] = vPrev;
+                    weldPairs.push_back({vCurr, vPrev});
                 } else {
                     cleanLp.push_back(vCurr);
                 }
@@ -834,7 +835,7 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
                 glm::vec3 pFirst(mesh.verts[vFirst * 3], mesh.verts[vFirst * 3 + 1], mesh.verts[vFirst * 3 + 2]);
                 glm::vec3 pLast(mesh.verts[vLast * 3], mesh.verts[vLast * 3 + 1], mesh.verts[vLast * 3 + 2]);
                 if (glm::distance(pFirst, pLast) < weldDist) {
-                    weldMap[vLast] = vFirst;
+                    weldPairs.push_back({vLast, vFirst});
                     cleanLp.pop_back();
                 }
             }
@@ -843,22 +844,25 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
             }
         }
 
-        if (!weldMap.empty()) {
+        if (!weldPairs.empty()) {
             uint32_t minSrc = UINT32_MAX, maxSrc = 0;
-            for (auto& [src, dst] : weldMap) {
-                uint32_t target = dst;
-                while (weldMap.find(target) != weldMap.end()) {
-                    target = weldMap[target];
-                }
-                dst = target;
-                minSrc = std::min(minSrc, src);
-                maxSrc = std::max(maxSrc, src);
+            for (const auto& wp : weldPairs) {
+                minSrc = std::min(minSrc, wp.first);
+                maxSrc = std::max(maxSrc, wp.first);
             }
 
             // Remap vertex indices in newFaces (fast range check eliminates 99.9% of lookups)
             std::vector<uint32_t> weldRemap(maxSrc - minSrc + 1, UINT32_MAX);
-            for (const auto& [src, dst] : weldMap) {
-                weldRemap[src - minSrc] = dst;
+            for (const auto& wp : weldPairs) {
+                weldRemap[wp.first - minSrc] = wp.second;
+            }
+            // Resolve transitive chains
+            for (uint32_t& dst : weldRemap) {
+                if (dst != UINT32_MAX) {
+                    while (dst >= minSrc && dst <= maxSrc && weldRemap[dst - minSrc] != UINT32_MAX) {
+                        dst = weldRemap[dst - minSrc];
+                    }
+                }
             }
 
             for (auto& vid : newFaces) {
@@ -952,7 +956,7 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
             newFaceGroups = std::move(compactedFaceGroups);
 
             sculpt_log("[QUAD CAP PATCH #%zu] Welded %zu micro-vertices (< %.3f mm) on boundary. Cleaned %d degenerate faces, converted %d collapsed quads to tris.\n",
-                       patchIdx + 1, weldMap.size(), weldDist, degenerateRemoved, quadsToTris);
+                       patchIdx + 1, weldPairs.size(), weldDist, degenerateRemoved, quadsToTris);
         }
 
         // Build 2D polygons for outer loop and all holes
@@ -1693,117 +1697,160 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
             uint32_t q0, q1, q2, q3;
             float score;
         };
+        int numThreads = omp_get_max_threads();
+        std::vector<std::vector<CandidateQuadPair>> threadCandidates(numThreads);
+        std::vector<int> threadNonConvex(numThreads, 0);
+        std::vector<int> threadDiagRatio(numThreads, 0);
+        std::vector<int> threadEdgeRatio(numThreads, 0);
+        std::vector<int> threadAngles(numThreads, 0);
+        std::vector<size_t> threadTransEdges(numThreads, 0);
+
+        #pragma omp parallel
+        {
+            int tid = omp_get_thread_num();
+            size_t n = transEdges.size();
+            size_t rawStart = (n * tid) / numThreads;
+            size_t rawEnd = (n * (tid + 1)) / numThreads;
+
+            if (rawStart > 0) {
+                while (rawStart < n && transEdges[rawStart].key == transEdges[rawStart - 1].key) {
+                    ++rawStart;
+                }
+            }
+            if (rawEnd < n) {
+                while (rawEnd < n && transEdges[rawEnd].key == transEdges[rawEnd - 1].key) {
+                    ++rawEnd;
+                }
+            }
+
+            auto& localCands = threadCandidates[tid];
+            if (rawStart < rawEnd) {
+                localCands.reserve((rawEnd - rawStart) / 4);
+                for (size_t i = rawStart; i < rawEnd; ) {
+                    size_t j = i + 1;
+                    while (j < rawEnd && transEdges[j].key == transEdges[i].key) ++j;
+                    threadTransEdges[tid]++;
+                    size_t count = j - i;
+                    if (count == 2) {
+                        const auto& hA = transEdges[i];
+                        const auto& hB = transEdges[i + 1];
+                        if (hA.forward != hB.forward) { // Consistent winding
+                            int tA = hA.triIdx;
+                            int tB = hB.triIdx;
+
+                            uint64_t edgeKey = hA.key;
+                            uint32_t u = (uint32_t)(edgeKey >> 32);
+                            uint32_t v = (uint32_t)(edgeKey & 0xFFFFFFFF);
+                            uint32_t wA = hA.vOpp;
+                            uint32_t wB = hB.vOpp;
+
+                            if (!hA.forward) {
+                                std::swap(u, v);
+                            }
+
+                            // CCW quad perimeter: u -> wB -> v -> wA
+                            uint32_t q0 = u;
+                            uint32_t q1 = wB;
+                            uint32_t q2 = v;
+                            uint32_t q3 = wA;
+
+                            glm::vec2 p0 = getVertPos2D(q0);
+                            glm::vec2 p1 = getVertPos2D(q1);
+                            glm::vec2 p2 = getVertPos2D(q2);
+                            glm::vec2 p3 = getVertPos2D(q3);
+
+                            auto cross2D = [](const glm::vec2& a, const glm::vec2& b) -> float {
+                                return a.x * b.y - a.y * b.x;
+                            };
+
+                            // Corner turn cross products:
+                            float c0 = cross2D(p0 - p3, p1 - p0);
+                            float c1 = cross2D(p1 - p0, p2 - p1);
+                            float c2 = cross2D(p2 - p1, p3 - p2);
+                            float c3 = cross2D(p3 - p2, p0 - p3);
+
+                            if (c0 <= 1e-6f || c1 <= 1e-6f || c2 <= 1e-6f || c3 <= 1e-6f) {
+                                threadNonConvex[tid]++;
+                            } else {
+                                // Diagonal ratio
+                                float d1 = glm::distance(p0, p2);
+                                float d2 = glm::distance(p1, p3);
+                                if (d1 < 1e-4f || d2 < 1e-4f) {
+                                    threadDiagRatio[tid]++;
+                                } else {
+                                    float diagRatio = std::min(d1, d2) / std::max(d1, d2);
+                                    if (diagRatio < 0.16f) {
+                                        threadDiagRatio[tid]++;
+                                    } else {
+                                        // Edge lengths and interior angles
+                                        glm::vec2 e0 = p1 - p0;
+                                        glm::vec2 e1 = p2 - p1;
+                                        glm::vec2 e2 = p3 - p2;
+                                        glm::vec2 e3 = p0 - p3;
+
+                                        float l0 = glm::length(e0);
+                                        float l1 = glm::length(e1);
+                                        float l2 = glm::length(e2);
+                                        float l3 = glm::length(e3);
+
+                                        float lMin = std::min({l0, l1, l2, l3});
+                                        float lMax = std::max({l0, l1, l2, l3});
+                                        if (lMax <= 1e-5f || (lMin / lMax) < 0.05f) {
+                                            threadEdgeRatio[tid]++;
+                                        } else {
+                                            // Interior angles
+                                            auto angleDeg = [](const glm::vec2& vIn, const glm::vec2& vOut, float crossVal) -> float {
+                                                float dotVal = glm::dot(vIn, vOut);
+                                                return glm::degrees(std::atan2(crossVal, dotVal));
+                                            };
+
+                                            float a0 = angleDeg(p0 - p3, p1 - p0, c0);
+                                            float a1 = angleDeg(p1 - p0, p2 - p1, c1);
+                                            float a2 = angleDeg(p2 - p1, p3 - p2, c2);
+                                            float a3 = angleDeg(p3 - p2, p0 - p3, c3);
+
+                                            if (a0 < 22.0f || a0 > 158.0f || a1 < 22.0f || a1 > 158.0f ||
+                                                a2 < 22.0f || a2 > 158.0f || a3 < 22.0f || a3 > 158.0f) {
+                                                threadAngles[tid]++;
+                                            } else {
+                                                // Quality score: diagonal ratio + edge ratio + proximity of angles to 90 deg
+                                                float angleScore = 0.0f;
+                                                for (float a : {a0, a1, a2, a3}) {
+                                                    angleScore += std::sin(glm::radians(a));
+                                                }
+                                                float score = diagRatio * 2.5f + (lMin / lMax) * 1.5f + angleScore;
+                                                localCands.push_back({tA, tB, q0, q1, q2, q3, score});
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    i = j;
+                }
+            }
+        }
+
+        size_t totalCands = 0;
+        for (const auto& tc : threadCandidates) totalCands += tc.size();
         std::vector<CandidateQuadPair> candidatePairs;
-        candidatePairs.reserve(numTransTris / 2);
+        candidatePairs.reserve(totalCands);
+        for (auto& tc : threadCandidates) {
+            candidatePairs.insert(candidatePairs.end(), tc.begin(), tc.end());
+        }
 
         int rejectedNonConvex = 0;
         int rejectedDiagRatio = 0;
         int rejectedEdgeRatio = 0;
         int rejectedAngles = 0;
         size_t totalTransEdgesCount = 0;
-
-        for (size_t i = 0; i < transEdges.size(); ) {
-            size_t j = i + 1;
-            while (j < transEdges.size() && transEdges[j].key == transEdges[i].key) ++j;
-            totalTransEdgesCount++;
-            size_t count = j - i;
-            if (count == 2) {
-                const auto& hA = transEdges[i];
-                const auto& hB = transEdges[i + 1];
-                if (hA.forward != hB.forward) { // Consistent winding
-                    int tA = hA.triIdx;
-                    int tB = hB.triIdx;
-
-                    uint64_t edgeKey = hA.key;
-                    uint32_t u = (uint32_t)(edgeKey >> 32);
-                    uint32_t v = (uint32_t)(edgeKey & 0xFFFFFFFF);
-                    uint32_t wA = hA.vOpp;
-                    uint32_t wB = hB.vOpp;
-
-                    if (!hA.forward) {
-                        std::swap(u, v);
-                    }
-
-                    // CCW quad perimeter: u -> wB -> v -> wA
-                    uint32_t q0 = u;
-                    uint32_t q1 = wB;
-                    uint32_t q2 = v;
-                    uint32_t q3 = wA;
-
-                    glm::vec2 p0 = getVertPos2D(q0);
-                    glm::vec2 p1 = getVertPos2D(q1);
-                    glm::vec2 p2 = getVertPos2D(q2);
-                    glm::vec2 p3 = getVertPos2D(q3);
-
-                    auto cross2D = [](const glm::vec2& a, const glm::vec2& b) -> float {
-                        return a.x * b.y - a.y * b.x;
-                    };
-
-                    // Corner turn cross products:
-                    float c0 = cross2D(p0 - p3, p1 - p0);
-                    float c1 = cross2D(p1 - p0, p2 - p1);
-                    float c2 = cross2D(p2 - p1, p3 - p2);
-                    float c3 = cross2D(p3 - p2, p0 - p3);
-
-                    if (c0 <= 1e-6f || c1 <= 1e-6f || c2 <= 1e-6f || c3 <= 1e-6f) {
-                        rejectedNonConvex++;
-                    } else {
-                        // Diagonal ratio
-                        float d1 = glm::distance(p0, p2);
-                        float d2 = glm::distance(p1, p3);
-                        if (d1 < 1e-4f || d2 < 1e-4f) {
-                            rejectedDiagRatio++;
-                        } else {
-                            float diagRatio = std::min(d1, d2) / std::max(d1, d2);
-                            if (diagRatio < 0.16f) {
-                                rejectedDiagRatio++;
-                            } else {
-                                // Edge lengths and interior angles
-                                glm::vec2 e0 = p1 - p0;
-                                glm::vec2 e1 = p2 - p1;
-                                glm::vec2 e2 = p3 - p2;
-                                glm::vec2 e3 = p0 - p3;
-
-                                float l0 = glm::length(e0);
-                                float l1 = glm::length(e1);
-                                float l2 = glm::length(e2);
-                                float l3 = glm::length(e3);
-
-                                float lMin = std::min({l0, l1, l2, l3});
-                                float lMax = std::max({l0, l1, l2, l3});
-                                if (lMax <= 1e-5f || (lMin / lMax) < 0.05f) {
-                                    rejectedEdgeRatio++;
-                                } else {
-                                    // Interior angles
-                                    auto angleDeg = [](const glm::vec2& vIn, const glm::vec2& vOut, float crossVal) -> float {
-                                        float dotVal = glm::dot(vIn, vOut);
-                                        return glm::degrees(std::atan2(crossVal, dotVal));
-                                    };
-
-                                    float a0 = angleDeg(p0 - p3, p1 - p0, c0);
-                                    float a1 = angleDeg(p1 - p0, p2 - p1, c1);
-                                    float a2 = angleDeg(p2 - p1, p3 - p2, c2);
-                                    float a3 = angleDeg(p3 - p2, p0 - p3, c3);
-
-                                    if (a0 < 22.0f || a0 > 158.0f || a1 < 22.0f || a1 > 158.0f ||
-                                        a2 < 22.0f || a2 > 158.0f || a3 < 22.0f || a3 > 158.0f) {
-                                        rejectedAngles++;
-                                    } else {
-                                        // Quality score: diagonal ratio + edge ratio + proximity of angles to 90 deg
-                                        float angleScore = 0.0f;
-                                        for (float a : {a0, a1, a2, a3}) {
-                                            angleScore += std::sin(glm::radians(a));
-                                        }
-                                        float score = diagRatio * 2.5f + (lMin / lMax) * 1.5f + angleScore;
-                                        candidatePairs.push_back({tA, tB, q0, q1, q2, q3, score});
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            i = j;
+        for (int tid = 0; tid < numThreads; ++tid) {
+            rejectedNonConvex += threadNonConvex[tid];
+            rejectedDiagRatio += threadDiagRatio[tid];
+            rejectedEdgeRatio += threadEdgeRatio[tid];
+            rejectedAngles += threadAngles[tid];
+            totalTransEdgesCount += threadTransEdges[tid];
         }
 
         std::sort(candidatePairs.begin(), candidatePairs.end(), [](const CandidateQuadPair& a, const CandidateQuadPair& b) {

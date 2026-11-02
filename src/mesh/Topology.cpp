@@ -1,5 +1,6 @@
 #include "mesh/Topology.h"
 #include <algorithm>
+#include <omp.h>
 
 void computeTopology(
     int nbVerts, const uint32_t* faces, int nbFaces,
@@ -85,12 +86,12 @@ void computeTopology(
         }
     }
 
-    // 3. Sort, unique, and compact neighbors
+    // 3. Sort, unique, and compact neighbors in parallel
     vrvStartCount.resize(nbVerts * 2);
-    vertRingVert.clear();
-    vertRingVert.reserve(totalV);
     vertOnEdge.assign(nbVerts, 0);
 
+    std::vector<uint32_t> uniqueCounts(nbVerts);
+    #pragma omp parallel for schedule(static) if(nbVerts > 2000)
     for (int i = 0; i < nbVerts; ++i) {
         uint32_t start = vOffsets[i];
         uint32_t count = vCounts[i];
@@ -99,13 +100,26 @@ void computeTopology(
 
         std::sort(begin, end);
         auto* newEnd = std::unique(begin, end);
-        uint32_t uniqueCount = static_cast<uint32_t>(newEnd - begin);
+        uniqueCounts[i] = static_cast<uint32_t>(newEnd - begin);
+    }
 
-        vrvStartCount[i * 2] = static_cast<uint32_t>(vertRingVert.size());
-        vrvStartCount[i * 2 + 1] = uniqueCount;
-        vertRingVert.insert(vertRingVert.end(), begin, newEnd);
+    uint32_t totalUnique = 0;
+    for (int i = 0; i < nbVerts; ++i) {
+        vrvStartCount[i * 2] = totalUnique;
+        vrvStartCount[i * 2 + 1] = uniqueCounts[i];
+        totalUnique += uniqueCounts[i];
+    }
 
-        if (vrfStartCount[i * 2 + 1] != uniqueCount) {
+    vertRingVert.resize(totalUnique);
+
+    #pragma omp parallel for schedule(static) if(nbVerts > 2000)
+    for (int i = 0; i < nbVerts; ++i) {
+        uint32_t dstStart = vrvStartCount[i * 2];
+        uint32_t uCount = uniqueCounts[i];
+        const auto* srcBegin = tempVertRingVert.data() + vOffsets[i];
+        std::copy(srcBegin, srcBegin + uCount, vertRingVert.data() + dstStart);
+
+        if (vrfStartCount[i * 2 + 1] != uCount) {
             vertOnEdge[i] = 1;
         }
     }

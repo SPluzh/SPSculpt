@@ -98,23 +98,47 @@ manifold::Manifold ManifoldBridge::fromMesh(const Mesh& mesh, uint32_t originalI
         }
     }
 
+    auto tPackEnd = std::chrono::high_resolution_clock::now();
+
     if (originalID == 0) {
         originalID = manifold::Manifold::ReserveIDs(1);
     }
     gl.runIndex = {0, (uint32_t)gl.triVerts.size()};
     gl.runOriginalID = {originalID};
 
-    // Merge coincident vertices along open edges to guarantee watertight 2-manifold
-    gl.Merge();
+    // Check if mesh has any boundary/open edges before calling expensive gl.Merge()
+    bool hasOpenEdges = false;
+    if (mesh.vertOnEdge.size() == (size_t)mesh.nbVerts) {
+        for (int i = 0; i < mesh.nbVerts; ++i) {
+            if (mesh.vertOnEdge[i]) {
+                hasOpenEdges = true;
+                break;
+            }
+        }
+    } else {
+        hasOpenEdges = true;
+    }
 
+    double mergeMs = 0.0;
+    if (hasOpenEdges) {
+        auto tMergeStart = std::chrono::high_resolution_clock::now();
+        // Merge coincident vertices along open edges to guarantee watertight 2-manifold
+        gl.Merge();
+        auto tMergeEnd = std::chrono::high_resolution_clock::now();
+        mergeMs = std::chrono::duration<double, std::milli>(tMergeEnd - tMergeStart).count();
+    }
+
+    auto tCtorStart = std::chrono::high_resolution_clock::now();
     // Disable coplanar face merging by setting negative property tolerance
     std::vector<float> propertyTolerance(gl.numProp - 3, -1.0f);
     manifold::Manifold m(gl, propertyTolerance);
 
     auto tEnd = std::chrono::high_resolution_clock::now();
     double ms = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
-    sculpt_log("[MANIFOLD BRIDGE] Converted Mesh -> Manifold in %.2f ms (%d verts, %d tris, status: %d, origID: %u)\n",
-               ms, nbV, (int)(gl.triVerts.size() / 3), (int)m.Status(), originalID);
+    double packMs = std::chrono::duration<double, std::milli>(tPackEnd - tStart).count();
+    double ctorMs = std::chrono::duration<double, std::milli>(tEnd - tCtorStart).count();
+    sculpt_log("[MANIFOLD BRIDGE] Converted Mesh -> Manifold in %.2f ms [Pack: %.2fms, Merge: %.2fms%s, Ctor: %.2fms] (%d verts, %d tris, status: %d, origID: %u)\n",
+               ms, packMs, mergeMs, hasOpenEdges ? "" : " (Skipped: Closed)", ctorMs, nbV, (int)(gl.triVerts.size() / 3), (int)m.Status(), originalID);
 
     return m;
 }
@@ -129,7 +153,6 @@ void ManifoldBridge::toMesh(
     auto tStart = std::chrono::high_resolution_clock::now();
 
     manifold::MeshGL gl = m.GetMeshGL();
-    gl.Merge();
 
     const int rawNumV = gl.NumVert();
     const int numT = gl.NumTri();
@@ -281,16 +304,33 @@ void ManifoldBridge::toMesh(
         glm::vec3 normal;
     };
 
-    std::vector<ValidTri> validTris;
-    validTris.reserve(numT);
-
+    std::vector<uint8_t> isValidTri(numT, 0);
+    #pragma omp parallel for schedule(static) if(numT > 2000)
     for (int t = 0; t < numT; ++t) {
         uint32_t i0 = compactIndex[gl.triVerts[t * 3 + 0]];
         uint32_t i1 = compactIndex[gl.triVerts[t * 3 + 1]];
         uint32_t i2 = compactIndex[gl.triVerts[t * 3 + 2]];
+        if (i0 != i1 && i1 != i2 && i2 != i0) {
+            isValidTri[t] = 1;
+        }
+    }
 
-        // Discard degenerate triangles
-        if (i0 == i1 || i1 == i2 || i2 == i0) continue;
+    std::vector<int> triOffsets(numT + 1, 0);
+    for (int t = 0; t < numT; ++t) {
+        triOffsets[t + 1] = triOffsets[t] + isValidTri[t];
+    }
+    const size_t VT = triOffsets[numT];
+
+    std::vector<ValidTri> validTris(VT);
+
+    #pragma omp parallel for schedule(static) if(numT > 2000)
+    for (int t = 0; t < numT; ++t) {
+        if (!isValidTri[t]) continue;
+        int outIdx = triOffsets[t];
+
+        uint32_t i0 = compactIndex[gl.triVerts[t * 3 + 0]];
+        uint32_t i1 = compactIndex[gl.triVerts[t * 3 + 1]];
+        uint32_t i2 = compactIndex[gl.triVerts[t * 3 + 2]];
 
         uint32_t gid = triCapGroup[t];
         if (gid == 0) {
@@ -311,10 +351,8 @@ void ManifoldBridge::toMesh(
         if (len > 1e-7f) n /= len;
         else n = glm::vec3(0, 1, 0);
 
-        validTris.push_back({i0, i1, i2, gid, n});
+        validTris[outIdx] = {i0, i1, i2, gid, n};
     }
-
-    const size_t VT = validTris.size();
 
     // Map undirected edges to adjacent triangles for quadification using a flat sorted array
     struct EdgeHalf {
@@ -349,70 +387,102 @@ void ManifoldBridge::toMesh(
         float score;
     };
 
-    std::vector<CandidatePair> candidates;
-    candidates.reserve(VT / 2);
+    int numThreads = omp_get_max_threads();
+    std::vector<std::vector<CandidatePair>> threadCandidates(numThreads);
 
-    for (size_t i = 0; i < halfEdges.size(); ) {
-        size_t j = i + 1;
-        while (j < halfEdges.size() && halfEdges[j].key == halfEdges[i].key) ++j;
-        size_t count = j - i;
-        if (count == 2) {
-            const auto& hA = halfEdges[i];
-            const auto& hB = halfEdges[i + 1];
-            if (hA.forward != hB.forward) { // Consistent winding
-                int tA = hA.triIdx;
-                int tB = hB.triIdx;
-                if (validTris[tA].gid == validTris[tB].gid) { // Keep polygroups separate
-                    // Pruning: skip quadification for cap triangles if capGroupID is specified
-                    if (capGroupID == 0 || validTris[tA].gid != capGroupID) {
-                        float dotN = glm::dot(validTris[tA].normal, validTris[tB].normal);
-                        if (dotN >= 0.80f) { // Crease angle <= ~36 deg
-                            uint64_t key = hA.key;
-                            uint32_t u = (uint32_t)(key >> 32);
-                            uint32_t v = (uint32_t)(key & 0xFFFFFFFF);
-                            uint32_t wA = hA.vOpp;
-                            uint32_t wB = hB.vOpp;
+    #pragma omp parallel
+    {
+        int tid = omp_get_thread_num();
+        size_t n = halfEdges.size();
+        size_t rawStart = (n * tid) / numThreads;
+        size_t rawEnd = (n * (tid + 1)) / numThreads;
 
-                            // In tA, ensure edge is directed u -> v
-                            if (!hA.forward) {
-                                std::swap(u, v);
-                            }
-                            // CCW quad perimeter: u -> wB -> v -> wA
-                            uint32_t q0 = u;
-                            uint32_t q1 = wB;
-                            uint32_t q2 = v;
-                            uint32_t q3 = wA;
+        // Align boundaries to edge key transitions
+        if (rawStart > 0) {
+            while (rawStart < n && halfEdges[rawStart].key == halfEdges[rawStart - 1].key) {
+                ++rawStart;
+            }
+        }
+        if (rawEnd < n) {
+            while (rawEnd < n && halfEdges[rawEnd].key == halfEdges[rawEnd - 1].key) {
+                ++rawEnd;
+            }
+        }
 
-                            glm::vec3 p0(outMesh.verts[q0 * 3], outMesh.verts[q0 * 3 + 1], outMesh.verts[q0 * 3 + 2]);
-                            glm::vec3 p1(outMesh.verts[q1 * 3], outMesh.verts[q1 * 3 + 1], outMesh.verts[q1 * 3 + 2]);
-                            glm::vec3 p2(outMesh.verts[q2 * 3], outMesh.verts[q2 * 3 + 1], outMesh.verts[q2 * 3 + 2]);
-                            glm::vec3 p3(outMesh.verts[q3 * 3], outMesh.verts[q3 * 3 + 1], outMesh.verts[q3 * 3 + 2]);
+        auto& localCands = threadCandidates[tid];
+        if (rawStart < rawEnd) {
+            localCands.reserve((rawEnd - rawStart) / 6);
+            for (size_t i = rawStart; i < rawEnd; ) {
+                size_t j = i + 1;
+                while (j < rawEnd && halfEdges[j].key == halfEdges[i].key) ++j;
+                size_t count = j - i;
+                if (count == 2) {
+                    const auto& hA = halfEdges[i];
+                    const auto& hB = halfEdges[i + 1];
+                    if (hA.forward != hB.forward) { // Consistent winding
+                        int tA = hA.triIdx;
+                        int tB = hB.triIdx;
+                        if (validTris[tA].gid == validTris[tB].gid) { // Keep polygroups separate
+                            // Pruning: skip quadification for cap triangles if capGroupID is specified
+                            if (capGroupID == 0 || validTris[tA].gid != capGroupID) {
+                                float dotN = glm::dot(validTris[tA].normal, validTris[tB].normal);
+                                if (dotN >= 0.80f) { // Crease angle <= ~36 deg
+                                    uint64_t key = hA.key;
+                                    uint32_t u = (uint32_t)(key >> 32);
+                                    uint32_t v = (uint32_t)(key & 0xFFFFFFFF);
+                                    uint32_t wA = hA.vOpp;
+                                    uint32_t wB = hB.vOpp;
 
-                            glm::vec3 avgN = glm::normalize(validTris[tA].normal + validTris[tB].normal);
+                                    // In tA, ensure edge is directed u -> v
+                                    if (!hA.forward) {
+                                        std::swap(u, v);
+                                    }
+                                    // CCW quad perimeter: u -> wB -> v -> wA
+                                    uint32_t q0 = u;
+                                    uint32_t q1 = wB;
+                                    uint32_t q2 = v;
+                                    uint32_t q3 = wA;
 
-                            // Check strict convexity at all 4 corners
-                            glm::vec3 c0 = glm::cross(p1 - p0, p3 - p0);
-                            glm::vec3 c1 = glm::cross(p2 - p1, p0 - p1);
-                            glm::vec3 c2 = glm::cross(p3 - p2, p1 - p2);
-                            glm::vec3 c3 = glm::cross(p0 - p3, p2 - p3);
+                                    glm::vec3 p0(outMesh.verts[q0 * 3], outMesh.verts[q0 * 3 + 1], outMesh.verts[q0 * 3 + 2]);
+                                    glm::vec3 p1(outMesh.verts[q1 * 3], outMesh.verts[q1 * 3 + 1], outMesh.verts[q1 * 3 + 2]);
+                                    glm::vec3 p2(outMesh.verts[q2 * 3], outMesh.verts[q2 * 3 + 1], outMesh.verts[q2 * 3 + 2]);
+                                    glm::vec3 p3(outMesh.verts[q3 * 3], outMesh.verts[q3 * 3 + 1], outMesh.verts[q3 * 3 + 2]);
 
-                            if (glm::dot(c0, avgN) > 1e-5f && glm::dot(c1, avgN) > 1e-5f &&
-                                glm::dot(c2, avgN) > 1e-5f && glm::dot(c3, avgN) > 1e-5f) {
-                                // Check diagonals: aspect ratio must not be extremely skewed
-                                float d1 = glm::distance(p0, p2);
-                                float d2 = glm::distance(p1, p3);
-                                float diagRatio = (d1 > 1e-5f && d2 > 1e-5f) ? std::min(d1, d2) / std::max(d1, d2) : 0.0f;
-                                if (diagRatio >= 0.20f) {
-                                    float score = dotN * 2.0f + diagRatio;
-                                    candidates.push_back({tA, tB, q0, q1, q2, q3, score});
+                                    glm::vec3 avgN = glm::normalize(validTris[tA].normal + validTris[tB].normal);
+
+                                    // Check strict convexity at all 4 corners
+                                    glm::vec3 c0 = glm::cross(p1 - p0, p3 - p0);
+                                    glm::vec3 c1 = glm::cross(p2 - p1, p0 - p1);
+                                    glm::vec3 c2 = glm::cross(p3 - p2, p1 - p2);
+                                    glm::vec3 c3 = glm::cross(p0 - p3, p2 - p3);
+
+                                    if (glm::dot(c0, avgN) > 1e-5f && glm::dot(c1, avgN) > 1e-5f &&
+                                        glm::dot(c2, avgN) > 1e-5f && glm::dot(c3, avgN) > 1e-5f) {
+                                        // Check diagonals: aspect ratio must not be extremely skewed
+                                        float d1 = glm::distance(p0, p2);
+                                        float d2 = glm::distance(p1, p3);
+                                        float diagRatio = (d1 > 1e-5f && d2 > 1e-5f) ? std::min(d1, d2) / std::max(d1, d2) : 0.0f;
+                                        if (diagRatio >= 0.20f) {
+                                            float score = dotN * 2.0f + diagRatio;
+                                            localCands.push_back({tA, tB, q0, q1, q2, q3, score});
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
                 }
+                i = j;
             }
         }
-        i = j;
+    }
+
+    size_t totalCands = 0;
+    for (const auto& tc : threadCandidates) totalCands += tc.size();
+    std::vector<CandidatePair> candidates;
+    candidates.reserve(totalCands);
+    for (auto& tc : threadCandidates) {
+        candidates.insert(candidates.end(), tc.begin(), tc.end());
     }
 
     std::sort(candidates.begin(), candidates.end(), [](const CandidatePair& a, const CandidatePair& b) {
