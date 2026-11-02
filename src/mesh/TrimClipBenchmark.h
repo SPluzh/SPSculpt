@@ -23,6 +23,7 @@
 #include "editing/undo/TopologyUndoEntry.h"
 #include "common/Enums.h"
 #include "common/Constants.h"
+#include "editing/manifold/ManifoldBridge.h"
 #include <omp.h>
 
 namespace TrimClipBenchmark {
@@ -240,10 +241,49 @@ inline bool run(int targetFaces = 100000) {
             // Quad cap passed if generator succeeded, created quads, and quad ratio >= 50%
             bool quadCapPassed = capRes.success && (capQuads > 0) && (quadRatio >= 0.50f);
 
+            // Verify whether the trimmed mesh can be cleanly converted to a valid 2-manifold
+            manifold::Manifold checkM = curMesh ? sculpt::ManifoldBridge::fromMesh(*curMesh) : manifold::Manifold();
+            bool isManifold = (checkM.Status() == manifold::Manifold::Error::NoError);
+
+            int openEdges = 0, nonManifoldEdges = 0;
+            if (curMesh) {
+                std::unordered_map<uint64_t, int> halfEdges;
+                for (int f = 0; f < curMesh->nbFaces; ++f) {
+                    uint32_t v0 = curMesh->faces[f * 4 + 0];
+                    uint32_t v1 = curMesh->faces[f * 4 + 1];
+                    uint32_t v2 = curMesh->faces[f * 4 + 2];
+                    uint32_t v3 = curMesh->faces[f * 4 + 3];
+                    auto addHE = [&](uint32_t a, uint32_t b) {
+                        uint64_t key = ((uint64_t)a << 32) | b;
+                        halfEdges[key]++;
+                    };
+                    addHE(v0, v1);
+                    addHE(v1, v2);
+                    if (v3 != TRI_INDEX) {
+                        addHE(v2, v3);
+                        addHE(v3, v0);
+                    } else {
+                        addHE(v2, v0);
+                    }
+                }
+                for (const auto& [he, cnt] : halfEdges) {
+                    uint32_t a = (uint32_t)(he >> 32);
+                    uint32_t b = (uint32_t)(he & 0xFFFFFFFF);
+                    uint64_t rev = ((uint64_t)b << 32) | a;
+                    auto it = halfEdges.find(rev);
+                    int revCnt = (it != halfEdges.end()) ? it->second : 0;
+                    if (cnt > 1) nonManifoldEdges++;
+                    if (revCnt == 0) openEdges++;
+                }
+            }
+
             std::cout << "      [Quad Cap Check] Cap Faces: " << totalCapFaces
                       << " (" << capQuads << " quads, " << capTris << " tris -> "
                       << std::fixed << std::setprecision(1) << (quadRatio * 100.0f) << "% quads) | "
                       << (quadCapPassed ? "CLOSED WITH QUAD GRID [OK]" : "NOT CLOSED WITH QUAD GRID [NO QUAD]") << "\n";
+            std::cout << "      [Manifold Check] Mesh -> Manifold: Status " << (int)checkM.Status()
+                      << " (" << (isManifold ? "VALID 2-MANIFOLD [OK]" : "NOT MANIFOLD [ERROR]") << ") | Open HE: "
+                      << openEdges << ", Non-Manifold HE: " << nonManifoldEdges << "\n";
             if (!quadCapPassed) {
                 std::cout << "      [Quad Cap Diagnostic] "
                           << (!capRes.fallbackReason.empty() ? capRes.fallbackReason : "No quads on cap / fell back to raw triangles") << "\n";
@@ -319,7 +359,7 @@ inline bool run(int targetFaces = 100000) {
                 { 1240.0f, 260.0f },
                 { 1240.0f, 540.0f }
             };
-            rows.push_back(runTrimBenchmark("Trim Tool (Default Cut & Cap)", trimCornerLasso, false, 1, 7));
+            rows.push_back(runTrimBenchmark("Trim Tool (Default Cut & Cap)", trimCornerLasso, false, 1, 8));
         }
 
         // 2. Tool: Trim Tool (Alt Mode: Keep Inside Volume with QuadCap)
@@ -330,7 +370,7 @@ inline bool run(int targetFaces = 100000) {
                 { 1060.0f, 640.0f },
                 { 860.0f, 640.0f }
             };
-            rows.push_back(runTrimBenchmark("Trim Tool (Alt: Keep Inside)", trimAltLasso, true, 2, 7));
+            rows.push_back(runTrimBenchmark("Trim Tool (Alt: Keep Inside)", trimAltLasso, true, 2, 8));
         }
 
         // 3. Tool: Trim Tool (Hole in Sphere Center - Through-Hole Cutout)
@@ -341,7 +381,7 @@ inline bool run(int targetFaces = 100000) {
                 { 1040.0f, 620.0f },
                 { 880.0f, 620.0f }
             };
-            rows.push_back(runTrimBenchmark("Trim Tool (Hole in Center)", trimHoleLasso, false, 3, 7));
+            rows.push_back(runTrimBenchmark("Trim Tool (Hole in Center)", trimHoleLasso, false, 3, 8));
         }
 
         // 4. Tool: Trim Tool (Elongated Cutout / Narrow Slot Notch)
@@ -352,14 +392,207 @@ inline bool run(int targetFaces = 100000) {
                 { 1180.0f, 560.0f },
                 { 740.0f, 560.0f }
             };
-            rows.push_back(runTrimBenchmark("Trim Tool (Elongated Cutout)", trimSlotLasso, false, 4, 7));
+            rows.push_back(runTrimBenchmark("Trim Tool (Elongated Cutout)", trimSlotLasso, false, 4, 8));
+        }
+
+        // 5. Tool: Trim Tool (Consecutive Cuts - 2 In Sequence)
+        auto runConsecutiveTrimBenchmark = [&](const std::string& name,
+                                               const std::vector<glm::vec2>& lasso1,
+                                               const std::vector<glm::vec2>& lasso2,
+                                               int stepIdx, int totalSteps) -> BenchmarkRow {
+            std::cout << "  -> [" << stepIdx << "/" << totalSteps << "] Benchmarking " << name << "...\n";
+            Mesh* curMesh = getActiveMesh();
+            int origVertCount = curMesh ? curMesh->nbVerts : 0;
+            const std::vector<float> pristineVerts = curMesh ? curMesh->verts : std::vector<float>();
+
+            // --- CUT 1 ---
+            HistoryState beforeCut1 = scene.saveCurrentState(true);
+            TrimConfig config1;
+            config1.fillHole = true;
+            config1.remeshFilled = true;
+            sculpt::QuadCapResult capRes1;
+            uint32_t capGid1 = 0;
+            config1.outCapResult = &capRes1;
+            config1.outCapGid = &capGid1;
+
+            auto tStart1 = std::chrono::high_resolution_clock::now();
+            bool mod1 = TrimTool::execute(curMesh, camera, lasso1, false, false, SymmetryMode::Local, {}, config1);
+            auto tEnd1 = std::chrono::high_resolution_clock::now();
+            double exec1Ms = std::chrono::duration<double, std::milli>(tEnd1 - tStart1).count();
+
+            curMesh = getActiveMesh();
+            manifold::Manifold checkM1 = curMesh ? sculpt::ManifoldBridge::fromMesh(*curMesh) : manifold::Manifold();
+            bool isManifold1 = (checkM1.Status() == manifold::Manifold::Error::NoError);
+            std::cout << "      [Cut 1/2 Check] Mesh -> Manifold: Status " << (int)checkM1.Status()
+                      << " (" << (isManifold1 ? "VALID 2-MANIFOLD [OK]" : "NOT MANIFOLD [ERROR]") << ")\n";
+
+            HistoryState afterCut1 = scene.saveCurrentState(true);
+            g_undoManager.pushTopologyChange(scene, name + " (Cut 1)", std::move(beforeCut1), std::move(afterCut1));
+
+            // --- CUT 2 (ON RESULT OF CUT 1) ---
+            HistoryState beforeCut2 = scene.saveCurrentState(true);
+            TrimConfig config2;
+            config2.fillHole = true;
+            config2.remeshFilled = true;
+            sculpt::QuadCapResult capRes2;
+            uint32_t capGid2 = 0;
+            config2.outCapResult = &capRes2;
+            config2.outCapGid = &capGid2;
+
+            auto tStart2 = std::chrono::high_resolution_clock::now();
+            bool mod2 = TrimTool::execute(curMesh, camera, lasso2, false, false, SymmetryMode::Local, {}, config2);
+            auto tEnd2 = std::chrono::high_resolution_clock::now();
+            double exec2Ms = std::chrono::duration<double, std::milli>(tEnd2 - tStart2).count();
+
+            curMesh = getActiveMesh();
+            int finalVerts = curMesh ? curMesh->nbVerts : 0;
+            int finalFaces = curMesh ? curMesh->nbFaces : 0;
+
+            manifold::Manifold checkM2 = curMesh ? sculpt::ManifoldBridge::fromMesh(*curMesh) : manifold::Manifold();
+            bool isManifold2 = (checkM2.Status() == manifold::Manifold::Error::NoError);
+
+            int openEdges = 0, nonManifoldEdges = 0;
+            if (curMesh) {
+                std::unordered_map<uint64_t, int> halfEdges;
+                for (int f = 0; f < curMesh->nbFaces; ++f) {
+                    uint32_t v0 = curMesh->faces[f * 4 + 0];
+                    uint32_t v1 = curMesh->faces[f * 4 + 1];
+                    uint32_t v2 = curMesh->faces[f * 4 + 2];
+                    uint32_t v3 = curMesh->faces[f * 4 + 3];
+                    auto addHE = [&](uint32_t a, uint32_t b) {
+                        uint64_t key = ((uint64_t)a << 32) | b;
+                        halfEdges[key]++;
+                    };
+                    addHE(v0, v1);
+                    addHE(v1, v2);
+                    if (v3 != TRI_INDEX) {
+                        addHE(v2, v3);
+                        addHE(v3, v0);
+                    } else {
+                        addHE(v2, v0);
+                    }
+                }
+                for (const auto& [he, cnt] : halfEdges) {
+                    uint32_t a = (uint32_t)(he >> 32);
+                    uint32_t b = (uint32_t)(he & 0xFFFFFFFF);
+                    uint64_t rev = ((uint64_t)b << 32) | a;
+                    auto it = halfEdges.find(rev);
+                    int revCnt = (it != halfEdges.end()) ? it->second : 0;
+                    if (cnt > 1) nonManifoldEdges++;
+                    if (revCnt == 0) openEdges++;
+                }
+            }
+
+            int capQuads2 = 0, capTris2 = 0;
+            if (curMesh && capGid2 > 0) {
+                for (int f = 0; f < curMesh->nbFaces; ++f) {
+                    if (f < (int)curMesh->faceGroups.size() && curMesh->faceGroups[f] == capGid2) {
+                        if (curMesh->faces[f * 4 + 3] != TRI_INDEX) capQuads2++;
+                        else capTris2++;
+                    }
+                }
+            }
+            int totalCap2 = capQuads2 + capTris2;
+            float quadRatio2 = totalCap2 > 0 ? (float)capQuads2 / (float)totalCap2 : 0.0f;
+            bool quadCapPassed2 = capRes2.success && (capQuads2 > 0) && (quadRatio2 >= 0.50f);
+
+            std::cout << "      [Cut 2/2 Check] Cap Faces: " << totalCap2
+                      << " (" << capQuads2 << " quads, " << capTris2 << " tris -> "
+                      << std::fixed << std::setprecision(1) << (quadRatio2 * 100.0f) << "% quads) | "
+                      << (quadCapPassed2 ? "CLOSED WITH QUAD GRID [OK]" : "NOT CLOSED WITH QUAD GRID [NO QUAD]") << "\n";
+            std::cout << "      [Cut 2/2 Check] Mesh -> Manifold: Status " << (int)checkM2.Status()
+                      << " (" << (isManifold2 ? "VALID 2-MANIFOLD [OK]" : "NOT MANIFOLD [ERROR]") << ") | Open HE: "
+                      << openEdges << ", Non-Manifold HE: " << nonManifoldEdges << "\n";
+
+            HistoryState afterCut2 = scene.saveCurrentState(true);
+            g_undoManager.pushTopologyChange(scene, name + " (Cut 2)", std::move(beforeCut2), std::move(afterCut2));
+            size_t undoBytes = 0;
+            for (const auto& entry : g_undoManager.getUndoStack()) {
+                undoBytes += entry->getMemoryUsage();
+            }
+
+            // Undo Cut 2 then Cut 1
+            auto tUndoStart = std::chrono::high_resolution_clock::now();
+            g_undoManager.undo(scene); // Undoes Cut 2
+            g_undoManager.undo(scene); // Undoes Cut 1
+            auto tUndoEnd = std::chrono::high_resolution_clock::now();
+            double undoMs = std::chrono::duration<double, std::milli>(tUndoEnd - tUndoStart).count();
+
+            curMesh = getActiveMesh();
+            float maxUndoDiff = 0.0f;
+            if (curMesh && curMesh->nbVerts == origVertCount) {
+                for (size_t i = 0; i < pristineVerts.size(); ++i) {
+                    float diff = std::abs(curMesh->verts[i] - pristineVerts[i]);
+                    if (diff > maxUndoDiff) maxUndoDiff = diff;
+                }
+            } else {
+                maxUndoDiff = 999.0f;
+            }
+
+            // Redo Cut 1 then Cut 2
+            auto tRedoStart = std::chrono::high_resolution_clock::now();
+            g_undoManager.redo(scene); // Redoes Cut 1
+            g_undoManager.redo(scene); // Redoes Cut 2
+            auto tRedoEnd = std::chrono::high_resolution_clock::now();
+            double redoMs = std::chrono::duration<double, std::milli>(tRedoEnd - tRedoStart).count();
+
+            curMesh = getActiveMesh();
+            float maxRedoDiff = 0.0f;
+            if (!curMesh || curMesh->nbVerts != finalVerts || curMesh->nbFaces != finalFaces) {
+                maxRedoDiff = 999.0f;
+            }
+
+            // Undo both back to pristine sphere
+            g_undoManager.undo(scene);
+            g_undoManager.undo(scene);
+            g_undoManager.clear();
+
+            BenchmarkRow row;
+            row.toolName = name;
+            row.executionMs = exec1Ms + exec2Ms;
+            row.undoMs = undoMs;
+            row.redoMs = redoMs;
+            row.undoRAMBytes = undoBytes;
+            row.inVerts = origVertCount;
+            row.outVerts = finalVerts;
+            row.flyingVerts = -1;
+            row.maxUndoEps = maxUndoDiff;
+            row.maxRedoEps = maxRedoDiff;
+            row.isTrim = true;
+            row.quadCapChecked = true;
+            row.quadCapPassed = isManifold1 && isManifold2 && quadCapPassed2;
+            row.capQuads = capQuads2;
+            row.capTris = capTris2;
+            row.capQuadRatio = quadRatio2;
+            row.capPatches = capRes2.numPatches;
+            row.capPatchesSuccess = capRes2.patchesQuadCapped;
+            row.capPatchesFallback = capRes2.patchesFellBack;
+            row.capFallbackReason = capRes2.fallbackReason;
+            row.passed = mod1 && mod2 && isManifold1 && isManifold2 && (maxUndoDiff == 0.0f) && (maxRedoDiff == 0.0f);
+            return row;
+        };
+
+        {
+            std::vector<glm::vec2> cut1Lasso = {
+                { 960.0f, 540.0f },
+                { 960.0f, 260.0f },
+                { 1240.0f, 260.0f },
+                { 1240.0f, 540.0f }
+            };
+            std::vector<glm::vec2> cut2Lasso = {
+                { 680.0f, 540.0f },
+                { 680.0f, 820.0f },
+                { 1040.0f, 820.0f },
+                { 1040.0f, 540.0f }
+            };
+            rows.push_back(runConsecutiveTrimBenchmark("Trim Tool (Consecutive Cuts)", cut1Lasso, cut2Lasso, 5, 8));
         }
 
         // =========================================================================
-        // 5. Tool: Clip Curve (Straight Line Across Sphere)
+        // 6. Tool: Clip Curve (Straight Line Across Sphere)
         // =========================================================================
         {
-            std::cout << "  -> [5/7] Benchmarking Clip Curve (Straight Line)...\n";
+            std::cout << "  -> [6/8] Benchmarking Clip Curve (Straight Line)...\n";
             Mesh* curMesh = getActiveMesh();
 
             std::vector<glm::vec2> clipLine = {
@@ -454,10 +687,10 @@ inline bool run(int targetFaces = 100000) {
         }
 
         // =========================================================================
-        // 6. Tool: Clip Curve (Polyline with Angle / Bend)
+        // 7. Tool: Clip Curve (Polyline with Angle / Bend)
         // =========================================================================
         {
-            std::cout << "  -> [6/7] Benchmarking Clip Curve (Polyline Angle / Bend)...\n";
+            std::cout << "  -> [7/8] Benchmarking Clip Curve (Polyline Angle / Bend)...\n";
             Mesh* curMesh = getActiveMesh();
 
             std::vector<glm::vec2> clipPoly = {
@@ -552,10 +785,10 @@ inline bool run(int targetFaces = 100000) {
         }
 
         // =========================================================================
-        // 7. Tool: Clip Curve (with Symmetry)
+        // 8. Tool: Clip Curve (with Symmetry)
         // =========================================================================
         {
-            std::cout << "  -> [7/7] Benchmarking Clip Curve (with X Symmetry)...\n";
+            std::cout << "  -> [8/8] Benchmarking Clip Curve (with X Symmetry)...\n";
             Mesh* curMesh = getActiveMesh();
 
             std::vector<glm::vec2> clipLine = {
