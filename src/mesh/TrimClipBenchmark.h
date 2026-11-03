@@ -26,6 +26,8 @@
 #include "editing/manifold/ManifoldBridge.h"
 #include <omp.h>
 
+#include "common/Logger.h"
+
 namespace TrimClipBenchmark {
 
 struct BenchmarkRow {
@@ -159,6 +161,10 @@ inline CapElongationStats analyzeCapElongation(const Mesh& mesh, uint32_t capGid
     const int nbV = mesh.nbVerts;
     const int nbF = mesh.nbFaces;
 
+    auto getV = [&](uint32_t idx) -> glm::vec3 {
+        return glm::vec3(mesh.verts[idx * 3 + 0], mesh.verts[idx * 3 + 1], mesh.verts[idx * 3 + 2]);
+    };
+
     // 1. Mark vertices that belong to non-cap faces (defining the cut boundary perimeter)
     std::vector<uint8_t> isBoundaryVert(nbV, 0);
     for (int f = 0; f < nbF; ++f) {
@@ -174,9 +180,47 @@ inline CapElongationStats analyzeCapElongation(const Mesh& mesh, uint32_t capGid
         }
     }
 
-    auto getV = [&](uint32_t idx) -> glm::vec3 {
-        return glm::vec3(mesh.verts[idx * 3 + 0], mesh.verts[idx * 3 + 1], mesh.verts[idx * 3 + 2]);
-    };
+    // 1b. Mark inter-patch seam vertices between adjacent cap walls (cutter prism corners with >35 deg dihedral angle)
+    std::unordered_map<uint64_t, std::pair<int, glm::vec3>> capHalfEdges;
+    capHalfEdges.reserve(nbF * 2);
+
+    for (int f = 0; f < nbF; ++f) {
+        if (f >= (int)mesh.faceGroups.size() || mesh.faceGroups[f] != capGid) continue;
+        uint32_t v0 = mesh.faces[f * 4 + 0];
+        uint32_t v1 = mesh.faces[f * 4 + 1];
+        uint32_t v2 = mesh.faces[f * 4 + 2];
+        uint32_t v3 = mesh.faces[f * 4 + 3];
+        if (v0 >= (uint32_t)nbV || v1 >= (uint32_t)nbV || v2 >= (uint32_t)nbV) continue;
+
+        glm::vec3 p0 = getV(v0), p1 = getV(v1), p2 = getV(v2);
+        glm::vec3 fn = glm::cross(p1 - p0, p2 - p0);
+        float len = glm::length(fn);
+        if (len > 1e-6f) fn /= len;
+
+        auto addCapHE = [&](uint32_t a, uint32_t b) {
+            uint64_t forwardKey = ((uint64_t)a << 32) | b;
+            uint64_t revKey = ((uint64_t)b << 32) | a;
+            auto it = capHalfEdges.find(revKey);
+            if (it != capHalfEdges.end()) {
+                float dotVal = glm::dot(fn, it->second.second);
+                if (dotVal < 0.996f) { // Dihedral angle > 5 deg (inter-patch seam between cutter prism walls)
+                    isBoundaryVert[a] = 1;
+                    isBoundaryVert[b] = 1;
+                }
+            } else {
+                capHalfEdges[forwardKey] = {f, fn};
+            }
+        };
+
+        addCapHE(v0, v1);
+        addCapHE(v1, v2);
+        if (v3 != TRI_INDEX && v3 < (uint32_t)nbV) {
+            addCapHE(v2, v3);
+            addCapHE(v3, v0);
+        } else {
+            addCapHE(v2, v0);
+        }
+    }
 
     // 2. Measure aspect ratio and spatial location of each cap face
     for (int f = 0; f < nbF; ++f) {
@@ -241,6 +285,19 @@ inline CapElongationStats analyzeCapElongation(const Mesh& mesh, uint32_t capGid
                 stats.midElongated++;
                 if (v3 == TRI_INDEX) stats.midElongTris++;
                 else stats.midElongQuads++;
+                if (stats.midElongated <= 10) {
+                    if (v3 == TRI_INDEX) {
+                        float l0 = glm::distance(p0, p1), l1 = glm::distance(p1, p2), l2 = glm::distance(p2, p0);
+                        sculpt_log("[MID ELONG TRI #%d] AR: %.2fx | edges: (%.4f, %.4f, %.4f) | v=(%u, %u, %u) | pos0=(%.2f, %.2f, %.2f) pos1=(%.2f, %.2f, %.2f) pos2=(%.2f, %.2f, %.2f)\n",
+                                   stats.midElongated, aspect, l0, l1, l2, v0, v1, v2, p0.x, p0.y, p0.z, p1.x, p1.y, p1.z, p2.x, p2.y, p2.z);
+                    } else {
+                        glm::vec3 p3 = getV(v3);
+                        float l0 = glm::distance(p0, p1), l1 = glm::distance(p1, p2), l2 = glm::distance(p2, p3), l3 = glm::distance(p3, p0);
+                        float d1 = glm::distance(p0, p2), d2 = glm::distance(p1, p3);
+                        sculpt_log("[MID ELONG QUAD #%d] AR: %.2fx | edges: (%.4f, %.4f, %.4f, %.4f) | diag: (%.4f, %.4f) | v=(%u, %u, %u, %u) | pos0=(%.2f, %.2f, %.2f)\n",
+                                   stats.midElongated, aspect, l0, l1, l2, l3, d1, d2, v0, v1, v2, v3, p0.x, p0.y, p0.z);
+                    }
+                }
             }
             if (aspect > 5.0f) stats.midSevere++;
         } else {

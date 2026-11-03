@@ -361,11 +361,11 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
 
                 // Crease check between adjacent faces
                 float dotAdj = glm::dot(faceGeom[currF].normal, faceGeom[adjF].normal);
-                if (dotAdj < cosCrease) continue;
+                if (dotAdj < cosCrease && faceGeom[adjF].area > 1e-4f) continue;
 
                 // Deviation from current patch average normal
                 float dotAvg = glm::dot(currAvgN, faceGeom[adjF].normal);
-                if (dotAvg < cosMaxDev) continue;
+                if (dotAvg < cosMaxDev && faceGeom[adjF].area > 1e-4f) continue;
 
                 faceVisited[adjF] = 1;
                 chartNormSum += faceGeom[adjF].normal * faceGeom[adjF].area;
@@ -376,6 +376,26 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
 
         if (!currentPatch.empty()) {
             patches.push_back(std::move(currentPatch));
+        }
+    }
+
+    // Absorb any remaining unvisited tiny sliver faces into an adjacent visited patch
+    for (int f : sortedCapFaces) {
+        if (!faceVisited[f] && faceGeom[f].area <= 1e-4f) {
+            for (int adjF : capFaceAdj[f]) {
+                if (faceVisited[adjF]) {
+                    for (auto& patch : patches) {
+                        for (int pf : patch) {
+                            if (pf == adjF) {
+                                patch.push_back(f);
+                                faceVisited[f] = 1;
+                                goto faceAbsorbed;
+                            }
+                        }
+                    }
+                }
+            }
+        faceAbsorbed:;
         }
     }
 
@@ -400,7 +420,149 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
         }
     }
 
-    // 4. Staging structures for newly created vertices
+    int origNbVerts = static_cast<int>(mesh.verts.size() / 3);
+
+    // 4. Subdivide long inter-patch seam edges
+    // Long straight edges along seams between adjacent cap patches (e.g. cutter prism lateral walls)
+    // create severe needle triangles in CDT when triangulating against a fine grid boundary.
+    // By subdividing these long shared edges with intermediate vertices at spacing step,
+    // CDT triangulates the transition belt as a regular ladder of quads with AR ~ 1.0..1.4x.
+    float seamStep = targetEdgeLen;
+    if (seamStep <= 1e-4f) {
+        float sumLen = 0.0f;
+        int count = 0;
+        for (int f : capFaceIndices) {
+            uint32_t v0 = mesh.faces[f * 4 + 0];
+            uint32_t v1 = mesh.faces[f * 4 + 1];
+            uint32_t v2 = mesh.faces[f * 4 + 2];
+            uint32_t v3 = mesh.faces[f * 4 + 3];
+            glm::vec3 p0(mesh.verts[v0 * 3], mesh.verts[v0 * 3 + 1], mesh.verts[v0 * 3 + 2]);
+            glm::vec3 p1(mesh.verts[v1 * 3], mesh.verts[v1 * 3 + 1], mesh.verts[v1 * 3 + 2]);
+            glm::vec3 p2(mesh.verts[v2 * 3], mesh.verts[v2 * 3 + 1], mesh.verts[v2 * 3 + 2]);
+            for (float l : {glm::distance(p0, p1), glm::distance(p1, p2), glm::distance(p2, p0)}) {
+                if (l > 1e-4f && l < 0.5f) { sumLen += l; count++; }
+            }
+            if (v3 != TRI_INDEX) {
+                glm::vec3 p3(mesh.verts[v3 * 3], mesh.verts[v3 * 3 + 1], mesh.verts[v3 * 3 + 2]);
+                float l3 = glm::distance(p3, p0);
+                if (l3 > 1e-4f && l3 < 0.5f) { sumLen += l3; count++; }
+            }
+        }
+        seamStep = (count > 0) ? (sumLen / count) : 0.025f;
+    }
+    seamStep = std::clamp(seamStep, 0.01f, 5.0f);
+
+    std::vector<float> patchAreas(patches.size(), 0.0f);
+    for (size_t p = 0; p < patches.size(); ++p) {
+        for (int f : patches[p]) {
+            patchAreas[p] += faceGeom[f].area;
+        }
+    }
+
+    std::vector<std::vector<uint64_t>> patchBoundaryDirectedEdges(patches.size());
+    for (size_t p = 0; p < patches.size(); ++p) {
+        std::vector<uint64_t> patchEdges;
+        patchEdges.reserve(patches[p].size() * 4);
+        for (int f : patches[p]) {
+            uint32_t v0 = mesh.faces[f * 4 + 0];
+            uint32_t v1 = mesh.faces[f * 4 + 1];
+            uint32_t v2 = mesh.faces[f * 4 + 2];
+            uint32_t v3 = mesh.faces[f * 4 + 3];
+            patchEdges.push_back(((uint64_t)v0 << 32) | v1);
+            patchEdges.push_back(((uint64_t)v1 << 32) | v2);
+            if (v3 != TRI_INDEX) {
+                patchEdges.push_back(((uint64_t)v2 << 32) | v3);
+                patchEdges.push_back(((uint64_t)v3 << 32) | v0);
+            } else {
+                patchEdges.push_back(((uint64_t)v2 << 32) | v0);
+            }
+        }
+        std::sort(patchEdges.begin(), patchEdges.end());
+        for (uint64_t edge : patchEdges) {
+            uint32_t u = (uint32_t)(edge >> 32);
+            uint32_t v = (uint32_t)(edge & 0xFFFFFFFF);
+            uint64_t rev = ((uint64_t)v << 32) | u;
+            if (!std::binary_search(patchEdges.begin(), patchEdges.end(), rev)) {
+                patchBoundaryDirectedEdges[p].push_back(edge);
+            }
+        }
+    }
+
+    struct SeamEdgeCandidate {
+        size_t patchA;
+        size_t patchB;
+        uint32_t u, v;
+    };
+    std::unordered_map<uint64_t, SeamEdgeCandidate> candidateSeams;
+    for (size_t p = 0; p < patches.size(); ++p) {
+        if (patchAreas[p] < 0.01f || patches[p].size() < 3) continue;
+        for (uint64_t edge : patchBoundaryDirectedEdges[p]) {
+            uint32_t u = (uint32_t)(edge >> 32);
+            uint32_t v = (uint32_t)(edge & 0xFFFFFFFF);
+            uint64_t key = makeUndirectedEdgeKey(u, v);
+            auto it = candidateSeams.find(key);
+            if (it == candidateSeams.end()) {
+                candidateSeams[key] = {p, SIZE_MAX, std::min(u, v), std::max(u, v)};
+            } else if (it->second.patchB == SIZE_MAX && it->second.patchA != p) {
+                it->second.patchB = p;
+            }
+        }
+    }
+
+    std::unordered_map<uint64_t, std::vector<uint32_t>> seamSubdivision;
+    size_t totalSeamEdgesSubdivided = 0;
+    size_t totalNewSeamVerts = 0;
+
+    for (const auto& [key, seam] : candidateSeams) {
+        if (seam.patchB == SIZE_MAX) continue;
+        uint32_t u = seam.u;
+        uint32_t v = seam.v;
+        glm::vec3 pu(mesh.verts[u * 3], mesh.verts[u * 3 + 1], mesh.verts[u * 3 + 2]);
+        glm::vec3 pv(mesh.verts[v * 3], mesh.verts[v * 3 + 1], mesh.verts[v * 3 + 2]);
+        float edgeLen = glm::distance(pu, pv);
+
+        if (edgeLen > 1.35f * seamStep) {
+            int k = std::clamp(static_cast<int>(std::round(edgeLen / seamStep)), 2, 5000);
+            glm::vec3 nu(0, 1, 0), nv(0, 1, 0);
+            if (!mesh.normals.empty() && mesh.normals.size() >= mesh.verts.size()) {
+                nu = glm::vec3(mesh.normals[u * 3], mesh.normals[u * 3 + 1], mesh.normals[u * 3 + 2]);
+                nv = glm::vec3(mesh.normals[v * 3], mesh.normals[v * 3 + 1], mesh.normals[v * 3 + 2]);
+            }
+
+            std::vector<uint32_t> intermediateVerts;
+            intermediateVerts.reserve(k - 1);
+
+            for (int s = 1; s < k; ++s) {
+                float t = static_cast<float>(s) / static_cast<float>(k);
+                glm::vec3 p = glm::mix(pu, pv, t);
+                glm::vec3 n = glm::normalize(glm::mix(nu, nv, t));
+                uint32_t newVid = static_cast<uint32_t>(mesh.verts.size() / 3);
+                mesh.verts.push_back(p.x);
+                mesh.verts.push_back(p.y);
+                mesh.verts.push_back(p.z);
+                mesh.normals.push_back(n.x);
+                mesh.normals.push_back(n.y);
+                mesh.normals.push_back(n.z);
+                mesh.colors.push_back(1.0f);
+                mesh.colors.push_back(1.0f);
+                mesh.colors.push_back(1.0f);
+                mesh.materials.push_back(0.5f);
+                mesh.materials.push_back(0.0f);
+                mesh.materials.push_back(1.0f);
+                intermediateVerts.push_back(newVid);
+            }
+            totalNewSeamVerts += intermediateVerts.size();
+            totalSeamEdgesSubdivided++;
+            seamSubdivision[key] = std::move(intermediateVerts);
+        }
+    }
+
+    mesh.nbVerts = static_cast<int>(mesh.verts.size() / 3);
+
+    sculpt_log("[QUAD CAP SEAM] Candidate seams: %zu | Subdivided %zu long seams (> 1.5*step) with %zu intermediate vertices (seamStep: %.3f mm)\n",
+               candidateSeams.size(), totalSeamEdgesSubdivided, totalNewSeamVerts, seamStep);
+
+    // Staging structures for newly created grid vertices
     struct StagedVert {
         glm::vec3 pos;
         glm::vec3 normal;
@@ -605,7 +767,26 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
             uint32_t v = (uint32_t)(edge & 0xFFFFFFFF);
             uint64_t rev = ((uint64_t)v << 32) | u;
             if (!std::binary_search(patchDirectedEdges.begin(), patchDirectedEdges.end(), rev)) {
-                boundaryEdges.push_back({u, v});
+                uint64_t key = makeUndirectedEdgeKey(u, v);
+                auto it = seamSubdivision.find(key);
+                if (it != seamSubdivision.end() && !it->second.empty()) {
+                    const auto& inter = it->second;
+                    uint32_t prev = u;
+                    if (u < v) {
+                        for (uint32_t w : inter) {
+                            boundaryEdges.push_back({prev, w});
+                            prev = w;
+                        }
+                    } else {
+                        for (auto rit = inter.rbegin(); rit != inter.rend(); ++rit) {
+                            boundaryEdges.push_back({prev, *rit});
+                            prev = *rit;
+                        }
+                    }
+                    boundaryEdges.push_back({prev, v});
+                } else {
+                    boundaryEdges.push_back({u, v});
+                }
             }
         }
 
@@ -859,7 +1040,7 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
 
         float minStepAllowed = std::max(0.02f, loopAvgEdgeLen * 0.35f);
         step = std::clamp(step, minStepAllowed, 50.0f);
-        float margin = step * 0.38f;
+        float margin = std::clamp(step * 0.72f, 0.01f, step * 0.85f);
 
         // 3. Exact Boundary Loop Preservation:
         // Preserving exact boundary loop vertices is critical to guarantee watertight 2-manifold
@@ -1163,7 +1344,7 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
         };
 
         std::vector<RowResult> rowResults(gridRows);
-        float raySpan = std::max(200.0f, depthSpan * 3.0f);
+        float raySpan = std::clamp(depthSpan * 3.0f + step * 4.0f, 0.2f, 20.0f);
         const float marginSq = margin * margin;
 
         #pragma omp parallel for schedule(dynamic)
@@ -1263,12 +1444,15 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
                             n3D = (lenN > 1e-6f) ? (interpN / lenN) : tri.normal;
                         }
                     }
+                    if (bestDiff > depthSpan + step * 2.0f) {
+                        p3D = pPlane + std::clamp(hVal, -depthSpan, depthSpan) * normal;
+                    }
                     rowRes.rayHits++;
                 } else {
                     // Fallback projection
                     rowRes.fallback++;
                     float hVal = getHVal();
-                    glm::vec3 pGuide = pPlane + hVal * normal;
+                    glm::vec3 pGuide = pPlane + std::clamp(hVal, -depthSpan, depthSpan) * normal;
                     float bestD2 = 1e18f;
 
                     const auto* searchTris = (tcx >= 0 && tcx < triCols && tcy >= 0 && tcy < triRows && !triGrid[tcy * triCols + tcx].empty())
@@ -1353,13 +1537,61 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
                        highStretchCount, (float)highStretchCount * 100.0f / (float)gridPoints.size());
         }
 
-        // Identify complete quads from grid
+        // ---------------------------------------------------------
+        // Belt-Only CDT Architecture: Direct Inner Grid Quads
+        // ---------------------------------------------------------
         struct QuadCell {
             uint32_t v00, v10, v11, v01;
             int gx, gy;
         };
-        std::vector<QuadCell> quads;
-        std::vector<uint8_t> hasQuadCell(gridCols * gridRows, 0);
+
+        // Helper: 2D segment-segment intersection test
+        auto segmentsIntersect2D = [](const glm::vec2& p1, const glm::vec2& p2,
+                                       const glm::vec2& q1, const glm::vec2& q2) -> bool {
+            auto ccw = [](const glm::vec2& a, const glm::vec2& b, const glm::vec2& c) -> float {
+                return (c.y - a.y) * (b.x - a.x) - (b.y - a.y) * (c.x - a.x);
+            };
+            float c1 = ccw(p1, p2, q1);
+            float c2 = ccw(p1, p2, q2);
+            float c3 = ccw(q1, q2, p1);
+            float c4 = ccw(q1, q2, p2);
+            return (((c1 > 1e-6f && c2 < -1e-6f) || (c1 < -1e-6f && c2 > 1e-6f)) &&
+                    ((c3 > 1e-6f && c4 < -1e-6f) || (c3 < -1e-6f && c4 > 1e-6f)));
+        };
+
+        auto quadEdgesIntersectBoundary = [&](int gx, int gy) -> bool {
+            glm::vec2 p00(static_cast<float>(gx) * step, static_cast<float>(gy) * step);
+            glm::vec2 p10(static_cast<float>(gx + 1) * step, static_cast<float>(gy) * step);
+            glm::vec2 p11(static_cast<float>(gx + 1) * step, static_cast<float>(gy + 1) * step);
+            glm::vec2 p01(static_cast<float>(gx) * step, static_cast<float>(gy + 1) * step);
+
+            float bMinX = p00.x - 1e-4f;
+            float bMaxX = p11.x + 1e-4f;
+            float bMinY = p00.y - 1e-4f;
+            float bMaxY = p11.y + 1e-4f;
+
+            int sc0x = std::clamp(static_cast<int>(std::floor((bMinX - segMinU) / segCellSize)), 0, segCols - 1);
+            int sc1x = std::clamp(static_cast<int>(std::floor((bMaxX - segMinU) / segCellSize)), 0, segCols - 1);
+            int sc0y = std::clamp(static_cast<int>(std::floor((bMinY - segMinV) / segCellSize)), 0, segRows - 1);
+            int sc1y = std::clamp(static_cast<int>(std::floor((bMaxY - segMinV) / segCellSize)), 0, segRows - 1);
+
+            for (int scy = sc0y; scy <= sc1y; ++scy) {
+                for (int scx = sc0x; scx <= sc1x; ++scx) {
+                    const auto& cellSegs = segGrid[scy * segCols + scx];
+                    for (const auto& seg : cellSegs) {
+                        if (segmentsIntersect2D(p00, p10, seg.a, seg.b) ||
+                            segmentsIntersect2D(p10, p11, seg.a, seg.b) ||
+                            segmentsIntersect2D(p11, p01, seg.a, seg.b) ||
+                            segmentsIntersect2D(p01, p00, seg.a, seg.b)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        };
+
+        std::vector<uint8_t> isCandidateQuad(gridCols * gridRows, 0);
 
         for (const auto& g : gridPoints) {
             int gx = g.gx;
@@ -1369,64 +1601,177 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
             uint32_t v01 = getGridPtVid(gx, gy + 1);
 
             if (v10 != UINT32_MAX && v11 != UINT32_MAX && v01 != UINT32_MAX) {
-                quads.push_back({g.meshVid, v10, v11, v01, gx, gy});
-                hasQuadCell[(gy - gyMin) * gridCols + (gx - gxMin)] = 1;
+                glm::vec2 pCenter((static_cast<float>(gx) + 0.5f) * step, (static_cast<float>(gy) + 0.5f) * step);
+                if (pointInPatchDomain(pCenter) && !quadEdgesIntersectBoundary(gx, gy)) {
+                    isCandidateQuad[(gy - gyMin) * gridCols + (gx - gxMin)] = 1;
+                }
             }
         }
 
-        // Collect all vertex IDs used by at least one candidate quad
-        std::vector<uint8_t> isQuadUsedVid(loopNewVerts.size(), 0);
-        size_t quadUsedVidsCount = 0;
-        for (const auto& q : quads) {
-            for (uint32_t v : {q.v00, q.v10, q.v11, q.v01}) {
-                if (v >= baseVid && (v - baseVid) < isQuadUsedVid.size()) {
-                    if (!isQuadUsedVid[v - baseVid]) {
-                        isQuadUsedVid[v - baseVid] = 1;
-                        quadUsedVidsCount++;
+        // Checkerboard pinch resolution: eliminate diagonal-only corner contacts
+        // to guarantee that the quad complex boundary consists of strictly degree-2 vertices.
+        bool pinchesRemoved = true;
+        int pinchIterations = 0;
+        while (pinchesRemoved && pinchIterations < 5) {
+            pinchesRemoved = false;
+            pinchIterations++;
+            for (int gy = gyMin + 1; gy <= gyMax; ++gy) {
+                for (int gx = gxMin + 1; gx <= gxMax; ++gx) {
+                    int c00 = (gy - 1 - gyMin) * gridCols + (gx - 1 - gxMin);
+                    int c10 = (gy - 1 - gyMin) * gridCols + (gx - gxMin);
+                    int c11 = (gy - gyMin) * gridCols + (gx - gxMin);
+                    int c01 = (gy - gyMin) * gridCols + (gx - 1 - gxMin);
+
+                    uint8_t q00 = isCandidateQuad[c00];
+                    uint8_t q10 = isCandidateQuad[c10];
+                    uint8_t q11 = isCandidateQuad[c11];
+                    uint8_t q01 = isCandidateQuad[c01];
+
+                    if (q00 && q11 && !q10 && !q01) {
+                        isCandidateQuad[c11] = 0;
+                        pinchesRemoved = true;
+                    } else if (q10 && q01 && !q00 && !q11) {
+                        isCandidateQuad[c01] = 0;
+                        pinchesRemoved = true;
                     }
                 }
             }
         }
 
-        int orphanGridPtsPruned = 0;
-        for (const auto& gp : gridPoints) {
-            if (!quads.empty() && (gp.meshVid >= baseVid && (gp.meshVid - baseVid) < isQuadUsedVid.size() && !isQuadUsedVid[gp.meshVid - baseVid])) {
-                orphanGridPtsPruned++;
+        std::vector<QuadCell> acceptedGridQuads;
+        std::vector<uint8_t> hasQuadCell(gridCols * gridRows, 0);
+
+        for (int gy = gyMin; gy <= gyMax; ++gy) {
+            for (int gx = gxMin; gx <= gxMax; ++gx) {
+                int cellIdx = (gy - gyMin) * gridCols + (gx - gxMin);
+                if (!isCandidateQuad[cellIdx]) continue;
+                uint32_t v00 = getGridPtVid(gx, gy);
+                uint32_t v10 = getGridPtVid(gx + 1, gy);
+                uint32_t v11 = getGridPtVid(gx + 1, gy + 1);
+                uint32_t v01 = getGridPtVid(gx, gy + 1);
+                if (v00 != UINT32_MAX && v10 != UINT32_MAX && v11 != UINT32_MAX && v01 != UINT32_MAX) {
+                    acceptedGridQuads.push_back({v00, v10, v11, v01, gx, gy});
+                    hasQuadCell[cellIdx] = 1;
+                }
             }
         }
 
-        sculpt_log("[QUAD CAP PATCH #%zu] Candidate grid quads: %zu (grid points in quads: %zu, pruned orphans: %d)\n",
-                   patchIdx + 1, quads.size(), quadUsedVidsCount, orphanGridPtsPruned);
+        // Extract boundary half-edges of accepted grid quads
+        struct GridBndEdge {
+            uint32_t u, v;
+            int gx_u, gy_u, gx_v, gy_v;
+        };
+        std::vector<GridBndEdge> gridBndEdges;
 
-        // CDT Triangulation for boundary transition stitching
-        CDT::Triangulation<float> cdt;
+        for (const auto& q : acceptedGridQuads) {
+            int gx = q.gx;
+            int gy = q.gy;
+            // Bottom: (gx, gy) -> (gx+1, gy)
+            if (gy == gyMin || !hasQuadCell[(gy - 1 - gyMin) * gridCols + (gx - gxMin)]) {
+                gridBndEdges.push_back({q.v00, q.v10, gx, gy, gx + 1, gy});
+            }
+            // Right: (gx+1, gy) -> (gx+1, gy+1)
+            if (gx == gxMax || !hasQuadCell[(gy - gyMin) * gridCols + (gx + 1 - gxMin)]) {
+                gridBndEdges.push_back({q.v10, q.v11, gx + 1, gy, gx + 1, gy + 1});
+            }
+            // Top: (gx+1, gy+1) -> (gx, gy+1)
+            if (gy == gyMax || !hasQuadCell[(gy + 1 - gyMin) * gridCols + (gx - gxMin)]) {
+                gridBndEdges.push_back({q.v11, q.v01, gx + 1, gy + 1, gx, gy + 1});
+            }
+            // Left: (gx, gy+1) -> (gx, gy)
+            if (gx == gxMin || !hasQuadCell[(gy - gyMin) * gridCols + (gx - 1 - gxMin)]) {
+                gridBndEdges.push_back({q.v01, q.v00, gx, gy + 1, gx, gy});
+            }
+        }
+
+        std::unordered_map<uint32_t, uint32_t> nextBndVert;
+        std::unordered_map<uint32_t, glm::vec2> bndVertPos2D;
+        for (const auto& e : gridBndEdges) {
+            nextBndVert[e.u] = e.v;
+            bndVertPos2D[e.u] = glm::vec2(static_cast<float>(e.gx_u) * step, static_cast<float>(e.gy_u) * step);
+            bndVertPos2D[e.v] = glm::vec2(static_cast<float>(e.gx_v) * step, static_cast<float>(e.gy_v) * step);
+        }
+
+        std::vector<std::vector<uint32_t>> gridBoundaryLoops;
+        std::unordered_set<uint32_t> visitedBndVerts;
+        for (const auto& e : gridBndEdges) {
+            if (visitedBndVerts.count(e.u)) continue;
+            std::vector<uint32_t> loop;
+            uint32_t curr = e.u;
+            while (!visitedBndVerts.count(curr)) {
+                visitedBndVerts.insert(curr);
+                loop.push_back(curr);
+                auto it = nextBndVert.find(curr);
+                if (it == nextBndVert.end()) break;
+                curr = it->second;
+            }
+            if (loop.size() >= 3) {
+                gridBoundaryLoops.push_back(std::move(loop));
+            }
+        }
+
+        sculpt_log("[QUAD CAP PATCH #%zu] Belt-Only CDT: %zu accepted grid quads (100%% clean interior), %zu boundary loops (%zu bnd edges)\n",
+                   patchIdx + 1, acceptedGridQuads.size(), gridBoundaryLoops.size(), gridBndEdges.size());
+
+        // CDT Triangulation for transition belt only
+        CDT::Triangulation<float> cdt(CDT::VertexInsertionOrder::Auto, CDT::IntersectingConstraintEdges::TryResolve, 1e-4f);
         std::vector<CDT::V2d<float>> cdtVerts;
-        cdtVerts.reserve(patchLoops[0].size() * 2 + gridPoints.size());
-
         std::vector<uint32_t> cdtToMeshVid;
-        cdtToMeshVid.reserve(patchLoops[0].size() * 2 + gridPoints.size());
-
         std::vector<CDT::Edge> cdtEdges;
 
-        for (size_t l = 0; l < patchLoops.size(); ++l) {
-            const auto& lp = patchLoops[l];
-            const auto& p2d = allPoly2D[l];
-            size_t baseIdx = cdtVerts.size();
-            for (size_t i = 0; i < lp.size(); ++i) {
-                cdtVerts.push_back(CDT::V2d<float>::make(p2d[i].x, p2d[i].y));
-                cdtToMeshVid.push_back(lp[i]);
-                size_t j = (i + 1) % lp.size();
-                cdtEdges.push_back(CDT::Edge(static_cast<CDT::VertInd>(baseIdx + i),
-                                             static_cast<CDT::VertInd>(baseIdx + j)));
+        if (acceptedGridQuads.empty()) {
+            // Fallback: triangulate patch loops directly
+            for (size_t l = 0; l < patchLoops.size(); ++l) {
+                const auto& lp = patchLoops[l];
+                const auto& p2d = allPoly2D[l];
+                size_t baseIdx = cdtVerts.size();
+                for (size_t i = 0; i < lp.size(); ++i) {
+                    cdtVerts.push_back(CDT::V2d<float>::make(p2d[i].x, p2d[i].y));
+                    cdtToMeshVid.push_back(lp[i]);
+                    size_t j = (i + 1) % lp.size();
+                    cdtEdges.push_back(CDT::Edge(static_cast<CDT::VertInd>(baseIdx + i),
+                                                 static_cast<CDT::VertInd>(baseIdx + j)));
+                }
             }
-        }
+        } else {
+            // 1. Patch outer & hole loops (mesh boundary)
+            for (size_t l = 0; l < patchLoops.size(); ++l) {
+                const auto& lp = patchLoops[l];
+                const auto& p2d = allPoly2D[l];
+                size_t baseIdx = cdtVerts.size();
+                for (size_t i = 0; i < lp.size(); ++i) {
+                    cdtVerts.push_back(CDT::V2d<float>::make(p2d[i].x, p2d[i].y));
+                    cdtToMeshVid.push_back(lp[i]);
+                    size_t j = (i + 1) % lp.size();
+                    cdtEdges.push_back(CDT::Edge(static_cast<CDT::VertInd>(baseIdx + i),
+                                                 static_cast<CDT::VertInd>(baseIdx + j)));
+                }
+            }
 
-        for (const auto& gp : gridPoints) {
-            if (!quads.empty() && (gp.meshVid >= baseVid && (gp.meshVid - baseVid) < isQuadUsedVid.size() && !isQuadUsedVid[gp.meshVid - baseVid])) {
-                continue; // Skip orphan grid point
+            // 2. Grid boundary loops (inner boundary / hole of transition belt)
+            std::unordered_map<uint32_t, CDT::VertInd> meshVidToCdtVert;
+            for (const auto& loop : gridBoundaryLoops) {
+                for (uint32_t vid : loop) {
+                    if (meshVidToCdtVert.find(vid) == meshVidToCdtVert.end()) {
+                        CDT::VertInd cdtIdx = static_cast<CDT::VertInd>(cdtVerts.size());
+                        meshVidToCdtVert[vid] = cdtIdx;
+                        const glm::vec2& p = bndVertPos2D[vid];
+                        cdtVerts.push_back(CDT::V2d<float>::make(p.x, p.y));
+                        cdtToMeshVid.push_back(vid);
+                    }
+                }
             }
-            cdtVerts.push_back(CDT::V2d<float>::make(gp.p2D.x, gp.p2D.y));
-            cdtToMeshVid.push_back(gp.meshVid);
+
+            for (const auto& loop : gridBoundaryLoops) {
+                for (size_t i = 0; i < loop.size(); ++i) {
+                    size_t j = (i + 1) % loop.size();
+                    CDT::VertInd vA = meshVidToCdtVert[loop[i]];
+                    CDT::VertInd vB = meshVidToCdtVert[loop[j]];
+                    if (vA != vB) {
+                        cdtEdges.push_back(CDT::Edge(vA, vB));
+                    }
+                }
+            }
         }
 
         auto tCdtStart = std::chrono::high_resolution_clock::now();
@@ -1451,96 +1796,25 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
             continue;
         }
 
-        sculpt_log("[QUAD CAP PATCH #%zu] CDT Triangulation: %zu triangles generated in %.2f ms\n",
-                   patchIdx + 1, cdt.triangles.size(), cdtMs);
+        sculpt_log("[QUAD CAP PATCH #%zu] Transition Belt CDT: %zu triangles generated in %.2f ms (cdtVerts: %zu, cdtEdges: %zu)\n",
+                   patchIdx + 1, cdt.triangles.size(), cdtMs, cdtVerts.size(), cdtEdges.size());
 
-        // Fast O(1) lookup from vertex ID to grid coordinates (gx, gy)
-        struct GridCoord { int gx, gy; bool valid; };
-        std::vector<GridCoord> vidToGridFlat(loopNewVerts.size(), {0, 0, false});
-        for (const auto& gp : gridPoints) {
-            if (gp.meshVid >= baseVid && (gp.meshVid - baseVid) < vidToGridFlat.size()) {
-                vidToGridFlat[gp.meshVid - baseVid] = {gp.gx, gp.gy, true};
-            }
-        }
-
-        struct FlatCellTris {
-            std::array<uint32_t, 3> t0;
-            std::array<uint32_t, 3> t1;
-            uint8_t count = 0;
-            void push(const std::array<uint32_t, 3>& tri) {
-                if (count == 0) t0 = tri;
-                else if (count == 1) t1 = tri;
-                count++;
-            }
-        };
-        std::vector<FlatCellTris> cellTrianglesFlat(gridCols * gridRows);
         std::vector<std::array<uint32_t, 3>> transitionTris;
-
-        auto getGridCoord = [&](uint32_t m, int& outGx, int& outGy) -> bool {
-            if (m >= baseVid && (m - baseVid) < vidToGridFlat.size()) {
-                const auto& c = vidToGridFlat[m - baseVid];
-                if (c.valid) {
-                    outGx = c.gx;
-                    outGy = c.gy;
-                    return true;
-                }
-            }
-            return false;
-        };
+        transitionTris.reserve(cdt.triangles.size());
 
         for (const auto& tri : cdt.triangles) {
             if (tri.vertices[0] >= cdtToMeshVid.size() ||
                 tri.vertices[1] >= cdtToMeshVid.size() ||
                 tri.vertices[2] >= cdtToMeshVid.size()) {
-                fallbackPatch("CDT vertex index out of bounds");
                 continue;
             }
-
             uint32_t m0 = cdtToMeshVid[tri.vertices[0]];
             uint32_t m1 = cdtToMeshVid[tri.vertices[1]];
             uint32_t m2 = cdtToMeshVid[tri.vertices[2]];
-
-            bool isQuadTri = false;
-            int g0x, g0y, g1x, g1y, g2x, g2y;
-            if (getGridCoord(m0, g0x, g0y) && getGridCoord(m1, g1x, g1y) && getGridCoord(m2, g2x, g2y)) {
-                int minGx = std::min({g0x, g1x, g2x});
-                int maxGx = std::max({g0x, g1x, g2x});
-                int minGy = std::min({g0y, g1y, g2y});
-                int maxGy = std::max({g0y, g1y, g2y});
-
-                if (maxGx - minGx <= 1 && maxGy - minGy <= 1) {
-                    if (minGx >= gxMin && minGx <= gxMax && minGy >= gyMin && minGy <= gyMax) {
-                        int cellIdx = (minGy - gyMin) * gridCols + (minGx - gxMin);
-                        if (hasQuadCell[cellIdx]) {
-                            cellTrianglesFlat[cellIdx].push({m0, m1, m2});
-                            isQuadTri = true;
-                        }
-                    }
-                }
-            }
-
-            if (!isQuadTri) {
+            if (m0 != m1 && m1 != m2 && m2 != m0) {
                 transitionTris.push_back({m0, m1, m2});
             }
         }
-
-        // Inner Grid Quads: accept candidate cells with exactly 2 triangles from CDT
-        std::vector<QuadCell> acceptedGridQuads;
-        acceptedGridQuads.reserve(quads.size());
-
-        for (const auto& q : quads) {
-            int cellIdx = (q.gy - gyMin) * gridCols + (q.gx - gxMin);
-            const auto& ct = cellTrianglesFlat[cellIdx];
-            if (ct.count == 2) {
-                acceptedGridQuads.push_back(q);
-            } else {
-                if (ct.count >= 1) transitionTris.push_back(ct.t0);
-                if (ct.count >= 2) transitionTris.push_back(ct.t1);
-            }
-        }
-
-        sculpt_log("[QUAD CAP PATCH #%zu] Inner Grid: %zu candidate quads -> %zu accepted (2 tris), %zu transition belt tris\n",
-                   patchIdx + 1, quads.size(), acceptedGridQuads.size(), transitionTris.size());
 
         // ---------------------------------------------------------
         // Transition Belt Quadification: Greedy Quad Pairing
@@ -1576,6 +1850,21 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
                 }
             }
             return glm::vec3(0.0f);
+        };
+
+        auto getVertNorm3D = [&](uint32_t vid) -> glm::vec3 {
+            if (vid < mesh.verts.size() / 3) {
+                if (!mesh.normals.empty() && vid * 3 + 2 < mesh.normals.size()) {
+                    return glm::vec3(mesh.normals[vid * 3], mesh.normals[vid * 3 + 1], mesh.normals[vid * 3 + 2]);
+                }
+                return patchNormal;
+            } else {
+                size_t off = vid - baseVid;
+                if (off < loopNewVerts.size()) {
+                    return loopNewVerts[off].normal;
+                }
+            }
+            return patchNormal;
         };
 
         const size_t numTransTris = transitionTris.size();
@@ -1685,8 +1974,17 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
                                 if (d1 < 1e-4f || d2 < 1e-4f) {
                                     threadDiagRatio[tid]++;
                                 } else {
+                                    bool isGridOnlyA = (transitionTris[tA][0] >= baseVid && transitionTris[tA][1] >= baseVid && transitionTris[tA][2] >= baseVid);
+                                    bool isGridOnlyB = (transitionTris[tB][0] >= baseVid && transitionTris[tB][1] >= baseVid && transitionTris[tB][2] >= baseVid);
+                                    bool isCornerPair = (isGridOnlyA || isGridOnlyB);
+
+                                    float minDiagRatioAllowed = 0.40f;
+                                    float minEdgeRatioAllowed = 0.40f;
+                                    float minAngleAllowed = isCornerPair ? 16.0f : 22.0f;
+                                    float maxAngleAllowed = isCornerPair ? 164.0f : 158.0f;
+
                                     float diagRatio = std::min(d1, d2) / std::max(d1, d2);
-                                    if (diagRatio < 0.16f) {
+                                    if (diagRatio < minDiagRatioAllowed) {
                                         threadDiagRatio[tid]++;
                                     } else {
                                         // Edge lengths and interior angles
@@ -1702,7 +2000,7 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
 
                                         float lMin = std::min({l0, l1, l2, l3});
                                         float lMax = std::max({l0, l1, l2, l3});
-                                        if (lMax <= 1e-5f || (lMin / lMax) < 0.05f) {
+                                        if (lMax <= 1e-5f || (lMin / lMax) < minEdgeRatioAllowed) {
                                             threadEdgeRatio[tid]++;
                                         } else {
                                             // Interior angles
@@ -1716,8 +2014,8 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
                                             float a2 = angleDeg(p2 - p1, p3 - p2, c2);
                                             float a3 = angleDeg(p3 - p2, p0 - p3, c3);
 
-                                            if (a0 < 22.0f || a0 > 158.0f || a1 < 22.0f || a1 > 158.0f ||
-                                                a2 < 22.0f || a2 > 158.0f || a3 < 22.0f || a3 > 158.0f) {
+                                            if (a0 < minAngleAllowed || a0 > maxAngleAllowed || a1 < minAngleAllowed || a1 > maxAngleAllowed ||
+                                                a2 < minAngleAllowed || a2 > maxAngleAllowed || a3 < minAngleAllowed || a3 > maxAngleAllowed) {
                                                 threadAngles[tid]++;
                                             } else {
                                                 // Quality score: diagonal ratio + edge ratio + proximity of angles to 90 deg
@@ -1726,6 +2024,17 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
                                                     angleScore += std::sin(glm::radians(a));
                                                 }
                                                 float score = diagRatio * 2.5f + (lMin / lMax) * 1.5f + angleScore;
+                                                if (isCornerPair) score += 10.0f;
+
+                                                bool isLadderQuad = false;
+                                                if ((q0 < baseVid && q1 < baseVid && q2 >= baseVid && q3 >= baseVid) ||
+                                                    (q1 < baseVid && q2 < baseVid && q3 >= baseVid && q0 >= baseVid) ||
+                                                    (q2 < baseVid && q3 < baseVid && q0 >= baseVid && q1 >= baseVid) ||
+                                                    (q3 < baseVid && q0 < baseVid && q1 >= baseVid && q2 >= baseVid)) {
+                                                    isLadderQuad = true;
+                                                }
+                                                if (isLadderQuad) score += 50.0f;
+
                                                 localCands.push_back({tA, tB, q0, q1, q2, q3, score});
                                             }
                                         }
@@ -1775,6 +2084,55 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
                 triUsed[cp.tB] = true;
                 transitionQuads.push_back({cp.q0, cp.q1, cp.q2, cp.q3});
             }
+        }
+
+        // 2nd pass: pair any remaining adjacent triangles that form a well-proportioned convex quad
+        for (size_t i = 0; i < transEdges.size(); ) {
+            size_t j = i + 1;
+            while (j < transEdges.size() && transEdges[j].key == transEdges[i].key) ++j;
+            if (j - i == 2) {
+                const auto& hA = transEdges[i];
+                const auto& hB = transEdges[i + 1];
+                int tA = hA.triIdx;
+                int tB = hB.triIdx;
+                if (!triUsed[tA] && !triUsed[tB] && hA.forward != hB.forward) {
+                    uint32_t u = (uint32_t)(hA.key >> 32);
+                    uint32_t v = (uint32_t)(hA.key & 0xFFFFFFFF);
+                    uint32_t wA = hA.vOpp;
+                    uint32_t wB = hB.vOpp;
+                    if (!hA.forward) std::swap(u, v);
+                    uint32_t q0 = u, q1 = wB, q2 = v, q3 = wA;
+                    glm::vec2 p0 = getVertPos2D(q0);
+                    glm::vec2 p1 = getVertPos2D(q1);
+                    glm::vec2 p2 = getVertPos2D(q2);
+                    glm::vec2 p3 = getVertPos2D(q3);
+                    auto cross2D = [](const glm::vec2& a, const glm::vec2& b) -> float {
+                        return a.x * b.y - a.y * b.x;
+                    };
+                    float c0 = cross2D(p0 - p3, p1 - p0);
+                    float c1 = cross2D(p1 - p0, p2 - p1);
+                    float c2 = cross2D(p2 - p1, p3 - p2);
+                    float c3 = cross2D(p3 - p2, p0 - p3);
+                    if (c0 > 1e-6f && c1 > 1e-6f && c2 > 1e-6f && c3 > 1e-6f) {
+                        float d1 = glm::distance(p0, p2);
+                        float d2 = glm::distance(p1, p3);
+                        float l0 = glm::distance(p0, p1);
+                        float l1 = glm::distance(p1, p2);
+                        float l2 = glm::distance(p2, p3);
+                        float l3 = glm::distance(p3, p0);
+                        float lMin = std::min({l0, l1, l2, l3});
+                        float lMax = std::max({l0, l1, l2, l3});
+                        float diagRatio = (std::max(d1, d2) > 1e-5f) ? (std::min(d1, d2) / std::max(d1, d2)) : 0.0f;
+                        float edgeRatio = (lMax > 1e-5f) ? (lMin / lMax) : 0.0f;
+                        if (diagRatio >= 0.38f && edgeRatio >= 0.38f) {
+                            triUsed[tA] = true;
+                            triUsed[tB] = true;
+                            transitionQuads.push_back({q0, q1, q2, q3});
+                        }
+                    }
+                }
+            }
+            i = j;
         }
 
         // Inner Grid 3D Quality Metrics
@@ -1962,37 +2320,54 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
         sculpt_log("[QUAD CAP PATCH #%zu] Cap Faces Normal Alignment: %d faces | avg dot vs patchN: %.3f [min: %.3f, max: %.3f] | Inverted (dot<0): %d, Steep (dot<0.2): %d\n",
                    patchIdx + 1, capTotalFaces, capAvgDot, capMinDot, capMaxDot, capInverted, capSteep);
 
+        // Vertex compaction: only stage vertices that are actually referenced in faces
+        std::vector<uint32_t> remapNewVid(loopNewVerts.size(), UINT32_MAX);
+        std::vector<StagedVert> compactedVerts;
+        compactedVerts.reserve(loopNewVerts.size());
+
+        auto getOrAddCompactedVid = [&](uint32_t vid) -> uint32_t {
+            if (vid < baseVid) return vid;
+            size_t off = vid - baseVid;
+            if (off >= loopNewVerts.size()) return vid;
+            if (remapNewVid[off] == UINT32_MAX) {
+                uint32_t newVid = baseVid + static_cast<uint32_t>(compactedVerts.size());
+                remapNewVid[off] = newVid;
+                compactedVerts.push_back(loopNewVerts[off]);
+            }
+            return remapNewVid[off];
+        };
+
         // Emit new patch faces into buffers:
         // 1. Inner grid quads
         for (const auto& q : acceptedGridQuads) {
-            newFaces.push_back(q.v00);
-            newFaces.push_back(q.v10);
-            newFaces.push_back(q.v11);
-            newFaces.push_back(q.v01);
+            newFaces.push_back(getOrAddCompactedVid(q.v00));
+            newFaces.push_back(getOrAddCompactedVid(q.v10));
+            newFaces.push_back(getOrAddCompactedVid(q.v11));
+            newFaces.push_back(getOrAddCompactedVid(q.v01));
             newFaceGroups.push_back(capGroupID);
         }
 
         // 2. Transition quads
         for (const auto& tq : transitionQuads) {
-            newFaces.push_back(tq.v0);
-            newFaces.push_back(tq.v1);
-            newFaces.push_back(tq.v2);
-            newFaces.push_back(tq.v3);
+            newFaces.push_back(getOrAddCompactedVid(tq.v0));
+            newFaces.push_back(getOrAddCompactedVid(tq.v1));
+            newFaces.push_back(getOrAddCompactedVid(tq.v2));
+            newFaces.push_back(getOrAddCompactedVid(tq.v3));
             newFaceGroups.push_back(capGroupID);
         }
 
         // 3. Remaining transition triangles
         for (const auto& t : remainingTris) {
             if (t[0] == t[1] || t[1] == t[2] || t[2] == t[0]) continue;
-            newFaces.push_back(t[0]);
-            newFaces.push_back(t[1]);
-            newFaces.push_back(t[2]);
+            newFaces.push_back(getOrAddCompactedVid(t[0]));
+            newFaces.push_back(getOrAddCompactedVid(t[1]));
+            newFaces.push_back(getOrAddCompactedVid(t[2]));
             newFaces.push_back(TRI_INDEX);
             newFaceGroups.push_back(capGroupID);
         }
 
         // Stage newly created grid vertices
-        stagedVerts.insert(stagedVerts.end(), loopNewVerts.begin(), loopNewVerts.end());
+        stagedVerts.insert(stagedVerts.end(), compactedVerts.begin(), compactedVerts.end());
 
         int patchQuads = static_cast<int>(acceptedGridQuads.size() + transitionQuads.size());
         int patchTrisGenerated = static_cast<int>(remainingTris.size());
@@ -2054,6 +2429,12 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
 
         result.success = true;
     } else {
+        mesh.verts.resize(origNbVerts * 3);
+        mesh.normals.resize(origNbVerts * 3);
+        mesh.colors.resize(origNbVerts * 3);
+        mesh.materials.resize(origNbVerts * 3);
+        mesh.nbVerts = origNbVerts;
+
         // If no patch was quad capped (e.g. preserved original manifold cap),
         // ensure mesh has valid topology, normals, and octree because toMesh skipped runPostInit.
         mesh.hasCustomNormals = false;
