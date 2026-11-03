@@ -5962,14 +5962,30 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                   "while remeshing only the unmasked regions.");
             }
             ImGui::Checkbox("Align Symmetry Axes", &m_remeshAlignSymmetry);
-            ImGui::Checkbox("Regularize Quads", &m_remeshRegularizeQuads);
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Eliminates diamond/rhombus polygon artifacts using QEF Hermite positioning and constrained tangential relaxation.");
+
+            bool regQuadsDisabled = m_remeshKeepSharpEdges;
+            if (regQuadsDisabled) {
+                ImGui::BeginDisabled();
             }
+            ImGui::Checkbox("Regularize Quads", &m_remeshRegularizeQuads);
+            if (regQuadsDisabled) {
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    ImGui::SetTooltip("Unavailable when 'Keep sharp edges' is enabled.\n"
+                                      "PolyCube 6-Chart regularization would round off and destroy sharp features.\n"
+                                      "Surface Nets with QEF feature snapping is used instead.");
+                }
+            } else {
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Eliminates diamond/rhombus polygon artifacts using QEF Hermite positioning and constrained tangential relaxation.");
+                }
+            }
+
             ImGui::Checkbox("Keep sharp edges", &m_remeshKeepSharpEdges);
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("This option is mostly useful for simple primitive boolean operations.\n"
-                                  "It can introduce distortion in some areas because points are snapped to the edges.");
+                                  "It can introduce distortion in some areas because points are snapped to the edges.\n"
+                                  "Note: Disables 'Regularize Quads' (PolyCube 6-Chart) to prevent rounding sharp creases.");
             }
 
             if (ImGui::Button("Remesh", ImVec2(-1, 0))) {
@@ -10007,14 +10023,30 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
                                   "while remeshing only the unmasked regions.");
             }
             ImGui::Checkbox("Align Symmetry Axes", &m_remeshAlignSymmetry);
-            ImGui::Checkbox("Regularize Quads", &m_remeshRegularizeQuads);
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Eliminates diamond/rhombus polygon artifacts using QEF Hermite positioning and constrained tangential relaxation.");
+
+            bool regQuadsDisabled = m_remeshKeepSharpEdges;
+            if (regQuadsDisabled) {
+                ImGui::BeginDisabled();
             }
+            ImGui::Checkbox("Regularize Quads", &m_remeshRegularizeQuads);
+            if (regQuadsDisabled) {
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    ImGui::SetTooltip("Unavailable when 'Keep sharp edges' is enabled.\n"
+                                      "PolyCube 6-Chart regularization would round off and destroy sharp features.\n"
+                                      "Surface Nets with QEF feature snapping is used instead.");
+                }
+            } else {
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Eliminates diamond/rhombus polygon artifacts using QEF Hermite positioning and constrained tangential relaxation.");
+                }
+            }
+
             ImGui::Checkbox("Keep sharp edges", &m_remeshKeepSharpEdges);
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("This option is mostly useful for simple primitive boolean operations.\n"
-                                  "It can introduce distortion in some areas because points are snapped to the edges.");
+                                  "It can introduce distortion in some areas because points are snapped to the edges.\n"
+                                  "Note: Disables 'Regularize Quads' (PolyCube 6-Chart) to prevent rounding sharp creases.");
             }
             ImGui::Separator();
             if (ImGui::Button("Remesh Now", ImVec2(-1.0f, 0.0f))) {
