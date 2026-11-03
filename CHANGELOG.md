@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.17]
+- **High-Poly Sculpt Performance**: Smooth sculpting, instant brush response, and accelerated Undo/Redo on dense 10M+ polygon meshes.
+- **Voxel Remesh Upgrades**: Resolution limit raised to 3000 with sparse memory protection, new "Keep Sharp Edges" mode, unrestricted quad regularization, and "Keep Masked" support.
+- **Trim & Clip Improvements**: Uniform quad caps without needle triangles, watertight consecutive cuts, and up to 70% lower RAM usage with compressed undo.
+- **Faster Selection**: Accelerated screen polygon and lasso selections on heavy geometry.
+
 ## [0.3.16]
 - **Modeling Tools**:
   - `Extrude`: Extrude selected faces or open boundary edges into new geometry.
