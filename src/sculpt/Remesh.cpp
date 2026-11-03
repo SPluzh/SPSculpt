@@ -857,6 +857,8 @@ static void voxelize(
     sculpt_log("[C++ voxelize] Finished voxelization: non-inf distances count=%d\n", nonInfCount);
 }
 
+static constexpr uint8_t TAG_EXTERIOR = 0x80;
+
 static void floodFill(VoxelGrid& voxels, std::function<void(int stage, int progress)> onProgress = nullptr) {
     int rx = voxels.dims[0];
     int ry = voxels.dims[1];
@@ -864,29 +866,27 @@ static void floodFill(VoxelGrid& voxels, std::function<void(int stage, int progr
     int rxy = rx * ry;
     int datalen = rx * ry * rz;
 
-    sculpt_log("[C++ floodFill] Starting fast 3D topological sweep flood fill: datalen=%d (dims: %dx%dx%d)\n", datalen, rx, ry, rz);
+    sculpt_log("[C++ floodFill] Starting fast 3D topological sweep flood fill (bit-packed in crossedEdges): datalen=%d (dims: %dx%dx%d)\n", datalen, rx, ry, rz);
 
     if (onProgress) onProgress(1, 0);
 
-    std::vector<uint8_t> tagCell(datalen, 0);
-
-    // Initialize entire outer 3D boundary grid as exterior (tagCell = 1)
+    // Initialize entire outer 3D boundary grid as exterior (TAG_EXTERIOR bit in crossedEdges)
     for (int z = 0; z < rz; ++z) {
         for (int y = 0; y < ry; ++y) {
-            tagCell[0 + y * rx + z * rxy] = 1;
-            tagCell[(rx - 1) + y * rx + z * rxy] = 1;
+            voxels.crossedEdges[0 + y * rx + z * rxy] |= TAG_EXTERIOR;
+            voxels.crossedEdges[(rx - 1) + y * rx + z * rxy] |= TAG_EXTERIOR;
         }
     }
     for (int z = 0; z < rz; ++z) {
         for (int x = 0; x < rx; ++x) {
-            tagCell[x + 0 * rx + z * rxy] = 1;
-            tagCell[x + (ry - 1) * rx + z * rxy] = 1;
+            voxels.crossedEdges[x + 0 * rx + z * rxy] |= TAG_EXTERIOR;
+            voxels.crossedEdges[x + (ry - 1) * rx + z * rxy] |= TAG_EXTERIOR;
         }
     }
     for (int y = 0; y < ry; ++y) {
         for (int x = 0; x < rx; ++x) {
-            tagCell[x + y * rx + 0 * rxy] = 1;
-            tagCell[x + y * rx + (rz - 1) * rxy] = 1;
+            voxels.crossedEdges[x + y * rx + 0 * rxy] |= TAG_EXTERIOR;
+            voxels.crossedEdges[x + y * rx + (rz - 1) * rxy] |= TAG_EXTERIOR;
         }
     }
 
@@ -895,13 +895,13 @@ static void floodFill(VoxelGrid& voxels, std::function<void(int stage, int progr
     for (int z = 0; z < rz; ++z) {
         for (int y = 0; y < ry; ++y) {
             for (int x = 0; x < rx; ++x, ++n) {
-                if (tagCell[n]) continue;
-                if (x > 0 && tagCell[n - 1] && !(voxels.crossedEdges[n - 1] & 1)) {
-                    tagCell[n] = 1;
-                } else if (y > 0 && tagCell[n - rx] && !(voxels.crossedEdges[n - rx] & 2)) {
-                    tagCell[n] = 1;
-                } else if (z > 0 && tagCell[n - rxy] && !(voxels.crossedEdges[n - rxy] & 4)) {
-                    tagCell[n] = 1;
+                if (voxels.crossedEdges[n] & TAG_EXTERIOR) continue;
+                if (x > 0 && (voxels.crossedEdges[n - 1] & TAG_EXTERIOR) && !(voxels.crossedEdges[n - 1] & 1)) {
+                    voxels.crossedEdges[n] |= TAG_EXTERIOR;
+                } else if (y > 0 && (voxels.crossedEdges[n - rx] & TAG_EXTERIOR) && !(voxels.crossedEdges[n - rx] & 2)) {
+                    voxels.crossedEdges[n] |= TAG_EXTERIOR;
+                } else if (z > 0 && (voxels.crossedEdges[n - rxy] & TAG_EXTERIOR) && !(voxels.crossedEdges[n - rxy] & 4)) {
+                    voxels.crossedEdges[n] |= TAG_EXTERIOR;
                 }
             }
         }
@@ -914,13 +914,13 @@ static void floodFill(VoxelGrid& voxels, std::function<void(int stage, int progr
     for (int z = rz - 1; z >= 0; --z) {
         for (int y = ry - 1; y >= 0; --y) {
             for (int x = rx - 1; x >= 0; --x, --n) {
-                if (tagCell[n]) continue;
-                if (x < rx - 1 && tagCell[n + 1] && !(voxels.crossedEdges[n] & 1)) {
-                    tagCell[n] = 1;
-                } else if (y < ry - 1 && tagCell[n + rx] && !(voxels.crossedEdges[n] & 2)) {
-                    tagCell[n] = 1;
-                } else if (z < rz - 1 && tagCell[n + rxy] && !(voxels.crossedEdges[n] & 4)) {
-                    tagCell[n] = 1;
+                if (voxels.crossedEdges[n] & TAG_EXTERIOR) continue;
+                if (x < rx - 1 && (voxels.crossedEdges[n + 1] & TAG_EXTERIOR) && !(voxels.crossedEdges[n] & 1)) {
+                    voxels.crossedEdges[n] |= TAG_EXTERIOR;
+                } else if (y < ry - 1 && (voxels.crossedEdges[n + rx] & TAG_EXTERIOR) && !(voxels.crossedEdges[n] & 2)) {
+                    voxels.crossedEdges[n] |= TAG_EXTERIOR;
+                } else if (z < rz - 1 && (voxels.crossedEdges[n + rxy] & TAG_EXTERIOR) && !(voxels.crossedEdges[n] & 4)) {
+                    voxels.crossedEdges[n] |= TAG_EXTERIOR;
                 }
             }
         }
@@ -934,18 +934,18 @@ static void floodFill(VoxelGrid& voxels, std::function<void(int stage, int progr
     for (int z = 0; z < rz; ++z) {
         for (int y = 0; y < ry; ++y) {
             for (int x = 0; x < rx; ++x, ++n) {
-                if (tagCell[n]) continue;
+                if (voxels.crossedEdges[n] & TAG_EXTERIOR) continue;
                 bool newlyTagged = false;
-                if (x > 0 && tagCell[n - 1] && !(voxels.crossedEdges[n - 1] & 1)) {
+                if (x > 0 && (voxels.crossedEdges[n - 1] & TAG_EXTERIOR) && !(voxels.crossedEdges[n - 1] & 1)) {
                     newlyTagged = true;
-                } else if (y > 0 && tagCell[n - rx] && !(voxels.crossedEdges[n - rx] & 2)) {
+                } else if (y > 0 && (voxels.crossedEdges[n - rx] & TAG_EXTERIOR) && !(voxels.crossedEdges[n - rx] & 2)) {
                     newlyTagged = true;
-                } else if (z > 0 && tagCell[n - rxy] && !(voxels.crossedEdges[n - rxy] & 4)) {
+                } else if (z > 0 && (voxels.crossedEdges[n - rxy] & TAG_EXTERIOR) && !(voxels.crossedEdges[n - rxy] & 4)) {
                     newlyTagged = true;
                 }
 
                 if (newlyTagged) {
-                    tagCell[n] = 1;
+                    voxels.crossedEdges[n] |= TAG_EXTERIOR;
                     queue.push_back(n);
                 }
             }
@@ -963,12 +963,12 @@ static void floodFill(VoxelGrid& voxels, std::function<void(int stage, int progr
             int off = dirs[i];
             int idNext = cell + off;
             if (idNext < 0 || idNext >= datalen) continue;
-            if (tagCell[idNext]) continue;
+            if (voxels.crossedEdges[idNext] & TAG_EXTERIOR) continue;
 
             int idx = (off >= 0) ? cell : idNext;
             int bit = 1 << dirsEdge[i];
             if ((voxels.crossedEdges[idx] & bit) == 0) {
-                tagCell[idNext] = 1;
+                voxels.crossedEdges[idNext] |= TAG_EXTERIOR;
                 queue.push_back(idNext);
             }
         }
@@ -979,12 +979,17 @@ static void floodFill(VoxelGrid& voxels, std::function<void(int stage, int progr
 #pragma omp parallel for schedule(static) reduction(+:taggedCount)
     for (int id = 0; id < datalen; ++id) {
         float d = voxels.distanceField[id];
-        uint8_t tagged = tagCell[id];
+        bool tagged = (voxels.crossedEdges[id] & TAG_EXTERIOR) != 0;
         voxels.distanceField[id] = tagged ? d : -d;
         taggedCount += (int)tagged;
     }
 
     sculpt_log("[C++ floodFill] Finished: tagged (exterior) cells=%d, untagged (interior) cells=%d\n", taggedCount, datalen - taggedCount);
+
+    // Phase 1 Optimization: crossedEdges is no longer needed after floodFill.
+    // Deallocate crossedEdges immediately to reclaim ~1.01 GB RAM before surface reconstruction.
+    std::vector<uint8_t>().swap(voxels.crossedEdges);
+
     if (onProgress) onProgress(1, 100);
 }
 
@@ -1179,10 +1184,22 @@ static RemeshResult marchingCubesReconstruct(VoxelGrid& voxels, std::function<vo
     int rz = voxels.dims[2];
     int rxy = rx * ry;
 
-    std::vector<uint32_t> edgeVertX((rx - 1) * ry * rz, 0xffffffff);
-    std::vector<uint32_t> edgeVertY(rx * (ry - 1) * rz, 0xffffffff);
-    std::vector<uint32_t> edgeVertZ(rx * ry * (rz - 1), 0xffffffff);
-    res.profile.bytesReconstructAux = ((size_t)(rx - 1) * ry * rz + (size_t)rx * (ry - 1) * rz + (size_t)rx * ry * (rz - 1)) * sizeof(uint32_t);
+    // Phase 1 Optimization: 2-slice sliding window ring buffer for edge vertices.
+    // Instead of 3 dense 3D arrays of size datalen (which consumes 12.15 GB on Res 1000),
+    // Marching Cubes edge sharing only ever connects slice z and slice z + 1.
+    // 2 slices per edge axis reduce memory to ~24 MB (99.8% reduction!).
+    size_t sliceX = (size_t)(rx - 1) * ry;
+    size_t sliceY = (size_t)rx * (ry - 1);
+    size_t sliceZ = (size_t)rx * ry;
+
+    std::vector<uint32_t> edgeVertX(2 * sliceX, 0xffffffff);
+    std::vector<uint32_t> edgeVertY(2 * sliceY, 0xffffffff);
+    std::vector<uint32_t> edgeVertZ(2 * sliceZ, 0xffffffff);
+    res.profile.bytesReconstructAux = (2 * sliceX + 2 * sliceY + 2 * sliceZ) * sizeof(uint32_t);
+
+    std::vector<size_t> dirtyX[2];
+    std::vector<size_t> dirtyY[2];
+    std::vector<size_t> dirtyZ[2];
     std::vector<uint32_t> vertGroups;
 
     int n = 0;
@@ -1200,6 +1217,25 @@ static RemeshResult marchingCubesReconstruct(VoxelGrid& voxels, std::function<vo
             int pct = (z * 100) / (rz - 1);
             onProgress(2, pct);
         }
+
+        // Reset the bank that will be used for ez = z + 1 (last used for ez = z - 1 in slice z - 1)
+        int bankNext = (z + 1) & 1;
+        for (size_t idx : dirtyX[bankNext]) {
+            edgeVertX[idx] = 0xffffffff;
+        }
+        dirtyX[bankNext].clear();
+
+        for (size_t idx : dirtyY[bankNext]) {
+            edgeVertY[idx] = 0xffffffff;
+        }
+        dirtyY[bankNext].clear();
+
+        // Reset the bank that will be used for Z edges in this slice (last used in slice z - 2)
+        int bankCur = z & 1;
+        for (size_t idx : dirtyZ[bankCur]) {
+            edgeVertZ[idx] = 0xffffffff;
+        }
+        dirtyZ[bankCur].clear();
         for (int y = 0; y < ry - 1; ++y, ++n) {
             for (int x = 0; x < rx - 1; ++x, ++n) {
                 float d0 = voxels.distanceField[n];
@@ -1233,12 +1269,16 @@ static RemeshResult marchingCubesReconstruct(VoxelGrid& voxels, std::function<vo
                     }
 
                     uint32_t* slot = nullptr;
+                    size_t slotIdx = 0;
                     if (axis == 0) {
-                        slot = &edgeVertX[ex + ey * (rx - 1) + ez * (rx - 1) * ry];
+                        slotIdx = (size_t)(ez & 1) * sliceX + (size_t)ex + (size_t)ey * (rx - 1);
+                        slot = &edgeVertX[slotIdx];
                     } else if (axis == 1) {
-                        slot = &edgeVertY[ex + ey * rx + ez * rx * (ry - 1)];
+                        slotIdx = (size_t)(ez & 1) * sliceY + (size_t)ex + (size_t)ey * rx;
+                        slot = &edgeVertY[slotIdx];
                     } else {
-                        slot = &edgeVertZ[ex + ey * rx + ez * rx * ry];
+                        slotIdx = (size_t)(ez & 1) * sliceZ + (size_t)ex + (size_t)ey * rx;
+                        slot = &edgeVertZ[slotIdx];
                     }
 
                     if (*slot != 0xffffffff) {
@@ -1262,6 +1302,9 @@ static RemeshResult marchingCubesReconstruct(VoxelGrid& voxels, std::function<vo
                         uint32_t idVertex = res.vertices.size() / 3;
                         *slot = idVertex;
                         edges[k] = idVertex;
+                        if (axis == 0) dirtyX[ez & 1].push_back(slotIdx);
+                        else if (axis == 1) dirtyY[ez & 1].push_back(slotIdx);
+                        else dirtyZ[ez & 1].push_back(slotIdx);
                         res.vertices.push_back(tmpV[0]);
                         res.vertices.push_back(tmpV[1]);
                         res.vertices.push_back(tmpV[2]);
@@ -1748,12 +1791,12 @@ static RemeshResult surfaceNetsReconstruct(
     int numThreads = (int)std::thread::hardware_concurrency();
     if (numThreads < 1) numThreads = 1;
 
-    std::vector<int32_t> cellToVert(datalen);
-    res.profile.bytesReconstructAux = (size_t)datalen * sizeof(int32_t);
-#pragma omp parallel for schedule(static)
-    for (int i = 0; i < datalen; ++i) {
-        cellToVert[i] = -1;
-    }
+    // Phase 1 Optimization: Sliding Window 2-slice ring buffer for cellToVert.
+    // Instead of allocating a 4.05 GB array for the entire 3D volume, quads generated at cell (x, y, z)
+    // only ever reference vertices from slice z and slice z - 1.
+    // 2 slices require only 2 * rxy * sizeof(int32_t) = ~8 MB (99.8% memory reduction!).
+    std::vector<int32_t> sliceToVert(2 * rxy, -1);
+    res.profile.bytesReconstructAux = 2 * (size_t)rxy * sizeof(int32_t);
 
     struct ThreadVertData {
         std::vector<float> vertices;
@@ -1812,7 +1855,7 @@ static RemeshResult surfaceNetsReconstruct(
         }
     }
 
-    // Merge Thread Vertices with parallel prefix sums and populate cellToVert map
+    // Merge Thread Vertices with parallel prefix sums
     std::vector<size_t> vertOffsets(numThreads + 1, 0);
     for (int t = 0; t < numThreads; ++t) {
         vertOffsets[t + 1] = vertOffsets[t] + threadVerts[t].vertCellIndices.size();
@@ -1827,6 +1870,9 @@ static RemeshResult surfaceNetsReconstruct(
     }
     std::vector<uint32_t> vertGroups;
     if (voxels.hasGroupField) vertGroups.resize(totalVerts);
+
+    std::vector<int> allCellIndices(totalVerts);
+    std::vector<uint8_t> allMasks(totalVerts);
 
 #pragma omp parallel for schedule(static)
     for (int t = 0; t < numThreads; ++t) {
@@ -1844,10 +1890,8 @@ static RemeshResult surfaceNetsReconstruct(
             if (voxels.hasGroupField && !td.vertGroups.empty()) {
                 std::memcpy(&vertGroups[baseVertIdx], td.vertGroups.data(), count * sizeof(uint32_t));
             }
-
-            for (size_t i = 0; i < count; ++i) {
-                cellToVert[td.vertCellIndices[i]] = (int32_t)(baseVertIdx + i);
-            }
+            std::memcpy(&allCellIndices[baseVertIdx], td.vertCellIndices.data(), count * sizeof(int));
+            std::memcpy(&allMasks[baseVertIdx], td.vertMasks.data(), count * sizeof(uint8_t));
         }
     }
 
@@ -1858,36 +1902,55 @@ static RemeshResult surfaceNetsReconstruct(
                    sharpCount, totalVerts, totalVerts > 0 ? (float)sharpCount / totalVerts * 100.0f : 0.0f);
     }
 
-    // Pass B: Parallel Face Generation (iterates ONLY active surface cells)
-    struct ThreadFaceData {
-        std::vector<uint32_t> faces;
-        std::vector<uint32_t> faceGroups;
-    };
-    std::vector<ThreadFaceData> threadFaces(numThreads);
+    // Pass B: Sliding Window Face Generation across slices z
+    // Precalculate vertex offset boundaries per slice z in O(totalVerts)
+    std::vector<size_t> sliceVertStart(rz + 1, totalVerts);
+    size_t curZ = 0;
+    sliceVertStart[0] = 0;
+    for (size_t v = 0; v < totalVerts; ++v) {
+        size_t z = (size_t)(allCellIndices[v] / rxy);
+        while (curZ < z) {
+            curZ++;
+            sliceVertStart[curZ] = v;
+        }
+    }
+    for (size_t z = curZ + 1; z <= (size_t)rz; ++z) {
+        sliceVertStart[z] = totalVerts;
+    }
 
     const int dimOffsets[3] = { rx, rxy, 1 };
     const int dimOffsetsV[3] = { rxy, 1, rx };
 
-#pragma omp parallel num_threads(numThreads)
-    {
-        int t = omp_get_thread_num();
-        const ThreadVertData& td = threadVerts[t];
-        ThreadFaceData& tf = threadFaces[t];
-        size_t baseVertIdx = vertOffsets[t];
-        size_t count = td.vertCellIndices.size();
+    res.faces.reserve(totalVerts * 4);
+    if (voxels.hasGroupField) res.faceGroups.reserve(totalVerts);
 
-        tf.faces.reserve(count * 6);
-        if (voxels.hasGroupField) tf.faceGroups.reserve(count * 2);
+    for (int z = 0; z < rz; ++z) {
+        // Clear bank that was used for slice z - 2 (only active vertices)
+        if (z >= 2) {
+            size_t vStartOld = sliceVertStart[z - 2];
+            size_t vEndOld = sliceVertStart[z - 1];
+            for (size_t v = vStartOld; v < vEndOld; ++v) {
+                int nOld = allCellIndices[v];
+                sliceToVert[((z - 2) & 1) * rxy + (nOld % rxy)] = -1;
+            }
+        }
 
-        for (size_t k = 0; k < count; ++k) {
-            int n = td.vertCellIndices[k];
-            uint8_t mask = td.vertMasks[k];
-            int32_t v0 = (int32_t)(baseVertIdx + k);
+        // Populate bank for slice z
+        size_t vStartZ = sliceVertStart[z];
+        size_t vEndZ = sliceVertStart[z + 1];
+        for (size_t v = vStartZ; v < vEndZ; ++v) {
+            int nCur = allCellIndices[v];
+            sliceToVert[(z & 1) * rxy + (nCur % rxy)] = (int32_t)v;
+        }
+
+        // Generate quads for vertices in slice z
+        for (size_t v = vStartZ; v < vEndZ; ++v) {
+            int n = allCellIndices[v];
+            uint8_t mask = allMasks[v];
+            int32_t v0 = (int32_t)v;
 
             uint32_t edgeMask = snEdgeTable[mask];
 
-            // Reconstruct cell x, y, z from cell index n
-            int z = n / rxy;
             int rem = n - z * rxy;
             int y = rem / rx;
             int x = rem - y * rx;
@@ -1904,23 +1967,24 @@ static RemeshResult surfaceNetsReconstruct(
                 int du = dimOffsets[i];
                 int dv = dimOffsetsV[i];
 
-                int32_t v1, v2, v3;
-                if (mask & 1) {
-                    v1 = cellToVert[n - du];
-                    v2 = cellToVert[n - du - dv];
-                    v3 = cellToVert[n - dv];
-                } else {
-                    v1 = cellToVert[n - dv];
-                    v2 = cellToVert[n - du - dv];
-                    v3 = cellToVert[n - du];
-                }
+                int n1 = (mask & 1) ? (n - du) : (n - dv);
+                int n2 = n - du - dv;
+                int n3 = (mask & 1) ? (n - dv) : (n - du);
+
+                int z1 = n1 / rxy;
+                int z2 = n2 / rxy;
+                int z3 = n3 / rxy;
+
+                int32_t v1 = sliceToVert[(z1 & 1) * rxy + (n1 % rxy)];
+                int32_t v2 = sliceToVert[(z2 & 1) * rxy + (n2 % rxy)];
+                int32_t v3 = sliceToVert[(z3 & 1) * rxy + (n3 % rxy)];
 
                 if (v1 < 0 || v2 < 0 || v3 < 0) continue;
 
-                tf.faces.push_back(v0);
-                tf.faces.push_back(v1);
-                tf.faces.push_back(v2);
-                tf.faces.push_back(v3);
+                res.faces.push_back(v0);
+                res.faces.push_back(v1);
+                res.faces.push_back(v2);
+                res.faces.push_back(v3);
 
                 if (voxels.hasGroupField && !vertGroups.empty()) {
                     uint32_t g0 = (size_t)v0 < vertGroups.size() ? vertGroups[v0] : 0;
@@ -1931,33 +1995,9 @@ static RemeshResult surfaceNetsReconstruct(
                     uint32_t fg = g0;
                     if (g1 == g2 || g1 == g3) fg = g1;
                     else if (g2 == g3) fg = g2;
-                    tf.faceGroups.push_back(fg);
+                    res.faceGroups.push_back(fg);
                 }
             }
-        }
-    }
-
-    // Merge Thread Faces with parallel prefix sums
-    std::vector<size_t> faceOffsets(numThreads + 1, 0);
-    std::vector<size_t> groupOffsets(numThreads + 1, 0);
-    for (int t = 0; t < numThreads; ++t) {
-        faceOffsets[t + 1] = faceOffsets[t] + threadFaces[t].faces.size();
-        groupOffsets[t + 1] = groupOffsets[t] + threadFaces[t].faceGroups.size();
-    }
-    size_t totalFaces = faceOffsets[numThreads];
-    size_t totalGroups = groupOffsets[numThreads];
-
-    res.faces.resize(totalFaces);
-    if (voxels.hasGroupField) res.faceGroups.resize(totalGroups);
-
-#pragma omp parallel for schedule(static)
-    for (int t = 0; t < numThreads; ++t) {
-        const ThreadFaceData& tf = threadFaces[t];
-        if (!tf.faces.empty()) {
-            std::memcpy(&res.faces[faceOffsets[t]], tf.faces.data(), tf.faces.size() * sizeof(uint32_t));
-        }
-        if (voxels.hasGroupField && !tf.faceGroups.empty()) {
-            std::memcpy(&res.faceGroups[groupOffsets[t]], tf.faceGroups.data(), tf.faceGroups.size() * sizeof(uint32_t));
         }
     }
 
@@ -2944,9 +2984,9 @@ RemeshResult doRemesh(
 
     double distMemMB = (double)datalen * sizeof(float) / (1024.0 * 1024.0);
     double crossMemMB = (double)datalen * sizeof(uint8_t) / (1024.0 * 1024.0);
-    double colorMemMB = hasColors ? ((double)datalen * sizeof(uint32_t) / (1024.0 * 1024.0)) : 0.0;
-    double matMemMB = hasMaterials ? ((double)datalen * sizeof(uint32_t) / (1024.0 * 1024.0)) : 0.0;
-    double coreGridTotalMB = distMemMB + crossMemMB + colorMemMB + matMemMB;
+    double colorMemMB = 0.0;
+    double matMemMB = 0.0;
+    double coreGridTotalMB = distMemMB + crossMemMB;
     sculpt_log("[REMESH PROFILE] Grid Memory: Dims=[%d, %d, %d] (%d voxels) | dist=%.2f MB, cross=%.2f MB, color=%.2f MB, mat=%.2f MB | Core Grid Total=%.2f MB\n",
               rx, ry, rz, datalen, distMemMB, crossMemMB, colorMemMB, matMemMB, coreGridTotalMB);
 
@@ -2957,7 +2997,11 @@ RemeshResult doRemesh(
         voxels.hermiteEdges.resize(rz);
     }
 
-    voxels.hasColorField = hasColors;
+    // Phase 1 Optimization: Lazy Attribute Transfer.
+    // 3D volume grids for colors and materials are eliminated (saving 8.1 GB on Res 1000).
+    // Colors and materials are transferred directly onto the reconstructed surface mesh
+    // vertices via spatial KD-tree/barycentric projection post-reconstruction.
+    voxels.hasColorField = false;
     if (uniformColor) {
         voxels.uniformColor[0] = uniformColor[0];
         voxels.uniformColor[1] = uniformColor[1];
@@ -2967,15 +3011,8 @@ RemeshResult doRemesh(
         voxels.uniformColor[1] = 0.52f;
         voxels.uniformColor[2] = 0.45f;
     }
-    if (hasColors) {
-        uint8_t cr = (uint8_t)(std::clamp(voxels.uniformColor[0], 0.0f, 1.0f) * 255.0f + 0.5f);
-        uint8_t cg = (uint8_t)(std::clamp(voxels.uniformColor[1], 0.0f, 1.0f) * 255.0f + 0.5f);
-        uint8_t cb = (uint8_t)(std::clamp(voxels.uniformColor[2], 0.0f, 1.0f) * 255.0f + 0.5f);
-        uint32_t defaultPackedColor = ((uint32_t)cr << 16) | ((uint32_t)cg << 8) | cb;
-        voxels.colorField.assign(datalen, defaultPackedColor);
-    }
 
-    voxels.hasMaterialField = hasMaterials;
+    voxels.hasMaterialField = false;
     if (uniformMaterial) {
         voxels.uniformMaterial[0] = uniformMaterial[0];
         voxels.uniformMaterial[1] = uniformMaterial[1];
@@ -2984,13 +3021,6 @@ RemeshResult doRemesh(
         voxels.uniformMaterial[0] = 0.5f;
         voxels.uniformMaterial[1] = 0.0f;
         voxels.uniformMaterial[2] = 1.0f;
-    }
-    if (hasMaterials) {
-        uint8_t mr = (uint8_t)(std::clamp(voxels.uniformMaterial[0], 0.0f, 1.0f) * 255.0f + 0.5f);
-        uint8_t mg = (uint8_t)(std::clamp(voxels.uniformMaterial[1], 0.0f, 1.0f) * 255.0f + 0.5f);
-        uint8_t mb = (uint8_t)(std::clamp(voxels.uniformMaterial[2], 0.0f, 1.0f) * 255.0f + 0.5f);
-        uint32_t defaultPackedMaterial = ((uint32_t)mr << 16) | ((uint32_t)mg << 8) | mb;
-        voxels.materialField.assign(datalen, defaultPackedMaterial);
     }
 
     voxels.hasGroupField = false; // PolyGroups are transferred via spatial projection post-reconstruction
@@ -3336,11 +3366,11 @@ RemeshResult doRemesh(
     r.profile.gridDims[1] = ry;
     r.profile.gridDims[2] = rz;
     r.profile.gridDatalen = datalen;
-    size_t bytesCross = voxels.crossedEdges.capacity() * sizeof(uint8_t);
+    size_t bytesCross = (size_t)datalen * sizeof(uint8_t); // peak during voxelize/floodFill (freed prior to reconstruct)
     size_t bytesDist = voxels.distanceField.capacity() * sizeof(float);
-    size_t bytesColor = voxels.colorField.capacity() * sizeof(uint32_t);
-    size_t bytesMat = voxels.materialField.capacity() * sizeof(uint32_t);
-    size_t bytesFloodAux = (size_t)datalen * sizeof(uint8_t);
+    size_t bytesColor = 0; // lazy attribute transfer
+    size_t bytesMat = 0;   // lazy attribute transfer
+    size_t bytesFloodAux = 0; // tagCell eliminated via crossedEdges bit 7
     size_t bytesReconAux = r.profile.bytesReconstructAux;
 
     double coreGridMB = (double)(bytesCross + bytesDist + bytesColor + bytesMat) / (1024.0 * 1024.0);

@@ -1325,8 +1325,10 @@ inline bool runMemoryStressTest() {
 
     for (int res : testResolutions) {
         double estCells = std::pow((double)res + 4.0, 3.0);
-        size_t estCoreBytes = (size_t)(estCells * 13.0); // 1B crossedEdges + 4B dist + 4B color + 4B mat
-        size_t estAuxBytes = (size_t)(estCells * 4.0);  // 4B cellToVert
+        // Phase 1 Optimization: Core grid only allocates distanceField (4B) and crossedEdges (1B, freed prior to reconstruct).
+        // 3D color/material volumes (8B) and 3D cellToVert (4B) eliminated via sliding windows & lazy attribute transfer.
+        size_t estCoreBytes = (size_t)(estCells * 5.0); // 4B dist + 1B crossedEdges peak during voxelize/floodFill
+        size_t estAuxBytes = (size_t)(2.0 * std::pow((double)res + 4.0, 2.0) * sizeof(int32_t)); // 2-slice ring buffer (~8 MB at Res 1000)
         size_t estTotalPeakBytes = estCoreBytes + estAuxBytes;
 
         std::cout << " -> Running Memory Stress at Resolution " << res << " (~"
@@ -1340,7 +1342,7 @@ inline bool runMemoryStressTest() {
             std::cout << "   Estimated Required RAM:         " << formatBytes(estTotalPeakBytes) << "\n";
             std::cout << "   EXECUTION SAFELY ABORTED for Res " << res << " to prevent physical RAM exhaustion, system freezing or OOM crash!\n";
             std::cout << "   [CRITICAL AUDIT INSIGHT] At Res " << res << ", dense regular grid requires "
-                      << formatBytes(estTotalPeakBytes) << " RAM.\n";
+                      << formatBytes(estTotalPeakBytes) << " RAM (down from 16 GB pre-Phase 1).\n";
             std::cout << "   Transitioning to Block-Sparse Narrow-Band (Phase 2) will reduce this to ~100-300 MB!\n\n";
             continue;
         }
@@ -1409,11 +1411,11 @@ inline bool run(int customResolution = 0, bool runMemoryStress = false) {
 
         if (customResolution >= 800) {
             double estCells = std::pow((double)customResolution + 4.0, 3.0);
-            size_t estTotalPeakBytes = (size_t)(estCells * 17.0);
+            size_t estTotalPeakBytes = (size_t)(estCells * 5.0); // Phase 1: 5 bytes per voxel peak
             if (availPhys < estTotalPeakBytes + (size_t)(1024ULL * 1024ULL * 1024ULL)) {
                 std::cout << " [MEMORY SAFETY GUARD] Skipping Res " << customResolution << " execution to prevent OOM crash!\n";
                 std::cout << "   Estimated required memory: " << formatBytes(estTotalPeakBytes) << " | Available: " << formatBytes(availPhys) << "\n";
-                std::cout << "   Dense grid on Res " << customResolution << " requires ~15-17 GB RAM.\n";
+                std::cout << "   Dense grid on Res " << customResolution << " requires ~5 GB RAM (reduced from 15-17 GB in Phase 1).\n";
                 return true;
             }
         }
