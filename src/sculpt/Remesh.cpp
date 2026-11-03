@@ -2930,8 +2930,9 @@ RemeshResult doRemesh(
     float boxDepth = box ? (box[5] - box[2]) : 1.0f;
     float maxBoxDim = std::max({boxWidth, boxHeight, boxDepth});
     if (step <= 0.0f) step = 0.001f;
-    if (maxBoxDim / step > 1200.0f) {
-        step = maxBoxDim / 1200.0f;
+    float maxResClamp = 3200.0f;
+    if (maxBoxDim / step > maxResClamp) {
+        step = maxBoxDim / maxResClamp;
     }
 
     float stepMin = step * 1.51f;
@@ -2990,8 +2991,12 @@ RemeshResult doRemesh(
     double msReconstruct = 0.0;
     size_t sparseBlocks = 0;
     size_t sparseGridBytes = 0;
+    bool effectiveSparseGrid = useSparseGrid;
+    if (!manifold && (useSparseGrid || resolution >= 600.0f || (float)rx >= 600.0f || (float)ry >= 600.0f || (float)rz >= 600.0f)) {
+        effectiveSparseGrid = true;
+    }
 
-    if (useSparseGrid) {
+    if (effectiveSparseGrid) {
         sculpt::BlockSparseGrid sGrid;
         sGrid.step = step;
         sGrid.minCoord[0] = voxels.minCoord[0];
@@ -3413,7 +3418,7 @@ RemeshResult doRemesh(
     r.profile.gridDims[1] = ry;
     r.profile.gridDims[2] = rz;
     r.profile.gridDatalen = datalen;
-    if (useSparseGrid) {
+    if (effectiveSparseGrid) {
         r.profile.isSparseGrid = true;
         r.profile.sparseActiveBlocks = sparseBlocks;
         r.profile.bytesCrossedEdges = 0;

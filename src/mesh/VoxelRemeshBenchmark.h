@@ -1419,15 +1419,9 @@ inline bool run(int customResolution = 0, bool runMemoryStress = false) {
                   << " | Currently Available: " << formatBytes(availPhys) << "\n";
         std::cout << "===================================================================================================================================================\n\n";
 
-        if (customResolution >= 800) {
-            double estCells = std::pow((double)customResolution + 4.0, 3.0);
-            size_t estTotalPeakBytes = (size_t)(estCells * 5.0); // Phase 1: 5 bytes per voxel peak
-            if (availPhys < estTotalPeakBytes + (size_t)(1024ULL * 1024ULL * 1024ULL)) {
-                std::cout << " [MEMORY SAFETY GUARD] Skipping Res " << customResolution << " execution to prevent OOM crash!\n";
-                std::cout << "   Estimated required memory: " << formatBytes(estTotalPeakBytes) << " | Available: " << formatBytes(availPhys) << "\n";
-                std::cout << "   Dense grid on Res " << customResolution << " requires ~5 GB RAM (reduced from 15-17 GB in Phase 1).\n";
-                return true;
-            }
+        if (customResolution > 3200) {
+            std::cout << " [RESOLUTION SAFETY GUARD] Resolution " << customResolution << " exceeds maximum supported limit of 3200!\n";
+            return true;
         }
 
         std::vector<VoxelBenchmarkRow> rows;

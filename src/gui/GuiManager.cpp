@@ -5947,7 +5947,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGui::Separator();
 
             ImGui::SliderFloat("Detail Factor", &m_dyntopoDetail, 10.0f, 500.0f, "%.1f");
-            ImGui::SliderInt("Remesh Resolution", &m_remeshResolution, 10, 1000);
+            ImGui::SliderInt("Remesh Resolution", &m_remeshResolution, 10, 3000);
             if (ImGui::IsItemActive()) {
                 float step = selectedMesh->computeWorldStep(m_remeshResolution);
                 scene.updateVoxelPreview(step, {selectedMesh});
@@ -8014,7 +8014,8 @@ void GuiManager::performRemesh(Scene& scene) {
                 scaleZ,
                 regularizeQuads,
                 keepSharpEdges,
-                keepMasked
+                keepMasked,
+                true // useSparseGrid (Phase 2 Block-Sparse Grid)
             );
             m_remeshAsync.result = std::move(result);
             m_remeshAsync.state = RemeshState::Done;
@@ -8336,7 +8337,7 @@ void GuiManager::drawModalIndicatorHUD(SculptManager& sculpt, Scene& scene) {
         case ModalMode::REMESH_RESOLUTION:
             label = "Remesh Resolution";
             snprintf(valStr, sizeof(valStr), "%d", m_remeshResolution);
-            fraction = (float)(m_remeshResolution - 10) / (1000 - 10);
+            fraction = (float)(m_remeshResolution - 10) / (3000 - 10);
             break;
         case ModalMode::TOPOLOGY_DETAIL:
             label = "Topology Detail";
@@ -9988,7 +9989,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::Separator();
             ImGui::Text("Resolution: %d", m_remeshResolution);
             ImGui::PushItemWidth(140.0f * scale);
-            ImGui::SliderInt("##hudRemeshResSlider", &m_remeshResolution, 10, 1000);
+            ImGui::SliderInt("##hudRemeshResSlider", &m_remeshResolution, 10, 3000);
             if (ImGui::IsItemActive()) {
                 Mesh* selectedMesh = scene.getSelected();
                 if (selectedMesh) {
