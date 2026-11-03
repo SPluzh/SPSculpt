@@ -491,7 +491,8 @@ inline const std::vector<uint32_t>& getSparseEdgeTable() {
 inline RemeshResult reconstructSurfaceNetsBlockSparse(
     BlockSparseGrid& grid,
     const float* uniformColor,
-    const float* uniformMaterial
+    const float* uniformMaterial,
+    bool regularizeQuads = false
 ) {
     RemeshResult res;
     auto tStart = std::chrono::high_resolution_clock::now();
@@ -574,9 +575,12 @@ inline RemeshResult reconstructSurfaceNetsBlockSparse(
                         float vTemp[3] = {0.0f, 0.0f, 0.0f};
                         int edgeCount = 0;
 
+                        glm::vec3 qefPoints[12];
+                        glm::vec3 qefNormals[12];
+                        glm::vec3 xMass(0.0f);
+
                         for (int i = 0; i < 12; ++i) {
                             if (!(edgeMask & (1 << i))) continue;
-                            ++edgeCount;
 
                             int e0 = snCubeEdges[i << 1];
                             int e1 = snCubeEdges[(i << 1) + 1];
@@ -586,22 +590,90 @@ inline RemeshResult reconstructSurfaceNetsBlockSparse(
                             float tVal = (std::abs(diff) > 1e-7f) ? (g0 / diff) : 0.5f;
                             tVal = std::clamp(tVal, 0.0f, 1.0f);
 
+                            glm::vec3 pLocal(0.0f);
                             for (int j = 0; j < 3; ++j) {
                                 int k = 1 << j;
                                 int a = e0 & k;
-                                if (a != (e1 & k)) {
-                                    vTemp[j] += a ? (1.0f - tVal) : tVal;
-                                } else {
-                                    vTemp[j] += a ? 1.0f : 0.0f;
-                                }
+                                pLocal[j] = (a != (e1 & k)) ? (a ? (1.0f - tVal) : tVal) : (a ? 1.0f : 0.0f);
                             }
+
+                            if (!regularizeQuads) {
+                                vTemp[0] += pLocal[0];
+                                vTemp[1] += pLocal[1];
+                                vTemp[2] += pLocal[2];
+                            } else {
+                                float u = pLocal.x;
+                                float v = pLocal.y;
+                                float w = pLocal.z;
+                                float nx = (1.0f - v) * (1.0f - w) * (corners[1] - corners[0]) +
+                                           v * (1.0f - w) * (corners[3] - corners[2]) +
+                                           (1.0f - v) * w * (corners[5] - corners[4]) +
+                                           v * w * (corners[7] - corners[6]);
+                                float ny = (1.0f - u) * (1.0f - w) * (corners[2] - corners[0]) +
+                                           u * (1.0f - w) * (corners[3] - corners[1]) +
+                                           (1.0f - u) * w * (corners[6] - corners[4]) +
+                                           u * w * (corners[7] - corners[5]);
+                                float nz = (1.0f - u) * (1.0f - v) * (corners[4] - corners[0]) +
+                                           u * (1.0f - v) * (corners[5] - corners[1]) +
+                                           (1.0f - u) * v * (corners[6] - corners[2]) +
+                                           u * v * (corners[7] - corners[3]);
+                                glm::vec3 norm(nx, ny, nz);
+                                float nlen = glm::length(norm);
+                                norm = (nlen > 1e-6f) ? (norm / nlen) : glm::vec3(0.0f, 0.0f, 1.0f);
+
+                                qefPoints[edgeCount] = pLocal;
+                                qefNormals[edgeCount] = norm;
+                                xMass += pLocal;
+                            }
+                            ++edgeCount;
                         }
 
-                        if (edgeCount > 0) {
-                            float s = 1.0f / (float)edgeCount;
-                            vTemp[0] *= s; vTemp[1] *= s; vTemp[2] *= s;
+                        if (!regularizeQuads) {
+                            if (edgeCount > 0) {
+                                float s = 1.0f / (float)edgeCount;
+                                vTemp[0] *= s; vTemp[1] *= s; vTemp[2] *= s;
+                            } else {
+                                vTemp[0] = 0.5f; vTemp[1] = 0.5f; vTemp[2] = 0.5f;
+                            }
                         } else {
-                            vTemp[0] = 0.5f; vTemp[1] = 0.5f; vTemp[2] = 0.5f;
+                            if (edgeCount > 0) {
+                                xMass /= (float)edgeCount;
+                                float A00 = 0.0f, A01 = 0.0f, A02 = 0.0f;
+                                float A11 = 0.0f, A12 = 0.0f, A22 = 0.0f;
+                                float b0 = 0.0f, b1 = 0.0f, b2 = 0.0f;
+                                for (int e = 0; e < edgeCount; ++e) {
+                                    const glm::vec3& n = qefNormals[e];
+                                    float dotDiff = glm::dot(n, qefPoints[e] - xMass);
+                                    A00 += n.x * n.x; A01 += n.x * n.y; A02 += n.x * n.z;
+                                    A11 += n.y * n.y; A12 += n.y * n.z; A22 += n.z * n.z;
+                                    b0 += n.x * dotDiff; b1 += n.y * dotDiff; b2 += n.z * dotDiff;
+                                }
+                                float alpha = 0.08f;
+                                A00 += alpha; A11 += alpha; A22 += alpha;
+                                float det = A00 * (A11 * A22 - A12 * A12) -
+                                            A01 * (A01 * A22 - A12 * A02) +
+                                            A02 * (A01 * A12 - A11 * A02);
+                                glm::vec3 pOpt = xMass;
+                                if (std::abs(det) > 1e-7f) {
+                                    float invDet = 1.0f / det;
+                                    float C00 =  (A11 * A22 - A12 * A12) * invDet;
+                                    float C01 = -(A01 * A22 - A12 * A02) * invDet;
+                                    float C02 =  (A01 * A12 - A11 * A02) * invDet;
+                                    float C11 =  (A00 * A22 - A02 * A02) * invDet;
+                                    float C12 = -(A00 * A12 - A01 * A02) * invDet;
+                                    float C22 =  (A00 * A11 - A01 * A01) * invDet;
+                                    float y0 = C00 * b0 + C01 * b1 + C02 * b2;
+                                    float y1 = C01 * b0 + C11 * b1 + C12 * b2;
+                                    float y2 = C02 * b0 + C12 * b1 + C22 * b2;
+                                    pOpt = xMass + glm::vec3(y0, y1, y2);
+                                }
+                                pOpt.x = std::clamp(pOpt.x, -0.05f, 1.05f);
+                                pOpt.y = std::clamp(pOpt.y, -0.05f, 1.05f);
+                                pOpt.z = std::clamp(pOpt.z, -0.05f, 1.05f);
+                                vTemp[0] = pOpt.x; vTemp[1] = pOpt.y; vTemp[2] = pOpt.z;
+                            } else {
+                                vTemp[0] = 0.5f; vTemp[1] = 0.5f; vTemp[2] = 0.5f;
+                            }
                         }
 
                         float wx = grid.minCoord[0] + ((float)x + vTemp[0]) * grid.step;
@@ -739,6 +811,48 @@ inline RemeshResult reconstructSurfaceNetsBlockSparse(
                msReconstruct, totalVerts, res.faces.size() / 4);
 
     return res;
+}
+
+// ---------------------------------------------------------
+// Fast Trilinear SDF Sampling on BlockSparseGrid
+// ---------------------------------------------------------
+inline float sampleSparseSDF(const BlockSparseGrid& grid, float gx, float gy, float gz, float defaultVal = 1e6f) {
+    if (gx < 0.0f || gx > (float)(grid.dims[0] - 1) ||
+        gy < 0.0f || gy > (float)(grid.dims[1] - 1) ||
+        gz < 0.0f || gz > (float)(grid.dims[2] - 1)) {
+        return defaultVal;
+    }
+    int x0 = std::clamp((int)std::floor(gx), 0, grid.dims[0] - 2);
+    int y0 = std::clamp((int)std::floor(gy), 0, grid.dims[1] - 2);
+    int z0 = std::clamp((int)std::floor(gz), 0, grid.dims[2] - 2);
+
+    float u = std::clamp(gx - (float)x0, 0.0f, 1.0f);
+    float v = std::clamp(gy - (float)y0, 0.0f, 1.0f);
+    float w = std::clamp(gz - (float)z0, 0.0f, 1.0f);
+
+    float d0 = grid.getDist(x0, y0, z0, defaultVal);
+    float d1 = grid.getDist(x0 + 1, y0, z0, defaultVal);
+    float d2 = grid.getDist(x0, y0 + 1, z0, defaultVal);
+    float d3 = grid.getDist(x0 + 1, y0 + 1, z0, defaultVal);
+    float d4 = grid.getDist(x0, y0, z0 + 1, defaultVal);
+    float d5 = grid.getDist(x0 + 1, y0, z0 + 1, defaultVal);
+    float d6 = grid.getDist(x0, y0 + 1, z0 + 1, defaultVal);
+    float d7 = grid.getDist(x0 + 1, y0 + 1, z0 + 1, defaultVal);
+
+    if (std::abs(d0) > 1e4f || std::abs(d1) > 1e4f || std::abs(d2) > 1e4f || std::abs(d3) > 1e4f ||
+        std::abs(d4) > 1e4f || std::abs(d5) > 1e4f || std::abs(d6) > 1e4f || std::abs(d7) > 1e4f) {
+        return defaultVal;
+    }
+
+    float c00 = d0 * (1.0f - u) + d1 * u;
+    float c10 = d2 * (1.0f - u) + d3 * u;
+    float c01 = d4 * (1.0f - u) + d5 * u;
+    float c11 = d6 * (1.0f - u) + d7 * u;
+
+    float c0 = c00 * (1.0f - v) + c10 * v;
+    float c1 = c01 * (1.0f - v) + c11 * v;
+
+    return c0 * (1.0f - w) + c1 * w;
 }
 
 // ---------------------------------------------------------

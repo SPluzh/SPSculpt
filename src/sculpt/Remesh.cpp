@@ -2513,6 +2513,30 @@ static void applyConstrainedTangentialRelaxation(
 // Multi-Chart 6-Direction PolyCube Reconstruction
 // ---------------------------------------------------------
 
+// Canonical boundary vertex index on an M x M x M cube surface (6*M*M + 2 unique vertices)
+// Completely eliminates the 3D (M+1)^3 lookup table, saving gigabytes of memory at high resolutions.
+inline int32_t getCanonicalPolyCubeVertId(int x, int y, int z, int M) {
+    if (z == 0) {
+        return x + y * (M + 1);
+    }
+    if (z == M) {
+        return (M + 1) * (M + 1) + x + y * (M + 1);
+    }
+    // 1 <= z <= M - 1: ring of 4*M points
+    int base = 2 * (M + 1) * (M + 1) + (z - 1) * 4 * M;
+    int offset = 0;
+    if (y == 0 && x < M) {
+        offset = x;
+    } else if (x == M && y < M) {
+        offset = M + y;
+    } else if (y == M && x > 0) {
+        offset = 2 * M + (M - x);
+    } else { // x == 0 && y > 0
+        offset = 3 * M + (M - y);
+    }
+    return base + offset;
+}
+
 static bool tryPolyCubeReconstruct(
     const VoxelGrid& voxels,
     const float* box,
@@ -2581,45 +2605,59 @@ static bool tryPolyCubeReconstruct(
 
     float rAxis = traceTestRay(glm::vec3(1.0f, 0.0f, 0.0f));
     float rDiag = traceTestRay(glm::normalize(glm::vec3(1.0f, 1.0f, 1.0f)));
-    if (rAxis > 0.0f && rDiag > 0.0f && (rDiag / rAxis > 1.25f)) {
+    if (rAxis <= 0.0f || rDiag <= 0.0f || (rDiag / rAxis > 1.25f)) {
         return false;
     }
 
     // 2. Target grid subdivision M per cube edge (M must be even for exact symmetry planes)
     int M = 2 * (int)std::round(0.88f * maxR / voxels.step);
-    M = std::clamp(M, 8, 384);
+    M = std::clamp(M, 8, 1500);
 
-    // 3. Build unique boundary vertex table and 6-chart quad faces
-    int strideY = M + 1;
-    int strideZ = (M + 1) * (M + 1);
-    size_t keyCount = (size_t)(M + 1) * strideZ;
-    std::vector<int32_t> cubeKeyToVertId(keyCount, -1);
+    // 3. Build unique boundary vertex table and 6-chart quad faces using O(1) canonical indexing
+    size_t totalVerts = 6 * (size_t)M * M + 2;
+    std::vector<glm::ivec3> vertCoords(totalVerts);
 
-    std::vector<glm::ivec3> vertCoords;
-    vertCoords.reserve(6 * M * M + 2);
-
-    auto getOrCreateVert = [&](int ix, int iy, int iz) -> int32_t {
-        size_t key = (size_t)ix + (size_t)iy * strideY + (size_t)iz * strideZ;
-        int32_t id = cubeKeyToVertId[key];
-        if (id == -1) {
-            id = (int32_t)vertCoords.size();
-            vertCoords.push_back(glm::ivec3(ix, iy, iz));
-            cubeKeyToVertId[key] = id;
+    // z = 0
+    for (int y = 0; y <= M; ++y) {
+        for (int x = 0; x <= M; ++x) {
+            vertCoords[x + y * (M + 1)] = glm::ivec3(x, y, 0);
         }
-        return id;
-    };
+    }
+    // z = M
+    int baseM = (M + 1) * (M + 1);
+    for (int y = 0; y <= M; ++y) {
+        for (int x = 0; x <= M; ++x) {
+            vertCoords[baseM + x + y * (M + 1)] = glm::ivec3(x, y, M);
+        }
+    }
+    // 1 <= z <= M - 1: rings of 4*M
+    for (int z = 1; z < M; ++z) {
+        int baseRing = 2 * (M + 1) * (M + 1) + (z - 1) * 4 * M;
+        for (int x = 0; x < M; ++x) {
+            vertCoords[baseRing + x] = glm::ivec3(x, 0, z);
+        }
+        for (int y = 0; y < M; ++y) {
+            vertCoords[baseRing + M + y] = glm::ivec3(M, y, z);
+        }
+        for (int x = M; x > 0; --x) {
+            vertCoords[baseRing + 2 * M + (M - x)] = glm::ivec3(x, M, z);
+        }
+        for (int y = M; y > 0; --y) {
+            vertCoords[baseRing + 3 * M + (M - y)] = glm::ivec3(0, y, z);
+        }
+    }
 
     std::vector<uint32_t> faces;
-    faces.reserve(6 * M * M * 4);
+    faces.reserve(6 * (size_t)M * M * 4);
 
     auto getFaceVert = [&](int f, int u, int v) -> int32_t {
         switch (f) {
-            case 0: return getOrCreateVert(u, v, M);              // +Z
-            case 1: return getOrCreateVert(M - u, v, 0);          // -Z
-            case 2: return getOrCreateVert(M, u, v);              // +X
-            case 3: return getOrCreateVert(0, M - u, v);          // -X
-            case 4: return getOrCreateVert(v, M, u);              // +Y
-            case 5: return getOrCreateVert(u, 0, v);              // -Y
+            case 0: return getCanonicalPolyCubeVertId(u, v, M, M);              // +Z
+            case 1: return getCanonicalPolyCubeVertId(M - u, v, 0, M);          // -Z
+            case 2: return getCanonicalPolyCubeVertId(M, u, v, M);              // +X
+            case 3: return getCanonicalPolyCubeVertId(0, M - u, v, M);          // -X
+            case 4: return getCanonicalPolyCubeVertId(v, M, u, M);              // +Y
+            case 5: return getCanonicalPolyCubeVertId(u, 0, v, M);              // -Y
             default: return 0;
         }
     };
@@ -2640,7 +2678,6 @@ static bool tryPolyCubeReconstruct(
         }
     }
 
-    size_t totalVerts = vertCoords.size();
     std::vector<float> vertices(totalVerts * 3);
     std::atomic<int> failCount(0);
 
@@ -2853,8 +2890,345 @@ static bool tryPolyCubeReconstruct(
 }
 
 // ---------------------------------------------------------
-// Main Entry Point
+// Multi-Chart 6-Direction PolyCube Reconstruction for BlockSparseGrid
+// High-resolution quad regularization for BlockSparseGrid without limits
 // ---------------------------------------------------------
+
+static bool tryPolyCubeReconstructSparse(
+    const sculpt::BlockSparseGrid& sGrid,
+    const float* box,
+    const float* uniformColor,
+    const float* uniformMaterial,
+    bool alignSymmetry,
+    RemeshResult& res,
+    std::function<void(int stage, int progress)> onProgress = nullptr
+) {
+    if (!box) return false;
+
+    // 1. Center and extents of bounding box
+    glm::vec3 C(
+        0.5f * (box[0] + box[3]),
+        0.5f * (box[1] + box[4]),
+        0.5f * (box[2] + box[5])
+    );
+
+    float rx = 0.5f * (box[3] - box[0]);
+    float ry = 0.5f * (box[4] - box[1]);
+    float rz = 0.5f * (box[5] - box[2]);
+    float minR = std::min({ rx, ry, rz });
+    float maxR = std::max({ rx, ry, rz });
+    if (minR < sGrid.step * 2.0f) return false;
+    if (maxR / minR > 1.35f) {
+        return false;
+    }
+
+    // Sphericity check: compare radius along axis vs diagonal
+    auto traceTestRay = [&](const glm::vec3& dir) -> float {
+        float t = maxR * 1.35f;
+        float tMin = sGrid.step * 0.5f;
+        float stepSize = sGrid.step * 0.40f;
+        float tPrev = t;
+        float dPrev = 1e6f;
+        while (t >= tMin) {
+            float gx = (C.x + t * dir.x - sGrid.minCoord[0]) / sGrid.step;
+            float gy = (C.y + t * dir.y - sGrid.minCoord[1]) / sGrid.step;
+            float gz = (C.z + t * dir.z - sGrid.minCoord[2]) / sGrid.step;
+            float dCur = sculpt::sampleSparseSDF(sGrid, gx, gy, gz);
+            if (dCur <= 0.0f) {
+                float tA = t;
+                float tB = (dPrev < 1e4f && dPrev > 0.0f) ? tPrev : (t + stepSize);
+                for (int it = 0; it < 14; ++it) {
+                    float tMid = 0.5f * (tA + tB);
+                    float mx = (C.x + tMid * dir.x - sGrid.minCoord[0]) / sGrid.step;
+                    float my = (C.y + tMid * dir.y - sGrid.minCoord[1]) / sGrid.step;
+                    float mz = (C.z + tMid * dir.z - sGrid.minCoord[2]) / sGrid.step;
+                    float dMid = sculpt::sampleSparseSDF(sGrid, mx, my, mz);
+                    if (dMid <= 0.0f) tA = tMid;
+                    else tB = tMid;
+                }
+                return 0.5f * (tA + tB);
+            }
+            dPrev = dCur;
+            t -= stepSize;
+        }
+        return -1.0f;
+    };
+
+    float rAxis = traceTestRay(glm::vec3(1.0f, 0.0f, 0.0f));
+    float rDiag = traceTestRay(glm::normalize(glm::vec3(1.0f, 1.0f, 1.0f)));
+    if (rAxis <= 0.0f || rDiag <= 0.0f) {
+        return false;
+    }
+    float ratio = rDiag / rAxis;
+    if (ratio < 0.75f || ratio > 1.25f) {
+        return false;
+    }
+
+    // 2. Target grid subdivision M per cube edge (M must be even for exact symmetry planes)
+    int M = 2 * (int)std::round(0.88f * maxR / sGrid.step);
+    M = std::clamp(M, 8, 1500);
+
+    // 3. Build unique boundary vertex table and 6-chart quad faces using O(1) canonical indexing
+    size_t totalVerts = 6 * (size_t)M * M + 2;
+    std::vector<glm::ivec3> vertCoords(totalVerts);
+
+    // z = 0
+    for (int y = 0; y <= M; ++y) {
+        for (int x = 0; x <= M; ++x) {
+            vertCoords[x + y * (M + 1)] = glm::ivec3(x, y, 0);
+        }
+    }
+    // z = M
+    int baseM = (M + 1) * (M + 1);
+    for (int y = 0; y <= M; ++y) {
+        for (int x = 0; x <= M; ++x) {
+            vertCoords[baseM + x + y * (M + 1)] = glm::ivec3(x, y, M);
+        }
+    }
+    // 1 <= z <= M - 1: rings of 4*M
+    for (int z = 1; z < M; ++z) {
+        int baseRing = 2 * (M + 1) * (M + 1) + (z - 1) * 4 * M;
+        for (int x = 0; x < M; ++x) {
+            vertCoords[baseRing + x] = glm::ivec3(x, 0, z);
+        }
+        for (int y = 0; y < M; ++y) {
+            vertCoords[baseRing + M + y] = glm::ivec3(M, y, z);
+        }
+        for (int x = M; x > 0; --x) {
+            vertCoords[baseRing + 2 * M + (M - x)] = glm::ivec3(x, M, z);
+        }
+        for (int y = M; y > 0; --y) {
+            vertCoords[baseRing + 3 * M + (M - y)] = glm::ivec3(0, y, z);
+        }
+    }
+
+    std::vector<uint32_t> faces;
+    faces.reserve(6 * (size_t)M * M * 4);
+
+    auto getFaceVert = [&](int f, int u, int v) -> int32_t {
+        switch (f) {
+            case 0: return getCanonicalPolyCubeVertId(u, v, M, M);              // +Z
+            case 1: return getCanonicalPolyCubeVertId(M - u, v, 0, M);          // -Z
+            case 2: return getCanonicalPolyCubeVertId(M, u, v, M);              // +X
+            case 3: return getCanonicalPolyCubeVertId(0, M - u, v, M);          // -X
+            case 4: return getCanonicalPolyCubeVertId(v, M, u, M);              // +Y
+            case 5: return getCanonicalPolyCubeVertId(u, 0, v, M);              // -Y
+            default: return 0;
+        }
+    };
+
+    for (int f = 0; f < 6; ++f) {
+        for (int v = 0; v < M; ++v) {
+            for (int u = 0; u < M; ++u) {
+                int32_t i0 = getFaceVert(f, u, v);
+                int32_t i1 = getFaceVert(f, u + 1, v);
+                int32_t i2 = getFaceVert(f, u + 1, v + 1);
+                int32_t i3 = getFaceVert(f, u, v + 1);
+
+                faces.push_back((uint32_t)i0);
+                faces.push_back((uint32_t)i1);
+                faces.push_back((uint32_t)i2);
+                faces.push_back((uint32_t)i3);
+            }
+        }
+    }
+
+    size_t totalVertsCount = totalVerts;
+    std::vector<float> vertices(totalVertsCount * 3);
+    std::atomic<int> failCount(0);
+
+    float rEst = rAxis;
+    float tStartRay = std::min(maxR * 1.30f, rEst + sGrid.step * 4.0f);
+
+    #pragma omp parallel for schedule(dynamic, 64)
+    for (int i = 0; i < (int)totalVertsCount; ++i) {
+        glm::ivec3 c = vertCoords[i];
+        float xc = 2.0f * (float)c.x / (float)M - 1.0f;
+        float yc = 2.0f * (float)c.y / (float)M - 1.0f;
+        float zc = 2.0f * (float)c.z / (float)M - 1.0f;
+
+        // Equal-area spherization mapping
+        float xs = xc * std::sqrt(std::max(0.0f, 1.0f - yc * yc * 0.5f - zc * zc * 0.5f + yc * yc * zc * zc / 3.0f));
+        float ys = yc * std::sqrt(std::max(0.0f, 1.0f - zc * zc * 0.5f - xc * xc * 0.5f + zc * zc * xc * xc / 3.0f));
+        float zs = zc * std::sqrt(std::max(0.0f, 1.0f - xc * xc * 0.5f - yc * yc * 0.5f + xc * xc * yc * yc / 3.0f));
+
+        glm::vec3 dir(xs, ys, zs);
+        float dlen = glm::length(dir);
+        if (dlen > 1e-6f) dir /= dlen;
+        else dir = glm::vec3(0.0f, 0.0f, 1.0f);
+
+        float t = tStartRay;
+        float tMin = std::max(sGrid.step * 0.5f, rEst - sGrid.step * 6.0f);
+        float stepSize = sGrid.step * 0.40f;
+        float tPrev = t;
+        float dPrev = 1e6f;
+        float tFound = -1.0f;
+
+        while (t >= tMin) {
+            float gx = (C.x + t * dir.x - sGrid.minCoord[0]) / sGrid.step;
+            float gy = (C.y + t * dir.y - sGrid.minCoord[1]) / sGrid.step;
+            float gz = (C.z + t * dir.z - sGrid.minCoord[2]) / sGrid.step;
+            float dCur = sculpt::sampleSparseSDF(sGrid, gx, gy, gz);
+            if (dCur <= 0.0f) {
+                float tA = t;
+                float tB = (dPrev < 1e4f && dPrev > 0.0f) ? tPrev : (t + stepSize);
+                for (int it = 0; it < 14; ++it) {
+                    float tMid = 0.5f * (tA + tB);
+                    float mx = (C.x + tMid * dir.x - sGrid.minCoord[0]) / sGrid.step;
+                    float my = (C.y + tMid * dir.y - sGrid.minCoord[1]) / sGrid.step;
+                    float mz = (C.z + tMid * dir.z - sGrid.minCoord[2]) / sGrid.step;
+                    float dMid = sculpt::sampleSparseSDF(sGrid, mx, my, mz);
+                    if (dMid <= 0.0f) tA = tMid;
+                    else tB = tMid;
+                }
+                tFound = 0.5f * (tA + tB);
+                break;
+            }
+            dPrev = dCur;
+            t -= stepSize;
+        }
+
+        if (tFound <= 0.0f) {
+            failCount.fetch_add(1, std::memory_order_relaxed);
+            glm::vec3 fallback = C + rEst * dir;
+            vertices[i * 3 + 0] = fallback.x;
+            vertices[i * 3 + 1] = fallback.y;
+            vertices[i * 3 + 2] = fallback.z;
+        } else {
+            glm::vec3 pos = C + tFound * dir;
+            vertices[i * 3 + 0] = pos.x;
+            vertices[i * 3 + 1] = pos.y;
+            vertices[i * 3 + 2] = pos.z;
+        }
+    }
+
+    if (failCount.load() > (int)(totalVertsCount * 0.005f)) {
+        return false;
+    }
+
+    // 4. Radial Distance Smoothing (Eliminates discrete voxel facetting / dimple artifacts)
+    const int MAX_DEG = 8;
+    std::vector<uint32_t> nbrList(totalVertsCount * MAX_DEG);
+    std::vector<uint8_t> nbrCounts(totalVertsCount, 0);
+
+    size_t nbFaces = faces.size() / 4;
+    for (size_t f = 0; f < nbFaces; ++f) {
+        for (int k = 0; k < 4; ++k) {
+            uint32_t u = faces[f * 4 + k];
+            uint32_t w = faces[f * 4 + (k + 1) % 4];
+            if (u >= totalVertsCount || w >= totalVertsCount || u == w) continue;
+
+            uint8_t cu = nbrCounts[u];
+            bool foundU = false;
+            for (uint8_t j = 0; j < cu; ++j) {
+                if (nbrList[u * MAX_DEG + j] == w) { foundU = true; break; }
+            }
+            if (!foundU && cu < MAX_DEG) {
+                nbrList[u * MAX_DEG + cu] = w;
+                nbrCounts[u] = cu + 1;
+            }
+
+            uint8_t cw = nbrCounts[w];
+            bool foundW = false;
+            for (uint8_t j = 0; j < cw; ++j) {
+                if (nbrList[w * MAX_DEG + j] == u) { foundW = true; break; }
+            }
+            if (!foundW && cw < MAX_DEG) {
+                nbrList[w * MAX_DEG + cw] = u;
+                nbrCounts[w] = cw + 1;
+            }
+        }
+    }
+
+    std::vector<float> currRadii(totalVertsCount);
+    double initialSumR = 0.0;
+    for (size_t i = 0; i < totalVertsCount; ++i) {
+        glm::vec3 pos(vertices[i * 3], vertices[i * 3 + 1], vertices[i * 3 + 2]);
+        float r = glm::length(pos - C);
+        currRadii[i] = r;
+        initialSumR += r;
+    }
+    float initialMeanR = (totalVertsCount > 0) ? (float)(initialSumR / (double)totalVertsCount) : 0.0f;
+
+    std::vector<float> nextRadii = currRadii;
+    const int numSmoothIters = 6;
+    for (int it = 0; it < numSmoothIters; ++it) {
+#pragma omp parallel for schedule(static)
+        for (int i = 0; i < (int)totalVertsCount; ++i) {
+            uint8_t deg = nbrCounts[i];
+            if (deg == 0) continue;
+            float rAvg = 0.0f;
+            const uint32_t* nbrPtr = &nbrList[i * MAX_DEG];
+            for (uint8_t j = 0; j < deg; ++j) {
+                rAvg += currRadii[nbrPtr[j]];
+            }
+            rAvg /= (float)deg;
+            nextRadii[i] = 0.30f * currRadii[i] + 0.70f * rAvg;
+        }
+        currRadii = nextRadii;
+    }
+
+    // Preserve exact mean radius / volume after smoothing
+    double smoothedSumR = 0.0;
+    for (size_t i = 0; i < totalVertsCount; ++i) {
+        smoothedSumR += currRadii[i];
+    }
+    float smoothedMeanR = (totalVertsCount > 0) ? (float)(smoothedSumR / (double)totalVertsCount) : 0.0f;
+    if (smoothedMeanR > 1e-6f && initialMeanR > 1e-6f) {
+        float rScale = initialMeanR / smoothedMeanR;
+        for (size_t i = 0; i < totalVertsCount; ++i) {
+            currRadii[i] *= rScale;
+        }
+    }
+
+    // Apply smoothed radii along rays
+#pragma omp parallel for schedule(static)
+    for (int i = 0; i < (int)totalVertsCount; ++i) {
+        glm::ivec3 c = vertCoords[i];
+        float xc = 2.0f * (float)c.x / (float)M - 1.0f;
+        float yc = 2.0f * (float)c.y / (float)M - 1.0f;
+        float zc = 2.0f * (float)c.z / (float)M - 1.0f;
+
+        float xs = xc * std::sqrt(std::max(0.0f, 1.0f - yc * yc * 0.5f - zc * zc * 0.5f + yc * yc * zc * zc / 3.0f));
+        float ys = yc * std::sqrt(std::max(0.0f, 1.0f - zc * zc * 0.5f - xc * xc * 0.5f + zc * zc * xc * xc / 3.0f));
+        float zs = zc * std::sqrt(std::max(0.0f, 1.0f - xc * xc * 0.5f - yc * yc * 0.5f + xc * xc * yc * yc / 3.0f));
+        glm::vec3 dir(xs, ys, zs);
+        float dlen = glm::length(dir);
+        if (dlen > 1e-6f) dir /= dlen;
+        else dir = glm::vec3(0.0f, 0.0f, 1.0f);
+
+        glm::vec3 pos = C + currRadii[i] * dir;
+
+        if (alignSymmetry) {
+            if (c.x == M / 2 && std::abs(C.x) < sGrid.step * 0.5f) pos.x = 0.0f;
+            if (c.y == M / 2 && std::abs(C.y) < sGrid.step * 0.5f) pos.y = 0.0f;
+            if (c.z == M / 2 && std::abs(C.z) < sGrid.step * 0.5f) pos.z = 0.0f;
+        }
+
+        vertices[i * 3 + 0] = pos.x;
+        vertices[i * 3 + 1] = pos.y;
+        vertices[i * 3 + 2] = pos.z;
+    }
+
+    res.vertices = std::move(vertices);
+    res.faces = std::move(faces);
+
+    float uCol[3] = { uniformColor ? uniformColor[0] : 0.72f, uniformColor ? uniformColor[1] : 0.52f, uniformColor ? uniformColor[2] : 0.45f };
+    float uMat[3] = { uniformMaterial ? uniformMaterial[0] : 0.5f, uniformMaterial ? uniformMaterial[1] : 0.0f, uniformMaterial ? uniformMaterial[2] : 1.0f };
+
+    res.colors.resize(totalVertsCount * 3);
+    res.materials.resize(totalVertsCount * 3);
+    for (size_t i = 0; i < totalVertsCount; ++i) {
+        res.colors[i * 3 + 0] = uCol[0];
+        res.colors[i * 3 + 1] = uCol[1];
+        res.colors[i * 3 + 2] = uCol[2];
+        res.materials[i * 3 + 0] = uMat[0];
+        res.materials[i * 3 + 1] = uMat[1];
+        res.materials[i * 3 + 2] = uMat[2];
+    }
+
+    return true;
+}
 
 RemeshResult doRemesh(
     const float* verts, int nbVerts,
@@ -3018,20 +3392,34 @@ RemeshResult doRemesh(
         msFlood = 0.0; // Flood fill eliminated via direct Angle-Weighted Pseudonormals!
 
         auto tReconstructStart = std::chrono::high_resolution_clock::now();
-        r = sculpt::reconstructSurfaceNetsBlockSparse(sGrid, uniformColor, uniformMaterial);
-        msReconstruct = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tReconstructStart).count();
-
-        if (alignSymmetry) {
-            float snapTol = step * 0.45f;
-            for (size_t i = 0; i < r.vertices.size(); i += 3) {
-                if (std::abs(r.vertices[i + 0]) < snapTol) r.vertices[i + 0] = 0.0f;
-                if (std::abs(r.vertices[i + 1]) < snapTol) r.vertices[i + 1] = 0.0f;
-                if (std::abs(r.vertices[i + 2]) < snapTol) r.vertices[i + 2] = 0.0f;
-            }
+        bool usedPolyCube = false;
+        if (regularizeQuads && !block && !keepSharpEdges) {
+            usedPolyCube = tryPolyCubeReconstructSparse(sGrid, box, uniformColor, uniformMaterial, alignSymmetry, r, onProgress);
         }
+        if (!usedPolyCube) {
+            r = sculpt::reconstructSurfaceNetsBlockSparse(sGrid, uniformColor, uniformMaterial, regularizeQuads);
+        }
+        msReconstruct = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tReconstructStart).count();
+        sculpt_log("[REMESH PROFILE] Stage 3 - Block-Sparse Reconstruction (%s): %.2f ms (Output: %d verts, %d faces)\n",
+                  usedPolyCube ? "PolyCube 6-Chart" : "Surface Nets", msReconstruct, (int)(r.vertices.size() / 3), (int)(r.faces.size() / 4));
 
-        if (regularizeQuads && !manifold && !block && r.vertices.size() >= 12) {
-            sculpt::applyConstrainedTangentialRelaxationSparse(r, sGrid, 3, 0.45f, alignSymmetry);
+        if (!usedPolyCube) {
+            if (alignSymmetry) {
+                float snapTol = step * 0.45f;
+                for (size_t i = 0; i < r.vertices.size(); i += 3) {
+                    if (std::abs(r.vertices[i + 0]) < snapTol) r.vertices[i + 0] = 0.0f;
+                    if (std::abs(r.vertices[i + 1]) < snapTol) r.vertices[i + 1] = 0.0f;
+                    if (std::abs(r.vertices[i + 2]) < snapTol) r.vertices[i + 2] = 0.0f;
+                }
+            }
+
+            if (regularizeQuads && !manifold && !block && r.vertices.size() >= 12) {
+                sculpt::applyConstrainedTangentialRelaxationSparse(r, sGrid, 3, 0.45f, alignSymmetry);
+            }
+        } else {
+            if (r.vertices.size() >= 12) {
+                sculpt::applyConstrainedTangentialRelaxationSparse(r, sGrid, 1, 0.15f, alignSymmetry);
+            }
         }
 
         sparseBlocks = sGrid.activeBlocks.size();
