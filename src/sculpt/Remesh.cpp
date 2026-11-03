@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <unordered_map>
 #include <string>
+#include <cstring>
 #include <cstdio>
 #include <functional>
 #include <chrono>
@@ -836,14 +837,14 @@ static void floodFill(VoxelGrid& voxels, std::function<void(int stage, int progr
         }
     }
 
+    // Branchless OpenMP sign flip: negate interior cells
     int taggedCount = 0;
 #pragma omp parallel for schedule(static) reduction(+:taggedCount)
     for (int id = 0; id < datalen; ++id) {
-        if (!tagCell[id]) {
-            voxels.distanceField[id] = -voxels.distanceField[id];
-        } else {
-            taggedCount++;
-        }
+        float d = voxels.distanceField[id];
+        uint8_t tagged = tagCell[id];
+        voxels.distanceField[id] = tagged ? d : -d;
+        taggedCount += (int)tagged;
     }
 
     sculpt_log("[C++ floodFill] Finished: tagged (exterior) cells=%d, untagged (interior) cells=%d\n", taggedCount, datalen - taggedCount);
@@ -1054,6 +1055,8 @@ static RemeshResult marchingCubesReconstruct(VoxelGrid& voxels, std::function<vo
     float tmpC[3] = {0.0f, 0.0f, 0.0f};
     float tmpM[3] = {0.0f, 0.0f, 0.0f};
 
+    float diagThreshold = 1.7321f * voxels.step;
+
     for (int z = 0; z < rz - 1; ++z, n += rx) {
         if (onProgress && (z % 10 == 0)) {
             int pct = (z * 100) / (rz - 1);
@@ -1061,6 +1064,9 @@ static RemeshResult marchingCubesReconstruct(VoxelGrid& voxels, std::function<vo
         }
         for (int y = 0; y < ry - 1; ++y, ++n) {
             for (int x = 0; x < rx - 1; ++x, ++n) {
+                float d0 = voxels.distanceField[n];
+                if (std::abs(d0) > diagThreshold) continue;
+
                 int cubeIndex = readScalarValuesMarchingCubes(voxels, grid, n, tmpC, tmpM);
                 uint32_t edgeMask = mcEdgeTable[cubeIndex];
                 if (edgeMask == 0) continue;
@@ -1322,56 +1328,6 @@ static void interpolateVerticesSurfaceNets(
     vertices.push_back(vTemp[2]);
 }
 
-static void createFaceSurfaceNets(
-    uint32_t edgeMask, uint8_t mask, const std::vector<int32_t>& buffer,
-    const int R[3], int m, const int x[3], std::vector<uint32_t>& faces,
-    const std::vector<uint32_t>& vertGroups, std::vector<uint32_t>& faceGroups,
-    bool hasGroupField
-) {
-    for (int i = 0; i < 3; ++i) {
-        if (!(edgeMask & (1 << i)))
-            continue;
-
-        int iu = (i + 1) % 3;
-        int iv = (i + 2) % 3;
-
-        if (x[iu] == 0 || x[iv] == 0)
-            continue;
-
-        int du = R[iu];
-        int dv = R[iv];
-
-        int32_t v0, v1, v2, v3;
-        if (mask & 1) {
-            v0 = buffer[m];
-            v1 = buffer[m - du];
-            v2 = buffer[m - du - dv];
-            v3 = buffer[m - dv];
-        } else {
-            v0 = buffer[m];
-            v1 = buffer[m - dv];
-            v2 = buffer[m - du - dv];
-            v3 = buffer[m - du];
-        }
-        faces.push_back(v0);
-        faces.push_back(v1);
-        faces.push_back(v2);
-        faces.push_back(v3);
-
-        if (hasGroupField && !vertGroups.empty()) {
-            uint32_t g0 = (size_t)v0 < vertGroups.size() ? vertGroups[v0] : 0;
-            uint32_t g1 = (size_t)v1 < vertGroups.size() ? vertGroups[v1] : 0;
-            uint32_t g2 = (size_t)v2 < vertGroups.size() ? vertGroups[v2] : 0;
-            uint32_t g3 = (size_t)v3 < vertGroups.size() ? vertGroups[v3] : 0;
-
-            uint32_t fg = g0;
-            if (g1 == g2 || g1 == g3) fg = g1;
-            else if (g2 == g3) fg = g2;
-            faceGroups.push_back(fg);
-        }
-    }
-}
-
 static RemeshResult surfaceNetsReconstruct(VoxelGrid& voxels, bool block, std::function<void(int stage, int progress)> onProgress = nullptr) {
     RemeshResult res;
     int rx = voxels.dims[0];
@@ -1383,7 +1339,11 @@ static RemeshResult surfaceNetsReconstruct(VoxelGrid& voxels, bool block, std::f
     int numThreads = (int)std::thread::hardware_concurrency();
     if (numThreads < 1) numThreads = 1;
 
-    std::vector<int32_t> cellToVert(datalen, -1);
+    std::vector<int32_t> cellToVert(datalen);
+#pragma omp parallel for schedule(static)
+    for (int i = 0; i < datalen; ++i) {
+        cellToVert[i] = -1;
+    }
 
     struct ThreadVertData {
         std::vector<float> vertices;
@@ -1391,12 +1351,14 @@ static RemeshResult surfaceNetsReconstruct(VoxelGrid& voxels, bool block, std::f
         std::vector<float> materials;
         std::vector<uint32_t> vertGroups;
         std::vector<int> vertCellIndices;
+        std::vector<uint8_t> vertMasks;
     };
     std::vector<ThreadVertData> threadVerts(numThreads);
 
     int slicesPerThread = ((rz - 1) + numThreads - 1) / numThreads;
+    float diagThreshold = 1.7321f * voxels.step;
 
-    // Pass A: Parallel Vertex Generation
+    // Pass A: Parallel Vertex Generation with fast distance rejection
 #pragma omp parallel num_threads(numThreads)
     {
         int t = omp_get_thread_num();
@@ -1404,11 +1366,12 @@ static RemeshResult surfaceNetsReconstruct(VoxelGrid& voxels, bool block, std::f
         int zEnd = std::min(rz - 1, zStart + slicesPerThread);
 
         ThreadVertData& td = threadVerts[t];
-        td.vertices.reserve(100000 * 3);
-        td.colors.reserve(100000 * 3);
-        td.materials.reserve(100000 * 3);
-        if (voxels.hasGroupField) td.vertGroups.reserve(100000);
-        td.vertCellIndices.reserve(100000);
+        td.vertices.reserve(64000 * 3);
+        td.colors.reserve(64000 * 3);
+        td.materials.reserve(64000 * 3);
+        if (voxels.hasGroupField) td.vertGroups.reserve(64000);
+        td.vertCellIndices.reserve(64000);
+        td.vertMasks.reserve(64000);
 
         float grid[8];
         int x[3];
@@ -1417,46 +1380,57 @@ static RemeshResult surfaceNetsReconstruct(VoxelGrid& voxels, bool block, std::f
             for (x[1] = 0; x[1] < ry - 1; ++x[1]) {
                 int n = x[1] * rx + x[2] * rxy;
                 for (x[0] = 0; x[0] < rx - 1; ++x[0], ++n) {
+                    // FAST REJECTION: if center/corner0 distance exceeds bounding cube diagonal,
+                    // the isosurface cannot intersect this cell.
+                    float d0 = voxels.distanceField[n];
+                    if (std::abs(d0) > diagThreshold) continue;
+
                     uint8_t mask = readScalarValuesSurfaceNets(voxels, grid, n, td.colors, td.materials, td.vertGroups);
                     if (mask == 0 || mask == 0xff) continue;
 
                     uint32_t edgeMask = snEdgeTable[mask];
                     interpolateVerticesSurfaceNets(edgeMask, grid, x, td.vertices, block);
                     td.vertCellIndices.push_back(n);
+                    td.vertMasks.push_back(mask);
                 }
             }
         }
     }
 
-    // Merge Thread Vertices and populate cellToVert map
-    size_t totalVerts = 0;
+    // Merge Thread Vertices with parallel prefix sums and populate cellToVert map
+    std::vector<size_t> vertOffsets(numThreads + 1, 0);
     for (int t = 0; t < numThreads; ++t) {
-        totalVerts += threadVerts[t].vertCellIndices.size();
+        vertOffsets[t + 1] = vertOffsets[t] + threadVerts[t].vertCellIndices.size();
     }
+    size_t totalVerts = vertOffsets[numThreads];
 
-    res.vertices.reserve(totalVerts * 3);
-    res.colors.reserve(totalVerts * 3);
-    res.materials.reserve(totalVerts * 3);
+    res.vertices.resize(totalVerts * 3);
+    res.colors.resize(totalVerts * 3);
+    res.materials.resize(totalVerts * 3);
     std::vector<uint32_t> vertGroups;
-    if (voxels.hasGroupField) vertGroups.reserve(totalVerts);
+    if (voxels.hasGroupField) vertGroups.resize(totalVerts);
 
+#pragma omp parallel for schedule(static)
     for (int t = 0; t < numThreads; ++t) {
-        ThreadVertData& td = threadVerts[t];
-        int baseVertIdx = (int)(res.vertices.size() / 3);
+        const ThreadVertData& td = threadVerts[t];
+        size_t baseVertIdx = vertOffsets[t];
+        size_t count = td.vertCellIndices.size();
 
-        res.vertices.insert(res.vertices.end(), td.vertices.begin(), td.vertices.end());
-        res.colors.insert(res.colors.end(), td.colors.begin(), td.colors.end());
-        res.materials.insert(res.materials.end(), td.materials.begin(), td.materials.end());
-        if (voxels.hasGroupField) {
-            vertGroups.insert(vertGroups.end(), td.vertGroups.begin(), td.vertGroups.end());
-        }
+        if (count > 0) {
+            std::memcpy(&res.vertices[baseVertIdx * 3], td.vertices.data(), count * 3 * sizeof(float));
+            std::memcpy(&res.colors[baseVertIdx * 3], td.colors.data(), count * 3 * sizeof(float));
+            std::memcpy(&res.materials[baseVertIdx * 3], td.materials.data(), count * 3 * sizeof(float));
+            if (voxels.hasGroupField && !td.vertGroups.empty()) {
+                std::memcpy(&vertGroups[baseVertIdx], td.vertGroups.data(), count * sizeof(uint32_t));
+            }
 
-        for (size_t i = 0; i < td.vertCellIndices.size(); ++i) {
-            cellToVert[td.vertCellIndices[i]] = baseVertIdx + (int)i;
+            for (size_t i = 0; i < count; ++i) {
+                cellToVert[td.vertCellIndices[i]] = (int32_t)(baseVertIdx + i);
+            }
         }
     }
 
-    // Pass B: Parallel Face Generation
+    // Pass B: Parallel Face Generation (iterates ONLY active surface cells)
     struct ThreadFaceData {
         std::vector<uint32_t> faces;
         std::vector<uint32_t> faceGroups;
@@ -1469,94 +1443,93 @@ static RemeshResult surfaceNetsReconstruct(VoxelGrid& voxels, bool block, std::f
 #pragma omp parallel num_threads(numThreads)
     {
         int t = omp_get_thread_num();
-        int zStart = t * slicesPerThread;
-        int zEnd = std::min(rz - 1, zStart + slicesPerThread);
-
+        const ThreadVertData& td = threadVerts[t];
         ThreadFaceData& tf = threadFaces[t];
-        tf.faces.reserve(100000 * 4);
-        if (voxels.hasGroupField) tf.faceGroups.reserve(100000);
+        size_t baseVertIdx = vertOffsets[t];
+        size_t count = td.vertCellIndices.size();
 
-        int x[3];
-        for (x[2] = zStart; x[2] < zEnd; ++x[2]) {
-            for (x[1] = 0; x[1] < ry - 1; ++x[1]) {
-                int n = x[1] * rx + x[2] * rxy;
-                for (x[0] = 0; x[0] < rx - 1; ++x[0], ++n) {
-                    int32_t v0 = cellToVert[n];
-                    if (v0 < 0) continue;
+        tf.faces.reserve(count * 6);
+        if (voxels.hasGroupField) tf.faceGroups.reserve(count * 2);
 
-                    int rx_grid = voxels.dims[0];
-                    int rxy_grid = rx_grid * voxels.dims[1];
-                    const int cornerOffsets[8] = {
-                        0, 1, rx_grid, rx_grid + 1,
-                        rxy_grid, rxy_grid + 1, rxy_grid + rx_grid, rxy_grid + rx_grid + 1
-                    };
-                    uint8_t mask = 0;
-                    for (int g = 0; g < 8; ++g) {
-                        if (voxels.distanceField[n + cornerOffsets[g]] < 0.0f) {
-                            mask |= (1 << g);
-                        }
-                    }
-                    if (mask == 0 || mask == 0xff) continue;
+        for (size_t k = 0; k < count; ++k) {
+            int n = td.vertCellIndices[k];
+            uint8_t mask = td.vertMasks[k];
+            int32_t v0 = (int32_t)(baseVertIdx + k);
 
-                    uint32_t edgeMask = snEdgeTable[mask];
+            uint32_t edgeMask = snEdgeTable[mask];
 
-                    for (int i = 0; i < 3; ++i) {
-                        if (!(edgeMask & (1 << i))) continue;
+            // Reconstruct cell x, y, z from cell index n
+            int z = n / rxy;
+            int rem = n - z * rxy;
+            int y = rem / rx;
+            int x = rem - y * rx;
+            const int coords[3] = { x, y, z };
 
-                        int iu = (i + 1) % 3;
-                        int iv = (i + 2) % 3;
+            for (int i = 0; i < 3; ++i) {
+                if (!(edgeMask & (1 << i))) continue;
 
-                        if (x[iu] == 0 || x[iv] == 0) continue;
+                int iu = (i + 1) % 3;
+                int iv = (i + 2) % 3;
 
-                        int du = dimOffsets[i];
-                        int dv = dimOffsetsV[i];
+                if (coords[iu] == 0 || coords[iv] == 0) continue;
 
-                        int32_t v1, v2, v3;
-                        if (mask & 1) {
-                            v1 = cellToVert[n - du];
-                            v2 = cellToVert[n - du - dv];
-                            v3 = cellToVert[n - dv];
-                        } else {
-                            v1 = cellToVert[n - dv];
-                            v2 = cellToVert[n - du - dv];
-                            v3 = cellToVert[n - du];
-                        }
+                int du = dimOffsets[i];
+                int dv = dimOffsetsV[i];
 
-                        if (v1 < 0 || v2 < 0 || v3 < 0) continue;
+                int32_t v1, v2, v3;
+                if (mask & 1) {
+                    v1 = cellToVert[n - du];
+                    v2 = cellToVert[n - du - dv];
+                    v3 = cellToVert[n - dv];
+                } else {
+                    v1 = cellToVert[n - dv];
+                    v2 = cellToVert[n - du - dv];
+                    v3 = cellToVert[n - du];
+                }
 
-                        tf.faces.push_back(v0);
-                        tf.faces.push_back(v1);
-                        tf.faces.push_back(v2);
-                        tf.faces.push_back(v3);
+                if (v1 < 0 || v2 < 0 || v3 < 0) continue;
 
-                        if (voxels.hasGroupField && !vertGroups.empty()) {
-                            uint32_t g0 = (size_t)v0 < vertGroups.size() ? vertGroups[v0] : 0;
-                            uint32_t g1 = (size_t)v1 < vertGroups.size() ? vertGroups[v1] : 0;
-                            uint32_t g2 = (size_t)v2 < vertGroups.size() ? vertGroups[v2] : 0;
-                            uint32_t g3 = (size_t)v3 < vertGroups.size() ? vertGroups[v3] : 0;
+                tf.faces.push_back(v0);
+                tf.faces.push_back(v1);
+                tf.faces.push_back(v2);
+                tf.faces.push_back(v3);
 
-                            uint32_t fg = g0;
-                            if (g1 == g2 || g1 == g3) fg = g1;
-                            else if (g2 == g3) fg = g2;
-                            tf.faceGroups.push_back(fg);
-                        }
-                    }
+                if (voxels.hasGroupField && !vertGroups.empty()) {
+                    uint32_t g0 = (size_t)v0 < vertGroups.size() ? vertGroups[v0] : 0;
+                    uint32_t g1 = (size_t)v1 < vertGroups.size() ? vertGroups[v1] : 0;
+                    uint32_t g2 = (size_t)v2 < vertGroups.size() ? vertGroups[v2] : 0;
+                    uint32_t g3 = (size_t)v3 < vertGroups.size() ? vertGroups[v3] : 0;
+
+                    uint32_t fg = g0;
+                    if (g1 == g2 || g1 == g3) fg = g1;
+                    else if (g2 == g3) fg = g2;
+                    tf.faceGroups.push_back(fg);
                 }
             }
         }
     }
 
-    size_t totalFaces = 0;
+    // Merge Thread Faces with parallel prefix sums
+    std::vector<size_t> faceOffsets(numThreads + 1, 0);
+    std::vector<size_t> groupOffsets(numThreads + 1, 0);
     for (int t = 0; t < numThreads; ++t) {
-        totalFaces += threadFaces[t].faces.size();
+        faceOffsets[t + 1] = faceOffsets[t] + threadFaces[t].faces.size();
+        groupOffsets[t + 1] = groupOffsets[t] + threadFaces[t].faceGroups.size();
     }
-    res.faces.reserve(totalFaces);
-    if (voxels.hasGroupField) res.faceGroups.reserve(totalFaces / 4);
+    size_t totalFaces = faceOffsets[numThreads];
+    size_t totalGroups = groupOffsets[numThreads];
 
+    res.faces.resize(totalFaces);
+    if (voxels.hasGroupField) res.faceGroups.resize(totalGroups);
+
+#pragma omp parallel for schedule(static)
     for (int t = 0; t < numThreads; ++t) {
-        res.faces.insert(res.faces.end(), threadFaces[t].faces.begin(), threadFaces[t].faces.end());
-        if (voxels.hasGroupField) {
-            res.faceGroups.insert(res.faceGroups.end(), threadFaces[t].faceGroups.begin(), threadFaces[t].faceGroups.end());
+        const ThreadFaceData& tf = threadFaces[t];
+        if (!tf.faces.empty()) {
+            std::memcpy(&res.faces[faceOffsets[t]], tf.faces.data(), tf.faces.size() * sizeof(uint32_t));
+        }
+        if (voxels.hasGroupField && !tf.faceGroups.empty()) {
+            std::memcpy(&res.faceGroups[groupOffsets[t]], tf.faceGroups.data(), tf.faceGroups.size() * sizeof(uint32_t));
         }
     }
 
