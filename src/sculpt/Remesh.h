@@ -23,6 +23,7 @@ struct RemeshResult {
     std::vector<float> colors;
     std::vector<float> materials;
     std::vector<uint32_t> faceGroups;
+    std::vector<uint8_t> sharpVertices;
     RemeshProfile profile;
 };
 
@@ -49,7 +50,8 @@ RemeshResult doRemesh(
     float matrixScaleX = 1.0f,
     float matrixScaleY = 1.0f,
     float matrixScaleZ = 1.0f,
-    bool regularizeQuads = true
+    bool regularizeQuads = true,
+    bool keepSharpEdges = false
 );
 RemeshResult doSurfaceNetsFromSDF(
     int resolution, 

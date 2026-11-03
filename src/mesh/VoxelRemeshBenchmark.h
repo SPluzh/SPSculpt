@@ -104,10 +104,13 @@ struct VoxelBenchmarkRow {
     int elongatedFaces = 0;    // 3.0x < AR <= 6.0x
     int severeNeedleFaces = 0; // AR > 6.0x
 
-    // Quality Metrics: Interior Angles
+    // Quality Metrics: Interior Angles & Creases
     float minAngleDeg = 90.0f;
     float maxAngleDeg = 90.0f;
     int badAnglesCount = 0;    // < 30 deg or > 150 deg
+    bool keepSharpEdges = false;
+    float minDihedralAngleDeg = 180.0f;
+    int sharpCreaseEdges = 0;  // Edges with dihedral angle <= 110 deg
 
     // Quality Metrics: Vertex Valence
     float valence4Ratio = 0.0f;
@@ -440,14 +443,16 @@ inline void evaluateMeshQuality(const Mesh& origMesh, const Mesh& remesh, VoxelB
     std::vector<int> vertFaceCount(nbV, 0);
     std::vector<std::vector<uint32_t>> vertIncidentFaces(nbV);
 
-    // Edge tracking for manifoldness & boundary detection
+    // Edge tracking for manifoldness, boundary detection & dihedral angle evaluation
     struct EdgeRecord {
         int count = 0;
+        uint32_t faceA = 0xffffffff;
+        uint32_t faceB = 0xffffffff;
     };
     std::unordered_map<uint64_t, EdgeRecord> edgeMap;
     edgeMap.reserve(nbF * 4);
 
-    auto addEdge = [&](uint32_t vA, uint32_t vB) {
+    auto addEdge = [&](uint32_t vA, uint32_t vB, uint32_t f) {
         if (vA == vB) return;
         uint32_t mi = std::min(vA, vB);
         uint32_t ma = std::max(vA, vB);
@@ -455,8 +460,11 @@ inline void evaluateMeshQuality(const Mesh& origMesh, const Mesh& remesh, VoxelB
         auto it = edgeMap.find(key);
         if (it != edgeMap.end()) {
             it->second.count++;
+            if (it->second.faceB == 0xffffffff) {
+                it->second.faceB = f;
+            }
         } else {
-            edgeMap[key] = { 1 };
+            edgeMap[key] = { 1, f, 0xffffffff };
             vertDegrees[vA]++;
             vertDegrees[vB]++;
         }
@@ -472,6 +480,8 @@ inline void evaluateMeshQuality(const Mesh& origMesh, const Mesh& remesh, VoxelB
     float minAngle = 180.0f;
     float maxAngle = 0.0f;
     int badAngles = 0;
+
+    std::vector<glm::vec3> faceNormals(nbF, glm::vec3(0.0f, 0.0f, 1.0f));
 
     auto calcAngleDeg = [](const glm::vec3& vPrev, const glm::vec3& vCurr, const glm::vec3& vNext) -> float {
         glm::vec3 e1 = vPrev - vCurr;
@@ -515,20 +525,25 @@ inline void evaluateMeshQuality(const Mesh& origMesh, const Mesh& remesh, VoxelB
         vertIncidentFaces[i1].push_back((uint32_t)f);
         vertIncidentFaces[i2].push_back((uint32_t)f);
 
-        addEdge(i0, i1);
-        addEdge(i1, i2);
+        addEdge(i0, i1, (uint32_t)f);
+        addEdge(i1, i2, (uint32_t)f);
         if (isQuad) {
             vertFaceCount[i3]++;
             vertIncidentFaces[i3].push_back((uint32_t)f);
-            addEdge(i2, i3);
-            addEdge(i3, i0);
+            addEdge(i2, i3, (uint32_t)f);
+            addEdge(i3, i0, (uint32_t)f);
         } else {
-            addEdge(i2, i0);
+            addEdge(i2, i0, (uint32_t)f);
         }
 
         glm::vec3 p0(v[i0 * 3], v[i0 * 3 + 1], v[i0 * 3 + 2]);
         glm::vec3 p1(v[i1 * 3], v[i1 * 3 + 1], v[i1 * 3 + 2]);
         glm::vec3 p2(v[i2 * 3], v[i2 * 3 + 1], v[i2 * 3 + 2]);
+
+        glm::vec3 fn = isQuad ? glm::cross(p2 - p0, glm::vec3(v[i3 * 3], v[i3 * 3 + 1], v[i3 * 3 + 2]) - p1)
+                              : glm::cross(p1 - p0, p2 - p0);
+        float fnLen = glm::length(fn);
+        if (fnLen > 1e-6f) faceNormals[f] = fn / fnLen;
 
         float faceArea = 0.5f * glm::length(glm::cross(p1 - p0, p2 - p0));
         float faceAspect = 1.0f;
@@ -616,6 +631,26 @@ inline void evaluateMeshQuality(const Mesh& origMesh, const Mesh& remesh, VoxelB
     }
     row.openBoundaryEdges = openEdges;
     row.nonManifoldEdges = nonManifoldE;
+
+    // Dihedral Angle Evaluation along 2-manifold internal edges
+    float minDihedral = 180.0f;
+    int sharpEdges = 0;
+    for (const auto& kv : edgeMap) {
+        if (kv.second.count == 2 && kv.second.faceA < nbF && kv.second.faceB < nbF) {
+            const glm::vec3& nA = faceNormals[kv.second.faceA];
+            const glm::vec3& nB = faceNormals[kv.second.faceB];
+            float dot = std::clamp(glm::dot(nA, nB), -1.0f, 1.0f);
+            float angleDeg = 180.0f - std::acos(dot) * (180.0f / 3.1415926535f);
+            if (angleDeg < minDihedral) {
+                minDihedral = angleDeg;
+            }
+            if (angleDeg <= 110.0f) {
+                sharpEdges++;
+            }
+        }
+    }
+    row.minDihedralAngleDeg = (edgeMap.empty() ? 180.0f : minDihedral);
+    row.sharpCreaseEdges = sharpEdges;
 
     int flying = 0;
     int nonManifoldV = 0;
@@ -734,7 +769,8 @@ inline VoxelBenchmarkRow runVoxelTest(
     bool manifold = false, // false = Surface Nets (quads), true = Marching Cubes (tris)
     bool keepGroups = false,
     bool alignSymmetry = true,
-    bool regularizeQuads = true
+    bool regularizeQuads = true,
+    bool keepSharpEdges = false
 ) {
     VoxelBenchmarkRow row;
     row.testName = name;
@@ -743,6 +779,7 @@ inline VoxelBenchmarkRow runVoxelTest(
     row.hasPolyGroups = keepGroups;
     row.alignSymmetry = alignSymmetry;
     row.regularizeQuads = regularizeQuads;
+    row.keepSharpEdges = keepSharpEdges;
 
     row.inVerts = inputMesh->nbVerts;
     row.inFaces = inputMesh->nbFaces;
@@ -813,7 +850,8 @@ inline VoxelBenchmarkRow runVoxelTest(
         alignSymmetry,
         nullptr, // onProgress
         1.0f, 1.0f, 1.0f, // matrixScaleXYZ
-        regularizeQuads
+        regularizeQuads,
+        keepSharpEdges
     );
 
     // Copy core sub-stage timings from RemeshProfile
@@ -973,8 +1011,12 @@ inline VoxelBenchmarkRow runVoxelTest(
     bool integrityOk = (row.maxUndoEps == 0.0f) && (row.maxRedoEps == 0.0f) && (row.flyingVerts == 0);
     bool manifoldOk = (row.nonManifoldEdges == 0) && (row.openBoundaryEdges == 0) && (row.degenerateFaces == 0);
     bool quadRatioOk = manifold ? true : (row.quadRatio >= 0.95f); // Surface Nets should be >= 95% quads
+    bool sharpEdgeOk = (!keepSharpEdges) || (row.minDihedralAngleDeg <= 115.0f && row.sharpCreaseEdges > 0);
 
-    row.passed = integrityOk && manifoldOk && quadRatioOk;
+    row.passed = integrityOk && manifoldOk && quadRatioOk && sharpEdgeOk;
+    if (!sharpEdgeOk) {
+        row.notes = "Sharp edges were not preserved!";
+    }
 
     return row;
 }
@@ -1007,6 +1049,10 @@ inline std::unique_ptr<Mesh> createCubeMesh(const glm::vec3& size, int subX, int
     mesh->initFaceGroups();
     mesh->postInit();
     return mesh;
+}
+
+inline std::unique_ptr<Mesh> createSharpCubeMesh(const glm::vec3& size, int subX, int subY, int subZ) {
+    return createCubeMesh(size, subX, subY, subZ, 0.0f);
 }
 
 inline std::unique_ptr<Mesh> createTorusMesh(float rOut, float rWidth, int nbRadial, int nbTubular) {
@@ -1074,7 +1120,7 @@ inline bool run(int customResolution = 0) {
 
         // Test 1: Organic Sphere (Smooth Curvature, Surface Nets Quads) @ Base Res
         {
-            std::cout << " -> Running Benchmark [1/7]: Sphere (Organic Curvature @ Res " << resBase << ")...\n";
+            std::cout << " -> Running Benchmark [1/9]: Sphere (Organic Curvature @ Res " << resBase << ")...\n";
             auto sphere = createSphereMesh(35.0f, 64, 64);
             rows.push_back(runVoxelTest("Sphere (Smooth Curvature)", std::move(sphere), resBase, false, false, true));
         }
@@ -1082,7 +1128,7 @@ inline bool run(int customResolution = 0) {
         // Test 2: Resolution Scaling Test: Sphere @ Res 64
         {
             int rLow = std::max(32, resBase / 2);
-            std::cout << " -> Running Benchmark [2/7]: Sphere (Resolution Scaling @ Res " << rLow << ")...\n";
+            std::cout << " -> Running Benchmark [2/9]: Sphere (Resolution Scaling @ Res " << rLow << ")...\n";
             auto sphere = createSphereMesh(35.0f, 48, 48);
             rows.push_back(runVoxelTest("Sphere (Low Res " + std::to_string(rLow) + ")", std::move(sphere), rLow, false, false, true));
         }
@@ -1090,37 +1136,51 @@ inline bool run(int customResolution = 0) {
         // Test 3: Resolution Scaling Test: Sphere @ Res 256
         {
             int rHigh = (customResolution > 0) ? (resBase * 2) : 256;
-            std::cout << " -> Running Benchmark [3/7]: Sphere (High Res Stress @ Res " << rHigh << ")...\n";
+            std::cout << " -> Running Benchmark [3/9]: Sphere (High Res Stress @ Res " << rHigh << ")...\n";
             auto sphere = createSphereMesh(35.0f, 80, 80);
             rows.push_back(runVoxelTest("Sphere (High Res " + std::to_string(rHigh) + ")", std::move(sphere), rHigh, false, false, true));
         }
 
         // Test 4: Beveled Cube (Sharp Planar Features & 90-deg Corners)
         {
-            std::cout << " -> Running Benchmark [4/7]: Beveled Cube (Sharp Corners & Planar @ Res " << resBase << ")...\n";
+            std::cout << " -> Running Benchmark [4/9]: Beveled Cube (Sharp Corners & Planar @ Res " << resBase << ")...\n";
             auto cube = createCubeMesh(glm::vec3(60.0f), 32, 32, 32, 4.0f);
             rows.push_back(runVoxelTest("Beveled Cube (Planar/Sharp)", std::move(cube), resBase, false, false, true));
         }
 
         // Test 5: Torus (Genus-1 Cavity & Complex Interior Topology)
         {
-            std::cout << " -> Running Benchmark [5/7]: Torus (Genus-1 Hole & Cavity @ Res " << resBase << ")...\n";
+            std::cout << " -> Running Benchmark [5/9]: Torus (Genus-1 Hole & Cavity @ Res " << resBase << ")...\n";
             auto torus = createTorusMesh(35.0f, 12.0f, 48, 48);
             rows.push_back(runVoxelTest("Torus (Genus-1 Hole)", std::move(torus), resBase, false, false, true));
         }
 
         // Test 6: Multi-PolyGroup Sphere (PolyGroup Transfer Profiling)
         {
-            std::cout << " -> Running Benchmark [6/7]: Multi-Group Sphere (PolyGroup Transfer @ Res " << resBase << ")...\n";
+            std::cout << " -> Running Benchmark [6/9]: Multi-Group Sphere (PolyGroup Transfer @ Res " << resBase << ")...\n";
             auto multiGroup = createMultiGroupSphere(35.0f, 64, 64);
             rows.push_back(runVoxelTest("Sphere (4 PolyGroups)", std::move(multiGroup), resBase, false, true, true));
         }
 
         // Test 7: Algorithm Comparison: Marching Cubes Manifold (Tris) vs Surface Nets (Quads)
         {
-            std::cout << " -> Running Benchmark [7/7]: Sphere (Marching Cubes Manifold Tris @ Res " << resBase << ")...\n";
+            std::cout << " -> Running Benchmark [7/9]: Sphere (Marching Cubes Manifold Tris @ Res " << resBase << ")...\n";
             auto sphere = createSphereMesh(35.0f, 64, 64);
             rows.push_back(runVoxelTest("Sphere (Marching Cubes)", std::move(sphere), resBase, true, false, true));
+        }
+
+        // Test 8: Sharp Cube (Standard Smooth without Edge Snapping)
+        {
+            std::cout << " -> Running Benchmark [8/9]: Sharp Cube (Standard Smooth @ Res " << resBase << ")...\n";
+            auto cube = createSharpCubeMesh(glm::vec3(60.0f), 32, 32, 32);
+            rows.push_back(runVoxelTest("Sharp Cube (Standard Smooth)", std::move(cube), resBase, false, false, true, true, false));
+        }
+
+        // Test 9: Sharp Cube (Keep Sharp Edges Preservation Mode)
+        {
+            std::cout << " -> Running Benchmark [9/9]: Sharp Cube (Keep Sharp Edges @ Res " << resBase << ")...\n";
+            auto cube = createSharpCubeMesh(glm::vec3(60.0f), 32, 32, 32);
+            rows.push_back(runVoxelTest("Sharp Cube (Keep Sharp Edges)", std::move(cube), resBase, false, false, true, true, true));
         }
 
         // =========================================================================
@@ -1195,8 +1255,8 @@ inline bool run(int customResolution = 0) {
         std::cout << "\n===================================================================================================================================================\n";
         std::cout << " TABLE 3: Reconstructed Mesh Quality, Aspect Ratio & Topology Integrity\n";
         std::cout << "===================================================================================================================================================\n";
-        std::cout << " Benchmark Scenario            |  Avg AR |  Max AR |  Reg (<=2x) |  Elong (>3x) |  Needle (>6x) | % Val 4 | Non-Manifold | Open Edges | Degen/Fly \n";
-        std::cout << "-------------------------------+---------+---------+-------------+--------------+---------------+---------+--------------+------------+-----------\n";
+        std::cout << " Benchmark Scenario            |  Avg AR |  Max AR |  Reg (<=2x) |  Elong (>3x) |  Needle (>6x) | % Val 4 | Min Dihed | Non-Manifold | Open Edges | Degen/Fly \n";
+        std::cout << "-------------------------------+---------+---------+-------------+--------------+---------------+---------+-----------+--------------+------------+-----------\n";
 
         for (const auto& r : rows) {
             std::ostringstream ssAvgAR, ssMaxAR, ssVal4;
@@ -1209,9 +1269,10 @@ inline bool run(int customResolution = 0) {
             ssElong << r.elongatedFaces;
             ssNeedle << r.severeNeedleFaces;
 
-            std::ostringstream ssNM, ssDegen;
+            std::ostringstream ssNM, ssDegen, ssDihed;
             ssNM << r.nonManifoldEdges << "E / " << r.nonManifoldVerts << "V";
             ssDegen << r.degenerateFaces << " / " << r.flyingVerts;
+            ssDihed << std::fixed << std::setprecision(1) << r.minDihedralAngleDeg << " deg";
 
             std::cout << " " << padRight(r.testName, 29) << " | "
                       << padLeft(ssAvgAR.str(), 7) << " | "
@@ -1220,11 +1281,12 @@ inline bool run(int customResolution = 0) {
                       << padLeft(ssElong.str(), 12) << " | "
                       << padLeft(ssNeedle.str(), 13) << " | "
                       << padLeft(ssVal4.str(), 7) << " | "
+                      << padLeft(ssDihed.str(), 9) << " | "
                       << padLeft(ssNM.str(), 12) << " | "
                       << padLeft(std::to_string(r.openBoundaryEdges), 10) << " | "
                       << padLeft(ssDegen.str(), 9) << " \n";
         }
-        std::cout << "-------------------------------+---------+---------+-------------+--------------+---------------+---------+--------------+------------+-----------\n";
+        std::cout << "-------------------------------+---------+---------+-------------+--------------+---------------+---------+-----------+--------------+------------+-----------\n";
 
         // =========================================================================
         // Print Table 4: Geometric Fidelity & Surface Conservation (Hausdorff Deviation)
@@ -1285,6 +1347,10 @@ inline bool run(int customResolution = 0) {
             std::cout << "   - Mesh Quality:        " << std::fixed << std::setprecision(1) << (r.quadRatio * 100.0f) << "% Quads, "
                       << "Avg Aspect Ratio: " << std::fixed << std::setprecision(2) << r.avgAspectRatio << "x (Regular faces: " << r.regularFaces
                       << ", Elongated: " << r.elongatedFaces << ", Needles: " << r.severeNeedleFaces << ")\n";
+            if (r.keepSharpEdges || r.testName.find("Sharp Cube") != std::string::npos) {
+                std::cout << "   - Sharp Edge Preservation: Min Dihedral Angle = " << std::fixed << std::setprecision(1) << r.minDihedralAngleDeg << " deg ("
+                          << r.sharpCreaseEdges << " sharp crease edges <= 110 deg)\n";
+            }
             std::cout << "   - Topological Health:  " << (r.openBoundaryEdges == 0 ? "WATERTIGHT [OK]" : "OPEN SEAMS [WARNING]") << ", "
                       << (r.nonManifoldEdges == 0 ? "2-MANIFOLD [OK]" : "NON-MANIFOLD EDGES DETECTED") << ", "
                       << "Volume Conservation: " << std::fixed << std::setprecision(2) << (100.0 - r.volDiffPct) << "% preserved\n";

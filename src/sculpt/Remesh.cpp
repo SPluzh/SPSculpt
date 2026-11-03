@@ -1288,19 +1288,89 @@ static uint8_t readScalarValuesSurfaceNets(
     return mask;
 }
 
-static void interpolateVerticesSurfaceNets(
+// 3x3 Real Symmetric Eigendecomposition via Jacobi Rotations
+static void eigenSymmetric3x3(const float A[3][3], float eigenvalues[3], glm::vec3 eigenvectors[3]) {
+    float V[3][3] = {
+        {1.0f, 0.0f, 0.0f},
+        {0.0f, 1.0f, 0.0f},
+        {0.0f, 0.0f, 1.0f}
+    };
+    float D[3][3];
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            D[r][c] = A[r][c];
+        }
+    }
+
+    for (int iter = 0; iter < 20; ++iter) {
+        int p = 0, q = 1;
+        float maxOff = std::abs(D[0][1]);
+        if (std::abs(D[0][2]) > maxOff) { p = 0; q = 2; maxOff = std::abs(D[0][2]); }
+        if (std::abs(D[1][2]) > maxOff) { p = 1; q = 2; maxOff = std::abs(D[1][2]); }
+
+        if (maxOff < 1e-6f) break;
+
+        float app = D[p][p];
+        float aqq = D[q][q];
+        float apq = D[p][q];
+
+        float phi = 0.5f * std::atan2(2.0f * apq, aqq - app);
+        float c = std::cos(phi);
+        float s = std::sin(phi);
+
+        for (int i = 0; i < 3; ++i) {
+            if (i != p && i != q) {
+                float aip = D[i][p];
+                float aiq = D[i][q];
+                D[i][p] = D[p][i] = c * aip - s * aiq;
+                D[i][q] = D[q][i] = s * aip + c * aiq;
+            }
+        }
+        D[p][p] = c * c * app - 2.0f * s * c * apq + s * s * aqq;
+        D[q][q] = s * s * app + 2.0f * s * c * apq + c * c * aqq;
+        D[p][q] = D[q][p] = 0.0f;
+
+        for (int i = 0; i < 3; ++i) {
+            float vip = V[i][p];
+            float viq = V[i][q];
+            V[i][p] = c * vip - s * viq;
+            V[i][q] = s * vip + c * viq;
+        }
+    }
+
+    eigenvalues[0] = D[0][0];
+    eigenvalues[1] = D[1][1];
+    eigenvalues[2] = D[2][2];
+
+    for (int i = 0; i < 3; ++i) {
+        eigenvectors[i] = glm::vec3(V[0][i], V[1][i], V[2][i]);
+        float l = glm::length(eigenvectors[i]);
+        if (l > 1e-6f) eigenvectors[i] /= l;
+    }
+
+    for (int i = 0; i < 2; ++i) {
+        for (int j = i + 1; j < 3; ++j) {
+            if (eigenvalues[j] > eigenvalues[i]) {
+                std::swap(eigenvalues[i], eigenvalues[j]);
+                std::swap(eigenvectors[i], eigenvectors[j]);
+            }
+        }
+    }
+}
+
+static bool interpolateVerticesSurfaceNets(
     uint32_t edgeMask, const float grid[8], const int x[3],
     std::vector<float>& vertices, bool block,
-    bool regularizeQuads
+    bool regularizeQuads, bool keepSharpEdges
 ) {
     if (block) {
         vertices.push_back((float)x[0] + 0.5f);
         vertices.push_back((float)x[1] + 0.5f);
         vertices.push_back((float)x[2] + 0.5f);
-        return;
+        return false;
     }
 
-    if (!regularizeQuads) {
+    if (!regularizeQuads && !keepSharpEdges) {
         float vTemp[3] = {0.0f, 0.0f, 0.0f};
         int edgeCount = 0;
 
@@ -1335,10 +1405,10 @@ static void interpolateVerticesSurfaceNets(
         vertices.push_back(vTemp[0]);
         vertices.push_back(vTemp[1]);
         vertices.push_back(vTemp[2]);
-        return;
+        return false;
     }
 
-    // Regularized Quad Mode: QEF Hermite Placement
+    // Regularized Quad Mode & Sharp Feature Preserving Mode: QEF Hermite Placement
     glm::vec3 points[12];
     glm::vec3 normals[12];
     glm::vec3 xMass(0.0f);
@@ -1401,12 +1471,24 @@ static void interpolateVerticesSurfaceNets(
         vertices.push_back((float)x[0] + 0.5f);
         vertices.push_back((float)x[1] + 0.5f);
         vertices.push_back((float)x[2] + 0.5f);
-        return;
+        return false;
     }
+
+    // Sharp Feature Detection: cell with high normal divergence
+    float minDot = 1.0f;
+    for (int i = 0; i < edgeCount; ++i) {
+        for (int j = i + 1; j < edgeCount; ++j) {
+            float d = glm::dot(normals[i], normals[j]);
+            if (d < minDot) {
+                minDot = d;
+            }
+        }
+    }
+    bool isSharp = (keepSharpEdges && edgeCount >= 2 && minDot <= 0.80f);
 
     xMass /= (float)edgeCount;
 
-    // Minimize E(x) = sum (n_i . (x - p_i))^2 + alpha * ||x - xMass||^2
+    // Minimize E(x) = sum (n_i . (x - p_i))^2 (+ alpha * ||x - xMass||^2)
     // Let y = x - xMass => (sum n_i n_i^T + alpha * I) y = sum n_i (n_i . (p_i - xMass))
     float A00 = 0.0f, A01 = 0.0f, A02 = 0.0f;
     float A11 = 0.0f, A12 = 0.0f, A22 = 0.0f;
@@ -1429,41 +1511,72 @@ static void interpolateVerticesSurfaceNets(
         b2 += n.z * dot;
     }
 
-    const float alpha = 0.08f;
-    float M00 = A00 + alpha;
-    float M01 = A01;
-    float M02 = A02;
-    float M11 = A11 + alpha;
-    float M12 = A12;
-    float M22 = A22 + alpha;
-
-    float C00 = M11 * M22 - M12 * M12;
-    float C01 = M02 * M12 - M01 * M22;
-    float C02 = M01 * M12 - M02 * M11;
-    float C11 = M00 * M22 - M02 * M02;
-    float C12 = M01 * M02 - M00 * M12;
-    float C22 = M00 * M11 - M01 * M01;
-
-    float det = M00 * C00 + M01 * C01 + M02 * C02;
     glm::vec3 ySol(0.0f);
-    if (std::abs(det) > 1e-12f) {
-        float invDet = 1.0f / det;
-        ySol.x = invDet * (C00 * b0 + C01 * b1 + C02 * b2);
-        ySol.y = invDet * (C01 * b0 + C11 * b1 + C12 * b2);
-        ySol.z = invDet * (C02 * b0 + C12 * b1 + C22 * b2);
+
+    if (isSharp) {
+        // Feature Snapping & SVD QEF:
+        // Spectral decomposition eliminates null-space drift along sharp edges (Rank 2)
+        // and snaps corners (Rank 3) directly to the intersection point of the tangent planes.
+        float A_mat[3][3] = {
+            { A00, A01, A02 },
+            { A01, A11, A12 },
+            { A02, A12, A22 }
+        };
+        float eigenvalues[3];
+        glm::vec3 eigenvectors[3];
+        eigenSymmetric3x3(A_mat, eigenvalues, eigenvectors);
+
+        glm::vec3 b(b0, b1, b2);
+        float threshold = 0.10f * std::max(1e-4f, eigenvalues[0]);
+        for (int i = 0; i < 3; ++i) {
+            if (eigenvalues[i] >= threshold) {
+                float coeff = glm::dot(eigenvectors[i], b) / (eigenvalues[i] + 1e-4f);
+                ySol += coeff * eigenvectors[i];
+            }
+        }
+    } else {
+        const float alpha = 0.08f;
+        float M00 = A00 + alpha;
+        float M01 = A01;
+        float M02 = A02;
+        float M11 = A11 + alpha;
+        float M12 = A12;
+        float M22 = A22 + alpha;
+
+        float C00 = M11 * M22 - M12 * M12;
+        float C01 = M02 * M12 - M01 * M22;
+        float C02 = M01 * M12 - M02 * M11;
+        float C11 = M00 * M22 - M02 * M02;
+        float C12 = M01 * M02 - M00 * M12;
+        float C22 = M00 * M11 - M01 * M01;
+
+        float det = M00 * C00 + M01 * C01 + M02 * C02;
+        if (std::abs(det) > 1e-12f) {
+            float invDet = 1.0f / det;
+            ySol.x = invDet * (C00 * b0 + C01 * b1 + C02 * b2);
+            ySol.y = invDet * (C01 * b0 + C11 * b1 + C12 * b2);
+            ySol.z = invDet * (C02 * b0 + C12 * b1 + C22 * b2);
+        }
     }
 
     glm::vec3 xSol = xMass + ySol;
-    xSol.x = std::clamp(xSol.x, -0.05f, 1.05f);
-    xSol.y = std::clamp(xSol.y, -0.05f, 1.05f);
-    xSol.z = std::clamp(xSol.z, -0.05f, 1.05f);
+    float clampMargin = isSharp ? 0.10f : 0.05f;
+    xSol.x = std::clamp(xSol.x, -clampMargin, 1.0f + clampMargin);
+    xSol.y = std::clamp(xSol.y, -clampMargin, 1.0f + clampMargin);
+    xSol.z = std::clamp(xSol.z, -clampMargin, 1.0f + clampMargin);
 
     vertices.push_back((float)x[0] + xSol.x);
     vertices.push_back((float)x[1] + xSol.y);
     vertices.push_back((float)x[2] + xSol.z);
+
+    return isSharp;
 }
 
-static RemeshResult surfaceNetsReconstruct(VoxelGrid& voxels, bool block, bool regularizeQuads, std::function<void(int stage, int progress)> onProgress = nullptr) {
+static RemeshResult surfaceNetsReconstruct(
+    VoxelGrid& voxels, bool block, bool regularizeQuads,
+    bool keepSharpEdges = false,
+    std::function<void(int stage, int progress)> onProgress = nullptr
+) {
     RemeshResult res;
     int rx = voxels.dims[0];
     int ry = voxels.dims[1];
@@ -1487,6 +1600,7 @@ static RemeshResult surfaceNetsReconstruct(VoxelGrid& voxels, bool block, bool r
         std::vector<uint32_t> vertGroups;
         std::vector<int> vertCellIndices;
         std::vector<uint8_t> vertMasks;
+        std::vector<uint8_t> isSharpVert;
     };
     std::vector<ThreadVertData> threadVerts(numThreads);
 
@@ -1507,6 +1621,7 @@ static RemeshResult surfaceNetsReconstruct(VoxelGrid& voxels, bool block, bool r
         if (voxels.hasGroupField) td.vertGroups.reserve(64000);
         td.vertCellIndices.reserve(64000);
         td.vertMasks.reserve(64000);
+        if (keepSharpEdges) td.isSharpVert.reserve(64000);
 
         float grid[8];
         int x[3];
@@ -1524,9 +1639,12 @@ static RemeshResult surfaceNetsReconstruct(VoxelGrid& voxels, bool block, bool r
                     if (mask == 0 || mask == 0xff) continue;
 
                     uint32_t edgeMask = snEdgeTable[mask];
-                    interpolateVerticesSurfaceNets(edgeMask, grid, x, td.vertices, block, regularizeQuads);
+                    bool isSharp = interpolateVerticesSurfaceNets(edgeMask, grid, x, td.vertices, block, regularizeQuads, keepSharpEdges);
                     td.vertCellIndices.push_back(n);
                     td.vertMasks.push_back(mask);
+                    if (keepSharpEdges) {
+                        td.isSharpVert.push_back(isSharp ? 1 : 0);
+                    }
                 }
             }
         }
@@ -1542,6 +1660,9 @@ static RemeshResult surfaceNetsReconstruct(VoxelGrid& voxels, bool block, bool r
     res.vertices.resize(totalVerts * 3);
     res.colors.resize(totalVerts * 3);
     res.materials.resize(totalVerts * 3);
+    if (keepSharpEdges) {
+        res.sharpVertices.resize(totalVerts, 0);
+    }
     std::vector<uint32_t> vertGroups;
     if (voxels.hasGroupField) vertGroups.resize(totalVerts);
 
@@ -1555,6 +1676,9 @@ static RemeshResult surfaceNetsReconstruct(VoxelGrid& voxels, bool block, bool r
             std::memcpy(&res.vertices[baseVertIdx * 3], td.vertices.data(), count * 3 * sizeof(float));
             std::memcpy(&res.colors[baseVertIdx * 3], td.colors.data(), count * 3 * sizeof(float));
             std::memcpy(&res.materials[baseVertIdx * 3], td.materials.data(), count * 3 * sizeof(float));
+            if (keepSharpEdges && !td.isSharpVert.empty()) {
+                std::memcpy(&res.sharpVertices[baseVertIdx], td.isSharpVert.data(), count * sizeof(uint8_t));
+            }
             if (voxels.hasGroupField && !td.vertGroups.empty()) {
                 std::memcpy(&vertGroups[baseVertIdx], td.vertGroups.data(), count * sizeof(uint32_t));
             }
@@ -1782,7 +1906,8 @@ static void applyConstrainedTangentialRelaxation(
     const VoxelGrid& voxels,
     int iterations,
     float lambda,
-    bool alignSymmetry
+    bool alignSymmetry,
+    bool keepSharpEdges = false
 ) {
     size_t nbV = res.vertices.size() / 3;
     size_t nbF = res.faces.size() / 4;
@@ -1913,6 +2038,9 @@ static void applyConstrainedTangentialRelaxation(
     for (int iter = 0; iter < iterations; ++iter) {
 #pragma omp parallel for schedule(static)
         for (int v = 0; v < (int)nbV; ++v) {
+            if (keepSharpEdges && !res.sharpVertices.empty() && res.sharpVertices[v]) {
+                continue;
+            }
             uint8_t count = vertNeighborCount[v];
             if (count == 0) continue;
 
@@ -2364,11 +2492,12 @@ RemeshResult doRemesh(
     float matrixScaleX,
     float matrixScaleY,
     float matrixScaleZ,
-    bool regularizeQuads
+    bool regularizeQuads,
+    bool keepSharpEdges
 ) {
     auto tRemeshStart = std::chrono::high_resolution_clock::now();
-    sculpt_log("[C++ doRemesh] Start. nbVerts=%d, nbTris=%d, resolution=%.2f, block=%d, smooth=%d, manifold=%d, hasColors=%d, hasMaterials=%d, hasFaceGroups=%d, alignSymmetry=%d, regularizeQuads=%d, scaleXYZ=(%.4f, %.4f, %.4f)\n",
-               nbVerts, nbTris, resolution, block, smooth, manifold, hasColors, hasMaterials, hasFaceGroups, alignSymmetry, regularizeQuads, matrixScaleX, matrixScaleY, matrixScaleZ);
+    sculpt_log("[C++ doRemesh] Start. nbVerts=%d, nbTris=%d, resolution=%.2f, block=%d, smooth=%d, manifold=%d, hasColors=%d, hasMaterials=%d, hasFaceGroups=%d, alignSymmetry=%d, regularizeQuads=%d, keepSharpEdges=%d, scaleXYZ=(%.4f, %.4f, %.4f)\n",
+               nbVerts, nbTris, resolution, block, smooth, manifold, hasColors, hasMaterials, hasFaceGroups, alignSymmetry, regularizeQuads, keepSharpEdges, matrixScaleX, matrixScaleY, matrixScaleZ);
     if (box) {
         sculpt_log("[C++ doRemesh] box: [%.4f, %.4f, %.4f, %.4f, %.4f, %.4f]\n", box[0], box[1], box[2], box[3], box[4], box[5]);
     } else {
@@ -2491,11 +2620,11 @@ RemeshResult doRemesh(
     if (manifold) {
         r = marchingCubesReconstruct(voxels, onProgress);
     } else {
-        if (regularizeQuads && !block) {
+        if (regularizeQuads && !block && !keepSharpEdges) {
             usedPolyCube = tryPolyCubeReconstruct(voxels, box, alignSymmetry, r, onProgress);
         }
         if (!usedPolyCube) {
-            r = surfaceNetsReconstruct(voxels, block, regularizeQuads, onProgress);
+            r = surfaceNetsReconstruct(voxels, block, regularizeQuads, keepSharpEdges, onProgress);
         }
     }
     double msReconstruct = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tReconstructStart).count();
@@ -2521,11 +2650,11 @@ RemeshResult doRemesh(
         }
 
         if (regularizeQuads && !manifold && !block && r.vertices.size() >= 12) {
-            applyConstrainedTangentialRelaxation(r, voxels, 3, 0.45f, alignSymmetry);
+            applyConstrainedTangentialRelaxation(r, voxels, 3, 0.45f, alignSymmetry, keepSharpEdges);
         }
     } else {
         if (r.vertices.size() >= 12) {
-            applyConstrainedTangentialRelaxation(r, voxels, 1, 0.15f, alignSymmetry);
+            applyConstrainedTangentialRelaxation(r, voxels, 1, 0.15f, alignSymmetry, false);
         }
     }
 
@@ -2754,7 +2883,7 @@ RemeshResult doSurfaceNetsFromSDF(
     voxels.uniformMaterial[1] = uniformMaterial[1];
     voxels.uniformMaterial[2] = uniformMaterial[2];
     
-    RemeshResult r = surfaceNetsReconstruct(voxels, false, true, onProgress);
+    RemeshResult r = surfaceNetsReconstruct(voxels, false, true, false, onProgress);
     
     for (size_t i = 0; i < r.vertices.size(); i += 3) {
         r.vertices[i]     = voxels.minCoord[0] + r.vertices[i] * voxels.step;
@@ -2763,7 +2892,7 @@ RemeshResult doSurfaceNetsFromSDF(
     }
 
     if (r.vertices.size() >= 12) {
-        applyConstrainedTangentialRelaxation(r, voxels, 3, 0.45f, false);
+        applyConstrainedTangentialRelaxation(r, voxels, 3, 0.45f, false, false);
     }
     
     return r;

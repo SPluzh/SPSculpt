@@ -5961,6 +5961,11 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Eliminates diamond/rhombus polygon artifacts using QEF Hermite positioning and constrained tangential relaxation.");
             }
+            ImGui::Checkbox("Keep sharp edges", &m_remeshKeepSharpEdges);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("This option is mostly useful for simple primitive boolean operations.\n"
+                                  "It can introduce distortion in some areas because points are snapped to the edges.");
+            }
 
             if (ImGui::Button("Remesh", ImVec2(-1, 0))) {
                 std::cout << "[Topology] Trigger remesh with resolution: " << m_remeshResolution << std::endl;
@@ -7963,6 +7968,7 @@ void GuiManager::performRemesh(Scene& scene) {
         keepGroups,
         alignSymmetry = m_remeshAlignSymmetry,
         regularizeQuads = m_remeshRegularizeQuads,
+        keepSharpEdges = m_remeshKeepSharpEdges,
         nbVerts,
         bboxArr = std::array<float,6>{bbox[0],bbox[1],bbox[2],bbox[3],bbox[4],bbox[5]},
         resolution,
@@ -8000,7 +8006,8 @@ void GuiManager::performRemesh(Scene& scene) {
                 scaleX,
                 scaleY,
                 scaleZ,
-                regularizeQuads
+                regularizeQuads,
+                keepSharpEdges
             );
             m_remeshAsync.result = std::move(result);
             m_remeshAsync.state = RemeshState::Done;
@@ -8421,6 +8428,7 @@ bool GuiManager::saveSettings(IniFile& ini) {
     ini.setBool(remeshSec, "keepPolyGroups", m_remeshKeepPolyGroups);
     ini.setBool(remeshSec, "alignSymmetry", m_remeshAlignSymmetry);
     ini.setBool(remeshSec, "regularizeQuads", m_remeshRegularizeQuads);
+    ini.setBool(remeshSec, "keepSharpEdges", m_remeshKeepSharpEdges);
 
     std::string winSec = "Window";
     ini.setInt(winSec, "width", m_winWidth);
@@ -8510,6 +8518,7 @@ bool GuiManager::loadSettings(const IniFile& ini) {
         if (ini.hasKey(remeshSec, "keepPolyGroups")) m_remeshKeepPolyGroups = ini.getBool(remeshSec, "keepPolyGroups");
         if (ini.hasKey(remeshSec, "alignSymmetry")) m_remeshAlignSymmetry = ini.getBool(remeshSec, "alignSymmetry");
         if (ini.hasKey(remeshSec, "regularizeQuads")) m_remeshRegularizeQuads = ini.getBool(remeshSec, "regularizeQuads");
+        if (ini.hasKey(remeshSec, "keepSharpEdges")) m_remeshKeepSharpEdges = ini.getBool(remeshSec, "keepSharpEdges");
     } else if (ini.hasSection("GuiGeneral")) {
         if (ini.hasKey("GuiGeneral", "remeshAlignSymmetry")) m_remeshAlignSymmetry = ini.getBool("GuiGeneral", "remeshAlignSymmetry");
         if (ini.hasKey("GuiGeneral", "remeshResolution")) m_remeshResolution = ini.getInt("GuiGeneral", "remeshResolution", 310);
