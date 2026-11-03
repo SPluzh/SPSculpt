@@ -9988,6 +9988,14 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::Checkbox("Keep PolyGroups", &m_remeshKeepPolyGroups);
             ImGui::Checkbox("Align Symmetry Axes", &m_remeshAlignSymmetry);
             ImGui::Checkbox("Regularize Quads", &m_remeshRegularizeQuads);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Eliminates diamond/rhombus polygon artifacts using QEF Hermite positioning and constrained tangential relaxation.");
+            }
+            ImGui::Checkbox("Keep sharp edges", &m_remeshKeepSharpEdges);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("This option is mostly useful for simple primitive boolean operations.\n"
+                                  "It can introduce distortion in some areas because points are snapped to the edges.");
+            }
             ImGui::Separator();
             if (ImGui::Button("Remesh Now", ImVec2(-1.0f, 0.0f))) {
                 scene.updateVoxelPreview(0.0f, {});
