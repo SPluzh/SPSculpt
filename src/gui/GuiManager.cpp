@@ -5957,6 +5957,10 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
             ImGui::Checkbox("Keep PolyGroups", &m_remeshKeepPolyGroups);
             ImGui::Checkbox("Align Symmetry Axes", &m_remeshAlignSymmetry);
+            ImGui::Checkbox("Regularize Quads", &m_remeshRegularizeQuads);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Eliminates diamond/rhombus polygon artifacts using QEF Hermite positioning and constrained tangential relaxation.");
+            }
 
             if (ImGui::Button("Remesh", ImVec2(-1, 0))) {
                 std::cout << "[Topology] Trigger remesh with resolution: " << m_remeshResolution << std::endl;
@@ -7958,6 +7962,7 @@ void GuiManager::performRemesh(Scene& scene) {
         triFaceGroups = std::move(triFaceGroups),
         keepGroups,
         alignSymmetry = m_remeshAlignSymmetry,
+        regularizeQuads = m_remeshRegularizeQuads,
         nbVerts,
         bboxArr = std::array<float,6>{bbox[0],bbox[1],bbox[2],bbox[3],bbox[4],bbox[5]},
         resolution,
@@ -7994,7 +7999,8 @@ void GuiManager::performRemesh(Scene& scene) {
                 },
                 scaleX,
                 scaleY,
-                scaleZ
+                scaleZ,
+                regularizeQuads
             );
             m_remeshAsync.result = std::move(result);
             m_remeshAsync.state = RemeshState::Done;
@@ -8414,6 +8420,7 @@ bool GuiManager::saveSettings(IniFile& ini) {
     ini.setInt(remeshSec, "resolution", m_remeshResolution);
     ini.setBool(remeshSec, "keepPolyGroups", m_remeshKeepPolyGroups);
     ini.setBool(remeshSec, "alignSymmetry", m_remeshAlignSymmetry);
+    ini.setBool(remeshSec, "regularizeQuads", m_remeshRegularizeQuads);
 
     std::string winSec = "Window";
     ini.setInt(winSec, "width", m_winWidth);
@@ -8502,6 +8509,7 @@ bool GuiManager::loadSettings(const IniFile& ini) {
         if (ini.hasKey(remeshSec, "resolution")) m_remeshResolution = ini.getInt(remeshSec, "resolution", 310);
         if (ini.hasKey(remeshSec, "keepPolyGroups")) m_remeshKeepPolyGroups = ini.getBool(remeshSec, "keepPolyGroups");
         if (ini.hasKey(remeshSec, "alignSymmetry")) m_remeshAlignSymmetry = ini.getBool(remeshSec, "alignSymmetry");
+        if (ini.hasKey(remeshSec, "regularizeQuads")) m_remeshRegularizeQuads = ini.getBool(remeshSec, "regularizeQuads");
     } else if (ini.hasSection("GuiGeneral")) {
         if (ini.hasKey("GuiGeneral", "remeshAlignSymmetry")) m_remeshAlignSymmetry = ini.getBool("GuiGeneral", "remeshAlignSymmetry");
         if (ini.hasKey("GuiGeneral", "remeshResolution")) m_remeshResolution = ini.getInt("GuiGeneral", "remeshResolution", 310);
@@ -9970,6 +9978,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             ImGui::PopItemWidth();
             ImGui::Checkbox("Keep PolyGroups", &m_remeshKeepPolyGroups);
             ImGui::Checkbox("Align Symmetry Axes", &m_remeshAlignSymmetry);
+            ImGui::Checkbox("Regularize Quads", &m_remeshRegularizeQuads);
             ImGui::Separator();
             if (ImGui::Button("Remesh Now", ImVec2(-1.0f, 0.0f))) {
                 scene.updateVoxelPreview(0.0f, {});

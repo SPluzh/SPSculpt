@@ -42,6 +42,7 @@ struct VoxelBenchmarkRow {
     bool isMarchingCubes = false; // false = Surface Nets (quads), true = Marching Cubes (tris)
     bool hasPolyGroups = false;
     bool alignSymmetry = true;
+    bool regularizeQuads = true;
 
     // Grid Specs
     int gridDims[3] = { 0, 0, 0 };
@@ -732,7 +733,8 @@ inline VoxelBenchmarkRow runVoxelTest(
     int resolution,
     bool manifold = false, // false = Surface Nets (quads), true = Marching Cubes (tris)
     bool keepGroups = false,
-    bool alignSymmetry = true
+    bool alignSymmetry = true,
+    bool regularizeQuads = true
 ) {
     VoxelBenchmarkRow row;
     row.testName = name;
@@ -740,6 +742,7 @@ inline VoxelBenchmarkRow runVoxelTest(
     row.isMarchingCubes = manifold;
     row.hasPolyGroups = keepGroups;
     row.alignSymmetry = alignSymmetry;
+    row.regularizeQuads = regularizeQuads;
 
     row.inVerts = inputMesh->nbVerts;
     row.inFaces = inputMesh->nbFaces;
@@ -807,7 +810,10 @@ inline VoxelBenchmarkRow runVoxelTest(
         hasColors,
         hasMaterials,
         keepGroups,
-        alignSymmetry
+        alignSymmetry,
+        nullptr, // onProgress
+        1.0f, 1.0f, 1.0f, // matrixScaleXYZ
+        regularizeQuads
     );
 
     // Copy core sub-stage timings from RemeshProfile
@@ -901,8 +907,8 @@ inline VoxelBenchmarkRow runVoxelTest(
     row.maxUndoEps = maxUndoDiff;
 
     // 7. Stage: Redo Execution & Verification
-    int remeshedVerts = mesh->nbVerts;
-    int remeshedFaces = mesh->nbFaces;
+    int remeshedVerts = remeshedMeshCopy->nbVerts;
+    int remeshedFaces = remeshedMeshCopy->nbFaces;
 
     auto tRedoStart = std::chrono::high_resolution_clock::now();
     g_undoManager.redo(scene);

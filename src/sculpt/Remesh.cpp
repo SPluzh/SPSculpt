@@ -12,6 +12,7 @@
 #ifdef _OPENMP
 #include <omp.h>
 #endif
+#include <glm/glm.hpp>
 #include "common/Logger.h"
 
 // Bounding box mapping and structures
@@ -1289,46 +1290,180 @@ static uint8_t readScalarValuesSurfaceNets(
 
 static void interpolateVerticesSurfaceNets(
     uint32_t edgeMask, const float grid[8], const int x[3],
-    std::vector<float>& vertices, bool block
+    std::vector<float>& vertices, bool block,
+    bool regularizeQuads
 ) {
-    float vTemp[3] = {0.0f, 0.0f, 0.0f};
+    if (block) {
+        vertices.push_back((float)x[0] + 0.5f);
+        vertices.push_back((float)x[1] + 0.5f);
+        vertices.push_back((float)x[2] + 0.5f);
+        return;
+    }
+
+    if (!regularizeQuads) {
+        float vTemp[3] = {0.0f, 0.0f, 0.0f};
+        int edgeCount = 0;
+
+        for (int i = 0; i < 12; ++i) {
+            if (!(edgeMask & (1 << i)))
+                continue;
+            ++edgeCount;
+
+            int e0 = snCubeEdges[i << 1];
+            int e1 = snCubeEdges[(i << 1) + 1];
+            float g0 = grid[e0];
+            float t = g0 - grid[e1];
+            if (std::abs(t) < 1e-7f)
+                continue;
+            t = g0 / t;
+
+            for (int j = 0; j < 3; ++j) {
+                int k = 1 << j;
+                int a = e0 & k;
+                if (a != (e1 & k))
+                    vTemp[j] += a ? 1.0f - t : t;
+                else
+                    vTemp[j] += a ? 1.0f : 0.0f;
+            }
+        }
+
+        if (edgeCount == 0) edgeCount = 1;
+        float s = 1.0f / (float)edgeCount;
+        for (int l = 0; l < 3; ++l) {
+            vTemp[l] = (float)x[l] + s * vTemp[l];
+        }
+        vertices.push_back(vTemp[0]);
+        vertices.push_back(vTemp[1]);
+        vertices.push_back(vTemp[2]);
+        return;
+    }
+
+    // Regularized Quad Mode: QEF Hermite Placement
+    glm::vec3 points[12];
+    glm::vec3 normals[12];
+    glm::vec3 xMass(0.0f);
     int edgeCount = 0;
 
     for (int i = 0; i < 12; ++i) {
         if (!(edgeMask & (1 << i)))
             continue;
-        ++edgeCount;
-        if (block)
-            continue;
 
         int e0 = snCubeEdges[i << 1];
         int e1 = snCubeEdges[(i << 1) + 1];
         float g0 = grid[e0];
-        float t = g0 - grid[e1];
-        if (std::abs(t) < 1e-7f)
+        float diff = g0 - grid[e1];
+        if (std::abs(diff) < 1e-7f)
             continue;
-        t = g0 / t;
+        float t = g0 / diff;
 
+        glm::vec3 pLocal(0.0f);
         for (int j = 0; j < 3; ++j) {
             int k = 1 << j;
             int a = e0 & k;
             if (a != (e1 & k))
-                vTemp[j] += a ? 1.0f - t : t;
+                pLocal[j] = a ? (1.0f - t) : t;
             else
-                vTemp[j] += a ? 1.0f : 0.0f;
+                pLocal[j] = a ? 1.0f : 0.0f;
         }
+
+        // Exact trilinear gradient of cell at pLocal
+        float u = pLocal.x;
+        float v = pLocal.y;
+        float w = pLocal.z;
+        float nx = (1.0f - v) * (1.0f - w) * (grid[1] - grid[0]) +
+                   v * (1.0f - w) * (grid[3] - grid[2]) +
+                   (1.0f - v) * w * (grid[5] - grid[4]) +
+                   v * w * (grid[7] - grid[6]);
+        float ny = (1.0f - u) * (1.0f - w) * (grid[2] - grid[0]) +
+                   u * (1.0f - w) * (grid[3] - grid[1]) +
+                   (1.0f - u) * w * (grid[6] - grid[4]) +
+                   u * w * (grid[7] - grid[5]);
+        float nz = (1.0f - u) * (1.0f - v) * (grid[4] - grid[0]) +
+                   u * (1.0f - v) * (grid[5] - grid[1]) +
+                   (1.0f - u) * v * (grid[6] - grid[2]) +
+                   u * v * (grid[7] - grid[3]);
+
+        glm::vec3 norm(nx, ny, nz);
+        float nlen = glm::length(norm);
+        if (nlen > 1e-6f) {
+            norm /= nlen;
+        } else {
+            norm = glm::vec3(0.0f, 0.0f, 1.0f);
+        }
+
+        points[edgeCount] = pLocal;
+        normals[edgeCount] = norm;
+        xMass += pLocal;
+        ++edgeCount;
     }
 
-    float s = 1.0f / (float)edgeCount;
-    for (int l = 0; l < 3; ++l) {
-        vTemp[l] = (float)x[l] + s * vTemp[l];
+    if (edgeCount == 0) {
+        vertices.push_back((float)x[0] + 0.5f);
+        vertices.push_back((float)x[1] + 0.5f);
+        vertices.push_back((float)x[2] + 0.5f);
+        return;
     }
-    vertices.push_back(vTemp[0]);
-    vertices.push_back(vTemp[1]);
-    vertices.push_back(vTemp[2]);
+
+    xMass /= (float)edgeCount;
+
+    // Minimize E(x) = sum (n_i . (x - p_i))^2 + alpha * ||x - xMass||^2
+    // Let y = x - xMass => (sum n_i n_i^T + alpha * I) y = sum n_i (n_i . (p_i - xMass))
+    float A00 = 0.0f, A01 = 0.0f, A02 = 0.0f;
+    float A11 = 0.0f, A12 = 0.0f, A22 = 0.0f;
+    float b0 = 0.0f, b1 = 0.0f, b2 = 0.0f;
+
+    for (int k = 0; k < edgeCount; ++k) {
+        const glm::vec3& n = normals[k];
+        glm::vec3 d = points[k] - xMass;
+        float dot = glm::dot(n, d);
+
+        A00 += n.x * n.x;
+        A01 += n.x * n.y;
+        A02 += n.x * n.z;
+        A11 += n.y * n.y;
+        A12 += n.y * n.z;
+        A22 += n.z * n.z;
+
+        b0 += n.x * dot;
+        b1 += n.y * dot;
+        b2 += n.z * dot;
+    }
+
+    const float alpha = 0.08f;
+    float M00 = A00 + alpha;
+    float M01 = A01;
+    float M02 = A02;
+    float M11 = A11 + alpha;
+    float M12 = A12;
+    float M22 = A22 + alpha;
+
+    float C00 = M11 * M22 - M12 * M12;
+    float C01 = M02 * M12 - M01 * M22;
+    float C02 = M01 * M12 - M02 * M11;
+    float C11 = M00 * M22 - M02 * M02;
+    float C12 = M01 * M02 - M00 * M12;
+    float C22 = M00 * M11 - M01 * M01;
+
+    float det = M00 * C00 + M01 * C01 + M02 * C02;
+    glm::vec3 ySol(0.0f);
+    if (std::abs(det) > 1e-12f) {
+        float invDet = 1.0f / det;
+        ySol.x = invDet * (C00 * b0 + C01 * b1 + C02 * b2);
+        ySol.y = invDet * (C01 * b0 + C11 * b1 + C12 * b2);
+        ySol.z = invDet * (C02 * b0 + C12 * b1 + C22 * b2);
+    }
+
+    glm::vec3 xSol = xMass + ySol;
+    xSol.x = std::clamp(xSol.x, -0.05f, 1.05f);
+    xSol.y = std::clamp(xSol.y, -0.05f, 1.05f);
+    xSol.z = std::clamp(xSol.z, -0.05f, 1.05f);
+
+    vertices.push_back((float)x[0] + xSol.x);
+    vertices.push_back((float)x[1] + xSol.y);
+    vertices.push_back((float)x[2] + xSol.z);
 }
 
-static RemeshResult surfaceNetsReconstruct(VoxelGrid& voxels, bool block, std::function<void(int stage, int progress)> onProgress = nullptr) {
+static RemeshResult surfaceNetsReconstruct(VoxelGrid& voxels, bool block, bool regularizeQuads, std::function<void(int stage, int progress)> onProgress = nullptr) {
     RemeshResult res;
     int rx = voxels.dims[0];
     int ry = voxels.dims[1];
@@ -1389,7 +1524,7 @@ static RemeshResult surfaceNetsReconstruct(VoxelGrid& voxels, bool block, std::f
                     if (mask == 0 || mask == 0xff) continue;
 
                     uint32_t edgeMask = snEdgeTable[mask];
-                    interpolateVerticesSurfaceNets(edgeMask, grid, x, td.vertices, block);
+                    interpolateVerticesSurfaceNets(edgeMask, grid, x, td.vertices, block, regularizeQuads);
                     td.vertCellIndices.push_back(n);
                     td.vertMasks.push_back(mask);
                 }
@@ -1537,6 +1672,674 @@ static RemeshResult surfaceNetsReconstruct(VoxelGrid& voxels, bool block, std::f
 }
 
 // ---------------------------------------------------------
+// Constrained Tangential Laplacian Relaxation & SDF Sampling
+// ---------------------------------------------------------
+
+static inline float sampleSDFScalar(const VoxelGrid& voxels, float gx, float gy, float gz) {
+    int rx = voxels.dims[0];
+    int ry = voxels.dims[1];
+    int rz = voxels.dims[2];
+    int rxy = rx * ry;
+
+    int x0 = std::clamp((int)std::floor(gx), 0, rx - 2);
+    int y0 = std::clamp((int)std::floor(gy), 0, ry - 2);
+    int z0 = std::clamp((int)std::floor(gz), 0, rz - 2);
+
+    float u = std::clamp(gx - (float)x0, 0.0f, 1.0f);
+    float v = std::clamp(gy - (float)y0, 0.0f, 1.0f);
+    float w = std::clamp(gz - (float)z0, 0.0f, 1.0f);
+
+    int n = x0 + y0 * rx + z0 * rxy;
+    float d0 = voxels.distanceField[n];
+    float d1 = voxels.distanceField[n + 1];
+    float d2 = voxels.distanceField[n + rx];
+    float d3 = voxels.distanceField[n + rx + 1];
+    float d4 = voxels.distanceField[n + rxy];
+    float d5 = voxels.distanceField[n + rxy + 1];
+    float d6 = voxels.distanceField[n + rxy + rx];
+    float d7 = voxels.distanceField[n + rxy + rx + 1];
+
+    float infDist = 2.0f * voxels.step;
+    auto clampDist = [infDist](float d) -> float {
+        if (!std::isfinite(d)) {
+            return (d < 0.0f) ? -infDist : infDist;
+        }
+        return d;
+    };
+
+    d0 = clampDist(d0);
+    d1 = clampDist(d1);
+    d2 = clampDist(d2);
+    d3 = clampDist(d3);
+    d4 = clampDist(d4);
+    d5 = clampDist(d5);
+    d6 = clampDist(d6);
+    d7 = clampDist(d7);
+
+    float c00 = d0 * (1.0f - u) + d1 * u;
+    float c10 = d2 * (1.0f - u) + d3 * u;
+    float c01 = d4 * (1.0f - u) + d5 * u;
+    float c11 = d6 * (1.0f - u) + d7 * u;
+
+    float c0 = c00 * (1.0f - v) + c10 * v;
+    float c1 = c01 * (1.0f - v) + c11 * v;
+
+    return c0 * (1.0f - w) + c1 * w;
+}
+
+static inline glm::vec3 sampleSDFGradient(const VoxelGrid& voxels, float gx, float gy, float gz) {
+    int rx = voxels.dims[0];
+    int ry = voxels.dims[1];
+    int rz = voxels.dims[2];
+    int rxy = rx * ry;
+
+    int x0 = std::clamp((int)std::floor(gx), 0, rx - 2);
+    int y0 = std::clamp((int)std::floor(gy), 0, ry - 2);
+    int z0 = std::clamp((int)std::floor(gz), 0, rz - 2);
+
+    float u = std::clamp(gx - (float)x0, 0.0f, 1.0f);
+    float v = std::clamp(gy - (float)y0, 0.0f, 1.0f);
+    float w = std::clamp(gz - (float)z0, 0.0f, 1.0f);
+
+    int n = x0 + y0 * rx + z0 * rxy;
+    float d0 = voxels.distanceField[n];
+    float d1 = voxels.distanceField[n + 1];
+    float d2 = voxels.distanceField[n + rx];
+    float d3 = voxels.distanceField[n + rx + 1];
+    float d4 = voxels.distanceField[n + rxy];
+    float d5 = voxels.distanceField[n + rxy + 1];
+    float d6 = voxels.distanceField[n + rxy + rx];
+    float d7 = voxels.distanceField[n + rxy + rx + 1];
+
+    if (!std::isfinite(d0) || !std::isfinite(d1) || !std::isfinite(d2) || !std::isfinite(d3) ||
+        !std::isfinite(d4) || !std::isfinite(d5) || !std::isfinite(d6) || !std::isfinite(d7)) {
+        return glm::vec3(0.0f);
+    }
+
+    float nx = (1.0f - v) * (1.0f - w) * (d1 - d0) +
+               v * (1.0f - w) * (d3 - d2) +
+               (1.0f - v) * w * (d5 - d4) +
+               v * w * (d7 - d6);
+    float ny = (1.0f - u) * (1.0f - w) * (d2 - d0) +
+               u * (1.0f - w) * (d3 - d1) +
+               (1.0f - u) * w * (d6 - d4) +
+               u * w * (d7 - d5);
+    float nz = (1.0f - u) * (1.0f - v) * (d4 - d0) +
+               u * (1.0f - v) * (d5 - d1) +
+               (1.0f - u) * v * (d6 - d2) +
+               u * v * (d7 - d3);
+
+    glm::vec3 grad(nx, ny, nz);
+    float len = glm::length(grad);
+    if (len > 1e-6f) {
+        return grad / len;
+    }
+    return glm::vec3(0.0f);
+}
+
+static void applyConstrainedTangentialRelaxation(
+    RemeshResult& res,
+    const VoxelGrid& voxels,
+    int iterations,
+    float lambda,
+    bool alignSymmetry
+) {
+    size_t nbV = res.vertices.size() / 3;
+    size_t nbF = res.faces.size() / 4;
+    if (nbV < 4 || nbF < 1 || iterations <= 0) return;
+
+    // 1. Precompute vertex normals from mesh geometry as a reliable baseline
+    std::vector<glm::vec3> vertNormals(nbV, glm::vec3(0.0f));
+    for (size_t f = 0; f < nbF; ++f) {
+        uint32_t i0 = res.faces[f * 4 + 0];
+        uint32_t i1 = res.faces[f * 4 + 1];
+        uint32_t i2 = res.faces[f * 4 + 2];
+        uint32_t i3 = res.faces[f * 4 + 3];
+        if (i0 >= nbV || i1 >= nbV || i2 >= nbV) continue;
+
+        glm::vec3 p0(res.vertices[i0 * 3], res.vertices[i0 * 3 + 1], res.vertices[i0 * 3 + 2]);
+        glm::vec3 p1(res.vertices[i1 * 3], res.vertices[i1 * 3 + 1], res.vertices[i1 * 3 + 2]);
+        glm::vec3 p2(res.vertices[i2 * 3], res.vertices[i2 * 3 + 1], res.vertices[i2 * 3 + 2]);
+
+        glm::vec3 fn(0.0f);
+        if (i3 != 0xffffffff && i3 < (uint32_t)nbV) {
+            glm::vec3 p3(res.vertices[i3 * 3], res.vertices[i3 * 3 + 1], res.vertices[i3 * 3 + 2]);
+            fn = glm::cross(p2 - p0, p3 - p1);
+            vertNormals[i3] += fn;
+        } else {
+            fn = glm::cross(p1 - p0, p2 - p0);
+        }
+        vertNormals[i0] += fn;
+        vertNormals[i1] += fn;
+        vertNormals[i2] += fn;
+    }
+#pragma omp parallel for schedule(static)
+    for (int i = 0; i < (int)nbV; ++i) {
+        float l = glm::length(vertNormals[i]);
+        if (l > 1e-6f) vertNormals[i] /= l;
+        else vertNormals[i] = glm::vec3(0.0f, 0.0f, 1.0f);
+    }
+
+    // 2. Build vertex adjacency graph (VRV) and quad diagonal pairs
+    const int MAX_DEG = 8;
+    std::vector<uint32_t> vertNeighbors(nbV * MAX_DEG);
+    std::vector<uint8_t> vertNeighborCount(nbV, 0);
+
+    struct QuadDiagRef {
+        uint32_t opp;
+        uint32_t otherA;
+        uint32_t otherB;
+    };
+    std::vector<QuadDiagRef> vertDiags(nbV * MAX_DEG);
+    std::vector<uint8_t> vertDiagCount(nbV, 0);
+
+    for (size_t f = 0; f < nbF; ++f) {
+        uint32_t fv[4] = {
+            res.faces[f * 4 + 0],
+            res.faces[f * 4 + 1],
+            res.faces[f * 4 + 2],
+            res.faces[f * 4 + 3]
+        };
+        bool isQuad = (fv[3] != 0xffffffff && fv[3] < (uint32_t)nbV);
+        int numEdges = isQuad ? 4 : 3;
+
+        for (int k = 0; k < numEdges; ++k) {
+            uint32_t u = fv[k];
+            uint32_t w = fv[(k + 1) % numEdges];
+            if (u >= (uint32_t)nbV || w >= (uint32_t)nbV || u == w) continue;
+
+            uint8_t cu = vertNeighborCount[u];
+            bool foundU = false;
+            for (uint8_t j = 0; j < cu; ++j) {
+                if (vertNeighbors[u * MAX_DEG + j] == w) {
+                    foundU = true;
+                    break;
+                }
+            }
+            if (!foundU && cu < MAX_DEG) {
+                vertNeighbors[u * MAX_DEG + cu] = w;
+                vertNeighborCount[u] = cu + 1;
+            }
+
+            uint8_t cw = vertNeighborCount[w];
+            bool foundW = false;
+            for (uint8_t j = 0; j < cw; ++j) {
+                if (vertNeighbors[w * MAX_DEG + j] == u) {
+                    foundW = true;
+                    break;
+                }
+            }
+            if (!foundW && cw < MAX_DEG) {
+                vertNeighbors[w * MAX_DEG + cw] = u;
+                vertNeighborCount[w] = cw + 1;
+            }
+        }
+
+        if (isQuad && fv[0] < nbV && fv[1] < nbV && fv[2] < nbV && fv[3] < nbV) {
+            auto addDiag = [&](uint32_t myV, uint32_t oppV, uint32_t oA, uint32_t oB) {
+                uint8_t cd = vertDiagCount[myV];
+                if (cd < MAX_DEG) {
+                    vertDiags[myV * MAX_DEG + cd] = { oppV, oA, oB };
+                    vertDiagCount[myV] = cd + 1;
+                }
+            };
+            addDiag(fv[0], fv[2], fv[1], fv[3]);
+            addDiag(fv[2], fv[0], fv[1], fv[3]);
+            addDiag(fv[1], fv[3], fv[0], fv[2]);
+            addDiag(fv[3], fv[1], fv[0], fv[2]);
+        }
+    }
+
+    // 3. Identify symmetry-constrained vertices
+    std::vector<uint8_t> symFixed(nbV, 0);
+    if (alignSymmetry) {
+#pragma omp parallel for schedule(static)
+        for (int i = 0; i < (int)nbV; ++i) {
+            float vx = res.vertices[i * 3 + 0];
+            float vy = res.vertices[i * 3 + 1];
+            float vz = res.vertices[i * 3 + 2];
+            uint8_t mask = 0;
+            if (std::abs(vx) < 1e-4f) mask |= 1;
+            if (std::abs(vy) < 1e-4f) mask |= 2;
+            if (std::abs(vz) < 1e-4f) mask |= 4;
+            symFixed[i] = mask;
+        }
+    }
+
+    // 4. Jacobi iterations with double buffering
+    std::vector<float> currVerts = res.vertices;
+    std::vector<float> nextVerts = res.vertices;
+
+    for (int iter = 0; iter < iterations; ++iter) {
+#pragma omp parallel for schedule(static)
+        for (int v = 0; v < (int)nbV; ++v) {
+            uint8_t count = vertNeighborCount[v];
+            if (count == 0) continue;
+
+            glm::vec3 pv(currVerts[v * 3 + 0], currVerts[v * 3 + 1], currVerts[v * 3 + 2]);
+
+            // Edge Laplacian vector
+            glm::vec3 pAvg(0.0f);
+            const uint32_t* nbrPtr = &vertNeighbors[v * MAX_DEG];
+            for (uint8_t k = 0; k < count; ++k) {
+                uint32_t u = nbrPtr[k];
+                pAvg += glm::vec3(currVerts[u * 3 + 0], currVerts[u * 3 + 1], currVerts[u * 3 + 2]);
+            }
+            pAvg /= (float)count;
+            glm::vec3 delta = pAvg - pv;
+
+            // Quad diagonal equalization force
+            uint8_t diagCount = vertDiagCount[v];
+            if (diagCount > 0) {
+                glm::vec3 diagDelta(0.0f);
+                const QuadDiagRef* dPtr = &vertDiags[v * MAX_DEG];
+                for (uint8_t k = 0; k < diagCount; ++k) {
+                    uint32_t opp = dPtr[k].opp;
+                    uint32_t oA = dPtr[k].otherA;
+                    uint32_t oB = dPtr[k].otherB;
+
+                    glm::vec3 pOpp(currVerts[opp * 3 + 0], currVerts[opp * 3 + 1], currVerts[opp * 3 + 2]);
+                    glm::vec3 pA(currVerts[oA * 3 + 0], currVerts[oA * 3 + 1], currVerts[oA * 3 + 2]);
+                    glm::vec3 pB(currVerts[oB * 3 + 0], currVerts[oB * 3 + 1], currVerts[oB * 3 + 2]);
+
+                    glm::vec3 myDiag = pv - pOpp;
+                    glm::vec3 otherDiag = pB - pA;
+                    float dMy = glm::length(myDiag);
+                    float dOther = glm::length(otherDiag);
+
+                    if (dMy > 1e-6f && dOther > 1e-6f) {
+                        float targetLen = (dMy + dOther) * 0.5f;
+                        float diff = (targetLen - dMy) * 0.5f;
+                        diagDelta += diff * (myDiag / dMy);
+                    }
+                }
+                diagDelta /= (float)diagCount;
+                delta = delta * 0.6f + diagDelta * 0.4f;
+            }
+
+            float gx = (pv.x - voxels.minCoord[0]) / voxels.step;
+            float gy = (pv.y - voxels.minCoord[1]) / voxels.step;
+            float gz = (pv.z - voxels.minCoord[2]) / voxels.step;
+            glm::vec3 norm = sampleSDFGradient(voxels, gx, gy, gz);
+            if (glm::length(norm) < 1e-6f) {
+                norm = vertNormals[v];
+            } else if (glm::dot(norm, vertNormals[v]) < 0.0f) {
+                norm = -norm;
+            }
+
+            // Project delta onto tangent plane
+            glm::vec3 deltaTan = delta - glm::dot(delta, norm) * norm;
+
+            if (alignSymmetry) {
+                uint8_t sf = symFixed[v];
+                if (sf & 1) deltaTan.x = 0.0f;
+                if (sf & 2) deltaTan.y = 0.0f;
+                if (sf & 4) deltaTan.z = 0.0f;
+            }
+
+            glm::vec3 pNew = pv + lambda * deltaTan;
+
+            if (alignSymmetry) {
+                uint8_t sf = symFixed[v];
+                if (sf & 1) pNew.x = 0.0f;
+                if (sf & 2) pNew.y = 0.0f;
+                if (sf & 4) pNew.z = 0.0f;
+            }
+
+            nextVerts[v * 3 + 0] = pNew.x;
+            nextVerts[v * 3 + 1] = pNew.y;
+            nextVerts[v * 3 + 2] = pNew.z;
+        }
+        currVerts = nextVerts;
+    }
+
+    res.vertices = std::move(currVerts);
+}
+
+// ---------------------------------------------------------
+// Multi-Chart 6-Direction PolyCube Reconstruction
+// ---------------------------------------------------------
+
+static bool tryPolyCubeReconstruct(
+    const VoxelGrid& voxels,
+    const float* box,
+    bool alignSymmetry,
+    RemeshResult& res,
+    std::function<void(int stage, int progress)> onProgress = nullptr
+) {
+    if (!box) return false;
+
+    // 1. Center and extents of bounding box
+    glm::vec3 C(
+        0.5f * (box[0] + box[3]),
+        0.5f * (box[1] + box[4]),
+        0.5f * (box[2] + box[5])
+    );
+
+    float gx = (C.x - voxels.minCoord[0]) / voxels.step;
+    float gy = (C.y - voxels.minCoord[1]) / voxels.step;
+    float gz = (C.z - voxels.minCoord[2]) / voxels.step;
+
+    if (gx < 1.0f || gx >= (float)(voxels.dims[0] - 2) ||
+        gy < 1.0f || gy >= (float)(voxels.dims[1] - 2) ||
+        gz < 1.0f || gz >= (float)(voxels.dims[2] - 2)) {
+        return false;
+    }
+
+    // Center MUST be deeply inside the object (not in a hole or hollow area)
+    float dCenter = sampleSDFScalar(voxels, gx, gy, gz);
+    if (dCenter >= -0.5f * voxels.step) {
+        return false;
+    }
+
+    float rx = 0.5f * (box[3] - box[0]);
+    float ry = 0.5f * (box[4] - box[1]);
+    float rz = 0.5f * (box[5] - box[2]);
+    float maxR = std::max(rx, std::max(ry, rz));
+    if (maxR < voxels.step * 2.0f) return false;
+
+    // Sphericity check: compare radius along axis vs diagonal
+    // A sphere has R_diag / R_axis ~ 1.0, while a sharp cube has R_diag / R_axis ~ 1.732.
+    // If the object has sharp box corners, Surface Nets already reconstructs it with 1.05x aspect ratio!
+    auto traceTestRay = [&](const glm::vec3& dir) -> float {
+        float t = voxels.step * 0.5f;
+        float tMax = maxR * 2.5f;
+        float dPrev = sampleSDFScalar(voxels, 
+            (C.x + t * dir.x - voxels.minCoord[0]) / voxels.step,
+            (C.y + t * dir.y - voxels.minCoord[1]) / voxels.step,
+            (C.z + t * dir.z - voxels.minCoord[2]) / voxels.step
+        );
+        if (dPrev >= 0.0f) return -1.0f;
+        while (t < tMax) {
+            float advance = std::clamp(std::abs(dPrev) * 0.5f, voxels.step * 0.35f, voxels.step * 2.0f);
+            t += advance;
+            float gx = (C.x + t * dir.x - voxels.minCoord[0]) / voxels.step;
+            float gy = (C.y + t * dir.y - voxels.minCoord[1]) / voxels.step;
+            float gz = (C.z + t * dir.z - voxels.minCoord[2]) / voxels.step;
+            if (gx < 0.0f || gx >= (float)(voxels.dims[0] - 1) ||
+                gy < 0.0f || gy >= (float)(voxels.dims[1] - 1) ||
+                gz < 0.0f || gz >= (float)(voxels.dims[2] - 1)) break;
+            float dCur = sampleSDFScalar(voxels, gx, gy, gz);
+            if (dCur >= 0.0f) return t;
+            dPrev = dCur;
+        }
+        return -1.0f;
+    };
+
+    float rAxis = traceTestRay(glm::vec3(1.0f, 0.0f, 0.0f));
+    float rDiag = traceTestRay(glm::normalize(glm::vec3(1.0f, 1.0f, 1.0f)));
+    if (rAxis > 0.0f && rDiag > 0.0f && (rDiag / rAxis > 1.25f)) {
+        return false;
+    }
+
+    // 2. Target grid subdivision M per cube edge (M must be even for exact symmetry planes)
+    int M = 2 * (int)std::round(0.88f * maxR / voxels.step);
+    M = std::clamp(M, 8, 384);
+
+    // 3. Build unique boundary vertex table and 6-chart quad faces
+    int strideY = M + 1;
+    int strideZ = (M + 1) * (M + 1);
+    size_t keyCount = (size_t)(M + 1) * strideZ;
+    std::vector<int32_t> cubeKeyToVertId(keyCount, -1);
+
+    std::vector<glm::ivec3> vertCoords;
+    vertCoords.reserve(6 * M * M + 2);
+
+    auto getOrCreateVert = [&](int ix, int iy, int iz) -> int32_t {
+        size_t key = (size_t)ix + (size_t)iy * strideY + (size_t)iz * strideZ;
+        int32_t id = cubeKeyToVertId[key];
+        if (id == -1) {
+            id = (int32_t)vertCoords.size();
+            vertCoords.push_back(glm::ivec3(ix, iy, iz));
+            cubeKeyToVertId[key] = id;
+        }
+        return id;
+    };
+
+    std::vector<uint32_t> faces;
+    faces.reserve(6 * M * M * 4);
+
+    auto getFaceVert = [&](int f, int u, int v) -> int32_t {
+        switch (f) {
+            case 0: return getOrCreateVert(u, v, M);              // +Z
+            case 1: return getOrCreateVert(M - u, v, 0);          // -Z
+            case 2: return getOrCreateVert(M, u, v);              // +X
+            case 3: return getOrCreateVert(0, M - u, v);          // -X
+            case 4: return getOrCreateVert(v, M, u);              // +Y
+            case 5: return getOrCreateVert(u, 0, v);              // -Y
+            default: return 0;
+        }
+    };
+
+    for (int f = 0; f < 6; ++f) {
+        for (int v = 0; v < M; ++v) {
+            for (int u = 0; u < M; ++u) {
+                int32_t i0 = getFaceVert(f, u, v);
+                int32_t i1 = getFaceVert(f, u + 1, v);
+                int32_t i2 = getFaceVert(f, u + 1, v + 1);
+                int32_t i3 = getFaceVert(f, u, v + 1);
+
+                faces.push_back((uint32_t)i0);
+                faces.push_back((uint32_t)i1);
+                faces.push_back((uint32_t)i2);
+                faces.push_back((uint32_t)i3);
+            }
+        }
+    }
+
+    size_t totalVerts = vertCoords.size();
+    std::vector<float> vertices(totalVerts * 3);
+    std::atomic<int> failCount(0);
+
+    // 4. Raymarch each vertex along tangent-spherized direction from C to SDF = 0
+    #pragma omp parallel for schedule(dynamic, 64)
+    for (int i = 0; i < (int)totalVerts; ++i) {
+        glm::ivec3 c = vertCoords[i];
+        float xc = 2.0f * (float)c.x / (float)M - 1.0f;
+        float yc = 2.0f * (float)c.y / (float)M - 1.0f;
+        float zc = 2.0f * (float)c.z / (float)M - 1.0f;
+
+        // Equal-area spherization mapping
+        float xs = xc * std::sqrt(std::max(0.0f, 1.0f - yc * yc * 0.5f - zc * zc * 0.5f + yc * yc * zc * zc / 3.0f));
+        float ys = yc * std::sqrt(std::max(0.0f, 1.0f - zc * zc * 0.5f - xc * xc * 0.5f + zc * zc * xc * xc / 3.0f));
+        float zs = zc * std::sqrt(std::max(0.0f, 1.0f - xc * xc * 0.5f - yc * yc * 0.5f + xc * xc * yc * yc / 3.0f));
+
+        glm::vec3 dir(xs, ys, zs);
+        float dlen = glm::length(dir);
+        if (dlen > 1e-6f) dir /= dlen;
+        else dir = glm::vec3(0.0f, 0.0f, 1.0f);
+
+        // March from C + tMin*dir to C + tMax*dir
+        float tMin = voxels.step * 0.5f;
+        float tMax = maxR * 2.5f;
+        float tCur = tMin;
+        float tFound = -1.0f;
+
+        float g0x = (C.x + tMin * dir.x - voxels.minCoord[0]) / voxels.step;
+        float g0y = (C.y + tMin * dir.y - voxels.minCoord[1]) / voxels.step;
+        float g0z = (C.z + tMin * dir.z - voxels.minCoord[2]) / voxels.step;
+        float dPrev = sampleSDFScalar(voxels, g0x, g0y, g0z);
+        float tPrev = tMin;
+
+        if (dPrev < 0.0f) {
+            while (tCur < tMax) {
+                float advance = std::clamp(std::abs(dPrev) * 0.5f, voxels.step * 0.25f, voxels.step * 1.5f);
+                tCur += advance;
+
+                float gx = (C.x + tCur * dir.x - voxels.minCoord[0]) / voxels.step;
+                float gy = (C.y + tCur * dir.y - voxels.minCoord[1]) / voxels.step;
+                float gz = (C.z + tCur * dir.z - voxels.minCoord[2]) / voxels.step;
+
+                if (gx < 0.0f || gx >= (float)(voxels.dims[0] - 1) ||
+                    gy < 0.0f || gy >= (float)(voxels.dims[1] - 1) ||
+                    gz < 0.0f || gz >= (float)(voxels.dims[2] - 1)) {
+                    break;
+                }
+
+                float dCur = sampleSDFScalar(voxels, gx, gy, gz);
+                if (dCur >= 0.0f) {
+                    float tA = tPrev;
+                    float tB = tCur;
+                    for (int it = 0; it < 14; ++it) {
+                        float tMid = 0.5f * (tA + tB);
+                        float mx = (C.x + tMid * dir.x - voxels.minCoord[0]) / voxels.step;
+                        float my = (C.y + tMid * dir.y - voxels.minCoord[1]) / voxels.step;
+                        float mz = (C.z + tMid * dir.z - voxels.minCoord[2]) / voxels.step;
+                        float dMid = sampleSDFScalar(voxels, mx, my, mz);
+                        if (dMid < 0.0f) {
+                            tA = tMid;
+                        } else {
+                            tB = tMid;
+                        }
+                    }
+                    tFound = 0.5f * (tA + tB);
+                    break;
+                }
+                tPrev = tCur;
+                dPrev = dCur;
+            }
+        }
+
+        if (tFound <= 0.0f) {
+            failCount.fetch_add(1, std::memory_order_relaxed);
+            glm::vec3 fallback = C + maxR * dir;
+            vertices[i * 3 + 0] = fallback.x;
+            vertices[i * 3 + 1] = fallback.y;
+            vertices[i * 3 + 2] = fallback.z;
+        } else {
+            glm::vec3 pos = C + tFound * dir;
+            vertices[i * 3 + 0] = pos.x;
+            vertices[i * 3 + 1] = pos.y;
+            vertices[i * 3 + 2] = pos.z;
+        }
+    }
+
+    if (failCount.load() > (int)(totalVerts * 0.005f)) {
+        return false;
+    }
+
+    // 5. Radial Distance Smoothing (Eliminates discrete voxel facetting / dimple artifacts)
+    const int MAX_DEG = 8;
+    std::vector<uint32_t> nbrList(totalVerts * MAX_DEG);
+    std::vector<uint8_t> nbrCounts(totalVerts, 0);
+
+    size_t nbFaces = faces.size() / 4;
+    for (size_t f = 0; f < nbFaces; ++f) {
+        for (int k = 0; k < 4; ++k) {
+            uint32_t u = faces[f * 4 + k];
+            uint32_t w = faces[f * 4 + (k + 1) % 4];
+            if (u >= totalVerts || w >= totalVerts || u == w) continue;
+
+            uint8_t cu = nbrCounts[u];
+            bool foundU = false;
+            for (uint8_t j = 0; j < cu; ++j) {
+                if (nbrList[u * MAX_DEG + j] == w) { foundU = true; break; }
+            }
+            if (!foundU && cu < MAX_DEG) {
+                nbrList[u * MAX_DEG + cu] = w;
+                nbrCounts[u] = cu + 1;
+            }
+
+            uint8_t cw = nbrCounts[w];
+            bool foundW = false;
+            for (uint8_t j = 0; j < cw; ++j) {
+                if (nbrList[w * MAX_DEG + j] == u) { foundW = true; break; }
+            }
+            if (!foundW && cw < MAX_DEG) {
+                nbrList[w * MAX_DEG + cw] = u;
+                nbrCounts[w] = cw + 1;
+            }
+        }
+    }
+
+    std::vector<float> currRadii(totalVerts);
+    double initialSumR = 0.0;
+    for (size_t i = 0; i < totalVerts; ++i) {
+        glm::vec3 pos(vertices[i * 3], vertices[i * 3 + 1], vertices[i * 3 + 2]);
+        float r = glm::length(pos - C);
+        currRadii[i] = r;
+        initialSumR += r;
+    }
+    float initialMeanR = (totalVerts > 0) ? (float)(initialSumR / (double)totalVerts) : 0.0f;
+
+    std::vector<float> nextRadii = currRadii;
+    const int numSmoothIters = 6;
+    for (int it = 0; it < numSmoothIters; ++it) {
+#pragma omp parallel for schedule(static)
+        for (int i = 0; i < (int)totalVerts; ++i) {
+            uint8_t deg = nbrCounts[i];
+            if (deg == 0) continue;
+            float rAvg = 0.0f;
+            const uint32_t* nbrPtr = &nbrList[i * MAX_DEG];
+            for (uint8_t j = 0; j < deg; ++j) {
+                rAvg += currRadii[nbrPtr[j]];
+            }
+            rAvg /= (float)deg;
+            nextRadii[i] = 0.30f * currRadii[i] + 0.70f * rAvg;
+        }
+        currRadii = nextRadii;
+    }
+
+    // Preserve exact mean radius / volume after smoothing
+    double smoothedSumR = 0.0;
+    for (size_t i = 0; i < totalVerts; ++i) {
+        smoothedSumR += currRadii[i];
+    }
+    float smoothedMeanR = (totalVerts > 0) ? (float)(smoothedSumR / (double)totalVerts) : 0.0f;
+    if (smoothedMeanR > 1e-6f && initialMeanR > 1e-6f) {
+        float rScale = initialMeanR / smoothedMeanR;
+        for (size_t i = 0; i < totalVerts; ++i) {
+            currRadii[i] *= rScale;
+        }
+    }
+
+    // Apply smoothed radii along rays
+#pragma omp parallel for schedule(static)
+    for (int i = 0; i < (int)totalVerts; ++i) {
+        glm::ivec3 c = vertCoords[i];
+        float xc = 2.0f * (float)c.x / (float)M - 1.0f;
+        float yc = 2.0f * (float)c.y / (float)M - 1.0f;
+        float zc = 2.0f * (float)c.z / (float)M - 1.0f;
+
+        float xs = xc * std::sqrt(std::max(0.0f, 1.0f - yc * yc * 0.5f - zc * zc * 0.5f + yc * yc * zc * zc / 3.0f));
+        float ys = yc * std::sqrt(std::max(0.0f, 1.0f - zc * zc * 0.5f - xc * xc * 0.5f + zc * zc * xc * xc / 3.0f));
+        float zs = zc * std::sqrt(std::max(0.0f, 1.0f - xc * xc * 0.5f - yc * yc * 0.5f + xc * xc * yc * yc / 3.0f));
+        glm::vec3 dir(xs, ys, zs);
+        float dlen = glm::length(dir);
+        if (dlen > 1e-6f) dir /= dlen;
+        else dir = glm::vec3(0.0f, 0.0f, 1.0f);
+
+        glm::vec3 pos = C + currRadii[i] * dir;
+
+        if (alignSymmetry) {
+            if (c.x == M / 2 && std::abs(C.x) < voxels.step * 0.5f) pos.x = 0.0f;
+            if (c.y == M / 2 && std::abs(C.y) < voxels.step * 0.5f) pos.y = 0.0f;
+            if (c.z == M / 2 && std::abs(C.z) < voxels.step * 0.5f) pos.z = 0.0f;
+        }
+
+        vertices[i * 3 + 0] = pos.x;
+        vertices[i * 3 + 1] = pos.y;
+        vertices[i * 3 + 2] = pos.z;
+    }
+
+    res.vertices = std::move(vertices);
+    res.faces = std::move(faces);
+
+    res.colors.resize(totalVerts * 3);
+    res.materials.resize(totalVerts * 3);
+    for (size_t i = 0; i < totalVerts; ++i) {
+        res.colors[i * 3 + 0] = voxels.uniformColor[0];
+        res.colors[i * 3 + 1] = voxels.uniformColor[1];
+        res.colors[i * 3 + 2] = voxels.uniformColor[2];
+        res.materials[i * 3 + 0] = voxels.uniformMaterial[0];
+        res.materials[i * 3 + 1] = voxels.uniformMaterial[1];
+        res.materials[i * 3 + 2] = voxels.uniformMaterial[2];
+    }
+
+    return true;
+}
+
+// ---------------------------------------------------------
 // Main Entry Point
 // ---------------------------------------------------------
 
@@ -1560,11 +2363,12 @@ RemeshResult doRemesh(
     std::function<void(int stage, int progress)> onProgress,
     float matrixScaleX,
     float matrixScaleY,
-    float matrixScaleZ
+    float matrixScaleZ,
+    bool regularizeQuads
 ) {
     auto tRemeshStart = std::chrono::high_resolution_clock::now();
-    sculpt_log("[C++ doRemesh] Start. nbVerts=%d, nbTris=%d, resolution=%.2f, block=%d, smooth=%d, manifold=%d, hasColors=%d, hasMaterials=%d, hasFaceGroups=%d, alignSymmetry=%d, scaleXYZ=(%.4f, %.4f, %.4f)\n",
-               nbVerts, nbTris, resolution, block, smooth, manifold, hasColors, hasMaterials, hasFaceGroups, alignSymmetry, matrixScaleX, matrixScaleY, matrixScaleZ);
+    sculpt_log("[C++ doRemesh] Start. nbVerts=%d, nbTris=%d, resolution=%.2f, block=%d, smooth=%d, manifold=%d, hasColors=%d, hasMaterials=%d, hasFaceGroups=%d, alignSymmetry=%d, regularizeQuads=%d, scaleXYZ=(%.4f, %.4f, %.4f)\n",
+               nbVerts, nbTris, resolution, block, smooth, manifold, hasColors, hasMaterials, hasFaceGroups, alignSymmetry, regularizeQuads, matrixScaleX, matrixScaleY, matrixScaleZ);
     if (box) {
         sculpt_log("[C++ doRemesh] box: [%.4f, %.4f, %.4f, %.4f, %.4f, %.4f]\n", box[0], box[1], box[2], box[3], box[4], box[5]);
     } else {
@@ -1683,30 +2487,46 @@ RemeshResult doRemesh(
     // 5. Reconstruct Surface
     auto tReconstructStart = std::chrono::high_resolution_clock::now();
     RemeshResult r;
+    bool usedPolyCube = false;
     if (manifold) {
         r = marchingCubesReconstruct(voxels, onProgress);
     } else {
-        r = surfaceNetsReconstruct(voxels, block, onProgress);
+        if (regularizeQuads && !block) {
+            usedPolyCube = tryPolyCubeReconstruct(voxels, box, alignSymmetry, r, onProgress);
+        }
+        if (!usedPolyCube) {
+            r = surfaceNetsReconstruct(voxels, block, regularizeQuads, onProgress);
+        }
     }
     double msReconstruct = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tReconstructStart).count();
     sculpt_log("[REMESH PROFILE] Stage 3 - Surface Reconstruction (%s): %.2f ms (Output: %d verts, %d faces)\n",
-              manifold ? "Marching Cubes" : "Surface Nets", msReconstruct, (int)(r.vertices.size() / 3), (int)(r.faces.size() / 4));
+              manifold ? "Marching Cubes" : (usedPolyCube ? "PolyCube 6-Chart" : "Surface Nets"), msReconstruct, (int)(r.vertices.size() / 3), (int)(r.faces.size() / 4));
 
-    float snapTol = step * 0.45f;
-    for (size_t i = 0; i < r.vertices.size(); i += 3) {
-        float vx = voxels.minCoord[0] + r.vertices[i] * step;
-        float vy = voxels.minCoord[1] + r.vertices[i + 1] * step;
-        float vz = voxels.minCoord[2] + r.vertices[i + 2] * step;
+    if (!usedPolyCube) {
+        float snapTol = step * 0.45f;
+        for (size_t i = 0; i < r.vertices.size(); i += 3) {
+            float vx = voxels.minCoord[0] + r.vertices[i] * step;
+            float vy = voxels.minCoord[1] + r.vertices[i + 1] * step;
+            float vz = voxels.minCoord[2] + r.vertices[i + 2] * step;
 
-        if (alignSymmetry) {
-            if (std::abs(vx) < snapTol) vx = 0.0f;
-            if (std::abs(vy) < snapTol) vy = 0.0f;
-            if (std::abs(vz) < snapTol) vz = 0.0f;
+            if (alignSymmetry) {
+                if (std::abs(vx) < snapTol) vx = 0.0f;
+                if (std::abs(vy) < snapTol) vy = 0.0f;
+                if (std::abs(vz) < snapTol) vz = 0.0f;
+            }
+
+            r.vertices[i]     = vx;
+            r.vertices[i + 1] = vy;
+            r.vertices[i + 2] = vz;
         }
 
-        r.vertices[i]     = vx;
-        r.vertices[i + 1] = vy;
-        r.vertices[i + 2] = vz;
+        if (regularizeQuads && !manifold && !block && r.vertices.size() >= 12) {
+            applyConstrainedTangentialRelaxation(r, voxels, 3, 0.45f, alignSymmetry);
+        }
+    } else {
+        if (r.vertices.size() >= 12) {
+            applyConstrainedTangentialRelaxation(r, voxels, 1, 0.15f, alignSymmetry);
+        }
     }
 
     // 6. PolyGroup Transfer via Direct Spatial Mesh-to-Mesh Projection
@@ -1934,12 +2754,16 @@ RemeshResult doSurfaceNetsFromSDF(
     voxels.uniformMaterial[1] = uniformMaterial[1];
     voxels.uniformMaterial[2] = uniformMaterial[2];
     
-    RemeshResult r = surfaceNetsReconstruct(voxels, false, onProgress);
+    RemeshResult r = surfaceNetsReconstruct(voxels, false, true, onProgress);
     
     for (size_t i = 0; i < r.vertices.size(); i += 3) {
         r.vertices[i]     = voxels.minCoord[0] + r.vertices[i] * voxels.step;
         r.vertices[i + 1] = voxels.minCoord[1] + r.vertices[i + 1] * voxels.step;
         r.vertices[i + 2] = voxels.minCoord[2] + r.vertices[i + 2] * voxels.step;
+    }
+
+    if (r.vertices.size() >= 12) {
+        applyConstrainedTangentialRelaxation(r, voxels, 3, 0.45f, false);
     }
     
     return r;

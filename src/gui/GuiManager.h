@@ -102,6 +102,7 @@ private:
     int m_remeshResolution = 310;
     bool m_remeshKeepPolyGroups = true;
     bool m_remeshAlignSymmetry = false;
+    bool m_remeshRegularizeQuads = true;
     bool m_animateBookmarks = false;
     bool m_savePngNextToProject = true;
     bool m_createDefaultSphereOnStartup = true;
@@ -404,6 +405,9 @@ public:
 
     bool getRemeshAlignSymmetry() const { return m_remeshAlignSymmetry; }
     void setRemeshAlignSymmetry(bool val) { m_remeshAlignSymmetry = val; }
+
+    bool getRemeshRegularizeQuads() const { return m_remeshRegularizeQuads; }
+    void setRemeshRegularizeQuads(bool val) { m_remeshRegularizeQuads = val; }
 
     bool getAnimateBookmarks() const { return m_animateBookmarks; }
     void setAnimateBookmarks(bool val) { m_animateBookmarks = val; }

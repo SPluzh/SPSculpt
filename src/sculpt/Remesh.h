@@ -48,7 +48,8 @@ RemeshResult doRemesh(
     std::function<void(int stage, int progress)> onProgress = nullptr,
     float matrixScaleX = 1.0f,
     float matrixScaleY = 1.0f,
-    float matrixScaleZ = 1.0f
+    float matrixScaleZ = 1.0f,
+    bool regularizeQuads = true
 );
 RemeshResult doSurfaceNetsFromSDF(
     int resolution, 
