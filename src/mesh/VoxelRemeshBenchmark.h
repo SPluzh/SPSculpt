@@ -28,6 +28,7 @@
 #include "common/Enums.h"
 #include "common/Constants.h"
 #include "common/Logger.h"
+#include "common/MemoryUtils.h"
 #include <omp.h>
 
 namespace VoxelRemeshBenchmark {
@@ -83,6 +84,17 @@ struct VoxelBenchmarkRow {
     size_t undoRAMBytes = 0;
     float maxUndoEps = 0.0f;
     float maxRedoEps = 0.0f;
+
+    // Physical OS Process Memory
+    size_t startRAMBytes = 0;       // Working set before remesh start
+    size_t peakRAMBytes = 0;        // Peak working set during execution
+    size_t endRAMBytes = 0;          // Working set after finish and cleanup
+    size_t deltaRAMBytes = 0;        // Net working set delta (end - start)
+
+    // Stage-Specific & Algorithmic Allocations
+    double coreGridRAM_MB = 0.0;    // distanceField + crossedEdges + colors + materials
+    double auxAllocRAM_MB = 0.0;    // tagCell (floodfill) + cellToVert / edgeVerts (reconstruct)
+    double peakTotalRAM_MB = 0.0;   // Process peak working set in MB
 
     // Bottlenecks & Throughput
     std::string dominantBottleneck;
@@ -168,9 +180,11 @@ inline std::string formatMs(double ms, int decimals = 1) {
 
 inline std::string formatBytes(size_t bytes) {
     std::ostringstream oss;
-    if (bytes >= 1024 * 1024) {
+    if (bytes >= 1024ULL * 1024ULL * 1024ULL) {
+        oss << std::fixed << std::setprecision(2) << ((double)bytes / (1024.0 * 1024.0 * 1024.0)) << " GB";
+    } else if (bytes >= 1024ULL * 1024ULL) {
         oss << std::fixed << std::setprecision(1) << ((double)bytes / (1024.0 * 1024.0)) << " MB";
-    } else if (bytes >= 1024) {
+    } else if (bytes >= 1024ULL) {
         oss << std::fixed << std::setprecision(1) << ((double)bytes / 1024.0) << " KB";
     } else {
         oss << bytes << " B";
@@ -837,6 +851,7 @@ inline VoxelBenchmarkRow runVoxelTest(
     bool hasMaterials = !mesh->materials.empty();
 
     // 1. Run doRemesh
+    ProcessMemorySnapshot snapStart = getProcessMemorySnapshot();
     auto tPipelineStart = std::chrono::high_resolution_clock::now();
 
     RemeshResult r = doRemesh(
@@ -862,6 +877,8 @@ inline VoxelBenchmarkRow runVoxelTest(
         keepSharpEdges,
         keepMasked
     );
+
+    ProcessMemorySnapshot snapRemesh = getProcessMemorySnapshot();
 
     // Copy core sub-stage timings from RemeshProfile
     row.msVoxelize = r.profile.msVoxelize;
@@ -929,6 +946,16 @@ inline VoxelBenchmarkRow runVoxelTest(
 
     // End-to-end remesh pipeline time (excluding undo overhead)
     row.msTotalPipeline = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tPipelineStart).count();
+
+    ProcessMemorySnapshot snapEnd = getProcessMemorySnapshot();
+    row.startRAMBytes = snapStart.currentWorkingSetBytes;
+    row.peakRAMBytes = std::max({ snapStart.peakWorkingSetBytes, snapRemesh.peakWorkingSetBytes, snapEnd.peakWorkingSetBytes, (size_t)(r.profile.peakWorkingSetMB * 1024.0 * 1024.0) });
+    row.endRAMBytes = snapEnd.currentWorkingSetBytes;
+    row.deltaRAMBytes = (snapEnd.currentWorkingSetBytes > snapStart.currentWorkingSetBytes)
+                        ? (snapEnd.currentWorkingSetBytes - snapStart.currentWorkingSetBytes) : 0;
+    row.coreGridRAM_MB = r.profile.coreGridRAM_MB;
+    row.auxAllocRAM_MB = r.profile.auxAllocRAM_MB;
+    row.peakTotalRAM_MB = (double)row.peakRAMBytes / (1024.0 * 1024.0);
 
     // 5. Stage: Undo Push
     auto tUndoPushStart = std::chrono::high_resolution_clock::now();
@@ -1279,10 +1306,89 @@ inline std::unique_ptr<Mesh> createMultiGroupSphere(float radius, int rings, int
 }
 
 // =========================================================================
+// Memory Scaling Stress Test Runner
+// =========================================================================
+
+inline bool runMemoryStressTest() {
+    std::cout << "\n===================================================================================================================================================\n";
+    std::cout << " SPSculpt Voxel Remesh Memory Scaling Stress Test (Res 64 -> 128 -> 256 -> 512 -> 1000)\n";
+    std::cout << " Profiling Memory Footprint Scaling & Protecting Against OOM Crashes\n";
+    std::cout << "===================================================================================================================================================\n";
+
+    size_t availPhys = getAvailablePhysicalMemoryBytes();
+    size_t totalPhys = getTotalPhysicalMemoryBytes();
+    std::cout << " [System Memory Info] Physical RAM Total: " << formatBytes(totalPhys)
+              << " | Currently Available: " << formatBytes(availPhys) << "\n\n";
+
+    std::vector<int> testResolutions = { 64, 128, 256, 512, 1000 };
+    std::vector<VoxelBenchmarkRow> memRows;
+
+    for (int res : testResolutions) {
+        double estCells = std::pow((double)res + 4.0, 3.0);
+        size_t estCoreBytes = (size_t)(estCells * 13.0); // 1B crossedEdges + 4B dist + 4B color + 4B mat
+        size_t estAuxBytes = (size_t)(estCells * 4.0);  // 4B cellToVert
+        size_t estTotalPeakBytes = estCoreBytes + estAuxBytes;
+
+        std::cout << " -> Running Memory Stress at Resolution " << res << " (~"
+                  << (size_t)(estCells / 1000000.0) << " M cells, Est. Core Grid: "
+                  << formatBytes(estCoreBytes) << ", Est. Peak: " << formatBytes(estTotalPeakBytes) << ")...\n";
+
+        size_t currentAvail = getAvailablePhysicalMemoryBytes();
+        if (currentAvail < estTotalPeakBytes + (size_t)(1024ULL * 1024ULL * 1024ULL)) {
+            std::cout << " [MEMORY SAFETY GUARD TRIGGERED]\n";
+            std::cout << "   Current Available Physical RAM: " << formatBytes(currentAvail) << "\n";
+            std::cout << "   Estimated Required RAM:         " << formatBytes(estTotalPeakBytes) << "\n";
+            std::cout << "   EXECUTION SAFELY ABORTED for Res " << res << " to prevent physical RAM exhaustion, system freezing or OOM crash!\n";
+            std::cout << "   [CRITICAL AUDIT INSIGHT] At Res " << res << ", dense regular grid requires "
+                      << formatBytes(estTotalPeakBytes) << " RAM.\n";
+            std::cout << "   Transitioning to Block-Sparse Narrow-Band (Phase 2) will reduce this to ~100-300 MB!\n\n";
+            continue;
+        }
+
+        auto sphere = createSphereMesh(35.0f, std::min(128, res), std::min(128, res));
+        VoxelBenchmarkRow row = runVoxelTest("Sphere (Stress Res " + std::to_string(res) + ")", std::move(sphere), res, false, false, true);
+        memRows.push_back(row);
+
+        std::cout << "    Done in " << formatMs(row.msTotalPipeline)
+                  << " | Peak Working Set: " << formatBytes(row.peakRAMBytes)
+                  << " | Core Grid: " << std::fixed << std::setprecision(1) << row.coreGridRAM_MB << " MB"
+                  << " | Aux Buffers: " << std::fixed << std::setprecision(1) << row.auxAllocRAM_MB << " MB\n\n";
+    }
+
+    if (!memRows.empty()) {
+        std::cout << "===================================================================================================================================================\n";
+        std::cout << " MEMORY SCALING SUMMARY TABLE:\n";
+        std::cout << " Res   |  Grid Dimension  |  Voxel Cells |  Core Grid RAM |  Aux Buffers RAM |  Peak Process RAM |  Pipeline Time \n";
+        std::cout << "-------+------------------+--------------+----------------+------------------+-------------------+----------------\n";
+        for (const auto& r : memRows) {
+            std::ostringstream ssDims;
+            ssDims << r.gridDims[0] << "x" << r.gridDims[1] << "x" << r.gridDims[2];
+            std::ostringstream ssCore, ssAux;
+            ssCore << std::fixed << std::setprecision(1) << r.coreGridRAM_MB << " MB";
+            ssAux << std::fixed << std::setprecision(1) << r.auxAllocRAM_MB << " MB";
+
+            std::cout << " " << padRight(std::to_string(r.resolution), 5) << " | "
+                      << padLeft(ssDims.str(), 16) << " | "
+                      << padLeft(std::to_string(r.gridDatalen), 12) << " | "
+                      << padLeft(ssCore.str(), 14) << " | "
+                      << padLeft(ssAux.str(), 16) << " | "
+                      << padLeft(formatBytes(r.peakRAMBytes), 17) << " | "
+                      << padLeft(formatMs(r.msTotalPipeline), 14) << " \n";
+        }
+        std::cout << "===================================================================================================================================================\n\n";
+    }
+
+    return true;
+}
+
+// =========================================================================
 // Main Entry Point for Benchmark Suite
 // =========================================================================
 
-inline bool run(int customResolution = 0) {
+inline bool run(int customResolution = 0, bool runMemoryStress = false) {
+    if (runMemoryStress) {
+        return runMemoryStressTest();
+    }
     try {
         std::cout << "\n===================================================================================================================================================\n";
         std::cout << " SPSculpt Voxel Remesh Benchmark Suite & Performance Profiler\n";
@@ -1295,7 +1401,22 @@ inline bool run(int customResolution = 0) {
         std::cout << " [System Info] OpenMP Multi-threading: DISABLED (Single-threaded build)\n";
 #endif
         std::cout << " [System Info] SIMD Distance Traversal: Standard IEEE-754 / AVX Enabled\n";
+        size_t availPhys = getAvailablePhysicalMemoryBytes();
+        size_t totalPhys = getTotalPhysicalMemoryBytes();
+        std::cout << " [System Memory Info] Physical RAM Total: " << formatBytes(totalPhys)
+                  << " | Currently Available: " << formatBytes(availPhys) << "\n";
         std::cout << "===================================================================================================================================================\n\n";
+
+        if (customResolution >= 800) {
+            double estCells = std::pow((double)customResolution + 4.0, 3.0);
+            size_t estTotalPeakBytes = (size_t)(estCells * 17.0);
+            if (availPhys < estTotalPeakBytes + (size_t)(1024ULL * 1024ULL * 1024ULL)) {
+                std::cout << " [MEMORY SAFETY GUARD] Skipping Res " << customResolution << " execution to prevent OOM crash!\n";
+                std::cout << "   Estimated required memory: " << formatBytes(estTotalPeakBytes) << " | Available: " << formatBytes(availPhys) << "\n";
+                std::cout << "   Dense grid on Res " << customResolution << " requires ~15-17 GB RAM.\n";
+                return true;
+            }
+        }
 
         std::vector<VoxelBenchmarkRow> rows;
 
@@ -1428,11 +1549,11 @@ inline bool run(int customResolution = 0) {
         // =========================================================================
         // Print Table 1: Executive Summary & Bottleneck Overview
         // =========================================================================
-        std::cout << "\n===================================================================================================================================================\n";
+        std::cout << "\n===================================================================================================================================================================\n";
         std::cout << " TABLE 1: Voxel Remesh Executive Summary & Primary Bottleneck Identification\n";
-        std::cout << "===================================================================================================================================================\n";
-        std::cout << " Benchmark Scenario            |   Res |  Grid Dimension  |  Total Time | Primary Bottleneck (% Time) |  Out Faces |  Quad Ratio |  Vol Err |   Status \n";
-        std::cout << "-------------------------------+-------+------------------+-------------+-----------------------------+------------+-------------+----------+----------\n";
+        std::cout << "===================================================================================================================================================================\n";
+        std::cout << " Benchmark Scenario            |   Res |  Grid Dimension  |  Total Time | Primary Bottleneck (% Time) |   Peak RAM |  Out Faces |  Quad Ratio |  Vol Err |   Status \n";
+        std::cout << "-------------------------------+-------+------------------+-------------+-----------------------------+------------+------------+-------------+----------+----------\n";
 
         bool allPassed = true;
 
@@ -1461,35 +1582,43 @@ inline bool run(int customResolution = 0) {
                       << padLeft(ssDims.str(), 16) << " | "
                       << padLeft(formatMs(r.msTotalPipeline), 11) << " | "
                       << padLeft(ssBottle.str(), 27) << " | "
+                      << padLeft(formatBytes(r.peakRAMBytes), 10) << " | "
                       << padLeft(std::to_string(r.outFaces), 10) << " | "
                       << padLeft(ssQuad.str(), 11) << " | "
                       << padLeft(ssVol.str(), 8) << " | "
                       << padLeft(statusStr, 8) << " \n";
         }
-        std::cout << "-------------------------------+-------+------------------+-------------+-----------------------------+------------+-------------+----------+----------\n";
+        std::cout << "-------------------------------+-------+------------------+-------------+-----------------------------+------------+------------+-------------+----------+----------\n";
 
         // =========================================================================
-        // Print Table 2: Deep-Dive Stage-by-Stage Timing Breakdown (Bottleneck Profiling)
+        // Print Table 2: Deep-Dive Stage-by-Stage Timing & Memory Breakdown
         // =========================================================================
-        std::cout << "\n===================================================================================================================================================\n";
-        std::cout << " TABLE 2: Detailed Stage-by-Stage Timing Breakdown (Bottleneck Profiling in ms)\n";
-        std::cout << "===================================================================================================================================================\n";
-        std::cout << " Benchmark Scenario            |  Voxelize ms |  FloodFill ms | Reconstruct ms |  PolyGroup ms |   Topology ms |   PostInit ms |   Undo Push | Undo RAM \n";
-        std::cout << "-------------------------------+--------------+---------------+----------------+---------------+---------------+---------------+-------------+----------\n";
+        std::cout << "\n===============================================================================================================================================================================================\n";
+        std::cout << " TABLE 2: Detailed Stage-by-Stage Timing & Memory Allocation Breakdown\n";
+        std::cout << "===============================================================================================================================================================================================\n";
+        std::cout << " Benchmark Scenario            |  Voxelize ms |  FloodFill ms | Reconstruct ms | Core Grid RAM |  Aux Peak RAM |   Undo RAM | Total Peak RSS |  Undo Push |   Topology ms |   PostInit ms \n";
+        std::cout << "-------------------------------+--------------+---------------+----------------+---------------+---------------+------------+----------------+------------+---------------+---------------\n";
 
         for (const auto& r : rows) {
-            std::string polyStr = r.hasPolyGroups ? formatMs(r.msPolyGroup) : "       -       ";
+            std::ostringstream ssCore, ssAux, ssUndo, ssPeakRSS;
+            ssCore << std::fixed << std::setprecision(1) << r.coreGridRAM_MB << " MB";
+            ssAux << std::fixed << std::setprecision(1) << r.auxAllocRAM_MB << " MB";
+            ssUndo << formatBytes(r.undoRAMBytes);
+            ssPeakRSS << formatBytes(r.peakRAMBytes);
+
             std::cout << " " << padRight(r.testName, 29) << " | "
                       << padLeft(formatMs(r.msVoxelize), 12) << " | "
                       << padLeft(formatMs(r.msFloodFill), 13) << " | "
                       << padLeft(formatMs(r.msReconstruct), 14) << " | "
-                      << padLeft(polyStr, 13) << " | "
+                      << padLeft(ssCore.str(), 13) << " | "
+                      << padLeft(ssAux.str(), 13) << " | "
+                      << padLeft(ssUndo.str(), 10) << " | "
+                      << padLeft(ssPeakRSS.str(), 14) << " | "
+                      << padLeft(formatMs(r.msUndoPush), 10) << " | "
                       << padLeft(formatMs(r.msTopology), 13) << " | "
-                      << padLeft(formatMs(r.msPostInit), 13) << " | "
-                      << padLeft(formatMs(r.msUndoPush), 11) << " | "
-                      << padLeft(formatBytes(r.undoRAMBytes), 8) << " \n";
+                      << padLeft(formatMs(r.msPostInit), 13) << " \n";
         }
-        std::cout << "-------------------------------+--------------+---------------+----------------+---------------+---------------+---------------+-------------+----------\n";
+        std::cout << "-------------------------------+--------------+---------------+----------------+---------------+---------------+------------+----------------+------------+---------------+---------------\n";
 
         // =========================================================================
         // Print Table 3: Mesh Quality, Aspect Ratio & Topology Verification
@@ -1578,6 +1707,15 @@ inline bool run(int customResolution = 0) {
                       << " | Reconstruct " << formatMs(r.msReconstruct)
                       << " | Topology " << formatMs(r.msTopology)
                       << " | PostInit " << formatMs(r.msPostInit) << "\n";
+            std::cout << "   - Memory Footprint:    Peak Working Set: " << formatBytes(r.peakRAMBytes)
+                      << " (Core Grid: " << std::fixed << std::setprecision(1) << r.coreGridRAM_MB << " MB"
+                      << ", Aux Buffers: " << std::fixed << std::setprecision(1) << r.auxAllocRAM_MB << " MB"
+                      << ", Undo: " << formatBytes(r.undoRAMBytes) << ")\n";
+            if (r.peakTotalRAM_MB > 4096.0 || r.coreGridRAM_MB > 4096.0) {
+                std::cout << "   - Memory Warning:      CRITICAL MEMORY OVERHEAD (> 4 GB). High risk of page paging / OOM on client devices!\n";
+            } else if (r.peakTotalRAM_MB > 1024.0 || r.coreGridRAM_MB > 1024.0) {
+                std::cout << "   - Memory Warning:      ELEVATED MEMORY USAGE (> 1 GB). Cache eviction and memory bus saturation risk.\n";
+            }
             if (r.hasPolyGroups) {
                 std::cout << "   - PolyGroup Transfer:  Total " << formatMs(r.msPolyGroup)
                           << " (Index Build: " << formatMs(r.msPolyGroupBuild)

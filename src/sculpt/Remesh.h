@@ -16,6 +16,17 @@ struct RemeshProfile {
     int gridDatalen = 0;
     double gridMemoryMB = 0.0;
     float step = 0.0f;
+
+    // Memory Metrics (bytes & MB)
+    size_t bytesCrossedEdges = 0;
+    size_t bytesDistanceField = 0;
+    size_t bytesColorField = 0;
+    size_t bytesMaterialField = 0;
+    size_t bytesFloodFillAux = 0;
+    size_t bytesReconstructAux = 0;
+    double coreGridRAM_MB = 0.0;
+    double auxAllocRAM_MB = 0.0;
+    double peakWorkingSetMB = 0.0;
 };
 
 struct RemeshResult {

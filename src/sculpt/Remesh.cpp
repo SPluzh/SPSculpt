@@ -1,6 +1,7 @@
 #include "sculpt/Remesh.h"
 #include "sculpt/KeepMasked.h"
 #include "common/Constants.h"
+#include "common/MemoryUtils.h"
 #include <cmath>
 #include <limits>
 #include <algorithm>
@@ -1181,6 +1182,7 @@ static RemeshResult marchingCubesReconstruct(VoxelGrid& voxels, std::function<vo
     std::vector<uint32_t> edgeVertX((rx - 1) * ry * rz, 0xffffffff);
     std::vector<uint32_t> edgeVertY(rx * (ry - 1) * rz, 0xffffffff);
     std::vector<uint32_t> edgeVertZ(rx * ry * (rz - 1), 0xffffffff);
+    res.profile.bytesReconstructAux = ((size_t)(rx - 1) * ry * rz + (size_t)rx * (ry - 1) * rz + (size_t)rx * ry * (rz - 1)) * sizeof(uint32_t);
     std::vector<uint32_t> vertGroups;
 
     int n = 0;
@@ -1747,6 +1749,7 @@ static RemeshResult surfaceNetsReconstruct(
     if (numThreads < 1) numThreads = 1;
 
     std::vector<int32_t> cellToVert(datalen);
+    res.profile.bytesReconstructAux = (size_t)datalen * sizeof(int32_t);
 #pragma omp parallel for schedule(static)
     for (int i = 0; i < datalen; ++i) {
         cellToVert[i] = -1;
@@ -2941,8 +2944,11 @@ RemeshResult doRemesh(
 
     double distMemMB = (double)datalen * sizeof(float) / (1024.0 * 1024.0);
     double crossMemMB = (double)datalen * sizeof(uint8_t) / (1024.0 * 1024.0);
-    sculpt_log("[REMESH PROFILE] Grid Memory: Dims=[%d, %d, %d] (%d voxels) | distanceField=%.2f MB, crossedEdges=%.2f MB | Core Grid Total=%.2f MB\n",
-              rx, ry, rz, datalen, distMemMB, crossMemMB, distMemMB + crossMemMB);
+    double colorMemMB = hasColors ? ((double)datalen * sizeof(uint32_t) / (1024.0 * 1024.0)) : 0.0;
+    double matMemMB = hasMaterials ? ((double)datalen * sizeof(uint32_t) / (1024.0 * 1024.0)) : 0.0;
+    double coreGridTotalMB = distMemMB + crossMemMB + colorMemMB + matMemMB;
+    sculpt_log("[REMESH PROFILE] Grid Memory: Dims=[%d, %d, %d] (%d voxels) | dist=%.2f MB, cross=%.2f MB, color=%.2f MB, mat=%.2f MB | Core Grid Total=%.2f MB\n",
+              rx, ry, rz, datalen, distMemMB, crossMemMB, colorMemMB, matMemMB, coreGridTotalMB);
 
     // 2. Allocate voxel fields
     voxels.crossedEdges.assign(datalen, 0);
@@ -3330,7 +3336,28 @@ RemeshResult doRemesh(
     r.profile.gridDims[1] = ry;
     r.profile.gridDims[2] = rz;
     r.profile.gridDatalen = datalen;
-    r.profile.gridMemoryMB = distMemMB + crossMemMB;
+    size_t bytesCross = voxels.crossedEdges.capacity() * sizeof(uint8_t);
+    size_t bytesDist = voxels.distanceField.capacity() * sizeof(float);
+    size_t bytesColor = voxels.colorField.capacity() * sizeof(uint32_t);
+    size_t bytesMat = voxels.materialField.capacity() * sizeof(uint32_t);
+    size_t bytesFloodAux = (size_t)datalen * sizeof(uint8_t);
+    size_t bytesReconAux = r.profile.bytesReconstructAux;
+
+    double coreGridMB = (double)(bytesCross + bytesDist + bytesColor + bytesMat) / (1024.0 * 1024.0);
+    double auxAllocMB = (double)(bytesFloodAux + bytesReconAux) / (1024.0 * 1024.0);
+    ProcessMemorySnapshot snapAfter = getProcessMemorySnapshot();
+    double peakWorkingSetMB = (double)snapAfter.peakWorkingSetBytes / (1024.0 * 1024.0);
+
+    r.profile.bytesCrossedEdges = bytesCross;
+    r.profile.bytesDistanceField = bytesDist;
+    r.profile.bytesColorField = bytesColor;
+    r.profile.bytesMaterialField = bytesMat;
+    r.profile.bytesFloodFillAux = bytesFloodAux;
+    r.profile.bytesReconstructAux = bytesReconAux;
+    r.profile.coreGridRAM_MB = coreGridMB;
+    r.profile.auxAllocRAM_MB = auxAllocMB;
+    r.profile.peakWorkingSetMB = peakWorkingSetMB;
+    r.profile.gridMemoryMB = coreGridMB;
     r.profile.step = step;
 
     return r;

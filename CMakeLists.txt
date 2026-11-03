@@ -191,7 +191,7 @@ add_executable(SPSculpt
 if(WIN32)
     set_target_properties(SPSculpt PROPERTIES WIN32_EXECUTABLE TRUE OUTPUT_NAME "SPSculpt")
     target_sources(SPSculpt PRIVATE resources/app.rc)
-    target_link_libraries(SPSculpt PRIVATE comdlg32)
+    target_link_libraries(SPSculpt PRIVATE comdlg32 psapi)
 endif()
 
 if(TARGET SDL2::SDL2)

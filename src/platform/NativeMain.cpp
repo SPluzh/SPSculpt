@@ -331,6 +331,7 @@ int main(int argc, char* argv[]) {
     bool runBench = false;
     bool runTrimClipBench = false;
     bool runVoxelBench = false;
+    bool runVoxelMemBench = false;
     int benchFaces = 4000000;
     int benchRemeshRes = 0;
     std::string fileToOpen = "";
@@ -352,6 +353,10 @@ int main(int argc, char* argv[]) {
                 showConsole = true;
             } else if (arg == "--bench-remesh" || arg == "--bench-voxel" || arg == "--bench-voxel-remesh") {
                 runVoxelBench = true;
+                showConsole = true;
+            } else if (arg == "--bench-remesh-mem" || arg == "--bench-voxel-mem") {
+                runVoxelBench = true;
+                runVoxelMemBench = true;
                 showConsole = true;
             } else if ((arg == "--bench-remesh-res" || arg == "--remesh-res") && i + 1 < numArgs) {
                 showConsole = true;
@@ -387,6 +392,10 @@ int main(int argc, char* argv[]) {
             showConsole = true;
         } else if (arg == "--bench-remesh" || arg == "--bench-voxel" || arg == "--bench-voxel-remesh") {
             runVoxelBench = true;
+            showConsole = true;
+        } else if (arg == "--bench-remesh-mem" || arg == "--bench-voxel-mem") {
+            runVoxelBench = true;
+            runVoxelMemBench = true;
             showConsole = true;
         } else if ((arg == "--bench-remesh-res" || arg == "--remesh-res") && i + 1 < argc) {
             showConsole = true;
@@ -448,7 +457,7 @@ int main(int argc, char* argv[]) {
     setvbuf(stderr, NULL, _IONBF, 0);
 
     if (runVoxelBench && !runBench && !runTrimClipBench) {
-        bool success = VoxelRemeshBenchmark::run(benchRemeshRes);
+        bool success = VoxelRemeshBenchmark::run(benchRemeshRes, runVoxelMemBench);
         fflush(stdout);
         fflush(stderr);
 #ifdef _WIN32
@@ -461,7 +470,7 @@ int main(int argc, char* argv[]) {
     if (runTrimClipBench && !runBench) {
         bool success = TrimClipBenchmark::run(benchFaces);
         if (runVoxelBench) {
-            success = VoxelRemeshBenchmark::run(benchRemeshRes) && success;
+            success = VoxelRemeshBenchmark::run(benchRemeshRes, runVoxelMemBench) && success;
         }
         fflush(stdout);
         fflush(stderr);
@@ -478,7 +487,7 @@ int main(int argc, char* argv[]) {
             success = TrimClipBenchmark::run(benchFaces) && success;
         }
         if (runVoxelBench) {
-            success = VoxelRemeshBenchmark::run(benchRemeshRes) && success;
+            success = VoxelRemeshBenchmark::run(benchRemeshRes, runVoxelMemBench) && success;
         }
         fflush(stdout);
         fflush(stderr);
