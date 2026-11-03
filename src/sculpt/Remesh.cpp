@@ -1,4 +1,6 @@
 #include "sculpt/Remesh.h"
+#include "sculpt/KeepMasked.h"
+#include "common/Constants.h"
 #include <cmath>
 #include <limits>
 #include <algorithm>
@@ -50,7 +52,7 @@ static double distance2PointTriangleEdges(
     const double edge2[3],
     const double v1[3],
     double a00, double a01, double a11,
-    double closest[4]
+    double closest[5]
 ) {
     double diff[3] = { v1[0] - point[0], v1[1] - point[1], v1[2] - point[2] };
     double b0 = diff[0] * edge1[0] + diff[1] * edge1[1] + diff[2] * edge1[2];
@@ -209,7 +211,8 @@ static double distance2PointTriangleEdges(
     closest[0] = v1[0] + s * edge1[0] + t * edge2[0];
     closest[1] = v1[1] + s * edge1[1] + t * edge2[1];
     closest[2] = v1[2] + s * edge1[2] + t * edge2[2];
-    closest[3] = (double)zone;
+    closest[3] = s;
+    closest[4] = t;
 
     return sqrDistance;
 }
@@ -397,8 +400,17 @@ public:
         }
     }
 
-    uint32_t findClosestPolyGroup(const float point[3], const float quadNormal[3]) const {
-        if (m_triangles.empty()) return 0;
+    struct ClosestTriangleResult {
+        uint32_t triIndex = 0;
+        uint32_t groupID = 0;
+        float w0 = 1.0f / 3.0f;
+        float w1 = 1.0f / 3.0f;
+        float w2 = 1.0f / 3.0f;
+    };
+
+    ClosestTriangleResult findClosestTriangle(const float point[3], const float normal[3]) const {
+        ClosestTriangleResult res;
+        if (m_triangles.empty()) return res;
 
         float invCellSize = 1.0f / cellSize;
         int cx = (int)std::floor((point[0] - gridMin[0]) * invCellSize);
@@ -406,8 +418,10 @@ public:
         int cz = (int)std::floor((point[2] - gridMin[2]) * invCellSize);
 
         double bestDistSq = 1e30;
-        uint32_t bestGroup = 0;
         bool foundAligned = false;
+        double bestS = 0.0, bestT = 0.0;
+        uint32_t bestTri = 0;
+        uint32_t bestGroup = 0;
 
         double pointD[3] = { (double)point[0], (double)point[1], (double)point[2] };
 
@@ -416,28 +430,41 @@ public:
             int cellIdx = cx + cy * dims[0] + cz * dims[0] * dims[1];
             for (uint32_t triIdx : cells[cellIdx]) {
                 const IndexedTriangle& tri = m_triangles[triIdx];
-                double dummyClosest[4];
+                double closest[5];
                 double distSq = distance2PointTriangleEdges(
-                    pointD, tri.edge1, tri.edge2, tri.v1, tri.a00, tri.a01, tri.a11, dummyClosest
+                    pointD, tri.edge1, tri.edge2, tri.v1, tri.a00, tri.a01, tri.a11, closest
                 );
 
-                float dotN = quadNormal[0] * tri.normal[0] +
-                             quadNormal[1] * tri.normal[1] +
-                             quadNormal[2] * tri.normal[2];
+                float dotN = normal[0] * tri.normal[0] +
+                             normal[1] * tri.normal[1] +
+                             normal[2] * tri.normal[2];
 
                 if (dotN > 0.0f) {
                     if (!foundAligned || distSq < bestDistSq) {
                         bestDistSq = distSq;
                         bestGroup = tri.groupID;
+                        bestTri = tri.triIndex;
+                        bestS = closest[3];
+                        bestT = closest[4];
                         foundAligned = true;
                     }
                 } else if (!foundAligned && distSq < bestDistSq) {
                     bestDistSq = distSq;
                     bestGroup = tri.groupID;
+                    bestTri = tri.triIndex;
+                    bestS = closest[3];
+                    bestT = closest[4];
                 }
             }
             if (foundAligned && bestDistSq < (double)(0.5f * cellSize * 0.5f * cellSize)) {
-                return bestGroup;
+                res.triIndex = bestTri;
+                res.groupID = bestGroup;
+                res.w1 = (float)std::clamp(bestS, 0.0, 1.0);
+                res.w2 = (float)std::clamp(bestT, 0.0, 1.0);
+                res.w0 = (float)std::clamp(1.0 - bestS - bestT, 0.0, 1.0);
+                float sum = res.w0 + res.w1 + res.w2;
+                if (sum > 1e-6f) { res.w0 /= sum; res.w1 /= sum; res.w2 /= sum; }
+                return res;
             }
         }
 
@@ -459,24 +486,30 @@ public:
                         int cellIdx = x + y * dims[0] + z * dims[0] * dims[1];
                         for (uint32_t triIdx : cells[cellIdx]) {
                             const IndexedTriangle& tri = m_triangles[triIdx];
-                            double dummyClosest[4];
+                            double closest[5];
                             double distSq = distance2PointTriangleEdges(
-                                pointD, tri.edge1, tri.edge2, tri.v1, tri.a00, tri.a01, tri.a11, dummyClosest
+                                pointD, tri.edge1, tri.edge2, tri.v1, tri.a00, tri.a01, tri.a11, closest
                             );
 
-                            float dotN = quadNormal[0] * tri.normal[0] +
-                                         quadNormal[1] * tri.normal[1] +
-                                         quadNormal[2] * tri.normal[2];
+                            float dotN = normal[0] * tri.normal[0] +
+                                         normal[1] * tri.normal[1] +
+                                         normal[2] * tri.normal[2];
 
                             if (dotN > 0.0f) {
                                 if (!foundAligned || distSq < bestDistSq) {
                                     bestDistSq = distSq;
                                     bestGroup = tri.groupID;
+                                    bestTri = tri.triIndex;
+                                    bestS = closest[3];
+                                    bestT = closest[4];
                                     foundAligned = true;
                                 }
                             } else if (!foundAligned && distSq < bestDistSq) {
                                 bestDistSq = distSq;
                                 bestGroup = tri.groupID;
+                                bestTri = tri.triIndex;
+                                bestS = closest[3];
+                                bestT = closest[4];
                             }
                         }
                     }
@@ -486,7 +519,68 @@ public:
                 break;
             }
         }
-        return bestGroup;
+
+        if (bestDistSq >= 1e20) {
+            int maxDim = std::max({ dims[0], dims[1], dims[2] });
+            for (int r = 4; r <= maxDim && bestDistSq >= 1e20; ++r) {
+                int xMin = std::max(0, cx - r);
+                int xMax = std::min(dims[0] - 1, cx + r);
+                int yMin = std::max(0, cy - r);
+                int yMax = std::min(dims[1] - 1, cy + r);
+                int zMin = std::max(0, cz - r);
+                int zMax = std::min(dims[2] - 1, cz + r);
+
+                for (int z = zMin; z <= zMax; ++z) {
+                    for (int y = yMin; y <= yMax; ++y) {
+                        for (int x = xMin; x <= xMax; ++x) {
+                            if (x > cx - r && x < cx + r && y > cy - r && y < cy + r && z > cz - r && z < cz + r) {
+                                continue;
+                            }
+                            int cellIdx = x + y * dims[0] + z * dims[0] * dims[1];
+                            for (uint32_t triIdx : cells[cellIdx]) {
+                                const IndexedTriangle& tri = m_triangles[triIdx];
+                                double closest[5];
+                                double distSq = distance2PointTriangleEdges(
+                                    pointD, tri.edge1, tri.edge2, tri.v1, tri.a00, tri.a01, tri.a11, closest
+                                );
+                                float dotN = normal[0] * tri.normal[0] +
+                                             normal[1] * tri.normal[1] +
+                                             normal[2] * tri.normal[2];
+                                if (dotN > 0.0f) {
+                                    if (!foundAligned || distSq < bestDistSq) {
+                                        bestDistSq = distSq;
+                                        bestGroup = tri.groupID;
+                                        bestTri = tri.triIndex;
+                                        bestS = closest[3];
+                                        bestT = closest[4];
+                                        foundAligned = true;
+                                    }
+                                } else if (!foundAligned && distSq < bestDistSq) {
+                                    bestDistSq = distSq;
+                                    bestGroup = tri.groupID;
+                                    bestTri = tri.triIndex;
+                                    bestS = closest[3];
+                                    bestT = closest[4];
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        res.triIndex = bestTri;
+        res.groupID = bestGroup;
+        res.w1 = (float)std::clamp(bestS, 0.0, 1.0);
+        res.w2 = (float)std::clamp(bestT, 0.0, 1.0);
+        res.w0 = (float)std::clamp(1.0 - bestS - bestT, 0.0, 1.0);
+        float sum = res.w0 + res.w1 + res.w2;
+        if (sum > 1e-6f) { res.w0 /= sum; res.w1 /= sum; res.w2 /= sum; }
+        return res;
+    }
+
+    uint32_t findClosestPolyGroup(const float point[3], const float quadNormal[3]) const {
+        return findClosestTriangle(point, quadNormal).groupID;
     }
 };
 
@@ -683,7 +777,7 @@ static void voxelize(
                     double x = vminx + i * step;
 
                     double point[3] = { x, y, z };
-                    double closest[4];
+                    double closest[5];
                     double newDistSq = distance2PointTriangleEdges(point, tm.triEdge1, tm.triEdge2, tm.v1, tm.a00, tm.a01, tm.a11, closest);
                     float curDistSq = voxels.distanceField[n];
 
@@ -2017,7 +2111,107 @@ static void applyConstrainedTangentialRelaxation(
         else vertNormals[i] = glm::vec3(0.0f, 0.0f, 1.0f);
     }
 
-    // 2. Build vertex adjacency graph (VRV) and quad diagonal pairs
+    // 2. Crease Graph & Sharp Feature Preservation
+    const int MAX_CREASE_DEG = 4;
+    std::vector<uint8_t> isCreaseVert(nbV, 0);
+    std::vector<uint32_t> creaseNeighbors(nbV * MAX_CREASE_DEG);
+    std::vector<uint8_t> creaseNeighborCount(nbV, 0);
+    std::vector<uint8_t> isNearCrease(nbV, 0);
+
+    if (keepSharpEdges) {
+        // Precompute face normals to evaluate dihedral angles across shared edges
+        std::vector<glm::vec3> faceNormals(nbF, glm::vec3(0.0f));
+        for (size_t f = 0; f < nbF; ++f) {
+            uint32_t i0 = res.faces[f * 4 + 0];
+            uint32_t i1 = res.faces[f * 4 + 1];
+            uint32_t i2 = res.faces[f * 4 + 2];
+            uint32_t i3 = res.faces[f * 4 + 3];
+            if (i0 >= nbV || i1 >= nbV || i2 >= nbV) continue;
+
+            glm::vec3 p0(res.vertices[i0 * 3], res.vertices[i0 * 3 + 1], res.vertices[i0 * 3 + 2]);
+            glm::vec3 p1(res.vertices[i1 * 3], res.vertices[i1 * 3 + 1], res.vertices[i1 * 3 + 2]);
+            glm::vec3 p2(res.vertices[i2 * 3], res.vertices[i2 * 3 + 1], res.vertices[i2 * 3 + 2]);
+
+            glm::vec3 fn(0.0f);
+            if (i3 != 0xffffffff && i3 < (uint32_t)nbV) {
+                glm::vec3 p3(res.vertices[i3 * 3], res.vertices[i3 * 3 + 1], res.vertices[i3 * 3 + 2]);
+                fn = glm::cross(p2 - p0, p3 - p1);
+            } else {
+                fn = glm::cross(p1 - p0, p2 - p0);
+            }
+            float l = glm::length(fn);
+            if (l > 1e-6f) faceNormals[f] = fn / l;
+            else faceNormals[f] = glm::vec3(0.0f, 0.0f, 1.0f);
+        }
+
+        std::unordered_map<uint64_t, uint32_t> edgeFaceMap;
+        edgeFaceMap.reserve(nbF * 4);
+
+        for (size_t f = 0; f < nbF; ++f) {
+            uint32_t fv[4] = {
+                res.faces[f * 4 + 0],
+                res.faces[f * 4 + 1],
+                res.faces[f * 4 + 2],
+                res.faces[f * 4 + 3]
+            };
+            bool isQuad = (fv[3] != 0xffffffff && fv[3] < (uint32_t)nbV);
+            int numEdges = isQuad ? 4 : 3;
+
+            for (int k = 0; k < numEdges; ++k) {
+                uint32_t u = fv[k];
+                uint32_t w = fv[(k + 1) % numEdges];
+                if (u >= (uint32_t)nbV || w >= (uint32_t)nbV || u == w) continue;
+
+                uint64_t key = (uint64_t(std::min(u, w)) << 32) | uint64_t(std::max(u, w));
+                auto it = edgeFaceMap.find(key);
+                if (it == edgeFaceMap.end()) {
+                    edgeFaceMap[key] = (uint32_t)f;
+                } else {
+                    uint32_t fOther = it->second;
+                    float dot = glm::dot(faceNormals[f], faceNormals[fOther]);
+                    bool sharpByTag = (!res.sharpVertices.empty() && u < res.sharpVertices.size() && w < res.sharpVertices.size() && res.sharpVertices[u] && res.sharpVertices[w]);
+                    if (dot <= 0.85f || sharpByTag) {
+                        isCreaseVert[u] = 1;
+                        isCreaseVert[w] = 1;
+
+                        uint8_t cu = creaseNeighborCount[u];
+                        bool foundW = false;
+                        for (uint8_t j = 0; j < cu; ++j) {
+                            if (creaseNeighbors[u * MAX_CREASE_DEG + j] == w) {
+                                foundW = true;
+                                break;
+                            }
+                        }
+                        if (!foundW && cu < MAX_CREASE_DEG) {
+                            creaseNeighbors[u * MAX_CREASE_DEG + cu] = w;
+                            creaseNeighborCount[u] = cu + 1;
+                        }
+
+                        uint8_t cw = creaseNeighborCount[w];
+                        bool foundU = false;
+                        for (uint8_t j = 0; j < cw; ++j) {
+                            if (creaseNeighbors[w * MAX_CREASE_DEG + j] == u) {
+                                foundU = true;
+                                break;
+                            }
+                        }
+                        if (!foundU && cw < MAX_CREASE_DEG) {
+                            creaseNeighbors[w * MAX_CREASE_DEG + cw] = u;
+                            creaseNeighborCount[w] = cw + 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!res.sharpVertices.empty()) {
+            for (size_t i = 0; i < nbV && i < res.sharpVertices.size(); ++i) {
+                if (res.sharpVertices[i]) isCreaseVert[i] = 1;
+            }
+        }
+    }
+
+    // 3. Build vertex adjacency graph (VRV) and quad diagonal pairs
     const int MAX_DEG = 8;
     std::vector<uint32_t> vertNeighbors(nbV * MAX_DEG);
     std::vector<uint8_t> vertNeighborCount(nbV, 0);
@@ -2087,7 +2281,26 @@ static void applyConstrainedTangentialRelaxation(
         }
     }
 
-    // 3. Identify symmetry-constrained vertices
+    if (keepSharpEdges) {
+        for (size_t v = 0; v < nbV; ++v) {
+            if (isCreaseVert[v]) {
+                isNearCrease[v] = 1;
+                uint8_t count = vertNeighborCount[v];
+                const uint32_t* nbrPtr = &vertNeighbors[v * MAX_DEG];
+                for (uint8_t k = 0; k < count; ++k) {
+                    uint32_t u = nbrPtr[k];
+                    isNearCrease[u] = 1;
+                    uint8_t countU = vertNeighborCount[u];
+                    const uint32_t* nbrU = &vertNeighbors[u * MAX_DEG];
+                    for (uint8_t j = 0; j < countU; ++j) {
+                        isNearCrease[nbrU[j]] = 1;
+                    }
+                }
+            }
+        }
+    }
+
+    // 4. Identify symmetry-constrained vertices
     std::vector<uint8_t> symFixed(nbV, 0);
     if (alignSymmetry) {
 #pragma omp parallel for schedule(static)
@@ -2103,19 +2316,62 @@ static void applyConstrainedTangentialRelaxation(
         }
     }
 
-    // 4. Jacobi iterations with double buffering
+    // 5. Jacobi iterations with double buffering
     std::vector<float> currVerts = res.vertices;
     std::vector<float> nextVerts = res.vertices;
 
     for (int iter = 0; iter < iterations; ++iter) {
 #pragma omp parallel for schedule(static)
         for (int v = 0; v < (int)nbV; ++v) {
-            if (keepSharpEdges && !res.sharpVertices.empty() && res.sharpVertices[v]) {
+            if (keepSharpEdges && isCreaseVert[v]) {
+                uint8_t cCount = creaseNeighborCount[v];
+                if (cCount == 2) {
+                    // Regularize strictly along 1D crease tangent
+                    uint32_t c0 = creaseNeighbors[v * MAX_CREASE_DEG + 0];
+                    uint32_t c1 = creaseNeighbors[v * MAX_CREASE_DEG + 1];
+
+                    glm::vec3 pv(currVerts[v * 3 + 0], currVerts[v * 3 + 1], currVerts[v * 3 + 2]);
+                    glm::vec3 pc0(currVerts[c0 * 3 + 0], currVerts[c0 * 3 + 1], currVerts[c0 * 3 + 2]);
+                    glm::vec3 pc1(currVerts[c1 * 3 + 0], currVerts[c1 * 3 + 1], currVerts[c1 * 3 + 2]);
+
+                    glm::vec3 t = pc1 - pc0;
+                    float tLen = glm::length(t);
+                    if (tLen > 1e-6f) {
+                        t /= tLen;
+                        glm::vec3 pMid = 0.5f * (pc0 + pc1);
+                        glm::vec3 delta = pMid - pv;
+                        glm::vec3 deltaAlongCrease = glm::dot(delta, t) * t;
+
+                        if (alignSymmetry) {
+                            uint8_t sf = symFixed[v];
+                            if (sf & 1) deltaAlongCrease.x = 0.0f;
+                            if (sf & 2) deltaAlongCrease.y = 0.0f;
+                            if (sf & 4) deltaAlongCrease.z = 0.0f;
+                        }
+
+                        glm::vec3 pNew = pv + lambda * deltaAlongCrease;
+
+                        if (alignSymmetry) {
+                            uint8_t sf = symFixed[v];
+                            if (sf & 1) pNew.x = 0.0f;
+                            if (sf & 2) pNew.y = 0.0f;
+                            if (sf & 4) pNew.z = 0.0f;
+                        }
+
+                        nextVerts[v * 3 + 0] = pNew.x;
+                        nextVerts[v * 3 + 1] = pNew.y;
+                        nextVerts[v * 3 + 2] = pNew.z;
+                        continue;
+                    }
+                }
+
+                // Corners (creaseCount >= 3 or 1 or isolated): Freeze completely
                 nextVerts[v * 3 + 0] = currVerts[v * 3 + 0];
                 nextVerts[v * 3 + 1] = currVerts[v * 3 + 1];
                 nextVerts[v * 3 + 2] = currVerts[v * 3 + 2];
                 continue;
             }
+
             uint8_t count = vertNeighborCount[v];
             if (count == 0) continue;
 
@@ -2160,14 +2416,20 @@ static void applyConstrainedTangentialRelaxation(
                 delta = delta * 0.6f + diagDelta * 0.4f;
             }
 
-            float gx = (pv.x - voxels.minCoord[0]) / voxels.step;
-            float gy = (pv.y - voxels.minCoord[1]) / voxels.step;
-            float gz = (pv.z - voxels.minCoord[2]) / voxels.step;
-            glm::vec3 norm = sampleSDFGradient(voxels, gx, gy, gz);
-            if (glm::length(norm) < 1e-6f) {
-                norm = vertNormals[v];
-            } else if (glm::dot(norm, vertNormals[v]) < 0.0f) {
-                norm = -norm;
+            // Normal projection:
+            // For vertices adjacent to sharp creases, use vertNormals to prevent tilted SDF gradient from beveling the face!
+            glm::vec3 norm = vertNormals[v];
+            if (!keepSharpEdges || !isNearCrease[v]) {
+                float gx = (pv.x - voxels.minCoord[0]) / voxels.step;
+                float gy = (pv.y - voxels.minCoord[1]) / voxels.step;
+                float gz = (pv.z - voxels.minCoord[2]) / voxels.step;
+                glm::vec3 sdfNorm = sampleSDFGradient(voxels, gx, gy, gz);
+                if (glm::length(sdfNorm) > 1e-6f) {
+                    if (glm::dot(sdfNorm, vertNormals[v]) < 0.0f) {
+                        sdfNorm = -sdfNorm;
+                    }
+                    norm = sdfNorm;
+                }
             }
 
             // Project delta onto tangent plane
@@ -2194,6 +2456,10 @@ static void applyConstrainedTangentialRelaxation(
             nextVerts[v * 3 + 2] = pNew.z;
         }
         currVerts = nextVerts;
+    }
+
+    if (keepSharpEdges) {
+        res.sharpVertices = std::move(isCreaseVert);
     }
 
     res.vertices = std::move(currVerts);
@@ -2568,11 +2834,37 @@ RemeshResult doRemesh(
     float matrixScaleY,
     float matrixScaleZ,
     bool regularizeQuads,
-    bool keepSharpEdges
+    bool keepSharpEdges,
+    bool keepMasked
 ) {
     auto tRemeshStart = std::chrono::high_resolution_clock::now();
-    sculpt_log("[C++ doRemesh] Start. nbVerts=%d, nbTris=%d, resolution=%.2f, block=%d, smooth=%d, manifold=%d, hasColors=%d, hasMaterials=%d, hasFaceGroups=%d, alignSymmetry=%d, regularizeQuads=%d, keepSharpEdges=%d, scaleXYZ=(%.4f, %.4f, %.4f)\n",
-               nbVerts, nbTris, resolution, block, smooth, manifold, hasColors, hasMaterials, hasFaceGroups, alignSymmetry, regularizeQuads, keepSharpEdges, matrixScaleX, matrixScaleY, matrixScaleZ);
+    sculpt_log("[C++ doRemesh] Start. nbVerts=%d, nbTris=%d, resolution=%.2f, block=%d, smooth=%d, manifold=%d, hasColors=%d, hasMaterials=%d, hasFaceGroups=%d, alignSymmetry=%d, regularizeQuads=%d, keepSharpEdges=%d, keepMasked=%d, scaleXYZ=(%.4f, %.4f, %.4f)\n",
+               nbVerts, nbTris, resolution, block, smooth, manifold, hasColors, hasMaterials, hasFaceGroups, alignSymmetry, regularizeQuads, keepSharpEdges, keepMasked, matrixScaleX, matrixScaleY, matrixScaleZ);
+
+    const std::vector<uint8_t> keep = (keepMasked && hasMaterials && materials)
+        ? sculpt::getKeepMaskedTriangles(materials, nbVerts, tris, nbTris)
+        : std::vector<uint8_t>();
+    const bool keeping = std::find(keep.begin(), keep.end(), 1) != keep.end();
+
+    if (keeping && std::find(keep.begin(), keep.end(), 0) == keep.end()) {
+        sculpt_log("[C++ doRemesh] Everything is masked, returning original mesh.\n");
+        RemeshResult allKept;
+        allKept.vertices.assign(verts, verts + nbVerts * 3);
+        if (hasColors && colors) allKept.colors.assign(colors, colors + nbVerts * 3);
+        if (hasMaterials && materials) allKept.materials.assign(materials, materials + nbVerts * 3);
+        allKept.faces.reserve(nbTris * 4);
+        allKept.faceGroups.reserve(nbTris);
+        for (int t = 0; t < nbTris; ++t) {
+            allKept.faces.push_back(tris[t * 3 + 0]);
+            allKept.faces.push_back(tris[t * 3 + 1]);
+            allKept.faces.push_back(tris[t * 3 + 2]);
+            allKept.faces.push_back(TRI_INDEX);
+            allKept.faceGroups.push_back(hasFaceGroups && faceGroups ? faceGroups[t] : 0u);
+        }
+        allKept.profile.msTotalRemesh = 0.0;
+        return allKept;
+    }
+
     if (box) {
         sculpt_log("[C++ doRemesh] box: [%.4f, %.4f, %.4f, %.4f, %.4f, %.4f]\n", box[0], box[1], box[2], box[3], box[4], box[5]);
     } else {
@@ -2660,21 +2952,39 @@ RemeshResult doRemesh(
     }
 
     voxels.hasColorField = hasColors;
-    if (hasColors) {
-        voxels.colorField.assign(datalen, 0);
-    } else {
+    if (uniformColor) {
         voxels.uniformColor[0] = uniformColor[0];
         voxels.uniformColor[1] = uniformColor[1];
         voxels.uniformColor[2] = uniformColor[2];
+    } else {
+        voxels.uniformColor[0] = 0.72f;
+        voxels.uniformColor[1] = 0.52f;
+        voxels.uniformColor[2] = 0.45f;
+    }
+    if (hasColors) {
+        uint8_t cr = (uint8_t)(std::clamp(voxels.uniformColor[0], 0.0f, 1.0f) * 255.0f + 0.5f);
+        uint8_t cg = (uint8_t)(std::clamp(voxels.uniformColor[1], 0.0f, 1.0f) * 255.0f + 0.5f);
+        uint8_t cb = (uint8_t)(std::clamp(voxels.uniformColor[2], 0.0f, 1.0f) * 255.0f + 0.5f);
+        uint32_t defaultPackedColor = ((uint32_t)cr << 16) | ((uint32_t)cg << 8) | cb;
+        voxels.colorField.assign(datalen, defaultPackedColor);
     }
 
     voxels.hasMaterialField = hasMaterials;
-    if (hasMaterials) {
-        voxels.materialField.assign(datalen, 0);
-    } else {
+    if (uniformMaterial) {
         voxels.uniformMaterial[0] = uniformMaterial[0];
         voxels.uniformMaterial[1] = uniformMaterial[1];
         voxels.uniformMaterial[2] = uniformMaterial[2];
+    } else {
+        voxels.uniformMaterial[0] = 0.5f;
+        voxels.uniformMaterial[1] = 0.0f;
+        voxels.uniformMaterial[2] = 1.0f;
+    }
+    if (hasMaterials) {
+        uint8_t mr = (uint8_t)(std::clamp(voxels.uniformMaterial[0], 0.0f, 1.0f) * 255.0f + 0.5f);
+        uint8_t mg = (uint8_t)(std::clamp(voxels.uniformMaterial[1], 0.0f, 1.0f) * 255.0f + 0.5f);
+        uint8_t mb = (uint8_t)(std::clamp(voxels.uniformMaterial[2], 0.0f, 1.0f) * 255.0f + 0.5f);
+        uint32_t defaultPackedMaterial = ((uint32_t)mr << 16) | ((uint32_t)mg << 8) | mb;
+        voxels.materialField.assign(datalen, defaultPackedMaterial);
     }
 
     voxels.hasGroupField = false; // PolyGroups are transferred via spatial projection post-reconstruction
@@ -2736,15 +3046,17 @@ RemeshResult doRemesh(
         }
     }
 
-    // 6. PolyGroup Transfer via Direct Spatial Mesh-to-Mesh Projection
+    // 6. Spatial Mesh-to-Mesh Attribute & PolyGroup Transfer
     double msPolyGroupTotal = 0.0;
     double msBuild = 0.0;
     double msQuery = 0.0;
     double msCleanup = 0.0;
-    if (hasFaceGroups && faceGroups && nbTris > 0 && !r.faces.empty()) {
+    bool needsAttributeTransfer = ((hasMaterials && materials) || (hasColors && colors));
+    bool needsPolyGroupTransfer = (hasFaceGroups && faceGroups && !r.faces.empty());
+    if ((needsAttributeTransfer || needsPolyGroupTransfer) && nbTris > 0 && !r.vertices.empty()) {
         auto tPolyGroupStart = std::chrono::high_resolution_clock::now();
         size_t numFaces = r.faces.size() / 4;
-        r.faceGroups.resize(numFaces, 0);
+        size_t numVerts = r.vertices.size() / 3;
 
         auto tBuildStart = std::chrono::high_resolution_clock::now();
         TriangleSpatialIndex spatialIndex;
@@ -2752,161 +3064,257 @@ RemeshResult doRemesh(
         msBuild = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tBuildStart).count();
 
         auto tQueryStart = std::chrono::high_resolution_clock::now();
+
+        // A. Material & Color Attribute Transfer onto Reconstructed Vertices
+        if (needsAttributeTransfer && numVerts > 0) {
+            std::vector<float> vertNormals(numVerts * 3, 0.0f);
+            for (size_t f = 0; f < numFaces; ++f) {
+                uint32_t idx0 = r.faces[f * 4 + 0];
+                uint32_t idx1 = r.faces[f * 4 + 1];
+                uint32_t idx2 = r.faces[f * 4 + 2];
+                uint32_t idx3 = r.faces[f * 4 + 3];
+                if (idx0 >= numVerts || idx1 >= numVerts || idx2 >= numVerts) continue;
+                const float* p0 = &r.vertices[idx0 * 3];
+                const float* p1 = &r.vertices[idx1 * 3];
+                const float* p2 = &r.vertices[idx2 * 3];
+                float fn[3] = {
+                    (p1[1] - p0[1]) * (p2[2] - p0[2]) - (p1[2] - p0[2]) * (p2[1] - p0[1]),
+                    (p1[2] - p0[2]) * (p2[0] - p0[0]) - (p1[0] - p0[0]) * (p2[2] - p0[2]),
+                    (p1[0] - p0[0]) * (p2[1] - p0[1]) - (p1[1] - p0[1]) * (p2[0] - p0[0])
+                };
+                for (int k = 0; k < 3; ++k) {
+                    vertNormals[idx0 * 3 + k] += fn[k];
+                    vertNormals[idx1 * 3 + k] += fn[k];
+                    vertNormals[idx2 * 3 + k] += fn[k];
+                    if (idx3 != 0xffffffff && idx3 < numVerts) {
+                        vertNormals[idx3 * 3 + k] += fn[k];
+                    }
+                }
+            }
 #pragma omp parallel for schedule(static)
-        for (int i = 0; i < (int)numFaces; ++i) {
-            uint32_t idx0 = r.faces[i * 4 + 0];
-            uint32_t idx1 = r.faces[i * 4 + 1];
-            uint32_t idx2 = r.faces[i * 4 + 2];
-            uint32_t idx3 = r.faces[i * 4 + 3];
-
-            size_t nbV = r.vertices.size() / 3;
-            if (idx0 >= nbV || idx1 >= nbV || idx2 >= nbV) {
-                continue;
+            for (int i = 0; i < (int)numVerts; ++i) {
+                float* vn = &vertNormals[i * 3];
+                float len = std::sqrt(vn[0] * vn[0] + vn[1] * vn[1] + vn[2] * vn[2]);
+                if (len > 1e-9f) { vn[0] /= len; vn[1] /= len; vn[2] /= len; }
+                else { vn[0] = 0.0f; vn[1] = 0.0f; vn[2] = 1.0f; }
             }
 
-            bool isQuad = (idx3 != 0xffffffff && idx3 < nbV);
-            const float* p0 = &r.vertices[idx0 * 3];
-            const float* p1 = &r.vertices[idx1 * 3];
-            const float* p2 = &r.vertices[idx2 * 3];
-
-            float centroid[3];
-            float e1[3] = { p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2] };
-            float e2[3];
-
-            if (isQuad) {
-                const float* p3 = &r.vertices[idx3 * 3];
-                centroid[0] = (p0[0] + p1[0] + p2[0] + p3[0]) * 0.25f;
-                centroid[1] = (p0[1] + p1[1] + p2[1] + p3[1]) * 0.25f;
-                centroid[2] = (p0[2] + p1[2] + p2[2] + p3[2]) * 0.25f;
-                e2[0] = p3[0] - p0[0];
-                e2[1] = p3[1] - p0[1];
-                e2[2] = p3[2] - p0[2];
-            } else {
-                centroid[0] = (p0[0] + p1[0] + p2[0]) * (1.0f / 3.0f);
-                centroid[1] = (p0[1] + p1[1] + p2[1]) * (1.0f / 3.0f);
-                centroid[2] = (p0[2] + p1[2] + p2[2]) * (1.0f / 3.0f);
-                e2[0] = p2[0] - p0[0];
-                e2[1] = p2[1] - p0[1];
-                e2[2] = p2[2] - p0[2];
+            if (hasMaterials && materials) {
+                r.materials.resize(numVerts * 3);
+            }
+            if (hasColors && colors) {
+                r.colors.resize(numVerts * 3);
             }
 
-            float nx = e1[1] * e2[2] - e1[2] * e2[1];
-            float ny = e1[2] * e2[0] - e1[0] * e2[2];
-            float nz = e1[0] * e2[1] - e1[1] * e2[0];
-            float nlen = std::sqrt(nx * nx + ny * ny + nz * nz);
-            float norm[3] = { 0.0f, 0.0f, 1.0f };
-            if (nlen > 1e-9f) {
-                norm[0] = nx / nlen;
-                norm[1] = ny / nlen;
-                norm[2] = nz / nlen;
-            }
+#pragma omp parallel for schedule(static)
+            for (int i = 0; i < (int)numVerts; ++i) {
+                const float* pt = &r.vertices[i * 3];
+                const float* vn = &vertNormals[i * 3];
+                auto triRes = spatialIndex.findClosestTriangle(pt, vn);
+                uint32_t t = triRes.triIndex;
+                uint32_t iv0 = tris[t * 3 + 0];
+                uint32_t iv1 = tris[t * 3 + 1];
+                uint32_t iv2 = tris[t * 3 + 2];
 
-            r.faceGroups[i] = spatialIndex.findClosestPolyGroup(centroid, norm);
+                if (hasMaterials && materials) {
+                    for (int k = 0; k < 3; ++k) {
+                        float val = triRes.w0 * materials[iv0 * 3 + k] +
+                                    triRes.w1 * materials[iv1 * 3 + k] +
+                                    triRes.w2 * materials[iv2 * 3 + k];
+                        r.materials[i * 3 + k] = std::clamp(val, 0.0f, 1.0f);
+                    }
+                }
+                if (hasColors && colors) {
+                    for (int k = 0; k < 3; ++k) {
+                        float val = triRes.w0 * colors[iv0 * 3 + k] +
+                                    triRes.w1 * colors[iv1 * 3 + k] +
+                                    triRes.w2 * colors[iv2 * 3 + k];
+                        r.colors[i * 3 + k] = std::clamp(val, 0.0f, 1.0f);
+                    }
+                }
+            }
         }
-        msQuery = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tQueryStart).count();
 
-        // Post-processing cleanup: Filter isolated 1-face noise
-        auto tCleanupStart = std::chrono::high_resolution_clock::now();
-        if (numFaces > 0) {
-            size_t numVerts = r.vertices.size() / 3;
-            std::vector<uint32_t> faceCounts(numVerts, 0);
-            for (size_t f = 0; f < numFaces; ++f) {
-                for (int k = 0; k < 4; ++k) {
-                    uint32_t v = r.faces[f * 4 + k];
-                    if (v != 0xffffffff && v < numVerts) {
-                        faceCounts[v]++;
-                    }
-                }
-            }
+        // B. PolyGroup Transfer onto Reconstructed Faces
+        if (needsPolyGroupTransfer) {
+            r.faceGroups.resize(numFaces, 0);
 
-            std::vector<uint32_t> faceOffsets(numVerts + 1, 0);
-            for (size_t v = 0; v < numVerts; ++v) {
-                faceOffsets[v + 1] = faceOffsets[v] + faceCounts[v];
-            }
-
-            std::vector<uint32_t> vertFaceIndices(faceOffsets[numVerts]);
-            std::vector<uint32_t> currentOffsets = faceOffsets;
-            for (size_t f = 0; f < numFaces; ++f) {
-                for (int k = 0; k < 4; ++k) {
-                    uint32_t v = r.faces[f * 4 + k];
-                    if (v != 0xffffffff && v < numVerts) {
-                        vertFaceIndices[currentOffsets[v]++] = (uint32_t)f;
-                    }
-                }
-            }
-
-            std::vector<uint32_t> cleanedGroups = r.faceGroups;
 #pragma omp parallel for schedule(static)
-            for (int f = 0; f < (int)numFaces; ++f) {
-                uint32_t myGroup = r.faceGroups[f];
-                struct GroupEntry { uint32_t group; int count; };
-                GroupEntry neighbors[32];
-                int neighborEntryCount = 0;
-                int totalNeighborFaces = 0;
+            for (int i = 0; i < (int)numFaces; ++i) {
+                uint32_t idx0 = r.faces[i * 4 + 0];
+                uint32_t idx1 = r.faces[i * 4 + 1];
+                uint32_t idx2 = r.faces[i * 4 + 2];
+                uint32_t idx3 = r.faces[i * 4 + 3];
 
-                for (int k = 0; k < 4; ++k) {
-                    uint32_t v = r.faces[f * 4 + k];
-                    if (v == 0xffffffff || v >= numVerts) continue;
-                    uint32_t startIdx = faceOffsets[v];
-                    uint32_t endIdx = faceOffsets[v + 1];
-                    for (uint32_t idx = startIdx; idx < endIdx; ++idx) {
-                        uint32_t nFace = vertFaceIndices[idx];
-                        if (nFace != f) {
-                            uint32_t nGroup = r.faceGroups[nFace];
-                            totalNeighborFaces++;
-                            bool found = false;
-                            for (int e = 0; e < neighborEntryCount; ++e) {
-                                if (neighbors[e].group == nGroup) {
-                                    neighbors[e].count++;
-                                    found = true;
-                                    break;
+                if (idx0 >= numVerts || idx1 >= numVerts || idx2 >= numVerts) {
+                    continue;
+                }
+
+                bool isQuad = (idx3 != 0xffffffff && idx3 < numVerts);
+                const float* p0 = &r.vertices[idx0 * 3];
+                const float* p1 = &r.vertices[idx1 * 3];
+                const float* p2 = &r.vertices[idx2 * 3];
+
+                float centroid[3];
+                float e1[3] = { p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2] };
+                float e2[3];
+
+                if (isQuad) {
+                    const float* p3 = &r.vertices[idx3 * 3];
+                    centroid[0] = (p0[0] + p1[0] + p2[0] + p3[0]) * 0.25f;
+                    centroid[1] = (p0[1] + p1[1] + p2[1] + p3[1]) * 0.25f;
+                    centroid[2] = (p0[2] + p1[2] + p2[2] + p3[2]) * 0.25f;
+                    e2[0] = p3[0] - p0[0];
+                    e2[1] = p3[1] - p0[1];
+                    e2[2] = p3[2] - p0[2];
+                } else {
+                    centroid[0] = (p0[0] + p1[0] + p2[0]) * (1.0f / 3.0f);
+                    centroid[1] = (p0[1] + p1[1] + p2[1]) * (1.0f / 3.0f);
+                    centroid[2] = (p0[2] + p1[2] + p2[2]) * (1.0f / 3.0f);
+                    e2[0] = p2[0] - p0[0];
+                    e2[1] = p2[1] - p0[1];
+                    e2[2] = p2[2] - p0[2];
+                }
+
+                float nx = e1[1] * e2[2] - e1[2] * e2[1];
+                float ny = e1[2] * e2[0] - e1[0] * e2[2];
+                float nz = e1[0] * e2[1] - e1[1] * e2[0];
+                float nlen = std::sqrt(nx * nx + ny * ny + nz * nz);
+                float norm[3] = { 0.0f, 0.0f, 1.0f };
+                if (nlen > 1e-9f) {
+                    norm[0] = nx / nlen;
+                    norm[1] = ny / nlen;
+                    norm[2] = nz / nlen;
+                }
+
+                r.faceGroups[i] = spatialIndex.findClosestPolyGroup(centroid, norm);
+            }
+
+            // Post-processing cleanup: Filter isolated 1-face noise
+            auto tCleanupStart = std::chrono::high_resolution_clock::now();
+            if (numFaces > 0) {
+                std::vector<uint32_t> faceCounts(numVerts, 0);
+                for (size_t f = 0; f < numFaces; ++f) {
+                    for (int k = 0; k < 4; ++k) {
+                        uint32_t v = r.faces[f * 4 + k];
+                        if (v != 0xffffffff && v < numVerts) {
+                            faceCounts[v]++;
+                        }
+                    }
+                }
+
+                std::vector<uint32_t> faceOffsets(numVerts + 1, 0);
+                for (size_t v = 0; v < numVerts; ++v) {
+                    faceOffsets[v + 1] = faceOffsets[v] + faceCounts[v];
+                }
+
+                std::vector<uint32_t> vertFaceIndices(faceOffsets[numVerts]);
+                std::vector<uint32_t> currentOffsets = faceOffsets;
+                for (size_t f = 0; f < numFaces; ++f) {
+                    for (int k = 0; k < 4; ++k) {
+                        uint32_t v = r.faces[f * 4 + k];
+                        if (v != 0xffffffff && v < numVerts) {
+                            vertFaceIndices[currentOffsets[v]++] = (uint32_t)f;
+                        }
+                    }
+                }
+
+                std::vector<uint32_t> cleanedGroups = r.faceGroups;
+#pragma omp parallel for schedule(static)
+                for (int f = 0; f < (int)numFaces; ++f) {
+                    uint32_t myGroup = r.faceGroups[f];
+                    struct GroupEntry { uint32_t group; int count; };
+                    GroupEntry neighbors[32];
+                    int neighborEntryCount = 0;
+                    int totalNeighborFaces = 0;
+
+                    for (int k = 0; k < 4; ++k) {
+                        uint32_t v = r.faces[f * 4 + k];
+                        if (v == 0xffffffff || v >= numVerts) continue;
+                        uint32_t startIdx = faceOffsets[v];
+                        uint32_t endIdx = faceOffsets[v + 1];
+                        for (uint32_t idx = startIdx; idx < endIdx; ++idx) {
+                            uint32_t nFace = vertFaceIndices[idx];
+                            if (nFace != f) {
+                                uint32_t nGroup = r.faceGroups[nFace];
+                                totalNeighborFaces++;
+                                bool found = false;
+                                for (int e = 0; e < neighborEntryCount; ++e) {
+                                    if (neighbors[e].group == nGroup) {
+                                        neighbors[e].count++;
+                                        found = true;
+                                        break;
+                                    }
+                                }
+                                if (!found && neighborEntryCount < 32) {
+                                    neighbors[neighborEntryCount++] = { nGroup, 1 };
                                 }
                             }
-                            if (!found && neighborEntryCount < 32) {
-                                neighbors[neighborEntryCount++] = { nGroup, 1 };
-                            }
-                        }
-                    }
-                }
-
-                if (totalNeighborFaces > 0) {
-                    int myGroupCount = 0;
-                    for (int e = 0; e < neighborEntryCount; ++e) {
-                        if (neighbors[e].group == myGroup) {
-                            myGroupCount = neighbors[e].count;
-                            break;
                         }
                     }
 
-                    if (myGroupCount == 0 || (float)myGroupCount / totalNeighborFaces < 0.15f) {
-                        uint32_t bestNeighborGroup = myGroup;
-                        int maxCount = 0;
+                    if (totalNeighborFaces > 0) {
+                        int myGroupCount = 0;
                         for (int e = 0; e < neighborEntryCount; ++e) {
-                            if (neighbors[e].count > maxCount) {
-                                maxCount = neighbors[e].count;
-                                bestNeighborGroup = neighbors[e].group;
+                            if (neighbors[e].group == myGroup) {
+                                myGroupCount = neighbors[e].count;
+                                break;
                             }
                         }
-                        if (maxCount > 0) {
-                            cleanedGroups[f] = bestNeighborGroup;
+
+                        if (myGroupCount == 0 || (float)myGroupCount / totalNeighborFaces < 0.15f) {
+                            uint32_t bestNeighborGroup = myGroup;
+                            int maxCount = 0;
+                            for (int e = 0; e < neighborEntryCount; ++e) {
+                                if (neighbors[e].count > maxCount) {
+                                    maxCount = neighbors[e].count;
+                                    bestNeighborGroup = neighbors[e].group;
+                                }
+                            }
+                            if (maxCount > 0) {
+                                cleanedGroups[f] = bestNeighborGroup;
+                            }
                         }
                     }
                 }
+                r.faceGroups = std::move(cleanedGroups);
             }
-            r.faceGroups = std::move(cleanedGroups);
+            msCleanup = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tCleanupStart).count();
         }
-        msCleanup = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tCleanupStart).count();
+
+        msQuery = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tQueryStart).count();
         msPolyGroupTotal = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tPolyGroupStart).count();
 
-        sculpt_log("[REMESH PROFILE] Stage 4 - PolyGroup Transfer: Total=%.2f ms (Index Build: %.2f ms, Query Search: %.2f ms, Cleanup: %.2f ms)\n",
+        sculpt_log("[REMESH PROFILE] Stage 4 - Attribute & PolyGroup Transfer: Total=%.2f ms (Index Build: %.2f ms, Query Search: %.2f ms, Cleanup: %.2f ms)\n",
                   msPolyGroupTotal, msBuild, msQuery, msCleanup);
+    }
+
+    double msKeep = 0.0;
+    if (keeping) {
+        auto tKeepStart = std::chrono::high_resolution_clock::now();
+        std::string keepErr, keepNote;
+        RemeshResult stitched;
+        if (sculpt::stitchKeptTriangles(
+                verts, nbVerts,
+                tris, nbTris,
+                colors, materials, faceGroups,
+                keep, r, stitched,
+                keepErr, &keepNote)) {
+            stitched.profile = r.profile;
+            r = std::move(stitched);
+            sculpt_log("[C++ doRemesh] Keep masked successfully stitched%s%s\n",
+                       keepNote.empty() ? "" : ": ", keepNote.c_str());
+        } else {
+            sculpt_log("[C++ doRemesh] WARNING: Keep masked stitching failed: %s\n", keepErr.c_str());
+        }
+        msKeep = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tKeepStart).count();
     }
 
     if (onProgress) onProgress(2, 100);
 
     double msTotalRemesh = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tRemeshStart).count();
-    sculpt_log("[REMESH PROFILE] SUMMARY - C++ doRemesh Total: %.2f ms (Voxelize: %.2f ms | FloodFill: %.2f ms | Reconstruct: %.2f ms | PolyGroup: %.2f ms)\n",
-              msTotalRemesh, msVoxelize, msFlood, msReconstruct, msPolyGroupTotal);
+    sculpt_log("[REMESH PROFILE] SUMMARY - C++ doRemesh Total: %.2f ms (Voxelize: %.2f ms | FloodFill: %.2f ms | Reconstruct: %.2f ms | PolyGroup: %.2f ms | KeepMasked: %.2f ms)\n",
+              msTotalRemesh, msVoxelize, msFlood, msReconstruct, msPolyGroupTotal, msKeep);
     sculpt_log("[C++ doRemesh] Reconstructed. output verts: %d, faces: %d\n", (int)(r.vertices.size() / 3), (int)(r.faces.size() / 4));
 
     r.profile.msVoxelize = msVoxelize;
@@ -2916,6 +3324,7 @@ RemeshResult doRemesh(
     r.profile.msPolyGroupBuild = msBuild;
     r.profile.msPolyGroupQuery = msQuery;
     r.profile.msPolyGroupCleanup = msCleanup;
+    r.profile.msKeepMasked = msKeep;
     r.profile.msTotalRemesh = msTotalRemesh;
     r.profile.gridDims[0] = rx;
     r.profile.gridDims[1] = ry;

@@ -117,6 +117,7 @@ add_executable(SPSculpt
     # sculpt algorithms
     src/sculpt/SculptEngine.cpp
     src/sculpt/Remesh.cpp
+    src/sculpt/KeepMasked.cpp
     src/sculpt/RelaxEngine.cpp
     src/sculpt/PrimitiveGenerator.cpp
     src/editing/Subdivision.cpp

@@ -5956,6 +5956,11 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             }
 
             ImGui::Checkbox("Keep PolyGroups", &m_remeshKeepPolyGroups);
+            ImGui::Checkbox("Keep Masked", &m_remeshKeepMasked);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Preserves the masked geometry untouched with original vertices and topology,\n"
+                                  "while remeshing only the unmasked regions.");
+            }
             ImGui::Checkbox("Align Symmetry Axes", &m_remeshAlignSymmetry);
             ImGui::Checkbox("Regularize Quads", &m_remeshRegularizeQuads);
             if (ImGui::IsItemHovered()) {
@@ -7969,6 +7974,7 @@ void GuiManager::performRemesh(Scene& scene) {
         alignSymmetry = m_remeshAlignSymmetry,
         regularizeQuads = m_remeshRegularizeQuads,
         keepSharpEdges = m_remeshKeepSharpEdges,
+        keepMasked = m_remeshKeepMasked,
         nbVerts,
         bboxArr = std::array<float,6>{bbox[0],bbox[1],bbox[2],bbox[3],bbox[4],bbox[5]},
         resolution,
@@ -8007,7 +8013,8 @@ void GuiManager::performRemesh(Scene& scene) {
                 scaleY,
                 scaleZ,
                 regularizeQuads,
-                keepSharpEdges
+                keepSharpEdges,
+                keepMasked
             );
             m_remeshAsync.result = std::move(result);
             m_remeshAsync.state = RemeshState::Done;
@@ -8119,6 +8126,10 @@ void GuiManager::applyRemeshResult(Scene& scene, const RemeshResult& r) {
 
     selectedMesh->isDirty = true;
     selectedMesh->isVertexDirty = true;
+    selectedMesh->isColorDirty = true;
+    selectedMesh->isMaterialDirty = true;
+    selectedMesh->isFaceGroupDirty = true;
+    selectedMesh->isTopologyDirty = true;
     selectedMesh->dirtyVertMin = 0;
     selectedMesh->dirtyVertMax = selectedMesh->nbVerts > 0 ? (selectedMesh->nbVerts - 1) : 0;
     thumbInvalidate(selectedMesh->getID());
@@ -8426,6 +8437,7 @@ bool GuiManager::saveSettings(IniFile& ini) {
     std::string remeshSec = "Remesh";
     ini.setInt(remeshSec, "resolution", m_remeshResolution);
     ini.setBool(remeshSec, "keepPolyGroups", m_remeshKeepPolyGroups);
+    ini.setBool(remeshSec, "keepMasked", m_remeshKeepMasked);
     ini.setBool(remeshSec, "alignSymmetry", m_remeshAlignSymmetry);
     ini.setBool(remeshSec, "regularizeQuads", m_remeshRegularizeQuads);
     ini.setBool(remeshSec, "keepSharpEdges", m_remeshKeepSharpEdges);
@@ -8516,6 +8528,7 @@ bool GuiManager::loadSettings(const IniFile& ini) {
     if (ini.hasSection(remeshSec)) {
         if (ini.hasKey(remeshSec, "resolution")) m_remeshResolution = ini.getInt(remeshSec, "resolution", 310);
         if (ini.hasKey(remeshSec, "keepPolyGroups")) m_remeshKeepPolyGroups = ini.getBool(remeshSec, "keepPolyGroups");
+        if (ini.hasKey(remeshSec, "keepMasked")) m_remeshKeepMasked = ini.getBool(remeshSec, "keepMasked");
         if (ini.hasKey(remeshSec, "alignSymmetry")) m_remeshAlignSymmetry = ini.getBool(remeshSec, "alignSymmetry");
         if (ini.hasKey(remeshSec, "regularizeQuads")) m_remeshRegularizeQuads = ini.getBool(remeshSec, "regularizeQuads");
         if (ini.hasKey(remeshSec, "keepSharpEdges")) m_remeshKeepSharpEdges = ini.getBool(remeshSec, "keepSharpEdges");
@@ -8523,6 +8536,7 @@ bool GuiManager::loadSettings(const IniFile& ini) {
         if (ini.hasKey("GuiGeneral", "remeshAlignSymmetry")) m_remeshAlignSymmetry = ini.getBool("GuiGeneral", "remeshAlignSymmetry");
         if (ini.hasKey("GuiGeneral", "remeshResolution")) m_remeshResolution = ini.getInt("GuiGeneral", "remeshResolution", 310);
         if (ini.hasKey("GuiGeneral", "remeshKeepPolyGroups")) m_remeshKeepPolyGroups = ini.getBool("GuiGeneral", "remeshKeepPolyGroups");
+        if (ini.hasKey("GuiGeneral", "remeshKeepMasked")) m_remeshKeepMasked = ini.getBool("GuiGeneral", "remeshKeepMasked");
     }
 
     std::string winSec = "Window";
@@ -9986,6 +10000,11 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             }
             ImGui::PopItemWidth();
             ImGui::Checkbox("Keep PolyGroups", &m_remeshKeepPolyGroups);
+            ImGui::Checkbox("Keep Masked", &m_remeshKeepMasked);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Preserves the masked geometry untouched with original vertices and topology,\n"
+                                  "while remeshing only the unmasked regions.");
+            }
             ImGui::Checkbox("Align Symmetry Axes", &m_remeshAlignSymmetry);
             ImGui::Checkbox("Regularize Quads", &m_remeshRegularizeQuads);
             if (ImGui::IsItemHovered()) {

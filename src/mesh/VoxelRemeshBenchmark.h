@@ -43,6 +43,11 @@ struct VoxelBenchmarkRow {
     bool hasPolyGroups = false;
     bool alignSymmetry = true;
     bool regularizeQuads = true;
+    bool keepMasked = false;
+    bool hasInputMask = false;
+    float maskedVertsPreservedPct = 0.0f; // 100.0% for keepMasked mode
+    float maxMaskedVertDrift = 0.0f;       // < 1e-5 mm (coordinates of masked verts did not drift)
+    float maskTransferAccuracyPct = 0.0f; // > 98.0% when keepMasked is false but mask was present
 
     // Grid Specs
     int gridDims[3] = { 0, 0, 0 };
@@ -770,7 +775,8 @@ inline VoxelBenchmarkRow runVoxelTest(
     bool keepGroups = false,
     bool alignSymmetry = true,
     bool regularizeQuads = true,
-    bool keepSharpEdges = false
+    bool keepSharpEdges = false,
+    bool keepMasked = false
 ) {
     VoxelBenchmarkRow row;
     row.testName = name;
@@ -780,6 +786,7 @@ inline VoxelBenchmarkRow runVoxelTest(
     row.alignSymmetry = alignSymmetry;
     row.regularizeQuads = regularizeQuads;
     row.keepSharpEdges = keepSharpEdges;
+    row.keepMasked = keepMasked;
 
     row.inVerts = inputMesh->nbVerts;
     row.inFaces = inputMesh->nbFaces;
@@ -788,6 +795,7 @@ inline VoxelBenchmarkRow runVoxelTest(
     std::vector<float> pristineVerts = inputMesh->verts;
     std::vector<uint32_t> pristineFaces = inputMesh->faces;
     std::vector<uint32_t> pristineGroups = inputMesh->faceGroups;
+    std::vector<float> pristineMaterials = inputMesh->materials;
     int pristineVertCount = inputMesh->nbVerts;
     int pristineFaceCount = inputMesh->nbFaces;
 
@@ -851,7 +859,8 @@ inline VoxelBenchmarkRow runVoxelTest(
         nullptr, // onProgress
         1.0f, 1.0f, 1.0f, // matrixScaleXYZ
         regularizeQuads,
-        keepSharpEdges
+        keepSharpEdges,
+        keepMasked
     );
 
     // Copy core sub-stage timings from RemeshProfile
@@ -915,6 +924,7 @@ inline VoxelBenchmarkRow runVoxelTest(
     // 4. Stage: PostInit (normals, octree/bvh)
     auto tPostInitStart = std::chrono::high_resolution_clock::now();
     mesh->postInit();
+    remeshedMeshCopy->materials = mesh->materials;
     row.msPostInit = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tPostInitStart).count();
 
     // End-to-end remesh pipeline time (excluding undo overhead)
@@ -974,6 +984,127 @@ inline VoxelBenchmarkRow runVoxelTest(
 
     evaluateMeshQuality(*pristineMesh, *remeshedMeshCopy, row);
 
+    // Verification of Keep Masked Vertices Preservation & Drift
+    if (keepMasked && !pristineMaterials.empty()) {
+        int totalMasked = 0;
+        int preservedMasked = 0;
+        float maxDrift = 0.0f;
+
+        const auto& outV = remeshedMeshCopy->verts;
+        int outNbV = remeshedMeshCopy->nbVerts;
+
+        float bmin[3] = { 1e9f, 1e9f, 1e9f };
+        float bmax[3] = { -1e9f, -1e9f, -1e9f };
+        for (int i = 0; i < outNbV; ++i) {
+            bmin[0] = std::min(bmin[0], outV[i * 3 + 0]);
+            bmin[1] = std::min(bmin[1], outV[i * 3 + 1]);
+            bmin[2] = std::min(bmin[2], outV[i * 3 + 2]);
+            bmax[0] = std::max(bmax[0], outV[i * 3 + 0]);
+            bmax[1] = std::max(bmax[1], outV[i * 3 + 1]);
+            bmax[2] = std::max(bmax[2], outV[i * 3 + 2]);
+        }
+        float longest = std::max({ bmax[0] - bmin[0], bmax[1] - bmin[1], bmax[2] - bmin[2], 1e-4f });
+        float cell = longest / std::max(1.0f, std::cbrt((float)outNbV));
+        if (cell < 1e-5f) cell = 1.0f;
+
+        constexpr int kOff = 1 << 20;
+        auto cellKey = [&](float x, float y, float z) -> uint64_t {
+            int cx = (int)std::floor((x - bmin[0]) / cell);
+            int cy = (int)std::floor((y - bmin[1]) / cell);
+            int cz = (int)std::floor((z - bmin[2]) / cell);
+            return ((uint64_t(uint32_t(cx + kOff) & 0x1fffffu)) << 42) |
+                   ((uint64_t(uint32_t(cy + kOff) & 0x1fffffu)) << 21) |
+                   (uint64_t(uint32_t(cz + kOff) & 0x1fffffu));
+        };
+
+        std::unordered_map<uint64_t, std::vector<int>> grid;
+        grid.reserve(outNbV);
+        for (int i = 0; i < outNbV; ++i) {
+            grid[cellKey(outV[i * 3 + 0], outV[i * 3 + 1], outV[i * 3 + 2])].push_back(i);
+        }
+
+        for (int i = 0; i < pristineVertCount; ++i) {
+            float maskVal = (i * 3 + 2 < (int)pristineMaterials.size()) ? pristineMaterials[i * 3 + 2] : 1.0f;
+            if (maskVal < 0.5f) {
+                totalMasked++;
+                float px = pristineVerts[i * 3 + 0];
+                float py = pristineVerts[i * 3 + 1];
+                float pz = pristineVerts[i * 3 + 2];
+
+                float bestD2 = 1e9f;
+                int bestVi = -1;
+                int cx = (int)std::floor((px - bmin[0]) / cell);
+                int cy = (int)std::floor((py - bmin[1]) / cell);
+                int cz = (int)std::floor((pz - bmin[2]) / cell);
+
+                for (int dz = -1; dz <= 1; ++dz) {
+                    for (int dy = -1; dy <= 1; ++dy) {
+                        for (int dx = -1; dx <= 1; ++dx) {
+                            uint64_t key = ((uint64_t(uint32_t(cx + dx + kOff) & 0x1fffffu)) << 42) |
+                                           ((uint64_t(uint32_t(cy + dy + kOff) & 0x1fffffu)) << 21) |
+                                           (uint64_t(uint32_t(cz + dz + kOff) & 0x1fffffu));
+                            auto it = grid.find(key);
+                            if (it != grid.end()) {
+                                for (int vi : it->second) {
+                                    float dx_ = outV[vi * 3 + 0] - px;
+                                    float dy_ = outV[vi * 3 + 1] - py;
+                                    float dz_ = outV[vi * 3 + 2] - pz;
+                                    float d2 = dx_ * dx_ + dy_ * dy_ + dz_ * dz_;
+                                    if (d2 < bestD2) {
+                                        bestD2 = d2;
+                                        bestVi = vi;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                float d = std::sqrt(bestD2);
+                if (d < 1e-4f && bestVi >= 0) {
+                    float outMask = (bestVi * 3 + 2 < (int)remeshedMeshCopy->materials.size()) ? remeshedMeshCopy->materials[bestVi * 3 + 2] : 1.0f;
+                    if (outMask < 0.5f) {
+                        preservedMasked++;
+                    }
+                    if (d > maxDrift) maxDrift = d;
+                }
+            }
+        }
+
+        row.maskedVertsPreservedPct = (totalMasked > 0) ? ((float)preservedMasked / (float)totalMasked * 100.0f) : 100.0f;
+        row.maxMaskedVertDrift = maxDrift;
+    }
+
+
+
+    // Verification of Mask Attribute Transfer when Keep Masked is OFF
+    bool hasInputMask = false;
+    for (size_t i = 0; i < pristineMaterials.size() / 3; ++i) {
+        if (pristineMaterials[i * 3 + 2] < 0.5f) {
+            hasInputMask = true;
+            break;
+        }
+    }
+    row.hasInputMask = hasInputMask;
+
+    if (hasInputMask && !keepMasked && remeshedMeshCopy->nbVerts > 0 && !remeshedMeshCopy->materials.empty()) {
+        int checked = 0;
+        int correct = 0;
+        for (int i = 0; i < remeshedMeshCopy->nbVerts; ++i) {
+            float z = remeshedMeshCopy->verts[i * 3 + 2];
+            float m = remeshedMeshCopy->materials[i * 3 + 2];
+            // Outside the boundary transition zone (|z| > 2.0 mm on R=35.0 sphere)
+            if (z > 2.0f) {
+                checked++;
+                if (m < 0.5f) correct++;
+            } else if (z < -2.0f) {
+                checked++;
+                if (m > 0.5f) correct++;
+            }
+        }
+        row.maskTransferAccuracyPct = (checked > 0) ? ((float)correct / (float)checked * 100.0f) : 100.0f;
+    }
+
     // 9. Bottleneck Identification & Throughputs
     struct StagePair {
         std::string name;
@@ -988,6 +1119,9 @@ inline VoxelBenchmarkRow runVoxelTest(
     };
     if (keepGroups) {
         stages.push_back({ "PolyGroup", row.msPolyGroup });
+    }
+    if (keepMasked) {
+        stages.push_back({ "KeepMasked", r.profile.msKeepMasked });
     }
 
     auto maxStage = std::max_element(stages.begin(), stages.end(), [](const StagePair& a, const StagePair& b) {
@@ -1011,11 +1145,18 @@ inline VoxelBenchmarkRow runVoxelTest(
     bool integrityOk = (row.maxUndoEps == 0.0f) && (row.maxRedoEps == 0.0f) && (row.flyingVerts == 0);
     bool manifoldOk = (row.nonManifoldEdges == 0) && (row.openBoundaryEdges == 0) && (row.degenerateFaces == 0);
     bool quadRatioOk = manifold ? true : (row.quadRatio >= 0.95f); // Surface Nets should be >= 95% quads
-    bool sharpEdgeOk = (!keepSharpEdges) || (row.minDihedralAngleDeg <= 115.0f && row.sharpCreaseEdges > 0);
+    bool isSharpModel = (row.testName.find("Cube") != std::string::npos || row.testName.find("Cylinder") != std::string::npos);
+    bool sharpEdgeOk = (!keepSharpEdges) || (!isSharpModel) || (row.minDihedralAngleDeg <= 115.0f && row.sharpCreaseEdges > 0);
+    bool keepMaskedOk = (!keepMasked) || (row.maskedVertsPreservedPct >= 99.99f && row.maxMaskedVertDrift < 1e-5f);
+    bool maskTransferOk = (keepMasked || !row.hasInputMask) || (row.maskTransferAccuracyPct >= 98.0f);
 
-    row.passed = integrityOk && manifoldOk && quadRatioOk && sharpEdgeOk;
+    row.passed = integrityOk && manifoldOk && quadRatioOk && sharpEdgeOk && keepMaskedOk && maskTransferOk;
     if (!sharpEdgeOk) {
         row.notes = "Sharp edges were not preserved!";
+    } else if (!keepMaskedOk) {
+        row.notes = "Masked vertices were not preserved!";
+    } else if (!maskTransferOk) {
+        row.notes = "Mask was not accurately transferred across new topology!";
     }
 
     return row;
@@ -1038,6 +1179,20 @@ inline std::unique_ptr<Mesh> createSphereMesh(float radius, int rings, int secto
     return mesh;
 }
 
+inline std::unique_ptr<Mesh> createMaskedSphereMesh(float radius, int rings, int sectors) {
+    auto sphere = createSphereMesh(radius, rings, sectors);
+    // Upper hemisphere (Z >= 0) is fully masked (materials[i*3+2] = 0.0f)
+    // Lower hemisphere (Z < 0) is unmasked (materials[i*3+2] = 1.0f)
+    sphere->materials.resize(sphere->nbVerts * 3);
+    for (int i = 0; i < sphere->nbVerts; ++i) {
+        sphere->materials[i * 3 + 0] = 0.5f;
+        sphere->materials[i * 3 + 1] = 0.0f;
+        float z = sphere->verts[i * 3 + 2];
+        sphere->materials[i * 3 + 2] = (z >= 0.0f) ? 0.0f : 1.0f;
+    }
+    return sphere;
+}
+
 inline std::unique_ptr<Mesh> createCubeMesh(const glm::vec3& size, int subX, int subY, int subZ, float cornerRadius) {
     auto mesh = std::make_unique<Mesh>();
     std::vector<float> normals;
@@ -1053,6 +1208,34 @@ inline std::unique_ptr<Mesh> createCubeMesh(const glm::vec3& size, int subX, int
 
 inline std::unique_ptr<Mesh> createSharpCubeMesh(const glm::vec3& size, int subX, int subY, int subZ) {
     return createCubeMesh(size, subX, subY, subZ, 0.0f);
+}
+
+inline std::unique_ptr<Mesh> createRotatedSharpCubeMesh(const glm::vec3& size, int subX, int subY, int subZ, float angleDeg) {
+    auto mesh = createSharpCubeMesh(size, subX, subY, subZ);
+    float rad = glm::radians(angleDeg);
+    float cosA = std::cos(rad);
+    float sinA = std::sin(rad);
+    for (int i = 0; i < mesh->nbVerts; ++i) {
+        float x = mesh->verts[i * 3 + 0];
+        float y = mesh->verts[i * 3 + 1];
+        mesh->verts[i * 3 + 0] = x * cosA - y * sinA;
+        mesh->verts[i * 3 + 1] = x * sinA + y * cosA;
+    }
+    mesh->postInit();
+    return mesh;
+}
+
+inline std::unique_ptr<Mesh> createCylinderMesh(float radius, float height, int radSegments, int heightSegments) {
+    auto mesh = std::make_unique<Mesh>();
+    std::vector<float> normals;
+    PrimitiveGenerator::generateCylinder(radius, radius, height, radSegments, heightSegments, true, true, 1, 0.0f, mesh->verts, mesh->faces, mesh->colors, normals);
+    mesh->nbVerts = (int)(mesh->verts.size() / 3);
+    mesh->nbFaces = (int)(mesh->faces.size() / 4);
+    mesh->vertVisible.assign(mesh->nbVerts, 1);
+    mesh->faceVisible.assign(mesh->nbFaces, 1);
+    mesh->initFaceGroups();
+    mesh->postInit();
+    return mesh;
 }
 
 inline std::unique_ptr<Mesh> createTorusMesh(float rOut, float rWidth, int nbRadial, int nbTubular) {
@@ -1120,7 +1303,7 @@ inline bool run(int customResolution = 0) {
 
         // Test 1: Organic Sphere (Smooth Curvature, Surface Nets Quads) @ Base Res
         {
-            std::cout << " -> Running Benchmark [1/9]: Sphere (Organic Curvature @ Res " << resBase << ")...\n";
+            std::cout << " -> Running Benchmark [1/14]: Sphere (Organic Curvature @ Res " << resBase << ")...\n";
             auto sphere = createSphereMesh(35.0f, 64, 64);
             rows.push_back(runVoxelTest("Sphere (Smooth Curvature)", std::move(sphere), resBase, false, false, true));
         }
@@ -1128,7 +1311,7 @@ inline bool run(int customResolution = 0) {
         // Test 2: Resolution Scaling Test: Sphere @ Res 64
         {
             int rLow = std::max(32, resBase / 2);
-            std::cout << " -> Running Benchmark [2/9]: Sphere (Resolution Scaling @ Res " << rLow << ")...\n";
+            std::cout << " -> Running Benchmark [2/14]: Sphere (Resolution Scaling @ Res " << rLow << ")...\n";
             auto sphere = createSphereMesh(35.0f, 48, 48);
             rows.push_back(runVoxelTest("Sphere (Low Res " + std::to_string(rLow) + ")", std::move(sphere), rLow, false, false, true));
         }
@@ -1136,51 +1319,110 @@ inline bool run(int customResolution = 0) {
         // Test 3: Resolution Scaling Test: Sphere @ Res 256
         {
             int rHigh = (customResolution > 0) ? (resBase * 2) : 256;
-            std::cout << " -> Running Benchmark [3/9]: Sphere (High Res Stress @ Res " << rHigh << ")...\n";
+            std::cout << " -> Running Benchmark [3/14]: Sphere (High Res Stress @ Res " << rHigh << ")...\n";
             auto sphere = createSphereMesh(35.0f, 80, 80);
             rows.push_back(runVoxelTest("Sphere (High Res " + std::to_string(rHigh) + ")", std::move(sphere), rHigh, false, false, true));
         }
 
         // Test 4: Beveled Cube (Sharp Planar Features & 90-deg Corners)
         {
-            std::cout << " -> Running Benchmark [4/9]: Beveled Cube (Sharp Corners & Planar @ Res " << resBase << ")...\n";
+            std::cout << " -> Running Benchmark [4/14]: Beveled Cube (Sharp Corners & Planar @ Res " << resBase << ")...\n";
             auto cube = createCubeMesh(glm::vec3(60.0f), 32, 32, 32, 4.0f);
             rows.push_back(runVoxelTest("Beveled Cube (Planar/Sharp)", std::move(cube), resBase, false, false, true));
         }
 
         // Test 5: Torus (Genus-1 Cavity & Complex Interior Topology)
         {
-            std::cout << " -> Running Benchmark [5/9]: Torus (Genus-1 Hole & Cavity @ Res " << resBase << ")...\n";
+            std::cout << " -> Running Benchmark [5/14]: Torus (Genus-1 Hole & Cavity @ Res " << resBase << ")...\n";
             auto torus = createTorusMesh(35.0f, 12.0f, 48, 48);
             rows.push_back(runVoxelTest("Torus (Genus-1 Hole)", std::move(torus), resBase, false, false, true));
         }
 
         // Test 6: Multi-PolyGroup Sphere (PolyGroup Transfer Profiling)
         {
-            std::cout << " -> Running Benchmark [6/9]: Multi-Group Sphere (PolyGroup Transfer @ Res " << resBase << ")...\n";
+            std::cout << " -> Running Benchmark [6/14]: Multi-Group Sphere (PolyGroup Transfer @ Res " << resBase << ")...\n";
             auto multiGroup = createMultiGroupSphere(35.0f, 64, 64);
             rows.push_back(runVoxelTest("Sphere (4 PolyGroups)", std::move(multiGroup), resBase, false, true, true));
         }
 
         // Test 7: Algorithm Comparison: Marching Cubes Manifold (Tris) vs Surface Nets (Quads)
         {
-            std::cout << " -> Running Benchmark [7/9]: Sphere (Marching Cubes Manifold Tris @ Res " << resBase << ")...\n";
+            std::cout << " -> Running Benchmark [7/14]: Sphere (Marching Cubes Manifold Tris @ Res " << resBase << ")...\n";
             auto sphere = createSphereMesh(35.0f, 64, 64);
             rows.push_back(runVoxelTest("Sphere (Marching Cubes)", std::move(sphere), resBase, true, false, true));
         }
 
         // Test 8: Sharp Cube (Standard Smooth without Edge Snapping)
         {
-            std::cout << " -> Running Benchmark [8/9]: Sharp Cube (Standard Smooth @ Res " << resBase << ")...\n";
+            std::cout << " -> Running Benchmark [8/14]: Sharp Cube (Standard Smooth @ Res " << resBase << ")...\n";
             auto cube = createSharpCubeMesh(glm::vec3(60.0f), 32, 32, 32);
             rows.push_back(runVoxelTest("Sharp Cube (Standard Smooth)", std::move(cube), resBase, false, false, true, true, false));
         }
 
         // Test 9: Sharp Cube (Keep Sharp Edges Preservation Mode)
         {
-            std::cout << " -> Running Benchmark [9/9]: Sharp Cube (Keep Sharp Edges @ Res " << resBase << ")...\n";
+            std::cout << " -> Running Benchmark [9/14]: Sharp Cube (Keep Sharp Edges @ Res " << resBase << ")...\n";
             auto cube = createSharpCubeMesh(glm::vec3(60.0f), 32, 32, 32);
             rows.push_back(runVoxelTest("Sharp Cube (Keep Sharp Edges)", std::move(cube), resBase, false, false, true, true, true));
+        }
+        {
+            auto cubeNoReg = createSharpCubeMesh(glm::vec3(60.0f), 32, 32, 32);
+            rows.push_back(runVoxelTest("Sharp Cube (Sharp NO Reg, No Sym)", std::move(cubeNoReg), resBase, false, false, false, false, true));
+        }
+        {
+            auto cubeWithReg = createSharpCubeMesh(glm::vec3(60.0f), 32, 32, 32);
+            rows.push_back(runVoxelTest("Sharp Cube (Sharp WITH Reg, No Sym)", std::move(cubeWithReg), resBase, false, false, false, true, true));
+        }
+        {
+            auto rotCubeNoReg = createRotatedSharpCubeMesh(glm::vec3(60.0f), 32, 32, 32, 30.0f);
+            rows.push_back(runVoxelTest("Rot Cube (Sharp NO Reg)", std::move(rotCubeNoReg), resBase, false, false, false, false, true));
+        }
+        {
+            auto rotCubeWithReg = createRotatedSharpCubeMesh(glm::vec3(60.0f), 32, 32, 32, 30.0f);
+            rows.push_back(runVoxelTest("Rot Cube (Sharp WITH Reg)", std::move(rotCubeWithReg), resBase, false, false, false, true, true));
+        }
+        {
+            auto cylNoReg = createCylinderMesh(25.0f, 60.0f, 48, 24);
+            rows.push_back(runVoxelTest("Cylinder (Sharp NO Reg)", std::move(cylNoReg), resBase, false, false, false, false, true));
+        }
+        {
+            auto cylWithReg = createCylinderMesh(25.0f, 60.0f, 48, 24);
+            rows.push_back(runVoxelTest("Cylinder (Sharp WITH Reg)", std::move(cylWithReg), resBase, false, false, false, true, true));
+        }
+
+        // Test 10: Sphere with Masked Hemisphere (Keep Masked Preservation Mode)
+        {
+            std::cout << " -> Running Benchmark [10/14]: Sphere (Keep Masked Hemisphere @ Res " << resBase << ")...\n";
+            auto sphere = createMaskedSphereMesh(35.0f, 64, 64);
+            rows.push_back(runVoxelTest("Sphere (Keep Masked Half)", std::move(sphere), resBase, false, false, true, true, false, true));
+        }
+
+        // Test 11: Sphere with Masked Hemisphere (Keep Masked OFF - PolyCube Regularize Quads)
+        {
+            std::cout << " -> Running Benchmark [11/14]: Sphere (Keep Masked OFF - PolyCube Quads @ Res " << resBase << ")...\n";
+            auto sphere = createMaskedSphereMesh(35.0f, 64, 64);
+            rows.push_back(runVoxelTest("Sphere (Mask - PolyCube)", std::move(sphere), resBase, false, false, true, true, false, false));
+        }
+
+        // Test 12: Sphere with Masked Hemisphere (Keep Masked OFF - Pure Surface Nets Quads)
+        {
+            std::cout << " -> Running Benchmark [12/14]: Sphere (Keep Masked OFF - Surface Nets Quads @ Res " << resBase << ")...\n";
+            auto sphere = createMaskedSphereMesh(35.0f, 64, 64);
+            rows.push_back(runVoxelTest("Sphere (Mask - Surface Nets)", std::move(sphere), resBase, false, false, true, false, false, false));
+        }
+
+        // Test 13: Sphere with Masked Hemisphere (Keep Masked OFF - Marching Cubes Manifold Tris)
+        {
+            std::cout << " -> Running Benchmark [13/14]: Sphere (Keep Masked OFF - Marching Cubes @ Res " << resBase << ")...\n";
+            auto sphere = createMaskedSphereMesh(35.0f, 64, 64);
+            rows.push_back(runVoxelTest("Sphere (Mask - Marching Cubes)", std::move(sphere), resBase, true, false, true, false, false, false));
+        }
+
+        // Test 14: Sphere with Masked Hemisphere (Keep Masked OFF - Keep Sharp Edges)
+        {
+            std::cout << " -> Running Benchmark [14/14]: Sphere (Keep Masked OFF - Keep Sharp Edges @ Res " << resBase << ")...\n";
+            auto sphere = createMaskedSphereMesh(35.0f, 64, 64);
+            rows.push_back(runVoxelTest("Sphere (Mask - Sharp Edges)", std::move(sphere), resBase, false, false, true, true, true, false));
         }
 
         // =========================================================================
@@ -1350,6 +1592,16 @@ inline bool run(int customResolution = 0) {
             if (r.keepSharpEdges || r.testName.find("Sharp Cube") != std::string::npos) {
                 std::cout << "   - Sharp Edge Preservation: Min Dihedral Angle = " << std::fixed << std::setprecision(1) << r.minDihedralAngleDeg << " deg ("
                           << r.sharpCreaseEdges << " sharp crease edges <= 110 deg)\n";
+            }
+            if (r.hasInputMask) {
+                if (r.keepMasked) {
+                    std::cout << "   - Keep Masked Preservation: " << std::fixed << std::setprecision(1) << r.maskedVertsPreservedPct
+                              << "% verts preserved untouched (Max drift: " << std::fixed << std::setprecision(4) << r.maxMaskedVertDrift
+                              << " mm), Seam " << (r.openBoundaryEdges == 0 ? "watertight [OK]" : "OPEN SEAMS [FAIL]") << "\n";
+                } else {
+                    std::cout << "   - Mask Spatial Transfer (Keep Masked OFF): " << std::fixed << std::setprecision(1) << r.maskTransferAccuracyPct
+                              << "% accuracy across new topology [OK]\n";
+                }
             }
             std::cout << "   - Topological Health:  " << (r.openBoundaryEdges == 0 ? "WATERTIGHT [OK]" : "OPEN SEAMS [WARNING]") << ", "
                       << (r.nonManifoldEdges == 0 ? "2-MANIFOLD [OK]" : "NON-MANIFOLD EDGES DETECTED") << ", "

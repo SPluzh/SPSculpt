@@ -11,6 +11,7 @@ struct RemeshProfile {
     double msPolyGroupQuery = 0.0;
     double msPolyGroupCleanup = 0.0;
     double msTotalRemesh = 0.0;
+    double msKeepMasked = 0.0;
     int gridDims[3] = {0, 0, 0};
     int gridDatalen = 0;
     double gridMemoryMB = 0.0;
@@ -51,7 +52,8 @@ RemeshResult doRemesh(
     float matrixScaleY = 1.0f,
     float matrixScaleZ = 1.0f,
     bool regularizeQuads = true,
-    bool keepSharpEdges = false
+    bool keepSharpEdges = false,
+    bool keepMasked = false
 );
 RemeshResult doSurfaceNetsFromSDF(
     int resolution, 

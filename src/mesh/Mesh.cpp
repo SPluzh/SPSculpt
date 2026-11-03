@@ -262,18 +262,6 @@ void Mesh::postInit(bool buildOctree) {
             materials[i * 3 + 1] = 0.0f; // metalness
             materials[i * 3 + 2] = 1.0f; // mask
         }
-    } else {
-        // Guarantee no vertex has corrupted zeroed mask or pitch black color from boolean artifacts
-        for (int i = 0; i < nbVerts; ++i) {
-            if (materials[i * 3 + 2] <= 1e-4f) {
-                materials[i * 3 + 2] = 1.0f;
-            }
-            if (colors.size() == (size_t)nbVerts * 3) {
-                if (colors[i * 3 + 0] <= 1e-4f && colors[i * 3 + 1] <= 1e-4f && colors[i * 3 + 2] <= 1e-4f) {
-                    colors[i * 3 + 0] = colors[i * 3 + 1] = colors[i * 3 + 2] = 1.0f;
-                }
-            }
-        }
     }
 
     if (vertVisible.size() != (size_t)nbVerts) {

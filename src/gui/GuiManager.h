@@ -104,6 +104,7 @@ private:
     bool m_remeshAlignSymmetry = false;
     bool m_remeshRegularizeQuads = true;
     bool m_remeshKeepSharpEdges = false;
+    bool m_remeshKeepMasked = false;
     bool m_animateBookmarks = false;
     bool m_savePngNextToProject = true;
     bool m_createDefaultSphereOnStartup = true;
@@ -412,6 +413,9 @@ public:
 
     bool getRemeshKeepSharpEdges() const { return m_remeshKeepSharpEdges; }
     void setRemeshKeepSharpEdges(bool val) { m_remeshKeepSharpEdges = val; }
+
+    bool getRemeshKeepMasked() const { return m_remeshKeepMasked; }
+    void setRemeshKeepMasked(bool val) { m_remeshKeepMasked = val; }
 
     bool getAnimateBookmarks() const { return m_animateBookmarks; }
     void setAnimateBookmarks(bool val) { m_animateBookmarks = val; }
