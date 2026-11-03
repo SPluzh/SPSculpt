@@ -518,146 +518,205 @@ static void voxelize(
 
     double inv3 = 1.0 / 3.0;
 
-    int numThreads = (int)std::thread::hardware_concurrency();
-    if (numThreads < 1) numThreads = 1;
-    std::vector<std::thread> threads(numThreads);
-    int slicesPerThread = (rz + numThreads - 1) / numThreads;
+    // 1. Precompute Z slice bounds and triangle metadata, then build CSR slice buckets
+    struct TriVoxelMeta {
+        double v1[3];
+        double triEdge1[3];
+        double triEdge2[3];
+        double a00, a01, a11;
+        int snapMinx, snapMaxx;
+        int snapMiny, snapMaxy;
+        float c1[3];
+        float m1[3];
+    };
+    std::vector<TriVoxelMeta> triMeta(nbTris);
+    std::vector<int> triMinZ(nbTris);
+    std::vector<int> triMaxZ(nbTris);
+    std::vector<int> sliceCounts(rz, 0);
 
-    for (int t = 0; t < numThreads; ++t) {
-        threads[t] = std::thread([&, t]() {
-            int kStart_t = t * slicesPerThread;
-            int kEnd_t = std::min(rz - 1, kStart_t + slicesPerThread - 1);
-            if (kStart_t > kEnd_t) return;
+#pragma omp parallel
+    {
+        std::vector<int> localCounts(rz, 0);
+#pragma omp for schedule(static)
+        for (int iTri = 0; iTri < nbTris; ++iTri) {
+            int idTri = iTri * 3;
+            uint32_t iv1 = tris[idTri] * 3;
+            uint32_t iv2 = tris[idTri + 1] * 3;
+            uint32_t iv3 = tris[idTri + 2] * 3;
 
-            for (int iTri = 0; iTri < nbTris; ++iTri) {
-                int idTri = iTri * 3;
-                uint32_t iv1 = tris[idTri] * 3;
-                uint32_t iv2 = tris[idTri + 1] * 3;
-                uint32_t iv3 = tris[idTri + 2] * 3;
+            double v1[3] = { verts[iv1], verts[iv1 + 1], verts[iv1 + 2] };
+            double v2[3] = { verts[iv2], verts[iv2 + 1], verts[iv2 + 2] };
+            double v3[3] = { verts[iv3], verts[iv3 + 1], verts[iv3 + 2] };
 
-                double v1[3] = { verts[iv1], verts[iv1 + 1], verts[iv1 + 2] };
-                double v2[3] = { verts[iv2], verts[iv2 + 1], verts[iv2 + 2] };
-                double v3[3] = { verts[iv3], verts[iv3 + 1], verts[iv3 + 2] };
+            double zmin = std::min({ v1[2], v2[2], v3[2] });
+            double zmax = std::max({ v1[2], v2[2], v3[2] });
 
-                double zmin = std::min({v1[2], v2[2], v3[2]});
-                double zmax = std::max({v1[2], v2[2], v3[2]});
+            int snapMinz = (int)std::floor((zmin - vminz) * invStep);
+            int snapMaxz = (int)std::ceil((zmax - vminz) * invStep);
 
-                int snapMinz = (int)std::floor((zmin - vminz) * invStep);
-                int snapMaxz = (int)std::ceil((zmax - vminz) * invStep);
+            int kMin = std::max(0, snapMinz);
+            int kMax = std::min(rz - 1, snapMaxz);
 
-                int kMin = std::max(kStart_t, snapMinz);
-                int kMax = std::min(kEnd_t, snapMaxz);
-                if (kMin > kMax) continue;
+            triMinZ[iTri] = kMin;
+            triMaxZ[iTri] = kMax;
+
+            if (kMin <= kMax) {
+                for (int k = kMin; k <= kMax; ++k) {
+                    localCounts[k]++;
+                }
 
                 double xmin = std::min({v1[0], v2[0], v3[0]});
                 double xmax = std::max({v1[0], v2[0], v3[0]});
                 double ymin = std::min({v1[1], v2[1], v3[1]});
                 double ymax = std::max({v1[1], v2[1], v3[1]});
 
-                float c1[3] = {0.0f, 0.0f, 0.0f};
-                if (colors) {
-                    c1[0] = (colors[iv1] + colors[iv2] + colors[iv3]) * inv3;
-                    c1[1] = (colors[iv1 + 1] + colors[iv2 + 1] + colors[iv3 + 1]) * inv3;
-                    c1[2] = (colors[iv1 + 2] + colors[iv2 + 2] + colors[iv3 + 2]) * inv3;
-                }
+                TriVoxelMeta& tm = triMeta[iTri];
+                tm.v1[0] = v1[0]; tm.v1[1] = v1[1]; tm.v1[2] = v1[2];
 
-                float m1[3] = {0.0f, 0.0f, 0.0f};
-                if (materials) {
-                    m1[0] = (materials[iv1] + materials[iv2] + materials[iv3]) * inv3;
-                    m1[1] = (materials[iv1 + 1] + materials[iv2 + 1] + materials[iv3 + 1]) * inv3;
-                    m1[2] = (materials[iv1 + 2] + materials[iv2 + 2] + materials[iv3 + 2]) * inv3;
-                }
+                tm.triEdge1[0] = v2[0] - v1[0];
+                tm.triEdge1[1] = v2[1] - v1[1];
+                tm.triEdge1[2] = v2[2] - v1[2];
 
-                double triEdge1[3] = { v2[0] - v1[0], v2[1] - v1[1], v2[2] - v1[2] };
-                double triEdge2[3] = { v3[0] - v1[0], v3[1] - v1[1], v3[2] - v1[2] };
+                tm.triEdge2[0] = v3[0] - v1[0];
+                tm.triEdge2[1] = v3[1] - v1[1];
+                tm.triEdge2[2] = v3[2] - v1[2];
 
-                double a00 = triEdge1[0] * triEdge1[0] + triEdge1[1] * triEdge1[1] + triEdge1[2] * triEdge1[2];
-                double a01 = triEdge1[0] * triEdge2[0] + triEdge1[1] * triEdge2[1] + triEdge1[2] * triEdge2[2];
-                double a11 = triEdge2[0] * triEdge2[0] + triEdge2[1] * triEdge2[1] + triEdge2[2] * triEdge2[2];
+                tm.a00 = tm.triEdge1[0] * tm.triEdge1[0] + tm.triEdge1[1] * tm.triEdge1[1] + tm.triEdge1[2] * tm.triEdge1[2];
+                tm.a01 = tm.triEdge1[0] * tm.triEdge2[0] + tm.triEdge1[1] * tm.triEdge2[1] + tm.triEdge1[2] * tm.triEdge2[2];
+                tm.a11 = tm.triEdge2[0] * tm.triEdge2[0] + tm.triEdge2[1] * tm.triEdge2[1] + tm.triEdge2[2] * tm.triEdge2[2];
 
                 int snapMinx = (int)std::floor((xmin - vminx) * invStep);
                 int snapMiny = (int)std::floor((ymin - vminy) * invStep);
                 int snapMaxx = (int)std::ceil((xmax - vminx) * invStep);
                 int snapMaxy = (int)std::ceil((ymax - vminy) * invStep);
 
-                snapMinx = std::max(0, snapMinx);
-                snapMiny = std::max(0, snapMiny);
-                snapMaxx = std::min(rx - 1, snapMaxx);
-                snapMaxy = std::min(ry - 1, snapMaxy);
+                tm.snapMinx = std::max(0, snapMinx);
+                tm.snapMiny = std::max(0, snapMiny);
+                tm.snapMaxx = std::min(rx - 1, snapMaxx);
+                tm.snapMaxy = std::min(ry - 1, snapMaxy);
 
-                for (int k = kMin; k <= kMax; ++k) {
-                    double z = vminz + k * step;
-                    int kOffset = k * rxy;
-                    for (int j = snapMiny; j <= snapMaxy; ++j) {
-                        double y = vminy + j * step;
-                        int n = snapMinx + j * rx + kOffset;
-                        for (int i = snapMinx; i <= snapMaxx; ++i, ++n) {
-                            double x = vminx + i * step;
+                if (colors) {
+                    tm.c1[0] = (colors[iv1] + colors[iv2] + colors[iv3]) * (float)inv3;
+                    tm.c1[1] = (colors[iv1 + 1] + colors[iv2 + 1] + colors[iv3 + 1]) * (float)inv3;
+                    tm.c1[2] = (colors[iv1 + 2] + colors[iv2 + 2] + colors[iv3 + 2]) * (float)inv3;
+                } else {
+                    tm.c1[0] = tm.c1[1] = tm.c1[2] = 0.0f;
+                }
 
-                            double point[3] = { x, y, z };
-                            double closest[4];
-                            double newDistSq = distance2PointTriangleEdges(point, triEdge1, triEdge2, v1, a00, a01, a11, closest);
-                            float curDist = voxels.distanceField[n];
-                            double curDistSq = (double)curDist * (double)curDist;
+                if (materials) {
+                    tm.m1[0] = (materials[iv1] + materials[iv2] + materials[iv3]) * (float)inv3;
+                    tm.m1[1] = (materials[iv1 + 1] + materials[iv2 + 1] + materials[iv3 + 1]) * (float)inv3;
+                    tm.m1[2] = (materials[iv1 + 2] + materials[iv2 + 2] + materials[iv3 + 2]) * (float)inv3;
+                } else {
+                    tm.m1[0] = tm.m1[1] = tm.m1[2] = 0.0f;
+                }
+            }
+        }
+#pragma omp critical
+        {
+            for (int k = 0; k < rz; ++k) {
+                sliceCounts[k] += localCounts[k];
+            }
+        }
+    }
 
-                            if (newDistSq < curDistSq) {
-                                voxels.distanceField[n] = (float)std::sqrt(newDistSq);
-                                if (voxels.hasColorField) {
-                                    uint8_t r = (uint8_t)(c1[0] * 255.0f + 0.5f);
-                                    uint8_t g = (uint8_t)(c1[1] * 255.0f + 0.5f);
-                                    uint8_t b = (uint8_t)(c1[2] * 255.0f + 0.5f);
-                                    voxels.colorField[n] = ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
-                                }
-                                if (voxels.hasMaterialField) {
-                                    uint8_t r = (uint8_t)(m1[0] * 255.0f + 0.5f);
-                                    uint8_t g = (uint8_t)(m1[1] * 255.0f + 0.5f);
-                                    uint8_t b = (uint8_t)(m1[2] * 255.0f + 0.5f);
-                                    voxels.materialField[n] = ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
-                                }
-                                if (voxels.hasGroupField && faceGroups) {
-                                    voxels.groupField[n] = faceGroups[iTri];
-                                }
-                            }
+    std::vector<int> sliceOffsets(rz + 1, 0);
+    for (int k = 0; k < rz; ++k) {
+        sliceOffsets[k + 1] = sliceOffsets[k] + sliceCounts[k];
+    }
 
-                            if (newDistSq > step * step)
-                                continue;
+    int totalPairs = sliceOffsets[rz];
+    std::vector<int> sliceTriangles(totalPairs);
+    std::vector<int> currentOffsets = sliceOffsets;
 
-                            for (int it = 0; it < 3; ++it) {
-                                double val = closest[it] - point[it];
-                                if (val < 0.0 || val > step)
-                                    continue;
+    for (int iTri = 0; iTri < nbTris; ++iTri) {
+        int kMin = triMinZ[iTri];
+        int kMax = triMaxZ[iTri];
+        if (kMin <= kMax) {
+            for (int k = kMin; k <= kMax; ++k) {
+                sliceTriangles[currentOffsets[k]++] = iTri;
+            }
+        }
+    }
 
-                                int bit = 1 << it;
-                                if ((voxels.crossedEdges[n] & bit) != 0)
-                                    continue;
+    // 2. Parallel Slice-by-Slice Voxelization
+#pragma omp parallel for schedule(dynamic, 1)
+    for (int k = 0; k < rz; ++k) {
+        int startIdx = sliceOffsets[k];
+        int endIdx = sliceOffsets[k + 1];
+        if (startIdx >= endIdx) continue;
 
-                                double dist = intersectionRayTriangleEdges(point, dirUnit[it], triEdge1, triEdge2, v1);
-                                if (dist < 0.0 || dist > step)
-                                    continue;
+        double z = vminz + k * step;
+        int kOffset = k * rxy;
 
-                                voxels.crossedEdges[n] |= bit;
-                            }
+        for (int idx = startIdx; idx < endIdx; ++idx) {
+            int iTri = sliceTriangles[idx];
+            const TriVoxelMeta& tm = triMeta[iTri];
+
+            for (int j = tm.snapMiny; j <= tm.snapMaxy; ++j) {
+                double y = vminy + j * step;
+                int n = tm.snapMinx + j * rx + kOffset;
+                for (int i = tm.snapMinx; i <= tm.snapMaxx; ++i, ++n) {
+                    double x = vminx + i * step;
+
+                    double point[3] = { x, y, z };
+                    double closest[4];
+                    double newDistSq = distance2PointTriangleEdges(point, tm.triEdge1, tm.triEdge2, tm.v1, tm.a00, tm.a01, tm.a11, closest);
+                    float curDistSq = voxels.distanceField[n];
+
+                    if ((float)newDistSq < curDistSq) {
+                        voxels.distanceField[n] = (float)newDistSq;
+                        if (voxels.hasColorField) {
+                            uint8_t r = (uint8_t)(tm.c1[0] * 255.0f + 0.5f);
+                            uint8_t g = (uint8_t)(tm.c1[1] * 255.0f + 0.5f);
+                            uint8_t b = (uint8_t)(tm.c1[2] * 255.0f + 0.5f);
+                            voxels.colorField[n] = ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
                         }
+                        if (voxels.hasMaterialField) {
+                            uint8_t r = (uint8_t)(tm.m1[0] * 255.0f + 0.5f);
+                            uint8_t g = (uint8_t)(tm.m1[1] * 255.0f + 0.5f);
+                            uint8_t b = (uint8_t)(tm.m1[2] * 255.0f + 0.5f);
+                            voxels.materialField[n] = ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+                        }
+                        if (voxels.hasGroupField && faceGroups) {
+                            voxels.groupField[n] = faceGroups[iTri];
+                        }
+                    }
+
+                    if (newDistSq > step * step)
+                        continue;
+
+                    for (int it = 0; it < 3; ++it) {
+                        double val = closest[it] - point[it];
+                        if (val < 0.0 || val > step)
+                            continue;
+
+                        int bit = 1 << it;
+                        if ((voxels.crossedEdges[n] & bit) != 0)
+                            continue;
+
+                        double dist = intersectionRayTriangleEdges(point, dirUnit[it], tm.triEdge1, tm.triEdge2, tm.v1);
+                        if (dist < 0.0 || dist > step)
+                            continue;
+
+                        voxels.crossedEdges[n] |= bit;
                     }
                 }
             }
-        });
-    }
-    for (auto& th : threads) {
-        if (th.joinable()) th.join();
+        }
     }
 
+    // 3. Vectorized OpenMP pass: convert squared distances to linear Euclidean distances
     int nonInfCount = 0;
-    int crossedCount = 0;
+#pragma omp parallel for schedule(static) reduction(+:nonInfCount)
     for (int i = 0; i < datalen; ++i) {
-        if (voxels.distanceField[i] != std::numeric_limits<float>::infinity()) {
+        float dSq = voxels.distanceField[i];
+        if (dSq != std::numeric_limits<float>::infinity()) {
+            voxels.distanceField[i] = std::sqrt(dSq);
             nonInfCount++;
         }
-        if (voxels.crossedEdges[i] != 0) {
-            crossedCount++;
-        }
     }
-    sculpt_log("[C++ voxelize] Finished voxelization: non-inf distances count=%d, crossed edges count=%d\n", nonInfCount, crossedCount);
+    sculpt_log("[C++ voxelize] Finished voxelization: non-inf distances count=%d\n", nonInfCount);
 }
 
 static void floodFill(VoxelGrid& voxels, std::function<void(int stage, int progress)> onProgress = nullptr) {
@@ -777,32 +836,15 @@ static void floodFill(VoxelGrid& voxels, std::function<void(int stage, int progr
         }
     }
 
-    int numThreads = (int)std::thread::hardware_concurrency();
-    if (numThreads < 1) numThreads = 1;
-    std::vector<std::thread> threads(numThreads);
-    int chunkSize = (datalen + numThreads - 1) / numThreads;
-
-    std::vector<int> threadTaggedCounts(numThreads, 0);
-    for (int t = 0; t < numThreads; ++t) {
-        threads[t] = std::thread([&, t]() {
-            int start = t * chunkSize;
-            int end = std::min(datalen, start + chunkSize);
-            int localTagged = 0;
-            for (int id = start; id < end; ++id) {
-                if (!tagCell[id]) {
-                    voxels.distanceField[id] = -voxels.distanceField[id];
-                } else {
-                    localTagged++;
-                }
-            }
-            threadTaggedCounts[t] = localTagged;
-        });
-    }
-    for (auto& th : threads) {
-        if (th.joinable()) th.join();
-    }
     int taggedCount = 0;
-    for (int count : threadTaggedCounts) taggedCount += count;
+#pragma omp parallel for schedule(static) reduction(+:taggedCount)
+    for (int id = 0; id < datalen; ++id) {
+        if (!tagCell[id]) {
+            voxels.distanceField[id] = -voxels.distanceField[id];
+        } else {
+            taggedCount++;
+        }
+    }
 
     sculpt_log("[C++ floodFill] Finished: tagged (exterior) cells=%d, untagged (interior) cells=%d\n", taggedCount, datalen - taggedCount);
     if (onProgress) onProgress(1, 100);
@@ -1355,39 +1397,35 @@ static RemeshResult surfaceNetsReconstruct(VoxelGrid& voxels, bool block, std::f
     int slicesPerThread = ((rz - 1) + numThreads - 1) / numThreads;
 
     // Pass A: Parallel Vertex Generation
-    std::vector<std::thread> threads(numThreads);
-    for (int t = 0; t < numThreads; ++t) {
-        threads[t] = std::thread([&, t]() {
-            int zStart = t * slicesPerThread;
-            int zEnd = std::min(rz - 1, zStart + slicesPerThread);
+#pragma omp parallel num_threads(numThreads)
+    {
+        int t = omp_get_thread_num();
+        int zStart = t * slicesPerThread;
+        int zEnd = std::min(rz - 1, zStart + slicesPerThread);
 
-            ThreadVertData& td = threadVerts[t];
-            td.vertices.reserve(100000 * 3);
-            td.colors.reserve(100000 * 3);
-            td.materials.reserve(100000 * 3);
-            if (voxels.hasGroupField) td.vertGroups.reserve(100000);
-            td.vertCellIndices.reserve(100000);
+        ThreadVertData& td = threadVerts[t];
+        td.vertices.reserve(100000 * 3);
+        td.colors.reserve(100000 * 3);
+        td.materials.reserve(100000 * 3);
+        if (voxels.hasGroupField) td.vertGroups.reserve(100000);
+        td.vertCellIndices.reserve(100000);
 
-            float grid[8];
-            int x[3];
+        float grid[8];
+        int x[3];
 
-            for (x[2] = zStart; x[2] < zEnd; ++x[2]) {
-                for (x[1] = 0; x[1] < ry - 1; ++x[1]) {
-                    int n = x[1] * rx + x[2] * rxy;
-                    for (x[0] = 0; x[0] < rx - 1; ++x[0], ++n) {
-                        uint8_t mask = readScalarValuesSurfaceNets(voxels, grid, n, td.colors, td.materials, td.vertGroups);
-                        if (mask == 0 || mask == 0xff) continue;
+        for (x[2] = zStart; x[2] < zEnd; ++x[2]) {
+            for (x[1] = 0; x[1] < ry - 1; ++x[1]) {
+                int n = x[1] * rx + x[2] * rxy;
+                for (x[0] = 0; x[0] < rx - 1; ++x[0], ++n) {
+                    uint8_t mask = readScalarValuesSurfaceNets(voxels, grid, n, td.colors, td.materials, td.vertGroups);
+                    if (mask == 0 || mask == 0xff) continue;
 
-                        uint32_t edgeMask = snEdgeTable[mask];
-                        interpolateVerticesSurfaceNets(edgeMask, grid, x, td.vertices, block);
-                        td.vertCellIndices.push_back(n);
-                    }
+                    uint32_t edgeMask = snEdgeTable[mask];
+                    interpolateVerticesSurfaceNets(edgeMask, grid, x, td.vertices, block);
+                    td.vertCellIndices.push_back(n);
                 }
             }
-        });
-    }
-    for (auto& th : threads) {
-        if (th.joinable()) th.join();
+        }
     }
 
     // Merge Thread Vertices and populate cellToVert map
@@ -1428,87 +1466,84 @@ static RemeshResult surfaceNetsReconstruct(VoxelGrid& voxels, bool block, std::f
     const int dimOffsets[3] = { rx, rxy, 1 };
     const int dimOffsetsV[3] = { rxy, 1, rx };
 
-    for (int t = 0; t < numThreads; ++t) {
-        threads[t] = std::thread([&, t]() {
-            int zStart = t * slicesPerThread;
-            int zEnd = std::min(rz - 1, zStart + slicesPerThread);
+#pragma omp parallel num_threads(numThreads)
+    {
+        int t = omp_get_thread_num();
+        int zStart = t * slicesPerThread;
+        int zEnd = std::min(rz - 1, zStart + slicesPerThread);
 
-            ThreadFaceData& tf = threadFaces[t];
-            tf.faces.reserve(100000 * 4);
-            if (voxels.hasGroupField) tf.faceGroups.reserve(100000);
+        ThreadFaceData& tf = threadFaces[t];
+        tf.faces.reserve(100000 * 4);
+        if (voxels.hasGroupField) tf.faceGroups.reserve(100000);
 
-            int x[3];
-            for (x[2] = zStart; x[2] < zEnd; ++x[2]) {
-                for (x[1] = 0; x[1] < ry - 1; ++x[1]) {
-                    int n = x[1] * rx + x[2] * rxy;
-                    for (x[0] = 0; x[0] < rx - 1; ++x[0], ++n) {
-                        int32_t v0 = cellToVert[n];
-                        if (v0 < 0) continue;
+        int x[3];
+        for (x[2] = zStart; x[2] < zEnd; ++x[2]) {
+            for (x[1] = 0; x[1] < ry - 1; ++x[1]) {
+                int n = x[1] * rx + x[2] * rxy;
+                for (x[0] = 0; x[0] < rx - 1; ++x[0], ++n) {
+                    int32_t v0 = cellToVert[n];
+                    if (v0 < 0) continue;
 
-                        int rx_grid = voxels.dims[0];
-                        int rxy_grid = rx_grid * voxels.dims[1];
-                        const int cornerOffsets[8] = {
-                            0, 1, rx_grid, rx_grid + 1,
-                            rxy_grid, rxy_grid + 1, rxy_grid + rx_grid, rxy_grid + rx_grid + 1
-                        };
-                        uint8_t mask = 0;
-                        for (int g = 0; g < 8; ++g) {
-                            if (voxels.distanceField[n + cornerOffsets[g]] < 0.0f) {
-                                mask |= (1 << g);
-                            }
+                    int rx_grid = voxels.dims[0];
+                    int rxy_grid = rx_grid * voxels.dims[1];
+                    const int cornerOffsets[8] = {
+                        0, 1, rx_grid, rx_grid + 1,
+                        rxy_grid, rxy_grid + 1, rxy_grid + rx_grid, rxy_grid + rx_grid + 1
+                    };
+                    uint8_t mask = 0;
+                    for (int g = 0; g < 8; ++g) {
+                        if (voxels.distanceField[n + cornerOffsets[g]] < 0.0f) {
+                            mask |= (1 << g);
                         }
-                        if (mask == 0 || mask == 0xff) continue;
+                    }
+                    if (mask == 0 || mask == 0xff) continue;
 
-                        uint32_t edgeMask = snEdgeTable[mask];
+                    uint32_t edgeMask = snEdgeTable[mask];
 
-                        for (int i = 0; i < 3; ++i) {
-                            if (!(edgeMask & (1 << i))) continue;
+                    for (int i = 0; i < 3; ++i) {
+                        if (!(edgeMask & (1 << i))) continue;
 
-                            int iu = (i + 1) % 3;
-                            int iv = (i + 2) % 3;
+                        int iu = (i + 1) % 3;
+                        int iv = (i + 2) % 3;
 
-                            if (x[iu] == 0 || x[iv] == 0) continue;
+                        if (x[iu] == 0 || x[iv] == 0) continue;
 
-                            int du = dimOffsets[i];
-                            int dv = dimOffsetsV[i];
+                        int du = dimOffsets[i];
+                        int dv = dimOffsetsV[i];
 
-                            int32_t v1, v2, v3;
-                            if (mask & 1) {
-                                v1 = cellToVert[n - du];
-                                v2 = cellToVert[n - du - dv];
-                                v3 = cellToVert[n - dv];
-                            } else {
-                                v1 = cellToVert[n - dv];
-                                v2 = cellToVert[n - du - dv];
-                                v3 = cellToVert[n - du];
-                            }
+                        int32_t v1, v2, v3;
+                        if (mask & 1) {
+                            v1 = cellToVert[n - du];
+                            v2 = cellToVert[n - du - dv];
+                            v3 = cellToVert[n - dv];
+                        } else {
+                            v1 = cellToVert[n - dv];
+                            v2 = cellToVert[n - du - dv];
+                            v3 = cellToVert[n - du];
+                        }
 
-                            if (v1 < 0 || v2 < 0 || v3 < 0) continue;
+                        if (v1 < 0 || v2 < 0 || v3 < 0) continue;
 
-                            tf.faces.push_back(v0);
-                            tf.faces.push_back(v1);
-                            tf.faces.push_back(v2);
-                            tf.faces.push_back(v3);
+                        tf.faces.push_back(v0);
+                        tf.faces.push_back(v1);
+                        tf.faces.push_back(v2);
+                        tf.faces.push_back(v3);
 
-                            if (voxels.hasGroupField && !vertGroups.empty()) {
-                                uint32_t g0 = (size_t)v0 < vertGroups.size() ? vertGroups[v0] : 0;
-                                uint32_t g1 = (size_t)v1 < vertGroups.size() ? vertGroups[v1] : 0;
-                                uint32_t g2 = (size_t)v2 < vertGroups.size() ? vertGroups[v2] : 0;
-                                uint32_t g3 = (size_t)v3 < vertGroups.size() ? vertGroups[v3] : 0;
+                        if (voxels.hasGroupField && !vertGroups.empty()) {
+                            uint32_t g0 = (size_t)v0 < vertGroups.size() ? vertGroups[v0] : 0;
+                            uint32_t g1 = (size_t)v1 < vertGroups.size() ? vertGroups[v1] : 0;
+                            uint32_t g2 = (size_t)v2 < vertGroups.size() ? vertGroups[v2] : 0;
+                            uint32_t g3 = (size_t)v3 < vertGroups.size() ? vertGroups[v3] : 0;
 
-                                uint32_t fg = g0;
-                                if (g1 == g2 || g1 == g3) fg = g1;
-                                else if (g2 == g3) fg = g2;
-                                tf.faceGroups.push_back(fg);
-                            }
+                            uint32_t fg = g0;
+                            if (g1 == g2 || g1 == g3) fg = g1;
+                            else if (g2 == g3) fg = g2;
+                            tf.faceGroups.push_back(fg);
                         }
                     }
                 }
             }
-        });
-    }
-    for (auto& th : threads) {
-        if (th.joinable()) th.join();
+        }
     }
 
     size_t totalFaces = 0;
@@ -1717,69 +1752,56 @@ RemeshResult doRemesh(
         msBuild = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tBuildStart).count();
 
         auto tQueryStart = std::chrono::high_resolution_clock::now();
-        int numThreads = (int)std::thread::hardware_concurrency();
-        if (numThreads < 1) numThreads = 1;
-        std::vector<std::thread> threads(numThreads);
-        int chunkSize = (numFaces + numThreads - 1) / numThreads;
+#pragma omp parallel for schedule(static)
+        for (int i = 0; i < (int)numFaces; ++i) {
+            uint32_t idx0 = r.faces[i * 4 + 0];
+            uint32_t idx1 = r.faces[i * 4 + 1];
+            uint32_t idx2 = r.faces[i * 4 + 2];
+            uint32_t idx3 = r.faces[i * 4 + 3];
 
-        for (int t = 0; t < numThreads; ++t) {
-            threads[t] = std::thread([&, t]() {
-                int start = t * chunkSize;
-                int end = std::min((int)numFaces, start + chunkSize);
-                for (int i = start; i < end; ++i) {
-                    uint32_t idx0 = r.faces[i * 4 + 0];
-                    uint32_t idx1 = r.faces[i * 4 + 1];
-                    uint32_t idx2 = r.faces[i * 4 + 2];
-                    uint32_t idx3 = r.faces[i * 4 + 3];
+            size_t nbV = r.vertices.size() / 3;
+            if (idx0 >= nbV || idx1 >= nbV || idx2 >= nbV) {
+                continue;
+            }
 
-                    size_t nbV = r.vertices.size() / 3;
-                    if (idx0 >= nbV || idx1 >= nbV || idx2 >= nbV) {
-                        continue;
-                    }
+            bool isQuad = (idx3 != 0xffffffff && idx3 < nbV);
+            const float* p0 = &r.vertices[idx0 * 3];
+            const float* p1 = &r.vertices[idx1 * 3];
+            const float* p2 = &r.vertices[idx2 * 3];
 
-                    bool isQuad = (idx3 != 0xffffffff && idx3 < nbV);
-                    const float* p0 = &r.vertices[idx0 * 3];
-                    const float* p1 = &r.vertices[idx1 * 3];
-                    const float* p2 = &r.vertices[idx2 * 3];
+            float centroid[3];
+            float e1[3] = { p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2] };
+            float e2[3];
 
-                    float centroid[3];
-                    float e1[3] = { p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2] };
-                    float e2[3];
+            if (isQuad) {
+                const float* p3 = &r.vertices[idx3 * 3];
+                centroid[0] = (p0[0] + p1[0] + p2[0] + p3[0]) * 0.25f;
+                centroid[1] = (p0[1] + p1[1] + p2[1] + p3[1]) * 0.25f;
+                centroid[2] = (p0[2] + p1[2] + p2[2] + p3[2]) * 0.25f;
+                e2[0] = p3[0] - p0[0];
+                e2[1] = p3[1] - p0[1];
+                e2[2] = p3[2] - p0[2];
+            } else {
+                centroid[0] = (p0[0] + p1[0] + p2[0]) * (1.0f / 3.0f);
+                centroid[1] = (p0[1] + p1[1] + p2[1]) * (1.0f / 3.0f);
+                centroid[2] = (p0[2] + p1[2] + p2[2]) * (1.0f / 3.0f);
+                e2[0] = p2[0] - p0[0];
+                e2[1] = p2[1] - p0[1];
+                e2[2] = p2[2] - p0[2];
+            }
 
-                    if (isQuad) {
-                        const float* p3 = &r.vertices[idx3 * 3];
-                        centroid[0] = (p0[0] + p1[0] + p2[0] + p3[0]) * 0.25f;
-                        centroid[1] = (p0[1] + p1[1] + p2[1] + p3[1]) * 0.25f;
-                        centroid[2] = (p0[2] + p1[2] + p2[2] + p3[2]) * 0.25f;
-                        e2[0] = p3[0] - p0[0];
-                        e2[1] = p3[1] - p0[1];
-                        e2[2] = p3[2] - p0[2];
-                    } else {
-                        centroid[0] = (p0[0] + p1[0] + p2[0]) * (1.0f / 3.0f);
-                        centroid[1] = (p0[1] + p1[1] + p2[1]) * (1.0f / 3.0f);
-                        centroid[2] = (p0[2] + p1[2] + p2[2]) * (1.0f / 3.0f);
-                        e2[0] = p2[0] - p0[0];
-                        e2[1] = p2[1] - p0[1];
-                        e2[2] = p2[2] - p0[2];
-                    }
+            float nx = e1[1] * e2[2] - e1[2] * e2[1];
+            float ny = e1[2] * e2[0] - e1[0] * e2[2];
+            float nz = e1[0] * e2[1] - e1[1] * e2[0];
+            float nlen = std::sqrt(nx * nx + ny * ny + nz * nz);
+            float norm[3] = { 0.0f, 0.0f, 1.0f };
+            if (nlen > 1e-9f) {
+                norm[0] = nx / nlen;
+                norm[1] = ny / nlen;
+                norm[2] = nz / nlen;
+            }
 
-                    float nx = e1[1] * e2[2] - e1[2] * e2[1];
-                    float ny = e1[2] * e2[0] - e1[0] * e2[2];
-                    float nz = e1[0] * e2[1] - e1[1] * e2[0];
-                    float nlen = std::sqrt(nx * nx + ny * ny + nz * nz);
-                    float norm[3] = { 0.0f, 0.0f, 1.0f };
-                    if (nlen > 1e-9f) {
-                        norm[0] = nx / nlen;
-                        norm[1] = ny / nlen;
-                        norm[2] = nz / nlen;
-                    }
-
-                    r.faceGroups[i] = spatialIndex.findClosestPolyGroup(centroid, norm);
-                }
-            });
-        }
-        for (auto& th : threads) {
-            if (th.joinable()) th.join();
+            r.faceGroups[i] = spatialIndex.findClosestPolyGroup(centroid, norm);
         }
         msQuery = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tQueryStart).count();
 
@@ -1814,7 +1836,8 @@ RemeshResult doRemesh(
             }
 
             std::vector<uint32_t> cleanedGroups = r.faceGroups;
-            for (size_t f = 0; f < numFaces; ++f) {
+#pragma omp parallel for schedule(static)
+            for (int f = 0; f < (int)numFaces; ++f) {
                 uint32_t myGroup = r.faceGroups[f];
                 struct GroupEntry { uint32_t group; int count; };
                 GroupEntry neighbors[32];
