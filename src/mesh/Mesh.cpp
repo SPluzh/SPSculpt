@@ -5,6 +5,9 @@
 #include <map>
 #include <unordered_map>
 #include <chrono>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 #include "mesh/NormalCalc.h"
 #include "mesh/Topology.h"
 #include "common/Constants.h"
@@ -77,6 +80,74 @@ void Mesh::initEdges() {
         return;
     }
 
+    // Fast path: if vertRingVert and vrvStartCount are already built and valid,
+    // construct unique edges and faceEdges directly in O(V + F) time without std::sort!
+    if (vrvStartCount.size() == (size_t)(nbVerts * 2) && !vertRingVert.empty()) {
+        std::vector<uint32_t> higherCounts(nbVerts, 0);
+        std::vector<uint32_t> higherFirstIdx(nbVerts, 0);
+
+#pragma omp parallel for schedule(static) if(nbVerts > 2000)
+        for (int i = 0; i < nbVerts; ++i) {
+            uint32_t vStart = vrvStartCount[i * 2];
+            uint32_t vCount = vrvStartCount[i * 2 + 1];
+            // Since vertRingVert[vStart .. vStart + vCount - 1] is sorted in ascending order:
+            uint32_t fHigher = 0;
+            while (fHigher < vCount && vertRingVert[vStart + fHigher] <= (uint32_t)i) {
+                ++fHigher;
+            }
+            higherFirstIdx[i] = fHigher;
+            higherCounts[i] = vCount - fHigher;
+        }
+
+        std::vector<uint32_t> edgeOffsets(nbVerts + 1, 0);
+        for (int i = 0; i < nbVerts; ++i) {
+            edgeOffsets[i + 1] = edgeOffsets[i] + higherCounts[i];
+        }
+        uint32_t totalEdges = edgeOffsets[nbVerts];
+
+        std::vector<uint32_t> edgeValence(totalEdges, 0);
+
+#pragma omp parallel for schedule(static) if(nbFaces > 2000)
+        for (int f = 0; f < nbFaces; ++f) {
+            int id = f * 4;
+            int numE = (faces[id + 3] != TRI_INDEX) ? 4 : 3;
+            for (int k = 0; k < numE; ++k) {
+                uint32_t va = faces[id + k];
+                uint32_t vb = faces[id + ((k + 1) % numE)];
+                if (va >= (uint32_t)nbVerts || vb >= (uint32_t)nbVerts) continue;
+
+                uint32_t mn = std::min(va, vb);
+                uint32_t mx = std::max(va, vb);
+
+                uint32_t vStart = vrvStartCount[mn * 2];
+                uint32_t fHigher = higherFirstIdx[mn];
+                uint32_t hCount = higherCounts[mn];
+                const uint32_t* higherList = &vertRingVert[vStart + fHigher];
+
+                uint32_t offset = 0;
+                while (offset < hCount && higherList[offset] != mx) {
+                    ++offset;
+                }
+
+                if (offset < hCount) {
+                    uint32_t edgeIdx = edgeOffsets[mn] + offset;
+                    faceEdges[id + k] = edgeIdx;
+#pragma omp atomic
+                    edgeValence[edgeIdx]++;
+                }
+            }
+        }
+
+        nbEdges = static_cast<int>(totalEdges);
+        edges = std::move(edgeValence);
+
+        if (edgeCreases.size() != (size_t)nbEdges) {
+            edgeCreases.resize(nbEdges, 0);
+        }
+        return;
+    }
+
+    // Fallback path: global comparison sort if vertRingVert is not available
     struct FaceEdgeSlot {
         uint64_t key;
         int slot;

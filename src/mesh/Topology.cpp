@@ -17,14 +17,44 @@ void computeTopology(
         return;
     }
 
+    int numThreads = omp_get_max_threads();
+    if (numThreads < 1) numThreads = 1;
+    bool useParallel = (nbFaces > 2000 && numThreads > 1);
+
     // 1. Vertex to Face (vToF) flat buffer
     std::vector<uint32_t> fCounts(nbVerts, 0);
-    for (int i = 0; i < nbFaces; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            uint32_t vid = faces[i * 4 + j];
-            if (vid != 0xffffffff && vid < static_cast<uint32_t>(nbVerts)) {
-                fCounts[vid]++;
+    if (!useParallel) {
+        for (int i = 0; i < nbFaces; ++i) {
+            for (int j = 0; j < 4; ++j) {
+                uint32_t vid = faces[i * 4 + j];
+                if (vid != 0xffffffff && vid < static_cast<uint32_t>(nbVerts)) {
+                    fCounts[vid]++;
+                }
             }
+        }
+    } else {
+        std::vector<std::vector<uint32_t>> threadFCounts(numThreads, std::vector<uint32_t>(nbVerts, 0));
+#pragma omp parallel num_threads(numThreads)
+        {
+            int tid = omp_get_thread_num();
+            std::vector<uint32_t>& localCounts = threadFCounts[tid];
+#pragma omp for schedule(static)
+            for (int i = 0; i < nbFaces; ++i) {
+                for (int j = 0; j < 4; ++j) {
+                    uint32_t vid = faces[i * 4 + j];
+                    if (vid != 0xffffffff && vid < static_cast<uint32_t>(nbVerts)) {
+                        localCounts[vid]++;
+                    }
+                }
+            }
+        }
+#pragma omp parallel for schedule(static) if(nbVerts > 2000)
+        for (int i = 0; i < nbVerts; ++i) {
+            uint32_t sum = 0;
+            for (int t = 0; t < numThreads; ++t) {
+                sum += threadFCounts[t][i];
+            }
+            fCounts[i] = sum;
         }
     }
 
@@ -51,16 +81,46 @@ void computeTopology(
 
     // 2. Vertex to Vertex (vToV) flat buffer
     std::vector<uint32_t> vCounts(nbVerts, 0);
-    for (int i = 0; i < nbFaces; ++i) {
-        uint32_t f[4] = { faces[i * 4], faces[i * 4 + 1], faces[i * 4 + 2], faces[i * 4 + 3] };
-        int num = (f[3] == 0xffffffff) ? 3 : 4;
-        for (int j = 0; j < num; ++j) {
-            uint32_t curr = f[j];
-            uint32_t next = f[(j + 1) % num];
-            if (curr < static_cast<uint32_t>(nbVerts) && next < static_cast<uint32_t>(nbVerts)) {
-                vCounts[curr]++;
-                vCounts[next]++;
+    if (!useParallel) {
+        for (int i = 0; i < nbFaces; ++i) {
+            uint32_t f[4] = { faces[i * 4], faces[i * 4 + 1], faces[i * 4 + 2], faces[i * 4 + 3] };
+            int num = (f[3] == 0xffffffff) ? 3 : 4;
+            for (int j = 0; j < num; ++j) {
+                uint32_t curr = f[j];
+                uint32_t next = f[(j + 1) % num];
+                if (curr < static_cast<uint32_t>(nbVerts) && next < static_cast<uint32_t>(nbVerts)) {
+                    vCounts[curr]++;
+                    vCounts[next]++;
+                }
             }
+        }
+    } else {
+        std::vector<std::vector<uint32_t>> threadVCounts(numThreads, std::vector<uint32_t>(nbVerts, 0));
+#pragma omp parallel num_threads(numThreads)
+        {
+            int tid = omp_get_thread_num();
+            std::vector<uint32_t>& localCounts = threadVCounts[tid];
+#pragma omp for schedule(static)
+            for (int i = 0; i < nbFaces; ++i) {
+                uint32_t f[4] = { faces[i * 4], faces[i * 4 + 1], faces[i * 4 + 2], faces[i * 4 + 3] };
+                int num = (f[3] == 0xffffffff) ? 3 : 4;
+                for (int j = 0; j < num; ++j) {
+                    uint32_t curr = f[j];
+                    uint32_t next = f[(j + 1) % num];
+                    if (curr < static_cast<uint32_t>(nbVerts) && next < static_cast<uint32_t>(nbVerts)) {
+                        localCounts[curr]++;
+                        localCounts[next]++;
+                    }
+                }
+            }
+        }
+#pragma omp parallel for schedule(static) if(nbVerts > 2000)
+        for (int i = 0; i < nbVerts; ++i) {
+            uint32_t sum = 0;
+            for (int t = 0; t < numThreads; ++t) {
+                sum += threadVCounts[t][i];
+            }
+            vCounts[i] = sum;
         }
     }
 
