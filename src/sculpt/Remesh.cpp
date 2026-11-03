@@ -16,6 +16,11 @@
 #include "common/Logger.h"
 
 // Bounding box mapping and structures
+struct HermiteData {
+    float nx, ny, nz;
+    float t;
+};
+
 struct VoxelGrid {
     int dims[3];
     float step;
@@ -26,6 +31,7 @@ struct VoxelGrid {
     std::vector<uint32_t> colorField;      // packed colors
     std::vector<uint32_t> materialField;   // packed materials
     std::vector<uint32_t> groupField;      // polygroup IDs
+    std::vector<std::unordered_map<uint32_t, HermiteData>> hermiteEdges;
     float uniformColor[3];
     float uniformMaterial[3];
     bool hasColorField = false;
@@ -495,7 +501,8 @@ static void voxelize(
     const float* materials,
     const uint32_t* faceGroups,
     VoxelGrid& voxels,
-    std::function<void(int stage, int progress)> onProgress = nullptr
+    std::function<void(int stage, int progress)> onProgress = nullptr,
+    bool keepSharpEdges = false
 ) {
     int rx = voxels.dims[0];
     int ry = voxels.dims[1];
@@ -526,6 +533,7 @@ static void voxelize(
         double triEdge1[3];
         double triEdge2[3];
         double a00, a01, a11;
+        float normal[3];
         int snapMinx, snapMaxx;
         int snapMiny, snapMaxy;
         float c1[3];
@@ -586,6 +594,19 @@ static void voxelize(
                 tm.a00 = tm.triEdge1[0] * tm.triEdge1[0] + tm.triEdge1[1] * tm.triEdge1[1] + tm.triEdge1[2] * tm.triEdge1[2];
                 tm.a01 = tm.triEdge1[0] * tm.triEdge2[0] + tm.triEdge1[1] * tm.triEdge2[1] + tm.triEdge1[2] * tm.triEdge2[2];
                 tm.a11 = tm.triEdge2[0] * tm.triEdge2[0] + tm.triEdge2[1] * tm.triEdge2[1] + tm.triEdge2[2] * tm.triEdge2[2];
+
+                double nrmX = tm.triEdge1[1] * tm.triEdge2[2] - tm.triEdge1[2] * tm.triEdge2[1];
+                double nrmY = tm.triEdge1[2] * tm.triEdge2[0] - tm.triEdge1[0] * tm.triEdge2[2];
+                double nrmZ = tm.triEdge1[0] * tm.triEdge2[1] - tm.triEdge1[1] * tm.triEdge2[0];
+                double lenN = std::sqrt(nrmX * nrmX + nrmY * nrmY + nrmZ * nrmZ);
+                if (lenN > 1e-12) {
+                    double invL = 1.0 / lenN;
+                    tm.normal[0] = (float)(nrmX * invL);
+                    tm.normal[1] = (float)(nrmY * invL);
+                    tm.normal[2] = (float)(nrmZ * invL);
+                } else {
+                    tm.normal[0] = 0.0f; tm.normal[1] = 0.0f; tm.normal[2] = 1.0f;
+                }
 
                 int snapMinx = (int)std::floor((xmin - vminx) * invStep);
                 int snapMiny = (int)std::floor((ymin - vminy) * invStep);
@@ -694,14 +715,34 @@ static void voxelize(
                             continue;
 
                         int bit = 1 << it;
-                        if ((voxels.crossedEdges[n] & bit) != 0)
+                        if ((voxels.crossedEdges[n] & bit) != 0) {
+                            if (keepSharpEdges && !voxels.hermiteEdges.empty()) {
+                                double dist = intersectionRayTriangleEdges(point, dirUnit[it], tm.triEdge1, tm.triEdge2, tm.v1);
+                                if (dist >= 0.0 && dist <= step) {
+                                    uint32_t edgeKey = (uint32_t)((j * rx + i) * 3 + it);
+                                    auto itH = voxels.hermiteEdges[k].find(edgeKey);
+                                    float newT = (float)(dist / step);
+                                    if (itH != voxels.hermiteEdges[k].end() && newT < itH->second.t) {
+                                        itH->second = { tm.normal[0], tm.normal[1], tm.normal[2], newT };
+                                    }
+                                }
+                            }
                             continue;
+                        }
 
                         double dist = intersectionRayTriangleEdges(point, dirUnit[it], tm.triEdge1, tm.triEdge2, tm.v1);
                         if (dist < 0.0 || dist > step)
                             continue;
 
                         voxels.crossedEdges[n] |= bit;
+
+                        if (keepSharpEdges && !voxels.hermiteEdges.empty()) {
+                            uint32_t edgeKey = (uint32_t)((j * rx + i) * 3 + it);
+                            voxels.hermiteEdges[k][edgeKey] = {
+                                tm.normal[0], tm.normal[1], tm.normal[2],
+                                (float)(dist / step)
+                            };
+                        }
                     }
                 }
             }
@@ -1359,6 +1400,7 @@ static void eigenSymmetric3x3(const float A[3][3], float eigenvalues[3], glm::ve
 }
 
 static bool interpolateVerticesSurfaceNets(
+    const VoxelGrid& voxels,
     uint32_t edgeMask, const float grid[8], const int x[3],
     std::vector<float>& vertices, bool block,
     bool regularizeQuads, bool keepSharpEdges
@@ -1436,7 +1478,7 @@ static bool interpolateVerticesSurfaceNets(
                 pLocal[j] = a ? 1.0f : 0.0f;
         }
 
-        // Exact trilinear gradient of cell at pLocal
+        // Exact trilinear gradient of cell at pLocal as default fallback
         float u = pLocal.x;
         float v = pLocal.y;
         float w = pLocal.z;
@@ -1461,6 +1503,29 @@ static bool interpolateVerticesSurfaceNets(
             norm = glm::vec3(0.0f, 0.0f, 1.0f);
         }
 
+        // If keepSharpEdges is on, lookup original triangle normal and intersection point
+        if (keepSharpEdges && !voxels.hermiteEdges.empty()) {
+            int dx0 = e0 & 1;
+            int dy0 = (e0 >> 1) & 1;
+            int dz0 = (e0 >> 2) & 1;
+            int diffBits = e0 ^ e1;
+            int axis = (diffBits == 1) ? 0 : ((diffBits == 2) ? 1 : 2);
+            int gx = x[0] + dx0;
+            int gy = x[1] + dy0;
+            int gz = x[2] + dz0;
+
+            if (gz >= 0 && gz < voxels.dims[2] && gy >= 0 && gy < voxels.dims[1] && gx >= 0 && gx < voxels.dims[0]) {
+                uint32_t edgeKey = (uint32_t)((gy * voxels.dims[0] + gx) * 3 + axis);
+                const auto& sliceMap = voxels.hermiteEdges[gz];
+                auto itH = sliceMap.find(edgeKey);
+                if (itH != sliceMap.end()) {
+                    norm = glm::vec3(itH->second.nx, itH->second.ny, itH->second.nz);
+                    pLocal = glm::vec3((float)dx0, (float)dy0, (float)dz0);
+                    pLocal[axis] = itH->second.t;
+                }
+            }
+        }
+
         points[edgeCount] = pLocal;
         normals[edgeCount] = norm;
         xMass += pLocal;
@@ -1474,7 +1539,7 @@ static bool interpolateVerticesSurfaceNets(
         return false;
     }
 
-    // Sharp Feature Detection: cell with high normal divergence
+    // Sharp Feature Detection: cell with high normal divergence among intersected triangles
     float minDot = 1.0f;
     for (int i = 0; i < edgeCount; ++i) {
         for (int j = i + 1; j < edgeCount; ++j) {
@@ -1484,7 +1549,7 @@ static bool interpolateVerticesSurfaceNets(
             }
         }
     }
-    bool isSharp = (keepSharpEdges && edgeCount >= 2 && minDot <= 0.80f);
+    bool isSharp = (keepSharpEdges && edgeCount >= 2 && minDot <= 0.85f);
 
     xMass /= (float)edgeCount;
 
@@ -1560,7 +1625,7 @@ static bool interpolateVerticesSurfaceNets(
     }
 
     glm::vec3 xSol = xMass + ySol;
-    float clampMargin = isSharp ? 0.10f : 0.05f;
+    float clampMargin = isSharp ? 0.35f : 0.05f;
     xSol.x = std::clamp(xSol.x, -clampMargin, 1.0f + clampMargin);
     xSol.y = std::clamp(xSol.y, -clampMargin, 1.0f + clampMargin);
     xSol.z = std::clamp(xSol.z, -clampMargin, 1.0f + clampMargin);
@@ -1639,7 +1704,7 @@ static RemeshResult surfaceNetsReconstruct(
                     if (mask == 0 || mask == 0xff) continue;
 
                     uint32_t edgeMask = snEdgeTable[mask];
-                    bool isSharp = interpolateVerticesSurfaceNets(edgeMask, grid, x, td.vertices, block, regularizeQuads, keepSharpEdges);
+                    bool isSharp = interpolateVerticesSurfaceNets(voxels, edgeMask, grid, x, td.vertices, block, regularizeQuads, keepSharpEdges);
                     td.vertCellIndices.push_back(n);
                     td.vertMasks.push_back(mask);
                     if (keepSharpEdges) {
@@ -1687,6 +1752,13 @@ static RemeshResult surfaceNetsReconstruct(
                 cellToVert[td.vertCellIndices[i]] = (int32_t)(baseVertIdx + i);
             }
         }
+    }
+
+    if (keepSharpEdges) {
+        size_t sharpCount = 0;
+        for (uint8_t s : res.sharpVertices) sharpCount += s;
+        sculpt_log("[Surface Nets] Sharp vertices identified: %zu / %zu (%.2f%%)\n",
+                   sharpCount, totalVerts, totalVerts > 0 ? (float)sharpCount / totalVerts * 100.0f : 0.0f);
     }
 
     // Pass B: Parallel Face Generation (iterates ONLY active surface cells)
@@ -2039,6 +2111,9 @@ static void applyConstrainedTangentialRelaxation(
 #pragma omp parallel for schedule(static)
         for (int v = 0; v < (int)nbV; ++v) {
             if (keepSharpEdges && !res.sharpVertices.empty() && res.sharpVertices[v]) {
+                nextVerts[v * 3 + 0] = currVerts[v * 3 + 0];
+                nextVerts[v * 3 + 1] = currVerts[v * 3 + 1];
+                nextVerts[v * 3 + 2] = currVerts[v * 3 + 2];
                 continue;
             }
             uint8_t count = vertNeighborCount[v];
@@ -2580,6 +2655,9 @@ RemeshResult doRemesh(
     // 2. Allocate voxel fields
     voxels.crossedEdges.assign(datalen, 0);
     voxels.distanceField.assign(datalen, std::numeric_limits<float>::infinity());
+    if (keepSharpEdges) {
+        voxels.hermiteEdges.resize(rz);
+    }
 
     voxels.hasColorField = hasColors;
     if (hasColors) {
@@ -2603,7 +2681,7 @@ RemeshResult doRemesh(
 
     // 3. Voxelize
     auto tVoxelizeStart = std::chrono::high_resolution_clock::now();
-    voxelize(verts, nbVerts, tris, nbTris, colors, materials, faceGroups, voxels, onProgress);
+    voxelize(verts, nbVerts, tris, nbTris, colors, materials, faceGroups, voxels, onProgress, keepSharpEdges);
     double msVoxelize = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tVoxelizeStart).count();
     sculpt_log("[REMESH PROFILE] Stage 1 - Voxelize: %.2f ms\n", msVoxelize);
 
