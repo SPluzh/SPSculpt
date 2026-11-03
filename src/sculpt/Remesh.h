@@ -2,12 +2,28 @@
 #include <vector>
 #include <cstdint>
 
+struct RemeshProfile {
+    double msVoxelize = 0.0;
+    double msFloodFill = 0.0;
+    double msReconstruct = 0.0;
+    double msPolyGroup = 0.0;
+    double msPolyGroupBuild = 0.0;
+    double msPolyGroupQuery = 0.0;
+    double msPolyGroupCleanup = 0.0;
+    double msTotalRemesh = 0.0;
+    int gridDims[3] = {0, 0, 0};
+    int gridDatalen = 0;
+    double gridMemoryMB = 0.0;
+    float step = 0.0f;
+};
+
 struct RemeshResult {
     std::vector<float> vertices;
     std::vector<uint32_t> faces;
     std::vector<float> colors;
     std::vector<float> materials;
     std::vector<uint32_t> faceGroups;
+    RemeshProfile profile;
 };
 
 #include <functional>

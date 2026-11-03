@@ -1703,6 +1703,9 @@ RemeshResult doRemesh(
 
     // 6. PolyGroup Transfer via Direct Spatial Mesh-to-Mesh Projection
     double msPolyGroupTotal = 0.0;
+    double msBuild = 0.0;
+    double msQuery = 0.0;
+    double msCleanup = 0.0;
     if (hasFaceGroups && faceGroups && nbTris > 0 && !r.faces.empty()) {
         auto tPolyGroupStart = std::chrono::high_resolution_clock::now();
         size_t numFaces = r.faces.size() / 4;
@@ -1711,7 +1714,7 @@ RemeshResult doRemesh(
         auto tBuildStart = std::chrono::high_resolution_clock::now();
         TriangleSpatialIndex spatialIndex;
         spatialIndex.build(verts, nbVerts, tris, nbTris, faceGroups, step);
-        double msBuild = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tBuildStart).count();
+        msBuild = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tBuildStart).count();
 
         auto tQueryStart = std::chrono::high_resolution_clock::now();
         int numThreads = (int)std::thread::hardware_concurrency();
@@ -1778,7 +1781,7 @@ RemeshResult doRemesh(
         for (auto& th : threads) {
             if (th.joinable()) th.join();
         }
-        double msQuery = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tQueryStart).count();
+        msQuery = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tQueryStart).count();
 
         // Post-processing cleanup: Filter isolated 1-face noise
         auto tCleanupStart = std::chrono::high_resolution_clock::now();
@@ -1869,7 +1872,7 @@ RemeshResult doRemesh(
             }
             r.faceGroups = std::move(cleanedGroups);
         }
-        double msCleanup = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tCleanupStart).count();
+        msCleanup = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tCleanupStart).count();
         msPolyGroupTotal = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tPolyGroupStart).count();
 
         sculpt_log("[REMESH PROFILE] Stage 4 - PolyGroup Transfer: Total=%.2f ms (Index Build: %.2f ms, Query Search: %.2f ms, Cleanup: %.2f ms)\n",
@@ -1882,6 +1885,22 @@ RemeshResult doRemesh(
     sculpt_log("[REMESH PROFILE] SUMMARY - C++ doRemesh Total: %.2f ms (Voxelize: %.2f ms | FloodFill: %.2f ms | Reconstruct: %.2f ms | PolyGroup: %.2f ms)\n",
               msTotalRemesh, msVoxelize, msFlood, msReconstruct, msPolyGroupTotal);
     sculpt_log("[C++ doRemesh] Reconstructed. output verts: %d, faces: %d\n", (int)(r.vertices.size() / 3), (int)(r.faces.size() / 4));
+
+    r.profile.msVoxelize = msVoxelize;
+    r.profile.msFloodFill = msFlood;
+    r.profile.msReconstruct = msReconstruct;
+    r.profile.msPolyGroup = msPolyGroupTotal;
+    r.profile.msPolyGroupBuild = msBuild;
+    r.profile.msPolyGroupQuery = msQuery;
+    r.profile.msPolyGroupCleanup = msCleanup;
+    r.profile.msTotalRemesh = msTotalRemesh;
+    r.profile.gridDims[0] = rx;
+    r.profile.gridDims[1] = ry;
+    r.profile.gridDims[2] = rz;
+    r.profile.gridDatalen = datalen;
+    r.profile.gridMemoryMB = distMemMB + crossMemMB;
+    r.profile.step = step;
+
     return r;
 }
 

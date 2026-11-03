@@ -25,6 +25,7 @@
 #include "mesh/Octree.h"
 #include "mesh/SculptBenchmark.h"
 #include "mesh/TrimClipBenchmark.h"
+#include "mesh/VoxelRemeshBenchmark.h"
 #include "mesh/NormalCalc.h"
 #include "sculpt/SculptEngine.h"
 #include "mesh/Topology.h"
@@ -329,7 +330,9 @@ int main(int argc, char* argv[]) {
     bool showConsole = false;
     bool runBench = false;
     bool runTrimClipBench = false;
+    bool runVoxelBench = false;
     int benchFaces = 4000000;
+    int benchRemeshRes = 0;
     std::string fileToOpen = "";
 
 #ifdef _WIN32
@@ -347,9 +350,16 @@ int main(int argc, char* argv[]) {
             } else if (arg == "--bench-trim" || arg == "--bench-clip" || arg == "--bench-trim-clip" || arg == "--bench-curves") {
                 runTrimClipBench = true;
                 showConsole = true;
+            } else if (arg == "--bench-remesh" || arg == "--bench-voxel" || arg == "--bench-voxel-remesh") {
+                runVoxelBench = true;
+                showConsole = true;
+            } else if ((arg == "--bench-remesh-res" || arg == "--remesh-res") && i + 1 < numArgs) {
+                showConsole = true;
+                benchRemeshRes = std::atoi(wideToUtf8(szArgList[++i]).c_str());
             } else if (arg == "--bench-all") {
                 runBench = true;
                 runTrimClipBench = true;
+                runVoxelBench = true;
                 showConsole = true;
             } else if (arg == "--test-claybuildup-4m" || arg == "--bench-claybuildup" || arg == "--bench-multitool" || arg == "--benchmark") {
                 runBench = true;
@@ -375,9 +385,16 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--bench-trim" || arg == "--bench-clip" || arg == "--bench-trim-clip" || arg == "--bench-curves") {
             runTrimClipBench = true;
             showConsole = true;
+        } else if (arg == "--bench-remesh" || arg == "--bench-voxel" || arg == "--bench-voxel-remesh") {
+            runVoxelBench = true;
+            showConsole = true;
+        } else if ((arg == "--bench-remesh-res" || arg == "--remesh-res") && i + 1 < argc) {
+            showConsole = true;
+            benchRemeshRes = std::atoi(argv[++i]);
         } else if (arg == "--bench-all") {
             runBench = true;
             runTrimClipBench = true;
+            runVoxelBench = true;
             showConsole = true;
         } else if (arg == "--test-claybuildup-4m" || arg == "--bench-claybuildup" || arg == "--bench-multitool" || arg == "--benchmark") {
             runBench = true;
@@ -430,8 +447,22 @@ int main(int argc, char* argv[]) {
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
 
+    if (runVoxelBench && !runBench && !runTrimClipBench) {
+        bool success = VoxelRemeshBenchmark::run(benchRemeshRes);
+        fflush(stdout);
+        fflush(stderr);
+#ifdef _WIN32
+        ExitProcess(success ? 0 : 1);
+#else
+        _exit(success ? 0 : 1);
+#endif
+    }
+
     if (runTrimClipBench && !runBench) {
         bool success = TrimClipBenchmark::run(benchFaces);
+        if (runVoxelBench) {
+            success = VoxelRemeshBenchmark::run(benchRemeshRes) && success;
+        }
         fflush(stdout);
         fflush(stderr);
 #ifdef _WIN32
@@ -445,6 +476,9 @@ int main(int argc, char* argv[]) {
         bool success = SculptBenchmark::run(benchFaces);
         if (runTrimClipBench) {
             success = TrimClipBenchmark::run(benchFaces) && success;
+        }
+        if (runVoxelBench) {
+            success = VoxelRemeshBenchmark::run(benchRemeshRes) && success;
         }
         fflush(stdout);
         fflush(stderr);
