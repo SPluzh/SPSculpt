@@ -946,7 +946,7 @@ inline void applyConstrainedTangentialRelaxationSparse(
                     float otherDiagLen = glm::length(pB - pA);
                     if (diagLen > 1e-6f && otherDiagLen > 1e-6f) {
                         float diff = otherDiagLen - diagLen;
-                        diagDelta += ((pOpp - pv) / diagLen) * (diff * 0.15f);
+                        diagDelta += ((pv - pOpp) / diagLen) * (diff * 0.15f);
                     }
                 }
                 delta += diagDelta / (float)diagCount;

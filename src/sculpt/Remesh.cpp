@@ -2992,7 +2992,7 @@ RemeshResult doRemesh(
     size_t sparseBlocks = 0;
     size_t sparseGridBytes = 0;
     bool effectiveSparseGrid = useSparseGrid;
-    if (!manifold && (useSparseGrid || resolution >= 600.0f || (float)rx >= 600.0f || (float)ry >= 600.0f || (float)rz >= 600.0f)) {
+    if (!manifold && !keepSharpEdges && (useSparseGrid || resolution >= 600.0f || (float)rx >= 600.0f || (float)ry >= 600.0f || (float)rz >= 600.0f)) {
         effectiveSparseGrid = true;
     }
 

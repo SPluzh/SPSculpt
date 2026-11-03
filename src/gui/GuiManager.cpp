@@ -8015,7 +8015,7 @@ void GuiManager::performRemesh(Scene& scene) {
                 regularizeQuads,
                 keepSharpEdges,
                 keepMasked,
-                true // useSparseGrid (Phase 2 Block-Sparse Grid)
+                false // useSparseGrid (auto BlockSparseGrid when resolution >= 600)
             );
             m_remeshAsync.result = std::move(result);
             m_remeshAsync.state = RemeshState::Done;
