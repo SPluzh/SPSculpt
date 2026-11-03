@@ -49,6 +49,8 @@ struct VoxelBenchmarkRow {
     float maskedVertsPreservedPct = 0.0f; // 100.0% for keepMasked mode
     float maxMaskedVertDrift = 0.0f;       // < 1e-5 mm (coordinates of masked verts did not drift)
     float maskTransferAccuracyPct = 0.0f; // > 98.0% when keepMasked is false but mask was present
+    bool useSparseGrid = false;
+    size_t sparseActiveBlocks = 0;
 
     // Grid Specs
     int gridDims[3] = { 0, 0, 0 };
@@ -790,7 +792,8 @@ inline VoxelBenchmarkRow runVoxelTest(
     bool alignSymmetry = true,
     bool regularizeQuads = true,
     bool keepSharpEdges = false,
-    bool keepMasked = false
+    bool keepMasked = false,
+    bool useSparseGrid = false
 ) {
     VoxelBenchmarkRow row;
     row.testName = name;
@@ -801,6 +804,7 @@ inline VoxelBenchmarkRow runVoxelTest(
     row.regularizeQuads = regularizeQuads;
     row.keepSharpEdges = keepSharpEdges;
     row.keepMasked = keepMasked;
+    row.useSparseGrid = useSparseGrid;
 
     row.inVerts = inputMesh->nbVerts;
     row.inFaces = inputMesh->nbFaces;
@@ -875,7 +879,8 @@ inline VoxelBenchmarkRow runVoxelTest(
         1.0f, 1.0f, 1.0f, // matrixScaleXYZ
         regularizeQuads,
         keepSharpEdges,
-        keepMasked
+        keepMasked,
+        useSparseGrid
     );
 
     ProcessMemorySnapshot snapRemesh = getProcessMemorySnapshot();
@@ -895,6 +900,7 @@ inline VoxelBenchmarkRow runVoxelTest(
     row.gridDatalen = r.profile.gridDatalen;
     row.gridMemoryMB = r.profile.gridMemoryMB;
     row.voxelStep = r.profile.step;
+    row.sparseActiveBlocks = r.profile.sparseActiveBlocks;
 
     // 2. Stage: Update Mesh with Remesh Result
     mesh->verts = r.vertices;
@@ -1325,53 +1331,57 @@ inline bool runMemoryStressTest() {
 
     for (int res : testResolutions) {
         double estCells = std::pow((double)res + 4.0, 3.0);
-        // Phase 1 Optimization: Core grid only allocates distanceField (4B) and crossedEdges (1B, freed prior to reconstruct).
-        // 3D color/material volumes (8B) and 3D cellToVert (4B) eliminated via sliding windows & lazy attribute transfer.
         size_t estCoreBytes = (size_t)(estCells * 5.0); // 4B dist + 1B crossedEdges peak during voxelize/floodFill
         size_t estAuxBytes = (size_t)(2.0 * std::pow((double)res + 4.0, 2.0) * sizeof(int32_t)); // 2-slice ring buffer (~8 MB at Res 1000)
         size_t estTotalPeakBytes = estCoreBytes + estAuxBytes;
 
-        std::cout << " -> Running Memory Stress at Resolution " << res << " (~"
+        std::cout << " -> Running Dense Grid Memory Stress at Resolution " << res << " (~"
                   << (size_t)(estCells / 1000000.0) << " M cells, Est. Core Grid: "
                   << formatBytes(estCoreBytes) << ", Est. Peak: " << formatBytes(estTotalPeakBytes) << ")...\n";
 
         size_t currentAvail = getAvailablePhysicalMemoryBytes();
-        if (currentAvail < estTotalPeakBytes + (size_t)(1024ULL * 1024ULL * 1024ULL)) {
-            std::cout << " [MEMORY SAFETY GUARD TRIGGERED]\n";
-            std::cout << "   Current Available Physical RAM: " << formatBytes(currentAvail) << "\n";
-            std::cout << "   Estimated Required RAM:         " << formatBytes(estTotalPeakBytes) << "\n";
-            std::cout << "   EXECUTION SAFELY ABORTED for Res " << res << " to prevent physical RAM exhaustion, system freezing or OOM crash!\n";
-            std::cout << "   [CRITICAL AUDIT INSIGHT] At Res " << res << ", dense regular grid requires "
-                      << formatBytes(estTotalPeakBytes) << " RAM (down from 16 GB pre-Phase 1).\n";
-            std::cout << "   Transitioning to Block-Sparse Narrow-Band (Phase 2) will reduce this to ~100-300 MB!\n\n";
-            continue;
+        if (currentAvail >= estTotalPeakBytes + (size_t)(1024ULL * 1024ULL * 1024ULL)) {
+            auto sphere = createSphereMesh(35.0f, std::min(128, res), std::min(128, res));
+            VoxelBenchmarkRow rowDense = runVoxelTest("Dense Grid (Res " + std::to_string(res) + ")", std::move(sphere), res, false, false, true, false, false, false, false);
+            memRows.push_back(rowDense);
+
+            std::cout << "    [Dense Grid] Done in " << formatMs(rowDense.msTotalPipeline)
+                      << " | Peak Working Set: " << formatBytes(rowDense.peakRAMBytes)
+                      << " | Core Grid: " << std::fixed << std::setprecision(1) << rowDense.coreGridRAM_MB << " MB"
+                      << " | Aux Buffers: " << std::fixed << std::setprecision(1) << rowDense.auxAllocRAM_MB << " MB\n";
+        } else {
+            std::cout << "    [Dense Grid] Skipped to protect physical RAM.\n";
         }
 
-        auto sphere = createSphereMesh(35.0f, std::min(128, res), std::min(128, res));
-        VoxelBenchmarkRow row = runVoxelTest("Sphere (Stress Res " + std::to_string(res) + ")", std::move(sphere), res, false, false, true);
-        memRows.push_back(row);
+        // Phase 2: Block-Sparse Narrow-Band Grid
+        std::cout << " -> Running Phase 2 Block-Sparse Grid at Resolution " << res << "...\n";
+        auto sphereSparse = createSphereMesh(35.0f, std::min(128, res), std::min(128, res));
+        VoxelBenchmarkRow rowSparse = runVoxelTest("Block-Sparse (Res " + std::to_string(res) + ")", std::move(sphereSparse), res, false, false, true, false, false, false, true);
+        memRows.push_back(rowSparse);
 
-        std::cout << "    Done in " << formatMs(row.msTotalPipeline)
-                  << " | Peak Working Set: " << formatBytes(row.peakRAMBytes)
-                  << " | Core Grid: " << std::fixed << std::setprecision(1) << row.coreGridRAM_MB << " MB"
-                  << " | Aux Buffers: " << std::fixed << std::setprecision(1) << row.auxAllocRAM_MB << " MB\n\n";
+        std::cout << "    [Block-Sparse Grid] Done in " << formatMs(rowSparse.msTotalPipeline)
+                  << " | Peak Working Set: " << formatBytes(rowSparse.peakRAMBytes)
+                  << " | Grid RAM: " << std::fixed << std::setprecision(1) << rowSparse.gridMemoryMB << " MB"
+                  << " | Active Blocks: " << rowSparse.sparseActiveBlocks << "\n\n";
     }
 
     if (!memRows.empty()) {
         std::cout << "===================================================================================================================================================\n";
-        std::cout << " MEMORY SCALING SUMMARY TABLE:\n";
-        std::cout << " Res   |  Grid Dimension  |  Voxel Cells |  Core Grid RAM |  Aux Buffers RAM |  Peak Process RAM |  Pipeline Time \n";
-        std::cout << "-------+------------------+--------------+----------------+------------------+-------------------+----------------\n";
+        std::cout << " PHASE 2 MEMORY SCALING SUMMARY TABLE (Dense vs Block-Sparse Narrow-Band Grid):\n";
+        std::cout << " Architecture       | Res   |  Grid Dimension  |  Active Blocks |  Core Grid RAM |  Aux Buffers RAM |  Peak Process RAM |  Pipeline Time \n";
+        std::cout << "--------------------+-------+------------------+----------------+----------------+------------------+-------------------+----------------\n";
         for (const auto& r : memRows) {
             std::ostringstream ssDims;
             ssDims << r.gridDims[0] << "x" << r.gridDims[1] << "x" << r.gridDims[2];
             std::ostringstream ssCore, ssAux;
             ssCore << std::fixed << std::setprecision(1) << r.coreGridRAM_MB << " MB";
             ssAux << std::fixed << std::setprecision(1) << r.auxAllocRAM_MB << " MB";
+            std::string arch = r.useSparseGrid ? "Block-Sparse (Ph2)" : "Dense Grid (Ph1)";
 
-            std::cout << " " << padRight(std::to_string(r.resolution), 5) << " | "
+            std::cout << " " << padRight(arch, 18) << " | "
+                      << padRight(std::to_string(r.resolution), 5) << " | "
                       << padLeft(ssDims.str(), 16) << " | "
-                      << padLeft(std::to_string(r.gridDatalen), 12) << " | "
+                      << padLeft(r.useSparseGrid ? std::to_string(r.sparseActiveBlocks) : "All Dense", 14) << " | "
                       << padLeft(ssCore.str(), 14) << " | "
                       << padLeft(ssAux.str(), 16) << " | "
                       << padLeft(formatBytes(r.peakRAMBytes), 17) << " | "
@@ -1426,7 +1436,7 @@ inline bool run(int customResolution = 0, bool runMemoryStress = false) {
 
         // Test 1: Organic Sphere (Smooth Curvature, Surface Nets Quads) @ Base Res
         {
-            std::cout << " -> Running Benchmark [1/14]: Sphere (Organic Curvature @ Res " << resBase << ")...\n";
+            std::cout << " -> Running Benchmark [1/17]: Sphere (Organic Curvature @ Res " << resBase << ")...\n";
             auto sphere = createSphereMesh(35.0f, 64, 64);
             rows.push_back(runVoxelTest("Sphere (Smooth Curvature)", std::move(sphere), resBase, false, false, true));
         }
@@ -1434,7 +1444,7 @@ inline bool run(int customResolution = 0, bool runMemoryStress = false) {
         // Test 2: Resolution Scaling Test: Sphere @ Res 64
         {
             int rLow = std::max(32, resBase / 2);
-            std::cout << " -> Running Benchmark [2/14]: Sphere (Resolution Scaling @ Res " << rLow << ")...\n";
+            std::cout << " -> Running Benchmark [2/17]: Sphere (Resolution Scaling @ Res " << rLow << ")...\n";
             auto sphere = createSphereMesh(35.0f, 48, 48);
             rows.push_back(runVoxelTest("Sphere (Low Res " + std::to_string(rLow) + ")", std::move(sphere), rLow, false, false, true));
         }
@@ -1442,49 +1452,49 @@ inline bool run(int customResolution = 0, bool runMemoryStress = false) {
         // Test 3: Resolution Scaling Test: Sphere @ Res 256
         {
             int rHigh = (customResolution > 0) ? (resBase * 2) : 256;
-            std::cout << " -> Running Benchmark [3/14]: Sphere (High Res Stress @ Res " << rHigh << ")...\n";
+            std::cout << " -> Running Benchmark [3/17]: Sphere (High Res Stress @ Res " << rHigh << ")...\n";
             auto sphere = createSphereMesh(35.0f, 80, 80);
             rows.push_back(runVoxelTest("Sphere (High Res " + std::to_string(rHigh) + ")", std::move(sphere), rHigh, false, false, true));
         }
 
         // Test 4: Beveled Cube (Sharp Planar Features & 90-deg Corners)
         {
-            std::cout << " -> Running Benchmark [4/14]: Beveled Cube (Sharp Corners & Planar @ Res " << resBase << ")...\n";
+            std::cout << " -> Running Benchmark [4/17]: Beveled Cube (Sharp Corners & Planar @ Res " << resBase << ")...\n";
             auto cube = createCubeMesh(glm::vec3(60.0f), 32, 32, 32, 4.0f);
             rows.push_back(runVoxelTest("Beveled Cube (Planar/Sharp)", std::move(cube), resBase, false, false, true));
         }
 
         // Test 5: Torus (Genus-1 Cavity & Complex Interior Topology)
         {
-            std::cout << " -> Running Benchmark [5/14]: Torus (Genus-1 Hole & Cavity @ Res " << resBase << ")...\n";
+            std::cout << " -> Running Benchmark [5/17]: Torus (Genus-1 Hole & Cavity @ Res " << resBase << ")...\n";
             auto torus = createTorusMesh(35.0f, 12.0f, 48, 48);
             rows.push_back(runVoxelTest("Torus (Genus-1 Hole)", std::move(torus), resBase, false, false, true));
         }
 
         // Test 6: Multi-PolyGroup Sphere (PolyGroup Transfer Profiling)
         {
-            std::cout << " -> Running Benchmark [6/14]: Multi-Group Sphere (PolyGroup Transfer @ Res " << resBase << ")...\n";
+            std::cout << " -> Running Benchmark [6/17]: Multi-Group Sphere (PolyGroup Transfer @ Res " << resBase << ")...\n";
             auto multiGroup = createMultiGroupSphere(35.0f, 64, 64);
             rows.push_back(runVoxelTest("Sphere (4 PolyGroups)", std::move(multiGroup), resBase, false, true, true));
         }
 
         // Test 7: Algorithm Comparison: Marching Cubes Manifold (Tris) vs Surface Nets (Quads)
         {
-            std::cout << " -> Running Benchmark [7/14]: Sphere (Marching Cubes Manifold Tris @ Res " << resBase << ")...\n";
+            std::cout << " -> Running Benchmark [7/17]: Sphere (Marching Cubes Manifold Tris @ Res " << resBase << ")...\n";
             auto sphere = createSphereMesh(35.0f, 64, 64);
             rows.push_back(runVoxelTest("Sphere (Marching Cubes)", std::move(sphere), resBase, true, false, true));
         }
 
         // Test 8: Sharp Cube (Standard Smooth without Edge Snapping)
         {
-            std::cout << " -> Running Benchmark [8/14]: Sharp Cube (Standard Smooth @ Res " << resBase << ")...\n";
+            std::cout << " -> Running Benchmark [8/17]: Sharp Cube (Standard Smooth @ Res " << resBase << ")...\n";
             auto cube = createSharpCubeMesh(glm::vec3(60.0f), 32, 32, 32);
             rows.push_back(runVoxelTest("Sharp Cube (Standard Smooth)", std::move(cube), resBase, false, false, true, true, false));
         }
 
         // Test 9: Sharp Cube (Keep Sharp Edges Preservation Mode)
         {
-            std::cout << " -> Running Benchmark [9/14]: Sharp Cube (Keep Sharp Edges @ Res " << resBase << ")...\n";
+            std::cout << " -> Running Benchmark [9/17]: Sharp Cube (Keep Sharp Edges @ Res " << resBase << ")...\n";
             auto cube = createSharpCubeMesh(glm::vec3(60.0f), 32, 32, 32);
             rows.push_back(runVoxelTest("Sharp Cube (Keep Sharp Edges)", std::move(cube), resBase, false, false, true, true, true));
         }
@@ -1515,37 +1525,58 @@ inline bool run(int customResolution = 0, bool runMemoryStress = false) {
 
         // Test 10: Sphere with Masked Hemisphere (Keep Masked Preservation Mode)
         {
-            std::cout << " -> Running Benchmark [10/14]: Sphere (Keep Masked Hemisphere @ Res " << resBase << ")...\n";
+            std::cout << " -> Running Benchmark [10/17]: Sphere (Keep Masked Hemisphere @ Res " << resBase << ")...\n";
             auto sphere = createMaskedSphereMesh(35.0f, 64, 64);
             rows.push_back(runVoxelTest("Sphere (Keep Masked Half)", std::move(sphere), resBase, false, false, true, true, false, true));
         }
 
         // Test 11: Sphere with Masked Hemisphere (Keep Masked OFF - PolyCube Regularize Quads)
         {
-            std::cout << " -> Running Benchmark [11/14]: Sphere (Keep Masked OFF - PolyCube Quads @ Res " << resBase << ")...\n";
+            std::cout << " -> Running Benchmark [11/17]: Sphere (Keep Masked OFF - PolyCube Quads @ Res " << resBase << ")...\n";
             auto sphere = createMaskedSphereMesh(35.0f, 64, 64);
             rows.push_back(runVoxelTest("Sphere (Mask - PolyCube)", std::move(sphere), resBase, false, false, true, true, false, false));
         }
 
         // Test 12: Sphere with Masked Hemisphere (Keep Masked OFF - Pure Surface Nets Quads)
         {
-            std::cout << " -> Running Benchmark [12/14]: Sphere (Keep Masked OFF - Surface Nets Quads @ Res " << resBase << ")...\n";
+            std::cout << " -> Running Benchmark [12/17]: Sphere (Keep Masked OFF - Surface Nets Quads @ Res " << resBase << ")...\n";
             auto sphere = createMaskedSphereMesh(35.0f, 64, 64);
             rows.push_back(runVoxelTest("Sphere (Mask - Surface Nets)", std::move(sphere), resBase, false, false, true, false, false, false));
         }
 
         // Test 13: Sphere with Masked Hemisphere (Keep Masked OFF - Marching Cubes Manifold Tris)
         {
-            std::cout << " -> Running Benchmark [13/14]: Sphere (Keep Masked OFF - Marching Cubes @ Res " << resBase << ")...\n";
+            std::cout << " -> Running Benchmark [13/17]: Sphere (Keep Masked OFF - Marching Cubes @ Res " << resBase << ")...\n";
             auto sphere = createMaskedSphereMesh(35.0f, 64, 64);
             rows.push_back(runVoxelTest("Sphere (Mask - Marching Cubes)", std::move(sphere), resBase, true, false, true, false, false, false));
         }
 
         // Test 14: Sphere with Masked Hemisphere (Keep Masked OFF - Keep Sharp Edges)
         {
-            std::cout << " -> Running Benchmark [14/14]: Sphere (Keep Masked OFF - Keep Sharp Edges @ Res " << resBase << ")...\n";
+            std::cout << " -> Running Benchmark [14/17]: Sphere (Keep Masked OFF - Keep Sharp Edges @ Res " << resBase << ")...\n";
             auto sphere = createMaskedSphereMesh(35.0f, 64, 64);
             rows.push_back(runVoxelTest("Sphere (Mask - Sharp Edges)", std::move(sphere), resBase, false, false, true, true, true, false));
+        }
+
+        // Test 15: Sphere (Phase 2 Block-Sparse Grid with Angle-Weighted Pseudonormals)
+        {
+            std::cout << " -> Running Benchmark [15/17]: Sphere (Phase 2 Block-Sparse Grid @ Res " << resBase << ")...\n";
+            auto sphere = createSphereMesh(35.0f, 64, 64);
+            rows.push_back(runVoxelTest("Sphere (BlockSparse Res " + std::to_string(resBase) + ")", std::move(sphere), resBase, false, false, true, false, false, false, true));
+        }
+
+        // Test 16: Sphere (Phase 2 Block-Sparse Grid with Regularized Quads)
+        {
+            std::cout << " -> Running Benchmark [16/17]: Sphere (Phase 2 Block-Sparse Regularized @ Res " << resBase << ")...\n";
+            auto sphere = createSphereMesh(35.0f, 64, 64);
+            rows.push_back(runVoxelTest("Sphere (BlockSparse RegQuads)", std::move(sphere), resBase, false, false, true, true, false, false, true));
+        }
+
+        // Test 17: Beveled Cube (Phase 2 Block-Sparse Grid)
+        {
+            std::cout << " -> Running Benchmark [17/17]: Beveled Cube (Phase 2 Block-Sparse Grid @ Res " << resBase << ")...\n";
+            auto cube = createCubeMesh(glm::vec3(60.0f), 32, 32, 32, 4.0f);
+            rows.push_back(runVoxelTest("Bevel Cube (BlockSparse)", std::move(cube), resBase, false, false, true, true, false, false, true));
         }
 
         // =========================================================================

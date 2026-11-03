@@ -1,5 +1,6 @@
 #include "sculpt/Remesh.h"
 #include "sculpt/KeepMasked.h"
+#include "sculpt/BlockSparseGrid.h"
 #include "common/Constants.h"
 #include "common/MemoryUtils.h"
 #include <cmath>
@@ -2878,11 +2879,12 @@ RemeshResult doRemesh(
     float matrixScaleZ,
     bool regularizeQuads,
     bool keepSharpEdges,
-    bool keepMasked
+    bool keepMasked,
+    bool useSparseGrid
 ) {
     auto tRemeshStart = std::chrono::high_resolution_clock::now();
-    sculpt_log("[C++ doRemesh] Start. nbVerts=%d, nbTris=%d, resolution=%.2f, block=%d, smooth=%d, manifold=%d, hasColors=%d, hasMaterials=%d, hasFaceGroups=%d, alignSymmetry=%d, regularizeQuads=%d, keepSharpEdges=%d, keepMasked=%d, scaleXYZ=(%.4f, %.4f, %.4f)\n",
-               nbVerts, nbTris, resolution, block, smooth, manifold, hasColors, hasMaterials, hasFaceGroups, alignSymmetry, regularizeQuads, keepSharpEdges, keepMasked, matrixScaleX, matrixScaleY, matrixScaleZ);
+    sculpt_log("[C++ doRemesh] Start. nbVerts=%d, nbTris=%d, resolution=%.2f, block=%d, smooth=%d, manifold=%d, hasColors=%d, hasMaterials=%d, hasFaceGroups=%d, alignSymmetry=%d, regularizeQuads=%d, keepSharpEdges=%d, keepMasked=%d, useSparseGrid=%d, scaleXYZ=(%.4f, %.4f, %.4f)\n",
+               nbVerts, nbTris, resolution, block, smooth, manifold, hasColors, hasMaterials, hasFaceGroups, alignSymmetry, regularizeQuads, keepSharpEdges, keepMasked, useSparseGrid, matrixScaleX, matrixScaleY, matrixScaleZ);
 
     const std::vector<uint8_t> keep = (keepMasked && hasMaterials && materials)
         ? sculpt::getKeepMaskedTriangles(materials, nbVerts, tris, nbTris)
@@ -2982,103 +2984,148 @@ RemeshResult doRemesh(
     sculpt_log("[REMESH PROFILE] OpenMP: Disabled (compiled single-threaded)\n");
 #endif
 
-    double distMemMB = (double)datalen * sizeof(float) / (1024.0 * 1024.0);
-    double crossMemMB = (double)datalen * sizeof(uint8_t) / (1024.0 * 1024.0);
-    double colorMemMB = 0.0;
-    double matMemMB = 0.0;
-    double coreGridTotalMB = distMemMB + crossMemMB;
-    sculpt_log("[REMESH PROFILE] Grid Memory: Dims=[%d, %d, %d] (%d voxels) | dist=%.2f MB, cross=%.2f MB, color=%.2f MB, mat=%.2f MB | Core Grid Total=%.2f MB\n",
-              rx, ry, rz, datalen, distMemMB, crossMemMB, colorMemMB, matMemMB, coreGridTotalMB);
-
-    // 2. Allocate voxel fields
-    voxels.crossedEdges.assign(datalen, 0);
-    voxels.distanceField.assign(datalen, std::numeric_limits<float>::infinity());
-    if (keepSharpEdges) {
-        voxels.hermiteEdges.resize(rz);
-    }
-
-    // Phase 1 Optimization: Lazy Attribute Transfer.
-    // 3D volume grids for colors and materials are eliminated (saving 8.1 GB on Res 1000).
-    // Colors and materials are transferred directly onto the reconstructed surface mesh
-    // vertices via spatial KD-tree/barycentric projection post-reconstruction.
-    voxels.hasColorField = false;
-    if (uniformColor) {
-        voxels.uniformColor[0] = uniformColor[0];
-        voxels.uniformColor[1] = uniformColor[1];
-        voxels.uniformColor[2] = uniformColor[2];
-    } else {
-        voxels.uniformColor[0] = 0.72f;
-        voxels.uniformColor[1] = 0.52f;
-        voxels.uniformColor[2] = 0.45f;
-    }
-
-    voxels.hasMaterialField = false;
-    if (uniformMaterial) {
-        voxels.uniformMaterial[0] = uniformMaterial[0];
-        voxels.uniformMaterial[1] = uniformMaterial[1];
-        voxels.uniformMaterial[2] = uniformMaterial[2];
-    } else {
-        voxels.uniformMaterial[0] = 0.5f;
-        voxels.uniformMaterial[1] = 0.0f;
-        voxels.uniformMaterial[2] = 1.0f;
-    }
-
-    voxels.hasGroupField = false; // PolyGroups are transferred via spatial projection post-reconstruction
-
-    // 3. Voxelize
-    auto tVoxelizeStart = std::chrono::high_resolution_clock::now();
-    voxelize(verts, nbVerts, tris, nbTris, colors, materials, faceGroups, voxels, onProgress, keepSharpEdges);
-    double msVoxelize = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tVoxelizeStart).count();
-    sculpt_log("[REMESH PROFILE] Stage 1 - Voxelize: %.2f ms\n", msVoxelize);
-
-    // 4. Flood fill inside/outside
-    auto tFloodStart = std::chrono::high_resolution_clock::now();
-    floodFill(voxels, onProgress);
-    double msFlood = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tFloodStart).count();
-    sculpt_log("[REMESH PROFILE] Stage 2 - Flood Fill: %.2f ms\n", msFlood);
-
-    // 5. Reconstruct Surface
-    auto tReconstructStart = std::chrono::high_resolution_clock::now();
     RemeshResult r;
-    bool usedPolyCube = false;
-    if (manifold) {
-        r = marchingCubesReconstruct(voxels, onProgress);
-    } else {
-        if (regularizeQuads && !block && !keepSharpEdges) {
-            usedPolyCube = tryPolyCubeReconstruct(voxels, box, alignSymmetry, r, onProgress);
-        }
-        if (!usedPolyCube) {
-            r = surfaceNetsReconstruct(voxels, block, regularizeQuads, keepSharpEdges, onProgress);
-        }
-    }
-    double msReconstruct = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tReconstructStart).count();
-    sculpt_log("[REMESH PROFILE] Stage 3 - Surface Reconstruction (%s): %.2f ms (Output: %d verts, %d faces)\n",
-              manifold ? "Marching Cubes" : (usedPolyCube ? "PolyCube 6-Chart" : "Surface Nets"), msReconstruct, (int)(r.vertices.size() / 3), (int)(r.faces.size() / 4));
+    double msVoxelize = 0.0;
+    double msFlood = 0.0;
+    double msReconstruct = 0.0;
+    size_t sparseBlocks = 0;
+    size_t sparseGridBytes = 0;
 
-    if (!usedPolyCube) {
-        float snapTol = step * 0.45f;
-        for (size_t i = 0; i < r.vertices.size(); i += 3) {
-            float vx = voxels.minCoord[0] + r.vertices[i] * step;
-            float vy = voxels.minCoord[1] + r.vertices[i + 1] * step;
-            float vz = voxels.minCoord[2] + r.vertices[i + 2] * step;
+    if (useSparseGrid) {
+        sculpt::BlockSparseGrid sGrid;
+        sGrid.step = step;
+        sGrid.minCoord[0] = voxels.minCoord[0];
+        sGrid.minCoord[1] = voxels.minCoord[1];
+        sGrid.minCoord[2] = voxels.minCoord[2];
+        sGrid.dims[0] = rx;
+        sGrid.dims[1] = ry;
+        sGrid.dims[2] = rz;
+        sGrid.bDims[0] = (rx + sculpt::BLOCK_SIZE - 1) >> sculpt::BLOCK_SHIFT;
+        sGrid.bDims[1] = (ry + sculpt::BLOCK_SIZE - 1) >> sculpt::BLOCK_SHIFT;
+        sGrid.bDims[2] = (rz + sculpt::BLOCK_SIZE - 1) >> sculpt::BLOCK_SHIFT;
 
-            if (alignSymmetry) {
-                if (std::abs(vx) < snapTol) vx = 0.0f;
-                if (std::abs(vy) < snapTol) vy = 0.0f;
-                if (std::abs(vz) < snapTol) vz = 0.0f;
+        sculpt_log("[C++ doRemesh] Using Phase 2 Block-Sparse Grid: Dims=[%d, %d, %d], Blocks=[%d, %d, %d] (Max Table=%d entries)\n",
+                   rx, ry, rz, sGrid.bDims[0], sGrid.bDims[1], sGrid.bDims[2], sGrid.bDims[0] * sGrid.bDims[1] * sGrid.bDims[2]);
+
+        auto tVoxelizeStart = std::chrono::high_resolution_clock::now();
+        sculpt::voxelizeBlockSparse(verts, nbVerts, tris, nbTris, sGrid);
+        msVoxelize = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tVoxelizeStart).count();
+        msFlood = 0.0; // Flood fill eliminated via direct Angle-Weighted Pseudonormals!
+
+        auto tReconstructStart = std::chrono::high_resolution_clock::now();
+        r = sculpt::reconstructSurfaceNetsBlockSparse(sGrid, uniformColor, uniformMaterial);
+        msReconstruct = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tReconstructStart).count();
+
+        if (alignSymmetry) {
+            float snapTol = step * 0.45f;
+            for (size_t i = 0; i < r.vertices.size(); i += 3) {
+                if (std::abs(r.vertices[i + 0]) < snapTol) r.vertices[i + 0] = 0.0f;
+                if (std::abs(r.vertices[i + 1]) < snapTol) r.vertices[i + 1] = 0.0f;
+                if (std::abs(r.vertices[i + 2]) < snapTol) r.vertices[i + 2] = 0.0f;
             }
-
-            r.vertices[i]     = vx;
-            r.vertices[i + 1] = vy;
-            r.vertices[i + 2] = vz;
         }
 
         if (regularizeQuads && !manifold && !block && r.vertices.size() >= 12) {
-            applyConstrainedTangentialRelaxation(r, voxels, 3, 0.45f, alignSymmetry, keepSharpEdges);
+            sculpt::applyConstrainedTangentialRelaxationSparse(r, sGrid, 3, 0.45f, alignSymmetry);
         }
+
+        sparseBlocks = sGrid.activeBlocks.size();
+        sparseGridBytes = sGrid.getMemoryBytes();
     } else {
-        if (r.vertices.size() >= 12) {
-            applyConstrainedTangentialRelaxation(r, voxels, 1, 0.15f, alignSymmetry, false);
+        double distMemMB = (double)datalen * sizeof(float) / (1024.0 * 1024.0);
+        double crossMemMB = (double)datalen * sizeof(uint8_t) / (1024.0 * 1024.0);
+        double colorMemMB = 0.0;
+        double matMemMB = 0.0;
+        double coreGridTotalMB = distMemMB + crossMemMB;
+        sculpt_log("[REMESH PROFILE] Grid Memory: Dims=[%d, %d, %d] (%d voxels) | dist=%.2f MB, cross=%.2f MB, color=%.2f MB, mat=%.2f MB | Core Grid Total=%.2f MB\n",
+                  rx, ry, rz, datalen, distMemMB, crossMemMB, colorMemMB, matMemMB, coreGridTotalMB);
+
+        // 2. Allocate voxel fields
+        voxels.crossedEdges.assign(datalen, 0);
+        voxels.distanceField.assign(datalen, std::numeric_limits<float>::infinity());
+        if (keepSharpEdges) {
+            voxels.hermiteEdges.resize(rz);
+        }
+
+        // Phase 1 Optimization: Lazy Attribute Transfer.
+        voxels.hasColorField = false;
+        if (uniformColor) {
+            voxels.uniformColor[0] = uniformColor[0];
+            voxels.uniformColor[1] = uniformColor[1];
+            voxels.uniformColor[2] = uniformColor[2];
+        } else {
+            voxels.uniformColor[0] = 0.72f;
+            voxels.uniformColor[1] = 0.52f;
+            voxels.uniformColor[2] = 0.45f;
+        }
+
+        voxels.hasMaterialField = false;
+        if (uniformMaterial) {
+            voxels.uniformMaterial[0] = uniformMaterial[0];
+            voxels.uniformMaterial[1] = uniformMaterial[1];
+            voxels.uniformMaterial[2] = uniformMaterial[2];
+        } else {
+            voxels.uniformMaterial[0] = 0.5f;
+            voxels.uniformMaterial[1] = 0.0f;
+            voxels.uniformMaterial[2] = 1.0f;
+        }
+
+        voxels.hasGroupField = false; // PolyGroups are transferred via spatial projection post-reconstruction
+
+        // 3. Voxelize
+        auto tVoxelizeStart = std::chrono::high_resolution_clock::now();
+        voxelize(verts, nbVerts, tris, nbTris, colors, materials, faceGroups, voxels, onProgress, keepSharpEdges);
+        msVoxelize = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tVoxelizeStart).count();
+        sculpt_log("[REMESH PROFILE] Stage 1 - Voxelize: %.2f ms\n", msVoxelize);
+
+        // 4. Flood fill inside/outside
+        auto tFloodStart = std::chrono::high_resolution_clock::now();
+        floodFill(voxels, onProgress);
+        msFlood = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tFloodStart).count();
+        sculpt_log("[REMESH PROFILE] Stage 2 - Flood Fill: %.2f ms\n", msFlood);
+
+        // 5. Reconstruct Surface
+        auto tReconstructStart = std::chrono::high_resolution_clock::now();
+        bool usedPolyCube = false;
+        if (manifold) {
+            r = marchingCubesReconstruct(voxels, onProgress);
+        } else {
+            if (regularizeQuads && !block && !keepSharpEdges) {
+                usedPolyCube = tryPolyCubeReconstruct(voxels, box, alignSymmetry, r, onProgress);
+            }
+            if (!usedPolyCube) {
+                r = surfaceNetsReconstruct(voxels, block, regularizeQuads, keepSharpEdges, onProgress);
+            }
+        }
+        msReconstruct = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tReconstructStart).count();
+        sculpt_log("[REMESH PROFILE] Stage 3 - Surface Reconstruction (%s): %.2f ms (Output: %d verts, %d faces)\n",
+                  manifold ? "Marching Cubes" : (usedPolyCube ? "PolyCube 6-Chart" : "Surface Nets"), msReconstruct, (int)(r.vertices.size() / 3), (int)(r.faces.size() / 4));
+
+        if (!usedPolyCube) {
+            float snapTol = step * 0.45f;
+            for (size_t i = 0; i < r.vertices.size(); i += 3) {
+                float vx = voxels.minCoord[0] + r.vertices[i] * step;
+                float vy = voxels.minCoord[1] + r.vertices[i + 1] * step;
+                float vz = voxels.minCoord[2] + r.vertices[i + 2] * step;
+
+                if (alignSymmetry) {
+                    if (std::abs(vx) < snapTol) vx = 0.0f;
+                    if (std::abs(vy) < snapTol) vy = 0.0f;
+                    if (std::abs(vz) < snapTol) vz = 0.0f;
+                }
+
+                r.vertices[i]     = vx;
+                r.vertices[i + 1] = vy;
+                r.vertices[i + 2] = vz;
+            }
+
+            if (regularizeQuads && !manifold && !block && r.vertices.size() >= 12) {
+                applyConstrainedTangentialRelaxation(r, voxels, 3, 0.45f, alignSymmetry, keepSharpEdges);
+            }
+        } else {
+            if (r.vertices.size() >= 12) {
+                applyConstrainedTangentialRelaxation(r, voxels, 1, 0.15f, alignSymmetry, false);
+            }
         }
     }
 
@@ -3366,28 +3413,44 @@ RemeshResult doRemesh(
     r.profile.gridDims[1] = ry;
     r.profile.gridDims[2] = rz;
     r.profile.gridDatalen = datalen;
-    size_t bytesCross = (size_t)datalen * sizeof(uint8_t); // peak during voxelize/floodFill (freed prior to reconstruct)
-    size_t bytesDist = voxels.distanceField.capacity() * sizeof(float);
-    size_t bytesColor = 0; // lazy attribute transfer
-    size_t bytesMat = 0;   // lazy attribute transfer
-    size_t bytesFloodAux = 0; // tagCell eliminated via crossedEdges bit 7
-    size_t bytesReconAux = r.profile.bytesReconstructAux;
+    if (useSparseGrid) {
+        r.profile.isSparseGrid = true;
+        r.profile.sparseActiveBlocks = sparseBlocks;
+        r.profile.bytesCrossedEdges = 0;
+        r.profile.bytesDistanceField = sparseBlocks * sculpt::BLOCK_VOXELS * sizeof(float);
+        r.profile.bytesColorField = 0;
+        r.profile.bytesMaterialField = 0;
+        r.profile.bytesFloodFillAux = 0;
+        r.profile.bytesReconstructAux = sparseGridBytes;
+        r.profile.coreGridRAM_MB = (double)sparseGridBytes / (1024.0 * 1024.0);
+        r.profile.auxAllocRAM_MB = (double)sparseGridBytes / (1024.0 * 1024.0);
+        r.profile.gridMemoryMB = r.profile.coreGridRAM_MB;
+    } else {
+        size_t bytesCross = (size_t)datalen * sizeof(uint8_t); // peak during voxelize/floodFill (freed prior to reconstruct)
+        size_t bytesDist = voxels.distanceField.capacity() * sizeof(float);
+        size_t bytesColor = 0; // lazy attribute transfer
+        size_t bytesMat = 0;   // lazy attribute transfer
+        size_t bytesFloodAux = 0; // tagCell eliminated via crossedEdges bit 7
+        size_t bytesReconAux = r.profile.bytesReconstructAux;
 
-    double coreGridMB = (double)(bytesCross + bytesDist + bytesColor + bytesMat) / (1024.0 * 1024.0);
-    double auxAllocMB = (double)(bytesFloodAux + bytesReconAux) / (1024.0 * 1024.0);
+        double coreGridMB = (double)(bytesCross + bytesDist + bytesColor + bytesMat) / (1024.0 * 1024.0);
+        double auxAllocMB = (double)(bytesFloodAux + bytesReconAux) / (1024.0 * 1024.0);
+
+        r.profile.isSparseGrid = false;
+        r.profile.sparseActiveBlocks = 0;
+        r.profile.bytesCrossedEdges = bytesCross;
+        r.profile.bytesDistanceField = bytesDist;
+        r.profile.bytesColorField = bytesColor;
+        r.profile.bytesMaterialField = bytesMat;
+        r.profile.bytesFloodFillAux = bytesFloodAux;
+        r.profile.bytesReconstructAux = bytesReconAux;
+        r.profile.coreGridRAM_MB = coreGridMB;
+        r.profile.auxAllocRAM_MB = auxAllocMB;
+        r.profile.gridMemoryMB = coreGridMB;
+    }
+
     ProcessMemorySnapshot snapAfter = getProcessMemorySnapshot();
-    double peakWorkingSetMB = (double)snapAfter.peakWorkingSetBytes / (1024.0 * 1024.0);
-
-    r.profile.bytesCrossedEdges = bytesCross;
-    r.profile.bytesDistanceField = bytesDist;
-    r.profile.bytesColorField = bytesColor;
-    r.profile.bytesMaterialField = bytesMat;
-    r.profile.bytesFloodFillAux = bytesFloodAux;
-    r.profile.bytesReconstructAux = bytesReconAux;
-    r.profile.coreGridRAM_MB = coreGridMB;
-    r.profile.auxAllocRAM_MB = auxAllocMB;
-    r.profile.peakWorkingSetMB = peakWorkingSetMB;
-    r.profile.gridMemoryMB = coreGridMB;
+    r.profile.peakWorkingSetMB = (double)snapAfter.peakWorkingSetBytes / (1024.0 * 1024.0);
     r.profile.step = step;
 
     return r;

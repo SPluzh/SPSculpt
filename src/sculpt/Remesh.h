@@ -27,6 +27,10 @@ struct RemeshProfile {
     double coreGridRAM_MB = 0.0;
     double auxAllocRAM_MB = 0.0;
     double peakWorkingSetMB = 0.0;
+
+    // Sparse Grid Metrics (Phase 2)
+    bool isSparseGrid = false;
+    size_t sparseActiveBlocks = 0;
 };
 
 struct RemeshResult {
@@ -64,7 +68,8 @@ RemeshResult doRemesh(
     float matrixScaleZ = 1.0f,
     bool regularizeQuads = true,
     bool keepSharpEdges = false,
-    bool keepMasked = false
+    bool keepMasked = false,
+    bool useSparseGrid = false
 );
 RemeshResult doSurfaceNetsFromSDF(
     int resolution, 
