@@ -1,4 +1,6 @@
 build/
+_build_/build/
+_build_/dist/
 .cache/
 .vs/
 out/
@@ -33,3 +35,9 @@ dist/
 ZBrushes/
 docs/
 *.fbx
+models/
+
+# Benchmarks
+benchmarks/
+bench_*.txt
+out_*.txt

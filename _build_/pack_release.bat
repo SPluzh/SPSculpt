@@ -4,9 +4,9 @@ setlocal enabledelayedexpansion
 pushd "%~dp0"
 
 :: Read version from version.txt (or fallback to src\common\Version.h)
-if not exist "version.txt" (
-    if exist "src\common\Version.h" (
-        for /f "tokens=3 delims=^ " %%A in ('findstr /C:"constexpr const char* STRING" src\common\Version.h') do (
+if not exist "..\version.txt" (
+    if exist "..\src\common\Version.h" (
+        for /f "tokens=3 delims=^ " %%A in ('findstr /C:"constexpr const char* STRING" ..\src\common\Version.h') do (
             set "RAW_VER=%%~A"
             set "VERSION=!RAW_VER:;=!"
             set "VERSION=!VERSION:"=!"
@@ -17,7 +17,7 @@ if not exist "version.txt" (
         exit /b 1
     )
 ) else (
-    set /p VERSION=<version.txt
+    set /p VERSION=<..\version.txt
 )
 set VERSION=%VERSION: =%
 
@@ -91,9 +91,9 @@ if exist "%TARGET_DIR%\COMPILE AND ADD Clipper2_64.dll HERE" (
 )
 
 :: 3. Copy resources
-if exist "resources" (
+if exist "..\resources" (
     echo Copying resources...
-    xcopy /E /I /Y "resources" "%TARGET_DIR%\resources" >nul
+    xcopy /E /I /Y "..\resources" "%TARGET_DIR%\resources" >nul
 )
 
 :: 4. Create ZIP using PowerShell

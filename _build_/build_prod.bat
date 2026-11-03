@@ -4,11 +4,12 @@ echo        Building Production Release (Optimized)
 echo ========================================================
 
 set PATH=C:\msys64\ucrt64\bin;%PATH%
+cd /d "%~dp0"
 
 if not exist build mkdir build
 cd build
 
-cmake .. -G "Ninja" -DCMAKE_BUILD_TYPE=Release
+cmake ../.. -G "Ninja" -DCMAKE_BUILD_TYPE=Release
 if errorlevel 1 goto error
 
 cmake --build . --config Release
@@ -33,11 +34,11 @@ copy /Y C:\msys64\ucrt64\bin\libgcc_s_seh-1.dll dist\ >nul
 copy /Y C:\msys64\ucrt64\bin\libstdc++-6.dll dist\ >nul
 
 echo [3/3] Copying assets to dist...
-if exist ZBrushes (
-    xcopy /E /I /Y ZBrushes dist\ZBrushes >nul
+if exist ..\ZBrushes (
+    xcopy /E /I /Y ..\ZBrushes dist\ZBrushes >nul
 )
-if exist resources (
-    xcopy /E /I /Y resources dist\resources >nul
+if exist ..\resources (
+    xcopy /E /I /Y ..\resources dist\resources >nul
 )
 
 

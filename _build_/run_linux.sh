@@ -1,6 +1,10 @@
 #!/bin/bash
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR/build"
+if [ -d "$SCRIPT_DIR/dist" ]; then
+    cd "$SCRIPT_DIR/dist"
+else
+    cd "$SCRIPT_DIR/build"
+fi
 
 if [ -z "$DISPLAY" ]; then
     export DISPLAY=:1

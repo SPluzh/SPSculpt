@@ -1,5 +1,6 @@
 @echo off
 setlocal
+cd /d "%~dp0.."
 
 :: ============================================================================
 :: Build SPSculpt on Linux Virtual Machine via SSH
@@ -24,7 +25,7 @@ if errorlevel 1 (
 
 :: 2. Minimal Sync: Only src, CMakeLists.txt and shell scripts (skips heavy folders)
 echo [2/3] Syncing source files, scripts and resources metadata...
-scp -r src CMakeLists.txt build_linux.sh run_linux.sh package_appimage.sh %VM_USER%@%VM_IP%:%VM_DIR%/
+scp -r src CMakeLists.txt _build_\build_linux.sh _build_\run_linux.sh _build_\package_appimage.sh %VM_USER%@%VM_IP%:%VM_DIR%/
 scp resources/spsculpt.desktop resources/AppRun %VM_USER%@%VM_IP%:%VM_DIR%/resources/ 2>nul
 if errorlevel 1 (
     echo [ERROR] scp failed.
