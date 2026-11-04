@@ -170,6 +170,9 @@ add_executable(SPSculpt
     src/files/ImportFBX.cpp
     src/files/ImportGoZ.cpp
     src/files/MeshUtils.cpp
+    # zbrush bridge
+    src/zbrush_bridge/ZBrushBridgeConfig.cpp
+    src/zbrush_bridge/ZBrushWatcher.cpp
     # editing
     src/editing/manifold/ManifoldBridge.cpp
     src/editing/manifold/LassoCutter.cpp
@@ -267,6 +270,27 @@ if(UNIX AND NOT APPLE)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_SONAME_FILE:Clipper2>
             $<TARGET_FILE_DIR:SPSculpt>/
+    )
+endif()
+
+if(WIN32)
+    add_library(SPSculptBridge SHARED
+        src/zbrush_bridge/dll/SPSculptBridge.cpp
+    )
+    set_target_properties(SPSculptBridge PROPERTIES
+        PREFIX ""
+        OUTPUT_NAME "SPSculptBridge"
+    )
+    target_link_libraries(SPSculptBridge PRIVATE comctl32 user32)
+    if(MINGW)
+        target_link_options(SPSculptBridge PRIVATE -static-libgcc -static-libstdc++)
+    endif()
+    add_custom_command(
+        TARGET SPSculptBridge POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_SOURCE_DIR}/zbrush_plugin
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:SPSculptBridge>
+            ${CMAKE_SOURCE_DIR}/zbrush_plugin/SPSculptBridge.dll
     )
 endif()
 

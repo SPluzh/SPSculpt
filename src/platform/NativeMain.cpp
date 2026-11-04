@@ -48,7 +48,11 @@
 #include "common/Logger.h"
 #include "brushes/BrushPresetManager.h"
 #include "files/FileManager.h"
+#include "files/ImportGoZ.h"
 #include "files/GoZBenchmark.h"
+#include "zbrush_bridge/ZBrushBridgeConfig.h"
+#include "zbrush_bridge/ZBrushWatcher.h"
+#include "zbrush_bridge/ZBrushBridgeBenchmark.h"
 #include "stb_image.h"
 #include "editing/PrimitiveTool.h"
 #include <cctype>
@@ -335,6 +339,7 @@ int main(int argc, char* argv[]) {
     bool runVoxelBench = false;
     bool runVoxelMemBench = false;
     bool runGozBench = false;
+    bool runBridgeBench = false;
     std::string gozBenchPath = "";
     int benchFaces = 4000000;
     int benchRemeshRes = 0;
@@ -347,6 +352,9 @@ int main(int argc, char* argv[]) {
         for (int i = 1; i < numArgs; ++i) {
             std::string arg = wideToUtf8(szArgList[i]);
             if (arg == "--console" || arg == "-console" || arg == "-c" || arg == "--show-console") {
+                showConsole = true;
+            } else if (arg == "--bench-bridge" || arg == "--bench-zbrush-bridge") {
+                runBridgeBench = true;
                 showConsole = true;
             } else if (arg == "--bench-goz" || arg == "--bench-goz-import") {
                 runGozBench = true;
@@ -392,6 +400,9 @@ int main(int argc, char* argv[]) {
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--console" || arg == "-console" || arg == "-c" || arg == "--show-console") {
+            showConsole = true;
+        } else if (arg == "--bench-bridge" || arg == "--bench-zbrush-bridge") {
+            runBridgeBench = true;
             showConsole = true;
         } else if (arg == "--bench-goz" || arg == "--bench-goz-import") {
             runGozBench = true;
@@ -470,7 +481,16 @@ int main(int argc, char* argv[]) {
     sculpt_log_init();
 
     setvbuf(stdout, NULL, _IONBF, 0);
-    setvbuf(stderr, NULL, _IONBF, 0);
+    if (runBridgeBench) {
+        bool success = ZBrushBridge::runZBrushBridgeBenchmark();
+        fflush(stdout);
+        fflush(stderr);
+#ifdef _WIN32
+        ExitProcess(success ? 0 : 1);
+#else
+        _exit(success ? 0 : 1);
+#endif
+    }
 
     if (runGozBench) {
         bool success = GoZBenchmark::run(gozBenchPath);
@@ -742,10 +762,62 @@ int main(int argc, char* argv[]) {
     SDL_Event event;
     std::cout << "[Debug] Entering main loop." << std::endl;
     bool wasRemeshRunning = false;
+
+    // Start background watcher for ZBrush live companion viewport
+    std::unique_ptr<ZBrushBridge::ZBrushWatcher> zbrushWatcher;
+    if (ZBrushBridge::Config::isAutoSyncEnabled()) {
+        zbrushWatcher = std::make_unique<ZBrushBridge::ZBrushWatcher>();
+        zbrushWatcher->start();
+        sculpt_log("[ZBrush Bridge] Live companion watcher started on: '%s'\n",
+                   zbrushWatcher->getWatchDirectory().c_str());
+    }
+
     while (!quit) {
         auto currentFrameTime = std::chrono::high_resolution_clock::now();
         float deltaTime = std::chrono::duration<float>(currentFrameTime - lastFrameTime).count();
         lastFrameTime = currentFrameTime;
+
+        bool hadActivity = false; // set true on any user input this frame
+
+        // Check for live ZBrush companion sync updates
+        if (zbrushWatcher && zbrushWatcher->hasPendingMesh()) {
+            std::vector<uint8_t> gozBuffer;
+            if (zbrushWatcher->consumePendingMesh(gozBuffer)) {
+                auto tGoZStart = std::chrono::high_resolution_clock::now();
+                ImportGoZ::GoZInfo info;
+                auto meshes = ImportGoZ::importGoZ(gozBuffer, false, &info);
+                if (!meshes.empty() && meshes[0]) {
+                    Mesh* incomingMesh = meshes[0];
+                    Mesh* targetMesh = nullptr;
+                    for (Mesh* m : scene.getMeshes()) {
+                        if (m && m->outlinerName == "ZBrush Companion") {
+                            targetMesh = m;
+                            break;
+                        }
+                    }
+                    if (targetMesh) {
+                        incomingMesh->outlinerName = targetMesh->outlinerName;
+                        scene.replaceMesh(targetMesh, incomingMesh);
+                    } else if (!scene.getMeshes().empty() && scene.getSelected()) {
+                        Mesh* sel = scene.getSelected();
+                        incomingMesh->outlinerName = sel->outlinerName.empty() ? "ZBrush Companion" : sel->outlinerName;
+                        scene.replaceMesh(sel, incomingMesh);
+                    } else {
+                        incomingMesh->outlinerName = "ZBrush Companion";
+                        scene.addMesh(incomingMesh);
+                        scene.selectMesh(incomingMesh);
+                        scene.getCamera().resetViewToMeshes({incomingMesh}, false);
+                    }
+                    scene.setModified(true);
+                    hadActivity = true;
+                    lastActivityTime = std::chrono::high_resolution_clock::now();
+                    double msUpdate = std::chrono::duration<double, std::milli>(
+                        std::chrono::high_resolution_clock::now() - tGoZStart).count();
+                    sculpt_log("[ZBrush Bridge] Live mesh synced in %.2f ms (Verts: %d, Faces: %d, Quads: %d)\n",
+                               msUpdate, incomingMesh->nbVerts, incomingMesh->nbFaces, incomingMesh->getNbQuads());
+                }
+            }
+        }
 
         // Update cameras and controllers
         scene.getCamera().update(deltaTime);
@@ -756,8 +828,6 @@ int main(int argc, char* argv[]) {
                 camRight->update(deltaTime);
             }
         }
-
-        bool hadActivity = false; // set true on any user input this frame
         while (SDL_PollEvent(&event)) {
             // Track user activity for idle throttle
             if (event.type == SDL_MOUSEMOTION || event.type == SDL_MOUSEBUTTONDOWN ||
@@ -1150,6 +1220,10 @@ int main(int argc, char* argv[]) {
                 if (sleepMs > 0) SDL_Delay(sleepMs);
             }
         }
+    }
+
+    if (zbrushWatcher) {
+        zbrushWatcher->stop();
     }
 
     // Save application settings on exit
