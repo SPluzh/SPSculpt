@@ -56,12 +56,13 @@ inline bool runZBrushBridgeBenchmark() {
     const std::vector<std::string> candidateDllPaths = {
         "SPSculptBridge.dll",
         "libSPSculptBridge.dll",
+        "zbrush_plugin/SPSculptBridge/SPSculptBridge.dll",
+        "../../zbrush_plugin/SPSculptBridge/SPSculptBridge.dll",
         "zbrush_plugin/SPSculptBridge.dll",
         "../../zbrush_plugin/SPSculptBridge.dll",
         "_build_/build/SPSculptBridge.dll",
         "_build_/build/libSPSculptBridge.dll",
-        "C:/Users/user/Desktop/cpp/sculptsp-native/zbrush_plugin/SPSculptBridge.dll",
-        "C:/Users/user/Desktop/cpp/sculptsp-native/_build_/build/libSPSculptBridge.dll",
+        "C:/Users/user/Desktop/cpp/sculptsp-native/zbrush_plugin/SPSculptBridge/SPSculptBridge.dll",
         "C:/Users/user/Desktop/cpp/sculptsp-native/_build_/build/SPSculptBridge.dll"
     };
 
@@ -229,9 +230,9 @@ inline bool runZBrushBridgeBenchmark() {
     // Test 4: ZScript Plugin File Completeness
     std::cout << "\n[Test 4/4] Verifying ZBrush ZScript Plugin Template...\n";
     const std::vector<std::string> candidatePluginPaths = {
-        "zbrush_plugin/SPSculpt.txt",
-        "../../zbrush_plugin/SPSculpt.txt",
-        "C:/Users/user/Desktop/cpp/sculptsp-native/zbrush_plugin/SPSculpt.txt"
+        "zbrush_plugin/SPSculptBridge.txt",
+        "../../zbrush_plugin/SPSculptBridge.txt",
+        "C:/Users/user/Desktop/cpp/sculptsp-native/zbrush_plugin/SPSculptBridge.txt"
     };
 
     std::string pluginPath;
@@ -243,7 +244,7 @@ inline bool runZBrushBridgeBenchmark() {
     }
 
     if (pluginPath.empty()) {
-        std::cout << "  [FAIL] 'zbrush_plugin/SPSculpt.txt' does not exist!\n";
+        std::cout << "  [FAIL] 'zbrush_plugin/SPSculptBridge.txt' does not exist!\n";
         allPassed = false;
     } else {
         std::ifstream plg(pluginPath);

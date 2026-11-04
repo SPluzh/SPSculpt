@@ -1,18 +1,14 @@
 // ==============================================================================
 // SPSculpt Companion Viewport - ZBrush Plugin (ZScript)
 // ==============================================================================
-// Installation options in ZBrush:
+// Installation in ZBrush:
+//   Copy to your ZBrush ZStartup/ZPlugs64 directory:
+//     ZStartup/ZPlugs64/SPSculptBridge.txt
+//     ZStartup/ZPlugs64/SPSculptBridge/SPSculptBridge.dll
 //
-// Option 1 (Recommended - standard ZBrush layout):
-//   ZStartup/ZPlugs64/SPSculpt.txt (or SPSculpt.zsc)
-//   ZStartup/ZPlugs64/SPSculptData/SPSculptBridge.dll
-//
-// Option 2 (Flat - both together):
-//   ZStartup/ZPlugs64/SPSculpt.txt
-//   ZStartup/ZPlugs64/SPSculptBridge.dll
-//
-// Option 3 (Direct testing without installing):
-//   In ZBrush: ZScript > Load -> select this file directly.
+//   Example:
+//     C:\Program Files\Pixologic\ZBrush 202X\ZStartup\ZPlugs64\SPSculptBridge.txt
+//     C:\Program Files\Pixologic\ZBrush 202X\ZStartup\ZPlugs64\SPSculptBridge\SPSculptBridge.dll
 // ==============================================================================
 
 [ISubPalette, "ZPlugin:SPSculpt"]
@@ -20,21 +16,21 @@
 [VarDef, spsculptDataDir, "C:/Users/Public/Documents/SPSculptData/"]
 [VarDef, spsculptDllPath, ""]
 
-// Helper routine: finds SPSculptBridge.dll in same folder or SPSculptData subfolder
+// Helper routine: resolves SPSculptBridge.dll in the SPSculptBridge subfolder
 [RoutineDef, FindBridgeDll,
     [VarSet, spsculptDllPath, ""]
-    // 1. Same folder as script
-    [VarSet, probe, [FileNameResolvePath, "SPSculptBridge.dll"]]
+    // 1. Primary path: subfolder SPSculptBridge/SPSculptBridge.dll
+    [VarSet, probe, [FileNameResolvePath, "SPSculptBridge/SPSculptBridge.dll"]]
     [If, [FileExists, [Var, probe]],
         [VarSet, spsculptDllPath, [Var, probe]]
     ,
-        // 2. Standard ZBrush subfolder: SPSculptData/
-        [VarSet, probe, [FileNameResolvePath, "SPSculptData/SPSculptBridge.dll"]]
+        // 2. Same folder as script
+        [VarSet, probe, [FileNameResolvePath, "SPSculptBridge.dll"]]
         [If, [FileExists, [Var, probe]],
             [VarSet, spsculptDllPath, [Var, probe]]
         ,
-            // 3. Standard ZBrush subfolder: SPSculptData64/
-            [VarSet, probe, [FileNameResolvePath, "SPSculptData64/SPSculptBridge.dll"]]
+            // 3. Alternative subfolder: SPSculptData/
+            [VarSet, probe, [FileNameResolvePath, "SPSculptData/SPSculptBridge.dll"]]
             [If, [FileExists, [Var, probe]],
                 [VarSet, spsculptDllPath, [Var, probe]]
             ,
@@ -42,8 +38,8 @@
                 [If, [FileExists, "C:/Users/Public/Documents/SPSculptData/SPSculptBridge.dll"],
                     [VarSet, spsculptDllPath, "C:/Users/Public/Documents/SPSculptData/SPSculptBridge.dll"]
                 ,
-                    // Fallback to relative name
-                    [VarSet, spsculptDllPath, [FileNameResolvePath, "SPSculptBridge.dll"]]
+                    // Fallback to primary relative path
+                    [VarSet, spsculptDllPath, [FileNameResolvePath, "SPSculptBridge/SPSculptBridge.dll"]]
                 ]
             ]
         ]

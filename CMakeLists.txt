@@ -287,10 +287,10 @@ if(WIN32)
     endif()
     add_custom_command(
         TARGET SPSculptBridge POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_SOURCE_DIR}/zbrush_plugin
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_SOURCE_DIR}/zbrush_plugin/SPSculptBridge
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_FILE:SPSculptBridge>
-            ${CMAKE_SOURCE_DIR}/zbrush_plugin/SPSculptBridge.dll
+            ${CMAKE_SOURCE_DIR}/zbrush_plugin/SPSculptBridge/SPSculptBridge.dll
     )
 endif()
 
