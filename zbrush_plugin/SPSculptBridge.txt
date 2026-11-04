@@ -21,9 +21,6 @@
 [VarDef, curUndoCounter, 0]
 [VarDef, userDebounceMs, 350]
 [VarDef, debounceSec, 0.35]
-[VarDef, sleepState, 0]
-[VarDef, wakeEvent, 0]
-[VarDef, wakeWinId, 0]
 
 // Helper routine: resolves SPSculptBridge.dll in the SPSculptBridgeData subfolder
 [RoutineDef, FindBridgeDll,
@@ -78,38 +75,12 @@
     ]
 ]
 
-// Background routine: 2-state debounced listener
+// Background routine: periodically checks if geometry changed via Undo Counter
 [RoutineDef, AutoSyncHandler,
     [If, [Var, autoSyncActive] == 1,
-        // State 0: LButton Up occurred (user just finished a stroke)
-        [If, [Var, sleepState] == 0,
-            // Calculate debounce duration in seconds from user setting
-            [VarSet, debounceSec, [Var, userDebounceMs] / 1000.0]
-            [If, [Var, debounceSec] < 0.05,
-                [VarSet, debounceSec, 0.05]
-            ]
-            // Move to State 1: wait for Timer (1) or new stroke LButton Down (4) -> bitmask 1 + 4 = 5
-            [VarSet, sleepState, 1]
-            [VarSet, wakeEvent, 0]
-            [SleepAgain, [Var, debounceSec], 5]
-        ,
-            // State 1: We were waiting for debounce delay or new stroke
-            [If, [Var, wakeEvent] == 4,
-                // User pressed LButton Down -> new stroke started before timeout!
-                // Skip export and return to State 0 waiting for this new stroke to finish (8)
-                [VarSet, sleepState, 0]
-                [VarSet, wakeEvent, 0]
-                [SleepAgain, 3600, 8]
-            ,
-                // Timer expired (user was idle for debounceSec)!
-                // Check if Undo Counter changed and export
-                [RoutineCall, CheckAndExportIfChanged]
-                // Return to State 0 waiting for next stroke release (8)
-                [VarSet, sleepState, 0]
-                [VarSet, wakeEvent, 0]
-                [SleepAgain, 3600, 8]
-            ]
-        ]
+        [RoutineCall, CheckAndExportIfChanged]
+        // Continue periodic timer loop (Event 1 = Timer)
+        [SleepAgain, [Var, debounceSec], 1]
     ]
 ]
 
@@ -134,19 +105,24 @@
 , , 0.5]
 
 // 2. Debounce Delay Slider
-[ISlider, "ZPlugin:SPSculpt:Debounce Delay", 350, 25, 100, 1000, "Idle delay before export in milliseconds",
+[ISlider, "ZPlugin:SPSculpt:Debounce Delay", 350, 25, 100, 1000, "Idle check interval in milliseconds",
     [VarSet, userDebounceMs, [IGet, "ZPlugin:SPSculpt:Debounce Delay"]]
+    [VarSet, debounceSec, [Var, userDebounceMs] / 1000.0]
     [RoutineCall, FindBridgeDll]
     [If, [FileExists, [Var, spsculptDllPath]],
         [FileExecute, [Var, spsculptDllPath], "SetDebounceDelay", , [Var, userDebounceMs]]
     ]
 , , 0.5]
 
-// 3. Enable Auto-Sync (Smooth debounced export via native Sleep event loop)
+// 3. Enable Auto-Sync (Smooth debounced export via native Sleep timer loop)
 [IButton, "ZPlugin:SPSculpt:Enable Auto-Sync", "Enable automatic stroke-end export with debounce delay",
     // Read current slider value
     [If, [IsEnabled, "ZPlugin:SPSculpt:Debounce Delay"],
         [VarSet, userDebounceMs, [IGet, "ZPlugin:SPSculpt:Debounce Delay"]]
+    ]
+    [VarSet, debounceSec, [Var, userDebounceMs] / 1000.0]
+    [If, [Var, debounceSec] < 0.1,
+        [VarSet, debounceSec, 0.1]
     ]
     [RoutineCall, FindBridgeDll]
     [If, [FileExists, [Var, spsculptDllPath]],
@@ -161,17 +137,14 @@
         [VarSet, lastUndoCounter, 0]
     ]
     [VarSet, autoSyncActive, 1]
-    [VarSet, sleepState, 0]
-    [VarSet, wakeEvent, 0]
     [Note, [StrMerge, "SPSculpt: Auto-Sync ENABLED! (Debounce: ", [Var, userDebounceMs], " ms)"], , 2]
-    // Launch active debounced sleep listener on stroke release (LButton Up = 8)
-    [Sleep, 3600, [RoutineCall, AutoSyncHandler], 8, wakeEvent, wakeWinId]
+    // Launch active periodic timer loop (Event 1 = Timer)
+    [Sleep, [Var, debounceSec], [RoutineCall, AutoSyncHandler], 1]
 , , 0.5]
 
 // 4. Disable Auto-Sync
 [IButton, "ZPlugin:SPSculpt:Disable Auto-Sync", "Disable automatic stroke-end export",
     [VarSet, autoSyncActive, 0]
-    [VarSet, sleepState, 0]
     [VarSet, lastUndoCounter, -999999]
     [RoutineCall, FindBridgeDll]
     [If, [FileExists, [Var, spsculptDllPath]],
