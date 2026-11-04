@@ -1,14 +1,14 @@
 // ==============================================================================
 // SPSculpt Companion Viewport - ZBrush Plugin (ZScript)
 // ==============================================================================
-// Installation in ZBrush:
+// Standard Pixologic/Maxon Plugin Installation in ZBrush:
 //   Copy to your ZBrush ZStartup/ZPlugs64 directory:
 //     ZStartup/ZPlugs64/SPSculptBridge.txt
-//     ZStartup/ZPlugs64/SPSculptBridge/SPSculptBridge.dll
+//     ZStartup/ZPlugs64/SPSculptBridgeData/SPSculptBridge.dll
 //
 //   Example:
 //     C:\Program Files\Pixologic\ZBrush 202X\ZStartup\ZPlugs64\SPSculptBridge.txt
-//     C:\Program Files\Pixologic\ZBrush 202X\ZStartup\ZPlugs64\SPSculptBridge\SPSculptBridge.dll
+//     C:\Program Files\Pixologic\ZBrush 202X\ZStartup\ZPlugs64\SPSculptBridgeData\SPSculptBridge.dll
 // ==============================================================================
 
 [ISubPalette, "ZPlugin:SPSculpt"]
@@ -16,30 +16,30 @@
 [VarDef, spsculptDataDir, "C:/Users/Public/Documents/SPSculptData/"]
 [VarDef, spsculptDllPath, ""]
 
-// Helper routine: resolves SPSculptBridge.dll in the SPSculptBridge subfolder
+// Helper routine: resolves SPSculptBridge.dll in the SPSculptBridgeData subfolder
 [RoutineDef, FindBridgeDll,
     [VarSet, spsculptDllPath, ""]
-    // 1. Primary path: subfolder SPSculptBridge/SPSculptBridge.dll
-    [VarSet, probe, [FileNameResolvePath, "SPSculptBridge/SPSculptBridge.dll"]]
+    // 1. Official ZBrush convention: SPSculptBridgeData/SPSculptBridge.dll
+    [VarSet, probe, [FileNameResolvePath, "SPSculptBridgeData/SPSculptBridge.dll"]]
     [If, [FileExists, [Var, probe]],
         [VarSet, spsculptDllPath, [Var, probe]]
     ,
-        // 2. Same folder as script
-        [VarSet, probe, [FileNameResolvePath, "SPSculptBridge.dll"]]
+        // 2. Alternative subfolder: SPSculptBridge/SPSculptBridge.dll
+        [VarSet, probe, [FileNameResolvePath, "SPSculptBridge/SPSculptBridge.dll"]]
         [If, [FileExists, [Var, probe]],
             [VarSet, spsculptDllPath, [Var, probe]]
         ,
-            // 3. Alternative subfolder: SPSculptData/
-            [VarSet, probe, [FileNameResolvePath, "SPSculptData/SPSculptBridge.dll"]]
+            // 3. Same folder as script
+            [VarSet, probe, [FileNameResolvePath, "SPSculptBridge.dll"]]
             [If, [FileExists, [Var, probe]],
                 [VarSet, spsculptDllPath, [Var, probe]]
             ,
-                // 4. Default exchange directory
+                // 4. Default public exchange directory
                 [If, [FileExists, "C:/Users/Public/Documents/SPSculptData/SPSculptBridge.dll"],
                     [VarSet, spsculptDllPath, "C:/Users/Public/Documents/SPSculptData/SPSculptBridge.dll"]
                 ,
                     // Fallback to primary relative path
-                    [VarSet, spsculptDllPath, [FileNameResolvePath, "SPSculptBridge/SPSculptBridge.dll"]]
+                    [VarSet, spsculptDllPath, [FileNameResolvePath, "SPSculptBridgeData/SPSculptBridge.dll"]]
                 ]
             ]
         ]

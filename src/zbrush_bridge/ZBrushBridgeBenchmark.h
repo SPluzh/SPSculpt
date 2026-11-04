@@ -56,13 +56,13 @@ inline bool runZBrushBridgeBenchmark() {
     const std::vector<std::string> candidateDllPaths = {
         "SPSculptBridge.dll",
         "libSPSculptBridge.dll",
+        "zbrush_plugin/SPSculptBridgeData/SPSculptBridge.dll",
+        "../../zbrush_plugin/SPSculptBridgeData/SPSculptBridge.dll",
         "zbrush_plugin/SPSculptBridge/SPSculptBridge.dll",
         "../../zbrush_plugin/SPSculptBridge/SPSculptBridge.dll",
-        "zbrush_plugin/SPSculptBridge.dll",
-        "../../zbrush_plugin/SPSculptBridge.dll",
         "_build_/build/SPSculptBridge.dll",
         "_build_/build/libSPSculptBridge.dll",
-        "C:/Users/user/Desktop/cpp/sculptsp-native/zbrush_plugin/SPSculptBridge/SPSculptBridge.dll",
+        "C:/Users/user/Desktop/cpp/sculptsp-native/zbrush_plugin/SPSculptBridgeData/SPSculptBridge.dll",
         "C:/Users/user/Desktop/cpp/sculptsp-native/_build_/build/SPSculptBridge.dll"
     };
 
