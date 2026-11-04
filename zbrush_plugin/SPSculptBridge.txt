@@ -19,41 +19,35 @@
 [VarDef, meshFile, ""]
 [VarDef, lastUndoCounter, -999999]
 [VarDef, curUndoCounter, 0]
-[VarDef, userDebounceMs, 350]
-[VarDef, debounceSec, 0.35]
+[VarDef, userThrottleMs, 800]
+[VarDef, canExport, 1]
+[VarDef, skipCount, 0]
 
-// Helper routine: resolves SPSculptBridge.dll in the SPSculptBridgeData subfolder
+// Helper routine: resolves SPSculptBridge.dll with absolute, exchange and local probes
 [RoutineDef, FindBridgeDll,
     [VarSet, spsculptDllPath, ""]
     [VarDef, probe, ""]
-    // 1. Official ZBrush convention: SPSculptBridgeData/SPSculptBridge.dll
-    [VarSet, probe, [FileNameResolvePath, "SPSculptBridgeData/SPSculptBridge.dll"]]
-    [If, [FileExists, [Var, probe]],
-        [VarSet, spsculptDllPath, [Var, probe]]
+    // 1. Direct workspace location
+    [If, [FileExists, "C:/Users/user/Desktop/cpp/sculptsp-native/zbrush_plugin/SPSculptBridgeData/SPSculptBridge.dll"],
+        [VarSet, spsculptDllPath, "C:/Users/user/Desktop/cpp/sculptsp-native/zbrush_plugin/SPSculptBridgeData/SPSculptBridge.dll"]
     ,
-        // 2. Alternative subfolder: SPSculptBridge/SPSculptBridge.dll
-        [VarSet, probe, [FileNameResolvePath, "SPSculptBridge/SPSculptBridge.dll"]]
-        [If, [FileExists, [Var, probe]],
-            [VarSet, spsculptDllPath, [Var, probe]]
+        // 2. Default public exchange directory
+        [If, [FileExists, "C:/Users/Public/Documents/SPSculptData/SPSculptBridge.dll"],
+            [VarSet, spsculptDllPath, "C:/Users/Public/Documents/SPSculptData/SPSculptBridge.dll"]
         ,
-            // 3. Same folder as script
-            [VarSet, probe, [FileNameResolvePath, "SPSculptBridge.dll"]]
+            // 3. Official ZBrush convention: SPSculptBridgeData/SPSculptBridge.dll
+            [VarSet, probe, [FileNameResolvePath, "SPSculptBridgeData/SPSculptBridge.dll"]]
             [If, [FileExists, [Var, probe]],
                 [VarSet, spsculptDllPath, [Var, probe]]
             ,
-                // 4. Default public exchange directory
-                [If, [FileExists, "C:/Users/Public/Documents/SPSculptData/SPSculptBridge.dll"],
-                    [VarSet, spsculptDllPath, "C:/Users/Public/Documents/SPSculptData/SPSculptBridge.dll"]
-                ,
-                    // Fallback to primary relative path
-                    [VarSet, spsculptDllPath, [FileNameResolvePath, "SPSculptBridgeData/SPSculptBridge.dll"]]
-                ]
+                // Fallback
+                [VarSet, spsculptDllPath, [FileNameResolvePath, "SPSculptBridge.dll"]]
             ]
         ]
     ]
 ]
 
-// Helper routine: checks Undo Counter and exports mesh only if geometry changed
+// Helper routine: checks Undo Counter and exports mesh only if geometry changed + throttled
 [RoutineDef, CheckAndExportIfChanged,
     [If, [Var, autoSyncActive] == 1,
         // 1. Query current undo history step
@@ -65,22 +59,33 @@
         // 2. Export ONLY if Undo Counter changed (actual brush stroke, smooth, or undo/redo)
         // Camera navigation (orbit/pan/zoom) and key presses do NOT change Undo Counter!
         [If, [Var, curUndoCounter] != [Var, lastUndoCounter],
-            [VarSet, lastUndoCounter, [Var, curUndoCounter]]
-            [If, [IsEnabled, "Tool:Export"],
-                [VarSet, meshFile, [StrMerge, [Var, spsculptDataDir], "mesh.GoZ"]]
-                [FileNameSetNext, [Var, meshFile]]
-                [IPress, "Tool:Export"]
+            // 3. Time throttle check via DLL (e.g. min 800ms between disk writes)
+            [VarSet, canExport, 1]
+            [If, [FileExists, [Var, spsculptDllPath]],
+                [VarSet, canExport, [FileExecute, [Var, spsculptDllPath], "CanExportNow", , [Var, userThrottleMs]]]
+            ]
+
+            [VarSet, skipCount, [Var, skipCount] + 1]
+            // Allow export if throttle time passed OR if 4 quick strokes were skipped
+            [If, ([Var, canExport] == 1) || ([Var, skipCount] >= 4),
+                [VarSet, skipCount, 0]
+                [VarSet, lastUndoCounter, [Var, curUndoCounter]]
+                [If, [IsEnabled, "Tool:Export"],
+                    [VarSet, meshFile, [StrMerge, [Var, spsculptDataDir], "mesh.GoZ"]]
+                    [FileNameSetNext, [Var, meshFile]]
+                    [IPress, "Tool:Export"]
+                ]
             ]
         ]
     ]
 ]
 
-// Background routine: periodically checks if geometry changed via Undo Counter
+// Background routine: triggered reliably on each stroke release (LButton Up = event 8)
 [RoutineDef, AutoSyncHandler,
     [If, [Var, autoSyncActive] == 1,
         [RoutineCall, CheckAndExportIfChanged]
-        // Continue periodic timer loop (Event 1 = Timer)
-        [SleepAgain, [Var, debounceSec], 1]
+        // Continue listening for next brush stroke release (LButton Up = 8)
+        [SleepAgain, 3600, 8]
     ]
 ]
 
@@ -98,37 +103,29 @@
         [If, [IsEnabled, "Edit:Tool:Undo Counter"],
             [VarSet, lastUndoCounter, [IGet, "Edit:Tool:Undo Counter"]]
         ]
+        [If, [FileExists, [Var, spsculptDllPath]],
+            [FileExecute, [Var, spsculptDllPath], "MarkExportDone"]
+        ]
         [Note, [StrMerge, "SPSculpt: Synced active tool to ", [Var, meshFile]], , 1]
     ,
         [Note, "SPSculpt: Tool:Export is disabled. Please enter 3D Edit mode.", , 2]
     ]
 , , 0.5]
 
-// 2. Debounce Delay Slider
-[ISlider, "ZPlugin:SPSculpt:Debounce Delay", 350, 25, 100, 1000, "Idle check interval in milliseconds",
-    [VarSet, userDebounceMs, [IGet, "ZPlugin:SPSculpt:Debounce Delay"]]
-    [VarSet, debounceSec, [Var, userDebounceMs] / 1000.0]
-    [RoutineCall, FindBridgeDll]
-    [If, [FileExists, [Var, spsculptDllPath]],
-        [FileExecute, [Var, spsculptDllPath], "SetDebounceDelay", , [Var, userDebounceMs]]
-    ]
+// 2. Throttle Interval Slider (200ms - 2000ms)
+[ISlider, "ZPlugin:SPSculpt:Sync Throttle", 800, 50, 200, 2000, "Minimum delay between mesh exports in ms (prevents stutter)",
+    [VarSet, userThrottleMs, [IGet, "ZPlugin:SPSculpt:Sync Throttle"]]
 , , 0.5]
 
-// 3. Enable Auto-Sync (Smooth debounced export via native Sleep timer loop)
-[IButton, "ZPlugin:SPSculpt:Enable Auto-Sync", "Enable automatic stroke-end export with debounce delay",
-    // Read current slider value
-    [If, [IsEnabled, "ZPlugin:SPSculpt:Debounce Delay"],
-        [VarSet, userDebounceMs, [IGet, "ZPlugin:SPSculpt:Debounce Delay"]]
-    ]
-    [VarSet, debounceSec, [Var, userDebounceMs] / 1000.0]
-    [If, [Var, debounceSec] < 0.1,
-        [VarSet, debounceSec, 0.1]
+// 3. Enable Auto-Sync (100% reliable stroke-end export via native Sleep event 8)
+[IButton, "ZPlugin:SPSculpt:Enable Auto-Sync", "Enable automatic stroke-end export with throttling",
+    [If, [IsEnabled, "ZPlugin:SPSculpt:Sync Throttle"],
+        [VarSet, userThrottleMs, [IGet, "ZPlugin:SPSculpt:Sync Throttle"]]
     ]
     [RoutineCall, FindBridgeDll]
     [If, [FileExists, [Var, spsculptDllPath]],
         [FileExecute, [Var, spsculptDllPath], "InstallHook"]
         [FileExecute, [Var, spsculptDllPath], "SetDataDir", [Var, spsculptDataDir]]
-        [FileExecute, [Var, spsculptDllPath], "SetDebounceDelay", , [Var, userDebounceMs]]
     ]
     // Baseline current undo counter so enabling auto-sync doesn't trigger immediate fake export
     [If, [IsEnabled, "Edit:Tool:Undo Counter"],
@@ -136,10 +133,11 @@
     ,
         [VarSet, lastUndoCounter, 0]
     ]
+    [VarSet, skipCount, 0]
     [VarSet, autoSyncActive, 1]
-    [Note, [StrMerge, "SPSculpt: Auto-Sync ENABLED! (Debounce: ", [Var, userDebounceMs], " ms)"], , 2]
-    // Launch active periodic timer loop (Event 1 = Timer)
-    [Sleep, [Var, debounceSec], [RoutineCall, AutoSyncHandler], 1]
+    [Note, [StrMerge, "SPSculpt: Auto-Sync ENABLED! (Throttle: ", [Var, userThrottleMs], " ms)"], , 2]
+    // Launch active event listener on stroke release (LButton Up = 8) - 100% reliable in ZBrush!
+    [Sleep, 3600, [RoutineCall, AutoSyncHandler], 8]
 , , 0.5]
 
 // 4. Disable Auto-Sync

@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <cstdint>
 
 // Standard ZScript & C-ABI export macro
 #ifdef _WIN32
@@ -298,6 +299,23 @@ SPSCULPT_EXPORT float TriggerSync(char* pText, double optValue, char* pOptBuffer
 
 SPSCULPT_EXPORT float IsHookInstalled(char* pText, double optValue, char* pOptBuffer1, int* pOptBuffer1Size, char* pOptBuffer2, int* pOptBuffer2Size) {
     return g_hookInstalled ? 1.0f : 0.0f;
+}
+
+uint64_t g_lastExportTick = 0;
+
+SPSCULPT_EXPORT float CanExportNow(char* pText, double minIntervalMs, char* pOptBuffer1, int* pOptBuffer1Size, char* pOptBuffer2, int* pOptBuffer2Size) {
+    uint64_t now = GetTickCount64();
+    if (minIntervalMs < 50.0) minIntervalMs = 500.0;
+    if (g_lastExportTick == 0 || (now - g_lastExportTick >= static_cast<uint64_t>(minIntervalMs))) {
+        g_lastExportTick = now;
+        return 1.0f; // Export allowed
+    }
+    return 0.0f; // Throttled
+}
+
+SPSCULPT_EXPORT float MarkExportDone(char* pText, double optValue, char* pOptBuffer1, int* pOptBuffer1Size, char* pOptBuffer2, int* pOptBuffer2Size) {
+    g_lastExportTick = GetTickCount64();
+    return 1.0f;
 }
 
 // DLL Entry Point
