@@ -74,13 +74,16 @@ void ZBrushWatcher::stop() {
     m_running.store(false);
 }
 
-bool ZBrushWatcher::consumePendingMesh(std::vector<uint8_t>& outBuffer) {
+bool ZBrushWatcher::consumePendingMesh(std::vector<uint8_t>& outBuffer, WatcherMeshStats* outStats) {
     if (!m_meshPending.load()) return false;
     std::lock_guard<std::mutex> lock(m_meshMutex);
     if (m_pendingMeshBuffer.empty()) return false;
     outBuffer = std::move(m_pendingMeshBuffer);
     m_pendingMeshBuffer.clear();
     m_pendingMeshBuffer.shrink_to_fit();
+    if (outStats) {
+        *outStats = m_pendingMeshStats;
+    }
     m_meshPending.store(false);
     return true;
 }
@@ -269,8 +272,14 @@ void ZBrushWatcher::watchThreadFunc() {
                 }
 
                 if (checkMesh) {
+                    auto tDetect = std::chrono::high_resolution_clock::now();
                     std::string meshPath = getWatchDirectory() + "mesh.GoZ";
-                    if (isFileReady(meshPath, 35, 30)) {
+                    auto tWaitStart = std::chrono::high_resolution_clock::now();
+                    bool ready = isFileReady(meshPath, 35, 30);
+                    auto tWaitEnd = std::chrono::high_resolution_clock::now();
+                    double waitMs = std::chrono::duration<double, std::milli>(tWaitEnd - tWaitStart).count();
+
+                    if (ready) {
                         std::wstring wMeshPath(meshPath.begin(), meshPath.end());
                         WIN32_FILE_ATTRIBUTE_DATA attrData;
                         bool isNew = true;
@@ -284,6 +293,7 @@ void ZBrushWatcher::watchThreadFunc() {
                         }
                         if (isNew) {
                             // Read binary GoZ into buffer
+                            auto tReadStart = std::chrono::high_resolution_clock::now();
                             std::ifstream file(meshPath, std::ios::binary | std::ios::ate);
                             if (file.is_open()) {
                                 std::streamsize size = file.tellg();
@@ -291,8 +301,16 @@ void ZBrushWatcher::watchThreadFunc() {
                                     file.seekg(0, std::ios::beg);
                                     std::vector<uint8_t> buffer(size);
                                     if (file.read(reinterpret_cast<char*>(buffer.data()), size)) {
+                                        auto tReadEnd = std::chrono::high_resolution_clock::now();
+                                        double readMs = std::chrono::duration<double, std::milli>(tReadEnd - tReadStart).count();
                                         std::lock_guard<std::mutex> lock(m_meshMutex);
                                         m_pendingMeshBuffer = std::move(buffer);
+                                        m_pendingMeshStats.filePath = meshPath;
+                                        m_pendingMeshStats.fileSizeBytes = static_cast<size_t>(size);
+                                        m_pendingMeshStats.fileReadyWaitMs = waitMs;
+                                        m_pendingMeshStats.diskReadMs = readMs;
+                                        m_pendingMeshStats.detectTime = tDetect;
+                                        m_pendingMeshStats.pushTime = std::chrono::high_resolution_clock::now();
                                         m_meshPending.store(true);
                                     }
                                 }

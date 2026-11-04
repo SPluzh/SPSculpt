@@ -271,9 +271,12 @@ void Mesh::postInit(bool buildOctree, bool buildTopology) {
     }
     vertTagFlags.assign(nbVerts, 0);
 
+    auto tBboxStart = std::chrono::high_resolution_clock::now();
     float bbox[6];
     computeBbox(bbox);
     center = glm::vec3((bbox[0] + bbox[3]) * 0.5f, (bbox[1] + bbox[4]) * 0.5f, (bbox[2] + bbox[5]) * 0.5f);
+    auto tBboxEnd = std::chrono::high_resolution_clock::now();
+    double msBbox = std::chrono::duration<double, std::milli>(tBboxEnd - tBboxStart).count();
 
     if (faceGroups.size() != (size_t)nbFaces) {
         initFaceGroups();
@@ -396,6 +399,13 @@ void Mesh::postInit(bool buildOctree, bool buildTopology) {
 
     double msTopology = std::chrono::duration<double, std::milli>(tTopEnd - tTopStart).count();
     double msTotal = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
+
+    lastPostInitStats.msBbox = msBbox;
+    lastPostInitStats.msTopology = msTopology;
+    lastPostInitStats.msFaceNormals = msFNorm;
+    lastPostInitStats.msVertexNormals = msVNorm;
+    lastPostInitStats.msOctree = msOctree;
+    lastPostInitStats.msTotal = msTotal;
 
     if (msTotal > 5.0) {
         sculpt_log("[Mesh Diagnostics] postInit%s | Verts: %d, Faces: %d | Total: %.2fms (Topology [%s]: %.2fms, FaceNorms: %.2fms, VertNorms: %.2fms%s: %.2fms)\n",
@@ -619,6 +629,7 @@ float Mesh::computeLocalRadius() const {
     if (!m_localRadiusDirty && m_cachedLocalRadius > 0.0f) {
         return m_cachedLocalRadius;
     }
+    auto tBboxStart = std::chrono::high_resolution_clock::now();
     float bbox[6];
     computeBbox(bbox);
     float dx = bbox[3] - bbox[0];

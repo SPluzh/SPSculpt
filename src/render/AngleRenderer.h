@@ -155,6 +155,14 @@ public:
     void setSsrMaxDistance(float dist) { m_ssrMaxDistance = dist; }
     float getSsrMaxDistance() const { return m_ssrMaxDistance; }
     
+    struct GpuUploadTiming {
+        double msVbo = 0.0;
+        double msEbo = 0.0;
+        double msTotal = 0.0;
+    };
+    const GpuUploadTiming& getLastUploadTiming() const { return m_lastUploadTiming; }
+    void resetLastUploadTiming() { m_lastUploadTiming = {}; }
+
     // Core render loop called from JS requestAnimationFrame or SDL main loop
     void render(const Scene& scene, unsigned int targetFbo = 0);
     void setShowBackground(bool show) { m_showBackground = show; }
@@ -828,6 +836,7 @@ private:
     int m_armatureCylIndicesCount = 0;
 
     std::unordered_map<const Mesh*, std::unique_ptr<MeshRenderBuffers>> m_meshBuffers;
+    GpuUploadTiming m_lastUploadTiming;
 
     // Model Snapshot storage
     ModelSnapshot m_snapshot;

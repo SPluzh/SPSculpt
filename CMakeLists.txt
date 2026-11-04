@@ -169,6 +169,7 @@ add_executable(SPSculpt
     src/files/ExportGLTF.cpp
     src/files/ImportFBX.cpp
     src/files/ImportGoZ.cpp
+    src/files/GoZProfiler.cpp
     src/files/MeshUtils.cpp
     # zbrush bridge
     src/zbrush_bridge/ZBrushBridgeConfig.cpp

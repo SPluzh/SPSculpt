@@ -1,0 +1,200 @@
+================================================================================
+           SPSCULPT GoZ PIPELINE DETAILED PROFILING REPORT
+================================================================================
+Timestamp:               2026-11-05 01:04:08
+File:                    C:/Users/Public/Documents/SPSculptData/mesh.GoZ
+File Size:               143.63 MB (143,630,722 bytes)
+System Hardware:         CPU Threads: 16 | Available RAM: 18837 MB | Peak RSS: 1933 MB
+
+--------------------------------------------------------------------------------
+MESH SUMMARY
+--------------------------------------------------------------------------------
+Vertices:                3,862,193
+Faces:                   3,900,580 (Quads: 3,823,802, Triangles: 76,778)
+Polypaint:               NO
+Polygroups:              YES (3,900,580 groups)
+Mask:                    NO
+
+--------------------------------------------------------------------------------
+STEP-BY-STEP BREAKDOWN
+--------------------------------------------------------------------------------
+Phase / Step Name                     | Time (ms)     | % of Total
+--------------------------------------------------------------------------------
+[I/O] Watcher File-Ready Wait         |    30.54 ms   |    0.8%
+[I/O] Disk Read to RAM Buffer         |    48.65 ms   |    1.3%
+[I/O] Thread Queue Latency            |   253.07 ms   |    6.6%
+--------------------------------------------------------------------------------
+[Parser] Header & Chunk Scanning      |     6.28 ms   |    0.2%
+[Parser] Vertices Extraction          |    13.79 ms   |    0.4%
+[Parser] Faces Extraction             |    17.31 ms   |    0.5%
+[Parser] Polypaint & sRGB Conversion  |    11.86 ms   |    0.3%
+[Parser] Polygroups Extraction        |     2.73 ms   |    0.1%
+[Parser] Quad/Tri Mesh Build          |    25.71 ms   |    0.7%
+--------------------------------------------------------------------------------
+[MeshInit] Normals Computation        |    81.11 ms   |    2.1%
+[MeshInit] Bounding Box & Cleanup     |     2.03 ms   |    0.1%
+--------------------------------------------------------------------------------
+[Scene] Old Mesh Delete & Replace     |     5.40 ms   |    0.1%
+[GPU] Upload VBO (Pos, Norm, Col)     |    77.31 ms   |    2.0%
+[GPU] Upload EBO (Indices)            |   941.13 ms   |   24.7%
+[GPU] First Frame Render & Swap       |  1718.99 ms   |   45.1%
+--------------------------------------------------------------------------------
+TOTAL END-TO-END PIPELINE TIME:       |  3808.83 ms   | 100.0%
+================================================================================
+
+TOP 3 BOTTLENECKS TO OPTIMIZE:
+  1. [GPU] First Frame Render & Swap (1718.99 ms, 45.1%)
+  2. [GPU] Upload EBO (Indices) (941.13 ms, 24.7%)
+  3. [I/O] Thread Queue Latency (253.07 ms, 6.6%)
+================================================================================
+
+================================================================================
+           SPSCULPT GoZ PIPELINE DETAILED PROFILING REPORT
+================================================================================
+Timestamp:               2026-11-05 01:04:29
+File:                    C:/Users/Public/Documents/SPSculptData/mesh.GoZ
+File Size:               143.63 MB (143,630,722 bytes)
+System Hardware:         CPU Threads: 16 | Available RAM: 18949 MB | Peak RSS: 2415 MB
+
+--------------------------------------------------------------------------------
+MESH SUMMARY
+--------------------------------------------------------------------------------
+Vertices:                3,862,193
+Faces:                   3,900,580 (Quads: 3,823,802, Triangles: 76,778)
+Polypaint:               NO
+Polygroups:              YES (3,900,580 groups)
+Mask:                    NO
+
+--------------------------------------------------------------------------------
+STEP-BY-STEP BREAKDOWN
+--------------------------------------------------------------------------------
+Phase / Step Name                     | Time (ms)     | % of Total
+--------------------------------------------------------------------------------
+[I/O] Watcher File-Ready Wait         |    30.48 ms   |    1.0%
+[I/O] Disk Read to RAM Buffer         |    48.91 ms   |    1.7%
+[I/O] Thread Queue Latency            |   329.73 ms   |   11.1%
+--------------------------------------------------------------------------------
+[Parser] Header & Chunk Scanning      |     6.35 ms   |    0.2%
+[Parser] Vertices Extraction          |     9.34 ms   |    0.3%
+[Parser] Faces Extraction             |    14.98 ms   |    0.5%
+[Parser] Polypaint & sRGB Conversion  |     8.45 ms   |    0.3%
+[Parser] Polygroups Extraction        |     1.73 ms   |    0.1%
+[Parser] Quad/Tri Mesh Build          |    16.82 ms   |    0.6%
+--------------------------------------------------------------------------------
+[MeshInit] Normals Computation        |    75.87 ms   |    2.6%
+[MeshInit] Bounding Box & Cleanup     |     1.74 ms   |    0.1%
+--------------------------------------------------------------------------------
+[Scene] Old Mesh Delete & Replace     |   122.81 ms   |    4.1%
+[GPU] Upload VBO (Pos, Norm, Col)     |    59.43 ms   |    2.0%
+[GPU] Upload EBO (Indices)            |   908.43 ms   |   30.7%
+[GPU] First Frame Render & Swap       |   942.84 ms   |   31.8%
+--------------------------------------------------------------------------------
+TOTAL END-TO-END PIPELINE TIME:       |  2961.68 ms   | 100.0%
+================================================================================
+
+TOP 3 BOTTLENECKS TO OPTIMIZE:
+  1. [GPU] First Frame Render & Swap (942.84 ms, 31.8%)
+  2. [GPU] Upload EBO (Indices) (908.43 ms, 30.7%)
+  3. [I/O] Thread Queue Latency (329.73 ms, 11.1%)
+================================================================================
+
+================================================================================
+           SPSCULPT GoZ PIPELINE DETAILED PROFILING REPORT
+================================================================================
+Timestamp:               2026-11-05 01:04:33
+File:                    C:/Users/Public/Documents/SPSculptData/mesh.GoZ
+File Size:               143.63 MB (143,630,722 bytes)
+System Hardware:         CPU Threads: 16 | Available RAM: 18959 MB | Peak RSS: 2643 MB
+
+--------------------------------------------------------------------------------
+MESH SUMMARY
+--------------------------------------------------------------------------------
+Vertices:                3,862,193
+Faces:                   3,900,580 (Quads: 3,823,802, Triangles: 76,778)
+Polypaint:               NO
+Polygroups:              YES (3,900,580 groups)
+Mask:                    NO
+
+--------------------------------------------------------------------------------
+STEP-BY-STEP BREAKDOWN
+--------------------------------------------------------------------------------
+Phase / Step Name                     | Time (ms)     | % of Total
+--------------------------------------------------------------------------------
+[I/O] Watcher File-Ready Wait         |    29.77 ms   |    1.0%
+[I/O] Disk Read to RAM Buffer         |    47.06 ms   |    1.5%
+[I/O] Thread Queue Latency            |   378.29 ms   |   12.3%
+--------------------------------------------------------------------------------
+[Parser] Header & Chunk Scanning      |     6.29 ms   |    0.2%
+[Parser] Vertices Extraction          |     9.01 ms   |    0.3%
+[Parser] Faces Extraction             |    15.44 ms   |    0.5%
+[Parser] Polypaint & sRGB Conversion  |     8.68 ms   |    0.3%
+[Parser] Polygroups Extraction        |     1.94 ms   |    0.1%
+[Parser] Quad/Tri Mesh Build          |    20.29 ms   |    0.7%
+--------------------------------------------------------------------------------
+[MeshInit] Normals Computation        |    79.32 ms   |    2.6%
+[MeshInit] Bounding Box & Cleanup     |     1.79 ms   |    0.1%
+--------------------------------------------------------------------------------
+[Scene] Old Mesh Delete & Replace     |   122.54 ms   |    4.0%
+[GPU] Upload VBO (Pos, Norm, Col)     |    57.82 ms   |    1.9%
+[GPU] Upload EBO (Indices)            |   912.26 ms   |   29.6%
+[GPU] First Frame Render & Swap       |   997.11 ms   |   32.4%
+--------------------------------------------------------------------------------
+TOTAL END-TO-END PIPELINE TIME:       |  3077.83 ms   | 100.0%
+================================================================================
+
+TOP 3 BOTTLENECKS TO OPTIMIZE:
+  1. [GPU] First Frame Render & Swap (997.11 ms, 32.4%)
+  2. [GPU] Upload EBO (Indices) (912.26 ms, 29.6%)
+  3. [I/O] Thread Queue Latency (378.29 ms, 12.3%)
+================================================================================
+
+================================================================================
+           SPSCULPT GoZ PIPELINE DETAILED PROFILING REPORT
+================================================================================
+Timestamp:               2026-11-05 01:04:52
+File:                    C:/Users/Public/Documents/SPSculptData/mesh.GoZ
+File Size:               143.63 MB (143,630,722 bytes)
+System Hardware:         CPU Threads: 16 | Available RAM: 18712 MB | Peak RSS: 2643 MB
+
+--------------------------------------------------------------------------------
+MESH SUMMARY
+--------------------------------------------------------------------------------
+Vertices:                3,862,193
+Faces:                   3,900,580 (Quads: 3,823,802, Triangles: 76,778)
+Polypaint:               NO
+Polygroups:              YES (3,900,580 groups)
+Mask:                    NO
+
+--------------------------------------------------------------------------------
+STEP-BY-STEP BREAKDOWN
+--------------------------------------------------------------------------------
+Phase / Step Name                     | Time (ms)     | % of Total
+--------------------------------------------------------------------------------
+[I/O] Watcher File-Ready Wait         |    30.45 ms   |    1.0%
+[I/O] Disk Read to RAM Buffer         |    46.73 ms   |    1.5%
+[I/O] Thread Queue Latency            |   370.17 ms   |   11.9%
+--------------------------------------------------------------------------------
+[Parser] Header & Chunk Scanning      |     6.25 ms   |    0.2%
+[Parser] Vertices Extraction          |     9.63 ms   |    0.3%
+[Parser] Faces Extraction             |    15.69 ms   |    0.5%
+[Parser] Polypaint & sRGB Conversion  |     8.30 ms   |    0.3%
+[Parser] Polygroups Extraction        |     1.62 ms   |    0.1%
+[Parser] Quad/Tri Mesh Build          |    16.43 ms   |    0.5%
+--------------------------------------------------------------------------------
+[MeshInit] Normals Computation        |    65.96 ms   |    2.1%
+[MeshInit] Bounding Box & Cleanup     |     2.95 ms   |    0.1%
+--------------------------------------------------------------------------------
+[Scene] Old Mesh Delete & Replace     |   125.18 ms   |    4.0%
+[GPU] Upload VBO (Pos, Norm, Col)     |    71.92 ms   |    2.3%
+[GPU] Upload EBO (Indices)            |   927.85 ms   |   29.7%
+[GPU] First Frame Render & Swap       |  1011.77 ms   |   32.4%
+--------------------------------------------------------------------------------
+TOTAL END-TO-END PIPELINE TIME:       |  3122.70 ms   | 100.0%
+================================================================================
+
+TOP 3 BOTTLENECKS TO OPTIMIZE:
+  1. [GPU] First Frame Render & Swap (1011.77 ms, 32.4%)
+  2. [GPU] Upload EBO (Indices) (927.85 ms, 29.7%)
+  3. [I/O] Thread Queue Latency (370.17 ms, 11.9%)
+================================================================================
+

@@ -295,6 +295,16 @@ public:
 
     // Initialization from JS-managed arrays
 
+    struct PostInitStats {
+        double msBbox = 0.0;
+        double msTopology = 0.0;
+        double msFaceNormals = 0.0;
+        double msVertexNormals = 0.0;
+        double msOctree = 0.0;
+        double msTotal = 0.0;
+    };
+    PostInitStats lastPostInitStats;
+
     void allocate(int nbV, int nbF, int nbRF, int nbRV);
     void postInit(bool buildOctree = true, bool buildTopology = true);
     void ensureOctreeBuilt();

@@ -3030,6 +3030,7 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
 
     if (isFullUpload) {
         uploaded = true;
+        auto tVboStart = std::chrono::high_resolution_clock::now();
         glBindVertexArray(bufs->vao);
         
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
@@ -3085,6 +3086,8 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
             glVertexAttribPointer(6, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
             glEnableVertexAttribArray(6);
         }
+        auto tVboEnd = std::chrono::high_resolution_clock::now();
+        auto tEboStart = std::chrono::high_resolution_clock::now();
         
         std::vector<uint32_t> triIndices;
         generateTriangleIndices(uploadMesh, triIndices);
@@ -3182,6 +3185,11 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
         } else {
             bufs->creaseWireIndexCount = 0;
         }
+        auto tEboEnd = std::chrono::high_resolution_clock::now();
+
+        m_lastUploadTiming.msVbo = std::chrono::duration<double, std::milli>(tVboEnd - tVboStart).count();
+        m_lastUploadTiming.msEbo = std::chrono::duration<double, std::milli>(tEboEnd - tEboStart).count();
+        m_lastUploadTiming.msTotal = m_lastUploadTiming.msVbo + m_lastUploadTiming.msEbo;
         
         mesh->isDirty = false;
         if (uploadMesh) {

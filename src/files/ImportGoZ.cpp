@@ -78,12 +78,19 @@ struct RawFace {
 
 } // anonymous namespace
 
-std::vector<Mesh*> importGoZ(const std::vector<uint8_t>& buffer, bool triangulateQuads, GoZInfo* outInfo) {
-    return importGoZ(buffer.data(), buffer.size(), triangulateQuads, outInfo);
+std::vector<Mesh*> importGoZ(const std::vector<uint8_t>& buffer, bool triangulateQuads, GoZInfo* outInfo, GoZParserStats* outStats) {
+    return importGoZ(buffer.data(), buffer.size(), triangulateQuads, outInfo, outStats);
 }
 
-std::vector<Mesh*> importGoZ(const uint8_t* data, size_t size, bool triangulateQuads, GoZInfo* outInfo) {
+std::vector<Mesh*> importGoZ(const uint8_t* data, size_t size, bool triangulateQuads, GoZInfo* outInfo, GoZParserStats* outStats) {
     auto tStart = std::chrono::high_resolution_clock::now();
+
+    double msVertsExtraction = 0.0;
+    double msFacesExtraction = 0.0;
+    double msPaintExtraction = 0.0;
+    double msGroupsExtraction = 0.0;
+    double msMaskExtraction = 0.0;
+    double msUvsExtraction = 0.0;
 
     if (!data || size < 36) {
         sculpt_log("[GoZ Import ERROR] Buffer is null or too small (%zu bytes)\n", size);
@@ -144,24 +151,31 @@ std::vector<Mesh*> importGoZ(const uint8_t* data, size_t size, bool triangulateQ
             }
 
             case TAG_VERTICES: {
+                auto t0 = std::chrono::high_resolution_clock::now();
                 size_t nbV = std::min<size_t>(static_cast<size_t>(count), payloadLen / 12);
                 verts.resize(nbV * 3);
                 // In x86_64 IEEE-754 little-endian, binary representation matches GoZ layout directly
                 std::memcpy(verts.data(), payload, nbV * 3 * sizeof(float));
                 info.nbVerts = nbV;
+                auto t1 = std::chrono::high_resolution_clock::now();
+                msVertsExtraction += std::chrono::duration<double, std::milli>(t1 - t0).count();
                 break;
             }
 
             case TAG_FACES: {
+                auto t0 = std::chrono::high_resolution_clock::now();
                 size_t nbF = std::min<size_t>(static_cast<size_t>(count), payloadLen / 16);
                 rawFaces.resize(nbF);
                 // Block memcpy for 16-byte RawFace structures
                 std::memcpy(rawFaces.data(), payload, nbF * sizeof(RawFace));
                 info.nbFaces = nbF;
+                auto t1 = std::chrono::high_resolution_clock::now();
+                msFacesExtraction += std::chrono::duration<double, std::milli>(t1 - t0).count();
                 break;
             }
 
             case TAG_PAINT: {
+                auto t0 = std::chrono::high_resolution_clock::now();
                 size_t nbP = std::min<size_t>(static_cast<size_t>(count), payloadLen / 4);
                 rawPaint.resize(nbP * 3);
                 bool anyNonWhite = false;
@@ -182,19 +196,25 @@ std::vector<Mesh*> importGoZ(const uint8_t* data, size_t size, bool triangulateQ
                     hasPaintData = true;
                     info.hasPaint = true;
                 }
+                auto t1 = std::chrono::high_resolution_clock::now();
+                msPaintExtraction += std::chrono::duration<double, std::milli>(t1 - t0).count();
                 break;
             }
 
             case TAG_POLYGROUPS: {
+                auto t0 = std::chrono::high_resolution_clock::now();
                 size_t nbG = std::min<size_t>(static_cast<size_t>(count), payloadLen / 2);
                 rawGroups.resize(nbG);
                 std::memcpy(rawGroups.data(), payload, nbG * sizeof(uint16_t));
                 hasGroupData = (!rawGroups.empty());
                 info.hasGroups = hasGroupData;
+                auto t1 = std::chrono::high_resolution_clock::now();
+                msGroupsExtraction += std::chrono::duration<double, std::milli>(t1 - t0).count();
                 break;
             }
 
             case TAG_MASK: {
+                auto t0 = std::chrono::high_resolution_clock::now();
                 size_t nbM = std::min<size_t>(static_cast<size_t>(count), payloadLen / 2);
                 rawMask.resize(nbM);
                 bool anyMasked = false;
@@ -210,10 +230,13 @@ std::vector<Mesh*> importGoZ(const uint8_t* data, size_t size, bool triangulateQ
                     hasMaskData = true;
                     info.hasMask = true;
                 }
+                auto t1 = std::chrono::high_resolution_clock::now();
+                msMaskExtraction += std::chrono::duration<double, std::milli>(t1 - t0).count();
                 break;
             }
 
             case TAG_UVS: {
+                auto t0 = std::chrono::high_resolution_clock::now();
                 // 4 corners per face, 2 floats per corner = 32 bytes per face
                 size_t nbU = std::min<size_t>(static_cast<size_t>(count), payloadLen / 32);
                 rawUVs.resize(nbU * 8);
@@ -225,6 +248,8 @@ std::vector<Mesh*> importGoZ(const uint8_t* data, size_t size, bool triangulateQ
                 }
                 hasUVData = (!rawUVs.empty());
                 info.hasUVs = hasUVData;
+                auto t1 = std::chrono::high_resolution_clock::now();
+                msUvsExtraction += std::chrono::duration<double, std::milli>(t1 - t0).count();
                 break;
             }
 
@@ -257,6 +282,7 @@ std::vector<Mesh*> importGoZ(const uint8_t* data, size_t size, bool triangulateQ
     size_t rawCount = rawFaces.size();
 
     // Process faces (quad preservation or triangulation)
+    auto tConvStart = std::chrono::high_resolution_clock::now();
     std::vector<uint32_t> outFaces;
     std::vector<uint32_t> outGroups;
     std::vector<float> uvAr;
@@ -383,12 +409,16 @@ std::vector<Mesh*> importGoZ(const uint8_t* data, size_t size, bool triangulateQ
         }
     }
 
+    auto tConvEnd = std::chrono::high_resolution_clock::now();
+    double msFacesConversion = std::chrono::duration<double, std::milli>(tConvEnd - tConvStart).count();
+
     // Free raw faces and raw groups memory early to minimize peak RAM
     rawFaces.clear(); rawFaces.shrink_to_fit();
     rawGroups.clear(); rawGroups.shrink_to_fit();
     rawUVs.clear(); rawUVs.shrink_to_fit();
 
     // Create and initialize Mesh
+    auto tMoveStart = std::chrono::high_resolution_clock::now();
     Mesh* mesh = new Mesh();
     mesh->verts = std::move(verts);
     mesh->faces = std::move(outFaces);
@@ -425,6 +455,8 @@ std::vector<Mesh*> importGoZ(const uint8_t* data, size_t size, bool triangulateQ
     if (!uvAr.empty() && uvfAr.size() == mesh->faces.size()) {
         mesh->initTexCoordsDataFromOBJData(uvAr, uvfAr);
     }
+    auto tMoveEnd = std::chrono::high_resolution_clock::now();
+    double msMeshAllocMove = std::chrono::duration<double, std::milli>(tMoveEnd - tMoveStart).count();
 
     // Fast postInit for viewport display:
     // Skips heavy computeTopology and octree build, computing vertex normals directly.
@@ -437,6 +469,25 @@ std::vector<Mesh*> importGoZ(const uint8_t* data, size_t size, bool triangulateQ
 
     auto tEnd = std::chrono::high_resolution_clock::now();
     double msTotal = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
+
+    if (outStats) {
+        outStats->totalParseMs = msTotal;
+        outStats->vertsExtractionMs = msVertsExtraction;
+        outStats->facesExtractionMs = msFacesExtraction;
+        outStats->paintExtractionMs = msPaintExtraction;
+        outStats->groupsExtractionMs = msGroupsExtraction;
+        outStats->maskExtractionMs = msMaskExtraction;
+        outStats->uvsExtractionMs = msUvsExtraction;
+        outStats->facesConversionMs = msFacesConversion;
+        outStats->meshAllocMoveMs = msMeshAllocMove;
+        outStats->normalsMs = mesh->lastPostInitStats.msFaceNormals + mesh->lastPostInitStats.msVertexNormals;
+        outStats->bboxMs = mesh->lastPostInitStats.msBbox;
+
+        double sumSteps = msVertsExtraction + msFacesExtraction + msPaintExtraction +
+                          msGroupsExtraction + msMaskExtraction + msUvsExtraction +
+                          msFacesConversion + msMeshAllocMove + mesh->lastPostInitStats.msTotal;
+        outStats->headerScanMs = (msTotal > sumSteps) ? (msTotal - sumSteps) : 0.0;
+    }
 
     sculpt_log("[GoZ Import] Successfully imported '%s': %d verts, %d faces (%zu quads, %zu tris), paint=%d, groups=%d, mask=%d in %.2f ms\n",
                info.name.empty() ? "GoZMesh" : info.name.c_str(),

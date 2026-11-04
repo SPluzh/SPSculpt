@@ -50,6 +50,7 @@
 #include "files/FileManager.h"
 #include "files/ImportGoZ.h"
 #include "files/GoZBenchmark.h"
+#include "files/GoZProfiler.h"
 #include "zbrush_bridge/ZBrushBridgeConfig.h"
 #include "zbrush_bridge/ZBrushWatcher.h"
 #include "zbrush_bridge/ZBrushBridgeBenchmark.h"
@@ -340,7 +341,9 @@ int main(int argc, char* argv[]) {
     bool runVoxelMemBench = false;
     bool runGozBench = false;
     bool runBridgeBench = false;
+    bool runGozProfile = false;
     std::string gozBenchPath = "";
+    std::string gozProfilePath = "";
     int benchFaces = 4000000;
     int benchRemeshRes = 0;
     std::string fileToOpen = "";
@@ -356,6 +359,12 @@ int main(int argc, char* argv[]) {
             } else if (arg == "--bench-bridge" || arg == "--bench-zbrush-bridge") {
                 runBridgeBench = true;
                 showConsole = true;
+            } else if (arg == "--profile-goz" || arg == "--profile-goz-import" || arg == "--goz-profile") {
+                runGozProfile = true;
+                showConsole = true;
+                if (i + 1 < numArgs && szArgList[i + 1][0] != L'-') {
+                    gozProfilePath = wideToUtf8(szArgList[++i]);
+                }
             } else if (arg == "--bench-goz" || arg == "--bench-goz-import") {
                 runGozBench = true;
                 showConsole = true;
@@ -404,6 +413,12 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--bench-bridge" || arg == "--bench-zbrush-bridge") {
             runBridgeBench = true;
             showConsole = true;
+        } else if (arg == "--profile-goz" || arg == "--profile-goz-import" || arg == "--goz-profile") {
+            runGozProfile = true;
+            showConsole = true;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                gozProfilePath = argv[++i];
+            }
         } else if (arg == "--bench-goz" || arg == "--bench-goz-import") {
             runGozBench = true;
             showConsole = true;
@@ -668,6 +683,20 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    if (runGozProfile) {
+        bool ok = GoZProfiler::runCliBenchmark(gozProfilePath, scene, renderer, window);
+        fflush(stdout);
+        fflush(stderr);
+        SDL_GL_DeleteContext(glContext);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+#ifdef _WIN32
+        ExitProcess(ok ? 0 : 1);
+#else
+        _exit(ok ? 0 : 1);
+#endif
+    }
+
 
     // Apply default matcap preset globally to the renderer
     int defaultFvIdx = renderer.findMatcapIndexByName("Matcap FV");
@@ -761,6 +790,10 @@ int main(int argc, char* argv[]) {
 
     auto lastFrameTime = std::chrono::high_resolution_clock::now();
     auto lastActivityTime = std::chrono::high_resolution_clock::now(); // for idle throttle
+    GoZProfiler::ProfileRecord pendingLiveSyncProfile;
+    bool pendingLiveSyncActive = false;
+    std::chrono::high_resolution_clock::time_point tLiveSyncPipelineStart;
+
     bool quit = false;
     SDL_Event event;
     std::cout << "[Debug] Entering main loop." << std::endl;
@@ -785,10 +818,12 @@ int main(int argc, char* argv[]) {
         // Check for live ZBrush companion sync updates
         if (zbrushWatcher && zbrushWatcher->hasPendingMesh()) {
             std::vector<uint8_t> gozBuffer;
-            if (zbrushWatcher->consumePendingMesh(gozBuffer)) {
+            ZBrushBridge::WatcherMeshStats watcherStats;
+            if (zbrushWatcher->consumePendingMesh(gozBuffer, &watcherStats)) {
                 auto tGoZStart = std::chrono::high_resolution_clock::now();
                 ImportGoZ::GoZInfo info;
-                auto meshes = ImportGoZ::importGoZ(gozBuffer, false, &info);
+                ImportGoZ::GoZParserStats parserStats;
+                auto meshes = ImportGoZ::importGoZ(gozBuffer, false, &info, &parserStats);
                 gozBuffer.clear();
                 gozBuffer.shrink_to_fit();
                 if (!meshes.empty() && meshes[0]) {
@@ -800,6 +835,7 @@ int main(int argc, char* argv[]) {
                             break;
                         }
                     }
+                    auto tSceneStart = std::chrono::high_resolution_clock::now();
                     if (targetMesh) {
                         incomingMesh->outlinerName = targetMesh->outlinerName;
                         scene.replaceMesh(targetMesh, incomingMesh);
@@ -813,6 +849,46 @@ int main(int argc, char* argv[]) {
                         scene.selectMesh(incomingMesh);
                         scene.getCamera().resetViewToMeshes({incomingMesh}, false);
                     }
+                    auto tSceneEnd = std::chrono::high_resolution_clock::now();
+                    double msScene = std::chrono::duration<double, std::milli>(tSceneEnd - tSceneStart).count();
+
+                    // Prepare live sync profile record
+                    pendingLiveSyncProfile = GoZProfiler::ProfileRecord();
+                    pendingLiveSyncProfile.filePath = watcherStats.filePath.empty() ? (zbrushWatcher->getWatchDirectory() + "mesh.GoZ") : watcherStats.filePath;
+                    pendingLiveSyncProfile.fileSizeBytes = watcherStats.fileSizeBytes;
+                    pendingLiveSyncProfile.fileReadyWaitMs = watcherStats.fileReadyWaitMs;
+                    pendingLiveSyncProfile.diskReadMs = watcherStats.diskReadMs;
+                    auto tConsumed = std::chrono::high_resolution_clock::now();
+                    pendingLiveSyncProfile.queueTransferLatencyMs = std::chrono::duration<double, std::milli>(tConsumed - watcherStats.pushTime).count();
+                    pendingLiveSyncProfile.watcherDetectionLatencyMs = std::max(0.0, std::chrono::duration<double, std::milli>(watcherStats.pushTime - watcherStats.detectTime).count() - watcherStats.fileReadyWaitMs - watcherStats.diskReadMs);
+
+                    pendingLiveSyncProfile.nbVerts = incomingMesh->nbVerts;
+                    pendingLiveSyncProfile.nbFaces = incomingMesh->nbFaces;
+                    pendingLiveSyncProfile.nbQuads = info.nbQuads;
+                    pendingLiveSyncProfile.nbTriangles = info.nbTriangles;
+                    pendingLiveSyncProfile.hasPaint = info.hasPaint;
+                    pendingLiveSyncProfile.nbPaintColors = info.hasPaint ? incomingMesh->nbVerts : 0;
+                    pendingLiveSyncProfile.hasGroups = info.hasGroups;
+                    pendingLiveSyncProfile.nbGroups = info.hasGroups ? incomingMesh->nbFaces : 0;
+                    pendingLiveSyncProfile.hasMask = info.hasMask;
+
+                    pendingLiveSyncProfile.parseHeaderMs = parserStats.headerScanMs;
+                    pendingLiveSyncProfile.parseVertsMs = parserStats.vertsExtractionMs;
+                    pendingLiveSyncProfile.parseFacesMs = parserStats.facesExtractionMs;
+                    pendingLiveSyncProfile.parsePaintMs = parserStats.paintExtractionMs;
+                    pendingLiveSyncProfile.parseGroupsMs = parserStats.groupsExtractionMs;
+                    pendingLiveSyncProfile.parseMaskMs = parserStats.maskExtractionMs;
+                    pendingLiveSyncProfile.parseFacesConversionMs = parserStats.facesConversionMs;
+
+                    pendingLiveSyncProfile.meshAllocMoveMs = parserStats.meshAllocMoveMs;
+                    pendingLiveSyncProfile.normalsComputationMs = incomingMesh->lastPostInitStats.msFaceNormals + incomingMesh->lastPostInitStats.msVertexNormals;
+                    pendingLiveSyncProfile.bboxAndCleanupMs = incomingMesh->lastPostInitStats.msBbox;
+                    pendingLiveSyncProfile.topologyOctreeCheckMs = incomingMesh->lastPostInitStats.msTopology + incomingMesh->lastPostInitStats.msOctree;
+                    pendingLiveSyncProfile.sceneReplaceMs = msScene;
+
+                    tLiveSyncPipelineStart = watcherStats.detectTime.time_since_epoch().count() > 0 ? watcherStats.detectTime : tConsumed;
+                    pendingLiveSyncActive = true;
+
                     scene.setModified(true);
                     hadActivity = true;
                     lastActivityTime = std::chrono::high_resolution_clock::now();
@@ -1164,6 +1240,7 @@ int main(int argc, char* argv[]) {
         if (isSculptingActive && renderer.getTaaResetOnStroke()) {
             renderer.resetTaaHistory();
         }
+        renderer.resetLastUploadTiming();
         auto tRenderStart = std::chrono::high_resolution_clock::now();
         renderer.render(scene);
         double renderMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tRenderStart).count();
@@ -1196,6 +1273,24 @@ int main(int argc, char* argv[]) {
         auto tSwapStart = std::chrono::high_resolution_clock::now();
         SDL_GL_SwapWindow(window);
         double swapMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tSwapStart).count();
+
+        if (pendingLiveSyncActive) {
+            auto tFrameDone = std::chrono::high_resolution_clock::now();
+            const auto& uploadTiming = renderer.getLastUploadTiming();
+            pendingLiveSyncProfile.gpuUploadVboMs = uploadTiming.msVbo;
+            pendingLiveSyncProfile.gpuUploadEboMs = uploadTiming.msEbo;
+            double totalFrameMs = std::chrono::duration<double, std::milli>(tFrameDone - tRenderStart).count();
+            pendingLiveSyncProfile.gpuFirstFrameRenderSwapMs = std::max(0.0, totalFrameMs - uploadTiming.msTotal);
+            pendingLiveSyncProfile.totalPipelineMs = std::chrono::duration<double, std::milli>(tFrameDone - tLiveSyncPipelineStart).count();
+            pendingLiveSyncProfile.timestamp = GoZProfiler::getCurrentTimestamp();
+            pendingLiveSyncProfile.cpuThreads = GoZProfiler::getCpuThreadCount();
+            pendingLiveSyncProfile.availableRamMB = GoZProfiler::getAvailableRamMB();
+            pendingLiveSyncProfile.peakRssMB = GoZProfiler::getPeakRssMB();
+
+            pendingLiveSyncProfile.saveReportToFile("goz_profile_report.txt", true);
+            pendingLiveSyncProfile.printToConsole();
+            pendingLiveSyncActive = false;
+        }
 
         if (isSculptingActive && (renderMs + guiMs + swapMs > 5.0)) {
             sculpt_log("[SCULPT RENDER FRAME] Render: %.2fms | GUI: %.2fms | Swap: %.2fms\n",
