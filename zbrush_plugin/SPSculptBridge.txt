@@ -19,6 +19,7 @@
 // Helper routine: resolves SPSculptBridge.dll in the SPSculptBridgeData subfolder
 [RoutineDef, FindBridgeDll,
     [VarSet, spsculptDllPath, ""]
+    [VarDef, probe, ""]
     // 1. Official ZBrush convention: SPSculptBridgeData/SPSculptBridge.dll
     [VarSet, probe, [FileNameResolvePath, "SPSculptBridgeData/SPSculptBridge.dll"]]
     [If, [FileExists, [Var, probe]],
@@ -44,27 +45,15 @@
             ]
         ]
     ]
-, probe]
+]
 
 // 1. Manual Sync Button
 [IButton, "ZPlugin:SPSculpt:Sync Active", "Export active SubTool to SPSculpt Companion Viewport",
     [VarDef, meshFile, [StrMerge, [Var, spsculptDataDir], "mesh.GoZ"]]
-    [VarDef, camFile, [StrMerge, [Var, spsculptDataDir], "camera.txt"]]
 
     // Perform native GoZ export
     [FileNameSetNext, [Var, meshFile]]
     [IPress, "Tool:Export"]
-
-    // Export camera orientation snapshot
-    [VarDef, xP, 0][VarDef, yP, 0][VarDef, zP, 0]
-    [VarDef, xR, 0][VarDef, yR, 0][VarDef, zR, 0]
-    [VarDef, sc, 0]
-    [TransformGet, xP, yP, zP, xR, yR, zR, sc]
-
-    [MemCreate, SPSculptCamMem, 256, 0]
-    [MemWriteString, SPSculptCamMem, [StrMerge, [Var, xP], ",", [Var, yP], ",", [Var, zP], ",", [Var, xR], ",", [Var, yR], ",", [Var, zR], ",", [Var, sc], "\n"], 0]
-    [MemSaveToFile, SPSculptCamMem, [Var, camFile], 1]
-    [MemDelete, SPSculptCamMem]
 
     [Note, [StrMerge, "SPSculpt: Synced active tool to ", [Var, meshFile]], , 1]
 , , 0.5]

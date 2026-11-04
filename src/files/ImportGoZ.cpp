@@ -51,10 +51,10 @@ inline float readF32(const uint8_t* p) {
     return f;
 }
 
-// Convert from ZBrush Y-down coordinates to OpenGL/SPSculpt Y-up coordinates.
-// Flipping Y and Z preserves triangle/quad winding without mirroring the model.
+// ZBrush 3D coordinates: +Y is Up, +X is Right.
+// We preserve native coordinates (x, y, z) so the model is upright and not mirrored.
 inline glm::vec3 fromZBrush(float x, float y, float z) {
-    return glm::vec3(x, -y, -z);
+    return glm::vec3(x, y, z);
 }
 
 // Fast sRGB to linear conversion for polypaint colors

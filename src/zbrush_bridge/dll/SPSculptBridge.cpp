@@ -86,14 +86,6 @@ void TriggerExportScript(HWND targetHwnd) {
     if (ofs.is_open()) {
         ofs << "// SPSculpt Auto-Sync Command Script\n";
         ofs << "[FileNameSetNext, \"" << meshPath << "\"][IPress, \"Tool:Export\"]\n";
-        ofs << "[VarDef, xP, 0][VarDef, yP, 0][VarDef, zP, 0]\n";
-        ofs << "[VarDef, xR, 0][VarDef, yR, 0][VarDef, zR, 0]\n";
-        ofs << "[VarDef, sc, 0]\n";
-        ofs << "[TransformGet, xP, yP, zP, xR, yR, zR, sc]\n";
-        ofs << "[MemCreate, SPSculptCamMem, 256, 0]\n";
-        ofs << "[MemWriteString, SPSculptCamMem, [StrMerge, [Var, xP], \",\", [Var, yP], \",\", [Var, zP], \",\", [Var, xR], \",\", [Var, yR], \",\", [Var, zR], \",\", [Var, sc], \"\\n\"], 0]\n";
-        ofs << "[MemSaveToFile, SPSculptCamMem, \"" << camPath << "\", 1]\n";
-        ofs << "[MemDelete, SPSculptCamMem]\n";
         ofs.close();
     }
 
