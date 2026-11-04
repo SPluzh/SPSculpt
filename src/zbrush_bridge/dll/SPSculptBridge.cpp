@@ -33,7 +33,7 @@ int g_downX = 0;
 int g_downY = 0;
 float g_maxDragDist = 0.0f;
 
-int g_debounceDelayMs = 250;
+int g_debounceDelayMs = 350;
 std::string g_dataDir = "";
 
 std::string NormalizeDir(std::string path) {
@@ -125,13 +125,22 @@ LRESULT CALLBACK ZBrushSubclassProc(
     HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
     UINT_PTR uIdSubclass, DWORD_PTR dwRefData)
 {
+    HWND timerOwner = g_mainHwnd ? g_mainHwnd : hWnd;
+
     switch (uMsg) {
     case WM_LBUTTONDOWN: {
         g_isLButtonDown = true;
         g_downX = GET_X_LPARAM(lParam);
         g_downY = GET_Y_LPARAM(lParam);
         g_maxDragDist = 0.0f;
-        KillTimer(hWnd, SPSCULPT_TIMER_ID);
+        KillTimer(timerOwner, SPSCULPT_TIMER_ID);
+        break;
+    }
+
+    case WM_RBUTTONDOWN:
+    case WM_MBUTTONDOWN: {
+        // Cancel debounce timer if user starts camera navigation with RMB or MMB
+        KillTimer(timerOwner, SPSCULPT_TIMER_ID);
         break;
     }
 
@@ -152,7 +161,7 @@ LRESULT CALLBACK ZBrushSubclassProc(
         // Check if movement indicates a sculpt stroke (>= 5 px)
         // Click on UI buttons typically has < 5 px delta
         if (g_maxDragDist >= 5.0f) {
-            SetTimer(hWnd, SPSCULPT_TIMER_ID, static_cast<UINT>(g_debounceDelayMs), NULL);
+            SetTimer(timerOwner, SPSCULPT_TIMER_ID, static_cast<UINT>(g_debounceDelayMs), NULL);
         }
         g_maxDragDist = 0.0f;
         break;
@@ -160,8 +169,8 @@ LRESULT CALLBACK ZBrushSubclassProc(
 
     case WM_TIMER: {
         if (wParam == SPSCULPT_TIMER_ID) {
-            KillTimer(hWnd, SPSCULPT_TIMER_ID);
-            TriggerExportScript(g_mainHwnd ? g_mainHwnd : hWnd);
+            KillTimer(timerOwner, SPSCULPT_TIMER_ID);
+            TriggerExportScript(timerOwner);
             return 0;
         }
         break;
