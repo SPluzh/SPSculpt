@@ -168,6 +168,7 @@ add_executable(SPSculpt
     src/files/ImportGLTF.cpp
     src/files/ExportGLTF.cpp
     src/files/ImportFBX.cpp
+    src/files/ImportGoZ.cpp
     src/files/MeshUtils.cpp
     # editing
     src/editing/manifold/ManifoldBridge.cpp

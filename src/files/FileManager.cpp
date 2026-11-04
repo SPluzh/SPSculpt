@@ -10,6 +10,7 @@
 #include "files/ImportGLTF.h"
 #include "files/ExportGLTF.h"
 #include "files/ImportFBX.h"
+#include "files/ImportGoZ.h"
 #include "common/FormatConstants.h"
 #include "common/StringUtils.h"
 #include "common/Logger.h"
@@ -145,6 +146,12 @@ std::vector<Mesh*> FileManager::importFiles(const std::string& path,
         std::vector<uint8_t> buffer = readBinaryFile(path);
         if (buffer.empty()) return {};
         return ImportPLY::importPLY(buffer);
+    }
+    
+    if (ext == "goz") {
+        std::vector<uint8_t> buffer = readBinaryFile(path);
+        if (buffer.empty()) return {};
+        return ImportGoZ::importGoZ(buffer);
     }
     
     if (ext == "glb") {

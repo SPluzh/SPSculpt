@@ -48,6 +48,7 @@
 #include "common/Logger.h"
 #include "brushes/BrushPresetManager.h"
 #include "files/FileManager.h"
+#include "files/GoZBenchmark.h"
 #include "stb_image.h"
 #include "editing/PrimitiveTool.h"
 #include <cctype>
@@ -72,6 +73,7 @@ static bool is3DModelFile(const std::string& path) {
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
     return (ext == ".obj" || ext == ".stl" || ext == ".ply" || 
             ext == ".glb" || ext == ".gltf" || ext == ".fbx" ||
+            ext == ".goz" ||
             ext == Format::PROJECT_DOT_EXT || ext == Format::LEGACY_DOT_EXT);
 }
 
@@ -332,6 +334,8 @@ int main(int argc, char* argv[]) {
     bool runTrimClipBench = false;
     bool runVoxelBench = false;
     bool runVoxelMemBench = false;
+    bool runGozBench = false;
+    std::string gozBenchPath = "";
     int benchFaces = 4000000;
     int benchRemeshRes = 0;
     std::string fileToOpen = "";
@@ -344,6 +348,12 @@ int main(int argc, char* argv[]) {
             std::string arg = wideToUtf8(szArgList[i]);
             if (arg == "--console" || arg == "-console" || arg == "-c" || arg == "--show-console") {
                 showConsole = true;
+            } else if (arg == "--bench-goz" || arg == "--bench-goz-import") {
+                runGozBench = true;
+                showConsole = true;
+                if (i + 1 < numArgs && szArgList[i + 1][0] != L'-') {
+                    gozBenchPath = wideToUtf8(szArgList[++i]);
+                }
             } else if (arg == "--test-claybuildup-50m") {
                 runBench = true;
                 benchFaces = 50000000;
@@ -383,6 +393,12 @@ int main(int argc, char* argv[]) {
         std::string arg = argv[i];
         if (arg == "--console" || arg == "-console" || arg == "-c" || arg == "--show-console") {
             showConsole = true;
+        } else if (arg == "--bench-goz" || arg == "--bench-goz-import") {
+            runGozBench = true;
+            showConsole = true;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                gozBenchPath = argv[++i];
+            }
         } else if (arg == "--test-claybuildup-50m") {
             runBench = true;
             benchFaces = 50000000;
@@ -455,6 +471,17 @@ int main(int argc, char* argv[]) {
 
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
+
+    if (runGozBench) {
+        bool success = GoZBenchmark::run(gozBenchPath);
+        fflush(stdout);
+        fflush(stderr);
+#ifdef _WIN32
+        ExitProcess(success ? 0 : 1);
+#else
+        _exit(success ? 0 : 1);
+#endif
+    }
 
     if (runVoxelBench && !runBench && !runTrimClipBench) {
         bool success = VoxelRemeshBenchmark::run(benchRemeshRes, runVoxelMemBench);

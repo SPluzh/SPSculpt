@@ -1,0 +1,40 @@
+// ==============================================================================
+// SPSculpt Companion Viewport - ZBrush Plugin (ZScript)
+// ==============================================================================
+// Installation:
+//   Copy this file (or compiled .zsc) to:
+//   C:\Program Files\Pixologic\ZBrush 202X\ZStartup\ZPlugs64\
+//   or
+//   C:\Program Files\Maxon ZBrush 202X\ZStartup\ZPlugs64\
+//
+// Description:
+//   Exports the active SubTool in native binary GoZ format to the SPSculpt
+//   exchange directory (C:/Users/Public/Documents/SPSculptData/mesh.GoZ)
+//   and exports camera orientation for instant synchronization.
+// ==============================================================================
+
+[ISubPalette, "ZPlugin:SPSculpt"]
+
+[IButton, "ZPlugin:SPSculpt:Sync Active", "Export active SubTool to SPSculpt Companion Viewport",
+    // 1. Data exchange directory
+    [VarDef, exportDir, "C:/Users/Public/Documents/SPSculptData/"]
+    [VarDef, meshFile, [StrMerge, [Var, exportDir], "mesh.GoZ"]]
+    [VarDef, camFile, [StrMerge, [Var, exportDir], "camera.txt"]]
+
+    // 2. Perform native GoZ export
+    [FileNameSetNext, [Var, meshFile]]
+    [IPress, "Tool:Export"]
+
+    // 3. Export camera orientation snapshot
+    [VarDef, xP, 0][VarDef, yP, 0][VarDef, zP, 0]
+    [VarDef, xR, 0][VarDef, yR, 0][VarDef, zR, 0]
+    [VarDef, sc, 0]
+    [TransformGet, xP, yP, zP, xR, yR, zR, sc]
+
+    [MemCreate, SPSculptCamMem, 256, 0]
+    [MemWriteString, SPSculptCamMem, [StrMerge, [Var, xP], ",", [Var, yP], ",", [Var, zP], ",", [Var, xR], ",", [Var, yR], ",", [Var, zR], ",", [Var, sc], "\n"], 0]
+    [MemSaveToFile, SPSculptCamMem, [Var, camFile], 1]
+    [MemDelete, SPSculptCamMem]
+
+    [Note, [StrMerge, "SPSculpt: Synced active tool to ", [Var, meshFile]], , 1]
+, , 0.5] // Button width

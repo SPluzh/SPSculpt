@@ -12,7 +12,7 @@ namespace FileDialog {
 
 std::vector<FilterSpec> getImportFilters() {
     return {
-        { "All Supported Files (*.spsculpt, *.sgl, *.obj, *.stl, *.ply, *.glb, *.gltf, *.fbx)", "*.spsculpt;*.sgl;*.obj;*.stl;*.ply;*.glb;*.gltf;*.fbx" },
+        { "All Supported Files (*.spsculpt, *.sgl, *.obj, *.stl, *.ply, *.glb, *.gltf, *.fbx, *.goz)", "*.spsculpt;*.sgl;*.obj;*.stl;*.ply;*.glb;*.gltf;*.fbx;*.goz" },
         { "SPSculpt Project (*.spsculpt)", "*.spsculpt" },
         { "Legacy SculptGL Scene (*.sgl)", "*.sgl" },
         { "Wavefront OBJ (*.obj)", "*.obj" },
@@ -20,6 +20,7 @@ std::vector<FilterSpec> getImportFilters() {
         { "PLY (*.ply)", "*.ply" },
         { "GLTF / GLB (*.glb, *.gltf)", "*.glb;*.gltf" },
         { "Autodesk FBX (*.fbx)", "*.fbx" },
+        { "ZBrush GoZ (*.goz)", "*.goz" },
         { "All Files (*.*)", "*.*" }
     };
 }
