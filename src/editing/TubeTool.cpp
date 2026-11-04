@@ -308,6 +308,7 @@ bool TubeTool::raycastSurface(
         glm::vec3 localRayOrigin = glm::vec3(invMatrix * glm::vec4(ray.origin, 1.0f));
         glm::vec3 localRayDir = glm::normalize(glm::vec3(invMatrix * glm::vec4(ray.dir, 0.0f)));
 
+        mesh->ensureOctreeBuilt();
         std::vector<uint32_t> candidateFaces = mesh->octree.collectIntersectRay(
             localRayOrigin.x, localRayOrigin.y, localRayOrigin.z,
             localRayDir.x, localRayDir.y, localRayDir.z

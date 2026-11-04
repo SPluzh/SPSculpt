@@ -2953,6 +2953,20 @@ void AngleRenderer::buildPolyGroupBuffers(const Mesh* mesh, MeshRenderBuffers* b
     glBindVertexArray(0);
 }
 
+void AngleRenderer::releaseMeshBuffers(const Mesh* mesh) {
+    if (!mesh) return;
+    if (mesh->dynamicCacheMesh) {
+        auto itDyn = m_meshBuffers.find(mesh->dynamicCacheMesh.get());
+        if (itDyn != m_meshBuffers.end()) {
+            m_meshBuffers.erase(itDyn);
+        }
+    }
+    auto it = m_meshBuffers.find(mesh);
+    if (it != m_meshBuffers.end()) {
+        m_meshBuffers.erase(it);
+    }
+}
+
 bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
     if (!mesh) return false;
     bool uploaded = false;

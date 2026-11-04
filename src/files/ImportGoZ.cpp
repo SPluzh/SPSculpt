@@ -7,7 +7,11 @@
 #include <cmath>
 #include <chrono>
 #include <algorithm>
+#include <array>
 #include <iostream>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 namespace ImportGoZ {
 
@@ -57,10 +61,15 @@ inline glm::vec3 fromZBrush(float x, float y, float z) {
     return glm::vec3(x, y, z);
 }
 
-// Fast sRGB to linear conversion for polypaint colors
-inline float srgbToLinear(float c) {
-    return (c <= 0.04045f) ? (c / 12.92f) : std::pow((c + 0.055f) / 1.055f, 2.4f);
-}
+// Fast sRGB to linear conversion LUT for polypaint colors (eliminates millions of expensive std::pow calls)
+static const auto srgbLut = []() {
+    std::array<float, 256> lut{};
+    for (int i = 0; i < 256; ++i) {
+        float c = static_cast<float>(i) / 255.0f;
+        lut[i] = (c <= 0.04045f) ? (c / 12.92f) : std::pow((c + 0.055f) / 1.055f, 2.4f);
+    }
+    return lut;
+}();
 
 struct RawFace {
     uint32_t v[4];
@@ -136,30 +145,18 @@ std::vector<Mesh*> importGoZ(const uint8_t* data, size_t size, bool triangulateQ
 
             case TAG_VERTICES: {
                 size_t nbV = std::min<size_t>(static_cast<size_t>(count), payloadLen / 12);
-                verts.reserve(nbV * 3);
-                for (size_t i = 0; i < nbV; ++i) {
-                    const uint8_t* vp = payload + i * 12;
-                    glm::vec3 v = fromZBrush(readF32(vp), readF32(vp + 4), readF32(vp + 8));
-                    verts.push_back(v.x);
-                    verts.push_back(v.y);
-                    verts.push_back(v.z);
-                }
+                verts.resize(nbV * 3);
+                // In x86_64 IEEE-754 little-endian, binary representation matches GoZ layout directly
+                std::memcpy(verts.data(), payload, nbV * 3 * sizeof(float));
                 info.nbVerts = nbV;
                 break;
             }
 
             case TAG_FACES: {
                 size_t nbF = std::min<size_t>(static_cast<size_t>(count), payloadLen / 16);
-                rawFaces.reserve(nbF);
-                for (size_t i = 0; i < nbF; ++i) {
-                    const uint8_t* fp = payload + i * 16;
-                    RawFace f;
-                    f.v[0] = readU32(fp);
-                    f.v[1] = readU32(fp + 4);
-                    f.v[2] = readU32(fp + 8);
-                    f.v[3] = readU32(fp + 12);
-                    rawFaces.push_back(f);
-                }
+                rawFaces.resize(nbF);
+                // Block memcpy for 16-byte RawFace structures
+                std::memcpy(rawFaces.data(), payload, nbF * sizeof(RawFace));
                 info.nbFaces = nbF;
                 break;
             }
@@ -168,6 +165,7 @@ std::vector<Mesh*> importGoZ(const uint8_t* data, size_t size, bool triangulateQ
                 size_t nbP = std::min<size_t>(static_cast<size_t>(count), payloadLen / 4);
                 rawPaint.resize(nbP * 3);
                 bool anyNonWhite = false;
+                #pragma omp parallel for schedule(static) if(nbP > 10000) reduction(|:anyNonWhite)
                 for (size_t i = 0; i < nbP; ++i) {
                     const uint8_t* pp = payload + i * 4; // B, G, R, 0 (sRGB)
                     uint8_t b = pp[0];
@@ -176,9 +174,9 @@ std::vector<Mesh*> importGoZ(const uint8_t* data, size_t size, bool triangulateQ
                     if (r != 255 || g != 255 || b != 255) {
                         anyNonWhite = true;
                     }
-                    rawPaint[i * 3 + 0] = srgbToLinear(static_cast<float>(r) / 255.0f);
-                    rawPaint[i * 3 + 1] = srgbToLinear(static_cast<float>(g) / 255.0f);
-                    rawPaint[i * 3 + 2] = srgbToLinear(static_cast<float>(b) / 255.0f);
+                    rawPaint[i * 3 + 0] = srgbLut[r];
+                    rawPaint[i * 3 + 1] = srgbLut[g];
+                    rawPaint[i * 3 + 2] = srgbLut[b];
                 }
                 if (anyNonWhite && nbP > 0) {
                     hasPaintData = true;
@@ -189,10 +187,8 @@ std::vector<Mesh*> importGoZ(const uint8_t* data, size_t size, bool triangulateQ
 
             case TAG_POLYGROUPS: {
                 size_t nbG = std::min<size_t>(static_cast<size_t>(count), payloadLen / 2);
-                rawGroups.reserve(nbG);
-                for (size_t i = 0; i < nbG; ++i) {
-                    rawGroups.push_back(readU16(payload + i * 2));
-                }
+                rawGroups.resize(nbG);
+                std::memcpy(rawGroups.data(), payload, nbG * sizeof(uint16_t));
                 hasGroupData = (!rawGroups.empty());
                 info.hasGroups = hasGroupData;
                 break;
@@ -202,10 +198,11 @@ std::vector<Mesh*> importGoZ(const uint8_t* data, size_t size, bool triangulateQ
                 size_t nbM = std::min<size_t>(static_cast<size_t>(count), payloadLen / 2);
                 rawMask.resize(nbM);
                 bool anyMasked = false;
+                #pragma omp parallel for schedule(static) if(nbM > 10000) reduction(|:anyMasked)
                 for (size_t i = 0; i < nbM; ++i) {
                     uint16_t mVal = readU16(payload + i * 2);
                     // In GoZ: 65535 = unmasked (1.0f in SPSculpt), 0 = fully masked (0.0f)
-                    float mFloat = static_cast<float>(mVal) / 65535.0f;
+                    float mFloat = static_cast<float>(mVal) * (1.0f / 65535.0f);
                     rawMask[i] = mFloat;
                     if (mVal != 65535) anyMasked = true;
                 }
@@ -219,13 +216,12 @@ std::vector<Mesh*> importGoZ(const uint8_t* data, size_t size, bool triangulateQ
             case TAG_UVS: {
                 // 4 corners per face, 2 floats per corner = 32 bytes per face
                 size_t nbU = std::min<size_t>(static_cast<size_t>(count), payloadLen / 32);
-                rawUVs.reserve(nbU * 8);
+                rawUVs.resize(nbU * 8);
+                #pragma omp parallel for schedule(static) if(nbU > 5000)
                 for (size_t i = 0; i < nbU * 4; ++i) {
                     const uint8_t* up = payload + i * 8;
-                    float u = readF32(up);
-                    float v = 1.0f - readF32(up + 4); // GoZ stores V downwards
-                    rawUVs.push_back(u);
-                    rawUVs.push_back(v);
+                    rawUVs[i * 2 + 0] = readF32(up);
+                    rawUVs[i * 2 + 1] = 1.0f - readF32(up + 4); // GoZ stores V downwards
                 }
                 hasUVData = (!rawUVs.empty());
                 info.hasUVs = hasUVData;
@@ -258,6 +254,7 @@ std::vector<Mesh*> importGoZ(const uint8_t* data, size_t size, bool triangulateQ
     }
 
     uint32_t nbTotalVerts = static_cast<uint32_t>(verts.size() / 3);
+    size_t rawCount = rawFaces.size();
 
     // Process faces (quad preservation or triangulation)
     std::vector<uint32_t> outFaces;
@@ -269,64 +266,82 @@ std::vector<Mesh*> importGoZ(const uint8_t* data, size_t size, bool triangulateQ
     size_t nbTris = 0;
 
     if (triangulateQuads) {
-        outFaces.reserve(rawFaces.size() * 8);
-        if (hasGroupData) outGroups.reserve(rawFaces.size() * 2);
+        std::vector<uint32_t> triOffsets(rawCount + 1, 0);
+        #pragma omp parallel for schedule(static) if(rawCount > 10000)
+        for (size_t fi = 0; fi < rawCount; ++fi) {
+            triOffsets[fi + 1] = (rawFaces[fi].isQuad() && rawFaces[fi].v[3] < nbTotalVerts) ? 2 : 1;
+        }
+        for (size_t fi = 0; fi < rawCount; ++fi) {
+            triOffsets[fi + 1] += triOffsets[fi];
+        }
+        size_t totalTris = triOffsets[rawCount];
+        outFaces.resize(totalTris * 4);
+        if (hasGroupData) outGroups.resize(totalTris);
 
-        for (size_t fi = 0; fi < rawFaces.size(); ++fi) {
+        size_t localQuads = 0;
+        size_t localTris = 0;
+
+        #pragma omp parallel for schedule(static) if(rawCount > 10000) reduction(+:localQuads, localTris)
+        for (size_t fi = 0; fi < rawCount; ++fi) {
             const auto& f = rawFaces[fi];
             if (f.v[0] >= nbTotalVerts || f.v[1] >= nbTotalVerts || f.v[2] >= nbTotalVerts) continue;
 
             uint32_t gid = (fi < rawGroups.size()) ? static_cast<uint32_t>(rawGroups[fi]) : 0;
+            size_t outIdx = triOffsets[fi];
 
             if (f.isQuad() && f.v[3] < nbTotalVerts) {
-                nbQuads++;
+                localQuads++;
                 // Triangle 1: (v0, v1, v2)
-                outFaces.push_back(f.v[0]);
-                outFaces.push_back(f.v[1]);
-                outFaces.push_back(f.v[2]);
-                outFaces.push_back(TRI_INDEX);
-                if (hasGroupData) outGroups.push_back(gid);
+                outFaces[outIdx * 4 + 0] = f.v[0];
+                outFaces[outIdx * 4 + 1] = f.v[1];
+                outFaces[outIdx * 4 + 2] = f.v[2];
+                outFaces[outIdx * 4 + 3] = TRI_INDEX;
+                if (hasGroupData) outGroups[outIdx] = gid;
 
                 // Triangle 2: (v0, v2, v3)
-                outFaces.push_back(f.v[0]);
-                outFaces.push_back(f.v[2]);
-                outFaces.push_back(f.v[3]);
-                outFaces.push_back(TRI_INDEX);
-                if (hasGroupData) outGroups.push_back(gid);
+                outFaces[(outIdx + 1) * 4 + 0] = f.v[0];
+                outFaces[(outIdx + 1) * 4 + 1] = f.v[2];
+                outFaces[(outIdx + 1) * 4 + 2] = f.v[3];
+                outFaces[(outIdx + 1) * 4 + 3] = TRI_INDEX;
+                if (hasGroupData) outGroups[outIdx + 1] = gid;
             } else {
-                nbTris++;
-                outFaces.push_back(f.v[0]);
-                outFaces.push_back(f.v[1]);
-                outFaces.push_back(f.v[2]);
-                outFaces.push_back(TRI_INDEX);
-                if (hasGroupData) outGroups.push_back(gid);
+                localTris++;
+                outFaces[outIdx * 4 + 0] = f.v[0];
+                outFaces[outIdx * 4 + 1] = f.v[1];
+                outFaces[outIdx * 4 + 2] = f.v[2];
+                outFaces[outIdx * 4 + 3] = TRI_INDEX;
+                if (hasGroupData) outGroups[outIdx] = gid;
             }
         }
+        nbQuads = localQuads;
+        nbTris = localTris;
     } else {
-        outFaces.reserve(rawFaces.size() * 4);
-        if (hasGroupData) outGroups.reserve(rawFaces.size());
+        outFaces.resize(rawCount * 4);
+        std::memcpy(outFaces.data(), rawFaces.data(), rawCount * sizeof(RawFace));
 
-        for (size_t fi = 0; fi < rawFaces.size(); ++fi) {
-            const auto& f = rawFaces[fi];
-            if (f.v[0] >= nbTotalVerts || f.v[1] >= nbTotalVerts || f.v[2] >= nbTotalVerts) continue;
-
-            uint32_t gid = (fi < rawGroups.size()) ? static_cast<uint32_t>(rawGroups[fi]) : 0;
-
-            if (f.isQuad() && f.v[3] < nbTotalVerts) {
-                nbQuads++;
-                outFaces.push_back(f.v[0]);
-                outFaces.push_back(f.v[1]);
-                outFaces.push_back(f.v[2]);
-                outFaces.push_back(f.v[3]);
-            } else {
-                nbTris++;
-                outFaces.push_back(f.v[0]);
-                outFaces.push_back(f.v[1]);
-                outFaces.push_back(f.v[2]);
-                outFaces.push_back(TRI_INDEX);
+        if (hasGroupData) {
+            outGroups.resize(rawCount);
+            #pragma omp parallel for schedule(static) if(rawCount > 10000)
+            for (size_t fi = 0; fi < rawCount; ++fi) {
+                outGroups[fi] = (fi < rawGroups.size()) ? static_cast<uint32_t>(rawGroups[fi]) : 0;
             }
-            if (hasGroupData) outGroups.push_back(gid);
         }
+
+        size_t localQuads = 0;
+        size_t localTris = 0;
+
+        #pragma omp parallel for schedule(static) if(rawCount > 10000) reduction(+:localQuads, localTris)
+        for (size_t fi = 0; fi < rawCount; ++fi) {
+            uint32_t& v3 = outFaces[fi * 4 + 3];
+            if (v3 != NO_VERTEX && v3 < nbTotalVerts) {
+                localQuads++;
+            } else {
+                v3 = TRI_INDEX;
+                localTris++;
+            }
+        }
+        nbQuads = localQuads;
+        nbTris = localTris;
     }
 
     info.nbQuads = nbQuads;
@@ -368,6 +383,11 @@ std::vector<Mesh*> importGoZ(const uint8_t* data, size_t size, bool triangulateQ
         }
     }
 
+    // Free raw faces and raw groups memory early to minimize peak RAM
+    rawFaces.clear(); rawFaces.shrink_to_fit();
+    rawGroups.clear(); rawGroups.shrink_to_fit();
+    rawUVs.clear(); rawUVs.shrink_to_fit();
+
     // Create and initialize Mesh
     Mesh* mesh = new Mesh();
     mesh->verts = std::move(verts);
@@ -392,37 +412,24 @@ std::vector<Mesh*> importGoZ(const uint8_t* data, size_t size, bool triangulateQ
 
     // Materials and mask
     mesh->materials.resize(mesh->nbVerts * 3);
+    #pragma omp parallel for schedule(static) if(mesh->nbVerts > 10000)
     for (int i = 0; i < mesh->nbVerts; ++i) {
         mesh->materials[i * 3 + 0] = 0.5f; // roughness
         mesh->materials[i * 3 + 1] = 0.0f; // metalness
         mesh->materials[i * 3 + 2] = (hasMaskData && static_cast<size_t>(i) < rawMask.size())
                                      ? rawMask[i] : 1.0f; // 1.0f = unmasked
     }
+    rawMask.clear(); rawMask.shrink_to_fit();
 
     // UVs
     if (!uvAr.empty() && uvfAr.size() == mesh->faces.size()) {
         mesh->initTexCoordsDataFromOBJData(uvAr, uvfAr);
     }
 
-    // Compute topology
-    std::vector<uint32_t> vrvStartCount;
-    std::vector<uint32_t> vertRingVert;
-    std::vector<uint32_t> vrfStartCount;
-    std::vector<uint32_t> vertRingFace;
-    std::vector<uint8_t> vertOnEdge;
-
-    computeTopology(
-        mesh->nbVerts, mesh->faces.data(), mesh->nbFaces,
-        vrfStartCount, vertRingFace, vrvStartCount, vertRingVert, vertOnEdge
-    );
-
-    mesh->vrfStartCount = std::move(vrfStartCount);
-    mesh->vertRingFace = std::move(vertRingFace);
-    mesh->vrvStartCount = std::move(vrvStartCount);
-    mesh->vertRingVert = std::move(vertRingVert);
-    mesh->vertOnEdge = std::move(vertOnEdge);
-
-    mesh->postInit();
+    // Fast postInit for viewport display:
+    // Skips heavy computeTopology and octree build, computing vertex normals directly.
+    // Topology and octree will be built lazily on demand if sculpting tools are activated.
+    mesh->postInit(false, false);
 
     if (outInfo) {
         *outInfo = info;

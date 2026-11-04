@@ -503,6 +503,7 @@ public:
 
     // Mesh buffer uploads
     bool uploadIfDirty(Mesh* mesh);
+    void releaseMeshBuffers(const Mesh* mesh);
 
 private:
     void generateTriangleIndices(const Mesh* mesh, std::vector<uint32_t>& outIndices);

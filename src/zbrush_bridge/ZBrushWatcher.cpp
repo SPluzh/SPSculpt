@@ -80,6 +80,7 @@ bool ZBrushWatcher::consumePendingMesh(std::vector<uint8_t>& outBuffer) {
     if (m_pendingMeshBuffer.empty()) return false;
     outBuffer = std::move(m_pendingMeshBuffer);
     m_pendingMeshBuffer.clear();
+    m_pendingMeshBuffer.shrink_to_fit();
     m_meshPending.store(false);
     return true;
 }
@@ -97,36 +98,84 @@ bool ZBrushWatcher::consumePendingCamera(CameraSnapshot& outCamera) {
 bool ZBrushWatcher::isFileReady(const std::string& filePath, int maxRetries, int delayMs) {
 #ifdef _WIN32
     std::wstring wpath(filePath.begin(), filePath.end());
+    LONGLONG lastSize = -1;
+    int stableCount = 0;
+
     for (int i = 0; i < maxRetries; ++i) {
         if (m_stopRequested.load()) return false;
 
+        // Try exclusive open (dwShareMode = 0) to ensure writer has completed and closed the file
         HANDLE hFile = CreateFileW(
             wpath.c_str(),
-            GENERIC_READ,
-            FILE_SHARE_READ, // Test if writer released write lock
+            GENERIC_READ | GENERIC_WRITE,
+            0,
             NULL,
             OPEN_EXISTING,
             FILE_ATTRIBUTE_NORMAL,
             NULL
         );
 
+        if (hFile == INVALID_HANDLE_VALUE) {
+            DWORD err = GetLastError();
+            if (err == ERROR_ACCESS_DENIED) {
+                hFile = CreateFileW(
+                    wpath.c_str(),
+                    GENERIC_READ,
+                    0,
+                    NULL,
+                    OPEN_EXISTING,
+                    FILE_ATTRIBUTE_NORMAL,
+                    NULL
+                );
+            }
+        }
+
         if (hFile != INVALID_HANDLE_VALUE) {
             LARGE_INTEGER size;
             if (GetFileSizeEx(hFile, &size) && size.QuadPart >= 32) {
-                CloseHandle(hFile);
-                return true;
+                if (lastSize > 0 && size.QuadPart == lastSize) {
+                    stableCount++;
+                    if (stableCount >= 2) {
+                        CloseHandle(hFile);
+                        return true;
+                    }
+                } else {
+                    lastSize = size.QuadPart;
+                    stableCount = 1;
+                }
+            } else {
+                lastSize = -1;
+                stableCount = 0;
             }
             CloseHandle(hFile);
+        } else {
+            lastSize = -1;
+            stableCount = 0;
         }
+
         std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
     }
     return false;
 #else
+    uintmax_t lastSize = 0;
+    int stableCount = 0;
     for (int i = 0; i < maxRetries; ++i) {
         if (m_stopRequested.load()) return false;
         if (fs::exists(filePath)) {
-            auto sz = fs::file_size(filePath);
-            if (sz >= 32) return true;
+            std::error_code ec;
+            auto sz = fs::file_size(filePath, ec);
+            if (!ec && sz >= 32) {
+                if (lastSize > 0 && sz == lastSize) {
+                    stableCount++;
+                    if (stableCount >= 2) return true;
+                } else {
+                    lastSize = sz;
+                    stableCount = 1;
+                }
+            } else {
+                lastSize = 0;
+                stableCount = 0;
+            }
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
     }
@@ -162,6 +211,7 @@ void ZBrushWatcher::watchThreadFunc() {
 
     alignas(DWORD) BYTE notifyBuffer[4096];
     HANDLE waitHandles[2] = { static_cast<HANDLE>(m_stopEvent), ov.hEvent };
+    FILETIME lastMeshTime = {0, 0};
 
     while (!m_stopRequested.load()) {
         ResetEvent(ov.hEvent);
@@ -220,18 +270,31 @@ void ZBrushWatcher::watchThreadFunc() {
 
                 if (checkMesh) {
                     std::string meshPath = getWatchDirectory() + "mesh.GoZ";
-                    if (isFileReady(meshPath)) {
-                        // Read binary GoZ into buffer
-                        std::ifstream file(meshPath, std::ios::binary | std::ios::ate);
-                        if (file.is_open()) {
-                            std::streamsize size = file.tellg();
-                            if (size >= 32) {
-                                file.seekg(0, std::ios::beg);
-                                std::vector<uint8_t> buffer(size);
-                                if (file.read(reinterpret_cast<char*>(buffer.data()), size)) {
-                                    std::lock_guard<std::mutex> lock(m_meshMutex);
-                                    m_pendingMeshBuffer = std::move(buffer);
-                                    m_meshPending.store(true);
+                    if (isFileReady(meshPath, 35, 30)) {
+                        std::wstring wMeshPath(meshPath.begin(), meshPath.end());
+                        WIN32_FILE_ATTRIBUTE_DATA attrData;
+                        bool isNew = true;
+                        if (GetFileAttributesExW(wMeshPath.c_str(), GetFileExInfoStandard, &attrData)) {
+                            if (lastMeshTime.dwLowDateTime == attrData.ftLastWriteTime.dwLowDateTime &&
+                                lastMeshTime.dwHighDateTime == attrData.ftLastWriteTime.dwHighDateTime) {
+                                isNew = false;
+                            } else {
+                                lastMeshTime = attrData.ftLastWriteTime;
+                            }
+                        }
+                        if (isNew) {
+                            // Read binary GoZ into buffer
+                            std::ifstream file(meshPath, std::ios::binary | std::ios::ate);
+                            if (file.is_open()) {
+                                std::streamsize size = file.tellg();
+                                if (size >= 32) {
+                                    file.seekg(0, std::ios::beg);
+                                    std::vector<uint8_t> buffer(size);
+                                    if (file.read(reinterpret_cast<char*>(buffer.data()), size)) {
+                                        std::lock_guard<std::mutex> lock(m_meshMutex);
+                                        m_pendingMeshBuffer = std::move(buffer);
+                                        m_meshPending.store(true);
+                                    }
                                 }
                             }
                         }

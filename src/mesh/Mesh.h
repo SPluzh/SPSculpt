@@ -296,13 +296,18 @@ public:
     // Initialization from JS-managed arrays
 
     void allocate(int nbV, int nbF, int nbRF, int nbRV);
-    void postInit(bool buildOctree = true);
+    void postInit(bool buildOctree = true, bool buildTopology = true);
+    void ensureOctreeBuilt();
+    void ensureTopologyBuilt();
     void updateAfterLayerBake();
 
     // Pointer getters for WASM / bindings
 
 
-    Octree* getOctree() { return &octree; }
+    Octree* getOctree() {
+        ensureOctreeBuilt();
+        return &octree;
+    }
 
     void setDirty(bool dirty) { isDirty = dirty; }
     bool getDirty() const { return isDirty; }

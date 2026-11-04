@@ -2,12 +2,27 @@
 #include "files/ImportGoZ.h"
 #include "files/FileManager.h"
 #include "mesh/Mesh.h"
+#include "scene/Scene.h"
 #include <iostream>
 #include <chrono>
 #include <vector>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <psapi.h>
+inline size_t getProcessMemoryMB() {
+    PROCESS_MEMORY_COUNTERS pmc;
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
+        return pmc.WorkingSetSize / (1024 * 1024);
+    }
+    return 0;
+}
+#else
+inline size_t getProcessMemoryMB() { return 0; }
+#endif
 
 namespace GoZBenchmark {
 
@@ -117,6 +132,72 @@ inline bool run(const std::string& customPath = "") {
         }
 
         delete mQ;
+
+        // Test 4: Live Sync RAM Stability Stress Test (10 Sequential Replacements)
+        std::cout << "\n  - Live Sync RAM Stability Stress Test (10 Sequential Mesh Replacements):\n";
+        {
+            Scene stressScene;
+            size_t deletedCallbacksCalled = 0;
+            stressScene.setOnMeshDeletedCallback([&deletedCallbacksCalled](Mesh* /*m*/) {
+                deletedCallbacksCalled++;
+            });
+
+            size_t memIter1 = 0;
+            size_t memIter10 = 0;
+
+            for (int it = 0; it < 10; ++it) {
+                auto tA = std::chrono::high_resolution_clock::now();
+
+                // Simulate ZBrushWatcher -> NativeMain workflow:
+                // 1. Copy buffer (simulating incoming IPC buffer)
+                std::vector<uint8_t> gozBuf = buffer;
+                // 2. Parse GoZ mesh (Native Quads)
+                auto meshes = ImportGoZ::importGoZ(gozBuf, false);
+                // 3. Immediately release GoZ buffer capacity
+                gozBuf.clear();
+                gozBuf.shrink_to_fit();
+
+                if (meshes.empty() || !meshes[0]) {
+                    std::cout << "    [FAIL] Iteration " << (it + 1) << " produced null mesh!\n";
+                    allPassed = false;
+                    break;
+                }
+
+                Mesh* incoming = meshes[0];
+                if (stressScene.getMeshes().empty()) {
+                    stressScene.addMesh(incoming);
+                } else {
+                    stressScene.replaceMesh(stressScene.getMeshes()[0], incoming);
+                }
+
+                auto tB = std::chrono::high_resolution_clock::now();
+                double msIt = std::chrono::duration<double, std::milli>(tB - tA).count();
+
+                size_t currentMem = getProcessMemoryMB();
+                if (it == 0) memIter1 = currentMem;
+                if (it == 9) memIter10 = currentMem;
+
+                std::cout << "    [Sync #" << std::setw(2) << (it + 1) << "] "
+                          << std::fixed << std::setprecision(1) << msIt << " ms | "
+                          << "WorkingSet: " << currentMem << " MB | "
+                          << "MeshDeleted Callbacks: " << deletedCallbacksCalled << "\n";
+            }
+
+            stressScene.clear();
+
+            int64_t memDiff = static_cast<int64_t>(memIter10) - static_cast<int64_t>(memIter1);
+            std::cout << "    RAM Stability Summary: Iteration 1 = " << memIter1 << " MB, Iteration 10 = " << memIter10
+                      << " MB (Diff: " << (memDiff >= 0 ? "+" : "") << memDiff << " MB)\n";
+
+            // If leaking 400 MB per sync, 10 syncs would grow by ~3600 MB!
+            // Flat memory (< 250 MB variance from OS heap fragmentation / working set) confirms no leak.
+            if (std::abs(memDiff) < 250 && deletedCallbacksCalled >= 9) {
+                std::cout << "    [PASS] Memory is completely stable across 10 sequential GoZ syncs (no RAM leak detected).\n";
+            } else {
+                std::cout << "    [FAIL] Memory grew excessively across 10 syncs! Potential RAM leak.\n";
+                allPassed = false;
+            }
+        }
     }
 
     std::cout << "===================================================================================================================================================\n";

@@ -98,6 +98,9 @@ void Scene::clear() {
 
 void Scene::notifyMeshWillBeDeleted(Mesh* m) {
     if (!m) return;
+    if (m_onMeshDeletedCallback) {
+        m_onMeshDeletedCallback(m);
+    }
     if (m_sculptManager) {
         if (auto* tube = m_sculptManager->getTubeTool()) {
             tube->notifyMeshDeleted(m);

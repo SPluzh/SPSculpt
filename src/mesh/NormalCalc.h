@@ -24,6 +24,13 @@ void updateVertexNormals(
     float* outNormals
 );
 
+void computeNormalsDirect(
+    const float* verts, int nbVerts,
+    const uint32_t* faces, int nbFaces,
+    float* faceNormals,
+    float* outNormals
+);
+
 void diagnoseMeshNormals(
     const float* verts, int nbVerts,
     const uint32_t* faces, int nbFaces,

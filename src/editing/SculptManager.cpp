@@ -1390,6 +1390,8 @@ void SculptManager::warmupMeshCaches(const Mesh* mesh) {
     if (mesh->vertProxy.size() != mesh->verts.size()) {
         const_cast<Mesh*>(mesh)->vertProxy = mesh->verts;
     }
+    const_cast<Mesh*>(mesh)->ensureTopologyBuilt();
+    const_cast<Mesh*>(mesh)->ensureOctreeBuilt();
     mesh->computeLocalRadius();
     g_undoManager.warmupForMesh(mesh->m_id, mesh->nbVerts);
 }
@@ -1398,6 +1400,11 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     m_lastFrameProfile.reset();
     
     auto tFrameStart = std::chrono::high_resolution_clock::now();
+
+    if (mesh) {
+        mesh->ensureTopologyBuilt();
+        mesh->ensureOctreeBuilt();
+    }
 
     if (m_firstStrokeFrame) {
         m_cachedInvMatrix = glm::inverse(mesh ? mesh->matrix : glm::mat4(1.0f));
@@ -1522,6 +1529,9 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         m_lastValidIntersection = m_currentIntersection;
         m_hasAnyValidIntersection = true;
     } else {
+        if (mesh) {
+            mesh->ensureOctreeBuilt();
+        }
         std::vector<uint32_t> candidateFaces = mesh ? mesh->octree.collectIntersectRay(
             localRayOrigin.x, localRayOrigin.y, localRayOrigin.z,
             localRayDir.x, localRayDir.y, localRayDir.z

@@ -231,11 +231,44 @@ void Mesh::allocate(int nbV, int nbF, int nbRF, int nbRV) {
     faceCenters.resize(nbFaces * 3, 0.0f);
 }
 
-void Mesh::postInit(bool buildOctree) {
+void Mesh::ensureTopologyBuilt() {
+    if (isTopologyDirty || vrfStartCount.size() != (size_t)(nbVerts * 2) || vertRingFace.empty()) {
+        initTopology();
+        isTopologyDirty = false;
+    }
+    if (vertProxy.size() != verts.size()) {
+        vertProxy = verts;
+    }
+}
+
+void Mesh::ensureOctreeBuilt() {
+    if (!octree.root && nbFaces > 0 && nbVerts > 0) {
+        if (faceCenters.size() != (size_t)nbFaces * 3 || faceBoxes.size() != (size_t)nbFaces * 6) {
+            faceCenters.resize(nbFaces * 3);
+            faceBoxes.resize(nbFaces * 6);
+            if (faceNormals.size() != (size_t)nbFaces * 3) {
+                faceNormals.resize(nbFaces * 3);
+            }
+            updateFaceNormalsAndBoxes(
+                verts.data(), nbVerts,
+                faces.data(), nbFaces,
+                nullptr, -1,
+                faceNormals.data(),
+                faceBoxes.data(),
+                faceCenters.data()
+            );
+        }
+        octree.build(nbVerts, nbFaces, faceCenters.data(), faceBoxes.data(), verts.data(), faces.data());
+    }
+}
+
+void Mesh::postInit(bool buildOctree, bool buildTopology) {
     auto tStart = std::chrono::high_resolution_clock::now();
 
     m_localRadiusDirty = true;
-    vertProxy = verts;
+    if (buildTopology) {
+        vertProxy = verts;
+    }
     vertTagFlags.assign(nbVerts, 0);
 
     float bbox[6];
@@ -252,10 +285,10 @@ void Mesh::postInit(bool buildOctree) {
         hasCustomNormals = false;
         normals.assign(nbVerts * 3, 0.0f);
     }
-    if (colors.size() != nbVerts * 3) {
+    if (colors.size() != (size_t)nbVerts * 3) {
         colors.assign(nbVerts * 3, 1.0f);
     }
-    if (materials.size() != nbVerts * 3) {
+    if (materials.size() != (size_t)nbVerts * 3) {
         materials.resize(nbVerts * 3);
         for (int i = 0; i < nbVerts; ++i) {
             materials[i * 3]     = 0.5f; // roughness
@@ -272,44 +305,63 @@ void Mesh::postInit(bool buildOctree) {
     }
 
     faceNormals.resize(nbFaces * 3, 0.0f);
-    faceBoxes.resize(nbFaces * 6, 0.0f);
-    faceCenters.resize(nbFaces * 3, 0.0f);
 
     auto tTopStart = std::chrono::high_resolution_clock::now();
     bool computedTopology = false;
-    if (isTopologyDirty || vrfStartCount.size() != (size_t)(nbVerts * 2) || vertRingFace.empty()) {
-        initTopology();
-        computedTopology = true;
+    if (buildTopology) {
+        if (isTopologyDirty || vrfStartCount.size() != (size_t)(nbVerts * 2) || vertRingFace.empty()) {
+            initTopology();
+            computedTopology = true;
+        } else {
+            initEdges();
+        }
+        isTopologyDirty = false;
     } else {
-        initEdges();
+        isTopologyDirty = true;
     }
     auto tTopEnd = std::chrono::high_resolution_clock::now();
 
-    updateFaceNormalsAndBoxes(
-        verts.data(), nbVerts,
-        faces.data(), nbFaces,
-        nullptr, -1,
-        faceNormals.data(),
-        faceBoxes.data(),
-        faceCenters.data()
-    );
-    auto tFNormEnd = std::chrono::high_resolution_clock::now();
-
-    if (!hasCustomNormals) {
-        updateVertexNormals(
-            nullptr, -1, nbVerts,
-            vrfStartCount.data(),
-            vertRingFace.data(),
-            faceNormals.data(),
-            normals.data()
-        );
-    } else {
-        sculpt_log("[Mesh] Preserved %zu pre-calculated imported vertex normals in postInit\n", normals.size() / 3);
-    }
-    auto tVNormEnd = std::chrono::high_resolution_clock::now();
-
+    double msFNorm = 0.0;
+    double msVNorm = 0.0;
     double msOctree = 0.0;
+
     if (buildOctree) {
+        faceBoxes.resize(nbFaces * 6, 0.0f);
+        faceCenters.resize(nbFaces * 3, 0.0f);
+        updateFaceNormalsAndBoxes(
+            verts.data(), nbVerts,
+            faces.data(), nbFaces,
+            nullptr, -1,
+            faceNormals.data(),
+            faceBoxes.data(),
+            faceCenters.data()
+        );
+        auto tFNormEnd = std::chrono::high_resolution_clock::now();
+        msFNorm = std::chrono::duration<double, std::milli>(tFNormEnd - tTopEnd).count();
+
+        if (!hasCustomNormals) {
+            if (!vertRingFace.empty() && vrfStartCount.size() == (size_t)(nbVerts * 2)) {
+                updateVertexNormals(
+                    nullptr, -1, nbVerts,
+                    vrfStartCount.data(),
+                    vertRingFace.data(),
+                    faceNormals.data(),
+                    normals.data()
+                );
+            } else {
+                computeNormalsDirect(
+                    verts.data(), nbVerts,
+                    faces.data(), nbFaces,
+                    faceNormals.data(),
+                    normals.data()
+                );
+            }
+        } else {
+            sculpt_log("[Mesh] Preserved %zu pre-calculated imported vertex normals in postInit\n", normals.size() / 3);
+        }
+        auto tVNormEnd = std::chrono::high_resolution_clock::now();
+        msVNorm = std::chrono::duration<double, std::milli>(tVNormEnd - tFNormEnd).count();
+
         octree.build(
             nbVerts, nbFaces,
             faceCenters.data(),
@@ -319,18 +371,38 @@ void Mesh::postInit(bool buildOctree) {
         );
         auto tOctreeEnd = std::chrono::high_resolution_clock::now();
         msOctree = std::chrono::duration<double, std::milli>(tOctreeEnd - tVNormEnd).count();
+    } else {
+        // Fast path: skip faceBoxes, faceCenters, and octree build entirely!
+        auto tNormStart = std::chrono::high_resolution_clock::now();
+        if (!hasCustomNormals) {
+            computeNormalsDirect(
+                verts.data(), nbVerts,
+                faces.data(), nbFaces,
+                faceNormals.data(),
+                normals.data()
+            );
+        } else {
+            updateFaceNormalsOnly(
+                verts.data(), nbVerts,
+                faces.data(), nbFaces,
+                faceNormals.data()
+            );
+            sculpt_log("[Mesh] Preserved %zu pre-calculated imported vertex normals in postInit\n", normals.size() / 3);
+        }
+        auto tNormEnd = std::chrono::high_resolution_clock::now();
+        msFNorm = std::chrono::duration<double, std::milli>(tNormEnd - tNormStart).count();
     }
     auto tEnd = std::chrono::high_resolution_clock::now();
 
     double msTopology = std::chrono::duration<double, std::milli>(tTopEnd - tTopStart).count();
-    double msFNorm = std::chrono::duration<double, std::milli>(tFNormEnd - tTopEnd).count();
-    double msVNorm = std::chrono::duration<double, std::milli>(tVNormEnd - tFNormEnd).count();
     double msTotal = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
 
     if (msTotal > 5.0) {
         sculpt_log("[Mesh Diagnostics] postInit%s | Verts: %d, Faces: %d | Total: %.2fms (Topology [%s]: %.2fms, FaceNorms: %.2fms, VertNorms: %.2fms%s: %.2fms)\n",
                   buildOctree ? "" : " (NoOctree)",
-                  nbVerts, nbFaces, msTotal, computedTopology ? "Build" : "EdgesOnly", msTopology, msFNorm, msVNorm,
+                  nbVerts, nbFaces, msTotal,
+                  buildTopology ? (computedTopology ? "Build" : "EdgesOnly") : "Skipped",
+                  msTopology, msFNorm, msVNorm,
                   buildOctree ? ", OctreeBuild" : "", msOctree);
     }
 }

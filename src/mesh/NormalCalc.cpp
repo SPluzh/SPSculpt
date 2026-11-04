@@ -4,6 +4,9 @@
 #include <cmath>
 #include <vector>
 #include <string>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 const uint32_t TRI_INDEX = 0xffffffff;
 
@@ -349,6 +352,133 @@ void updateVertexNormals(
             outNormals[ind3]     = 0.0f;
             outNormals[ind3 + 1] = 1.0f;
             outNormals[ind3 + 2] = 0.0f;
+        }
+    }
+}
+
+void computeNormalsDirect(
+    const float* verts, int nbVerts,
+    const uint32_t* faces, int nbFaces,
+    float* faceNormals,
+    float* outNormals
+) {
+    if (!verts || !faces || !faceNormals || !outNormals || nbVerts <= 0 || nbFaces <= 0) return;
+
+    int maxThreads = 1;
+#ifdef _OPENMP
+    maxThreads = omp_get_max_threads();
+#endif
+    // Cap thread count to 4 to balance parallelism with memory allocation overhead and cache footprint
+    int nThreads = std::clamp(maxThreads, 1, 4);
+
+    // Thread-local accumulation buffers (cleared to 0)
+    std::vector<float> accumNormals(static_cast<size_t>(nThreads) * nbVerts * 3, 0.0f);
+
+#pragma omp parallel num_threads(nThreads)
+    {
+        int tid = 0;
+#ifdef _OPENMP
+        tid = omp_get_thread_num();
+#endif
+        float* myNormals = &accumNormals[static_cast<size_t>(tid) * nbVerts * 3];
+
+#pragma omp for schedule(static)
+        for (int i = 0; i < nbFaces; ++i) {
+            uint32_t idTri = i * 3;
+            uint32_t idFace = i * 4;
+
+            uint32_t iv0 = faces[idFace];
+            uint32_t iv1 = faces[idFace + 1];
+            uint32_t iv2 = faces[idFace + 2];
+            uint32_t iv3 = faces[idFace + 3];
+            bool isQuad = (iv3 != TRI_INDEX && iv3 < (uint32_t)nbVerts);
+
+            if (iv0 >= (uint32_t)nbVerts || iv1 >= (uint32_t)nbVerts || iv2 >= (uint32_t)nbVerts) continue;
+
+            uint32_t ind1 = iv0 * 3;
+            uint32_t ind2 = iv1 * 3;
+            uint32_t ind3 = iv2 * 3;
+
+            float v1x = verts[ind1];
+            float v1y = verts[ind1 + 1];
+            float v1z = verts[ind1 + 2];
+            float v2x = verts[ind2];
+            float v2y = verts[ind2 + 1];
+            float v2z = verts[ind2 + 2];
+            float v3x = verts[ind3];
+            float v3y = verts[ind3 + 1];
+            float v3z = verts[ind3 + 2];
+
+            float ax = v2x - v1x;
+            float ay = v2y - v1y;
+            float az = v2z - v1z;
+            float bx = v3x - v1x;
+            float by = v3y - v1y;
+            float bz = v3z - v1z;
+            float crx = ay * bz - az * by;
+            float cry = az * bx - ax * bz;
+            float crz = ax * by - ay * bx;
+
+            if (isQuad) {
+                uint32_t ind4 = iv3 * 3;
+                float v4x = verts[ind4];
+                float v4y = verts[ind4 + 1];
+                float v4z = verts[ind4 + 2];
+
+                float ax2 = v3x - v4x;
+                float ay2 = v3y - v4y;
+                float az2 = v3z - v4z;
+                crx += ay2 * bz - az2 * by;
+                cry += az2 * bx - ax2 * bz;
+                crz += ax2 * by - ay2 * bx;
+            }
+
+            faceNormals[idTri]     = crx;
+            faceNormals[idTri + 1] = cry;
+            faceNormals[idTri + 2] = crz;
+
+            myNormals[ind1]     += crx;
+            myNormals[ind1 + 1] += cry;
+            myNormals[ind1 + 2] += crz;
+
+            myNormals[ind2]     += crx;
+            myNormals[ind2 + 1] += cry;
+            myNormals[ind2 + 2] += crz;
+
+            myNormals[ind3]     += crx;
+            myNormals[ind3 + 1] += cry;
+            myNormals[ind3 + 2] += crz;
+
+            if (isQuad) {
+                uint32_t ind4 = iv3 * 3;
+                myNormals[ind4]     += crx;
+                myNormals[ind4 + 1] += cry;
+                myNormals[ind4 + 2] += crz;
+            }
+        }
+    }
+
+#pragma omp parallel for schedule(static) if(nbVerts > 2000)
+    for (int i = 0; i < nbVerts; ++i) {
+        uint32_t i3 = i * 3;
+        float nx = 0.0f, ny = 0.0f, nz = 0.0f;
+        for (int t = 0; t < nThreads; ++t) {
+            const float* tBuf = &accumNormals[static_cast<size_t>(t) * nbVerts * 3 + i3];
+            nx += tBuf[0];
+            ny += tBuf[1];
+            nz += tBuf[2];
+        }
+
+        float lenSq = nx * nx + ny * ny + nz * nz;
+        float invLen = (lenSq > 1e-12f) ? (1.0f / std::sqrt(lenSq)) : 0.0f;
+        if (invLen > 0.0f) {
+            outNormals[i3]     = nx * invLen;
+            outNormals[i3 + 1] = ny * invLen;
+            outNormals[i3 + 2] = nz * invLen;
+        } else {
+            outNormals[i3]     = 0.0f;
+            outNormals[i3 + 1] = 1.0f;
+            outNormals[i3 + 2] = 0.0f;
         }
     }
 }

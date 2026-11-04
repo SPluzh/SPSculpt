@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
 #include <memory>
+#include <functional>
 #include "mesh/Mesh.h"
 #include "scene/Camera.h"
 #include "render/ReferenceImage.h"
@@ -184,6 +185,11 @@ public:
     void replaceMesh(Mesh* oldMesh, Mesh* newMesh);
     void clear();
     void notifyMeshWillBeDeleted(Mesh* m);
+
+    using MeshDeletedCallback = std::function<void(Mesh*)>;
+    void setOnMeshDeletedCallback(MeshDeletedCallback cb) { m_onMeshDeletedCallback = std::move(cb); }
+    const MeshDeletedCallback& getOnMeshDeletedCallback() const { return m_onMeshDeletedCallback; }
+
     const std::vector<Mesh*>& getMeshes() const;
     void selectMesh(Mesh* m);
     Mesh* getSelected() const;
@@ -299,4 +305,5 @@ private:
 
     uint32_t m_soloMeshId = 0;
     bool m_isModified = false;
+    MeshDeletedCallback m_onMeshDeletedCallback;
 };

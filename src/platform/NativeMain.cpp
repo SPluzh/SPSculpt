@@ -658,6 +658,9 @@ int main(int argc, char* argv[]) {
     renderer.resize(drawableWidth, drawableHeight, dpiScale);
 
     Scene scene;
+    scene.setOnMeshDeletedCallback([&renderer](Mesh* m) {
+        renderer.releaseMeshBuffers(m);
+    });
     scene.getCamera().onResize(width, height);
     if (fileToOpen.empty()) {
         if (gui.getCreateDefaultSphereOnStartup()) {
@@ -786,6 +789,8 @@ int main(int argc, char* argv[]) {
                 auto tGoZStart = std::chrono::high_resolution_clock::now();
                 ImportGoZ::GoZInfo info;
                 auto meshes = ImportGoZ::importGoZ(gozBuffer, false, &info);
+                gozBuffer.clear();
+                gozBuffer.shrink_to_fit();
                 if (!meshes.empty() && meshes[0]) {
                     Mesh* incomingMesh = meshes[0];
                     Mesh* targetMesh = nullptr;
