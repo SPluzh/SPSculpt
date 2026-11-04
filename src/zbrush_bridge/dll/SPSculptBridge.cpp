@@ -68,6 +68,17 @@ std::string ResolveDataDir() {
     return GetDefaultDataDir();
 }
 
+void LogDebug(const std::string& msg) {
+    std::string dataDir = ResolveDataDir();
+    CreateDirectoryA(dataDir.c_str(), NULL);
+    std::ofstream ofs(dataDir + "bridge_debug.log", std::ios::app);
+    if (ofs.is_open()) {
+        ofs << "[" << GetTickCount() << "] " << msg << "\n";
+        ofs.close();
+    }
+}
+
+
 void TriggerExportScript(HWND targetHwnd) {
     if (!targetHwnd) {
         targetHwnd = g_mainHwnd;
@@ -200,12 +211,14 @@ HWND FindZBrushMainWindow() {
 // ==============================================================================
 
 SPSCULPT_EXPORT float InstallHook(char* pText, double optValue, char* pOptBuffer1, int* pOptBuffer1Size, char* pOptBuffer2, int* pOptBuffer2Size) {
+    LogDebug("InstallHook invoked");
     if (g_hookInstalled) {
         return 1.0f; // Already installed
     }
 
     g_mainHwnd = FindZBrushMainWindow();
     if (!g_mainHwnd) {
+        LogDebug("InstallHook: ZBrush main HWND not found");
         return 0.0f;
     }
 
@@ -217,10 +230,12 @@ SPSCULPT_EXPORT float InstallHook(char* pText, double optValue, char* pOptBuffer
     EnumChildWindows(g_mainHwnd, EnumChildWindowsProc, 0);
 
     g_hookInstalled = true;
+    LogDebug("InstallHook: success");
     return 1.0f;
 }
 
 SPSCULPT_EXPORT float RemoveHook(char* pText, double optValue, char* pOptBuffer1, int* pOptBuffer1Size, char* pOptBuffer2, int* pOptBuffer2Size) {
+    LogDebug("RemoveHook invoked");
     if (!g_hookInstalled) {
         return 1.0f;
     }
@@ -233,12 +248,14 @@ SPSCULPT_EXPORT float RemoveHook(char* pText, double optValue, char* pOptBuffer1
     }
     g_subclassedWindows.clear();
     g_hookInstalled = false;
+    LogDebug("RemoveHook: success");
     return 1.0f;
 }
 
 SPSCULPT_EXPORT float SetDataDir(char* pText, double optValue, char* pOptBuffer1, int* pOptBuffer1Size, char* pOptBuffer2, int* pOptBuffer2Size) {
     if (pText && strlen(pText) > 0) {
         g_dataDir = pText;
+        LogDebug(std::string("SetDataDir: ") + pText);
         return 1.0f;
     }
     return 0.0f;
@@ -248,12 +265,14 @@ SPSCULPT_EXPORT float SetDebounceDelay(char* pText, double optValue, char* pOptB
     int delay = static_cast<int>(optValue);
     if (delay >= 50 && delay <= 2000) {
         g_debounceDelayMs = delay;
+        LogDebug(std::string("SetDebounceDelay: ") + std::to_string(delay));
         return 1.0f;
     }
     return 0.0f;
 }
 
 SPSCULPT_EXPORT float TriggerSync(char* pText, double optValue, char* pOptBuffer1, int* pOptBuffer1Size, char* pOptBuffer2, int* pOptBuffer2Size) {
+    LogDebug("TriggerSync invoked");
     HWND target = g_mainHwnd ? g_mainHwnd : FindZBrushMainWindow();
     if (target) {
         TriggerExportScript(target);

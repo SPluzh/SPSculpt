@@ -15,6 +15,8 @@
 
 [VarDef, spsculptDataDir, "C:/Users/Public/Documents/SPSculptData/"]
 [VarDef, spsculptDllPath, ""]
+[VarDef, autoSyncActive, 0]
+[VarDef, meshFile, ""]
 
 // Helper routine: resolves SPSculptBridge.dll in the SPSculptBridgeData subfolder
 [RoutineDef, FindBridgeDll,
@@ -47,34 +49,50 @@
     ]
 ]
 
+// Background routine: triggered upon each brush stroke release (LButton Up = event code 8)
+[RoutineDef, AutoSyncHandler,
+    [If, [Var, autoSyncActive] == 1,
+        [If, [IsEnabled, "Tool:Export"],
+            [VarSet, meshFile, [StrMerge, [Var, spsculptDataDir], "mesh.GoZ"]]
+            [FileNameSetNext, [Var, meshFile]]
+            [IPress, "Tool:Export"]
+        ]
+        // Continue listening for next brush stroke release (LButton Up = 8)
+        [SleepAgain, 3600, 8]
+    ]
+]
+
 // 1. Manual Sync Button
 [IButton, "ZPlugin:SPSculpt:Sync Active", "Export active SubTool to SPSculpt Companion Viewport",
-    [VarDef, meshFile, [StrMerge, [Var, spsculptDataDir], "mesh.GoZ"]]
-
-    // Perform native GoZ export
-    [FileNameSetNext, [Var, meshFile]]
-    [IPress, "Tool:Export"]
-
-    [Note, [StrMerge, "SPSculpt: Synced active tool to ", [Var, meshFile]], , 1]
-, , 0.5]
-
-// 2. Enable Auto-Sync Hook (In-Process DLL Subclassing)
-[IButton, "ZPlugin:SPSculpt:Enable Auto-Sync", "Install in-process hook for automatic stroke-end export",
-    [RoutineCall, FindBridgeDll]
-    [VarDef, res, 0]
-    [VarSet, res, [FileExecute, [Var, spsculptDllPath], "InstallHook"]]
-    [If, [Var, res] >= 1,
-        [FileExecute, [Var, spsculptDllPath], "SetDataDir", [Var, spsculptDataDir]]
-        [Note, "SPSculpt: Auto-Sync Hook INSTALLED! Changes will sync on brush stroke completion.", , 2]
+    [If, [IsEnabled, "Tool:Export"],
+        [VarSet, meshFile, [StrMerge, [Var, spsculptDataDir], "mesh.GoZ"]]
+        [FileNameSetNext, [Var, meshFile]]
+        [IPress, "Tool:Export"]
+        [Note, [StrMerge, "SPSculpt: Synced active tool to ", [Var, meshFile]], , 1]
     ,
-        [Note, [StrMerge, "SPSculpt: Failed to install hook. DLL not found. Tried: ", [Var, spsculptDllPath]], , 3]
+        [Note, "SPSculpt: Tool:Export is disabled. Please enter 3D Edit mode.", , 2]
     ]
 , , 0.5]
 
-// 3. Disable Auto-Sync Hook
-[IButton, "ZPlugin:SPSculpt:Disable Auto-Sync", "Remove in-process hook",
+// 2. Enable Auto-Sync (Automatic stroke-end export via native ZBrush Sleep event)
+[IButton, "ZPlugin:SPSculpt:Enable Auto-Sync", "Enable automatic stroke-end export to SPSculpt",
     [RoutineCall, FindBridgeDll]
-    [VarDef, res2, 0]
-    [VarSet, res2, [FileExecute, [Var, spsculptDllPath], "RemoveHook"]]
-    [Note, "SPSculpt: Auto-Sync Hook REMOVED.", , 1]
+    [If, [FileExists, [Var, spsculptDllPath]],
+        [FileExecute, [Var, spsculptDllPath], "InstallHook"]
+        [FileExecute, [Var, spsculptDllPath], "SetDataDir", [Var, spsculptDataDir]]
+    ]
+    [VarSet, autoSyncActive, 1]
+    [Note, "SPSculpt: Auto-Sync ENABLED! Mesh will auto-update on each brush stroke.", , 2]
+    [Sleep, 3600, [RoutineCall, AutoSyncHandler], 8]
 , , 0.5]
+
+// 3. Disable Auto-Sync
+[IButton, "ZPlugin:SPSculpt:Disable Auto-Sync", "Disable automatic stroke-end export",
+    [VarSet, autoSyncActive, 0]
+    [RoutineCall, FindBridgeDll]
+    [If, [FileExists, [Var, spsculptDllPath]],
+        [FileExecute, [Var, spsculptDllPath], "RemoveHook"]
+    ]
+    [Note, "SPSculpt: Auto-Sync DISABLED.", , 1]
+, , 0.5]
+
