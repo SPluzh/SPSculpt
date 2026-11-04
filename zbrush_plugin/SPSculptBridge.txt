@@ -17,6 +17,8 @@
 [VarDef, spsculptDllPath, ""]
 [VarDef, autoSyncActive, 0]
 [VarDef, meshFile, ""]
+[VarDef, lastUndoCounter, -999999]
+[VarDef, curUndoCounter, 0]
 
 // Helper routine: resolves SPSculptBridge.dll in the SPSculptBridgeData subfolder
 [RoutineDef, FindBridgeDll,
@@ -49,18 +51,41 @@
     ]
 ]
 
-// Background routine: triggered upon each brush stroke release (LButton Up = event code 8)
-[RoutineDef, AutoSyncHandler,
+// Helper routine: checks Undo Counter and exports mesh only if geometry changed
+[RoutineDef, CheckAndExportIfChanged,
     [If, [Var, autoSyncActive] == 1,
-        [If, [IsEnabled, "Tool:Export"],
-            [VarSet, meshFile, [StrMerge, [Var, spsculptDataDir], "mesh.GoZ"]]
-            [FileNameSetNext, [Var, meshFile]]
-            [IPress, "Tool:Export"]
+        // 1. Query current undo history step
+        [VarSet, curUndoCounter, 0]
+        [If, [IsEnabled, "Edit:Tool:Undo Counter"],
+            [VarSet, curUndoCounter, [IGet, "Edit:Tool:Undo Counter"]]
         ]
+
+        // 2. Export ONLY if Undo Counter changed (actual brush stroke, smooth, or undo/redo)
+        // Camera navigation (orbit/pan/zoom) and key presses do NOT change Undo Counter!
+        [If, [Var, curUndoCounter] != [Var, lastUndoCounter],
+            [VarSet, lastUndoCounter, [Var, curUndoCounter]]
+            [If, [IsEnabled, "Tool:Export"],
+                [VarSet, meshFile, [StrMerge, [Var, spsculptDataDir], "mesh.GoZ"]]
+                [FileNameSetNext, [Var, meshFile]]
+                [IPress, "Tool:Export"]
+            ]
+        ]
+    ]
+]
+
+// Background routine: triggered upon events, filtered strictly to geometry/undo changes
+[RoutineDef, AutoSyncHandler,
+    [RoutineCall, CheckAndExportIfChanged]
+    [If, [Var, autoSyncActive] == 1,
         // Continue listening for next brush stroke release (LButton Up = 8)
         [SleepAgain, 3600, 8]
     ]
 ]
+
+// Internal button callable by DLL via WM_COPYDATA
+[IButton, "ZPlugin:SPSculpt:CheckSync", "Trigger conditional sync if undo step changed",
+    [RoutineCall, CheckAndExportIfChanged]
+, , 0.01]
 
 // 1. Manual Sync Button
 [IButton, "ZPlugin:SPSculpt:Sync Active", "Export active SubTool to SPSculpt Companion Viewport",
@@ -68,6 +93,9 @@
         [VarSet, meshFile, [StrMerge, [Var, spsculptDataDir], "mesh.GoZ"]]
         [FileNameSetNext, [Var, meshFile]]
         [IPress, "Tool:Export"]
+        [If, [IsEnabled, "Edit:Tool:Undo Counter"],
+            [VarSet, lastUndoCounter, [IGet, "Edit:Tool:Undo Counter"]]
+        ]
         [Note, [StrMerge, "SPSculpt: Synced active tool to ", [Var, meshFile]], , 1]
     ,
         [Note, "SPSculpt: Tool:Export is disabled. Please enter 3D Edit mode.", , 2]
@@ -81,6 +109,12 @@
         [FileExecute, [Var, spsculptDllPath], "InstallHook"]
         [FileExecute, [Var, spsculptDllPath], "SetDataDir", [Var, spsculptDataDir]]
     ]
+    // Baseline current undo counter so enabling auto-sync doesn't trigger immediate fake export
+    [If, [IsEnabled, "Edit:Tool:Undo Counter"],
+        [VarSet, lastUndoCounter, [IGet, "Edit:Tool:Undo Counter"]]
+    ,
+        [VarSet, lastUndoCounter, 0]
+    ]
     [VarSet, autoSyncActive, 1]
     [Note, "SPSculpt: Auto-Sync ENABLED! Mesh will auto-update on each brush stroke.", , 2]
     [Sleep, 3600, [RoutineCall, AutoSyncHandler], 8]
@@ -89,6 +123,7 @@
 // 3. Disable Auto-Sync
 [IButton, "ZPlugin:SPSculpt:Disable Auto-Sync", "Disable automatic stroke-end export",
     [VarSet, autoSyncActive, 0]
+    [VarSet, lastUndoCounter, -999999]
     [RoutineCall, FindBridgeDll]
     [If, [FileExists, [Var, spsculptDllPath]],
         [FileExecute, [Var, spsculptDllPath], "RemoveHook"]

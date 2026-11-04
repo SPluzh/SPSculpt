@@ -96,7 +96,13 @@ void TriggerExportScript(HWND targetHwnd) {
     std::ofstream ofs(cmdPath);
     if (ofs.is_open()) {
         ofs << "// SPSculpt Auto-Sync Command Script\n";
-        ofs << "[FileNameSetNext, \"" << meshPath << "\"][IPress, \"Tool:Export\"]\n";
+        ofs << "[If, [IsEnabled, \"ZPlugin:SPSculpt:CheckSync\"],\n";
+        ofs << "    [IPress, \"ZPlugin:SPSculpt:CheckSync\"]\n";
+        ofs << ",\n";
+        ofs << "    [If, [IsEnabled, \"Tool:Export\"],\n";
+        ofs << "        [FileNameSetNext, \"" << meshPath << "\"][IPress, \"Tool:Export\"]\n";
+        ofs << "    ]\n";
+        ofs << "]\n";
         ofs.close();
     }
 
