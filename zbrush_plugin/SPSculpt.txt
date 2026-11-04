@@ -1,23 +1,54 @@
 // ==============================================================================
 // SPSculpt Companion Viewport - ZBrush Plugin (ZScript)
 // ==============================================================================
-// Installation:
-//   Copy this file and SPSculptBridge.dll to:
-//   C:\Program Files\Pixologic\ZBrush 202X\ZStartup\ZPlugs64\
-//   or
-//   C:\Program Files\Maxon ZBrush 202X\ZStartup\ZPlugs64\
+// Installation options in ZBrush:
 //
-// Description:
-//   Enables lightning-fast synchronization between ZBrush and SPSculpt.
-//   Supports both manual 'Sync Active' and automatic stroke end interception
-//   via native in-process subclassing with SPSculptBridge.dll.
+// Option 1 (Recommended - standard ZBrush layout):
+//   ZStartup/ZPlugs64/SPSculpt.txt (or SPSculpt.zsc)
+//   ZStartup/ZPlugs64/SPSculptData/SPSculptBridge.dll
+//
+// Option 2 (Flat - both together):
+//   ZStartup/ZPlugs64/SPSculpt.txt
+//   ZStartup/ZPlugs64/SPSculptBridge.dll
+//
+// Option 3 (Direct testing without installing):
+//   In ZBrush: ZScript > Load -> select this file directly.
 // ==============================================================================
 
 [ISubPalette, "ZPlugin:SPSculpt"]
 
-// Helper: DLL path resolver
 [VarDef, spsculptDataDir, "C:/Users/Public/Documents/SPSculptData/"]
 [VarDef, spsculptDllPath, ""]
+
+// Helper routine: finds SPSculptBridge.dll in same folder or SPSculptData subfolder
+[RoutineDef, FindBridgeDll,
+    [VarSet, spsculptDllPath, ""]
+    // 1. Same folder as script
+    [VarSet, probe, [FileNameResolvePath, "SPSculptBridge.dll"]]
+    [If, [FileExists, [Var, probe]],
+        [VarSet, spsculptDllPath, [Var, probe]]
+    ,
+        // 2. Standard ZBrush subfolder: SPSculptData/
+        [VarSet, probe, [FileNameResolvePath, "SPSculptData/SPSculptBridge.dll"]]
+        [If, [FileExists, [Var, probe]],
+            [VarSet, spsculptDllPath, [Var, probe]]
+        ,
+            // 3. Standard ZBrush subfolder: SPSculptData64/
+            [VarSet, probe, [FileNameResolvePath, "SPSculptData64/SPSculptBridge.dll"]]
+            [If, [FileExists, [Var, probe]],
+                [VarSet, spsculptDllPath, [Var, probe]]
+            ,
+                // 4. Default exchange directory
+                [If, [FileExists, "C:/Users/Public/Documents/SPSculptData/SPSculptBridge.dll"],
+                    [VarSet, spsculptDllPath, "C:/Users/Public/Documents/SPSculptData/SPSculptBridge.dll"]
+                ,
+                    // Fallback to relative name
+                    [VarSet, spsculptDllPath, [FileNameResolvePath, "SPSculptBridge.dll"]]
+                ]
+            ]
+        ]
+    ]
+, probe]
 
 // 1. Manual Sync Button
 [IButton, "ZPlugin:SPSculpt:Sync Active", "Export active SubTool to SPSculpt Companion Viewport",
@@ -44,20 +75,20 @@
 
 // 2. Enable Auto-Sync Hook (In-Process DLL Subclassing)
 [IButton, "ZPlugin:SPSculpt:Enable Auto-Sync", "Install in-process hook for automatic stroke-end export",
-    [VarSet, spsculptDllPath, [FileNameResolvePath, "SPSculptBridge.dll"]]
+    [RoutineCall, FindBridgeDll]
     [VarDef, res, 0]
     [VarSet, res, [FileExecute, [Var, spsculptDllPath], "InstallHook"]]
     [If, [Var, res] >= 1,
         [FileExecute, [Var, spsculptDllPath], "SetDataDir", [Var, spsculptDataDir]]
         [Note, "SPSculpt: Auto-Sync Hook INSTALLED! Changes will sync on brush stroke completion.", , 2]
     ,
-        [Note, [StrMerge, "SPSculpt: Failed to install hook. Make sure SPSculptBridge.dll is in ZPlugs64. Path: ", [Var, spsculptDllPath]], , 3]
+        [Note, [StrMerge, "SPSculpt: Failed to install hook. DLL not found. Tried: ", [Var, spsculptDllPath]], , 3]
     ]
 , , 0.5]
 
 // 3. Disable Auto-Sync Hook
 [IButton, "ZPlugin:SPSculpt:Disable Auto-Sync", "Remove in-process hook",
-    [VarSet, spsculptDllPath, [FileNameResolvePath, "SPSculptBridge.dll"]]
+    [RoutineCall, FindBridgeDll]
     [VarDef, res2, 0]
     [VarSet, res2, [FileExecute, [Var, spsculptDllPath], "RemoveHook"]]
     [Note, "SPSculpt: Auto-Sync Hook REMOVED.", , 1]
