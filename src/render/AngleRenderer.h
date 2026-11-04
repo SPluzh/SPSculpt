@@ -32,6 +32,30 @@ struct ModelSnapshot {
     bool isSilhouette = false;
 };
 
+struct GridSettings {
+    bool showGrid = false;
+    bool showAxes = true;
+    bool showSubdivisions = true;
+
+    bool infiniteGrid = false;   // true = Infinite horizon (Blender style), false = Bounded podium (Nomad style)
+    bool centerAtOrigin = true;  // true = Center at World Origin (0,0,0), false = Follow Camera Pivot
+    float gridRadius = 300.0f;   // Radius for Bounded mode
+    float edgeFeather = 0.35f;   // Edge softness (0.0 = sharp edge, 1.0 = smooth fade)
+
+    float spacing = 50.0f;       // Основной шаг сетки (Major)
+    int subdivisions = 5;        // Делений внутри основного шага (Minor = spacing / subdivisions)
+    float lineWidth = 1.2f;      // Толщина линий в пикселях
+    float opacity = 0.8f;        // Общий множитель прозрачности
+    float fadeDistance = 1.0f;   // Масштаб дистанции затухания горизонта (fog)
+
+    glm::vec3 majorColor = glm::vec3(0.28f, 0.29f, 0.32f); // Цвет главных линий
+    float majorAlpha = 0.55f;
+    glm::vec3 minorColor = glm::vec3(0.16f, 0.17f, 0.19f); // Цвет вспомогательных линий
+    float minorAlpha = 0.30f;
+
+    glm::vec3 xAxisColor = glm::vec3(1.00f, 0.15f, 0.15f); // Сочный красный
+    glm::vec3 zAxisColor = glm::vec3(0.10f, 0.50f, 1.00f); // Сочный синий
+};
 
 struct MeshRenderBuffers {
     GLuint vao = 0;
@@ -214,8 +238,12 @@ public:
     bool getSmoothCursor() const { return m_smoothCursor; }
     void setUseCrosshairCursor(bool crosshair) { m_useCrosshairCursor = crosshair; }
     bool getUseCrosshairCursor() const { return m_useCrosshairCursor; }
-    void setShowGrid(bool show) { m_showGrid = show; }
-    bool getShowGrid() const { return m_showGrid; }
+    void setShowGrid(bool show) { m_gridSettings.showGrid = show; }
+    bool getShowGrid() const { return m_gridSettings.showGrid; }
+    GridSettings& getGridSettings() { return m_gridSettings; }
+    const GridSettings& getGridSettings() const { return m_gridSettings; }
+    void setGridSettings(const GridSettings& s) { m_gridSettings = s; }
+    void resetGridToDefault();
     void setShowSafeFrames(bool show) { m_showSafeFrames = show; }
     bool getShowSafeFrames() const { return m_showSafeFrames; }
     void setSafeFramesMargin(float margin) { m_safeFramesMargin = std::max(0.0f, margin); }
@@ -697,7 +725,7 @@ private:
     float m_selectionAnimDuration = 1.2f;
     const Mesh* m_lastSelectedMesh = nullptr;
     std::chrono::high_resolution_clock::time_point m_lastRenderTime;
-    bool m_showGrid = false;
+    GridSettings m_gridSettings;
     bool m_showSafeFrames = true;
     float m_safeFramesMargin = 35.0f;
     float m_safeFramesThickness = 0.1f;

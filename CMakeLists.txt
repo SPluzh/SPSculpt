@@ -1,5 +1,32 @@
 cmake_minimum_required(VERSION 3.20)
-project(SPSculpt VERSION 0.3.13 LANGUAGES C CXX)
+
+# Read version from single source of truth (version.txt)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/version.txt" APP_VERSION_RAW)
+string(STRIP "${APP_VERSION_RAW}" APP_VERSION_RAW)
+
+if(APP_VERSION_RAW MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)(.*)$")
+    set(APP_VERSION_MAJOR "${CMAKE_MATCH_1}")
+    set(APP_VERSION_MINOR "${CMAKE_MATCH_2}")
+    set(APP_VERSION_PATCH "${CMAKE_MATCH_3}")
+    set(APP_VERSION_SUFFIX "${CMAKE_MATCH_4}")
+    set(APP_VERSION_SEMVER "${APP_VERSION_MAJOR}.${APP_VERSION_MINOR}.${APP_VERSION_PATCH}")
+else()
+    set(APP_VERSION_MAJOR "0")
+    set(APP_VERSION_MINOR "1")
+    set(APP_VERSION_PATCH "0")
+    set(APP_VERSION_SUFFIX "")
+    set(APP_VERSION_SEMVER "0.1.0")
+endif()
+
+project(SPSculpt VERSION ${APP_VERSION_SEMVER} LANGUAGES C CXX)
+
+# Auto-generate src/common/Version.h from template
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/common/Version.h.in"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/common/Version.h"
+    @ONLY
+)
+
 set(CMAKE_CXX_STANDARD 20)
 
 add_library(ufbx STATIC third_party/ufbx/ufbx.c)

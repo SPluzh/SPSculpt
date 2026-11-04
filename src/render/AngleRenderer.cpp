@@ -1378,12 +1378,9 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
             drawMeshFlatColor(scene.getSelected(), scene, camera, glm::vec4(1.0f));
         }
     } else if (passType == 3) {
-        // Background and Grid
+        // Background
         if (m_showBackground && !m_transparentClear) {
             drawBackground(scene, camera);
-        }
-        if (m_showGrid && !m_transparentClear) {
-            drawGrid(scene, camera);
         }
     } else if (passType == 1) {
         // Opaque meshes (alpha == 1.0)
@@ -1408,6 +1405,11 @@ void AngleRenderer::drawPassGeometry(const Scene& scene, int passType, const Cam
             drawVoxelPreview(scene, camera, viewportIdx);
         }
     } else if (passType == 2) {
+        // Floor Grid (rendered into transparent buffer before transparent meshes)
+        if (m_gridSettings.showGrid && !m_transparentClear) {
+            drawGrid(scene, camera);
+        }
+
         // Transparent meshes (alpha < 1.0)
         for (auto* mesh : scene.getMeshes()) {
             if (scene.isMeshRenderVisible(mesh, viewportIdx) && m_alpha < 1.0f) {
@@ -3428,13 +3430,17 @@ void AngleRenderer::drawReferenceImages(const Scene& scene, const Camera& camera
 }
 
 void AngleRenderer::drawGrid(const Scene& scene, const Camera& camera) {
-    if (!m_showGrid || m_gridProgram == 0 || m_gridLineCount == 0) return;
+    if (!m_gridSettings.showGrid || m_gridProgram == 0 || m_gridLineCount == 0) return;
 
-    // Render floor grid with per-fragment distance fog
+    // Render floor grid with per-fragment distance fog into transparent FBO
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_FALSE);
+
     glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA); // Premultiplied alpha blending
+
+    glDisable(GL_CULL_FACE);
 
     glUseProgram(m_gridProgram);
 
@@ -3454,27 +3460,46 @@ void AngleRenderer::drawGrid(const Scene& scene, const Camera& camera) {
     glUniform3fv(glGetUniformLocation(m_gridProgram, "uPivot"), 1, glm::value_ptr(pivotPos));
 
     glm::vec3 camPos = camera.computePosition();
-    float distToPivot = glm::length(camPos - pivotPos);
-    
-    float fogNear = std::clamp(distToPivot * 1.2f, 30.0f, 180.0f);
-    float fogFar  = std::clamp(distToPivot * 3.5f, 90.0f, 450.0f);
+    glUniform3fv(glGetUniformLocation(m_gridProgram, "uCamPos"), 1, glm::value_ptr(camPos));
 
+    float distToPivot = glm::length(camPos - pivotPos);
+    float fadeScale = std::max(m_gridSettings.fadeDistance, 0.05f);
+    float horizonFar = std::clamp(distToPivot * 8.0f * fadeScale, 500.0f, camera.getFar() * 0.95f);
     if (camera.isOrthographic()) {
         float orthoZoom = camera.getOrthoZoom();
-        fogNear = std::clamp(orthoZoom * 1.2f, 35.0f, 180.0f);
-        fogFar  = std::clamp(orthoZoom * 3.5f, 100.0f, 450.0f);
+        horizonFar = std::clamp(orthoZoom * 8.0f * fadeScale, 500.0f, camera.getFar() * 0.95f);
     }
+    float horizonNear = horizonFar * 0.4f;
 
-    glUniform1f(glGetUniformLocation(m_gridProgram, "uFogNear"), fogNear);
-    glUniform1f(glGetUniformLocation(m_gridProgram, "uFogFar"), fogFar);
+    glUniform1f(glGetUniformLocation(m_gridProgram, "uHorizonNear"), horizonNear);
+    glUniform1f(glGetUniformLocation(m_gridProgram, "uHorizonFar"), horizonFar);
 
-    glDisable(GL_CULL_FACE);
+    glUniform1i(glGetUniformLocation(m_gridProgram, "uInfiniteGrid"), m_gridSettings.infiniteGrid ? 1 : 0);
+    glUniform1i(glGetUniformLocation(m_gridProgram, "uCenterAtOrigin"), m_gridSettings.centerAtOrigin ? 1 : 0);
+    glUniform1f(glGetUniformLocation(m_gridProgram, "uGridRadius"), std::max(m_gridSettings.gridRadius, 10.0f));
+    glUniform1f(glGetUniformLocation(m_gridProgram, "uEdgeFeather"), std::clamp(m_gridSettings.edgeFeather, 0.0f, 1.0f));
+
+    glUniform1f(glGetUniformLocation(m_gridProgram, "uSpacing"), std::max(m_gridSettings.spacing, 1.0f));
+    glUniform1f(glGetUniformLocation(m_gridProgram, "uSubdivisions"), static_cast<float>(std::max(m_gridSettings.subdivisions, 1)));
+    glUniform1f(glGetUniformLocation(m_gridProgram, "uLineWidth"), std::max(m_gridSettings.lineWidth, 0.1f));
+    glUniform1f(glGetUniformLocation(m_gridProgram, "uGridOpacity"), std::clamp(m_gridSettings.opacity, 0.0f, 1.0f));
+
+    glUniform4f(glGetUniformLocation(m_gridProgram, "uMajorColor"),
+                m_gridSettings.majorColor.r, m_gridSettings.majorColor.g, m_gridSettings.majorColor.b, m_gridSettings.majorAlpha);
+    glUniform4f(glGetUniformLocation(m_gridProgram, "uMinorColor"),
+                m_gridSettings.minorColor.r, m_gridSettings.minorColor.g, m_gridSettings.minorColor.b, m_gridSettings.minorAlpha);
+    glUniform3fv(glGetUniformLocation(m_gridProgram, "uXAxisColor"), 1, glm::value_ptr(m_gridSettings.xAxisColor));
+    glUniform3fv(glGetUniformLocation(m_gridProgram, "uZAxisColor"), 1, glm::value_ptr(m_gridSettings.zAxisColor));
+
+    glUniform1i(glGetUniformLocation(m_gridProgram, "uShowAxes"), m_gridSettings.showAxes ? 1 : 0);
+    glUniform1i(glGetUniformLocation(m_gridProgram, "uShowSubdivisions"), m_gridSettings.showSubdivisions ? 1 : 0);
 
     glBindVertexArray(m_gridVao);
     glDrawArrays(GL_TRIANGLES, 0, m_gridLineCount);
     glBindVertexArray(0);
 
     glDisable(GL_BLEND);
+    glDepthMask(GL_TRUE);
 }
 
 void AngleRenderer::drawArmature(const ArmatureGraph& graph, const Camera& camera, void* selectedNodePtr, void* hoveredParentPtr, void* hoveredChildPtr, bool hasSymmetry, bool normalsPass) {
@@ -3709,7 +3734,7 @@ void AngleRenderer::initArmatureGeometry() {
 }
 
 void AngleRenderer::initGrid() {
-    float size = 1000.0f;
+    float size = 50000.0f;
     float planeData[] = {
         // x, y, z, r, g, b, a
         -size, 0.0f, -size, 1.0f, 1.0f, 1.0f, 1.0f,
@@ -3739,6 +3764,26 @@ void AngleRenderer::initGrid() {
     glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)(3 * sizeof(float)));
 
     glBindVertexArray(0);
+}
+
+void AngleRenderer::resetGridToDefault() {
+    m_gridSettings.infiniteGrid = false;
+    m_gridSettings.centerAtOrigin = true;
+    m_gridSettings.gridRadius = 300.0f;
+    m_gridSettings.edgeFeather = 0.35f;
+    m_gridSettings.spacing = 50.0f;
+    m_gridSettings.subdivisions = 5;
+    m_gridSettings.lineWidth = 1.2f;
+    m_gridSettings.opacity = 0.8f;
+    m_gridSettings.fadeDistance = 1.0f;
+    m_gridSettings.majorColor = glm::vec3(0.28f, 0.29f, 0.32f);
+    m_gridSettings.majorAlpha = 0.55f;
+    m_gridSettings.minorColor = glm::vec3(0.16f, 0.17f, 0.19f);
+    m_gridSettings.minorAlpha = 0.30f;
+    m_gridSettings.xAxisColor = glm::vec3(1.00f, 0.15f, 0.15f);
+    m_gridSettings.zAxisColor = glm::vec3(0.10f, 0.50f, 1.00f);
+    m_gridSettings.showAxes = true;
+    m_gridSettings.showSubdivisions = true;
 }
 
 void AngleRenderer::drawFullscreenMerge(const Scene& scene) {

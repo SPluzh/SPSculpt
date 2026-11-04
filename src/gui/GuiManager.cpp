@@ -10680,12 +10680,215 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             clickedGrid = ImGui::Button(ICON_LC_GRID "##hudGrid", squareBtn);
         }
 
+        bool openGridPopup = false;
         if (clickedGrid) {
             renderer.setShowGrid(!showGrid);
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Grid Display");
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+            openGridPopup = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Grid Display (Right-click for settings)");
+
+        ImVec2 gridMin = ImGui::GetItemRectMin();
+
+        // Flush narrow arrow button directly attached to Grid button
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, ImGui::GetStyle().FramePadding.y));
+        ImGui::SetWindowFontScale(fontScale * 0.65f);
+        if (ImGui::Button(ICON_LC_CHEVRON_DOWN "##hudGridArrow", halfSquareBtn)) {
+            openGridPopup = true;
+        }
+        ImGui::SetWindowFontScale(fontScale);
+        ImGui::PopStyleVar();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Grid Presets & Settings");
+
+        ImVec2 gridMax = ImGui::GetItemRectMax();
+
         if (showGrid) {
             ImGui::PopStyleColor(3);
+        }
+
+        float gridCenterX = (gridMin.x + gridMax.x) * 0.5f;
+        float gridBottomY = gridMax.y + 4.0f * scale;
+
+        if (openGridPopup) {
+            ImGui::OpenPopup("##hudGridPopup");
+        }
+
+        ImGui::SetNextWindowPos(ImVec2(gridCenterX, gridBottomY), ImGuiCond_Appearing, ImVec2(0.5f, 0.0f));
+        if (ImGui::BeginPopup("##hudGridPopup")) {
+            ImGui::SetWindowFontScale(fontScale);
+            ImGui::TextUnformatted("Floor Grid Settings");
+            ImGui::Separator();
+
+            GridSettings& gs = renderer.getGridSettings();
+            bool enable = gs.showGrid;
+            if (ImGui::Checkbox("Enable Grid##hud", &enable)) {
+                renderer.setShowGrid(enable);
+            }
+
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Geometry & Extent");
+
+            const char* modeItems[] = { "Bounded Podium", "Infinite Floor" };
+            int modeIdx = gs.infiniteGrid ? 1 : 0;
+            ImGui::TextUnformatted("Extent:    ");
+            ImGui::SameLine();
+            ImGui::PushItemWidth(140.0f * scale);
+            if (ImGui::Combo("##hudGridExtent", &modeIdx, modeItems, IM_ARRAYSIZE(modeItems))) {
+                gs.infiniteGrid = (modeIdx == 1);
+            }
+            ImGui::PopItemWidth();
+
+            if (!gs.infiniteGrid) {
+                float r = gs.gridRadius;
+                ImGui::TextUnformatted("Radius:    ");
+                ImGui::SameLine();
+                ImGui::PushItemWidth(140.0f * scale);
+                if (ImGui::SliderFloat("##hudGridRadius", &r, 20.0f, 5000.0f, "%.0f")) {
+                    gs.gridRadius = r;
+                }
+                ImGui::PopItemWidth();
+
+                float feather = gs.edgeFeather;
+                ImGui::TextUnformatted("Feather:   ");
+                ImGui::SameLine();
+                ImGui::PushItemWidth(140.0f * scale);
+                if (ImGui::SliderFloat("##hudGridFeather", &feather, 0.0f, 1.0f, "%.2f")) {
+                    gs.edgeFeather = feather;
+                }
+                ImGui::PopItemWidth();
+
+                bool centerAt0 = gs.centerAtOrigin;
+                if (ImGui::Checkbox("Center at World (0,0)##hud", &centerAt0)) {
+                    gs.centerAtOrigin = centerAt0;
+                }
+            } else {
+                float fadeDist = gs.fadeDistance;
+                ImGui::TextUnformatted("Horizon:   ");
+                ImGui::SameLine();
+                ImGui::PushItemWidth(140.0f * scale);
+                if (ImGui::SliderFloat("##hudGridFade", &fadeDist, 0.2f, 5.0f, "%.2fx")) {
+                    gs.fadeDistance = fadeDist;
+                }
+                ImGui::PopItemWidth();
+            }
+
+            // Quick Opacity slider
+            float op = gs.opacity;
+            ImGui::TextUnformatted("Opacity:   ");
+            ImGui::SameLine();
+            ImGui::PushItemWidth(140.0f * scale);
+            if (ImGui::SliderFloat("##hudGridOpacity", &op, 0.05f, 1.0f, "%.2f")) {
+                gs.opacity = op;
+            }
+            ImGui::PopItemWidth();
+
+            // Spacing slider
+            float sp = gs.spacing;
+            ImGui::TextUnformatted("Spacing:   ");
+            ImGui::SameLine();
+            ImGui::PushItemWidth(140.0f * scale);
+            if (ImGui::SliderFloat("##hudGridSpacing", &sp, 5.0f, 200.0f, "%.1f")) {
+                gs.spacing = sp;
+            }
+            ImGui::PopItemWidth();
+
+            // Quick Spacing shortcut buttons
+            ImGui::TextUnformatted("Quick Step:");
+            ImGui::SameLine();
+            float spacingOptions[] = { 10.0f, 25.0f, 50.0f, 100.0f };
+            for (int sIdx = 0; sIdx < 4; ++sIdx) {
+                if (sIdx > 0) ImGui::SameLine();
+                char sLabel[16];
+                snprintf(sLabel, sizeof(sLabel), "%d##hudSp", (int)spacingOptions[sIdx]);
+                bool isSelected = (std::abs(gs.spacing - spacingOptions[sIdx]) < 0.1f);
+                if (isSelected) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+                }
+                if (ImGui::Button(sLabel)) {
+                    gs.spacing = spacingOptions[sIdx];
+                }
+                if (isSelected) {
+                    ImGui::PopStyleColor();
+                }
+            }
+
+            // Subdivisions slider
+            int subdivs = gs.subdivisions;
+            ImGui::TextUnformatted("Subdivs:   ");
+            ImGui::SameLine();
+            ImGui::PushItemWidth(140.0f * scale);
+            if (ImGui::SliderInt("##hudGridSubdivs", &subdivs, 2, 10)) {
+                gs.subdivisions = subdivs;
+            }
+            ImGui::PopItemWidth();
+
+            // Line Width slider
+            float lw = gs.lineWidth;
+            ImGui::TextUnformatted("Line Width:");
+            ImGui::SameLine();
+            ImGui::PushItemWidth(140.0f * scale);
+            if (ImGui::SliderFloat("##hudGridLineWidth", &lw, 0.5f, 3.0f, "%.1f px")) {
+                gs.lineWidth = lw;
+            }
+            ImGui::PopItemWidth();
+
+            // Show Axes checkbox
+            bool axes = gs.showAxes;
+            if (ImGui::Checkbox("Colored Axes (X/Z)##hud", &axes)) {
+                gs.showAxes = axes;
+            }
+            ImGui::SameLine();
+            // Show Subdivisions checkbox
+            bool subdivsToggle = gs.showSubdivisions;
+            if (ImGui::Checkbox("Subdivisions##hud", &subdivsToggle)) {
+                gs.showSubdivisions = subdivsToggle;
+            }
+
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Colors");
+
+            // Major Lines Color (ColorEdit4 with AlphaBar)
+            glm::vec4 majorCol = glm::vec4(gs.majorColor, gs.majorAlpha);
+            if (ImGui::ColorEdit4("##hudMajorCol", &majorCol.r, ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_NoInputs)) {
+                gs.majorColor = glm::vec3(majorCol);
+                gs.majorAlpha = majorCol.a;
+            }
+            ImGui::SameLine();
+            ImGui::TextUnformatted("Major Lines");
+
+            // Minor Lines Color (ColorEdit4 with AlphaBar)
+            glm::vec4 minorCol = glm::vec4(gs.minorColor, gs.minorAlpha);
+            if (ImGui::ColorEdit4("##hudMinorCol", &minorCol.r, ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_NoInputs)) {
+                gs.minorColor = glm::vec3(minorCol);
+                gs.minorAlpha = minorCol.a;
+            }
+            ImGui::SameLine();
+            ImGui::TextUnformatted("Minor Lines");
+
+            // X Axis Color (Red)
+            glm::vec3 xCol = gs.xAxisColor;
+            if (ImGui::ColorEdit3("##hudXCol", &xCol.r, ImGuiColorEditFlags_NoInputs)) {
+                gs.xAxisColor = xCol;
+            }
+            ImGui::SameLine();
+            ImGui::TextUnformatted("X Axis (Red)");
+
+            // Z Axis Color (Blue)
+            glm::vec3 zCol = gs.zAxisColor;
+            if (ImGui::ColorEdit3("##hudZCol", &zCol.r, ImGuiColorEditFlags_NoInputs)) {
+                gs.zAxisColor = zCol;
+            }
+            ImGui::SameLine();
+            ImGui::TextUnformatted("Z Axis (Blue)");
+
+            ImGui::Separator();
+            if (ImGui::Button("Reset to Default##hudGrid")) {
+                renderer.resetGridToDefault();
+            }
+
+            ImGui::EndPopup();
         }
 
         ImGui::SameLine();
@@ -12929,6 +13132,108 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                         if (ImGui::Button("Import Bg Image")) {
                             renderer.setBgTexturePath(bgImagePath);
                         }
+                    }
+                }
+
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Floor Grid Settings");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                GridSettings& gridSettings = renderer.getGridSettings();
+                bool showFloorGrid = gridSettings.showGrid;
+                if (ImGui::Checkbox("Show Floor Grid", &showFloorGrid)) {
+                    renderer.setShowGrid(showFloorGrid);
+                }
+
+                if (showFloorGrid) {
+                    const char* modeItems[] = { "Bounded Podium (Nomad style)", "Infinite Floor (Blender style)" };
+                    int modeIdx = gridSettings.infiniteGrid ? 1 : 0;
+                    if (ImGui::Combo("Grid Extent Mode##gridPref", &modeIdx, modeItems, IM_ARRAYSIZE(modeItems))) {
+                        gridSettings.infiniteGrid = (modeIdx == 1);
+                    }
+
+                    if (!gridSettings.infiniteGrid) {
+                        float r = gridSettings.gridRadius;
+                        if (ImGui::SliderFloat("Podium Radius##gridPref", &r, 20.0f, 5000.0f, "%.0f")) {
+                            gridSettings.gridRadius = r;
+                        }
+                        float feather = gridSettings.edgeFeather;
+                        if (ImGui::SliderFloat("Edge Feather##gridPref", &feather, 0.0f, 1.0f, "%.2f")) {
+                            gridSettings.edgeFeather = feather;
+                        }
+                        bool centerAt0 = gridSettings.centerAtOrigin;
+                        if (ImGui::Checkbox("Center at World Origin (0,0,0)##gridPref", &centerAt0)) {
+                            gridSettings.centerAtOrigin = centerAt0;
+                        }
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("When checked, podium stays at world origin (0,0,0) instead of following camera focus");
+                        }
+                    } else {
+                        float fadeDist = gridSettings.fadeDistance;
+                        if (ImGui::SliderFloat("Horizon Fade Distance##gridPref", &fadeDist, 0.2f, 5.0f, "%.2fx")) {
+                            gridSettings.fadeDistance = fadeDist;
+                        }
+                    }
+
+                    ImGui::Spacing();
+                    bool showAxes = gridSettings.showAxes;
+                    if (ImGui::Checkbox("Show Colored Axes (X/Z)##gridPref", &showAxes)) {
+                        gridSettings.showAxes = showAxes;
+                    }
+                    ImGui::SameLine();
+                    bool showSubdivs = gridSettings.showSubdivisions;
+                    if (ImGui::Checkbox("Show Subdivisions##gridPref", &showSubdivs)) {
+                        gridSettings.showSubdivisions = showSubdivs;
+                    }
+
+                    float opacity = gridSettings.opacity;
+                    if (ImGui::SliderFloat("Grid Opacity##gridPref", &opacity, 0.05f, 1.0f, "%.2f")) {
+                        gridSettings.opacity = opacity;
+                    }
+
+                    float spacing = gridSettings.spacing;
+                    if (ImGui::SliderFloat("Cell Spacing##gridPref", &spacing, 5.0f, 200.0f, "%.1f")) {
+                        gridSettings.spacing = spacing;
+                    }
+
+                    int subdivs = gridSettings.subdivisions;
+                    if (ImGui::SliderInt("Subdivisions##gridPref", &subdivs, 2, 10)) {
+                        gridSettings.subdivisions = subdivs;
+                    }
+
+                    float lineWidth = gridSettings.lineWidth;
+                    if (ImGui::SliderFloat("Line Width (px)##gridPref", &lineWidth, 0.5f, 3.0f, "%.1f px")) {
+                        gridSettings.lineWidth = lineWidth;
+                    }
+
+                    ImGui::Spacing();
+                    ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Grid Colors");
+
+                    glm::vec4 majorCol = glm::vec4(gridSettings.majorColor, gridSettings.majorAlpha);
+                    if (ImGui::ColorEdit4("Major Lines Color##gridPref", &majorCol.r, ImGuiColorEditFlags_AlphaBar)) {
+                        gridSettings.majorColor = glm::vec3(majorCol);
+                        gridSettings.majorAlpha = majorCol.a;
+                    }
+
+                    glm::vec4 minorCol = glm::vec4(gridSettings.minorColor, gridSettings.minorAlpha);
+                    if (ImGui::ColorEdit4("Minor Lines Color##gridPref", &minorCol.r, ImGuiColorEditFlags_AlphaBar)) {
+                        gridSettings.minorColor = glm::vec3(minorCol);
+                        gridSettings.minorAlpha = minorCol.a;
+                    }
+
+                    glm::vec3 xCol = gridSettings.xAxisColor;
+                    if (ImGui::ColorEdit3("X Axis Color (Red)##gridPref", &xCol.r)) {
+                        gridSettings.xAxisColor = xCol;
+                    }
+
+                    glm::vec3 zCol = gridSettings.zAxisColor;
+                    if (ImGui::ColorEdit3("Z Axis Color (Blue)##gridPref", &zCol.r)) {
+                        gridSettings.zAxisColor = zCol;
+                    }
+
+                    if (ImGui::Button("Reset Grid to Default##gridPref")) {
+                        renderer.resetGridToDefault();
                     }
                 }
 

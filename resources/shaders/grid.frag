@@ -4,83 +4,125 @@ precision highp float;
 in vec4 vColor;
 in vec3 vWorldPos;
 
+uniform vec3 uCamPos;
 uniform vec3 uPivot;
-uniform float uFogNear;
-uniform float uFogFar;
+uniform int uInfiniteGrid;
+uniform int uCenterAtOrigin;
+uniform float uGridRadius;
+uniform float uEdgeFeather;
+uniform float uHorizonNear;
+uniform float uHorizonFar;
+
+uniform float uSpacing;          // Major line spacing (e.g. 50.0)
+uniform float uSubdivisions;     // Subdivisions count (e.g. 5.0)
+uniform float uLineWidth;        // Line width in pixels (e.g. 1.2)
+uniform float uGridOpacity;      // Overall opacity multiplier
+
+uniform vec4 uMajorColor;        // rgb + alpha
+uniform vec4 uMinorColor;        // rgb + alpha
+uniform vec3 uXAxisColor;        // Pure red
+uniform vec3 uZAxisColor;        // Pure blue
+uniform int uShowAxes;           // 1 = on, 0 = off
+uniform int uShowSubdivisions;   // 1 = on, 0 = off
 
 out vec4 fragColor;
 
-// Calculates analytical anti-aliased grid line intensity using screen-space derivatives (F3D style)
-float computeGrid(vec2 uv, float spacing, float lineWidthPixels) {
-    vec2 coord = uv / spacing;
-    vec2 derivative = fwidth(coord);
-    vec2 grid = abs(fract(coord - 0.5) - 0.5);
-    vec2 lineDist = grid / max(derivative, vec2(1e-5));
-    vec2 alpha2d = clamp(vec2(lineWidthPixels * 0.5) - lineDist + 0.5, 0.0, 1.0);
-    return max(alpha2d.x, alpha2d.y);
+// Analytical anti-aliased grid line calculation using screen-space derivatives
+float computeGridAxis(float coord, float spacing, float widthPx) {
+    float c = coord / spacing;
+    float lineDist = abs(fract(c - 0.5) - 0.5) / max(fwidth(c), 1e-5);
+    return clamp(widthPx * 0.5 - lineDist + 0.5, 0.0, 1.0);
 }
 
 void main() {
     vec2 uv = vWorldPos.xz;
+    vec2 fwidthUV = max(fwidth(uv), vec2(1e-5));
     
-    // 1. Minor grid lines (step 10.0, 1.2px thickness)
-    float minor = computeGrid(uv, 10.0, 1.2);
+    // 1. Central Axes
+    float axisWidthPx = uLineWidth * 1.8;
+    // X Axis: z = 0 (distance along Y in UV coords)
+    float distAxisX = abs(uv.y) / fwidthUV.y;
+    float alphaAxisX = clamp(axisWidthPx * 0.5 - distAxisX + 0.5, 0.0, 1.0);
     
-    // 2. Major grid lines (step 50.0, 1.8px thickness)
-    float major = computeGrid(uv, 50.0, 1.8);
+    // Z Axis: x = 0 (distance along X in UV coords)
+    float distAxisZ = abs(uv.x) / fwidthUV.x;
+    float alphaAxisZ = clamp(axisWidthPx * 0.5 - distAxisZ + 0.5, 0.0, 1.0);
     
-    // 3. Main Axes (X axis: z near 0, Z axis: x near 0, 2.5px thickness)
-    vec2 coordAxes = uv;
-    vec2 derivAxes = fwidth(coordAxes);
-    vec2 distAxes = abs(coordAxes) / max(derivAxes, vec2(1e-5));
-    vec2 axisAlpha = clamp(vec2(1.25) - distAxes + 0.5, 0.0, 1.0); // 2.5px thick axes
+    // 2. Major grid lines
+    float majorX = computeGridAxis(uv.x, uSpacing, uLineWidth * 1.3);
+    float majorZ = computeGridAxis(uv.y, uSpacing, uLineWidth * 1.3);
+    float major = max(majorX, majorZ);
     
-    float xAxis = axisAlpha.y; // z = 0 (X axis)
-    float zAxis = axisAlpha.x; // x = 0 (Z axis)
+    // 3. Minor grid lines (Subdivisions)
+    float minor = 0.0;
+    if (uShowSubdivisions == 1 && uSubdivisions > 1.0) {
+        float minorStep = uSpacing / uSubdivisions;
+        float minorX = computeGridAxis(uv.x, minorStep, uLineWidth);
+        float minorZ = computeGridAxis(uv.y, minorStep, uLineWidth);
+        minor = max(minorX, minorZ);
+        // Subtract major lines to avoid double-brightness
+        minor = max(0.0, minor - major);
+    }
     
-    // Mask out minor and major lines on top of the main axes to prevent double-line / white fringe artifacts
-    float axisMask = max(xAxis, zAxis);
-    minor *= (1.0 - axisMask);
-    major *= (1.0 - axisMask);
+    // 4. Eliminate parasitic white fringe/line along axes:
+    // Completely cut off background grid lines where colored axes pass
+    if (uShowAxes == 1) {
+        float maxAxis = max(alphaAxisX, alphaAxisZ);
+        major *= (1.0 - maxAxis);
+        minor *= (1.0 - maxAxis);
+    }
     
-    // Smooth grey grid palette (F3D style - soft grey lines)
-    vec3 minorCol = vec3(0.12, 0.13, 0.14);       // Deep soft grey for minor lines
-    vec3 majorCol = vec3(0.24, 0.25, 0.27);       // Subtle medium grey for major lines
-    vec3 xCol     = vec3(1.00, 0.05, 0.05);       // Pure Red X Axis
-    vec3 zCol     = vec3(0.00, 0.45, 1.00);       // Pure Blue Z Axis
+    // 5. Color compositing in straight linear RGB + analytical Alpha
+    vec3 finalCol = vec3(0.0);
+    float finalA = 0.0;
     
-    vec3 finalColor = vec3(0.0);
-    float finalAlpha = 0.0;
-
+    // Minor grid layer
     if (minor > 0.001) {
-        finalColor = minorCol;
-        finalAlpha = minor * 0.35;
+        finalCol = uMinorColor.rgb;
+        finalA = minor * uMinorColor.a;
     }
     
+    // Major grid layer
     if (major > 0.001) {
-        finalColor = mix(finalColor, majorCol, major);
-        finalAlpha = max(finalAlpha, major * 0.55);
+        float aMaj = major * uMajorColor.a;
+        finalCol = mix(finalCol, uMajorColor.rgb, aMaj / max(finalA + aMaj, 1e-4));
+        finalA = max(finalA, aMaj);
     }
     
-    if (xAxis > 0.001) {
-        finalColor = mix(finalColor, xCol, xAxis);
-        finalAlpha = max(finalAlpha, xAxis * 0.98);
+    // Colored axes layer (Red X axis, Blue Z axis)
+    if (uShowAxes == 1) {
+        if (alphaAxisX > 0.001) {
+            float aX = alphaAxisX * 0.95;
+            finalCol = mix(finalCol, uXAxisColor, aX / max(finalA + aX, 1e-4));
+            finalA = max(finalA, aX);
+        }
+        if (alphaAxisZ > 0.001) {
+            float aZ = alphaAxisZ * 0.95;
+            finalCol = mix(finalCol, uZAxisColor, aZ / max(finalA + aZ, 1e-4));
+            finalA = max(finalA, aZ);
+        }
     }
     
-    if (zAxis > 0.001) {
-        finalColor = mix(finalColor, zCol, zAxis);
-        finalAlpha = max(finalAlpha, zAxis * 0.98);
+    // 6. Extent attenuation (Bounded podium vs Infinite Horizon)
+    float fadeFactor = 1.0;
+    if (uInfiniteGrid == 0) {
+        vec2 center = (uCenterAtOrigin == 1) ? vec2(0.0) : uPivot.xz;
+        float dist = length(vWorldPos.xz - center);
+        float innerRadius = uGridRadius * (1.0 - clamp(uEdgeFeather, 0.0, 0.99));
+        fadeFactor = clamp((uGridRadius - dist) / max(uGridRadius - innerRadius, 0.001), 0.0, 1.0);
+        fadeFactor = fadeFactor * fadeFactor * (3.0 - 2.0 * fadeFactor);
+    } else {
+        float distToCam = length(vWorldPos - uCamPos);
+        fadeFactor = clamp((uHorizonFar - distToCam) / max(uHorizonFar - uHorizonNear, 1.0), 0.0, 1.0);
+        fadeFactor = fadeFactor * fadeFactor * (3.0 - 2.0 * fadeFactor);
     }
     
-    // Distance fog attenuation around camera pivot
-    float dist = length(vWorldPos.xz - uPivot.xz);
-    float fogFactor = clamp((uFogFar - dist) / max(uFogFar - uFogNear, 0.001), 0.0, 1.0);
-    fogFactor = fogFactor * fogFactor * (3.0 - 2.0 * fogFactor);
+    finalA *= fadeFactor * uGridOpacity;
     
-    finalAlpha *= fogFactor;
-    if (finalAlpha <= 0.001) {
+    if (finalA <= 0.001) {
         discard;
     }
     
-    fragColor = vec4(finalColor, finalAlpha);
+    // Premultiplied alpha output for transparent framebuffer
+    fragColor = vec4(finalCol * finalA, finalA);
 }

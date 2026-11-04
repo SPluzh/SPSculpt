@@ -19,6 +19,22 @@ bool RenderSettings::save(IniFile& ini, const AngleRenderer& renderer, const Sce
     ini.setBool(sec, "enableSelectionFlash", renderer.getEnableSelectionFlash());
     ini.setFloat(sec, "selectionAnimDuration", renderer.getSelectionAnimDuration());
     ini.setBool(sec, "showGrid", renderer.getShowGrid());
+    const auto& gs = renderer.getGridSettings();
+    ini.setBool(sec, "gridShowAxes", gs.showAxes);
+    ini.setBool(sec, "gridShowSubdivisions", gs.showSubdivisions);
+    ini.setBool(sec, "gridInfinite", gs.infiniteGrid);
+    ini.setBool(sec, "gridCenterAtOrigin", gs.centerAtOrigin);
+    ini.setFloat(sec, "gridRadius", gs.gridRadius);
+    ini.setFloat(sec, "gridEdgeFeather", gs.edgeFeather);
+    ini.setFloat(sec, "gridSpacing", gs.spacing);
+    ini.setInt(sec, "gridSubdivisions", gs.subdivisions);
+    ini.setFloat(sec, "gridLineWidth", gs.lineWidth);
+    ini.setFloat(sec, "gridOpacity", gs.opacity);
+    ini.setFloat(sec, "gridFadeDistance", gs.fadeDistance);
+    ini.set(sec, "gridMajorColor", std::to_string(gs.majorColor.r) + " " + std::to_string(gs.majorColor.g) + " " + std::to_string(gs.majorColor.b) + " " + std::to_string(gs.majorAlpha));
+    ini.set(sec, "gridMinorColor", std::to_string(gs.minorColor.r) + " " + std::to_string(gs.minorColor.g) + " " + std::to_string(gs.minorColor.b) + " " + std::to_string(gs.minorAlpha));
+    ini.set(sec, "gridXAxisColor", std::to_string(gs.xAxisColor.r) + " " + std::to_string(gs.xAxisColor.g) + " " + std::to_string(gs.xAxisColor.b));
+    ini.set(sec, "gridZAxisColor", std::to_string(gs.zAxisColor.r) + " " + std::to_string(gs.zAxisColor.g) + " " + std::to_string(gs.zAxisColor.b));
     ini.setBool(sec, "showSafeFrames", renderer.getShowSafeFrames());
     ini.setFloat(sec, "safeFramesMargin", renderer.getSafeFramesMargin());
     ini.setFloat(sec, "safeFramesThickness", renderer.getSafeFramesThickness());
@@ -130,7 +146,52 @@ bool RenderSettings::load(const IniFile& ini, AngleRenderer& renderer, Scene& sc
     if (ini.hasKey(sec, "showContour")) renderer.setShowContour(ini.getBool(sec, "showContour"));
     if (ini.hasKey(sec, "enableSelectionFlash")) renderer.setEnableSelectionFlash(ini.getBool(sec, "enableSelectionFlash"));
     if (ini.hasKey(sec, "selectionAnimDuration")) renderer.setSelectionAnimDuration(ini.getFloat(sec, "selectionAnimDuration", 1.2f));
-    if (ini.hasKey(sec, "showGrid")) renderer.setShowGrid(ini.getBool(sec, "showGrid"));
+    GridSettings gs = renderer.getGridSettings();
+    if (ini.hasKey(sec, "showGrid")) gs.showGrid = ini.getBool(sec, "showGrid");
+    if (ini.hasKey(sec, "gridShowAxes")) gs.showAxes = ini.getBool(sec, "gridShowAxes");
+    if (ini.hasKey(sec, "gridShowSubdivisions")) gs.showSubdivisions = ini.getBool(sec, "gridShowSubdivisions");
+    if (ini.hasKey(sec, "gridInfinite")) gs.infiniteGrid = ini.getBool(sec, "gridInfinite");
+    if (ini.hasKey(sec, "gridCenterAtOrigin")) gs.centerAtOrigin = ini.getBool(sec, "gridCenterAtOrigin");
+    if (ini.hasKey(sec, "gridRadius")) gs.gridRadius = ini.getFloat(sec, "gridRadius", 300.0f);
+    if (ini.hasKey(sec, "gridEdgeFeather")) gs.edgeFeather = ini.getFloat(sec, "gridEdgeFeather", 0.35f);
+    if (ini.hasKey(sec, "gridSpacing")) gs.spacing = ini.getFloat(sec, "gridSpacing", 50.0f);
+    if (ini.hasKey(sec, "gridSubdivisions")) gs.subdivisions = ini.getInt(sec, "gridSubdivisions", 5);
+    if (ini.hasKey(sec, "gridLineWidth")) gs.lineWidth = ini.getFloat(sec, "gridLineWidth", 1.2f);
+    if (ini.hasKey(sec, "gridOpacity")) gs.opacity = ini.getFloat(sec, "gridOpacity", 0.8f);
+    if (ini.hasKey(sec, "gridFadeDistance")) gs.fadeDistance = ini.getFloat(sec, "gridFadeDistance", 1.0f);
+
+    if (ini.hasKey(sec, "gridMajorColor")) {
+        std::stringstream ss(ini.get(sec, "gridMajorColor"));
+        float r, g, b, a;
+        if (ss >> r >> g >> b >> a) {
+            gs.majorColor = glm::vec3(r, g, b);
+            gs.majorAlpha = a;
+        }
+    }
+    if (ini.hasKey(sec, "gridMinorColor")) {
+        std::stringstream ss(ini.get(sec, "gridMinorColor"));
+        float r, g, b, a;
+        if (ss >> r >> g >> b >> a) {
+            gs.minorColor = glm::vec3(r, g, b);
+            gs.minorAlpha = a;
+        }
+    }
+    if (ini.hasKey(sec, "gridXAxisColor")) {
+        std::stringstream ss(ini.get(sec, "gridXAxisColor"));
+        float r, g, b;
+        if (ss >> r >> g >> b) {
+            gs.xAxisColor = glm::vec3(r, g, b);
+        }
+    }
+    if (ini.hasKey(sec, "gridZAxisColor")) {
+        std::stringstream ss(ini.get(sec, "gridZAxisColor"));
+        float r, g, b;
+        if (ss >> r >> g >> b) {
+            gs.zAxisColor = glm::vec3(r, g, b);
+        }
+    }
+    renderer.setGridSettings(gs);
+    renderer.setShowGrid(gs.showGrid);
     if (ini.hasKey(sec, "showSafeFrames")) renderer.setShowSafeFrames(ini.getBool(sec, "showSafeFrames"));
     if (ini.hasKey(sec, "safeFramesMargin")) renderer.setSafeFramesMargin(ini.getFloat(sec, "safeFramesMargin", 35.0f));
     if (ini.hasKey(sec, "safeFramesThickness")) renderer.setSafeFramesThickness(ini.getFloat(sec, "safeFramesThickness", 0.1f));

@@ -1,0 +1,13 @@
+#pragma once
+
+// AUTO-GENERATED from version.txt via CMake.
+// DO NOT EDIT DIRECTLY. To change the version, edit version.txt in the project root.
+
+namespace Version {
+    constexpr int MAJOR = @APP_VERSION_MAJOR@;
+    constexpr int MINOR = @APP_VERSION_MINOR@;
+    constexpr int PATCH = @APP_VERSION_PATCH@;
+    constexpr const char* SUFFIX = "@APP_VERSION_SUFFIX@";
+    constexpr const char* STRING = "@APP_VERSION_RAW@";
+    constexpr const char* APP_NAME = "SPSculpt";
+}

@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.18]
+- **Floor Grid Overhaul**:
+  - **Clean Display**: Removed white line artifacts on central axes and fixed background color distortion.
+  - **Podium & Infinite Modes**: Switch between Nomad-style circular podium (with adjustable radius and soft edges) and Blender-style infinite floor with horizon fade.
+  - **Custom Colors & Style**: Freely customize line and axis colors, cell spacing, line thickness, and opacity.
+  - **Quick Settings**: Configurable right from the top viewport HUD button or in Preferences.
+
 ## [0.3.17]
 - **High-Poly Sculpt Performance**: Smooth sculpting, instant brush response, and accelerated Undo/Redo on dense 10M+ polygon meshes.
 - **Voxel Remesh Upgrades**: Resolution limit raised to 3000 with sparse memory protection, new "Keep Sharp Edges" mode, unrestricted quad regularization, and "Keep Masked" support.

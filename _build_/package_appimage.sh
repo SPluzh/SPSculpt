@@ -73,7 +73,13 @@ chmod +x AppDir/AppRun
 
 echo "=== [5/5] Generating AppImage with universal static runtime ==="
 export ARCH=x86_64
-VERSION="0.3.13"
+if [ -f "version.txt" ]; then
+    VERSION="$(tr -d '\r\n[:space:]' < version.txt)"
+elif [ -f "../version.txt" ]; then
+    VERSION="$(tr -d '\r\n[:space:]' < ../version.txt)"
+else
+    VERSION="0.0.0"
+fi
 OUTPUT_NAME="SPSculpt-${VERSION}-x86_64.AppImage"
 
 "$TOOLS_DIR/appimagetool-x86_64.AppImage" --appimage-extract-and-run \
