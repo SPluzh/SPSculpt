@@ -176,7 +176,7 @@ float PCF(vec3 viewPos) {
 
 void main() {
     vec3 normal = getNormal();
-    vec3 viewDir = -normalize(vVertex);
+    vec3 viewDir = (uOrtho == 1) ? vec3(0.0, 0.0, 1.0) : (length(vVertex) > 1e-6 ? -normalize(vVertex) : vec3(0.0, 0.0, 1.0));
     if (uHasNormalMap == 1) {
         vec3 mapN = texture(uNormalMap, vTexCoord).rgb * 2.0 - 1.0;
         mat3 TBN = mat3(normalize(vTangent), normalize(vBitangent), normal);

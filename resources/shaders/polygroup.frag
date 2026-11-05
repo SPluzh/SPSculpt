@@ -38,7 +38,7 @@ void main() {
     vec3 lightColor = vec3(1.0) * (diff1 + diff2 + ambient);
     vec3 finalColor = linCol * lightColor;
     
-    vec3 viewDir = normalize(-vVertex);
+    vec3 viewDir = (uOrtho == 1) ? vec3(0.0, 0.0, 1.0) : (length(vVertex) > 1e-6 ? normalize(-vVertex) : vec3(0.0, 0.0, 1.0));
     vec3 halfDir = normalize(lightDir1 + viewDir);
     float spec = pow(max(dot(normal, halfDir), 0.0), 32.0) * 0.15;
     finalColor += vec3(spec);

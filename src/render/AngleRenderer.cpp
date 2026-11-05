@@ -1602,7 +1602,10 @@ void AngleRenderer::drawMeshForThumbnail(Mesh* mesh, const Camera& cam) {
     glUniform1i(glGetUniformLocation(m_matcapProgram, "uSymCount"), 0);
     glUniform1i(glGetUniformLocation(m_matcapProgram, "uSym"), 0);
     glUniform1f(glGetUniformLocation(m_matcapProgram, "uCurvature"), 0.0f);
-    glUniform1f(glGetUniformLocation(m_matcapProgram, "uFov"), cam.getFov());
+    float thumbFov = cam.isOrthographic() ? -cam.getOrthoZoom() : cam.getFov();
+    glUniform1f(glGetUniformLocation(m_matcapProgram, "uFov"), thumbFov);
+    glUniform1i(glGetUniformLocation(m_matcapProgram, "uOrtho"), cam.isOrthographic() ? 1 : 0);
+    glUniform1f(glGetUniformLocation(m_matcapProgram, "uOrthoZoom"), cam.getOrthoZoom());
     glUniform1i(glGetUniformLocation(m_matcapProgram, "uBevelEnabled"), 0);
     glUniform1i(glGetUniformLocation(m_matcapProgram, "uShowPolyGroups"), 0);
     glUniform1i(glGetUniformLocation(m_matcapProgram, "uIsThumbnail"), 1);
@@ -1749,7 +1752,10 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
     }
     glUniform1i(glGetUniformLocation(program, "uDarken"), darken ? 1 : 0);
     glUniform1f(glGetUniformLocation(program, "uCurvature"), m_curvature);
-    glUniform1f(glGetUniformLocation(program, "uFov"), camera.getFov());
+    float shaderFov = camera.isOrthographic() ? -camera.getOrthoZoom() : camera.getFov();
+    glUniform1f(glGetUniformLocation(program, "uFov"), shaderFov);
+    glUniform1i(glGetUniformLocation(program, "uOrtho"), camera.isOrthographic() ? 1 : 0);
+    glUniform1f(glGetUniformLocation(program, "uOrthoZoom"), camera.getOrthoZoom());
     glUniform1i(glGetUniformLocation(program, "uShowInvertedNormals"), m_showInvertedNormals ? 1 : 0);
     glUniform4f(glGetUniformLocation(program, "uInvertedNormalColor"), m_invertedNormalColor.r, m_invertedNormalColor.g, m_invertedNormalColor.b, m_invertedNormalColor.a);
 
@@ -1947,6 +1953,7 @@ void AngleRenderer::drawMeshPrepass(Mesh* mesh, const Scene& scene, const Camera
     glUniformMatrix4fv(glGetUniformLocation(m_bevelPrepassProgram, "uEM"), 1, GL_FALSE, glm::value_ptr(mesh->editMatrix));
     glUniformMatrix3fv(glGetUniformLocation(m_bevelPrepassProgram, "uEN"), 1, GL_FALSE, glm::value_ptr(mesh->enMatrix));
     glUniform1i(glGetUniformLocation(m_bevelPrepassProgram, "uFlat"), m_flatShading ? 1 : 0);
+    glUniform1i(glGetUniformLocation(m_bevelPrepassProgram, "uOrtho"), camera.isOrthographic() ? 1 : 0);
 
     glBindVertexArray(bufs->vao);
 
@@ -2038,7 +2045,10 @@ void AngleRenderer::drawMeshFlatColor(Mesh* mesh, const Scene& scene, const Came
     glUniform1i(glGetUniformLocation(m_flatProgram, "uSym"), 0);
     glUniform1i(glGetUniformLocation(m_flatProgram, "uDarken"), 0);
     glUniform1f(glGetUniformLocation(m_flatProgram, "uCurvature"), 0.0f);
-    glUniform1f(glGetUniformLocation(m_flatProgram, "uFov"), camera.getFov());
+    float flatFov = camera.isOrthographic() ? -camera.getOrthoZoom() : camera.getFov();
+    glUniform1f(glGetUniformLocation(m_flatProgram, "uFov"), flatFov);
+    glUniform1i(glGetUniformLocation(m_flatProgram, "uOrtho"), camera.isOrthographic() ? 1 : 0);
+    glUniform1f(glGetUniformLocation(m_flatProgram, "uOrthoZoom"), camera.getOrthoZoom());
 
     glUniform1i(glGetUniformLocation(m_flatProgram, "uBevelEnabled"), m_bevelEnabled ? 1 : 0);
     if (m_bevelEnabled) {
@@ -4688,6 +4698,7 @@ void AngleRenderer::drawMeshNormals(Mesh* mesh, const Scene& scene, const Camera
     glUniformMatrix4fv(glGetUniformLocation(m_ssaoNormalsProgram, "uEM"), 1, GL_FALSE, glm::value_ptr(mesh->editMatrix));
     glUniformMatrix3fv(glGetUniformLocation(m_ssaoNormalsProgram, "uEN"), 1, GL_FALSE, glm::value_ptr(mesh->enMatrix));
     glUniform1i(glGetUniformLocation(m_ssaoNormalsProgram, "uFlat"), m_flatShading ? 1 : 0);
+    glUniform1i(glGetUniformLocation(m_ssaoNormalsProgram, "uOrtho"), camera.isOrthographic() ? 1 : 0);
 
     glUniform1i(glGetUniformLocation(m_ssaoNormalsProgram, "uBevelEnabled"), m_bevelEnabled ? 1 : 0);
     if (m_bevelEnabled) {
@@ -4736,6 +4747,7 @@ void AngleRenderer::drawMeshGBuffer(Mesh* mesh, const Scene& scene, const Camera
     glUniformMatrix3fv(glGetUniformLocation(m_gbufferProgram, "uN"), 1, GL_FALSE, glm::value_ptr(mesh->nMatrix));
     glUniformMatrix4fv(glGetUniformLocation(m_gbufferProgram, "uEM"), 1, GL_FALSE, glm::value_ptr(mesh->editMatrix));
     glUniformMatrix3fv(glGetUniformLocation(m_gbufferProgram, "uEN"), 1, GL_FALSE, glm::value_ptr(mesh->enMatrix));
+    glUniform1i(glGetUniformLocation(m_gbufferProgram, "uOrtho"), camera.isOrthographic() ? 1 : 0);
 
     float effectiveAlbedo[3] = { m_albedo[0], m_albedo[1], m_albedo[2] };
     if (m_useVertexColors) {

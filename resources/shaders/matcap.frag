@@ -35,7 +35,7 @@ vec3 groupColor(uint gid) {
 void main() {
     float lenN = length(vNormal);
     vec3 normal = (uIsXRay == 1) ? (lenN > 1e-4 ? vNormal / lenN : vec3(0.0, 0.0, 1.0)) : getNormal();
-    vec3 eye = normalize(-vVertex);
+    vec3 eye = (uOrtho == 1) ? vec3(0.0, 0.0, 1.0) : (length(vVertex) > 1e-6 ? normalize(-vVertex) : vec3(0.0, 0.0, 1.0));
     if (uHasNormalMap == 1) {
         vec3 mapN = texture(uNormalMap, vTexCoord).rgb * 2.0 - 1.0;
         mat3 TBN = mat3(normalize(vTangent), normalize(vBitangent), normal);
@@ -54,7 +54,13 @@ void main() {
     float alphaToUse = uAlpha;
 
     if (uUseTexture == 1) {
-        vec3 nm_z = normalize(vVertex);
+        vec3 nm_z;
+        if (uOrtho == 1) {
+            nm_z = vec3(0.0, 0.0, -1.0);
+        } else {
+            float lenV = length(vVertex);
+            nm_z = lenV > 1e-6 ? (vVertex / lenV) : vec3(0.0, 0.0, -1.0);
+        }
         vec3 nm_x = vec3(-nm_z.z, 0.0, nm_z.x);
         float lenX = length(nm_x);
         nm_x = lenX > 1e-4 ? (nm_x / lenX) : vec3(1.0, 0.0, 0.0);
@@ -86,7 +92,9 @@ void main() {
             color = sRGBToLinear(matcapColor * baseColor);
         }
     } else {
-        vec3 r = reflect(normalize(vVertex), normal);
+        float lenV = length(vVertex);
+        vec3 viewDir = (uOrtho == 1) ? vec3(0.0, 0.0, -1.0) : (lenV > 1e-6 ? (vVertex / lenV) : vec3(0.0, 0.0, -1.0));
+        vec3 r = reflect(viewDir, normal);
         float diffuse = max(dot(normal, vec3(0.5, 0.8, 1.0)), 0.0);
         vec3 lightColor = vec3(0.9, 0.85, 0.8) * diffuse + vec3(0.18, 0.18, 0.22);
         color = baseColor * lightColor;

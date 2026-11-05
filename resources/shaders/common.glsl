@@ -13,6 +13,8 @@ uniform int uDarken;
 uniform float uCurvature;
 uniform float uFov;
 uniform int uFlat;
+uniform int uOrtho;
+uniform float uOrthoZoom;
 uniform int uIsXRay;
 uniform int uIsThumbnail;
 uniform int uShowInvertedNormals;
@@ -31,20 +33,18 @@ vec3 getAlignedNormal() {
     if (uBevelEnabled == 1) {
         return getBevelNormal();
     }
+    float lenN = length(vNormal);
+    bool hasValidN = (lenN > 1e-4 && !isnan(lenN));
+    vec3 N = hasValidN ? (vNormal / lenN) : vec3(0.0, 0.0, 1.0);
+
     vec3 dX = dFdx(vVertex);
     vec3 dY = dFdy(vVertex);
     vec3 crossN = cross(dY, dX);
     float lenCross = length(crossN);
-    vec3 flatNormal = lenCross > 1e-6 ? -(crossN / lenCross) : vec3(0.0, 0.0, 1.0);
-
-    float lenN = length(vNormal);
-    if (lenN < 1e-4 || isnan(lenN)) {
-        return flatNormal;
-    }
-    vec3 N = vNormal / lenN;
+    vec3 flatNormal = lenCross > 1e-10 ? -(crossN / lenCross) : N;
 
     // Two-sided normal consistency: guarantee flatNormal faces the camera
-    vec3 eye = -vVertex;
+    vec3 eye = (uOrtho == 1) ? vec3(0.0, 0.0, 1.0) : -vVertex;
     if (dot(flatNormal, eye) < 0.0) {
         flatNormal = -flatNormal;
     }
@@ -75,7 +75,14 @@ vec3 getNormal() {
         vec3 dY = dFdy(vVertex);
         vec3 crossN = cross(dY, dX);
         float lenCross = length(crossN);
-        return lenCross > 1e-6 ? -(crossN / lenCross) : vec3(0.0, 0.0, 1.0);
+        float lenN = length(vNormal);
+        vec3 fallbackN = (lenN > 1e-4 && !isnan(lenN)) ? (vNormal / lenN) : vec3(0.0, 0.0, 1.0);
+        vec3 fn = lenCross > 1e-10 ? -(crossN / lenCross) : fallbackN;
+        vec3 eye = (uOrtho == 1) ? vec3(0.0, 0.0, 1.0) : -vVertex;
+        if (dot(fn, eye) < 0.0) {
+            fn = -fn;
+        }
+        return fn;
     }
     return getAlignedNormal();
 }
@@ -109,7 +116,8 @@ vec3 computeCurvature(const in vec3 vertex, const in vec3 normal, const in vec3 
     vec3 xpos = n + dx;
     vec3 yneg = n - dy;
     vec3 ypos = n + dy;
-    float depth = fov > 0.0 ? length(vertex) * fov : -fov;
+    float depth = (uOrtho == 1) ? max(uOrthoZoom, 0.001) : (fov > 0.0 ? length(vertex) * fov : -fov);
+    depth = max(abs(depth), 0.001);
     float cur = (cross(xneg, xpos).y - cross(yneg, ypos).x) * str * 80.0 / depth;
     return mix(mix(color, color * 0.3, clamp(-cur * 15.0, 0.0, 1.0)), color * 2.0, clamp(cur * 25.0, 0.0, 1.0));
 }

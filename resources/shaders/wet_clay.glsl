@@ -54,7 +54,8 @@ vec3 computeWetClay(vec3 viewVertex, vec3 viewNormal, vec3 vertexColor, float ma
     vec3 normal = getNormal();
     vec3 bumpedNormal = normalize(normal - (uN * bump) * uBumpStrength * 0.15);
     
-    float curvature = clamp(dot(normalize(viewNormal), normalize(-viewVertex)) * 0.5 + 0.5, 0.0, 1.0);
+    vec3 eyeDir = (uOrtho == 1) ? vec3(0.0, 0.0, 1.0) : (length(viewVertex) > 1e-6 ? normalize(-viewVertex) : vec3(0.0, 0.0, 1.0));
+    float curvature = clamp(dot(normalize(viewNormal), eyeDir) * 0.5 + 0.5, 0.0, 1.0);
     vec3 baseClayColor = uClayColor.x >= 0.0 ? uClayColor : vertexColor;
     vec3 linClayColor = sRGBToLinear(baseClayColor);
     vec3 wetClayColor = linClayColor * vec3(0.55, 0.5, 0.48);
@@ -69,7 +70,7 @@ vec3 computeWetClay(vec3 viewVertex, vec3 viewNormal, vec3 vertexColor, float ma
     float sssFactor = pow(clamp(dot(bumpedNormal, lightDir) * -0.5 + 0.5, 0.0, 1.0), 2.0);
     vec3 sss = uSSSColor * uSSSIntensity * sssFactor * baseColor;
     
-    vec3 halfDir = normalize(normalize(-viewVertex) + lightDir);
+    vec3 halfDir = normalize(eyeDir + lightDir);
     float NoH = max(dot(bumpedNormal, halfDir), 0.0);
     
     float wetNoise = noise3(sp * 1.5 + vec3(10.0));

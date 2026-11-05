@@ -19,8 +19,11 @@ vec4 encodeRGBM(const in vec3 col) {
 
 void main() {
   // Use smooth vertex normals, aligned to face forward using the flat normal
-  vec3 N = normalize(vNormal);
-  vec3 flatNormal = -normalize(cross(dFdy(vVertex), dFdx(vVertex)));
+  float lenN = length(vNormal);
+  vec3 N = (lenN > 1e-4 && !isnan(lenN)) ? normalize(vNormal) : vec3(0.0, 0.0, 1.0);
+  vec3 crossN = cross(dFdy(vVertex), dFdx(vVertex));
+  float lenCross = length(crossN);
+  vec3 flatNormal = lenCross > 1e-10 ? -(crossN / lenCross) : N;
   vec3 normal = dot(N, flatNormal) < 0.0 ? -N : N;
 
   vec3 nm_z = normalize(vVertexPres);
