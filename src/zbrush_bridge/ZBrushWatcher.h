@@ -9,6 +9,13 @@
 
 namespace ZBrushBridge {
 
+enum class WatcherState {
+    Paused,
+    Watching,
+    Importing,
+    Error
+};
+
 struct CameraSnapshot {
     float xP = 0.0f, yP = 0.0f, zP = 0.0f;
     float xR = 0.0f, yR = 0.0f, zR = 0.0f;
@@ -33,6 +40,8 @@ public:
     void start();
     void stop();
     bool isRunning() const { return m_running.load(); }
+    WatcherState getState() const { return m_state.load(); }
+    bool forceReloadMesh();
 
     bool hasPendingMesh() const { return m_meshPending.load(); }
     bool consumePendingMesh(std::vector<uint8_t>& outBuffer, WatcherMeshStats* outStats = nullptr);
@@ -49,6 +58,7 @@ private:
 
     std::atomic<bool> m_running{false};
     std::atomic<bool> m_stopRequested{false};
+    std::atomic<WatcherState> m_state{WatcherState::Paused};
     std::atomic<bool> m_meshPending{false};
     std::atomic<bool> m_cameraPending{false};
 

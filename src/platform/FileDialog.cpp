@@ -6,6 +6,8 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <commdlg.h>
+#include <shobjidl.h>
+#include <shlobj.h>
 #endif
 
 namespace FileDialog {
@@ -186,6 +188,101 @@ std::string saveFile(const std::vector<FilterSpec>& filters, const std::string& 
     }
 #endif
     return "";
+}
+
+std::string pickFolder(const std::string& title) {
+#ifdef _WIN32
+    HRESULT hrCo = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+
+    IFileOpenDialog* pFolderDlg = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pFolderDlg));
+    if (SUCCEEDED(hr) && pFolderDlg) {
+        DWORD dwOptions = 0;
+        if (SUCCEEDED(pFolderDlg->GetOptions(&dwOptions))) {
+            pFolderDlg->SetOptions(dwOptions | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
+        }
+        if (!title.empty()) {
+            std::wstring wTitle = utf8ToWide(title);
+            pFolderDlg->SetTitle(wTitle.c_str());
+        }
+        HWND hwndOwner = GetActiveWindow();
+        if (SUCCEEDED(pFolderDlg->Show(hwndOwner))) {
+            IShellItem* pItem = nullptr;
+            if (SUCCEEDED(pFolderDlg->GetResult(&pItem)) && pItem) {
+                PWSTR pszFilePath = nullptr;
+                if (SUCCEEDED(pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath)) && pszFilePath) {
+                    std::string result = wideToUtf8(pszFilePath);
+                    CoTaskMemFree(pszFilePath);
+                    pItem->Release();
+                    pFolderDlg->Release();
+                    if (SUCCEEDED(hrCo)) CoUninitialize();
+                    for (char& c : result) {
+                        if (c == '\\') c = '/';
+                    }
+                    if (!result.empty() && result.back() != '/') {
+                        result += '/';
+                    }
+                    return result;
+                }
+                pItem->Release();
+            }
+        }
+        pFolderDlg->Release();
+    }
+
+    // Fallback: SHBrowseForFolderW
+    BROWSEINFOW bi = { 0 };
+    bi.hwndOwner = GetActiveWindow();
+    std::wstring titleW = utf8ToWide(title);
+    bi.lpszTitle = titleW.c_str();
+    bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+    LPITEMIDLIST pidl = SHBrowseForFolderW(&bi);
+    if (pidl != 0) {
+        wchar_t path[MAX_PATH];
+        if (SHGetPathFromIDListW(pidl, path)) {
+            CoTaskMemFree(pidl);
+            if (SUCCEEDED(hrCo)) CoUninitialize();
+            std::string res = wideToUtf8(path);
+            for (char& c : res) {
+                if (c == '\\') c = '/';
+            }
+            if (!res.empty() && res.back() != '/') {
+                res += '/';
+            }
+            return res;
+        }
+        CoTaskMemFree(pidl);
+    }
+
+    if (SUCCEEDED(hrCo)) CoUninitialize();
+    return "";
+#else
+    std::string cmd = "zenity --file-selection --directory";
+    if (!title.empty()) {
+        cmd += " --title=\"" + title + "\"";
+    }
+    cmd += " 2>/dev/null";
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (pipe) {
+        char buf[1024];
+        std::string res;
+        while (fgets(buf, sizeof(buf), pipe) != nullptr) {
+            res += buf;
+        }
+        pclose(pipe);
+        while (!res.empty() && (res.back() == '\n' || res.back() == '\r')) {
+            res.pop_back();
+        }
+        if (!res.empty()) {
+            for (char& c : res) {
+                if (c == '\\') c = '/';
+            }
+            if (res.back() != '/') res += '/';
+            return res;
+        }
+    }
+    return "";
+#endif
 }
 
 } // namespace FileDialog

@@ -800,13 +800,16 @@ int main(int argc, char* argv[]) {
     bool wasRemeshRunning = false;
 
     // Start background watcher for ZBrush live companion viewport
-    std::unique_ptr<ZBrushBridge::ZBrushWatcher> zbrushWatcher;
+    std::unique_ptr<ZBrushBridge::ZBrushWatcher> zbrushWatcher = std::make_unique<ZBrushBridge::ZBrushWatcher>();
     if (ZBrushBridge::Config::isAutoSyncEnabled()) {
-        zbrushWatcher = std::make_unique<ZBrushBridge::ZBrushWatcher>();
         zbrushWatcher->start();
         sculpt_log("[ZBrush Bridge] Live companion watcher started on: '%s'\n",
                    zbrushWatcher->getWatchDirectory().c_str());
+    } else {
+        sculpt_log("[ZBrush Bridge] Live companion watcher initialized (auto-sync paused) on: '%s'\n",
+                   zbrushWatcher->getWatchDirectory().c_str());
     }
+    gui.setZBrushWatcher(zbrushWatcher.get());
 
     while (!quit) {
         auto currentFrameTime = std::chrono::high_resolution_clock::now();
@@ -823,11 +826,18 @@ int main(int argc, char* argv[]) {
                 auto tGoZStart = std::chrono::high_resolution_clock::now();
                 ImportGoZ::GoZInfo info;
                 ImportGoZ::GoZParserStats parserStats;
-                auto meshes = ImportGoZ::importGoZ(gozBuffer, false, &info, &parserStats);
+                bool triangulate = !ZBrushBridge::Config::isKeepNativeQuadsEnabled();
+                auto meshes = ImportGoZ::importGoZ(gozBuffer, triangulate, &info, &parserStats);
                 gozBuffer.clear();
                 gozBuffer.shrink_to_fit();
                 if (!meshes.empty() && meshes[0]) {
                     Mesh* incomingMesh = meshes[0];
+                    if (!ZBrushBridge::Config::isImportPolyPaintEnabled()) {
+                        incomingMesh->colors.assign(incomingMesh->nbVerts * 3, 1.0f);
+                    }
+                    if (!ZBrushBridge::Config::isImportPolyGroupsEnabled()) {
+                        incomingMesh->initFaceGroups();
+                    }
                     Mesh* targetMesh = nullptr;
                     for (Mesh* m : scene.getMeshes()) {
                         if (m && m->outlinerName == "ZBrush Companion") {
@@ -868,10 +878,10 @@ int main(int argc, char* argv[]) {
                     pendingLiveSyncProfile.nbFaces = incomingMesh->nbFaces;
                     pendingLiveSyncProfile.nbQuads = info.nbQuads;
                     pendingLiveSyncProfile.nbTriangles = info.nbTriangles;
-                    pendingLiveSyncProfile.hasPaint = info.hasPaint;
-                    pendingLiveSyncProfile.nbPaintColors = info.hasPaint ? incomingMesh->nbVerts : 0;
-                    pendingLiveSyncProfile.hasGroups = info.hasGroups;
-                    pendingLiveSyncProfile.nbGroups = info.hasGroups ? incomingMesh->nbFaces : 0;
+                    pendingLiveSyncProfile.hasPaint = info.hasPaint && ZBrushBridge::Config::isImportPolyPaintEnabled();
+                    pendingLiveSyncProfile.nbPaintColors = pendingLiveSyncProfile.hasPaint ? incomingMesh->nbVerts : 0;
+                    pendingLiveSyncProfile.hasGroups = info.hasGroups && ZBrushBridge::Config::isImportPolyGroupsEnabled();
+                    pendingLiveSyncProfile.nbGroups = pendingLiveSyncProfile.hasGroups ? incomingMesh->nbFaces : 0;
                     pendingLiveSyncProfile.hasMask = info.hasMask;
 
                     pendingLiveSyncProfile.parseHeaderMs = parserStats.headerScanMs;
@@ -890,6 +900,7 @@ int main(int argc, char* argv[]) {
 
                     tLiveSyncPipelineStart = watcherStats.detectTime.time_since_epoch().count() > 0 ? watcherStats.detectTime : tConsumed;
                     pendingLiveSyncActive = true;
+                    gui.setLastLiveSyncProfile(pendingLiveSyncProfile);
 
                     scene.setModified(true);
                     hadActivity = true;
@@ -1292,6 +1303,7 @@ int main(int argc, char* argv[]) {
 
             pendingLiveSyncProfile.saveReportToFile("goz_profile_report.txt", true);
             pendingLiveSyncProfile.printToConsole();
+            gui.setLastLiveSyncProfile(pendingLiveSyncProfile);
             pendingLiveSyncActive = false;
         }
 

@@ -21,6 +21,11 @@
 #include "common/WorkTimer.h"
 #include "files/ImportSGL.h"
 #include "platform/HotkeyPreset.h"
+#include "files/GoZProfiler.h"
+
+namespace ZBrushBridge {
+    class ZBrushWatcher;
+}
 
 class AngleRenderer;
 class IniFile;
@@ -223,6 +228,7 @@ public:
         PrefTab_DebugLog = 6,
         PrefTab_Tablet = 7,
         PrefTab_Hotkeys = 8,
+        PrefTab_ZBrushBridge = 9,
     };
 
 private:
@@ -235,6 +241,11 @@ private:
     char m_hotkeySearchFilter[64] = "";
     char m_newPresetNameBuf[64] = "";
     bool m_showNewPresetDialog = false;
+    ZBrushBridge::ZBrushWatcher* m_zbrushWatcher = nullptr;
+    GoZProfiler::ProfileRecord m_lastLiveSyncProfile;
+    bool m_hasLiveSyncProfile = false;
+    char m_zbrushDirBuf[512] = {0};
+    bool m_zbrushDirBufInitialized = false;
 
     void drawHotkeysTab(Scene& scene, SculptManager& sculpt);
     void drawVirtualKeyboard(ImDrawList* dl, ImVec2 origin, float scale, const HotkeyPreset& preset);
@@ -343,6 +354,15 @@ public:
     void toggleFloatingIsland() { m_showFloatingIsland = !m_showFloatingIsland; }
     void toggleTimelapsePanel() { m_showTimelapsePanel = !m_showTimelapsePanel; }
     void togglePreferencesPanel() { m_showPreferencesPanel = !m_showPreferencesPanel; }
+    void toggleZBrushBridgePanel() { m_showPreferencesPanel = true; m_preferencesActiveTab = PrefTab_ZBrushBridge; }
+    void setZBrushWatcher(ZBrushBridge::ZBrushWatcher* watcher) { m_zbrushWatcher = watcher; }
+    ZBrushBridge::ZBrushWatcher* getZBrushWatcher() const { return m_zbrushWatcher; }
+    void setLastLiveSyncProfile(const GoZProfiler::ProfileRecord& record) {
+        m_lastLiveSyncProfile = record;
+        m_hasLiveSyncProfile = true;
+    }
+    const GoZProfiler::ProfileRecord& getLastLiveSyncProfile() const { return m_lastLiveSyncProfile; }
+    bool hasLiveSyncProfile() const { return m_hasLiveSyncProfile; }
     void toggleCameraBookmarksPanel() { m_showCameraBookmarksPanel = !m_showCameraBookmarksPanel; }
     void toggleBrushIconCapturePanel();
     void toggleRecentFilesWindow() { m_showRecentFilesWindow = !m_showRecentFilesWindow; }

@@ -64,7 +64,12 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include <shellapi.h>
 #endif
+
+#include "zbrush_bridge/ZBrushBridgeConfig.h"
+#include "zbrush_bridge/ZBrushWatcher.h"
+#include "files/GoZProfiler.h" 
 
 static FILE* openFileUtf8(const std::string& path, const char* mode) {
 #ifdef _WIN32
@@ -9621,6 +9626,7 @@ void GuiManager::drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRend
             sculpt.saveSettings(ini);
             saveSettings(ini);
             ini.save("app_settings.cfg");
+            ZBrushBridge::Config::saveConfig();
         }
         if (ImGui::MenuItem("Load App Settings")) {
             IniFile ini;
@@ -12171,6 +12177,7 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
             { PrefTab_DebugLog,     "Debug Log",           ICON_LC_TERMINAL },
             { PrefTab_Tablet,       "Tablet & Stylus",     ICON_LC_TABLET },
             { PrefTab_Hotkeys,      "Hotkeys",             ICON_LC_KEYBOARD },
+            { PrefTab_ZBrushBridge, "ZBrush Bridge",       ICON_LC_REFRESH_CW },
         };
 
         if (m_preferencesActiveTab >= 0) {
@@ -13793,6 +13800,240 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                 break;
             }
 
+            // 9. ZBrush Bridge Tab
+            case PrefTab_ZBrushBridge: {
+                ImGui::Spacing();
+
+                // Status Indicator Header
+                ZBrushBridge::WatcherState state = ZBrushBridge::WatcherState::Paused;
+                if (m_zbrushWatcher) {
+                    state = m_zbrushWatcher->getState();
+                } else if (ZBrushBridge::Config::isAutoSyncEnabled()) {
+                    state = ZBrushBridge::WatcherState::Watching;
+                }
+
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "ZBrush Live Companion Viewport");
+                ImGui::SameLine();
+                switch (state) {
+                case ZBrushBridge::WatcherState::Watching:
+                    ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.3f, 1.0f), "[ACTIVE / WATCHING]");
+                    break;
+                case ZBrushBridge::WatcherState::Paused:
+                    ImGui::TextColored(ImVec4(0.6f, 0.65f, 0.7f, 1.0f), "[PAUSED / OFF]");
+                    break;
+                case ZBrushBridge::WatcherState::Importing:
+                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f), "[IMPORTING...]");
+                    break;
+                case ZBrushBridge::WatcherState::Error:
+                    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "[ERROR / ACCESS DENIED]");
+                    break;
+                }
+
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                // Section A: Live Tracking Control
+                bool autoSync = ZBrushBridge::Config::isAutoSyncEnabled();
+                if (ImGui::Checkbox("Enable Live Auto-Sync", &autoSync)) {
+                    ZBrushBridge::Config::setAutoSyncEnabled(autoSync);
+                    if (m_zbrushWatcher) {
+                        if (autoSync) {
+                            m_zbrushWatcher->start();
+                        } else {
+                            m_zbrushWatcher->stop();
+                        }
+                    }
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Continuously watch the exchange directory and automatically update the companion mesh when changes occur in ZBrush.");
+                }
+
+                ImGui::SameLine();
+                ImGui::Dummy(ImVec2(15.0f * scale, 0.0f));
+                ImGui::SameLine();
+
+                if (ImGui::Button("Sync Now / Reload Mesh", ImVec2(180.0f * scale, 0.0f))) {
+                    if (m_zbrushWatcher) {
+                        m_zbrushWatcher->forceReloadMesh();
+                    }
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Force immediate one-time reload of mesh.GoZ from exchange directory,\neven if live auto-sync is currently paused.");
+                }
+
+                ImGui::Spacing();
+                ImGui::Spacing();
+
+                // Section B: Exchange Directory
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Exchange Directory");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                if (!m_zbrushDirBufInitialized) {
+                    std::string curDir = ZBrushBridge::Config::getDataDir();
+                    std::snprintf(m_zbrushDirBuf, sizeof(m_zbrushDirBuf), "%s", curDir.c_str());
+                    m_zbrushDirBufInitialized = true;
+                }
+
+                float actionButtonsWidth = (80.0f + 70.0f + 105.0f + 25.0f) * scale;
+                float inputWidth = ImGui::GetContentRegionAvail().x - actionButtonsWidth;
+                if (inputWidth < 150.0f * scale) inputWidth = 150.0f * scale;
+
+                ImGui::SetNextItemWidth(inputWidth);
+                if (ImGui::InputText("##ZBrushExchangeDir", m_zbrushDirBuf, sizeof(m_zbrushDirBuf), ImGuiInputTextFlags_EnterReturnsTrue) ||
+                    ImGui::IsItemDeactivatedAfterEdit()) {
+                    std::string newDir = m_zbrushDirBuf;
+                    ZBrushBridge::Config::setDataDir(newDir);
+                    std::string normalized = ZBrushBridge::Config::getDataDir();
+                    std::snprintf(m_zbrushDirBuf, sizeof(m_zbrushDirBuf), "%s", normalized.c_str());
+                    if (m_zbrushWatcher) {
+                        m_zbrushWatcher->setWatchDirectory(normalized);
+                    }
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Target directory where ZBrush SPSculptBridge DLL outputs mesh.GoZ and camera.txt");
+
+                ImGui::SameLine();
+                if (ImGui::Button("Browse...##ZBrushDir", ImVec2(80.0f * scale, 0.0f))) {
+                    std::string picked = FileDialog::pickFolder("Select ZBrush Exchange Directory");
+                    if (!picked.empty()) {
+                        ZBrushBridge::Config::setDataDir(picked);
+                        std::string normalized = ZBrushBridge::Config::getDataDir();
+                        std::snprintf(m_zbrushDirBuf, sizeof(m_zbrushDirBuf), "%s", normalized.c_str());
+                        if (m_zbrushWatcher) {
+                            m_zbrushWatcher->setWatchDirectory(normalized);
+                        }
+                    }
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Choose exchange directory using native Windows folder dialog");
+
+                ImGui::SameLine();
+                if (ImGui::Button("Default##ZBrushDir", ImVec2(70.0f * scale, 0.0f))) {
+                    std::string defDir = ZBrushBridge::Config::getDefaultDataDir();
+                    ZBrushBridge::Config::setDataDir(defDir);
+                    std::string normalized = ZBrushBridge::Config::getDataDir();
+                    std::snprintf(m_zbrushDirBuf, sizeof(m_zbrushDirBuf), "%s", normalized.c_str());
+                    if (m_zbrushWatcher) {
+                        m_zbrushWatcher->setWatchDirectory(normalized);
+                    }
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset path to default public directory:\n%s", ZBrushBridge::Config::getDefaultDataDir().c_str());
+
+                ImGui::SameLine();
+                if (ImGui::Button("Open Folder##ZBrushDir", ImVec2(105.0f * scale, 0.0f))) {
+                    std::string curDir = ZBrushBridge::Config::getDataDir();
+                    try {
+                        std::filesystem::create_directories(curDir);
+                    } catch (...) {}
+#ifdef _WIN32
+                    std::wstring wdir = utf8ToWide(curDir);
+                    ShellExecuteW(NULL, L"open", wdir.c_str(), NULL, NULL, SW_SHOWNORMAL);
+#endif
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open this exchange directory in Windows File Explorer");
+
+                ImGui::Spacing();
+                ImGui::Spacing();
+
+                // Section C: Debounce & File Safety
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Debounce & File Safety");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                int debounce = ZBrushBridge::Config::getDebounceDelayMs();
+                ImGui::SetNextItemWidth(260.0f * scale);
+                if (ImGui::SliderInt("Debounce Delay (ms)", &debounce, 50, 1000, "%d ms")) {
+                    ZBrushBridge::Config::setDebounceDelayMs(debounce);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Delay before reading file after detecting write event.\nProtects against reading while ZBrush is still flushing data to disk.");
+                }
+
+                int retries = ZBrushBridge::Config::getFileReadyRetries();
+                ImGui::SetNextItemWidth(260.0f * scale);
+                if (ImGui::SliderInt("File Access Retries", &retries, 10, 50, "%d attempts")) {
+                    ZBrushBridge::Config::setFileReadyRetries(retries);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Maximum retry attempts with 15ms step to acquire handle when file is locked by ZBrush.");
+                }
+
+                ImGui::Spacing();
+                ImGui::Spacing();
+
+                // Section D: Geometry Attributes
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Geometry Attributes");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                bool importPaint = ZBrushBridge::Config::isImportPolyPaintEnabled();
+                if (ImGui::Checkbox("Import PolyPaint (Vertex Colors)", &importPaint)) {
+                    ZBrushBridge::Config::setImportPolyPaintEnabled(importPaint);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Transfer vertex polypaint colors from ZBrush into SPSculpt.");
+                }
+
+                bool importGroups = ZBrushBridge::Config::isImportPolyGroupsEnabled();
+                if (ImGui::Checkbox("Import PolyGroups (Face Groups)", &importGroups)) {
+                    ZBrushBridge::Config::setImportPolyGroupsEnabled(importGroups);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Preserve ZBrush polygroups as SPSculpt Face Groups.");
+                }
+
+                bool keepQuads = ZBrushBridge::Config::isKeepNativeQuadsEnabled();
+                if (ImGui::Checkbox("Keep Native Quads", &keepQuads)) {
+                    ZBrushBridge::Config::setKeepNativeQuadsEnabled(keepQuads);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Preserves quad polygon topology for clean wireframe and sub-D tools (faster transmission without triangulation).");
+                }
+
+                ImGui::Spacing();
+                ImGui::Spacing();
+
+                // Section E: Live Diagnostics & Telemetry
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Live Diagnostics & Telemetry");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                if (m_hasLiveSyncProfile) {
+                    const auto& prof = m_lastLiveSyncProfile;
+                    float sizeMb = prof.fileSizeBytes / (1024.0f * 1024.0f);
+                    ImGui::Text("File Size:   %.2f MB (%s bytes)", sizeMb, GoZProfiler::formatNumber(prof.fileSizeBytes).c_str());
+
+                    double quadPct = (prof.nbFaces > 0) ? (100.0 * prof.nbQuads / prof.nbFaces) : 0.0;
+                    ImGui::Text("Geometry:    Verts: %s | Faces: %s | Quads: %s (%.1f%%)",
+                                GoZProfiler::formatNumber(prof.nbVerts).c_str(),
+                                GoZProfiler::formatNumber(prof.nbFaces).c_str(),
+                                GoZProfiler::formatNumber(prof.nbQuads).c_str(),
+                                quadPct);
+
+                    double parseTotalMs = prof.parseHeaderMs + prof.parseVertsMs + prof.parseFacesMs +
+                                          prof.parsePaintMs + prof.parseGroupsMs + prof.parseMaskMs + prof.parseFacesConversionMs;
+
+                    ImGui::Spacing();
+                    ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.85f, 1.0f), "Transfer Pipeline Timings:");
+                    ImGui::BulletText("Wait Ready:       %.2f ms", prof.fileReadyWaitMs);
+                    ImGui::BulletText("Disk Read:        %.2f ms", prof.diskReadMs);
+                    ImGui::BulletText("Parse GoZ:        %.2f ms", parseTotalMs);
+                    if (prof.totalPipelineMs > 0.0) {
+                        ImGui::BulletText("Total End-to-End: %.2f ms", prof.totalPipelineMs);
+                    }
+                } else {
+                    std::string meshPath = ZBrushBridge::Config::getMeshGoZPath();
+                    std::error_code ec;
+                    if (std::filesystem::exists(meshPath, ec)) {
+                        auto sz = std::filesystem::file_size(meshPath, ec);
+                        float sizeMb = sz / (1024.0f * 1024.0f);
+                        ImGui::Text("Exchange file present: %s (%.2f MB)", meshPath.c_str(), sizeMb);
+                    }
+                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No live sync captured yet during this session.");
+                }
+
+                break;
+            }
+
             default:
                 break;
             }
@@ -13813,6 +14054,7 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                 m_hotkeyManager->saveAll();
             }
             ini.save("app_settings.cfg");
+            ZBrushBridge::Config::saveConfig();
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save settings to app_settings.cfg");
 

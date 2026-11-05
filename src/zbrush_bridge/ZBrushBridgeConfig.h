@@ -19,6 +19,18 @@ public:
     static bool isAutoSyncEnabled();
     static void setAutoSyncEnabled(bool enabled);
 
+    static bool isImportPolyPaintEnabled();
+    static void setImportPolyPaintEnabled(bool enabled);
+
+    static bool isImportPolyGroupsEnabled();
+    static void setImportPolyGroupsEnabled(bool enabled);
+
+    static bool isKeepNativeQuadsEnabled();
+    static void setKeepNativeQuadsEnabled(bool enabled);
+
+    static int getFileReadyRetries();
+    static void setFileReadyRetries(int retries);
+
     static void loadConfig();
     static void saveConfig();
 
@@ -29,6 +41,10 @@ private:
     static std::string s_customDataDir;
     static int s_debounceDelayMs;
     static bool s_autoSyncEnabled;
+    static bool s_importPolyPaint;
+    static bool s_importPolyGroups;
+    static bool s_keepNativeQuads;
+    static int s_fileReadyRetries;
     static bool s_loaded;
 };
 

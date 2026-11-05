@@ -18,6 +18,10 @@ namespace fs = std::filesystem;
 std::string Config::s_customDataDir = "";
 int Config::s_debounceDelayMs = 250;
 bool Config::s_autoSyncEnabled = true;
+bool Config::s_importPolyPaint = true;
+bool Config::s_importPolyGroups = true;
+bool Config::s_keepNativeQuads = true;
+int Config::s_fileReadyRetries = 25;
 bool Config::s_loaded = false;
 
 static std::string normalizeDir(std::string path) {
@@ -84,6 +88,18 @@ void Config::loadConfig() {
                 if (j.contains("auto_sync_enabled") && j["auto_sync_enabled"].is_boolean()) {
                     s_autoSyncEnabled = j["auto_sync_enabled"].get<bool>();
                 }
+                if (j.contains("import_polypaint") && j["import_polypaint"].is_boolean()) {
+                    s_importPolyPaint = j["import_polypaint"].get<bool>();
+                }
+                if (j.contains("import_polygroups") && j["import_polygroups"].is_boolean()) {
+                    s_importPolyGroups = j["import_polygroups"].get<bool>();
+                }
+                if (j.contains("keep_native_quads") && j["keep_native_quads"].is_boolean()) {
+                    s_keepNativeQuads = j["keep_native_quads"].get<bool>();
+                }
+                if (j.contains("file_ready_retries") && j["file_ready_retries"].is_number_integer()) {
+                    s_fileReadyRetries = j["file_ready_retries"].get<int>();
+                }
                 return;
             }
         } catch (...) {
@@ -112,6 +128,10 @@ void Config::saveConfig() {
         j["data_dir"] = getDataDir();
         j["debounce_delay_ms"] = s_debounceDelayMs;
         j["auto_sync_enabled"] = s_autoSyncEnabled;
+        j["import_polypaint"] = s_importPolyPaint;
+        j["import_polygroups"] = s_importPolyGroups;
+        j["keep_native_quads"] = s_keepNativeQuads;
+        j["file_ready_retries"] = s_fileReadyRetries;
 
         std::ofstream f(appDataCfg);
         if (f.is_open()) {
@@ -181,6 +201,48 @@ bool Config::isAutoSyncEnabled() {
 
 void Config::setAutoSyncEnabled(bool enabled) {
     s_autoSyncEnabled = enabled;
+    saveConfig();
+}
+
+bool Config::isImportPolyPaintEnabled() {
+    if (!s_loaded) loadConfig();
+    return s_importPolyPaint;
+}
+
+void Config::setImportPolyPaintEnabled(bool enabled) {
+    s_importPolyPaint = enabled;
+    saveConfig();
+}
+
+bool Config::isImportPolyGroupsEnabled() {
+    if (!s_loaded) loadConfig();
+    return s_importPolyGroups;
+}
+
+void Config::setImportPolyGroupsEnabled(bool enabled) {
+    s_importPolyGroups = enabled;
+    saveConfig();
+}
+
+bool Config::isKeepNativeQuadsEnabled() {
+    if (!s_loaded) loadConfig();
+    return s_keepNativeQuads;
+}
+
+void Config::setKeepNativeQuadsEnabled(bool enabled) {
+    s_keepNativeQuads = enabled;
+    saveConfig();
+}
+
+int Config::getFileReadyRetries() {
+    if (!s_loaded) loadConfig();
+    return s_fileReadyRetries;
+}
+
+void Config::setFileReadyRetries(int retries) {
+    if (retries < 10) retries = 10;
+    if (retries > 100) retries = 100;
+    s_fileReadyRetries = retries;
     saveConfig();
 }
 

@@ -36,8 +36,17 @@ ZBrushWatcher::~ZBrushWatcher() {
 }
 
 void ZBrushWatcher::setWatchDirectory(const std::string& dir) {
-    std::lock_guard<std::mutex> lock(m_dirMutex);
-    m_watchDir = dir;
+    bool wasRunning = m_running.load();
+    if (wasRunning) {
+        stop();
+    }
+    {
+        std::lock_guard<std::mutex> lock(m_dirMutex);
+        m_watchDir = dir;
+    }
+    if (wasRunning) {
+        start();
+    }
 }
 
 std::string ZBrushWatcher::getWatchDirectory() const {
@@ -48,6 +57,15 @@ std::string ZBrushWatcher::getWatchDirectory() const {
 void ZBrushWatcher::start() {
     if (m_running.load()) return;
 
+    std::string dir = getWatchDirectory();
+    try {
+        if (!fs::exists(dir)) {
+            fs::create_directories(dir);
+        }
+    } catch (...) {
+        m_state.store(WatcherState::Error);
+    }
+
     m_stopRequested.store(false);
 #ifdef _WIN32
     if (m_stopEvent) {
@@ -56,11 +74,15 @@ void ZBrushWatcher::start() {
 #endif
 
     m_running.store(true);
+    m_state.store(WatcherState::Watching);
     m_thread = std::thread(&ZBrushWatcher::watchThreadFunc, this);
 }
 
 void ZBrushWatcher::stop() {
-    if (!m_running.load()) return;
+    if (!m_running.load()) {
+        m_state.store(WatcherState::Paused);
+        return;
+    }
 
     m_stopRequested.store(true);
 #ifdef _WIN32
@@ -73,6 +95,7 @@ void ZBrushWatcher::stop() {
         m_thread.join();
     }
     m_running.store(false);
+    m_state.store(WatcherState::Paused);
 }
 
 bool ZBrushWatcher::consumePendingMesh(std::vector<uint8_t>& outBuffer, WatcherMeshStats* outStats) {
@@ -203,7 +226,7 @@ void ZBrushWatcher::watchThreadFunc() {
     );
 
     if (hDir == INVALID_HANDLE_VALUE) {
-        // Fallback to polling if directory handle could not be opened
+        m_state.store(WatcherState::Error);
         while (!m_stopRequested.load()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
         }
@@ -273,10 +296,16 @@ void ZBrushWatcher::watchThreadFunc() {
                 }
 
                 if (checkMesh) {
+                    m_state.store(WatcherState::Importing);
+                    int debounceMs = Config::getDebounceDelayMs();
+                    if (debounceMs > 0) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(debounceMs));
+                    }
                     auto tDetect = std::chrono::high_resolution_clock::now();
                     std::string meshPath = getWatchDirectory() + "mesh.GoZ";
                     auto tWaitStart = std::chrono::high_resolution_clock::now();
-                    bool ready = isFileReady(meshPath, 35, 30);
+                    int retries = Config::getFileReadyRetries();
+                    bool ready = isFileReady(meshPath, retries, 15);
                     auto tWaitEnd = std::chrono::high_resolution_clock::now();
                     double waitMs = std::chrono::duration<double, std::milli>(tWaitEnd - tWaitStart).count();
 
@@ -323,6 +352,7 @@ void ZBrushWatcher::watchThreadFunc() {
                             }
                         }
                     }
+                    m_state.store(WatcherState::Watching);
                 }
 
                 if (checkCamera) {
@@ -387,6 +417,72 @@ void ZBrushWatcher::watchThreadFunc() {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 #endif
+}
+
+bool ZBrushWatcher::forceReloadMesh() {
+    std::string meshPath = getWatchDirectory() + "mesh.GoZ";
+    std::error_code ec;
+    if (!fs::exists(meshPath, ec)) {
+        return false;
+    }
+
+    WatcherState prevState = m_state.load();
+    m_state.store(WatcherState::Importing);
+
+    int retries = Config::getFileReadyRetries();
+    auto tWaitStart = std::chrono::high_resolution_clock::now();
+    bool ready = isFileReady(meshPath, retries, 15);
+    auto tWaitEnd = std::chrono::high_resolution_clock::now();
+    double waitMs = std::chrono::duration<double, std::milli>(tWaitEnd - tWaitStart).count();
+
+    if (!ready) {
+        m_state.store(prevState);
+        return false;
+    }
+
+    auto tReadStart = std::chrono::high_resolution_clock::now();
+    std::ifstream file(meshPath, std::ios::binary | std::ios::ate);
+    if (!file.is_open()) {
+        m_state.store(prevState);
+        return false;
+    }
+
+    std::streamsize size = file.tellg();
+    if (size < 32) {
+        m_state.store(prevState);
+        return false;
+    }
+
+    file.seekg(0, std::ios::beg);
+    std::vector<uint8_t> buffer(size);
+    if (!file.read(reinterpret_cast<char*>(buffer.data()), size)) {
+        m_state.store(prevState);
+        return false;
+    }
+
+    auto tReadEnd = std::chrono::high_resolution_clock::now();
+    double readMs = std::chrono::duration<double, std::milli>(tReadEnd - tReadStart).count();
+
+    {
+        std::lock_guard<std::mutex> lock(m_meshMutex);
+        m_pendingMeshBuffer = std::move(buffer);
+        m_pendingMeshStats.filePath = meshPath;
+        m_pendingMeshStats.fileSizeBytes = static_cast<size_t>(size);
+        m_pendingMeshStats.fileReadyWaitMs = waitMs;
+        m_pendingMeshStats.diskReadMs = readMs;
+        m_pendingMeshStats.detectTime = tWaitStart;
+        m_pendingMeshStats.pushTime = std::chrono::high_resolution_clock::now();
+        m_meshPending.store(true);
+    }
+
+    SDL_Event ev;
+    std::memset(&ev, 0, sizeof(ev));
+    ev.type = SDL_USEREVENT;
+    ev.user.code = 0x676F7A; // 'goz'
+    SDL_PushEvent(&ev);
+
+    m_state.store(m_running.load() ? WatcherState::Watching : WatcherState::Paused);
+    return true;
 }
 
 } // namespace ZBrushBridge
