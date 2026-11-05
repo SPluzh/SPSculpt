@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.19]
+- **ZBrush Live Companion**:
+  - **Real-Time Auto-Sync**: Use SPSculpt as a secondary viewport for ZBrush — meshes update instantly as you finish a stroke.
+  - **Native GoZ Support**: Open and drag-and-drop .GoZ files directly with quads, PolyPaint, PolyGroups, and masks preserved.
+  - **Smart Updates**: Only syncs on real mesh edits, ignoring camera navigation, hotkeys, and idle clicks.
+  - **Fast & Lightweight**: Smooth streaming without UI lag or memory leaks during long sculpting sessions.
+  - **Bridge Preferences**: New tab in Preferences to configure exchange folder, sync delay, and view connection status.
+- **Shading Fixes**: Fixed flat shading artifacts when zooming close to meshes and MatCap distortion in orthographic view.
+
 ## [0.3.18]
 - **Floor Grid Overhaul**:
   - **Clean Display**: Removed white line artifacts on central axes and fixed background color distortion.
