@@ -1,4 +1,5 @@
 #include "ZBrushWatcher.h"
+#include <SDL2/SDL.h>
 #include "ZBrushBridgeConfig.h"
 
 #include <chrono>
@@ -312,6 +313,11 @@ void ZBrushWatcher::watchThreadFunc() {
                                         m_pendingMeshStats.detectTime = tDetect;
                                         m_pendingMeshStats.pushTime = std::chrono::high_resolution_clock::now();
                                         m_meshPending.store(true);
+                                        SDL_Event ev;
+                                        std::memset(&ev, 0, sizeof(ev));
+                                        ev.type = SDL_USEREVENT;
+                                        ev.user.code = 0x676F7A; // 'goz'
+                                        SDL_PushEvent(&ev);
                                     }
                                 }
                             }
@@ -367,6 +373,11 @@ void ZBrushWatcher::watchThreadFunc() {
                                 std::lock_guard<std::mutex> lock(m_meshMutex);
                                 m_pendingMeshBuffer = std::move(buffer);
                                 m_meshPending.store(true);
+                                SDL_Event ev;
+                                std::memset(&ev, 0, sizeof(ev));
+                                ev.type = SDL_USEREVENT;
+                                ev.user.code = 0x676F7A; // 'goz'
+                                SDL_PushEvent(&ev);
                             }
                         }
                     }

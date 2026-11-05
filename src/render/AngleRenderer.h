@@ -95,6 +95,8 @@ struct MeshRenderBuffers {
     size_t triIndexCount = 0;
     size_t wireIndexCount = 0;
     size_t subdivWireIndexCount = 0;
+    bool wireDirty = true;
+    bool creaseDirty = true;
 
     ~MeshRenderBuffers() {
         if (vao) glDeleteVertexArrays(1, &vao);
@@ -512,6 +514,11 @@ public:
     // Mesh buffer uploads
     bool uploadIfDirty(Mesh* mesh);
     void releaseMeshBuffers(const Mesh* mesh);
+    void notifyMeshReplaced(const Mesh* oldMesh, const Mesh* newMesh) {
+        if (m_lastSelectedMesh == oldMesh) {
+            m_lastSelectedMesh = newMesh;
+        }
+    }
 
 private:
     void generateTriangleIndices(const Mesh* mesh, std::vector<uint32_t>& outIndices);

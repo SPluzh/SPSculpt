@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <thread>
 #include <map>
 #include <unordered_map>
 #include <utility>
@@ -628,7 +629,14 @@ void Scene::replaceMesh(Mesh* oldMesh, Mesh* newMesh) {
         }
     }
     notifyMeshWillBeDeleted(oldMesh);
-    delete oldMesh;
+    // Background mesh deallocation
+    std::thread([oldMesh]() {
+        delete oldMesh;
+    }).detach();
+}
+
+void Scene::replaceMeshAsync(Mesh* oldMesh, Mesh* newMesh) {
+    replaceMesh(oldMesh, newMesh);
 }
 
 const std::vector<Mesh*>& Scene::getMeshes() const {

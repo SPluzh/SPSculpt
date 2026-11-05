@@ -8,6 +8,8 @@ struct RenderTarget {
     GLuint depth = 0; // Renderbuffer (shared or owned)
     float invW = 0.0f;
     float invH = 0.0f;
+    int width = 0;
+    int height = 0;
     bool ownsDepth = true;
     bool depthAsTexture = false;
 

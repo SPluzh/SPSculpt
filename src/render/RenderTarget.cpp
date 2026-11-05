@@ -21,6 +21,8 @@ bool RenderTarget::init(int w, int h, bool hasDepth, GLuint sharedDepth, bool de
         ownsDepth = false;
     }
 
+    width = 0;
+    height = 0;
     resize(w, h);
     return true;
 }
@@ -31,8 +33,12 @@ bool RenderTarget::initDepthOnly(int w, int h) {
     texture = 0;
     ownsDepth = true;
     depthAsTexture = true;
-    invW = 1.0f / w;
-    invH = 1.0f / h;
+    width = w;
+    height = h;
+    width = w;
+    height = h;
+    invW = (w > 0) ? 1.0f / w : 0.0f;
+    invH = (h > 0) ? 1.0f / h : 0.0f;
 
     glBindTexture(GL_TEXTURE_2D, depth);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, w, h, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
@@ -71,6 +77,8 @@ bool RenderTarget::initFloat(int w, int h, bool hasDepth) {
         ownsDepth = false;
     }
 
+    width = w;
+    height = h;
     invW = (w > 0) ? 1.0f / w : 0.0f;
     invH = (h > 0) ? 1.0f / h : 0.0f;
 
@@ -105,6 +113,9 @@ bool RenderTarget::initFloat(int w, int h, bool hasDepth) {
 
 void RenderTarget::resize(int w, int h) {
     if (w <= 0 || h <= 0) return;
+    if (width == w && height == h) return;
+    width = w;
+    height = h;
     invW = 1.0f / w;
     invH = 1.0f / h;
 
@@ -168,4 +179,6 @@ void RenderTarget::release() {
         }
         depth = 0;
     }
+    width = 0;
+    height = 0;
 }

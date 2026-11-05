@@ -838,10 +838,12 @@ int main(int argc, char* argv[]) {
                     auto tSceneStart = std::chrono::high_resolution_clock::now();
                     if (targetMesh) {
                         incomingMesh->outlinerName = targetMesh->outlinerName;
+                        renderer.notifyMeshReplaced(targetMesh, incomingMesh);
                         scene.replaceMesh(targetMesh, incomingMesh);
                     } else if (!scene.getMeshes().empty() && scene.getSelected()) {
                         Mesh* sel = scene.getSelected();
                         incomingMesh->outlinerName = sel->outlinerName.empty() ? "ZBrush Companion" : sel->outlinerName;
+                        renderer.notifyMeshReplaced(sel, incomingMesh);
                         scene.replaceMesh(sel, incomingMesh);
                     } else {
                         incomingMesh->outlinerName = "ZBrush Companion";
@@ -913,7 +915,8 @@ int main(int argc, char* argv[]) {
             // Track user activity for idle throttle
             if (event.type == SDL_MOUSEMOTION || event.type == SDL_MOUSEBUTTONDOWN ||
                 event.type == SDL_MOUSEBUTTONUP || event.type == SDL_MOUSEWHEEL ||
-                event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) {
+                event.type == SDL_KEYDOWN || event.type == SDL_KEYUP ||
+                (event.type == SDL_USEREVENT && event.user.code == 0x676F7A)) {
                 hadActivity = true;
                 lastActivityTime = std::chrono::high_resolution_clock::now();
             }
@@ -1317,7 +1320,19 @@ int main(int argc, char* argv[]) {
 
             if (fpsLimitOn && frameMs < targetMs) {
                 Uint32 sleepMs = static_cast<Uint32>(targetMs - frameMs);
-                if (sleepMs > 0) SDL_Delay(sleepMs);
+                if (sleepMs > 0) {
+                    Uint32 elapsed = 0;
+                    while (elapsed < sleepMs) {
+                        Uint32 step = std::min<Uint32>(5, sleepMs - elapsed);
+                        SDL_Delay(step);
+                        elapsed += step;
+                        if (zbrushWatcher && zbrushWatcher->hasPendingMesh()) {
+                            hadActivity = true;
+                            lastActivityTime = std::chrono::high_resolution_clock::now();
+                            break;
+                        }
+                    }
+                }
             }
         }
     }

@@ -183,6 +183,7 @@ public:
     void deleteMesh(Mesh* m);
     void deleteSelection();
     void replaceMesh(Mesh* oldMesh, Mesh* newMesh);
+    void replaceMeshAsync(Mesh* oldMesh, Mesh* newMesh);
     void clear();
     void notifyMeshWillBeDeleted(Mesh* m);
 

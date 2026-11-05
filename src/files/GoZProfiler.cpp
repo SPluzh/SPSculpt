@@ -263,6 +263,8 @@ bool runCliBenchmark(const std::string& customPath, Scene& scene, AngleRenderer&
             "models/mesh.GoZ",
             "../models/mesh.GoZ",
             "../../models/mesh.GoZ",
+            "../../../models/mesh.GoZ",
+            "C:/Users/Public/Documents/SPSculptData/mesh.GoZ",
             "C:/Users/user/Desktop/cpp/sculptsp-native/models/mesh.GoZ"
         };
         for (const auto& c : candidates) {
@@ -356,11 +358,14 @@ bool runCliBenchmark(const std::string& customPath, Scene& scene, AngleRenderer&
     auto tSceneStart = std::chrono::high_resolution_clock::now();
     mesh->outlinerName = "GoZ Profile Target";
     if (!scene.getMeshes().empty()) {
+        renderer.notifyMeshReplaced(scene.getMeshes()[0], mesh);
         scene.replaceMesh(scene.getMeshes()[0], mesh);
     } else {
         scene.addMesh(mesh);
     }
     scene.selectMesh(mesh);
+    renderer.notifyMeshReplaced(nullptr, mesh);
+    renderer.setEnableSelectionFlash(false);
     scene.getCamera().resetViewToMeshes({mesh}, false);
     auto tSceneEnd = std::chrono::high_resolution_clock::now();
     record.sceneReplaceMs = std::chrono::duration<double, std::milli>(tSceneEnd - tSceneStart).count();
