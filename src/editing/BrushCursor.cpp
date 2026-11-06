@@ -100,6 +100,7 @@ static bool checkOcclusion(const glm::vec3& worldPos, const Camera& camera, Mesh
 
 BrushCursor::BrushCursor() {
     m_state.visible = false;
+    m_state.hitMesh = false;
 }
 
 void BrushCursor::update(int mouseX, int mouseY,
@@ -126,6 +127,7 @@ void BrushCursor::update(int mouseX, int mouseY,
         brushType == BRUSH_COMPONENT_SELECT || brushType == BRUSH_EDGE_CREASE ||
         brushType == BRUSH_CLIP_CURVE || brushType == BRUSH_TRIM || brushType == BRUSH_SPLIT) {
         m_state.visible = false;
+        m_state.hitMesh = false;
         return;
     }
 
@@ -222,6 +224,7 @@ void BrushCursor::update(int mouseX, int mouseY,
 
     m_state.visible = true;
     m_state.showCircle = !isSculpting;
+    m_state.hitMesh = hitMesh;
 
     // Color Setup based on active brush & hover status
     bool drawCircle = !isSculpting;

@@ -11,6 +11,7 @@ struct BrushCursorState {
     bool      visible        = false;
     bool      showCircle     = true;
     bool      isScreenspace  = false;
+    bool      hitMesh        = false;
     glm::vec3 hitPoint       {0.0f};
     glm::vec3 hitNormal      {0.0f, 1.0f, 0.0f};
     float     radius         = 8.0f;   // in world units
@@ -57,7 +58,7 @@ public:
 
     void applyToRenderer(AngleRenderer& renderer) const;
 
-    void hide() { m_state.visible = false; }
+    void hide() { m_state.visible = false; m_state.hitMesh = false; }
 
     const BrushCursorState& getState() const { return m_state; }
 

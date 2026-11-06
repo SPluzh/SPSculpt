@@ -2354,10 +2354,12 @@ void AngleRenderer::drawSelectionCursor(const Scene& scene, bool isRight) {
         glVertexAttribPointer(locPos, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
         glEnableVertexAttribArray(locPos);
 
-        // Draw main crosshair
-        glUniform3fv(locColor, 1, &m_cursorColor[0]);
-        glUniformMatrix4fv(locMVP, 1, GL_FALSE, &dotMVP[0][0]);
-        glDrawArrays(GL_LINES, 0, 8);
+        // Draw main crosshair (skip if hardware cursor mode is enabled)
+        if (m_hardwareCursorMode == 0) {
+            glUniform3fv(locColor, 1, &m_cursorColor[0]);
+            glUniformMatrix4fv(locMVP, 1, GL_FALSE, &dotMVP[0][0]);
+            glDrawArrays(GL_LINES, 0, 8);
+        }
 
         // Draw symmetry crosshairs
         for (size_t idx = 0; idx < symMVPs.size(); ++idx) {
@@ -2373,13 +2375,15 @@ void AngleRenderer::drawSelectionCursor(const Scene& scene, bool isRight) {
         }
         glLineWidth(1.0f);
     } else {
-        // Draw main dot
-        glUniform3fv(locColor, 1, &m_cursorColor[0]);
-        glUniformMatrix4fv(locMVP, 1, GL_FALSE, &dotMVP[0][0]);
-        glBindBuffer(GL_ARRAY_BUFFER, m_dotVbo);
-        glVertexAttribPointer(locPos, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(locPos);
-        glDrawArrays(GL_TRIANGLE_FAN, 0, 34);
+        // Draw main dot (skip if hardware cursor mode is enabled)
+        if (m_hardwareCursorMode == 0) {
+            glUniform3fv(locColor, 1, &m_cursorColor[0]);
+            glUniformMatrix4fv(locMVP, 1, GL_FALSE, &dotMVP[0][0]);
+            glBindBuffer(GL_ARRAY_BUFFER, m_dotVbo);
+            glVertexAttribPointer(locPos, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+            glEnableVertexAttribArray(locPos);
+            glDrawArrays(GL_TRIANGLE_FAN, 0, 34);
+        }
 
         // Draw symmetry dots
         for (size_t idx = 0; idx < symMVPs.size(); ++idx) {

@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.21]
+- **Hardware Brush Cursor**: Zero-latency crosshair and dot cursors eliminating mouse lag during sculpting.
+- **Smart Switching**: Activates over geometry; reverts to standard OS cursor over empty space and UI.
+
 ## [0.3.20]
 - **Two-Way ZBrush Bridge (Full Scene Round-Trip)**:
   - **Send to ZBrush (`Ctrl+Alt+Z`)**: Instantly send your sculpted or remeshed mesh back into ZBrush. Updates the active SubTool in place with quads, PolyPaint, PolyGroups, and masks preserved.

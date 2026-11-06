@@ -51,6 +51,8 @@ public:
         std::thread       worker;
     };
 
+    float getUiScale() const { return m_dpiScale * m_uiScale; }
+
 private:
     bool m_showToolbar = false;
     bool m_showSculptingPanel = false;
@@ -130,7 +132,6 @@ private:
     bool m_winMaximized = true;
 
     void rebuildFontsAndStyles();
-    float getUiScale() const { return m_dpiScale * m_uiScale; }
     float getFloatingIslandScaleMultiplier() const { return m_floatingIslandScale; }
     void setFloatingIslandScaleMultiplier(float val) { m_floatingIslandScale = std::max(0.5f, std::min(val, 2.5f)); }
     float getFloatingIslandScale() const { return m_dpiScale * m_floatingIslandScale; }

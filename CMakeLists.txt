@@ -219,6 +219,7 @@ add_executable(SPSculpt
     src/platform/HotkeyDispatcher.cpp
     src/platform/TabletInput.cpp
     src/platform/FileDialog.cpp
+    src/platform/HardwareCursor.cpp
     src/platform/NativeMain.cpp
 )
 

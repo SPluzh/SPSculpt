@@ -47,6 +47,8 @@ bool RenderSettings::save(IniFile& ini, const AngleRenderer& renderer, const Sce
     ini.setFloat(sec, "cursorThickness", renderer.getCursorThickness());
     ini.setBool(sec, "smoothCursor", renderer.getSmoothCursor());
     ini.setBool(sec, "useCrosshairCursor", renderer.getUseCrosshairCursor());
+    ini.setInt(sec, "hardwareCursorMode", renderer.getHardwareCursorMode());
+    ini.setBool(sec, "hardwareCursorAlwaysInViewport", renderer.getHardwareCursorAlwaysInViewport());
     ini.setInt(sec, "splitMode", static_cast<int>(scene.getSplitMode()));
     ini.setBool(sec, "splitShowInactiveCursor", scene.getSplitShowInactiveCursor());
     ini.setInt(sec, "currentEnvIdx", renderer.getCurrentEnvIdx());
@@ -210,6 +212,8 @@ bool RenderSettings::load(const IniFile& ini, AngleRenderer& renderer, Scene& sc
     if (ini.hasKey(sec, "cursorThickness")) renderer.setCursorThickness(ini.getFloat(sec, "cursorThickness", 1.0f));
     if (ini.hasKey(sec, "smoothCursor")) renderer.setSmoothCursor(ini.getBool(sec, "smoothCursor"));
     if (ini.hasKey(sec, "useCrosshairCursor")) renderer.setUseCrosshairCursor(ini.getBool(sec, "useCrosshairCursor", true));
+    if (ini.hasKey(sec, "hardwareCursorMode")) renderer.setHardwareCursorMode(ini.getInt(sec, "hardwareCursorMode", 0));
+    if (ini.hasKey(sec, "hardwareCursorAlwaysInViewport")) renderer.setHardwareCursorAlwaysInViewport(ini.getBool(sec, "hardwareCursorAlwaysInViewport", false));
     if (ini.hasKey(sec, "splitMode")) scene.setSplitMode(static_cast<Scene::SplitMode>(ini.getInt(sec, "splitMode", 0)));
     if (ini.hasKey(sec, "splitShowInactiveCursor")) scene.setSplitShowInactiveCursor(ini.getBool(sec, "splitShowInactiveCursor"));
 

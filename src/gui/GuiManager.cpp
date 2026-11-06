@@ -2645,11 +2645,31 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGui::Checkbox("Lock Single PolyGroup", &settings.singlePolyGroup);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Limit brush deformation/painting to the PolyGroup under the cursor at stroke start");
 
-            bool useCrosshair = renderer.getUseCrosshairCursor();
-            if (ImGui::Checkbox("Crosshair Cursor", &useCrosshair)) {
-                renderer.setUseCrosshairCursor(useCrosshair);
+            const char* hwCursorModes[] = {
+                "Software (Default)",
+                "Hardware Dot (0 ms)",
+                "Hardware Crosshair (0 ms)",
+                "System Crosshair (0 ms)"
+            };
+            int hwMode = renderer.getHardwareCursorMode();
+            if (ImGui::Combo("Cursor Mode", &hwMode, hwCursorModes, IM_ARRAYSIZE(hwCursorModes))) {
+                renderer.setHardwareCursorMode(hwMode);
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Use open-center crosshair cursor instead of dot during sculpting");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select cursor type. Hardware modes have 0 ms latency directly rendered by GPU/OS.");
+
+            if (hwMode == 0) {
+                bool useCrosshair = renderer.getUseCrosshairCursor();
+                if (ImGui::Checkbox("Crosshair Cursor", &useCrosshair)) {
+                    renderer.setUseCrosshairCursor(useCrosshair);
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Use open-center crosshair cursor instead of dot during sculpting");
+            } else {
+                bool isCrosshair = (hwMode == 2 || hwMode == 3);
+                if (ImGui::Checkbox("Crosshair Cursor (HW)", &isCrosshair)) {
+                    renderer.setHardwareCursorMode(isCrosshair ? 2 : 1);
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle between hardware crosshair and hardware dot (active over mesh only)");
+            }
 
             // Alpha Texture
             const char* alphas[] = { "None (Sphere)", "Square (Clay)", "Alpha 1", "Alpha 2" };
@@ -7786,10 +7806,13 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 };
 
                 const int dotSegments = 32;
+                bool isHardwareMode = (renderer.getHardwareCursorMode() > 0);
                 if (renderer.getUseCrosshairCursor()) {
-                    ImVec2 mainCenter = projectPoint(dotMVP, glm::vec3(0.0f), width, viewportHeight, xOffset, camera, apply2D);
-                    if (mainCenter.x > -5000.0f) {
-                        drawCrosshairLines(mainCenter, colorU32);
+                    if (!isHardwareMode) {
+                        ImVec2 mainCenter = projectPoint(dotMVP, glm::vec3(0.0f), width, viewportHeight, xOffset, camera, apply2D);
+                        if (mainCenter.x > -5000.0f) {
+                            drawCrosshairLines(mainCenter, colorU32);
+                        }
                     }
 
                     // Draw symmetry crosshairs
@@ -7811,14 +7834,16 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         drawCrosshairLines(symCenter, dotColorU32);
                     }
                 } else {
-                    // Draw main dot (filled circle)
-                    std::vector<ImVec2> dotPoints(dotSegments);
-                    for (int i = 0; i < dotSegments; ++i) {
-                        float angle = i * 2.0f * 3.1415926535f / dotSegments;
-                        glm::vec3 localPos(std::cos(angle), std::sin(angle), 0.0f);
-                        dotPoints[i] = projectPoint(dotMVP, localPos, width, viewportHeight, xOffset, camera, apply2D);
+                    // Draw main dot (filled circle) (skip if hardware cursor is active)
+                    if (!isHardwareMode) {
+                        std::vector<ImVec2> dotPoints(dotSegments);
+                        for (int i = 0; i < dotSegments; ++i) {
+                            float angle = i * 2.0f * 3.1415926535f / dotSegments;
+                            glm::vec3 localPos(std::cos(angle), std::sin(angle), 0.0f);
+                            dotPoints[i] = projectPoint(dotMVP, localPos, width, viewportHeight, xOffset, camera, apply2D);
+                        }
+                        ImGui::GetForegroundDrawList()->AddConvexPolyFilled(dotPoints.data(), dotSegments, colorU32);
                     }
-                    ImGui::GetForegroundDrawList()->AddConvexPolyFilled(dotPoints.data(), dotSegments, colorU32);
 
                     // Draw symmetry dots
                     for (size_t idx = 0; idx < symMVPs.size(); ++idx) {
@@ -13077,6 +13102,24 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                     renderer.setUseCrosshairCursor(useCrosshairPref);
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle between centerless crosshair cursor and center dot");
+
+                const char* hwCursorModes[] = {
+                    "Off / Software (Default)",
+                    "Hardware Dot (0 ms)",
+                    "Hardware Crosshair (0 ms)",
+                    "System Crosshair (0 ms)"
+                };
+                int hwMode = renderer.getHardwareCursorMode();
+                if (ImGui::Combo("Hardware Cursor Mode", &hwMode, hwCursorModes, IM_ARRAYSIZE(hwCursorModes))) {
+                    renderer.setHardwareCursorMode(hwMode);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Zero-latency OS hardware cursor rendered directly by GPU/display driver.\nCompletely eliminates cursor lag during sculpting.");
+                }
+
+                if (hwMode > 0) {
+                    ImGui::TextDisabled("Activated automatically when hovering over mesh (standard cursor elsewhere)");
+                }
 
                 ImGui::Spacing();
                 ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Material Settings");

@@ -39,6 +39,7 @@
 #include "platform/HotkeyDispatcher.h"
 #include "platform/HotkeyManager.h"
 #include "platform/TabletInput.h"
+#include "platform/HardwareCursor.h"
 #include "render/RenderSettings.h"
 #include "common/IniFile.h"
 #include "common/RecentFiles.h"
@@ -725,6 +726,9 @@ int main(int argc, char* argv[]) {
     g_undoManager.setSculptManager(&sculpt);
     gui.init(window, glContext);
 
+    HardwareCursorManager hardwareCursor;
+    hardwareCursor.init(gui.getUiScale());
+
     gui.setRenderer(&renderer);
     sculpt.setRenderer(&renderer);
     HotkeyDispatcher dispatcher;
@@ -1232,16 +1236,7 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // Hide or show system cursor during active sculpting
-        bool sculptingNow = sculpt.isSculpting();
-        ImGuiIO& io = ImGui::GetIO();
-        if (sculptingNow) {
-            io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
-            SDL_ShowCursor(SDL_DISABLE);
-        } else {
-            io.ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
-        }
-
+        // Manage hardware / system / software cursor
         // Poll raw mouse position right before rendering to eliminate input lag
         if (dispatcher.getModalMode() == ModalMode::NONE) {
             int rawMouseX, rawMouseY;
@@ -1260,6 +1255,20 @@ int main(int argc, char* argv[]) {
             sculpt.setModalMode(dispatcher.getModalMode());
             sculpt.processFrame(scene);
         }
+
+        // Manage hardware / system / software cursor (activated ONLY over the mesh or during sculpt)
+        bool sculptingNow = sculpt.isSculpting();
+        ImGuiIO& io = ImGui::GetIO();
+        Uint32 winFlags = SDL_GetWindowFlags(window);
+        bool appHasFocus = (winFlags & SDL_WINDOW_INPUT_FOCUS) != 0;
+        const auto& cursorState = sculpt.getCursor().getState();
+        bool isOverMesh = cursorState.hitMesh;
+
+        hardwareCursor.updateScale(gui.getUiScale());
+        hardwareCursor.setMode(static_cast<HardwareCursorMode>(renderer.getHardwareCursorMode()));
+        hardwareCursor.update(sculptingNow, isOverMesh, io.WantCaptureMouse, appHasFocus, cursorState.color);
+        renderer.setHardwareCursorActive(hardwareCursor.isHardwareCursorActive());
+
         sculpt.getCursor().applyToRenderer(renderer);
         renderer.setLassoParameters(sculpt.isLassoActive(), sculpt.getLassoPoints(), sculpt.getLassoAlt(), sculpt.isMaskLasso());
         renderer.setClipCurveOverlay(sculpt.isClipCurveActive(), sculpt.getClipCurvePoints(), sculpt.getClipCurveAlt());
@@ -1356,8 +1365,8 @@ int main(int argc, char* argv[]) {
         renderer.render(scene);
         double renderMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tRenderStart).count();
 
-        Uint32 winFlags = SDL_GetWindowFlags(window);
-        bool appHasFocus = (winFlags & SDL_WINDOW_INPUT_FOCUS) != 0;
+        winFlags = SDL_GetWindowFlags(window);
+        appHasFocus = (winFlags & SDL_WINDOW_INPUT_FOCUS) != 0;
         bool activeActivity = hadActivity || isSculptingActive || sculpt.getCameraController().isDragging();
         gui.getWorkTimer().tick(deltaTime, appHasFocus, activeActivity);
 
@@ -1449,6 +1458,8 @@ int main(int argc, char* argv[]) {
     if (zbrushWatcher) {
         zbrushWatcher->stop();
     }
+
+    hardwareCursor.shutdown();
 
     // Save application settings on exit
     IniFile saveApp;

@@ -248,6 +248,12 @@ public:
     bool getSmoothCursor() const { return m_smoothCursor; }
     void setUseCrosshairCursor(bool crosshair) { m_useCrosshairCursor = crosshair; }
     bool getUseCrosshairCursor() const { return m_useCrosshairCursor; }
+    void setHardwareCursorMode(int mode) { m_hardwareCursorMode = mode; }
+    int getHardwareCursorMode() const { return m_hardwareCursorMode; }
+    void setHardwareCursorAlwaysInViewport(bool always) { m_hardwareCursorAlwaysInViewport = always; }
+    bool getHardwareCursorAlwaysInViewport() const { return m_hardwareCursorAlwaysInViewport; }
+    void setHardwareCursorActive(bool active) { m_hardwareCursorActive = active; }
+    bool getHardwareCursorActive() const { return m_hardwareCursorActive; }
     void setShowGrid(bool show) { m_gridSettings.showGrid = show; }
     bool getShowGrid() const { return m_gridSettings.showGrid; }
     GridSettings& getGridSettings() { return m_gridSettings; }
@@ -749,6 +755,9 @@ private:
     float m_cursorThickness = 1.0f;
     bool m_smoothCursor = true;
     bool m_useCrosshairCursor = true;
+    int m_hardwareCursorMode = 0;
+    bool m_hardwareCursorAlwaysInViewport = false;
+    bool m_hardwareCursorActive = false;
 
     int m_shaderType = 1;
     int m_matcapIdx = 3;
