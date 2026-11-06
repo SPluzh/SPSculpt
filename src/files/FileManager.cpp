@@ -11,6 +11,7 @@
 #include "files/ExportGLTF.h"
 #include "files/ImportFBX.h"
 #include "files/ImportGoZ.h"
+#include "files/ExportGoZ.h"
 #include "common/FormatConstants.h"
 #include "common/StringUtils.h"
 #include "common/Logger.h"
@@ -277,6 +278,10 @@ bool FileManager::exportMeshes(const std::string& path,
         std::vector<uint8_t> buffer = ExportGLTF::exportGLB(meshes);
         if (buffer.empty()) return false;
         return writeBinaryFile(path, buffer);
+    }
+    
+    if (ext == "goz") {
+        return ExportGoZ::exportGoZ(path, meshes);
     }
     
     std::cerr << "Unsupported export file format: ." << ext << std::endl;

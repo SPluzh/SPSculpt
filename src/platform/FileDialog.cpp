@@ -21,6 +21,7 @@ std::vector<FilterSpec> getImportFilters() {
         { "STL (*.stl)", "*.stl" },
         { "PLY (*.ply)", "*.ply" },
         { "GLTF / GLB (*.glb, *.gltf)", "*.glb;*.gltf" },
+        { "ZBrush GoZ (*.goz)", "*.goz" },
         { "Autodesk FBX (*.fbx)", "*.fbx" },
         { "ZBrush GoZ (*.goz)", "*.goz" },
         { "All Files (*.*)", "*.*" }

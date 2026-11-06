@@ -69,6 +69,7 @@
 
 #include "zbrush_bridge/ZBrushBridgeConfig.h"
 #include "zbrush_bridge/ZBrushWatcher.h"
+#include "zbrush_bridge/ZBrushSender.h"
 #include "files/GoZProfiler.h" 
 
 static FILE* openFileUtf8(const std::string& path, const char* mode) {
@@ -4514,6 +4515,37 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Export Model / Scene (Ctrl+E)");
 
+            ImGui::SameLine();
+            if (ImGui::Button(ICON_LC_REFRESH_CW "##OutlinerSendZBrush", ImVec2(btnW, btnH))) {
+                ImGui::OpenPopup("##outlinerZBrushMenu");
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("ZBrush Round-Trip Bridge (Send / Receive Scene)");
+
+            if (ImGui::BeginPopup("##outlinerZBrushMenu")) {
+                ImGui::Text(ICON_LC_REFRESH_CW " ZBrush Round-Trip Bridge");
+                ImGui::Separator();
+                if (ImGui::MenuItem("Send Active to ZBrush")) {
+                    auto res = ZBrushBridge::sendActiveMeshToZBrush(scene.getSelected());
+                    showToast(res.message, 3.0f);
+                }
+                if (ImGui::MenuItem("Send Visible to ZBrush")) {
+                    auto res = ZBrushBridge::sendSceneToZBrush(scene, true);
+                    showToast(res.message, 3.0f);
+                }
+                if (ImGui::MenuItem("Send All Scene to ZBrush")) {
+                    auto res = ZBrushBridge::sendSceneToZBrush(scene, false);
+                    showToast(res.message, 3.0f);
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Pull Active from ZBrush")) {
+                    if (m_zbrushWatcher) m_zbrushWatcher->forceReloadMesh();
+                }
+                if (ImGui::MenuItem("Pull Scene from ZBrush")) {
+                    if (m_zbrushWatcher) m_zbrushWatcher->forceReloadScene();
+                }
+                ImGui::EndPopup();
+            }
+
             ImGui::Separator();
             ImGui::Spacing();
 
@@ -4895,6 +4927,15 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         ImGui::PopStyleColor(2);
                         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bake procedural primitive into standard editable sculpt mesh");
                     }
+
+                    ImGui::SameLine();
+                    ImGui::PushID(99);
+                    if (ImGui::Button(ICON_LC_REFRESH_CW "##sendZb", ImVec2(btnSz * 1.5f, btnSz))) {
+                        auto res = ZBrushBridge::sendActiveMeshToZBrush(mesh);
+                        showToast(res.message, 2.5f);
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Send this mesh to ZBrush (updates active SubTool in ZBrush)");
+                    ImGui::PopID();
 
                     ImGui::EndGroup();
                     ImGui::EndChild();
@@ -9646,6 +9687,42 @@ void GuiManager::drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRend
         }
         ImGui::EndMenu();
     }
+    if (ImGui::BeginMenu("ZBrush Bridge")) {
+        bool autoSync = ZBrushBridge::Config::isAutoSyncEnabled();
+        if (ImGui::MenuItem("Live Auto-Sync", nullptr, &autoSync)) {
+            ZBrushBridge::Config::setAutoSyncEnabled(autoSync);
+            if (m_zbrushWatcher) {
+                if (autoSync) m_zbrushWatcher->start();
+                else m_zbrushWatcher->stop();
+            }
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Send Active to ZBrush", "Ctrl+Alt+Z")) {
+            auto res = ZBrushBridge::sendActiveMeshToZBrush(scene.getSelected());
+            showToast(res.message, 3.0f);
+        }
+        if (ImGui::MenuItem("Send Visible to ZBrush")) {
+            auto res = ZBrushBridge::sendSceneToZBrush(scene, true);
+            showToast(res.message, 3.0f);
+        }
+        if (ImGui::MenuItem("Send All Scene to ZBrush", "Ctrl+Alt+Shift+Z")) {
+            auto res = ZBrushBridge::sendSceneToZBrush(scene, false);
+            showToast(res.message, 3.0f);
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Pull Active from ZBrush")) {
+            if (m_zbrushWatcher) m_zbrushWatcher->forceReloadMesh();
+        }
+        if (ImGui::MenuItem("Pull Scene from ZBrush")) {
+            if (m_zbrushWatcher) m_zbrushWatcher->forceReloadScene();
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("ZBrush Bridge Settings...")) {
+            m_showPreferencesPanel = true;
+            m_preferencesSelectedTab = PrefTab_ZBrushBridge;
+        }
+        ImGui::EndMenu();
+    }
     if (ImGui::BeginMenu("Panels")) {
         ImGui::MenuItem("Toolbar", nullptr, &m_showToolbar);
         ImGui::MenuItem("Sculpting Settings", nullptr, &m_showSculptingPanel);
@@ -13852,13 +13929,42 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                 ImGui::Dummy(ImVec2(15.0f * scale, 0.0f));
                 ImGui::SameLine();
 
-                if (ImGui::Button("Sync Now / Reload Mesh", ImVec2(180.0f * scale, 0.0f))) {
+                if (ImGui::Button("Sync Active Now", ImVec2(130.0f * scale, 0.0f))) {
                     if (m_zbrushWatcher) {
                         m_zbrushWatcher->forceReloadMesh();
                     }
                 }
                 if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Force immediate one-time reload of mesh.GoZ from exchange directory,\neven if live auto-sync is currently paused.");
+                    ImGui::SetTooltip("Reload active mesh.GoZ from exchange directory.");
+                }
+
+                ImGui::SameLine();
+                if (ImGui::Button("Sync Scene Now", ImVec2(130.0f * scale, 0.0f))) {
+                    if (m_zbrushWatcher) {
+                        m_zbrushWatcher->forceReloadScene();
+                    }
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Reload full scene from scene_manifest.json.");
+                }
+
+                ImGui::Spacing();
+                const char* syncModes[] = { "Active SubTool Only", "Full Scene (Visible Only)", "Full Scene (All SubTools)" };
+                int currentSyncMode = static_cast<int>(ZBrushBridge::Config::getSyncMode());
+                ImGui::SetNextItemWidth(260.0f * scale);
+                if (ImGui::Combo("Default Sync Mode", &currentSyncMode, syncModes, IM_ARRAYSIZE(syncModes))) {
+                    ZBrushBridge::Config::setSyncMode(static_cast<ZBrushBridge::SyncMode>(currentSyncMode));
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Default synchronization mode between ZBrush and SPSculpt.");
+                }
+
+                bool autoDelete = ZBrushBridge::Config::isAutoDeleteRemovedSubTools();
+                if (ImGui::Checkbox("Auto-delete removed SubTools from Scene", &autoDelete)) {
+                    ZBrushBridge::Config::setAutoDeleteRemovedSubTools(autoDelete);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("When synchronizing full scene, automatically remove meshes in SPSculpt that were deleted in ZBrush.");
                 }
 
                 ImGui::Spacing();
@@ -13948,6 +14054,15 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                     ImGui::SetTooltip("Delay before reading file after detecting write event.\nProtects against reading while ZBrush is still flushing data to disk.");
                 }
 
+                int sceneDebounce = ZBrushBridge::Config::getSceneDebounceDelayMs();
+                ImGui::SetNextItemWidth(260.0f * scale);
+                if (ImGui::SliderInt("Scene Debounce Delay (ms)", &sceneDebounce, 50, 1000, "%d ms")) {
+                    ZBrushBridge::Config::setSceneDebounceDelayMs(sceneDebounce);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Delay before reading scene manifest after detecting write event.\nAllows multiple subtool files to finish flushing to disk.");
+                }
+
                 int retries = ZBrushBridge::Config::getFileReadyRetries();
                 ImGui::SetNextItemWidth(260.0f * scale);
                 if (ImGui::SliderInt("File Access Retries", &retries, 10, 50, "%d attempts")) {
@@ -13955,6 +14070,26 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                 }
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip("Maximum retry attempts with 15ms step to acquire handle when file is locked by ZBrush.");
+                }
+
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Send to ZBrush (Round-Trip)");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                if (ImGui::Button("Send Active Mesh to ZBrush", ImVec2(210.0f * scale, 0.0f))) {
+                    auto res = ZBrushBridge::sendActiveMeshToZBrush(scene.getSelected());
+                    showToast(res.message, 3.0f);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Send Visible Scene to ZBrush", ImVec2(210.0f * scale, 0.0f))) {
+                    auto res = ZBrushBridge::sendSceneToZBrush(scene, true);
+                    showToast(res.message, 3.0f);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Send All Scene to ZBrush", ImVec2(210.0f * scale, 0.0f))) {
+                    auto res = ZBrushBridge::sendSceneToZBrush(scene, false);
+                    showToast(res.message, 3.0f);
                 }
 
                 ImGui::Spacing();

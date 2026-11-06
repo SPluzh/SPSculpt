@@ -17,7 +17,10 @@ namespace fs = std::filesystem;
 
 std::string Config::s_customDataDir = "";
 int Config::s_debounceDelayMs = 250;
+int Config::s_sceneDebounceDelayMs = 350;
 bool Config::s_autoSyncEnabled = true;
+SyncMode Config::s_syncMode = SyncMode::FullScene;
+bool Config::s_autoDeleteRemovedSubTools = false;
 bool Config::s_importPolyPaint = true;
 bool Config::s_importPolyGroups = true;
 bool Config::s_keepNativeQuads = true;
@@ -85,8 +88,17 @@ void Config::loadConfig() {
                 if (j.contains("debounce_delay_ms") && j["debounce_delay_ms"].is_number_integer()) {
                     s_debounceDelayMs = j["debounce_delay_ms"].get<int>();
                 }
+                if (j.contains("scene_debounce_delay_ms") && j["scene_debounce_delay_ms"].is_number_integer()) {
+                    s_sceneDebounceDelayMs = j["scene_debounce_delay_ms"].get<int>();
+                }
                 if (j.contains("auto_sync_enabled") && j["auto_sync_enabled"].is_boolean()) {
                     s_autoSyncEnabled = j["auto_sync_enabled"].get<bool>();
+                }
+                if (j.contains("sync_mode") && j["sync_mode"].is_number_integer()) {
+                    s_syncMode = static_cast<SyncMode>(j["sync_mode"].get<int>());
+                }
+                if (j.contains("auto_delete_removed_subtools") && j["auto_delete_removed_subtools"].is_boolean()) {
+                    s_autoDeleteRemovedSubTools = j["auto_delete_removed_subtools"].get<bool>();
                 }
                 if (j.contains("import_polypaint") && j["import_polypaint"].is_boolean()) {
                     s_importPolyPaint = j["import_polypaint"].get<bool>();
@@ -127,7 +139,10 @@ void Config::saveConfig() {
         nlohmann::json j;
         j["data_dir"] = getDataDir();
         j["debounce_delay_ms"] = s_debounceDelayMs;
+        j["scene_debounce_delay_ms"] = s_sceneDebounceDelayMs;
         j["auto_sync_enabled"] = s_autoSyncEnabled;
+        j["sync_mode"] = static_cast<int>(s_syncMode);
+        j["auto_delete_removed_subtools"] = s_autoDeleteRemovedSubTools;
         j["import_polypaint"] = s_importPolyPaint;
         j["import_polygroups"] = s_importPolyGroups;
         j["keep_native_quads"] = s_keepNativeQuads;
@@ -157,7 +172,6 @@ std::string Config::getDataDir() {
         }
     }
 
-    // Ensure directory exists on disk
     try {
         fs::create_directories(dir);
     } catch (...) {}
@@ -182,15 +196,43 @@ std::string Config::getCommandScriptPath() {
     return getDataDir() + "cmd_sync.txt";
 }
 
+std::string Config::getSceneManifestPath() {
+    return getDataDir() + "scene_manifest.json";
+}
+
+std::string Config::getSubtoolsDir() {
+    std::string dir = getDataDir() + "subtools/";
+    try { fs::create_directories(dir); } catch (...) {}
+    return dir;
+}
+
+std::string Config::getOutSubtoolsDir() {
+    std::string dir = getDataDir() + "out_subtools/";
+    try { fs::create_directories(dir); } catch (...) {}
+    return dir;
+}
+
+std::string Config::getImportSceneScriptPath() {
+    return getDataDir() + "cmd_import_scene.txt";
+}
+
 int Config::getDebounceDelayMs() {
     if (!s_loaded) loadConfig();
     return s_debounceDelayMs;
 }
 
 void Config::setDebounceDelayMs(int ms) {
-    if (ms < 50) ms = 50;
-    if (ms > 2000) ms = 2000;
     s_debounceDelayMs = ms;
+    saveConfig();
+}
+
+int Config::getSceneDebounceDelayMs() {
+    if (!s_loaded) loadConfig();
+    return s_sceneDebounceDelayMs;
+}
+
+void Config::setSceneDebounceDelayMs(int ms) {
+    s_sceneDebounceDelayMs = ms;
     saveConfig();
 }
 
@@ -201,6 +243,26 @@ bool Config::isAutoSyncEnabled() {
 
 void Config::setAutoSyncEnabled(bool enabled) {
     s_autoSyncEnabled = enabled;
+    saveConfig();
+}
+
+SyncMode Config::getSyncMode() {
+    if (!s_loaded) loadConfig();
+    return s_syncMode;
+}
+
+void Config::setSyncMode(SyncMode mode) {
+    s_syncMode = mode;
+    saveConfig();
+}
+
+bool Config::isAutoDeleteRemovedSubTools() {
+    if (!s_loaded) loadConfig();
+    return s_autoDeleteRemovedSubTools;
+}
+
+void Config::setAutoDeleteRemovedSubTools(bool val) {
+    s_autoDeleteRemovedSubTools = val;
     saveConfig();
 }
 
@@ -240,8 +302,6 @@ int Config::getFileReadyRetries() {
 }
 
 void Config::setFileReadyRetries(int retries) {
-    if (retries < 10) retries = 10;
-    if (retries > 100) retries = 100;
     s_fileReadyRetries = retries;
     saveConfig();
 }

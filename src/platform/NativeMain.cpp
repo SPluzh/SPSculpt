@@ -53,6 +53,8 @@
 #include "files/GoZProfiler.h"
 #include "zbrush_bridge/ZBrushBridgeConfig.h"
 #include "zbrush_bridge/ZBrushWatcher.h"
+#include "zbrush_bridge/ZBrushSender.h"
+#include <unordered_set>
 #include "zbrush_bridge/ZBrushBridgeBenchmark.h"
 #include "stb_image.h"
 #include "editing/PrimitiveTool.h"
@@ -817,6 +819,101 @@ int main(int argc, char* argv[]) {
         lastFrameTime = currentFrameTime;
 
         bool hadActivity = false; // set true on any user input this frame
+
+        // Check for live ZBrush full scene sync updates
+        if (zbrushWatcher && zbrushWatcher->hasPendingScene()) {
+            ZBrushBridge::SceneSnapshot sceneSnapshot;
+            if (zbrushWatcher->consumePendingScene(sceneSnapshot)) {
+                auto tSceneSyncStart = std::chrono::high_resolution_clock::now();
+                bool triangulate = !ZBrushBridge::Config::isKeepNativeQuadsEnabled();
+                std::unordered_set<std::string> incomingNames;
+
+                int updatedCount = 0;
+                int addedCount = 0;
+
+                for (auto& st : sceneSnapshot.subtools) {
+                    incomingNames.insert(st.name);
+
+                    // Find matching mesh in scene by outlinerName
+                    Mesh* existing = nullptr;
+                    for (Mesh* m : scene.getMeshes()) {
+                        if (m && m->outlinerName == st.name) {
+                            existing = m;
+                            break;
+                        }
+                    }
+
+                    if (st.isNewOrModified && !st.buffer.empty()) {
+                        ImportGoZ::GoZInfo info;
+                        ImportGoZ::GoZParserStats parserStats;
+                        auto meshes = ImportGoZ::importGoZ(st.buffer, triangulate, &info, &parserStats);
+                        st.buffer.clear();
+                        st.buffer.shrink_to_fit();
+
+                        if (!meshes.empty() && meshes[0]) {
+                            Mesh* incomingMesh = meshes[0];
+                            incomingMesh->outlinerName = st.name;
+                            incomingMesh->visibleV1 = st.visible;
+                            incomingMesh->visibleV2 = st.visible;
+
+                            if (!ZBrushBridge::Config::isImportPolyPaintEnabled()) {
+                                incomingMesh->colors.assign(incomingMesh->nbVerts * 3, 1.0f);
+                            }
+                            if (!ZBrushBridge::Config::isImportPolyGroupsEnabled()) {
+                                incomingMesh->initFaceGroups();
+                            }
+
+                            if (existing) {
+                                renderer.notifyMeshReplaced(existing, incomingMesh);
+                                scene.replaceMesh(existing, incomingMesh);
+                                updatedCount++;
+                            } else {
+                                scene.addMesh(incomingMesh);
+                                addedCount++;
+                            }
+                        }
+                    } else if (existing) {
+                        // Geometry unchanged, update visibility only
+                        existing->visibleV1 = st.visible;
+                        existing->visibleV2 = st.visible;
+                    }
+                }
+
+                // Auto-delete removed subtools if enabled
+                if (ZBrushBridge::Config::isAutoDeleteRemovedSubTools()) {
+                    std::vector<Mesh*> toDelete;
+                    for (Mesh* m : scene.getMeshes()) {
+                        if (m && incomingNames.find(m->outlinerName) == incomingNames.end() &&
+                            m->outlinerName != "Default Sphere") {
+                            toDelete.push_back(m);
+                        }
+                    }
+                    for (Mesh* m : toDelete) {
+                        scene.deleteMesh(m);
+                    }
+                }
+
+                // Update active selection
+                if (sceneSnapshot.activeIndex >= 0 && sceneSnapshot.activeIndex < static_cast<int>(sceneSnapshot.subtools.size())) {
+                    const std::string& actName = sceneSnapshot.subtools[sceneSnapshot.activeIndex].name;
+                    for (Mesh* m : scene.getMeshes()) {
+                        if (m && m->outlinerName == actName) {
+                            scene.selectMesh(m);
+                            break;
+                        }
+                    }
+                }
+
+                scene.setModified(true);
+                hadActivity = true;
+                lastActivityTime = std::chrono::high_resolution_clock::now();
+                auto tSceneSyncEnd = std::chrono::high_resolution_clock::now();
+                double msSync = std::chrono::duration<double, std::milli>(tSceneSyncEnd - tSceneSyncStart).count();
+                sculpt_log("[ZBrush Bridge] Full scene synced in %.2f ms (%d updated, %d added, total meshes: %zu)\n",
+                           msSync, updatedCount, addedCount, scene.getMeshes().size());
+                gui.showToast("ZBrush Scene Synced: " + std::to_string(sceneSnapshot.subtools.size()) + " SubTools", 2.5f);
+            }
+        }
 
         // Check for live ZBrush companion sync updates
         if (zbrushWatcher && zbrushWatcher->hasPendingMesh()) {

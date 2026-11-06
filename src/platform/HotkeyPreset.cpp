@@ -84,6 +84,9 @@ static const std::vector<HKActionInfo> s_actionInfoList = {
     { HKAction::SoloSelected,     "SoloSelected",     "Solo Selected Mesh",   "SOL", "Misc", false },
     { HKAction::ToggleRefImagesVisible, "ToggleRefImagesVisible", "Toggle Reference Visibility", "RFV", "Misc", false },
     { HKAction::ToggleRefEditMode,"ToggleRefEditMode","Toggle Reference Edit", "RFE", "Misc", false },
+    // ZBrush Bridge
+    { HKAction::ZBrushSendActive, "ZBrushSendActive", "Send Active to ZBrush", "ZBA", "ZBrush", false },
+    { HKAction::ZBrushSendScene,  "ZBrushSendScene",  "Send Scene to ZBrush",  "ZBS", "ZBrush", false },
 };
 
 const std::vector<HKActionInfo>& getAllHKActions() {
@@ -433,6 +436,10 @@ static void populateCommonKeyBindings(HotkeyPreset& p) {
     p.keyBindings[HKAction::ToggleOutliner]    = { SDLK_F1 };
     p.keyBindings[HKAction::ToggleCameraBookmarks] = { SDLK_F2 };
     p.keyBindings[HKAction::SoloSelected]      = { SDLK_c };
+
+    // ZBrush Bridge
+    p.keyBindings[HKAction::ZBrushSendActive]  = { SDLK_z, true, true, false }; // Ctrl+Alt+Z
+    p.keyBindings[HKAction::ZBrushSendScene]   = { SDLK_z, true, true, true };  // Ctrl+Alt+Shift+Z
 }
 
 HotkeyPreset HotkeyPreset::createZBrush() {

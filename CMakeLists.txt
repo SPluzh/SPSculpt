@@ -169,11 +169,13 @@ add_executable(SPSculpt
     src/files/ExportGLTF.cpp
     src/files/ImportFBX.cpp
     src/files/ImportGoZ.cpp
+    src/files/ExportGoZ.cpp
     src/files/GoZProfiler.cpp
     src/files/MeshUtils.cpp
     # zbrush bridge
     src/zbrush_bridge/ZBrushBridgeConfig.cpp
     src/zbrush_bridge/ZBrushWatcher.cpp
+    src/zbrush_bridge/ZBrushSender.cpp
     # editing
     src/editing/manifold/ManifoldBridge.cpp
     src/editing/manifold/LassoCutter.cpp

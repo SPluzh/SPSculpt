@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <nlohmann/json.hpp>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -112,6 +113,17 @@ bool ZBrushWatcher::consumePendingMesh(std::vector<uint8_t>& outBuffer, WatcherM
     return true;
 }
 
+bool ZBrushWatcher::consumePendingScene(SceneSnapshot& outScene) {
+    if (!m_scenePending.load()) return false;
+    std::lock_guard<std::mutex> lock(m_sceneMutex);
+    if (m_pendingScene.subtools.empty()) return false;
+    outScene = std::move(m_pendingScene);
+    m_pendingScene.subtools.clear();
+    m_pendingScene.subtools.shrink_to_fit();
+    m_scenePending.store(false);
+    return true;
+}
+
 bool ZBrushWatcher::consumePendingCamera(CameraSnapshot& outCamera) {
     if (!m_cameraPending.load()) return false;
     std::lock_guard<std::mutex> lock(m_cameraMutex);
@@ -131,7 +143,6 @@ bool ZBrushWatcher::isFileReady(const std::string& filePath, int maxRetries, int
     for (int i = 0; i < maxRetries; ++i) {
         if (m_stopRequested.load()) return false;
 
-        // Try exclusive open (dwShareMode = 0) to ensure writer has completed and closed the file
         HANDLE hFile = CreateFileW(
             wpath.c_str(),
             GENERIC_READ | GENERIC_WRITE,
@@ -159,7 +170,7 @@ bool ZBrushWatcher::isFileReady(const std::string& filePath, int maxRetries, int
 
         if (hFile != INVALID_HANDLE_VALUE) {
             LARGE_INTEGER size;
-            if (GetFileSizeEx(hFile, &size) && size.QuadPart >= 32) {
+            if (GetFileSizeEx(hFile, &size) && size.QuadPart >= 10) {
                 if (lastSize > 0 && size.QuadPart == lastSize) {
                     stableCount++;
                     if (stableCount >= 2) {
@@ -191,7 +202,7 @@ bool ZBrushWatcher::isFileReady(const std::string& filePath, int maxRetries, int
         if (fs::exists(filePath)) {
             std::error_code ec;
             auto sz = fs::file_size(filePath, ec);
-            if (!ec && sz >= 32) {
+            if (!ec && sz >= 10) {
                 if (lastSize > 0 && sz == lastSize) {
                     stableCount++;
                     if (stableCount >= 2) return true;
@@ -213,6 +224,12 @@ bool ZBrushWatcher::isFileReady(const std::string& filePath, int maxRetries, int
 void ZBrushWatcher::watchThreadFunc() {
 #ifdef _WIN32
     std::string currentDir = getWatchDirectory();
+    for (char& c : currentDir) {
+        if (c == '/') c = '\\';
+    }
+    while (currentDir.length() > 3 && currentDir.back() == '\\') {
+        currentDir.pop_back();
+    }
     std::wstring wdir(currentDir.begin(), currentDir.end());
 
     HANDLE hDir = CreateFileW(
@@ -239,6 +256,7 @@ void ZBrushWatcher::watchThreadFunc() {
     alignas(DWORD) BYTE notifyBuffer[4096];
     HANDLE waitHandles[2] = { static_cast<HANDLE>(m_stopEvent), ov.hEvent };
     FILETIME lastMeshTime = {0, 0};
+    FILETIME lastManifestTime = {0, 0};
 
     while (!m_stopRequested.load()) {
         ResetEvent(ov.hEvent);
@@ -262,7 +280,6 @@ void ZBrushWatcher::watchThreadFunc() {
 
         DWORD waitRes = WaitForMultipleObjects(2, waitHandles, FALSE, INFINITE);
         if (waitRes == WAIT_OBJECT_0) {
-            // Stop requested
             CancelIo(hDir);
             break;
         }
@@ -272,13 +289,13 @@ void ZBrushWatcher::watchThreadFunc() {
             if (GetOverlappedResult(hDir, &ov, &transferred, FALSE) && transferred > 0) {
                 BYTE* pCurrent = notifyBuffer;
                 bool checkMesh = false;
+                bool checkScene = false;
                 bool checkCamera = false;
 
                 while (pCurrent) {
                     auto* fni = reinterpret_cast<FILE_NOTIFY_INFORMATION*>(pCurrent);
                     std::wstring fileName(fni->FileName, fni->FileNameLength / sizeof(WCHAR));
 
-                    // Lowercase conversion for case-insensitive check
                     std::string narrowName;
                     narrowName.reserve(fileName.size());
                     for (WCHAR c : fileName) {
@@ -287,6 +304,8 @@ void ZBrushWatcher::watchThreadFunc() {
 
                     if (narrowName == "mesh.goz") {
                         checkMesh = true;
+                    } else if (narrowName == "scene_manifest.json") {
+                        checkScene = true;
                     } else if (narrowName == "camera.txt") {
                         checkCamera = true;
                     }
@@ -295,6 +314,111 @@ void ZBrushWatcher::watchThreadFunc() {
                     pCurrent += fni->NextEntryOffset;
                 }
 
+                // Handle Full Scene Sync Manifest
+                if (checkScene) {
+                    m_state.store(WatcherState::Importing);
+                    int debounceMs = Config::getSceneDebounceDelayMs();
+                    if (debounceMs > 0) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(debounceMs));
+                    }
+                    auto tDetect = std::chrono::high_resolution_clock::now();
+                    std::string manifestPath = getWatchDirectory() + "scene_manifest.json";
+                    int retries = Config::getFileReadyRetries();
+                    auto tWaitStart = std::chrono::high_resolution_clock::now();
+                    bool ready = isFileReady(manifestPath, retries, 15);
+                    auto tWaitEnd = std::chrono::high_resolution_clock::now();
+                    double waitMs = std::chrono::duration<double, std::milli>(tWaitEnd - tWaitStart).count();
+
+                    if (ready) {
+                        std::wstring wManifestPath(manifestPath.begin(), manifestPath.end());
+                        WIN32_FILE_ATTRIBUTE_DATA attrData;
+                        bool isNew = true;
+                        if (GetFileAttributesExW(wManifestPath.c_str(), GetFileExInfoStandard, &attrData)) {
+                            if (lastManifestTime.dwLowDateTime == attrData.ftLastWriteTime.dwLowDateTime &&
+                                lastManifestTime.dwHighDateTime == attrData.ftLastWriteTime.dwHighDateTime) {
+                                isNew = false;
+                            } else {
+                                lastManifestTime = attrData.ftLastWriteTime;
+                            }
+                        }
+
+                        if (isNew) {
+                            std::ifstream f(manifestPath);
+                            if (f.is_open()) {
+                                try {
+                                    nlohmann::json j;
+                                    f >> j;
+                                    f.close();
+
+                                    SceneSnapshot sceneSnap;
+                                    sceneSnap.version = j.value("version", 1);
+                                    sceneSnap.activeIndex = j.value("activeIndex", 0);
+                                    sceneSnap.timestamp = j.value("timestamp", 0ULL);
+                                    sceneSnap.stats.filePath = manifestPath;
+                                    sceneSnap.stats.detectTime = tDetect;
+                                    sceneSnap.stats.fileReadyWaitMs = waitMs;
+
+                                    if (j.contains("subtools") && j["subtools"].is_array()) {
+                                        std::string baseDir = getWatchDirectory();
+                                        for (const auto& item : j["subtools"]) {
+                                            SubToolSnapshot st;
+                                            st.id = item.value("id", 0);
+                                            st.name = item.value("name", "");
+                                            st.visible = item.value("visible", true);
+                                            st.undoCounter = item.value("undoCounter", 0);
+                                            std::string relFile = item.value("file", "");
+                                            fs::path p(relFile);
+                                            if (p.is_relative()) {
+                                                st.filePath = (fs::path(baseDir) / p).string();
+                                            } else {
+                                                st.filePath = relFile;
+                                            }
+
+                                            // Check if subtool needs to be read
+                                            auto cacheIt = m_subtoolUndoCache.find(st.name);
+                                            bool needsRead = (cacheIt == m_subtoolUndoCache.end() || cacheIt->second != st.undoCounter);
+
+                                            if (needsRead && fs::exists(st.filePath)) {
+                                                if (isFileReady(st.filePath, 15, 10)) {
+                                                    std::ifstream subFile(st.filePath, std::ios::binary | std::ios::ate);
+                                                    if (subFile.is_open()) {
+                                                        std::streamsize sz = subFile.tellg();
+                                                        if (sz >= 32) {
+                                                            subFile.seekg(0, std::ios::beg);
+                                                            st.buffer.resize(sz);
+                                                            subFile.read(reinterpret_cast<char*>(st.buffer.data()), sz);
+                                                            st.isNewOrModified = true;
+                                                            m_subtoolUndoCache[st.name] = st.undoCounter;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            sceneSnap.subtools.push_back(std::move(st));
+                                        }
+                                    }
+
+                                    sceneSnap.stats.pushTime = std::chrono::high_resolution_clock::now();
+
+                                    {
+                                        std::lock_guard<std::mutex> lock(m_sceneMutex);
+                                        m_pendingScene = std::move(sceneSnap);
+                                        m_scenePending.store(true);
+                                    }
+
+                                    SDL_Event ev;
+                                    std::memset(&ev, 0, sizeof(ev));
+                                    ev.type = SDL_USEREVENT;
+                                    ev.user.code = 0x676F73; // 'gos'
+                                    SDL_PushEvent(&ev);
+
+                                } catch (...) {}
+                            }
+                        }
+                    }
+                    m_state.store(WatcherState::Watching);
+                }
+
+                // Handle Single Active Mesh Sync
                 if (checkMesh) {
                     m_state.store(WatcherState::Importing);
                     int debounceMs = Config::getDebounceDelayMs();
@@ -322,7 +446,6 @@ void ZBrushWatcher::watchThreadFunc() {
                             }
                         }
                         if (isNew) {
-                            // Read binary GoZ into buffer
                             auto tReadStart = std::chrono::high_resolution_clock::now();
                             std::ifstream file(meshPath, std::ios::binary | std::ios::ate);
                             if (file.is_open()) {
@@ -386,32 +509,23 @@ void ZBrushWatcher::watchThreadFunc() {
 #else
     // Non-Windows polling fallback
     fs::file_time_type lastMeshTime{};
+    fs::file_time_type lastManifestTime{};
     while (!m_stopRequested.load()) {
+        std::string manifestPath = getWatchDirectory() + "scene_manifest.json";
+        if (fs::exists(manifestPath)) {
+            auto curTime = fs::last_write_time(manifestPath);
+            if (curTime != lastManifestTime) {
+                lastManifestTime = curTime;
+                forceReloadScene();
+            }
+        }
+
         std::string meshPath = getWatchDirectory() + "mesh.GoZ";
         if (fs::exists(meshPath)) {
             auto curTime = fs::last_write_time(meshPath);
             if (curTime != lastMeshTime) {
                 lastMeshTime = curTime;
-                if (isFileReady(meshPath)) {
-                    std::ifstream file(meshPath, std::ios::binary | std::ios::ate);
-                    if (file.is_open()) {
-                        std::streamsize size = file.tellg();
-                        if (size >= 32) {
-                            file.seekg(0, std::ios::beg);
-                            std::vector<uint8_t> buffer(size);
-                            if (file.read(reinterpret_cast<char*>(buffer.data()), size)) {
-                                std::lock_guard<std::mutex> lock(m_meshMutex);
-                                m_pendingMeshBuffer = std::move(buffer);
-                                m_meshPending.store(true);
-                                SDL_Event ev;
-                                std::memset(&ev, 0, sizeof(ev));
-                                ev.type = SDL_USEREVENT;
-                                ev.user.code = 0x676F7A; // 'goz'
-                                SDL_PushEvent(&ev);
-                            }
-                        }
-                    }
-                }
+                forceReloadMesh();
             }
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -480,6 +594,96 @@ bool ZBrushWatcher::forceReloadMesh() {
     ev.type = SDL_USEREVENT;
     ev.user.code = 0x676F7A; // 'goz'
     SDL_PushEvent(&ev);
+
+    m_state.store(m_running.load() ? WatcherState::Watching : WatcherState::Paused);
+    return true;
+}
+
+bool ZBrushWatcher::forceReloadScene() {
+    std::string manifestPath = getWatchDirectory() + "scene_manifest.json";
+    std::error_code ec;
+    if (!fs::exists(manifestPath, ec)) {
+        return false;
+    }
+
+    WatcherState prevState = m_state.load();
+    m_state.store(WatcherState::Importing);
+
+    int retries = Config::getFileReadyRetries();
+    if (!isFileReady(manifestPath, retries, 15)) {
+        m_state.store(prevState);
+        return false;
+    }
+
+    std::ifstream f(manifestPath);
+    if (!f.is_open()) {
+        m_state.store(prevState);
+        return false;
+    }
+
+    try {
+        nlohmann::json j;
+        f >> j;
+        f.close();
+
+        SceneSnapshot sceneSnap;
+        sceneSnap.version = j.value("version", 1);
+        sceneSnap.activeIndex = j.value("activeIndex", 0);
+        sceneSnap.timestamp = j.value("timestamp", 0ULL);
+        sceneSnap.stats.filePath = manifestPath;
+        sceneSnap.stats.detectTime = std::chrono::high_resolution_clock::now();
+
+        if (j.contains("subtools") && j["subtools"].is_array()) {
+            std::string baseDir = getWatchDirectory();
+            for (const auto& item : j["subtools"]) {
+                SubToolSnapshot st;
+                st.id = item.value("id", 0);
+                st.name = item.value("name", "");
+                st.visible = item.value("visible", true);
+                st.undoCounter = item.value("undoCounter", 0);
+                std::string relFile = item.value("file", "");
+                fs::path p(relFile);
+                if (p.is_relative()) {
+                    st.filePath = (fs::path(baseDir) / p).string();
+                } else {
+                    st.filePath = relFile;
+                }
+
+                if (fs::exists(st.filePath) && isFileReady(st.filePath, 10, 10)) {
+                    std::ifstream subFile(st.filePath, std::ios::binary | std::ios::ate);
+                    if (subFile.is_open()) {
+                        std::streamsize sz = subFile.tellg();
+                        if (sz >= 32) {
+                            subFile.seekg(0, std::ios::beg);
+                            st.buffer.resize(sz);
+                            subFile.read(reinterpret_cast<char*>(st.buffer.data()), sz);
+                            st.isNewOrModified = true;
+                            m_subtoolUndoCache[st.name] = st.undoCounter;
+                        }
+                    }
+                }
+                sceneSnap.subtools.push_back(std::move(st));
+            }
+        }
+
+        sceneSnap.stats.pushTime = std::chrono::high_resolution_clock::now();
+
+        {
+            std::lock_guard<std::mutex> lock(m_sceneMutex);
+            m_pendingScene = std::move(sceneSnap);
+            m_scenePending.store(true);
+        }
+
+        SDL_Event ev;
+        std::memset(&ev, 0, sizeof(ev));
+        ev.type = SDL_USEREVENT;
+        ev.user.code = 0x676F73; // 'gos'
+        SDL_PushEvent(&ev);
+
+    } catch (...) {
+        m_state.store(prevState);
+        return false;
+    }
 
     m_state.store(m_running.load() ? WatcherState::Watching : WatcherState::Paused);
     return true;

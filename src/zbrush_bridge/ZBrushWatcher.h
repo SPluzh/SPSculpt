@@ -6,6 +6,7 @@
 #include <thread>
 #include <vector>
 #include <chrono>
+#include <unordered_map>
 
 namespace ZBrushBridge {
 
@@ -32,6 +33,24 @@ struct WatcherMeshStats {
     std::chrono::high_resolution_clock::time_point detectTime;
 };
 
+struct SubToolSnapshot {
+    int id = 0;
+    std::string name;
+    bool visible = true;
+    int undoCounter = 0;
+    std::string filePath;
+    std::vector<uint8_t> buffer;
+    bool isNewOrModified = false;
+};
+
+struct SceneSnapshot {
+    int version = 1;
+    int activeIndex = 0;
+    uint64_t timestamp = 0;
+    std::vector<SubToolSnapshot> subtools;
+    WatcherMeshStats stats;
+};
+
 class ZBrushWatcher {
 public:
     ZBrushWatcher();
@@ -41,10 +60,15 @@ public:
     void stop();
     bool isRunning() const { return m_running.load(); }
     WatcherState getState() const { return m_state.load(); }
+
     bool forceReloadMesh();
+    bool forceReloadScene();
 
     bool hasPendingMesh() const { return m_meshPending.load(); }
     bool consumePendingMesh(std::vector<uint8_t>& outBuffer, WatcherMeshStats* outStats = nullptr);
+
+    bool hasPendingScene() const { return m_scenePending.load(); }
+    bool consumePendingScene(SceneSnapshot& outScene);
 
     bool hasPendingCamera() const { return m_cameraPending.load(); }
     bool consumePendingCamera(CameraSnapshot& outCamera);
@@ -60,6 +84,7 @@ private:
     std::atomic<bool> m_stopRequested{false};
     std::atomic<WatcherState> m_state{WatcherState::Paused};
     std::atomic<bool> m_meshPending{false};
+    std::atomic<bool> m_scenePending{false};
     std::atomic<bool> m_cameraPending{false};
 
     std::string m_watchDir;
@@ -68,6 +93,10 @@ private:
     std::vector<uint8_t> m_pendingMeshBuffer;
     WatcherMeshStats m_pendingMeshStats;
     std::mutex m_meshMutex;
+
+    SceneSnapshot m_pendingScene;
+    std::mutex m_sceneMutex;
+    std::unordered_map<std::string, int> m_subtoolUndoCache;
 
     CameraSnapshot m_pendingCamera;
     std::mutex m_cameraMutex;

@@ -90,6 +90,10 @@ enum class HKAction {
     SoloSelected,          // C
     ToggleRefImagesVisible,// Shift+Z
     ToggleRefEditMode,     // Z
+
+    // ZBrush Bridge
+    ZBrushSendActive,      // Ctrl+Alt+Z
+    ZBrushSendScene,       // Ctrl+Alt+Shift+Z
     None
 };
 

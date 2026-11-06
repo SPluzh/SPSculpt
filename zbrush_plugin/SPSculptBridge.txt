@@ -5,10 +5,6 @@
 //   Copy to your ZBrush ZStartup/ZPlugs64 directory:
 //     ZStartup/ZPlugs64/SPSculptBridge.txt
 //     ZStartup/ZPlugs64/SPSculptBridgeData/SPSculptBridge.dll
-//
-//   Example:
-//     C:\Program Files\Pixologic\ZBrush 202X\ZStartup\ZPlugs64\SPSculptBridge.txt
-//     C:\Program Files\Pixologic\ZBrush 202X\ZStartup\ZPlugs64\SPSculptBridgeData\SPSculptBridge.dll
 // ==============================================================================
 
 [ISubPalette, "ZPlugin:SPSculpt"]
@@ -47,6 +43,58 @@
     ]
 ]
 
+// ------------------------------------------------------------------------------
+// Inbound Import Routines (SPSculpt -> ZBrush)
+// ------------------------------------------------------------------------------
+
+[RoutineDef, ImportActiveMesh,
+    [If, [IsEnabled, "Tool:Import"],
+        [VarDef, activeGozPath, ""]
+        [VarSet, activeGozPath, [StrMerge, [Var, spsculptDataDir], "out_subtools/mesh_active.GoZ"]]
+        [If, [FileExists, [Var, activeGozPath]],
+            [FileNameSetNext, [Var, activeGozPath]]
+            [IPress, "Tool:Import"]
+            [VarDef, pActiveCmd, ""]
+            [VarSet, pActiveCmd, [StrMerge, [Var, spsculptDataDir], "cmd_import_active.txt"]]
+            [If, [FileExists, [Var, pActiveCmd]],
+                [FileDelete, [Var, pActiveCmd]]
+            ]
+            [Note, "SPSculpt: Active mesh imported into current SubTool!", , 1]
+        ,
+            [Note, [StrMerge, "SPSculpt: No mesh found at ", [Var, activeGozPath]], , 2]
+        ]
+    ,
+        [Note, "SPSculpt: Tool:Import is disabled. Please enter 3D Edit mode.", , 2]
+    ]
+]
+
+[RoutineDef, ImportSceneRoutine,
+    [VarDef, pSceneCmd, ""]
+    [VarSet, pSceneCmd, [StrMerge, [Var, spsculptDataDir], "cmd_import_scene.txt"]]
+    [If, [FileExists, [Var, pSceneCmd]],
+        [FileNameSetNext, [Var, pSceneCmd]]
+        [IPress, "ZScript:Load"]
+        [FileDelete, [Var, pSceneCmd]]
+    ,
+        [Note, [StrMerge, "SPSculpt: No scene script found at ", [Var, pSceneCmd]], , 2]
+    ]
+]
+
+// Background check for pending imports from SPSculpt
+[RoutineDef, CheckInboundImports,
+    [VarDef, chkAct, ""]
+    [VarSet, chkAct, [StrMerge, [Var, spsculptDataDir], "cmd_import_active.txt"]]
+    [If, [FileExists, [Var, chkAct]],
+        [RoutineCall, ImportActiveMesh]
+    ]
+
+    [VarDef, chkScn, ""]
+    [VarSet, chkScn, [StrMerge, [Var, spsculptDataDir], "cmd_import_scene.txt"]]
+    [If, [FileExists, [Var, chkScn]],
+        [RoutineCall, ImportSceneRoutine]
+    ]
+]
+
 // Helper routine: checks Undo Counter and exports mesh only if geometry changed + throttled
 [RoutineDef, CheckAndExportIfChanged,
     [If, [Var, autoSyncActive] == 1,
@@ -57,12 +105,11 @@
         ]
 
         // 2. Export ONLY if Undo Counter changed (actual brush stroke, smooth, or undo/redo)
-        // Camera navigation (orbit/pan/zoom) and key presses do NOT change Undo Counter!
         [If, [Var, curUndoCounter] != [Var, lastUndoCounter],
             // 3. Time throttle check via DLL (e.g. min 800ms between disk writes)
             [VarSet, canExport, 1]
             [If, [FileExists, [Var, spsculptDllPath]],
-                [VarSet, canExport, [FileExecute, [Var, spsculptDllPath], "CanExportNow", , [Var, userThrottleMs]]]
+                [VarSet, canExport, [FileExecute, [Var, spsculptDllPath], "CanExportNow", "", [Var, userThrottleMs]]]
             ]
 
             [VarSet, skipCount, [Var, skipCount] + 1]
@@ -80,21 +127,117 @@
     ]
 ]
 
-// Background routine: triggered reliably on each stroke release (LButton Up = event 8)
+// Full Scene Export Routine (ZBrush -> SPSculpt)
+[RoutineDef, ExportFullScene,
+    [If, [IsEnabled, "Tool:Export"],
+        [RoutineCall, FindBridgeDll]
+        [VarDef, totalSubTools, 0]
+        [VarSet, totalSubTools, [SubToolGetCount]]
+        [VarDef, origActiveIdx, 0]
+        [VarSet, origActiveIdx, [SubToolGetActiveIndex]]
+
+        [If, [FileExists, [Var, spsculptDllPath]],
+            [FileExecute, [Var, spsculptDllPath], "BeginSceneManifest", [Var, spsculptDataDir]]
+        ]
+
+        [VarDef, stStatus, 0]
+        [VarDef, isVisible, 0]
+        [VarDef, shouldExport, 1]
+        [VarDef, rawTitle, ""]
+        [VarDef, subName, ""]
+        [VarDef, titleLen, 0]
+        [VarDef, curSubUndo, 0]
+        [VarDef, isDirty, 1]
+        [VarDef, subGozRelPath, ""]
+        [VarDef, subGozFullPath, ""]
+        [VarDef, manifestEntry, ""]
+
+        [IFreeze,
+            [Loop, totalSubTools,
+                [VarSet, stStatus, [SubToolGetStatus, n]]
+                [If, (stStatus & 1) == 1,
+                    [VarSet, isVisible, 1]
+                ,
+                    [VarSet, isVisible, 0]
+                ]
+
+                [VarSet, shouldExport, 1]
+                [If, (exportOnlyVisible == 1) && (isVisible == 0),
+                    [VarSet, shouldExport, 0]
+                ]
+
+                [If, shouldExport == 1,
+                    [SubToolSelect, n]
+                    [VarSet, rawTitle, [IGetTitle, "Tool:ItemInfo"]]
+                    [VarSet, titleLen, [StrLength, rawTitle]]
+                    [If, titleLen > 1,
+                        [VarSet, subName, [StrExtract, rawTitle, 0, titleLen - 2]]
+                    ,
+                        [VarSet, subName, [StrMerge, "SubTool_", n]]
+                    ]
+
+                    [VarSet, curSubUndo, 0]
+                    [If, [IsEnabled, "Edit:Tool:Undo Counter"],
+                        [VarSet, curSubUndo, [IGet, "Edit:Tool:Undo Counter"]]
+                    ]
+
+                    // Dirty check via DLL
+                    [VarSet, isDirty, 1]
+                    [If, [FileExists, [Var, spsculptDllPath]],
+                        [VarSet, isDirty, [FileExecute, [Var, spsculptDllPath], "CheckSubToolDirty", subName, curSubUndo]]
+                    ]
+
+                    [VarSet, subGozRelPath, [StrMerge, "subtools/subtool_", n, ".GoZ"]]
+                    [VarSet, subGozFullPath, [StrMerge, [Var, spsculptDataDir], subGozRelPath]]
+
+                    [If, isDirty == 1,
+                        [FileNameSetNext, subGozFullPath]
+                        [IPress, "Tool:Export"]
+                    ]
+
+                    [If, [FileExists, [Var, spsculptDllPath]],
+                        // Format: "id|visible|undoCounter|relPath|subName"
+                        [VarSet, manifestEntry, [StrMerge, n, "|", isVisible, "|", curSubUndo, "|", subGozRelPath, "|", subName]]
+                        [FileExecute, [Var, spsculptDllPath], "AddManifestEntry", manifestEntry]
+                    ]
+                ]
+            , n]
+
+            // Restore original active subtool
+            [SubToolSelect, origActiveIdx]
+        ]
+
+        [If, [FileExists, [Var, spsculptDllPath]],
+            [FileExecute, [Var, spsculptDllPath], "SaveSceneManifest", "", origActiveIdx]
+        ]
+        [Note, [StrMerge, "SPSculpt: Scene synced! (", totalSubTools, " SubTools)"], , 1]
+    ,
+        [Note, "SPSculpt: Tool:Export is disabled. Please enter 3D Edit mode.", , 2]
+    ]
+    ,
+    exportOnlyVisible
+]
+
+// Background routine: triggered on timer or stroke release (Timer = 1, Mouse Up = 8, Mouse Move = 2)
 [RoutineDef, AutoSyncHandler,
     [If, [Var, autoSyncActive] == 1,
+        [RoutineCall, CheckInboundImports]
         [RoutineCall, CheckAndExportIfChanged]
-        // Continue listening for next brush stroke release (LButton Up = 8)
-        [SleepAgain, 3600, 8]
+        // Continue listening: wake up every 1 second or on user interaction
+        [SleepAgain, 1, 11]
     ]
 ]
 
-// Internal button callable by DLL via WM_COPYDATA
+// Internal button callable by DLL
 [IButton, "ZPlugin:SPSculpt:CheckSync", "Trigger conditional sync if undo step changed",
+    [RoutineCall, CheckInboundImports]
     [RoutineCall, CheckAndExportIfChanged]
 , , 0.01]
 
-// 1. Manual Sync Button
+// ------------------------------------------------------------------------------
+// UI Buttons: ZBrush -> SPSculpt (Push)
+// ------------------------------------------------------------------------------
+
 [IButton, "ZPlugin:SPSculpt:Sync Active", "Export active SubTool to SPSculpt Companion Viewport",
     [If, [IsEnabled, "Tool:Export"],
         [VarSet, meshFile, [StrMerge, [Var, spsculptDataDir], "mesh.GoZ"]]
@@ -110,15 +253,37 @@
     ,
         [Note, "SPSculpt: Tool:Export is disabled. Please enter 3D Edit mode.", , 2]
     ]
+, , 0.33]
+
+[IButton, "ZPlugin:SPSculpt:Sync Visible", "Export only visible SubTools to SPSculpt",
+    [RoutineCall, ExportFullScene, 1]
+, , 0.33]
+
+[IButton, "ZPlugin:SPSculpt:Sync Scene", "Export all SubTools to SPSculpt",
+    [RoutineCall, ExportFullScene, 0]
+, , 0.33]
+
+// ------------------------------------------------------------------------------
+// UI Buttons: SPSculpt -> ZBrush (Pull / Inbound)
+// ------------------------------------------------------------------------------
+
+[IButton, "ZPlugin:SPSculpt:Pull Active", "Import active mesh sent from SPSculpt into current SubTool",
+    [RoutineCall, ImportActiveMesh]
 , , 0.5]
 
-// 2. Throttle Interval Slider (200ms - 2000ms)
+[IButton, "ZPlugin:SPSculpt:Pull Scene", "Import full scene / all SubTools sent from SPSculpt",
+    [RoutineCall, ImportSceneRoutine]
+, , 0.5]
+
+// ------------------------------------------------------------------------------
+// Settings & Auto-Sync Controls
+// ------------------------------------------------------------------------------
+
 [ISlider, "ZPlugin:SPSculpt:Sync Throttle", 800, 50, 200, 2000, "Minimum delay between mesh exports in ms (prevents stutter)",
     [VarSet, userThrottleMs, [IGet, "ZPlugin:SPSculpt:Sync Throttle"]]
 , , 0.5]
 
-// 3. Enable Auto-Sync (100% reliable stroke-end export via native Sleep event 8)
-[IButton, "ZPlugin:SPSculpt:Enable Auto-Sync", "Enable automatic stroke-end export with throttling",
+[IButton, "ZPlugin:SPSculpt:Enable Auto-Sync", "Enable automatic bi-directional auto-sync",
     [If, [IsEnabled, "ZPlugin:SPSculpt:Sync Throttle"],
         [VarSet, userThrottleMs, [IGet, "ZPlugin:SPSculpt:Sync Throttle"]]
     ]
@@ -127,7 +292,6 @@
         [FileExecute, [Var, spsculptDllPath], "InstallHook"]
         [FileExecute, [Var, spsculptDllPath], "SetDataDir", [Var, spsculptDataDir]]
     ]
-    // Baseline current undo counter so enabling auto-sync doesn't trigger immediate fake export
     [If, [IsEnabled, "Edit:Tool:Undo Counter"],
         [VarSet, lastUndoCounter, [IGet, "Edit:Tool:Undo Counter"]]
     ,
@@ -135,12 +299,13 @@
     ]
     [VarSet, skipCount, 0]
     [VarSet, autoSyncActive, 1]
-    [Note, [StrMerge, "SPSculpt: Auto-Sync ENABLED! (Throttle: ", [Var, userThrottleMs], " ms)"], , 2]
-    // Launch active event listener on stroke release (LButton Up = 8) - 100% reliable in ZBrush!
-    [Sleep, 3600, [RoutineCall, AutoSyncHandler], 8]
+    [Note, [StrMerge, "SPSculpt: Bi-Directional Auto-Sync ENABLED! (Throttle: ", [Var, userThrottleMs], " ms)"], , 2]
+    // Check immediately for any pending inbound imports
+    [RoutineCall, CheckInboundImports]
+    // Launch active event listener on timer + interaction
+    [Sleep, 1, [RoutineCall, AutoSyncHandler], 11]
 , , 0.5]
 
-// 4. Disable Auto-Sync
 [IButton, "ZPlugin:SPSculpt:Disable Auto-Sync", "Disable automatic stroke-end export",
     [VarSet, autoSyncActive, 0]
     [VarSet, lastUndoCounter, -999999]
@@ -150,4 +315,3 @@
     ]
     [Note, "SPSculpt: Auto-Sync DISABLED.", , 1]
 , , 0.5]
-

@@ -7,6 +7,7 @@
 #include "editing/TubeTool.h"
 #include "editing/QuadDrawTool.h"
 #include "editing/MaskExtractTool.h"
+#include "zbrush_bridge/ZBrushSender.h"
 #include <imgui.h>
 #include <algorithm>
 #include <cmath>
@@ -514,6 +515,17 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
                         scene.getCameraRight()->setRefDragEnabled(false);
                     }
                 }
+                break;
+            }
+            case HKAction::ZBrushSendActive: {
+                Mesh* sel = scene.getSelected();
+                if (sel) {
+                    ZBrushBridge::sendActiveMeshToZBrush(sel);
+                }
+                break;
+            }
+            case HKAction::ZBrushSendScene: {
+                ZBrushBridge::sendSceneToZBrush(scene, false);
                 break;
             }
             

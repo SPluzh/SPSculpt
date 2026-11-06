@@ -8,10 +8,12 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 #include <algorithm>
 #include <cstdint>
+#include <unordered_map>
 
 // Standard ZScript & C-ABI export macro
 #ifdef _WIN32
@@ -36,6 +38,17 @@ float g_maxDragDist = 0.0f;
 
 int g_debounceDelayMs = 350;
 std::string g_dataDir = "";
+
+struct SubToolRecord {
+    int id = 0;
+    bool visible = true;
+    int undoCounter = 0;
+    std::string relPath;
+    std::string name;
+};
+
+std::vector<SubToolRecord> g_manifestEntries;
+std::unordered_map<std::string, int> g_subtoolUndoCache;
 
 std::string NormalizeDir(std::string path) {
     if (path.empty()) return path;
@@ -79,10 +92,54 @@ void LogDebug(const std::string& msg) {
     }
 }
 
+HWND FindZBrushMainWindow() {
+    DWORD currentPid = GetCurrentProcessId();
+    HWND bestHwnd = NULL;
+
+    EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
+        DWORD pid = 0;
+        GetWindowThreadProcessId(hwnd, &pid);
+        if (pid == GetCurrentProcessId() && IsWindowVisible(hwnd)) {
+            char title[256] = {0};
+            GetWindowTextA(hwnd, title, sizeof(title));
+            LONG style = GetWindowLongA(hwnd, GWL_STYLE);
+            if ((style & WS_CHILD) == 0 && strlen(title) > 0) {
+                *(HWND*)lParam = hwnd;
+                return FALSE;
+            }
+        }
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&bestHwnd));
+
+    if (!bestHwnd) bestHwnd = GetActiveWindow();
+    if (!bestHwnd) bestHwnd = GetForegroundWindow();
+
+    return bestHwnd;
+}
+
+bool SendScriptViaCopyData(HWND targetHwnd, const std::string& scriptPath) {
+    if (!targetHwnd) {
+        targetHwnd = g_mainHwnd ? g_mainHwnd : FindZBrushMainWindow();
+    }
+    if (!targetHwnd) return false;
+
+    std::string winCmdPath = scriptPath;
+    for (char& c : winCmdPath) {
+        if (c == '/') c = '\\';
+    }
+
+    COPYDATASTRUCT cds;
+    cds.dwData = 0;
+    cds.cbData = static_cast<DWORD>(winCmdPath.length() + 1);
+    cds.lpData = const_cast<char*>(winCmdPath.c_str());
+
+    SendMessageA(targetHwnd, WM_COPYDATA, reinterpret_cast<WPARAM>(targetHwnd), reinterpret_cast<LPARAM>(&cds));
+    return true;
+}
 
 void TriggerExportScript(HWND targetHwnd) {
     if (!targetHwnd) {
-        targetHwnd = g_mainHwnd;
+        targetHwnd = g_mainHwnd ? g_mainHwnd : FindZBrushMainWindow();
     }
     if (!targetHwnd) return;
 
@@ -90,7 +147,6 @@ void TriggerExportScript(HWND targetHwnd) {
     CreateDirectoryA(dataDir.c_str(), NULL);
 
     std::string meshPath = dataDir + "mesh.GoZ";
-    std::string camPath = dataDir + "camera.txt";
     std::string cmdPath = dataDir + "cmd_sync.txt";
 
     // Write command script with ZScript instructions
@@ -107,19 +163,23 @@ void TriggerExportScript(HWND targetHwnd) {
         ofs.close();
     }
 
-    // Windows native path format for COPYDATA payload
-    std::string winCmdPath = cmdPath;
-    for (char& c : winCmdPath) {
-        if (c == '/') c = '\\';
+    SendScriptViaCopyData(targetHwnd, cmdPath);
+}
+
+std::string JsonEscape(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 8);
+    for (char c : s) {
+        if (c == '"') out += "\\\"";
+        else if (c == '\\') out += "\\\\";
+        else if (c == '\b') out += "\\b";
+        else if (c == '\f') out += "\\f";
+        else if (c == '\n') out += "\\n";
+        else if (c == '\r') out += "\\r";
+        else if (c == '\t') out += "\\t";
+        else out += c;
     }
-
-    COPYDATASTRUCT cds;
-    cds.dwData = 0;
-    cds.cbData = static_cast<DWORD>(winCmdPath.length() + 1);
-    cds.lpData = const_cast<char*>(winCmdPath.c_str());
-
-    // Send synchronously to ZBrush message loop
-    SendMessageA(targetHwnd, WM_COPYDATA, reinterpret_cast<WPARAM>(targetHwnd), reinterpret_cast<LPARAM>(&cds));
+    return out;
 }
 
 LRESULT CALLBACK ZBrushSubclassProc(
@@ -160,7 +220,6 @@ LRESULT CALLBACK ZBrushSubclassProc(
     case WM_LBUTTONUP: {
         g_isLButtonDown = false;
         // Check if movement indicates a sculpt stroke (>= 5 px)
-        // Click on UI buttons typically has < 5 px delta
         if (g_maxDragDist >= 5.0f) {
             SetTimer(timerOwner, SPSCULPT_TIMER_ID, static_cast<UINT>(g_debounceDelayMs), NULL);
         }
@@ -195,31 +254,6 @@ BOOL CALLBACK EnumChildWindowsProc(HWND hwnd, LPARAM lParam) {
     return TRUE;
 }
 
-HWND FindZBrushMainWindow() {
-    DWORD currentPid = GetCurrentProcessId();
-    HWND bestHwnd = NULL;
-
-    EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
-        DWORD pid = 0;
-        GetWindowThreadProcessId(hwnd, &pid);
-        if (pid == GetCurrentProcessId() && IsWindowVisible(hwnd)) {
-            char title[256] = {0};
-            GetWindowTextA(hwnd, title, sizeof(title));
-            LONG style = GetWindowLongA(hwnd, GWL_STYLE);
-            if ((style & WS_CHILD) == 0 && strlen(title) > 0) {
-                *(HWND*)lParam = hwnd;
-                return FALSE;
-            }
-        }
-        return TRUE;
-    }, reinterpret_cast<LPARAM>(&bestHwnd));
-
-    if (!bestHwnd) bestHwnd = GetActiveWindow();
-    if (!bestHwnd) bestHwnd = GetForegroundWindow();
-
-    return bestHwnd;
-}
-
 } // anonymous namespace
 
 // ==============================================================================
@@ -238,11 +272,8 @@ SPSCULPT_EXPORT float InstallHook(char* pText, double optValue, char* pOptBuffer
         return 0.0f;
     }
 
-    // Subclass the main window
     SetWindowSubclass(g_mainHwnd, ZBrushSubclassProc, SPSCULPT_SUBCLASS_ID, 0);
     g_subclassedWindows.push_back(g_mainHwnd);
-
-    // Subclass child/canvas windows
     EnumChildWindows(g_mainHwnd, EnumChildWindowsProc, 0);
 
     g_hookInstalled = true;
@@ -316,6 +347,111 @@ SPSCULPT_EXPORT float CanExportNow(char* pText, double minIntervalMs, char* pOpt
 SPSCULPT_EXPORT float MarkExportDone(char* pText, double optValue, char* pOptBuffer1, int* pOptBuffer1Size, char* pOptBuffer2, int* pOptBuffer2Size) {
     g_lastExportTick = GetTickCount64();
     return 1.0f;
+}
+
+// ------------------------------------------------------------------------------
+// Full Scene Manifest & Dirty Checking Functions
+// ------------------------------------------------------------------------------
+
+SPSCULPT_EXPORT float BeginSceneManifest(char* pText, double optValue, char* pOptBuffer1, int* pOptBuffer1Size, char* pOptBuffer2, int* pOptBuffer2Size) {
+    g_manifestEntries.clear();
+    std::string dataDir = ResolveDataDir();
+    CreateDirectoryA(dataDir.c_str(), NULL);
+    std::string subtoolsDir = dataDir + "subtools/";
+    CreateDirectoryA(subtoolsDir.c_str(), NULL);
+    LogDebug("BeginSceneManifest: initialized for " + dataDir);
+    return 1.0f;
+}
+
+SPSCULPT_EXPORT float CheckSubToolDirty(char* pText, double undoCounter, char* pOptBuffer1, int* pOptBuffer1Size, char* pOptBuffer2, int* pOptBuffer2Size) {
+    std::string subToolName = pText ? pText : "";
+    int curUndo = static_cast<int>(undoCounter);
+
+    // If subtool was already exported with this undo counter, return 0 (not dirty)
+    auto it = g_subtoolUndoCache.find(subToolName);
+    if (it != g_subtoolUndoCache.end() && it->second == curUndo) {
+        return 0.0f; // Unchanged geometry, skip disk write
+    }
+
+    g_subtoolUndoCache[subToolName] = curUndo;
+    return 1.0f; // Dirty, must export
+}
+
+// Format: "id|visible|undoCounter|relPath|subName"
+SPSCULPT_EXPORT float AddManifestEntry(char* pText, double optValue, char* pOptBuffer1, int* pOptBuffer1Size, char* pOptBuffer2, int* pOptBuffer2Size) {
+    if (!pText || strlen(pText) == 0) return 0.0f;
+
+    std::string raw(pText);
+    std::stringstream ss(raw);
+    std::string sId, sVis, sUndo, sPath, sName;
+
+    std::getline(ss, sId, '|');
+    std::getline(ss, sVis, '|');
+    std::getline(ss, sUndo, '|');
+    std::getline(ss, sPath, '|');
+    std::getline(ss, sName, '|');
+
+    SubToolRecord rec;
+    rec.id = !sId.empty() ? std::stoi(sId) : static_cast<int>(optValue);
+    rec.visible = (sVis == "1" || sVis == "true");
+    rec.undoCounter = !sUndo.empty() ? std::stoi(sUndo) : 0;
+    rec.relPath = sPath;
+    rec.name = sName;
+
+    g_manifestEntries.push_back(rec);
+    return 1.0f;
+}
+
+SPSCULPT_EXPORT float SaveSceneManifest(char* pText, double activeIndex, char* pOptBuffer1, int* pOptBuffer1Size, char* pOptBuffer2, int* pOptBuffer2Size) {
+    std::string dataDir = ResolveDataDir();
+    CreateDirectoryA(dataDir.c_str(), NULL);
+
+    std::string tmpPath = dataDir + "scene_manifest.json.tmp";
+    std::string finalPath = dataDir + "scene_manifest.json";
+
+    std::ofstream ofs(tmpPath);
+    if (!ofs.is_open()) {
+        LogDebug("SaveSceneManifest ERROR: Failed to open " + tmpPath);
+        return 0.0f;
+    }
+
+    int activeIdx = static_cast<int>(activeIndex);
+
+    ofs << "{\n";
+    ofs << "  \"version\": 1,\n";
+    ofs << "  \"activeIndex\": " << activeIdx << ",\n";
+    ofs << "  \"timestamp\": " << GetTickCount64() << ",\n";
+    ofs << "  \"subtools\": [\n";
+
+    for (size_t i = 0; i < g_manifestEntries.size(); ++i) {
+        const auto& e = g_manifestEntries[i];
+        ofs << "    {\n";
+        ofs << "      \"id\": " << e.id << ",\n";
+        ofs << "      \"name\": \"" << JsonEscape(e.name) << "\",\n";
+        ofs << "      \"visible\": " << (e.visible ? "true" : "false") << ",\n";
+        ofs << "      \"undoCounter\": " << e.undoCounter << ",\n";
+        ofs << "      \"file\": \"" << JsonEscape(e.relPath) << "\"\n";
+        ofs << "    }" << (i + 1 < g_manifestEntries.size() ? "," : "") << "\n";
+    }
+
+    ofs << "  ]\n";
+    ofs << "}\n";
+    ofs.close();
+
+    // Atomic replace
+    MoveFileExA(tmpPath.c_str(), finalPath.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    LogDebug("SaveSceneManifest: written " + std::to_string(g_manifestEntries.size()) + " subtools to " + finalPath);
+    return 1.0f;
+}
+
+SPSCULPT_EXPORT float TriggerSceneImportScript(char* pText, double optValue, char* pOptBuffer1, int* pOptBuffer1Size, char* pOptBuffer2, int* pOptBuffer2Size) {
+    std::string scriptPath = (pText && strlen(pText) > 0) ? pText : (ResolveDataDir() + "cmd_import_scene.txt");
+    LogDebug("TriggerSceneImportScript: " + scriptPath);
+    HWND target = g_mainHwnd ? g_mainHwnd : FindZBrushMainWindow();
+    if (target && SendScriptViaCopyData(target, scriptPath)) {
+        return 1.0f;
+    }
+    return 0.0f;
 }
 
 // DLL Entry Point

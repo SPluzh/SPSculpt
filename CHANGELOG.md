@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.20]
+- **Two-Way ZBrush Bridge (Full Scene Round-Trip)**:
+  - **Send to ZBrush (`Ctrl+Alt+Z`)**: Instantly send your sculpted or remeshed mesh back into ZBrush. Updates the active SubTool in place with quads, PolyPaint, PolyGroups, and masks preserved.
+  - **Send Entire Scene (`Ctrl+Alt+Shift+Z`)**: Push all SubTools or visible meshes from SPSculpt back to ZBrush with automatic SubTool matching.
+  - **Multi-SubTool Project Sync**: Import entire projects from ZBrush into SPSculpt (`Sync Scene` or `Sync Visible`). SubTool names, visibility, and hierarchy are fully preserved.
+  - **Smart Instant Transfer**: Only modified SubTools are re-exported on sync; untouched meshes skip disk writes for near-instant updates.
+  - **Bi-Directional Auto-Sync**: Turn on `Enable Auto-Sync` in ZBrush for automatic live updates both ways.
+  - **1-Click Pull Buttons**: Added `Pull Active` and `Pull Scene` buttons to `ZPlugin > SPSculpt` in ZBrush for instant manual mesh retrieval at any time.
+  - **Direct GoZ Export**: New "Export GoZ (*.GoZ)" option in the File menu for saving binary GoZ files directly.
+  - **Outliner & HUD Integration**: Quick send buttons on each object card, Outliner top bar, and a dedicated ZBrush Bridge menu.
+
 ## [0.3.19]
 - **ZBrush Live Companion**:
   - **Real-Time Auto-Sync**: Use SPSculpt as a secondary viewport for ZBrush — meshes update instantly as you finish a stroke.

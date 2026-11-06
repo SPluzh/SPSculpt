@@ -1,5 +1,6 @@
 #pragma once
 #include "files/ImportGoZ.h"
+#include "files/ExportGoZ.h"
 #include "files/FileManager.h"
 #include "mesh/Mesh.h"
 #include "scene/Scene.h"
@@ -96,6 +97,41 @@ inline bool run(const std::string& customPath = "") {
                   << " | Normals: " << (mQ->normals.size() == (size_t)mQ->nbVerts * 3 ? "VALID" : "INVALID")
                   << " | Octree: " << (mQ->octree.root ? "BUILT" : "NONE")
                   << "\n";
+
+        // Test 1b: ExportGoZ Binary Roundtrip Verification
+        auto tExp0 = std::chrono::high_resolution_clock::now();
+        std::vector<uint8_t> expBuf = ExportGoZ::exportGoZ(mQ);
+        auto tExp1 = std::chrono::high_resolution_clock::now();
+        double msExp = std::chrono::duration<double, std::milli>(tExp1 - tExp0).count();
+
+        if (expBuf.empty()) {
+            std::cout << "  - [FAIL] ExportGoZ returned empty buffer!\n";
+            allPassed = false;
+        } else {
+            ImportGoZ::GoZInfo reInfo;
+            auto reMeshes = ImportGoZ::importGoZ(expBuf, false, &reInfo);
+            if (reMeshes.empty() || !reMeshes[0]) {
+                std::cout << "  - [FAIL] Re-importing exported GoZ buffer failed!\n";
+                allPassed = false;
+            } else {
+                Mesh* mRe = reMeshes[0];
+                bool matchVerts = (mRe->nbVerts == mQ->nbVerts);
+                bool matchFaces = (mRe->nbFaces == mQ->nbFaces);
+                bool matchQuads = (mRe->getNbQuads() == mQ->getNbQuads());
+                bool matchGroups = (mRe->faceGroups == mQ->faceGroups);
+
+                if (matchVerts && matchFaces && matchQuads && matchGroups) {
+                    std::cout << "  - ExportGoZ Roundtrip: " << std::fixed << std::setprecision(2) << msExp << " ms | "
+                              << "Size: " << expBuf.size() << " bytes | Verts: " << mRe->nbVerts
+                              << " | Faces: " << mRe->nbFaces << " | Groups: MATCH [PASS]\n";
+                } else {
+                    std::cout << "  - [FAIL] ExportGoZ Roundtrip mismatch! (Verts: " << mRe->nbVerts << " vs " << mQ->nbVerts
+                              << ", Faces: " << mRe->nbFaces << " vs " << mQ->nbFaces << ")\n";
+                    allPassed = false;
+                }
+                delete mRe;
+            }
+        }
 
         // Test 2: Triangulated Quads Import
         ImportGoZ::GoZInfo infoTris;
