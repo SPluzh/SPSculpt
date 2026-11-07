@@ -25,6 +25,7 @@
 #include "editing/MaskExtractTool.h"
 #include "editing/ComponentSelectTool.h"
 #include "editing/EdgeCreaseTool.h"
+#include "editing/CurveFoldsTool.h"
 #include "editing/ComponentOps.h"
 #include "editing/BooleanTool.h"
 #include "editing/undo/UndoManager.h"
@@ -228,6 +229,8 @@ static const char* getBrushNameLocal(BrushType brush) {
         case BRUSH_EXTRACT:     return "Mask Extract";
         case BRUSH_COMPONENT_SELECT: return "Component Select";
         case BRUSH_EDGE_CREASE: return "Edge Crease";
+        case BRUSH_CURVE_FOLDS: return "Curve Folds";
+        case BRUSH_RAKE: return "Rake";
     }
     return "Unknown";
 }
@@ -1255,6 +1258,11 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     if (auto* crTool = sculpt.getEdgeCreaseTool()) {
                         crTool->onActivate(scene);
                     }
+                } else if (bType == BRUSH_CURVE_FOLDS) {
+                    m_showSculptingPanel = true;
+                    if (auto* cfTool = sculpt.getCurveFoldsTool()) {
+                        cfTool->onActivate(scene);
+                    }
                 }
             }
             if (selected) {
@@ -1280,6 +1288,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             winTitle = "Quad Draw Settings###SculptingPanel";
         } else if (brushType == BRUSH_EXTRACT) {
             winTitle = "Mask Extract Settings###SculptingPanel";
+        } else if (brushType == BRUSH_CURVE_FOLDS) {
+            winTitle = "Curve Folds Settings###SculptingPanel";
         } else if (isPrimActive) {
             winTitle = "Primitive Settings###SculptingPanel";
         }
@@ -2500,6 +2510,93 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     scene.pushHistoryState();
                 }
             }
+        } else if (brushType == BRUSH_CURVE_FOLDS) {
+            CurveFoldsTool* cfTool = sculpt.getCurveFoldsTool();
+            if (cfTool) {
+                ImGui::TextColored(ImVec4(0.0f, 0.85f, 0.8f, 1.0f), "%s Curve Folds (Cloth Folds)", ICON_LC_SPLINE);
+                ImGui::Separator();
+
+                // Quick Actions: Apply, Cancel, New Curve
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.65f, 0.34f, 1.0f));
+                if (ImGui::Button(ICON_LC_CHECK " Apply Folds (Enter)", ImVec2(-1, 28))) {
+                    cfTool->applyFolds(scene);
+                }
+                ImGui::PopStyleColor();
+
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.22f, 0.22f, 1.0f));
+                if (ImGui::Button(ICON_LC_X " Cancel / Clear (Esc)", ImVec2(-1, 24))) {
+                    cfTool->cancelFolds(scene);
+                }
+                ImGui::PopStyleColor();
+
+                if (ImGui::Button(ICON_LC_PLUS " New Curve", ImVec2(ImGui::GetContentRegionAvail().x * 0.5f - 4, 24))) {
+                    cfTool->startNewCurve();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button(ICON_LC_TRASH_2 " Delete Active", ImVec2(-1, 24))) {
+                    cfTool->deleteActiveCurve();
+                    cfTool->updateLivePreview(scene, true);
+                }
+
+                ImGui::Spacing();
+                ImGui::Separator();
+
+                // Curve Stats
+                ImGui::Text("Total Curves: %zu", cfTool->getCurveCount());
+                if (cfTool->getActiveCurveIndex() >= 0) {
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f), "(Active: #%d)", cfTool->getActiveCurveIndex() + 1);
+                }
+
+                // Creation Mode
+                ImGui::TextUnformatted("Creation Mode");
+                int cMode = (cfTool->creationMode == CurveFoldsTool::CreationMode::FreehandStroke) ? 0 : 1;
+                if (ImGui::RadioButton("Freehand Stroke", &cMode, 0)) {
+                    cfTool->creationMode = CurveFoldsTool::CreationMode::FreehandStroke;
+                }
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Click Points", &cMode, 1)) {
+                    cfTool->creationMode = CurveFoldsTool::CreationMode::ClickPoints;
+                }
+
+                ImGui::Spacing();
+
+                // Fold Type Combo
+                ImGui::TextUnformatted("Fold Profile Type");
+                const char* foldTypeNames[] = { "Ridge (Convex Roll)", "Valley (Crease)", "Overlap (S-Fold)", "Double Fold (Trough)" };
+                int currentFoldType = static_cast<int>(cfTool->foldType);
+                if (ImGui::Combo("##FoldProfileType", &currentFoldType, foldTypeNames, 4)) {
+                    cfTool->foldType = static_cast<CurveFoldsTool::FoldType>(currentFoldType);
+                    cfTool->updateLivePreview(scene, true);
+                }
+
+                ImGui::Spacing();
+
+                // Parameters
+                bool paramChanged = false;
+                paramChanged |= ImGui::SliderFloat("Base Radius", &cfTool->baseRadius, 1.0f, 150.0f, "%.1f");
+                paramChanged |= ImGui::SliderFloat("Fold Depth", &cfTool->foldDepth, -10.0f, 10.0f, "%.2f");
+                paramChanged |= ImGui::SliderFloat("Pinch Strength", &cfTool->pinchStrength, 0.0f, 1.0f, "%.2f");
+                paramChanged |= ImGui::SliderFloat("Sharpness", &cfTool->sharpness, 0.2f, 4.0f, "%.2f");
+                paramChanged |= ImGui::SliderFloat("End Taper", &cfTool->endTaperFalloff, 0.0f, 4.0f, "%.2f");
+
+                if (cfTool->creationMode == CurveFoldsTool::CreationMode::FreehandStroke) {
+                    ImGui::SliderInt("Smoothing Passes", &cfTool->strokeSmoothing, 0, 8);
+                    ImGui::SliderFloat("Curve Fit Tolerance", &cfTool->curveFitTolerance, 0.1f, 3.0f, "%.2f");
+                }
+
+                if (ImGui::Checkbox("Live Preview", &cfTool->livePreviewEnabled)) {
+                    paramChanged = true;
+                }
+
+                if (paramChanged) {
+                    cfTool->updateLivePreview(scene, true);
+                }
+
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::TextDisabled("Workflow Tips:\n- Draw directly on mesh surface\n- Click control points to select/drag\n- Drag stick handle to adjust radius\n- Alt+Click point to delete\n- Click curve segment to insert point\n- Enter to Apply, Esc to Cancel");
+            }
         } else {
 
         // ZBrush Presets Section
@@ -2695,7 +2792,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                  brushType == BRUSH_BRUSH || brushType == BRUSH_POLYGROUP ||
                                  brushType == BRUSH_TRIM || brushType == BRUSH_SPLIT || brushType == BRUSH_POSE ||
                                  brushType == BRUSH_SNAKEHOOK || brushType == BRUSH_QUAD_DRAW ||
-                                 brushType == BRUSH_COMPONENT_SELECT || brushType == BRUSH_EDGE_CREASE);
+                                 brushType == BRUSH_COMPONENT_SELECT || brushType == BRUSH_EDGE_CREASE ||
+                                 brushType == BRUSH_RAKE);
 
         if (hasSpecialParams) {
             if (ImGui::CollapsingHeader("Tool Specific Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -2997,6 +3095,147 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     }
                     
                     ImGui::Dummy(ImVec2(size, size));
+                }
+                else if (brushType == BRUSH_RAKE) {
+                    ImGui::Checkbox("Clay Mode", &settings.rakeClayMode);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fills or cuts towards a modulated flat plane (ClayRake) instead of displacing along normal");
+
+                    ImGui::SameLine();
+                    ImGui::Checkbox("Accumulate", &settings.accumulate);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Allows the brush to build up stroke details on overlap");
+
+                    ImGui::Checkbox("Ridges Only", &settings.rakeRidgesOnly);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Applies brush only at the teeth ridges/hills, leaving valleys between them untouched (does not elevate the whole stamp)");
+
+                    ImGui::SameLine();
+                    ImGui::Checkbox("Square Footprint", &settings.rakeSquareFootprint);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Uses a square stamp footprint instead of a circular falloff");
+
+                    const char* waveNames[] = { "Sine (Soft)", "Triangle (V-Groove)", "Square (Chisel)", "Sawtooth" };
+                    ImGui::Combo("Teeth Profile", &settings.rakeWaveType, waveNames, IM_ARRAYSIZE(waveNames));
+
+                    ImGui::SliderInt("Teeth Count", &settings.rakeTeethCount, 1, 32);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Number of parallel ridges across brush diameter");
+
+                    ImGui::SliderFloat("Teeth Depth", &settings.rakeDepth, 0.0f, 1.0f, "%.2f");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Modulation depth/amplitude of teeth grooves");
+
+                    ImGui::SliderFloat("Teeth Sharpness", &settings.rakeSharpness, 0.0f, 1.0f, "%.2f");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sharpness / duty cycle of the ridges");
+
+                    ImGui::SliderFloat("Direction Smoothness", &settings.rakeTurnSmoothness, 0.0f, 0.95f, "%.2f");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stroke direction smoothing factor to eliminate jitter");
+
+                    ImGui::SliderFloat("Angle Offset", &settings.rakeAngleOffset, -90.0f, 90.0f, "%.1f deg");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Manual angle rotation relative to stroke motion");
+
+                    // 2D Draw Preview
+                    ImGui::Spacing();
+                    ImGui::Text("Teeth Profile Preview:");
+                    ImDrawList* drawList = ImGui::GetWindowDrawList();
+                    ImVec2 curPos = ImGui::GetCursorScreenPos();
+                    float availW = ImGui::GetContentRegionAvail().x;
+                    float boxW = std::max(120.0f, std::min(availW, 260.0f));
+                    float boxH = 54.0f;
+                    
+                    // Background
+                    drawList->AddRectFilled(curPos, ImVec2(curPos.x + boxW, curPos.y + boxH), IM_COL32(26, 26, 26, 255), 4.0f);
+                    drawList->AddRect(curPos, ImVec2(curPos.x + boxW, curPos.y + boxH), IM_COL32(55, 55, 55, 255), 4.0f, 0, 1.0f);
+
+                    float marginY = 8.0f;
+                    float baseLineY = curPos.y + boxH - marginY;
+                    float amplitude = boxH - 2.0f * marginY;
+
+                    constexpr int numSamples = 120;
+                    std::vector<ImVec2> wavePts;
+                    wavePts.reserve(numSamples);
+
+                    float teeth = static_cast<float>(std::max(1, settings.rakeTeethCount));
+                    constexpr float PI = 3.14159265358979323846f;
+
+                    for (int sIdx = 0; sIdx < numSamples; ++sIdx) {
+                        float u = (float)sIdx / (float)(numSamples - 1);
+                        float phi = u * teeth;
+                        float t = phi - std::floor(phi);
+
+                        float w = 0.0f;
+                        switch (settings.rakeWaveType) {
+                            case 0: // Sine
+                                w = std::cos(2.0f * PI * t);
+                                break;
+                            case 1: // Triangle / V-Groove
+                                w = 1.0f - 4.0f * std::abs(t - 0.5f);
+                                break;
+                            case 2: { // Square
+                                float distCenter = std::abs(t - 0.5f);
+                                float sharpness = std::clamp(settings.rakeSharpness, 0.0f, 0.98f);
+                                float delta = 0.25f * (1.0f - sharpness);
+                                float edge0 = 0.25f - delta;
+                                float edge1 = 0.25f + delta;
+                                float s = 0.0f;
+                                if (distCenter <= edge0) {
+                                    s = 0.0f;
+                                } else if (distCenter >= edge1) {
+                                    s = 1.0f;
+                                } else {
+                                    float st = (distCenter - edge0) / (edge1 - edge0);
+                                    s = st * st * (3.0f - 2.0f * st);
+                                }
+                                w = 1.0f - 2.0f * s;
+                                break;
+                            }
+                            case 3: // Sawtooth
+                                w = 2.0f * t - 1.0f;
+                                break;
+                            default:
+                                w = std::cos(2.0f * PI * t);
+                                break;
+                        }
+
+                        float toothFactor = 0.0f;
+                        if (settings.rakeRidgesOnly) {
+                            if (w <= 0.0f) {
+                                toothFactor = 0.0f;
+                            } else {
+                                float ridgeVal = w;
+                                if (settings.rakeWaveType != 2 && settings.rakeSharpness != 0.5f) {
+                                    float exp = std::pow(2.0f, (settings.rakeSharpness - 0.5f) * 4.0f);
+                                    ridgeVal = std::pow(std::clamp(ridgeVal, 0.0f, 1.0f), exp);
+                                }
+                                toothFactor = ridgeVal * settings.rakeDepth;
+                            }
+                        } else {
+                            float val = 0.5f + 0.5f * w;
+                            if (settings.rakeWaveType != 2 && settings.rakeSharpness != 0.5f) {
+                                float exp = std::pow(2.0f, (settings.rakeSharpness - 0.5f) * 4.0f);
+                                val = std::pow(std::clamp(val, 0.0f, 1.0f), exp);
+                            }
+                            toothFactor = (1.0f - settings.rakeDepth) + settings.rakeDepth * val;
+                        }
+
+                        float ptX = curPos.x + u * boxW;
+                        float ptY = baseLineY - toothFactor * amplitude;
+                        wavePts.push_back(ImVec2(ptX, ptY));
+                    }
+
+                    // Baseline guide
+                    drawList->AddLine(ImVec2(curPos.x, baseLineY), ImVec2(curPos.x + boxW, baseLineY), IM_COL32(80, 80, 80, 180), 1.0f);
+
+                    // Fill under wave
+                    for (size_t pIdx = 0; pIdx + 1 < wavePts.size(); ++pIdx) {
+                        ImVec2 quad[4] = {
+                            ImVec2(wavePts[pIdx].x, baseLineY),
+                            wavePts[pIdx],
+                            wavePts[pIdx + 1],
+                            ImVec2(wavePts[pIdx + 1].x, baseLineY)
+                        };
+                        drawList->AddConvexPolyFilled(quad, 4, IM_COL32(0, 180, 220, 70));
+                    }
+
+                    // Curve outline
+                    drawList->AddPolyline(wavePts.data(), (int)wavePts.size(), IM_COL32(0, 220, 255, 240), 0, 1.8f);
+
+                    ImGui::Dummy(ImVec2(boxW, boxH));
                 }
                 else if (brushType == BRUSH_PAINT) {
                     ImGui::ColorEdit3("Albedo (Color)", &settings.paintColor.r);
@@ -6873,6 +7112,16 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         }
     }
 
+    // Curve Folds Tool Viewport Overlay
+    if (sculpt.getBrush() == BRUSH_CURVE_FOLDS) {
+        if (auto* cfTool = sculpt.getCurveFoldsTool()) {
+            const Camera& camera = scene.getCamera();
+            float vW = (float)camera.getWidth();
+            float vH = (float)camera.getHeight();
+            cfTool->renderOverlay(scene, camera, vW, vH);
+        }
+    }
+
     if (sculpt.getBrush() == BRUSH_TRANSFORM) {
         Mesh* selectedMesh = scene.getSelected();
         const Camera& camera = scene.getCamera();
@@ -9851,7 +10100,8 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
                                 (activeBrush == BRUSH_QUAD_DRAW) ? ICON_LC_SQUARE "\nQuad" :
                                 (activeBrush == BRUSH_EXTRACT) ? ICON_LC_LAYERS "\nExtract" :
                                 (activeBrush == BRUSH_COMPONENT_SELECT) ? ICON_LC_SQUARE_DASHED_MOUSE_POINTER "\nSelect" :
-                                (activeBrush == BRUSH_EDGE_CREASE) ? ICON_LC_SQUARE_SPLIT_VERTICAL "\nCrease" : activeBrushName;
+                                (activeBrush == BRUSH_EDGE_CREASE) ? ICON_LC_SQUARE_SPLIT_VERTICAL "\nCrease" :
+                                (activeBrush == BRUSH_CURVE_FOLDS) ? ICON_LC_SPLINE "\nFolds" : activeBrushName;
             ImVec2 textSz = ImGui::CalcTextSize(label);
             ImGui::GetWindowDrawList()->AddText(
                 ImVec2(pMin.x + (bigBtnSize - textSz.x) * 0.5f, pMin.y + (bigBtnSize - textSz.y) * 0.5f),
@@ -9905,6 +10155,11 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
                             if (sel && !ext->isPreviewActive()) {
                                 ext->startPreview(scene, sel);
                             }
+                        }
+                    } else if (bType == BRUSH_CURVE_FOLDS) {
+                        m_showSculptingPanel = true;
+                        if (auto* cf = sculpt.getCurveFoldsTool()) {
+                            cf->onActivate(scene);
                         }
                     }
                 }
@@ -10464,6 +10719,29 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         }
 
         if (isExtractActive) {
+            ImGui::PopStyleColor(3);
+        }
+
+        // Curve Folds Tool Button
+        bool isCurveFoldsActive = (currentBrush == BRUSH_CURVE_FOLDS);
+        if (isCurveFoldsActive) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.01f, 0.52f, 0.45f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.02f, 0.65f, 0.54f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.39f, 0.30f, 1.0f));
+        }
+
+        bool clickedCF = ImGui::Button(ICON_LC_SPLINE "##hudVertCurveFoldsTool", ImVec2(squareSize, squareSize));
+        if (clickedCF) {
+            sculpt.setBrush(BRUSH_CURVE_FOLDS);
+            m_showSculptingPanel = true;
+            if (auto* cf = sculpt.getCurveFoldsTool()) {
+                cf->onActivate(scene);
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Curve Folds Tool\nDraw and sculpt cloth folds, creases, and ridges along 3D splines with live preview");
+        }
+        if (isCurveFoldsActive) {
             ImGui::PopStyleColor(3);
         }
 

@@ -190,6 +190,7 @@ add_executable(SPSculpt
     src/editing/ArmatureTool.cpp
     src/editing/PoseTool.cpp
     src/editing/TubeTool.cpp
+    src/editing/CurveFoldsTool.cpp
     src/editing/PrimitiveTool.cpp
     src/editing/PolyGroupTool.cpp
     src/editing/QuadDrawTool.cpp

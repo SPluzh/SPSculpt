@@ -125,6 +125,7 @@ void BrushCursor::update(int mouseX, int mouseY,
         brushType == BRUSH_POSE || brushType == BRUSH_TUBE ||
         brushType == BRUSH_QUAD_DRAW || brushType == BRUSH_EXTRACT ||
         brushType == BRUSH_COMPONENT_SELECT || brushType == BRUSH_EDGE_CREASE ||
+        brushType == BRUSH_CURVE_FOLDS ||
         brushType == BRUSH_CLIP_CURVE || brushType == BRUSH_TRIM || brushType == BRUSH_SPLIT) {
         m_state.visible = false;
         m_state.hitMesh = false;

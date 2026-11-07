@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.23]
+- **Rake Brush (ClayRake)**:
+  - **Parallel Grooves**: ClayRake tool that carves or builds parallel ridges smoothly following the stroke path.
+  - **4 Teeth Shapes**: Choose between `Sine`, `Triangle`, `Square`, and `Sawtooth` with adjustable teeth count, depth, and sharpness.
+  - **Ridges Only Mode**: Deform only under the teeth crests without raising the entire stamp footprint.
+  - **Live 2D Preview**: Real-time cross-section waveform graph in brush settings.
+
+## [0.3.22]
+- **Curve Folds Tool (Cloth Folds)**:
+  - **Splines on Mesh**: Draw multiple cloth folds freely or click to place points directly on the model surface.
+  - **Live Preview**: Real-time deformation as you draw, move points, or adjust sliders.
+  - **Fold Profiles**: Switch between `Ridge` (convex roll), `Valley` (sharp crease), `Overlap` (S-fold), and `Double Fold`.
+  - **Pinch & Taper**: Tighten fabric toward the center ridge and smoothly fade out fold endpoints.
+  - **Viewport HUD**: Quick `Enter` to apply and bake into Undo history, `Esc` to cancel, and `Delete` to remove curves.
+
 ## [0.3.21]
 - **Hardware Brush Cursor**: Zero-latency crosshair and dot cursors eliminating mouse lag during sculpting.
 - **Smart Switching**: Activates over geometry; reverts to standard OS cursor over empty space and UI.

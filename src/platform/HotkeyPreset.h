@@ -32,6 +32,8 @@ enum class HKAction {
     ToolTube,
     ToolQuadDraw,
     ToolExtract,
+    ToolCurveFolds,
+    ToolRake,
     
     // Sculpting Parameters
     BrushIntensity,        // A (modal)

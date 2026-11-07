@@ -281,6 +281,26 @@ int strokeBrush(
     const float* alphaLookAt, bool alphaXSym
 );
 
+int strokeRake(
+    float* verts,
+    const float* vertProxy,
+    const float* materials,
+    uint32_t* iVerts, int nbIVerts,
+    float cx, float cy, float cz,
+    float ax, float ay, float az,
+    float anx, float any, float anz,
+    float radius, float intensity,
+    bool negative, bool clayMode, bool accumulate,
+    float focalShift, bool focalShiftFalloff,
+    int rakeWaveType,        // 0 = Sine, 1 = Triangle, 2 = Square, 3 = Sawtooth
+    int rakeTeethCount,      // Number of teeth (1 .. 32)
+    float rakeDepth,         // Depth/amplitude of teeth (0.0 .. 1.0)
+    float rakeSharpness,     // Ridge sharpness / duty cycle (0.0 .. 1.0)
+    bool rakeSquareFootprint,// false = circular, true = square footprint
+    bool rakeRidgesOnly,     // false = full stamp profile, true = only add where ridges/hills are
+    const float* alphaLookAt, bool alphaXSym
+);
+
 int strokeDeleteLayer(
     const float* baseVerts,
     float* layerDeltaVerts,

@@ -40,6 +40,8 @@ enum BrushType {
     BRUSH_EXTRACT,
     BRUSH_COMPONENT_SELECT,
     BRUSH_EDGE_CREASE,
+    BRUSH_CURVE_FOLDS,
+    BRUSH_RAKE,
     BRUSH_COUNT
 };
 
@@ -97,6 +99,8 @@ inline const char* getBrushNameStr(BrushType brush) {
         case BRUSH_EXTRACT: return "Extract";
         case BRUSH_COMPONENT_SELECT: return "Component Select";
         case BRUSH_EDGE_CREASE: return "Edge Crease";
+        case BRUSH_CURVE_FOLDS: return "Curve Folds";
+        case BRUSH_RAKE: return "Rake";
         default: return "Unknown";
     }
 }

@@ -12,6 +12,7 @@
 #include "editing/MaskExtractTool.h"
 #include "editing/ComponentSelectTool.h"
 #include "editing/EdgeCreaseTool.h"
+#include "editing/CurveFoldsTool.h"
 #include "editing/ClipCurveTool.h"
 #include "editing/TrimTool.h"
 #include "editing/SplitTool.h"
@@ -275,6 +276,7 @@ SculptManager::SculptManager() {
     m_maskExtractTool = std::make_unique<MaskExtractTool>(*this);
     m_componentSelectTool = std::make_unique<ComponentSelectTool>(*this);
     m_edgeCreaseTool = std::make_unique<EdgeCreaseTool>(*this);
+    m_curveFoldsTool = std::make_unique<CurveFoldsTool>(*this);
     // Initialise all brushes with baseline defaults
     for (int i = 0; i < BRUSH_COUNT; ++i) {
         m_brushSettings[i].radius = 50.0f;
@@ -471,6 +473,30 @@ SculptManager::SculptManager() {
 
     m_brushSettings[BRUSH_EXTRACT].radius = 50.0f;
     m_brushSettings[BRUSH_EXTRACT].culling = false;
+
+    m_brushSettings[BRUSH_CURVE_FOLDS].radius = 15.0f;
+    m_brushSettings[BRUSH_CURVE_FOLDS].intensity = 1.0f;
+    m_brushSettings[BRUSH_CURVE_FOLDS].culling = false;
+
+    m_brushSettings[BRUSH_RAKE].radius = 80.0f;
+    m_brushSettings[BRUSH_RAKE].intensity = 0.5f;
+    m_brushSettings[BRUSH_RAKE].spacing = 0.06f;
+    m_brushSettings[BRUSH_RAKE].culling = false;
+    m_brushSettings[BRUSH_RAKE].rakeClayMode = true;
+    m_brushSettings[BRUSH_RAKE].rakeSquareFootprint = false;
+    m_brushSettings[BRUSH_RAKE].rakeRidgesOnly = false;
+    m_brushSettings[BRUSH_RAKE].rakeWaveType = 0;
+    m_brushSettings[BRUSH_RAKE].rakeTeethCount = 6;
+    m_brushSettings[BRUSH_RAKE].rakeDepth = 0.85f;
+    m_brushSettings[BRUSH_RAKE].rakeSharpness = 0.5f;
+    m_brushSettings[BRUSH_RAKE].rakeTurnSmoothness = 0.65f;
+    m_brushSettings[BRUSH_RAKE].rakeAngleOffset = 0.0f;
+}
+
+void SculptManager::notifyMeshDeletedTool(Mesh* mesh) {
+    if (m_curveFoldsTool) {
+        m_curveFoldsTool->notifyMeshDeleted(mesh);
+    }
 }
 
 std::vector<glm::vec3> SculptManager::getActiveSymmetryScales() const {
@@ -1251,6 +1277,138 @@ int SculptManager::doStrokePass(
             );
             break;
         }
+        case BRUSH_RAKE: {
+            glm::vec3 areaNormal = cachedAreaNormal;
+            glm::vec3 areaCenter = cachedAreaCenter;
+
+            if (!isSymmetry && !m_firstStrokeFrame && (!getCurrentSettings().flattenLockNormal || !getCurrentSettings().flattenLockOrigin)) {
+                bool moved = glm::distance(currentIntersection, m_prevClayIntersection) > localRadius * 0.15f;
+                bool intervalElapsed = (m_strokeFrameCounter - m_clayAreaNormalFrame) >= 3;
+                if (moved || intervalElapsed) {
+                    auto tAreaStart = std::chrono::high_resolution_clock::now();
+                    float areaResults[7] = {0.0f};
+                    if (computeAreaNormalAndCenter(
+                        mesh->verts.data(),
+                        mesh->normals.data(),
+                        mesh->materials.data(),
+                        pickedVertices.data(),
+                        pickedVertices.size(),
+                        areaResults
+                    )) {
+                        if (!getCurrentSettings().flattenLockNormal) {
+                            m_cachedAreaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
+                        }
+                        if (!getCurrentSettings().flattenLockOrigin) {
+                            m_cachedAreaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
+                        }
+                        m_clayAreaNormalFrame = m_strokeFrameCounter;
+                        m_prevClayIntersection = currentIntersection;
+                    }
+                    m_lastFrameProfile.areaComputeMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tAreaStart).count();
+                }
+                areaNormal = m_cachedAreaNormal;
+                areaCenter = m_cachedAreaCenter;
+            }
+
+            glm::vec3 strokeDir(0.0f);
+
+            if (!isSymmetry) {
+                if (m_firstStrokeFrame || !m_hasRakeDir) {
+                    const glm::mat4& invMeshMatrix = m_cachedInvMatrix;
+                    const glm::mat4& camWorld = m_cachedCamWorldMatrix;
+                    glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
+                    glm::vec3 projCam = camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal);
+                    if (glm::length(projCam) > 1e-5f) {
+                        strokeDir = glm::normalize(projCam);
+                    } else {
+                        glm::vec3 camUpLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[1]), 0.0f)));
+                        strokeDir = glm::normalize(camUpLocal - areaNormal * glm::dot(camUpLocal, areaNormal));
+                    }
+                    m_rakeSmoothDir = strokeDir;
+                    m_rakePrevPos = currentIntersection;
+                    m_hasRakeDir = true;
+                } else {
+                    glm::vec3 deltaP = currentIntersection - m_rakePrevPos;
+                    glm::vec3 dRaw = deltaP - areaNormal * glm::dot(deltaP, areaNormal);
+                    float dRawLen = glm::length(dRaw);
+                    if (dRawLen > 1e-5f) {
+                        glm::vec3 rawDir = dRaw / dRawLen;
+                        float smoothFactor = std::clamp(getCurrentSettings().rakeTurnSmoothness, 0.0f, 0.95f);
+                        glm::vec3 prevProj = m_rakeSmoothDir - areaNormal * glm::dot(m_rakeSmoothDir, areaNormal);
+                        if (glm::length(prevProj) > 1e-5f) {
+                            prevProj = glm::normalize(prevProj);
+                        } else {
+                            prevProj = rawDir;
+                        }
+                        m_rakeSmoothDir = glm::normalize(glm::mix(rawDir, prevProj, smoothFactor));
+                        m_rakePrevPos = currentIntersection;
+                    }
+                    strokeDir = m_rakeSmoothDir;
+                }
+            } else {
+                // Symmetry pass: reflect the primary stroke direction
+                strokeDir = reflectVectorSymmetry(m_rakeSmoothDir, sScale, mesh, m_symmetryMode);
+                glm::vec3 proj = strokeDir - areaNormal * glm::dot(strokeDir, areaNormal);
+                if (glm::length(proj) > 1e-5f) {
+                    strokeDir = glm::normalize(proj);
+                } else {
+                    const glm::mat4& invMeshMatrix = m_cachedInvMatrix;
+                    const glm::mat4& camWorld = m_cachedCamWorldMatrix;
+                    glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
+                    camRightLocal = reflectVectorSymmetry(camRightLocal, sScale, mesh, m_symmetryMode);
+                    strokeDir = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
+                }
+            }
+
+            float finalAngle = getCurrentSettings().rakeAngleOffset;
+            if (getCurrentSettings().stampUseTilt && g_tablet.isAvailable() && g_tablet.isPenActive() && g_tablet.isTiltEnabled()) {
+                float tx = g_tablet.getTiltX();
+                float ty = g_tablet.getTiltY();
+                if (tx * tx + ty * ty > 1.0f) {
+                    float tiltAngle = std::atan2(ty, tx) * (180.0f / 3.1415926535f);
+                    finalAngle += tiltAngle;
+                }
+            }
+
+            if (std::abs(finalAngle) > 1e-4f) {
+                float angleRad = glm::radians(finalAngle);
+                if (alphaXSym) angleRad = -angleRad;
+                glm::mat4 rot = glm::rotate(glm::mat4(1.0f), angleRad, areaNormal);
+                strokeDir = glm::normalize(glm::vec3(rot * glm::vec4(strokeDir, 0.0f)));
+            }
+
+            glm::vec3 eye = currentIntersection;
+            glm::vec3 nor = currentIntersection + areaNormal * localRadius;
+            glm::mat4 lookAtMat = glm::lookAt(eye, nor, strokeDir);
+
+            float alphaLookAt[16];
+            std::memcpy(alphaLookAt, &lookAtMat[0][0], 16 * sizeof(float));
+
+            deformedCount = strokeRake(
+                mesh->verts.data(),
+                mesh->vertProxy.data(),
+                mesh->materials.data(),
+                pickedVertices.data(),
+                pickedVertices.size(),
+                currentIntersection.x, currentIntersection.y, currentIntersection.z,
+                areaCenter.x, areaCenter.y, areaCenter.z,
+                areaNormal.x, areaNormal.y, areaNormal.z,
+                localRadius, intensity,
+                negative,
+                getCurrentSettings().rakeClayMode,
+                getCurrentSettings().accumulate,
+                getCurrentSettings().focalShift,
+                getCurrentSettings().focalShiftFalloff,
+                getCurrentSettings().rakeWaveType,
+                getCurrentSettings().rakeTeethCount,
+                getCurrentSettings().rakeDepth,
+                getCurrentSettings().rakeSharpness,
+                getCurrentSettings().rakeSquareFootprint,
+                getCurrentSettings().rakeRidgesOnly,
+                alphaLookAt, alphaXSym
+            );
+            break;
+        }
         case BRUSH_DELETE_LAYER: {
             if (!mesh->isLayerRecording()) break;
             Layer* layer = mesh->layerStack.getActive();
@@ -1364,6 +1522,7 @@ void SculptManager::cancelStroke() {
     m_gradIsDrawing = false;
     m_draggedSegment = nullptr;
     m_hasAlphaOrigin = false;
+    m_hasRakeDir = false;
     if (m_isTubeMoveStroke) {
         m_isTubeMoveStroke = false;
         m_tubeMoveHitMesh = nullptr;
@@ -2103,7 +2262,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         }
 
         // Cache area normal and center for Clay/Flatten/Brush tools on first frame
-        if (m_firstStrokeFrame && (activeBrush == BRUSH_CLAY || activeBrush == BRUSH_CLAYBUILDUP || activeBrush == BRUSH_FLATTEN || activeBrush == BRUSH_SQUAREBRUSH || activeBrush == BRUSH_BRUSH)) {
+        if (m_firstStrokeFrame && (activeBrush == BRUSH_CLAY || activeBrush == BRUSH_CLAYBUILDUP || activeBrush == BRUSH_FLATTEN || activeBrush == BRUSH_SQUAREBRUSH || activeBrush == BRUSH_BRUSH || activeBrush == BRUSH_RAKE)) {
             auto tAreaStart = std::chrono::high_resolution_clock::now();
             float areaResults[7] = {0.0f};
             if (computeAreaNormalAndCenter(
@@ -2804,6 +2963,17 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             if (m_edgeCreaseTool) {
                 SDL_Keymod mod = SDL_GetModState();
                 bool handled = m_edgeCreaseTool->handleMouseDown(scene, camera, (float)mouseX, (float)mouseY, (mod & KMOD_CTRL) != 0, (mod & KMOD_SHIFT) != 0, event.button.button);
+                if (!handled && m_cameraController.isNavigationEvent(event, camera.getRef2DMode())) {
+                    m_cameraController.handleEvent(event, camera, scene.getMeshes(), true, &scene, m_renderer);
+                }
+            }
+            return;
+        }
+
+        if (m_currentBrush == BRUSH_CURVE_FOLDS) {
+            if (m_curveFoldsTool) {
+                SDL_Keymod mod = SDL_GetModState();
+                bool handled = m_curveFoldsTool->handleMouseDown(scene, camera, (float)mouseX, (float)mouseY, (mod & KMOD_CTRL) != 0, (mod & KMOD_ALT) != 0, (mod & KMOD_SHIFT) != 0);
                 if (!handled && m_cameraController.isNavigationEvent(event, camera.getRef2DMode())) {
                     m_cameraController.handleEvent(event, camera, scene.getMeshes(), true, &scene, m_renderer);
                 }
@@ -3542,6 +3712,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 m_pendingOctreeUpdate = false;
                 m_grabbedNumIFaces = 0;
                 m_hasAlphaOrigin = false;
+                m_hasRakeDir = false;
                 if (!m_isTubeMoveStroke) {
                     m_initialIntersection = localRayOrigin + minT * localRayDir;
                     m_initialIntersectionNormal = glm::vec3(
@@ -3723,6 +3894,13 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
         if (m_currentBrush == BRUSH_EDGE_CREASE && m_edgeCreaseTool) {
             m_edgeCreaseTool->handleMouseUp(scene, camera, event.button.button);
+            return;
+        }
+
+        if (m_currentBrush == BRUSH_CURVE_FOLDS && m_curveFoldsTool) {
+            if (event.button.button == SDL_BUTTON_LEFT) {
+                m_curveFoldsTool->handleMouseUp(scene);
+            }
             return;
         }
 
@@ -4261,6 +4439,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             m_snakeActiveVerts.clear();
             m_snakeActiveVertsSyms.clear();
             m_snakePrevTipPosSyms.clear();
+            m_hasRakeDir = false;
 
             if (!m_grabbedAffectedVerts.empty()) {
                 if (mesh && mesh->vertProxy.size() == mesh->verts.size()) {
@@ -4604,6 +4783,15 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             return;
         }
 
+        if (m_currentBrush == BRUSH_CURVE_FOLDS && m_curveFoldsTool) {
+            if (m_cameraController.isDragging()) {
+                m_cameraController.handleEvent(event, camera, scene.getMeshes(), true, &scene, m_renderer);
+            } else {
+                m_curveFoldsTool->handleMouseMove(scene, camera, (float)mouseX, (float)mouseY);
+            }
+            return;
+        }
+
         if (mesh && mesh->isTube && mesh->tubeData != nullptr && m_tubeTool && !m_isSculpting && !m_cameraController.isDragging()) {
             if (!m_tubeTool->isInteracting() && m_tubeTool->getActiveTubeMesh() != mesh) {
                 m_tubeTool->loadFromMesh(mesh);
@@ -4884,7 +5072,7 @@ void SculptManager::processFrame(Scene& scene) {
     }
 
     bool isRefDragMode = (scene.getCamera().getRefDragEnabled() || (scene.getCameraRight() && scene.getCameraRight()->getRefDragEnabled())) && scene.areAnyReferenceImagesVisible();
-    if (isRefDragMode || m_cameraController.isDragging() || m_currentBrush == BRUSH_MEASURE || m_currentBrush == BRUSH_DIVIDER || m_currentBrush == BRUSH_TRANSFORM || m_currentBrush == BRUSH_POSE || m_currentBrush == BRUSH_TUBE || m_currentBrush == BRUSH_QUAD_DRAW || m_currentBrush == BRUSH_EXTRACT || m_currentBrush == BRUSH_COMPONENT_SELECT || m_currentBrush == BRUSH_EDGE_CREASE) {
+    if (isRefDragMode || m_cameraController.isDragging() || m_currentBrush == BRUSH_MEASURE || m_currentBrush == BRUSH_DIVIDER || m_currentBrush == BRUSH_TRANSFORM || m_currentBrush == BRUSH_POSE || m_currentBrush == BRUSH_TUBE || m_currentBrush == BRUSH_QUAD_DRAW || m_currentBrush == BRUSH_EXTRACT || m_currentBrush == BRUSH_COMPONENT_SELECT || m_currentBrush == BRUSH_EDGE_CREASE || m_currentBrush == BRUSH_CURVE_FOLDS) {
         m_cursor.hide();
     } else {
         // Resolve dynamic brush modifier swap (Shift->Smooth, Ctrl->Mask, Ctrl+Shift->Visibility)
@@ -4895,7 +5083,7 @@ void SculptManager::processFrame(Scene& scene) {
             m_armatureTool->preUpdate(scene, scene.getCamera(), (float)m_rawMouseX, (float)m_rawMouseY, (mod & KMOD_CTRL) != 0, (mod & KMOD_ALT) != 0);
         }
         bool isMayaNav = m_hotkeyManager ? m_hotkeyManager->getModifierBehavior().ctrlAltInvertsBrush : (scene.getCamera().getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
-        if (m_currentBrush != BRUSH_TUBE && m_currentBrush != BRUSH_POSE && m_currentBrush != BRUSH_TRANSFORM && m_currentBrush != BRUSH_QUAD_DRAW && m_currentBrush != BRUSH_EXTRACT && m_currentBrush != BRUSH_COMPONENT_SELECT && m_currentBrush != BRUSH_EDGE_CREASE) {
+        if (m_currentBrush != BRUSH_TUBE && m_currentBrush != BRUSH_POSE && m_currentBrush != BRUSH_TRANSFORM && m_currentBrush != BRUSH_QUAD_DRAW && m_currentBrush != BRUSH_EXTRACT && m_currentBrush != BRUSH_COMPONENT_SELECT && m_currentBrush != BRUSH_EDGE_CREASE && m_currentBrush != BRUSH_CURVE_FOLDS) {
             if ((mod & KMOD_CTRL) && (mod & KMOD_SHIFT)) {
                 activeBrush = BRUSH_VISIBILITY;
             } else if (mod & KMOD_SHIFT) {
@@ -5365,6 +5553,16 @@ bool SculptManager::saveSettings(IniFile& ini) {
         ini.setFloat(sec, "relaxCreaseAngle", m_brushSettings[i].relaxCreaseAngle);
         ini.setInt(sec, "relaxIterations", m_brushSettings[i].relaxIterations);
         ini.setInt(sec, "splitMode", m_brushSettings[i].splitMode);
+
+        ini.setBool(sec, "rakeClayMode", m_brushSettings[i].rakeClayMode);
+        ini.setBool(sec, "rakeSquareFootprint", m_brushSettings[i].rakeSquareFootprint);
+        ini.setBool(sec, "rakeRidgesOnly", m_brushSettings[i].rakeRidgesOnly);
+        ini.setInt(sec, "rakeWaveType", m_brushSettings[i].rakeWaveType);
+        ini.setInt(sec, "rakeTeethCount", m_brushSettings[i].rakeTeethCount);
+        ini.setFloat(sec, "rakeDepth", m_brushSettings[i].rakeDepth);
+        ini.setFloat(sec, "rakeSharpness", m_brushSettings[i].rakeSharpness);
+        ini.setFloat(sec, "rakeTurnSmoothness", m_brushSettings[i].rakeTurnSmoothness);
+        ini.setFloat(sec, "rakeAngleOffset", m_brushSettings[i].rakeAngleOffset);
     }
 
     std::string genSec = "General";
@@ -5445,6 +5643,16 @@ bool SculptManager::loadSettings(const IniFile& ini) {
         if (ini.hasKey(sec, "relaxCreaseAngle")) m_brushSettings[i].relaxCreaseAngle = ini.getFloat(sec, "relaxCreaseAngle", 45.0f);
         if (ini.hasKey(sec, "relaxIterations")) m_brushSettings[i].relaxIterations = ini.getInt(sec, "relaxIterations", 1);
         if (ini.hasKey(sec, "splitMode")) m_brushSettings[i].splitMode = ini.getInt(sec, "splitMode", 0);
+
+        if (ini.hasKey(sec, "rakeClayMode")) m_brushSettings[i].rakeClayMode = ini.getBool(sec, "rakeClayMode");
+        if (ini.hasKey(sec, "rakeSquareFootprint")) m_brushSettings[i].rakeSquareFootprint = ini.getBool(sec, "rakeSquareFootprint");
+        if (ini.hasKey(sec, "rakeRidgesOnly")) m_brushSettings[i].rakeRidgesOnly = ini.getBool(sec, "rakeRidgesOnly");
+        if (ini.hasKey(sec, "rakeWaveType")) m_brushSettings[i].rakeWaveType = ini.getInt(sec, "rakeWaveType", 0);
+        if (ini.hasKey(sec, "rakeTeethCount")) m_brushSettings[i].rakeTeethCount = ini.getInt(sec, "rakeTeethCount", 6);
+        if (ini.hasKey(sec, "rakeDepth")) m_brushSettings[i].rakeDepth = ini.getFloat(sec, "rakeDepth", 0.85f);
+        if (ini.hasKey(sec, "rakeSharpness")) m_brushSettings[i].rakeSharpness = ini.getFloat(sec, "rakeSharpness", 0.5f);
+        if (ini.hasKey(sec, "rakeTurnSmoothness")) m_brushSettings[i].rakeTurnSmoothness = ini.getFloat(sec, "rakeTurnSmoothness", 0.65f);
+        if (ini.hasKey(sec, "rakeAngleOffset")) m_brushSettings[i].rakeAngleOffset = ini.getFloat(sec, "rakeAngleOffset", 0.0f);
     }
 
     std::string genSec = "General";

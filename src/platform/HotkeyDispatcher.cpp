@@ -7,6 +7,7 @@
 #include "editing/TubeTool.h"
 #include "editing/QuadDrawTool.h"
 #include "editing/MaskExtractTool.h"
+#include "editing/CurveFoldsTool.h"
 #include "zbrush_bridge/ZBrushSender.h"
 #include <imgui.h>
 #include <algorithm>
@@ -142,6 +143,8 @@ static BrushType hkActionToBrushType(HKAction act, BrushType fallback) {
         case HKAction::ToolTube: return BRUSH_TUBE;
         case HKAction::ToolQuadDraw: return BRUSH_QUAD_DRAW;
         case HKAction::ToolExtract: return BRUSH_EXTRACT;
+        case HKAction::ToolCurveFolds: return BRUSH_CURVE_FOLDS;
+        case HKAction::ToolRake: return BRUSH_RAKE;
         default: return fallback;
     }
 }
@@ -336,6 +339,19 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
                         sculpt.getMaskExtractTool()->startPreview(scene, sel);
                     }
                 }
+                break;
+            }
+            case HKAction::ToolCurveFolds: {
+                sculpt.setBrush(BRUSH_CURVE_FOLDS);
+                gui.setShowSculptingPanel(true);
+                if (auto* cf = sculpt.getCurveFoldsTool()) {
+                    cf->onActivate(scene);
+                }
+                break;
+            }
+            case HKAction::ToolRake: {
+                sculpt.setBrush(BRUSH_RAKE);
+                gui.setShowSculptingPanel(true);
                 break;
             }
             case HKAction::ToolMask: sculpt.setBrush(BRUSH_MASK); break;

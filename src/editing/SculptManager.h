@@ -20,6 +20,7 @@ class PrimitiveTool;
 class MaskExtractTool;
 class ComponentSelectTool;
 class EdgeCreaseTool;
+class CurveFoldsTool;
 namespace retopo { class QuadDrawTool; }
 #include "editing/SelectionManager.h"
 class IniFile;
@@ -170,6 +171,17 @@ struct BrushSettings {
     float poseFalloffWidth = 1.0f;
     float poseCapsuleRadius = 0.0f; // 0 = infinite (disabled)
     bool poseUseMask = true;
+
+    // Rake brush settings
+    bool  rakeClayMode = true;           // Clay plane mode vs Normal displacement
+    bool  rakeSquareFootprint = false;   // Circular vs Square brush footprint
+    bool  rakeRidgesOnly = false;        // Deform only at teeth ridges/hills (leave valleys untouched)
+    int   rakeWaveType = 0;              // 0: Sine, 1: Triangle (V-Groove), 2: Square, 3: Sawtooth
+    int   rakeTeethCount = 6;            // Number of parallel ridges across brush diameter (1..32)
+    float rakeDepth = 0.85f;             // Modulation depth of teeth (0.0..1.0)
+    float rakeSharpness = 0.5f;          // Ridge sharpness / duty cycle (0.0..1.0)
+    float rakeTurnSmoothness = 0.65f;    // Stroke direction smoothing factor (0.0..0.95)
+    float rakeAngleOffset = 0.0f;        // Manual angle rotation relative to stroke (-90..90 deg)
 };
 
 #include "editing/MeasurementTypes.h"
@@ -194,6 +206,7 @@ private:
     SelectionManager m_selectionManager;
     std::unique_ptr<ComponentSelectTool> m_componentSelectTool;
     std::unique_ptr<EdgeCreaseTool> m_edgeCreaseTool;
+    std::unique_ptr<CurveFoldsTool> m_curveFoldsTool;
 
     CameraController m_cameraController;
     bool m_isSculpting = false;
@@ -561,15 +574,20 @@ public:
     const SelectionManager& getSelectionManager() const { return m_selectionManager; }
     ComponentSelectTool* getComponentSelectTool() const { return m_componentSelectTool.get(); }
     EdgeCreaseTool* getEdgeCreaseTool() const { return m_edgeCreaseTool.get(); }
+    CurveFoldsTool* getCurveFoldsTool() const { return m_curveFoldsTool.get(); }
 
     void notifyMeshDeleted(Mesh* mesh) {
         if (m_lastActiveMesh == mesh) {
             m_lastActiveMesh = nullptr;
         }
         m_knownMeshes.erase(mesh);
+        if (m_curveFoldsTool) {
+            notifyMeshDeletedTool(mesh);
+        }
     }
 
 private:
+    void notifyMeshDeletedTool(Mesh* mesh);
     Mesh* m_lastActiveMesh = nullptr;
     std::unordered_set<const Mesh*> m_knownMeshes;
     bool m_symmetryLineTriggered = false;
@@ -618,6 +636,11 @@ private:
     int       m_clayAreaNormalFrame = -1;
     int       m_strokeFrameCounter = 0;
     glm::vec3 m_prevClayIntersection{0.0f};
+
+    // Rake brush state
+    glm::vec3 m_rakeSmoothDir{0.0f};
+    glm::vec3 m_rakePrevPos{0.0f};
+    bool      m_hasRakeDir = false;
 
     // Gradient mask state variables
     glm::vec2 m_gradPointA{0.0f};
