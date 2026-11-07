@@ -1256,17 +1256,19 @@ int main(int argc, char* argv[]) {
             sculpt.processFrame(scene);
         }
 
-        // Manage hardware / system / software cursor (activated ONLY over the mesh or during sculpt)
+        // Manage hardware / system / software cursor (activated ONLY over the mesh or during sculpt, or when hovering brush sliders)
         bool sculptingNow = sculpt.isSculpting();
         ImGuiIO& io = ImGui::GetIO();
         Uint32 winFlags = SDL_GetWindowFlags(window);
         bool appHasFocus = (winFlags & SDL_WINDOW_INPUT_FOCUS) != 0;
         const auto& cursorState = sculpt.getCursor().getState();
-        bool isOverMesh = cursorState.hitMesh;
+        bool isOverSliders = gui.isOverBrushSliders();
+        bool isMouseOverUi = io.WantCaptureMouse && !isOverSliders;
+        bool isOverMesh = cursorState.hitMesh || isOverSliders;
 
         hardwareCursor.updateScale(gui.getUiScale());
         hardwareCursor.setMode(static_cast<HardwareCursorMode>(renderer.getHardwareCursorMode()));
-        hardwareCursor.update(sculptingNow, isOverMesh, io.WantCaptureMouse, appHasFocus, cursorState.color);
+        hardwareCursor.update(sculptingNow, isOverMesh, isMouseOverUi, appHasFocus, cursorState.color);
         renderer.setHardwareCursorActive(hardwareCursor.isHardwareCursorActive());
 
         sculpt.getCursor().applyToRenderer(renderer);

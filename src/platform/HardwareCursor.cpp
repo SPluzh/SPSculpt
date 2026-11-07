@@ -217,6 +217,10 @@ void HardwareCursorManager::update(bool isSculpting, bool isOverMesh, bool isMou
     if (!hasFocus || isMouseOverUi) {
         m_isHardwareActive = false;
         io.ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
+        SDL_ShowCursor(SDL_ENABLE);
+        if (m_defaultCursor) {
+            SDL_SetCursor(m_defaultCursor);
+        }
         return;
     }
 

@@ -136,6 +136,15 @@ private:
     void setFloatingIslandScaleMultiplier(float val) { m_floatingIslandScale = std::max(0.5f, std::min(val, 2.5f)); }
     float getFloatingIslandScale() const { return m_dpiScale * m_floatingIslandScale; }
 
+    bool m_isOverBrushSliders = false;
+    bool m_slidersValid = false;
+    ImVec2 m_sliderRadiusMin{0.0f, 0.0f};
+    ImVec2 m_sliderRadiusMax{0.0f, 0.0f};
+    ImVec2 m_sliderIntensityMin{0.0f, 0.0f};
+    ImVec2 m_sliderIntensityMax{0.0f, 0.0f};
+    ImVec2 m_sliderFocalShiftMin{0.0f, 0.0f};
+    ImVec2 m_sliderFocalShiftMax{0.0f, 0.0f};
+
     // File path state
     std::string m_currentScenePath = "";
     char m_importPath[256] = "model.obj";
@@ -368,6 +377,7 @@ public:
     void toggleBrushIconCapturePanel();
     void toggleRecentFilesWindow() { m_showRecentFilesWindow = !m_showRecentFilesWindow; }
     void toggleComponentPanel() { m_showComponentPanel = !m_showComponentPanel; }
+    bool isOverBrushSliders() const;
     bool getShowComponentPanel() const { return m_showComponentPanel; }
     void setShowComponentPanel(bool show) { m_showComponentPanel = show; }
 

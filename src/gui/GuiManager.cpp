@@ -7711,15 +7711,10 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         const auto& cursorState = sculpt.getCursor().getState();
         bool hideForUi = ImGui::GetIO().WantCaptureMouse;
         if (hideForUi) {
-            ImGuiContext* g = GImGui;
-            if (g && g->HoveredWindow && g->HoveredWindow->Name) {
-                std::string_view winName(g->HoveredWindow->Name);
-                if (winName.find("FloatingIsland") != std::string_view::npos ||
-                    winName.find("hud") != std::string_view::npos ||
-                    winName.find("HUD") != std::string_view::npos ||
-                    winName.find("PivotLock") != std::string_view::npos) {
-                    hideForUi = false;
-                }
+            // Over UI and HUD islands, hide brush circle and cursor.
+            // Exception: over brush regulators (size, intensity, falloff), keep brush circle and cursor visible!
+            if (isOverBrushSliders()) {
+                hideForUi = false;
             }
         }
         if (cursorState.visible && !hideForUi) {
@@ -9784,8 +9779,25 @@ void GuiManager::drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRend
     }
 }
 
+bool GuiManager::isOverBrushSliders() const {
+    if (!m_showFloatingIsland) return false;
+    if (m_isOverBrushSliders) return true;
+    if (!m_slidersValid) return false;
+    ImVec2 mousePos = ImGui::GetIO().MousePos;
+    auto inRect = [](ImVec2 p, ImVec2 rMin, ImVec2 rMax) {
+        return p.x >= rMin.x && p.x <= rMax.x && p.y >= rMin.y && p.y <= rMax.y;
+    };
+    return inRect(mousePos, m_sliderRadiusMin, m_sliderRadiusMax) ||
+           inRect(mousePos, m_sliderIntensityMin, m_sliderIntensityMax) ||
+           inRect(mousePos, m_sliderFocalShiftMin, m_sliderFocalShiftMax);
+}
+
 void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer) {
-    if (!m_showFloatingIsland) return;
+    if (!m_showFloatingIsland) {
+        m_slidersValid = false;
+        m_isOverBrushSliders = false;
+        return;
+    }
     float scale = getFloatingIslandScale();
     float fontScale = m_floatingIslandScale / std::max(0.01f, m_uiScale);
 
@@ -10008,7 +10020,11 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         if (ImGui::VSliderFloat("##hudVertRadius", ImVec2(squareSize, vSliderH), &radius, 1.0f, 1000.0f, "")) {
             sculpt.setBrushRadius(radius);
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Size: %.0f px", radius);
+        bool hoveredRadius = ImGui::IsItemHovered();
+        bool activeRadius = ImGui::IsItemActive();
+        ImVec2 rectRadiusMin = ImGui::GetItemRectMin();
+        ImVec2 rectRadiusMax = ImGui::GetItemRectMax();
+        if (hoveredRadius) ImGui::SetTooltip("Size: %.0f px", radius);
 
         ImGui::Spacing();
 
@@ -10018,11 +10034,15 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         if (ImGui::VSliderFloat("##hudVertIntensity", ImVec2(squareSize, vSliderH), &intensityPct, 0.0f, maxHudPct, "")) {
             sculpt.setBrushIntensity(std::max(0.0f, std::min(10.0f, intensityPct / 100.0f)));
         }
-        if (ImGui::IsItemActive() && ImGui::GetIO().MouseDelta.y < 0.0f && intensityPct >= maxHudPct - 0.1f) {
+        bool hoveredIntensity = ImGui::IsItemHovered();
+        bool activeIntensity = ImGui::IsItemActive();
+        ImVec2 rectIntensityMin = ImGui::GetItemRectMin();
+        ImVec2 rectIntensityMax = ImGui::GetItemRectMax();
+        if (activeIntensity && ImGui::GetIO().MouseDelta.y < 0.0f && intensityPct >= maxHudPct - 0.1f) {
             intensityPct = std::min(1000.0f, intensityPct + 10.0f);
             sculpt.setBrushIntensity(intensityPct / 100.0f);
         }
-        if (ImGui::IsItemHovered()) {
+        if (hoveredIntensity) {
             ImGui::SetTooltip("Intensity: %.0f%% (0%% to 1000%%)", intensityPct);
             float wheel = ImGui::GetIO().MouseWheel;
             if (wheel != 0.0f) {
@@ -10039,7 +10059,11 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
         if (ImGui::VSliderFloat("##hudVertFocalShift", ImVec2(squareSize, vSliderH), &focalShift, -1.0f, 1.0f, "")) {
             sculpt.setFocalShift(focalShift);
         }
-        if (ImGui::IsItemHovered()) {
+        bool hoveredFocalShift = ImGui::IsItemHovered();
+        bool activeFocalShift = ImGui::IsItemActive();
+        ImVec2 rectFocalShiftMin = ImGui::GetItemRectMin();
+        ImVec2 rectFocalShiftMax = ImGui::GetItemRectMax();
+        if (hoveredFocalShift) {
             ImGui::SetTooltip("Focal Shift: %.0f%%", focalShift * 100.0f);
             float wheel = ImGui::GetIO().MouseWheel;
             if (wheel != 0.0f) {
@@ -10047,6 +10071,15 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
                 sculpt.setFocalShift(focalShift);
             }
         }
+
+        m_sliderRadiusMin = rectRadiusMin;
+        m_sliderRadiusMax = rectRadiusMax;
+        m_sliderIntensityMin = rectIntensityMin;
+        m_sliderIntensityMax = rectIntensityMax;
+        m_sliderFocalShiftMin = rectFocalShiftMin;
+        m_sliderFocalShiftMax = rectFocalShiftMax;
+        m_slidersValid = true;
+        m_isOverBrushSliders = (hoveredRadius || activeRadius || hoveredIntensity || activeIntensity || hoveredFocalShift || activeFocalShift);
 
         ImGui::Separator();
 
