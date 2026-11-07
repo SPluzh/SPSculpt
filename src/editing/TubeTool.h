@@ -89,7 +89,7 @@ public:
     void setSelectedPointIndex(int idx) { m_selectedPointIdx = idx; }
 
     bool isInteracting() const {
-        return m_isDrawingStroke || m_isDraggingPoint || m_isDraggingRadius || m_isDraggingProfilePoint;
+        return m_isDrawingStroke || m_isDraggingPoint || m_isDraggingRadius || m_isDraggingBaseRadius || m_isDraggingProfilePoint;
     }
 
     void resetActiveTube() {
@@ -110,6 +110,7 @@ public:
     int hitTestControlPoints(const Camera& camera, float mouseX, float mouseY, float thresholdPx = 14.0f) const;
     int hitTestTubeControlPoints(const Camera& camera, const CurveSpline& spline, float mouseX, float mouseY, float thresholdPx = 14.0f) const;
     int hitTestRadiusHandle(const Camera& camera, float mouseX, float mouseY, float thresholdPx = 12.0f) const;
+    bool hitTestBaseRadiusHandle(const Camera& camera, float mouseX, float mouseY, float thresholdPx = 14.0f) const;
     int findClosestSegmentOnCurve(const Camera& camera, float mouseX, float mouseY, float thresholdPx = 12.0f, float* outT = nullptr) const;
     int findClosestSegmentOnSpline(const Camera& camera, const CurveSpline& spline, float mouseX, float mouseY, float thresholdPx = 12.0f, float* outT = nullptr) const;
     int hitTestEndProfilePoint(const Camera& camera, float mouseX, float mouseY, float thresholdPx = 14.0f) const;
@@ -137,8 +138,10 @@ private:
 
     int m_hoveredRadiusHandleIdx = -1;
     bool m_hoveredRadiusRing = false;
+    bool m_hoveredBaseRadiusHandle = false;
     bool m_isDraggingPoint = false;
     bool m_isDraggingRadius = false;
+    bool m_isDraggingBaseRadius = false;
     bool m_pointWasMoved = false;
     bool m_isExtrudingPoint = false;
     int m_extrudeEndIdx = -1;
@@ -160,11 +163,13 @@ private:
     glm::vec2 m_dragStartMouse{0.0f};
     glm::vec3 m_dragStartPointPos{0.0f};
     float m_dragStartRadius = 1.0f;
+    float m_dragStartBaseRadius = 2.5f;
 
     // Helpers
     bool raycastSurface(const Scene& scene, const Camera& camera, float mouseX, float mouseY, glm::vec3& outPos, glm::vec3& outNorm, Mesh** outHitMesh = nullptr) const;
     glm::vec3 intersectRayPlane(const Camera& camera, float mouseX, float mouseY, const glm::vec3& planePoint, const glm::vec3& planeNormal) const;
     bool getPointHandleInfo(const Camera& camera, int ptIdx, glm::vec3& outCenterWorld, glm::vec3& outHandleWorld, glm::vec2& outCenterScreen, glm::vec2& outHandleScreen, glm::vec3& outSideDir) const;
+    bool getBaseRadiusHandleInfo(const Camera& camera, glm::vec3& outCenterWorld, glm::vec3& outHandleWorld, glm::vec2& outCenterScreen, glm::vec2& outHandleScreen, glm::vec3& outOppositeSideDir) const;
     bool hitTestRadiusRing(const Camera& camera, float mouseX, float mouseY, int ptIdx, float thresholdPx = 8.0f) const;
 
     bool getEndProfileFrame(EvaluatedFrame& outFrame, int* outPointIdx = nullptr) const;

@@ -64,6 +64,7 @@ void TubeTool::onActivate(Scene& scene) {
     m_hoveredProfileSeg = -1;
     m_isDraggingPoint = false;
     m_isDraggingRadius = false;
+    m_isDraggingBaseRadius = false;
     m_isDrawingStroke = false;
     m_isDraggingProfilePoint = false;
 }
@@ -73,6 +74,7 @@ void TubeTool::onDeactivate() {
     m_isDrawingStroke = false;
     m_isDraggingPoint = false;
     m_isDraggingRadius = false;
+    m_isDraggingBaseRadius = false;
     m_isDraggingProfilePoint = false;
     m_hoveredPointIdx = -1;
     m_hoveredProfilePtIdx = -1;
@@ -160,6 +162,7 @@ bool TubeTool::loadFromMesh(Mesh* mesh, bool forceReload) {
     m_hoveredProfileSeg = -1;
     m_isDraggingPoint = false;
     m_isDraggingRadius = false;
+    m_isDraggingBaseRadius = false;
     m_isDrawingStroke = false;
     m_isExtrudingPoint = false;
     m_extrudeEndIdx = -1;
@@ -188,6 +191,7 @@ void TubeTool::startNewTube(Scene& scene) {
     m_hoveredProfileSeg = -1;
     m_isDraggingPoint = false;
     m_isDraggingRadius = false;
+    m_isDraggingBaseRadius = false;
     m_isDrawingStroke = false;
     m_isExtrudingPoint = false;
     m_extrudeEndIdx = -1;
@@ -214,6 +218,7 @@ void TubeTool::notifyMeshDeleted(Mesh* mesh) {
         m_hoveredProfileSeg = -1;
         m_isDraggingPoint = false;
         m_isDraggingRadius = false;
+        m_isDraggingBaseRadius = false;
         m_isDrawingStroke = false;
         m_isExtrudingPoint = false;
         m_extrudeEndIdx = -1;
@@ -240,6 +245,7 @@ void TubeTool::clearCurve(Scene* scene) {
     m_hoveredProfileSeg = -1;
     m_isDraggingPoint = false;
     m_isDraggingRadius = false;
+    m_isDraggingBaseRadius = false;
     m_isDrawingStroke = false;
     m_isExtrudingPoint = false;
     m_extrudeEndIdx = -1;
@@ -463,10 +469,64 @@ bool TubeTool::getPointHandleInfo(
     outHandleWorld = outCenterWorld + side * pt.radius;
 
     glm::vec3 sHandle = camera.project(outHandleWorld);
-    if (sHandle.z < 0.0f || sHandle.z > 1.0f) return false;
     outHandleScreen = glm::vec2(sHandle.x, sHandle.y);
 
     return true;
+}
+
+bool TubeTool::getBaseRadiusHandleInfo(
+    const Camera& camera,
+    glm::vec3& outCenterWorld, glm::vec3& outHandleWorld,
+    glm::vec2& outCenterScreen, glm::vec2& outHandleScreen,
+    glm::vec3& outOppositeSideDir
+) const {
+    if (m_spline.getPointCount() < 2) return false;
+
+    glm::vec3 cWorld, hWorld, sideDir;
+    glm::vec2 cScreen, hScreen;
+    if (!getPointHandleInfo(camera, 0, cWorld, hWorld, cScreen, hScreen, sideDir)) {
+        return false;
+    }
+
+    outCenterWorld = cWorld;
+    outCenterScreen = cScreen;
+    outOppositeSideDir = -sideDir;
+    outHandleWorld = cWorld - sideDir * baseRadius;
+
+    glm::vec3 sBase = camera.project(outHandleWorld);
+    if (sBase.z >= 0.0f && sBase.z <= 1.0f) {
+        outHandleScreen = glm::vec2(sBase.x, sBase.y);
+    } else {
+        float r0 = std::max(0.001f, m_spline.getPoint(0).radius);
+        float scale = baseRadius / r0;
+        outHandleScreen = cScreen - (hScreen - cScreen) * scale;
+    }
+
+    return true;
+}
+
+bool TubeTool::hitTestBaseRadiusHandle(const Camera& camera, float mouseX, float mouseY, float thresholdPx) const {
+    if (m_spline.getPointCount() < 2) return false;
+
+    glm::vec3 cWorld, hWorld, oppSide;
+    glm::vec2 cScreen, hScreen;
+    if (!getBaseRadiusHandleInfo(camera, cWorld, hWorld, cScreen, hScreen, oppSide)) {
+        return false;
+    }
+
+    glm::vec2 mousePos(mouseX, mouseY);
+    if (glm::distance(mousePos, hScreen) < thresholdPx) return true;
+
+    glm::vec2 ab = hScreen - cScreen;
+    float len2 = glm::dot(ab, ab);
+    if (len2 > 16.0f) {
+        float t = std::clamp(glm::dot(mousePos - cScreen, ab) / len2, 0.0f, 1.0f);
+        if (t > 0.35f) {
+            glm::vec2 proj = cScreen + t * ab;
+            if (glm::distance(mousePos, proj) < 8.0f) return true;
+        }
+    }
+    return false;
 }
 
 int TubeTool::hitTestRadiusHandle(const Camera& camera, float mouseX, float mouseY, float thresholdPx) const {
@@ -828,10 +888,47 @@ bool TubeTool::handleMouseDown(
 
     m_selectedProfilePtIdx = -1;
 
-    // 1. Check if clicking on control point or radius handle
+    // Check Base Radius handle (situated directly opposite to point 0 radius handle)
+    bool hitBaseR = hitTestBaseRadiusHandle(camera, mouseX, mouseY);
     int hitPoint = hitTestControlPoints(camera, mouseX, mouseY);
     int hitHandle = hitTestRadiusHandle(camera, mouseX, mouseY);
 
+    if (hitBaseR) {
+        glm::vec3 cWorld, hWorld, oppSide;
+        glm::vec2 cScreen, hScreen;
+        getBaseRadiusHandleInfo(camera, cWorld, hWorld, cScreen, hScreen, oppSide);
+        float dBase = glm::distance(glm::vec2(mouseX, mouseY), hScreen);
+
+        if (hitPoint == 0) {
+            float dPt = glm::distance(glm::vec2(mouseX, mouseY), cScreen);
+            if (dPt < dBase) {
+                hitBaseR = false;
+            } else {
+                hitPoint = -1;
+            }
+        }
+        if (hitHandle == 0) {
+            glm::vec3 cW0, hW0, sDir0;
+            glm::vec2 cS0, hS0;
+            getPointHandleInfo(camera, 0, cW0, hW0, cS0, hS0, sDir0);
+            float dH0 = glm::distance(glm::vec2(mouseX, mouseY), hS0);
+            if (dH0 < dBase) {
+                hitBaseR = false;
+            } else {
+                hitHandle = -1;
+            }
+        }
+    }
+
+    if (hitBaseR) {
+        m_selectedPointIdx = 0;
+        m_isDraggingBaseRadius = true;
+        m_dragStartMouse = glm::vec2(mouseX, mouseY);
+        m_dragStartBaseRadius = baseRadius;
+        return true;
+    }
+
+    // 1. Check if clicking on control point or point radius handle
     // If both are within threshold (e.g. small radius), choose the closer one
     if (hitPoint != -1 && hitHandle != -1) {
         glm::vec3 cWorld, hWorld, side;
@@ -1016,6 +1113,7 @@ bool TubeTool::handleMouseMove(Scene& scene, const Camera& camera, float mouseX,
     if (!isInteracting() && isMouseOverAnyImGuiWindow()) {
         m_hoveredPointIdx = -1;
         m_hoveredRadiusHandleIdx = -1;
+        m_hoveredBaseRadiusHandle = false;
         m_hoveredRadiusRing = false;
         m_hoveredCurveSeg = -1;
         m_hoveredProfilePtIdx = -1;
@@ -1218,15 +1316,36 @@ bool TubeTool::handleMouseMove(Scene& scene, const Camera& camera, float mouseX,
         return true;
     }
 
+    if (m_isDraggingBaseRadius && m_spline.getPointCount() >= 2) {
+        glm::vec3 cWorld, hWorld, oppSide;
+        glm::vec2 cScreen, hScreen;
+        if (getBaseRadiusHandleInfo(camera, cWorld, hWorld, cScreen, hScreen, oppSide)) {
+            glm::vec2 delta = hScreen - cScreen;
+            float distPx = glm::length(delta);
+            float pxPerUnit = (baseRadius > 1e-4f) ? (distPx / baseRadius) : 20.0f;
+            if (pxPerUnit > 1e-4f && distPx > 1.0f) {
+                glm::vec2 dir = delta / distPx;
+                float projDist = glm::dot(glm::vec2(mouseX, mouseY) - cScreen, dir);
+                float newRadius = std::max(0.05f, projDist / pxPerUnit);
+                setBaseRadius(newRadius);
+                rebuildMeshGeometry(scene);
+            }
+        }
+        return true;
+    }
+
     if (m_isDraggingRadius && m_selectedPointIdx >= 0 && m_selectedPointIdx < static_cast<int>(m_spline.getPointCount())) {
         glm::vec3 cWorld, hWorld, side;
         glm::vec2 cScreen, hScreen;
         if (getPointHandleInfo(camera, m_selectedPointIdx, cWorld, hWorld, cScreen, hScreen, side)) {
-            float distPx = glm::distance(glm::vec2(mouseX, mouseY), cScreen);
             glm::vec3 sUnit = camera.project(cWorld + side * 1.0f);
             float pxPerUnit = glm::distance(cScreen, glm::vec2(sUnit.x, sUnit.y));
             if (pxPerUnit > 1e-4f) {
-                float newRadius = std::max(0.05f, distPx / pxPerUnit);
+                glm::vec2 dir = glm::vec2(sUnit.x - cScreen.x, sUnit.y - cScreen.y);
+                float dirLen = glm::length(dir);
+                if (dirLen > 1e-3f) dir /= dirLen;
+                float projDist = glm::dot(glm::vec2(mouseX, mouseY) - cScreen, dir);
+                float newRadius = std::max(0.05f, projDist / pxPerUnit);
                 m_spline.getPoint(m_selectedPointIdx).radius = newRadius;
                 rebuildMeshGeometry(scene);
             }
@@ -1240,6 +1359,7 @@ bool TubeTool::handleMouseMove(Scene& scene, const Camera& camera, float mouseX,
         m_hoveredProfileSeg = -1;
         m_hoveredRadiusHandleIdx = -1;
         m_hoveredRadiusRing = false;
+        m_hoveredBaseRadiusHandle = false;
         m_hoveredCurveSeg = -1;
         m_hoveredPointIdx = hitTestControlPoints(camera, mouseX, mouseY);
         return false;
@@ -1265,18 +1385,47 @@ bool TubeTool::handleMouseMove(Scene& scene, const Camera& camera, float mouseX,
         m_hoveredPointIdx = -1;
         m_hoveredRadiusHandleIdx = -1;
         m_hoveredRadiusRing = false;
+        m_hoveredBaseRadiusHandle = false;
         m_hoveredCurveSeg = -1;
         return true;
     }
 
-    // Hover detection on control points and radius handles
+    // Hover detection on Base Radius handle, control points and radius handles
+    m_hoveredBaseRadiusHandle = hitTestBaseRadiusHandle(camera, mouseX, mouseY);
     m_hoveredPointIdx = hitTestControlPoints(camera, mouseX, mouseY);
     m_hoveredRadiusHandleIdx = hitTestRadiusHandle(camera, mouseX, mouseY);
     m_hoveredRadiusRing = (m_selectedPointIdx != -1) && hitTestRadiusRing(camera, mouseX, mouseY, m_selectedPointIdx);
 
+    if (m_hoveredBaseRadiusHandle) {
+        glm::vec3 cW, bW, oppDir;
+        glm::vec2 cS, bS;
+        getBaseRadiusHandleInfo(camera, cW, bW, cS, bS, oppDir);
+        float dBase = glm::distance(glm::vec2(mouseX, mouseY), bS);
+
+        if (m_hoveredPointIdx == 0) {
+            float dPt = glm::distance(glm::vec2(mouseX, mouseY), cS);
+            if (dPt < dBase) {
+                m_hoveredBaseRadiusHandle = false;
+            } else {
+                m_hoveredPointIdx = -1;
+            }
+        }
+        if (m_hoveredRadiusHandleIdx == 0) {
+            glm::vec3 cW0, hW0, sDir0;
+            glm::vec2 cS0, hS0;
+            getPointHandleInfo(camera, 0, cW0, hW0, cS0, hS0, sDir0);
+            float dH0 = glm::distance(glm::vec2(mouseX, mouseY), hS0);
+            if (dH0 < dBase) {
+                m_hoveredBaseRadiusHandle = false;
+            } else {
+                m_hoveredRadiusHandleIdx = -1;
+            }
+        }
+    }
+
     // Hover over curve for click-to-insert preview
     m_hoveredCurveSeg = -1;
-    if (m_hoveredPointIdx == -1 && m_hoveredRadiusHandleIdx == -1 && !m_hoveredRadiusRing && m_spline.getPointCount() >= 2) {
+    if (m_hoveredPointIdx == -1 && m_hoveredRadiusHandleIdx == -1 && !m_hoveredBaseRadiusHandle && !m_hoveredRadiusRing && m_spline.getPointCount() >= 2) {
         float segT = 0.5f;
         int hitSeg = findClosestSegmentOnCurve(camera, mouseX, mouseY, 18.0f, &segT);
         if (hitSeg != -1) {
@@ -1393,7 +1542,7 @@ bool TubeTool::handleMouseUp(Scene& scene) {
         return true;
     }
 
-    if (m_isDraggingPoint || m_isDraggingRadius) {
+    if (m_isDraggingPoint || m_isDraggingRadius || m_isDraggingBaseRadius) {
         bool shouldPushHistory = true;
 
         if (m_isDraggingPoint && !m_isExtrudingPoint && m_snapTargetPointIdx != -1 && m_spline.getPointCount() > 2 && m_selectedPointIdx >= 0) {
@@ -1430,10 +1579,16 @@ bool TubeTool::handleMouseUp(Scene& scene) {
             } else {
                 shouldPushHistory = false; // Alt-clicked without dragging; nothing was added or changed
             }
+        } else if (m_isDraggingBaseRadius) {
+            rebuildMeshGeometry(scene);
+            GuiManager::showToast("Base Radius Adjusted", 1.2f);
+        } else if (m_isDraggingRadius) {
+            rebuildMeshGeometry(scene);
         }
 
         m_isDraggingPoint = false;
         m_isDraggingRadius = false;
+        m_isDraggingBaseRadius = false;
         m_isExtrudingPoint = false;
         m_extrudeEndIdx = -1;
         m_snapTargetPointIdx = -1;
@@ -2099,25 +2254,62 @@ void TubeTool::rebuildTubeMesh(Scene& scene, Mesh* tubeMesh) {
     );
 
     // 2. If symmetry is enabled, build symmetric tube
-    if (m_sculpt.getUseSym() && (m_sculpt.getSymX() || m_sculpt.getSymY() || m_sculpt.getSymZ())) {
-        glm::vec3 sScale(m_sculpt.getSymX() ? -1.0f : 1.0f,
-                         m_sculpt.getSymY() ? -1.0f : 1.0f,
-                         m_sculpt.getSymZ() ? -1.0f : 1.0f);
-        bool flipSym = (sScale.x * sScale.y * sScale.z < 0.0f);
+    std::vector<glm::vec3> symScales = m_sculpt.getActiveSymmetryScales();
+    if (!symScales.empty()) {
+        size_t primNbVerts = verts.size() / 3;
+        size_t primNbFaces = faces.size() / 4;
 
-        std::vector<EvaluatedFrame> symFrames = frames;
-        for (auto& f : symFrames) {
-            f.position = f.position * sScale;
-            f.tangent = f.tangent * sScale;
-            f.normal = f.normal * sScale;
-            f.binormal = glm::normalize(glm::cross(f.tangent, f.normal));
+        for (const glm::vec3& sScale : symScales) {
+            bool flipSym = (sScale.x * sScale.y * sScale.z < 0.0f);
+            uint32_t symVertOffset = static_cast<uint32_t>(verts.size() / 3);
+
+            for (size_t i = 0; i < primNbVerts; ++i) {
+                verts.push_back(verts[i * 3 + 0] * sScale.x);
+                verts.push_back(verts[i * 3 + 1] * sScale.y);
+                verts.push_back(verts[i * 3 + 2] * sScale.z);
+
+                normals.push_back(normals[i * 3 + 0] * sScale.x);
+                normals.push_back(normals[i * 3 + 1] * sScale.y);
+                normals.push_back(normals[i * 3 + 2] * sScale.z);
+
+                colors.push_back(colors[i * 3 + 0]);
+                colors.push_back(colors[i * 3 + 1]);
+                colors.push_back(colors[i * 3 + 2]);
+            }
+
+            for (size_t i = 0; i < primNbFaces; ++i) {
+                uint32_t v0 = faces[i * 4 + 0] + symVertOffset;
+                uint32_t v1 = faces[i * 4 + 1] + symVertOffset;
+                uint32_t v2 = faces[i * 4 + 2] + symVertOffset;
+                uint32_t v3 = faces[i * 4 + 3];
+                bool isQuad = (v3 != 0xffffffff);
+                if (isQuad) {
+                    v3 += symVertOffset;
+                    if (flipSym) {
+                        faces.push_back(v0);
+                        faces.push_back(v3);
+                        faces.push_back(v2);
+                        faces.push_back(v1);
+                    } else {
+                        faces.push_back(v0);
+                        faces.push_back(v1);
+                        faces.push_back(v2);
+                        faces.push_back(v3);
+                    }
+                } else {
+                    if (flipSym) {
+                        faces.push_back(v0);
+                        faces.push_back(v2);
+                        faces.push_back(v1);
+                    } else {
+                        faces.push_back(v0);
+                        faces.push_back(v1);
+                        faces.push_back(v2);
+                    }
+                    faces.push_back(0xffffffff);
+                }
+            }
         }
-
-        buildTubeGeometry(
-            symFrames, profType, cType, radSides, ribbonThick,
-            csProfile, csSmooth,
-            verts, normals, colors, faces, flipSym
-        );
     }
 
     int nbVerts = static_cast<int>(verts.size() / 3);
@@ -2152,7 +2344,7 @@ void TubeTool::rebuildTubeMesh(Scene& scene, Mesh* tubeMesh) {
     for (int i = 0; i < nbVerts; ++i) {
         tubeMesh->materials[i * 3 + 0] = 0.5f; // roughness
         tubeMesh->materials[i * 3 + 1] = 0.0f; // metalness
-        tubeMesh->materials[i * 3 + 2] = 0.0f; // mask = 0 (unmasked)
+        tubeMesh->materials[i * 3 + 2] = 1.0f; // mask = 1.0 (unmasked)
     }
 
     tubeMesh->initFaceGroups(scene.getNextFreePolyGroupID());
@@ -2317,7 +2509,10 @@ void TubeTool::renderOverlay(
 
     // Render curves and control points for all selected tubes
     for (Mesh* tMesh : selectedTubes) {
-        bool isPrimary = (tMesh == m_activeTubeMesh);
+        bool isPrimary = (tMesh == m_activeTubeMesh || (selectedTubes.size() == 1 && isTubeTool));
+        if (isPrimary && m_activeTubeMesh != tMesh && tMesh && tMesh->tubeData) {
+            loadFromMesh(tMesh);
+        }
         const CurveSpline& spline = isPrimary ? m_spline : tMesh->tubeData->spline;
         if (spline.getPointCount() < 2) continue;
 
@@ -2387,20 +2582,21 @@ void TubeTool::renderOverlay(
             bool isHandleHovered = isTubeTool && isPrimary && (static_cast<int>(i) == m_hoveredRadiusHandleIdx);
             bool isHandleDragging = isTubeTool && isPrimary && (m_isDraggingRadius && static_cast<int>(i) == m_selectedPointIdx);
 
-            // Compute thickness stick and square handle (ONLY in Tube Tool and on primary active tube)
+            // Compute thickness stick and handle (ONLY in Tube Tool and on primary active tube)
             if (isTubeTool && isPrimary) {
                 glm::vec3 cWorld, hWorld, sideDir;
                 glm::vec2 cScreen, hScreen;
                 bool hasHandle = getPointHandleInfo(camera, static_cast<int>(i), cWorld, hWorld, cScreen, hScreen, sideDir);
 
                 if (hasHandle) {
-                    // Optional faint cross-section ring if handle or point is hovered/dragged/selected
-                    if (isSelected || isPointHovered || isHandleHovered || isHandleDragging) {
+                    // Cross-section ring when hovered/dragged/selected
+                    bool showRing = isSelected || isPointHovered || isHandleHovered || isHandleDragging;
+                    if (showRing) {
                         glm::vec3 viewDir = glm::normalize(camera.getPivot() - camera.computePosition());
                         glm::vec3 right = sideDir;
                         glm::vec3 up = glm::normalize(glm::cross(right, viewDir));
 
-                        const int ringSteps = 24;
+                        const int ringSteps = 32;
                         std::vector<ImVec2> ringScreenPts;
                         ringScreenPts.reserve(ringSteps + 1);
 
@@ -2413,15 +2609,17 @@ void TubeTool::renderOverlay(
                             }
                         }
 
-                        ImU32 ringCol = (isHandleHovered || isHandleDragging) ? IM_COL32(255, 220, 50, 200) : IM_COL32(255, 255, 255, 120);
+                        ImU32 ringCol = (isHandleHovered || isHandleDragging) ? IM_COL32(255, 220, 50, 240) : IM_COL32(255, 255, 255, 120);
+                        float ringThick = (isHandleHovered || isHandleDragging) ? 2.4f : 1.0f;
+
                         if (ringScreenPts.size() >= 2) {
                             for (size_t k = 1; k < ringScreenPts.size(); ++k) {
-                                drawList->AddLine(ringScreenPts[k - 1], ringScreenPts[k], ringCol, (isHandleHovered || isHandleDragging) ? 1.8f : 1.0f);
+                                drawList->AddLine(ringScreenPts[k - 1], ringScreenPts[k], ringCol, ringThick);
                             }
                         }
                     }
 
-                    // Draw Stick Line from point to square
+                    // Draw Stick Line from point to handle
                     // Shadow
                     drawList->AddLine(ImVec2(cScreen.x, cScreen.y), ImVec2(hScreen.x, hScreen.y), IM_COL32(0, 0, 0, 160), 3.5f);
                     // Accent stick
@@ -2433,9 +2631,10 @@ void TubeTool::renderOverlay(
                     } else {
                         stickCol = IM_COL32(180, 235, 255, 200); // Light cyan
                     }
-                    drawList->AddLine(ImVec2(cScreen.x, cScreen.y), ImVec2(hScreen.x, hScreen.y), stickCol, (isHandleHovered || isHandleDragging || isSelected) ? 2.5f : 1.8f);
+                    float stickThick = (isHandleHovered || isHandleDragging || isSelected) ? 2.5f : 1.8f;
+                    drawList->AddLine(ImVec2(cScreen.x, cScreen.y), ImVec2(hScreen.x, hScreen.y), stickCol, stickThick);
 
-                    // Draw Square Handle at end of stick
+                    // Square Handle for local point radius
                     float sqHalf = (isHandleHovered || isHandleDragging) ? 6.5f : (isSelected ? 5.5f : 4.5f);
                     ImVec2 sqMin(hScreen.x - sqHalf, hScreen.y - sqHalf);
                     ImVec2 sqMax(hScreen.x + sqHalf, hScreen.y + sqHalf);
@@ -2460,6 +2659,135 @@ void TubeTool::renderOverlay(
                         char rText[32];
                         snprintf(rText, sizeof(rText), "R: %.2f", pt.radius);
                         drawList->AddText(ImVec2(sqMax.x + 5.0f, hScreen.y - 7.0f), (isHandleHovered || isHandleDragging) ? IM_COL32(255, 240, 100, 255) : IM_COL32(255, 255, 255, 220), rText);
+                    }
+
+                    // Draw Base Radius Manipulator situated directly opposite to Point 0 Radius Handle (direction -sideDir)
+                    if (i == 0 && spline.getPointCount() >= 2) {
+                        glm::vec3 bWorld = cWorld - sideDir * baseRadius;
+                        glm::vec3 sBase = camera.project(bWorld);
+                        glm::vec2 bScreen;
+                        if (sBase.z >= 0.0f && sBase.z <= 1.0f) {
+                            bScreen = glm::vec2(sBase.x, sBase.y);
+                        } else {
+                            float r0 = std::max(0.001f, pt.radius);
+                            float scale = baseRadius / r0;
+                            bScreen = glm::vec2(cScreen.x - (hScreen.x - cScreen.x) * scale, cScreen.y - (hScreen.y - cScreen.y) * scale);
+                        }
+
+                        bool isBaseHovered = m_hoveredBaseRadiusHandle;
+                        bool isBaseDragging = m_isDraggingBaseRadius;
+
+                        // Base radius cross-section ring at start point
+                        if (isBaseHovered || isBaseDragging) {
+                            glm::vec3 viewDir = glm::normalize(camera.getPivot() - camera.computePosition());
+                            glm::vec3 right = -sideDir;
+                            glm::vec3 up = glm::normalize(glm::cross(right, viewDir));
+
+                            const int ringSteps = 32;
+                            std::vector<ImVec2> ringScreenPts;
+                            ringScreenPts.reserve(ringSteps + 1);
+
+                            for (int k = 0; k <= ringSteps; ++k) {
+                                float phi = 2.0f * (float)M_PI * static_cast<float>(k) / static_cast<float>(ringSteps);
+                                glm::vec3 ringWorld = cWorld + (right * std::cos(phi) + up * std::sin(phi)) * baseRadius;
+                                glm::vec3 sRing = camera.project(ringWorld);
+                                if (sRing.z >= 0.0f && sRing.z <= 1.0f) {
+                                    ringScreenPts.emplace_back(sRing.x, sRing.y);
+                                }
+                            }
+
+                            if (ringScreenPts.size() >= 2) {
+                                ImU32 ringCol = isBaseDragging ? IM_COL32(255, 140, 20, 220) : IM_COL32(0, 230, 220, 200);
+                                for (size_t k = 1; k < ringScreenPts.size(); ++k) {
+                                    drawList->AddLine(ringScreenPts[k - 1], ringScreenPts[k], ringCol, 2.0f);
+                                }
+                            }
+                        }
+
+                        // Stick line from start point in opposite direction (-sideDir) to Base Radius handle
+                        drawList->AddLine(ImVec2(cScreen.x, cScreen.y), ImVec2(bScreen.x, bScreen.y), IM_COL32(0, 0, 0, 160), 3.5f);
+                        ImU32 stickCol = isBaseDragging ? IM_COL32(255, 140, 20, 255) : (isBaseHovered ? IM_COL32(255, 230, 40, 255) : IM_COL32(0, 220, 245, 230));
+                        float stickThick = (isBaseHovered || isBaseDragging) ? 2.5f : 1.8f;
+                        drawList->AddLine(ImVec2(cScreen.x, cScreen.y), ImVec2(bScreen.x, bScreen.y), stickCol, stickThick);
+
+                        // Circular Dial Manipulator Widget
+                        float handleRad = (isBaseHovered || isBaseDragging) ? 8.5f : 6.5f;
+                        ImVec2 hPos(bScreen.x, bScreen.y);
+
+                        // Outer aura glow on hover or drag
+                        if (isBaseHovered || isBaseDragging) {
+                            drawList->AddCircle(hPos, handleRad + 5.0f, isBaseDragging ? IM_COL32(255, 140, 20, 140) : IM_COL32(255, 220, 40, 140), 20, 2.0f);
+                        }
+
+                        // Drop shadow
+                        drawList->AddCircleFilled(ImVec2(hPos.x + 1.5f, hPos.y + 1.5f), handleRad + 1.5f, IM_COL32(0, 0, 0, 180), 20);
+
+                        // Outer rim
+                        ImU32 rimCol = (isBaseHovered || isBaseDragging) ? IM_COL32(255, 240, 100, 255) : IM_COL32(20, 25, 30, 240);
+                        drawList->AddCircle(hPos, handleRad, rimCol, 20, 2.0f);
+
+                        // Inner fill
+                        ImU32 fillCol;
+                        if (isBaseDragging) {
+                            fillCol = IM_COL32(255, 140, 20, 255); // Glowing Orange
+                        } else if (isBaseHovered) {
+                            fillCol = IM_COL32(255, 225, 40, 255); // Glowing Yellow
+                        } else {
+                            fillCol = IM_COL32(0, 215, 245, 245);  // Vibrant Cyan
+                        }
+                        drawList->AddCircleFilled(hPos, handleRad - 1.5f, fillCol, 20);
+
+                        // Inner concentric accent circle & center dot
+                        drawList->AddCircle(hPos, std::max(2.0f, handleRad - 3.8f), IM_COL32(255, 255, 255, 200), 16, 1.2f);
+                        drawList->AddCircleFilled(hPos, 2.0f, IM_COL32(255, 255, 255, 240), 8);
+
+                        // Base Radius Badge/Tooltip
+                        char baseRText[48];
+                        snprintf(baseRText, sizeof(baseRText), "Base R: %.2f", baseRadius);
+                        ImVec2 txtSize = ImGui::CalcTextSize(baseRText);
+
+                        // Position badge towards the outside of bScreen (away from center cScreen)
+                        glm::vec2 awayDir = bScreen - cScreen;
+                        float awayLen = glm::length(awayDir);
+                        ImVec2 txtPos;
+                        if (awayLen > 1.0f) {
+                            awayDir /= awayLen;
+                            txtPos = ImVec2(
+                                bScreen.x + awayDir.x * (handleRad + 8.0f) - (awayDir.x < 0.0f ? txtSize.x : 0.0f),
+                                bScreen.y + awayDir.y * (handleRad + 8.0f) - txtSize.y * 0.5f
+                            );
+                        } else {
+                            txtPos = ImVec2(bScreen.x + handleRad + 8.0f, bScreen.y - txtSize.y * 0.5f);
+                        }
+
+                        drawList->AddRectFilled(
+                            ImVec2(txtPos.x - 4.0f, txtPos.y - 2.0f),
+                            ImVec2(txtPos.x + txtSize.x + 4.0f, txtPos.y + txtSize.y + 2.0f),
+                            IM_COL32(15, 20, 25, 215), 3.0f
+                        );
+                        drawList->AddRect(
+                            ImVec2(txtPos.x - 4.0f, txtPos.y - 2.0f),
+                            ImVec2(txtPos.x + txtSize.x + 4.0f, txtPos.y + txtSize.y + 2.0f),
+                            (isBaseHovered || isBaseDragging) ? IM_COL32(255, 220, 50, 180) : IM_COL32(0, 200, 220, 160),
+                            3.0f, 0, 1.0f
+                        );
+                        drawList->AddText(
+                            txtPos,
+                            (isBaseHovered || isBaseDragging) ? IM_COL32(255, 230, 40, 255) : IM_COL32(220, 245, 255, 240),
+                            baseRText
+                        );
+
+                        if (isBaseHovered && !isBaseDragging) {
+                            const char* hint = "Drag to adjust Base Radius (scales all points)";
+                            ImVec2 hintSize = ImGui::CalcTextSize(hint);
+                            ImVec2 hintPos(txtPos.x, txtPos.y + txtSize.y + 4.0f);
+                            drawList->AddRectFilled(
+                                ImVec2(hintPos.x - 3.0f, hintPos.y - 1.0f),
+                                ImVec2(hintPos.x + hintSize.x + 3.0f, hintPos.y + hintSize.y + 1.0f),
+                                IM_COL32(10, 15, 20, 200), 2.0f
+                            );
+                            drawList->AddText(hintPos, IM_COL32(220, 230, 245, 220), hint);
+                        }
                     }
                 }
             }
