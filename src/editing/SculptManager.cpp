@@ -654,7 +654,8 @@ int SculptManager::doStrokePass(
     Mesh* mesh,
     BrushType activeBrush,
     bool negative,
-    std::vector<uint32_t>& pickedVertices,
+    const uint32_t* pVerts,
+    size_t nbVerts,
     const glm::vec3& currentIntersection,
     const glm::vec3& currentIntersectionNormal,
     const glm::vec3& initialIntersection,
@@ -664,15 +665,17 @@ int SculptManager::doStrokePass(
     float intensity,
     float mouseX,
     bool isSymmetry,
-    const glm::vec3& sScale
+    const glm::vec3& sScale,
+    const std::vector<uint32_t>* pPickedVec
 ) {
+    uint32_t* pData = const_cast<uint32_t*>(pVerts);
     std::vector<float> preVerts;
     bool isLayerDeform = mesh && mesh->isLayerRecording() && activeBrush != BRUSH_DELETE_LAYER &&
                          activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_POLYGROUP;
-    if (isLayerDeform && !pickedVertices.empty()) {
-        preVerts.resize(pickedVertices.size() * 3);
-        for (size_t i = 0; i < pickedVertices.size(); ++i) {
-            uint32_t v = pickedVertices[i];
+    if (isLayerDeform && nbVerts > 0) {
+        preVerts.resize(nbVerts * 3);
+        for (size_t i = 0; i < nbVerts; ++i) {
+            uint32_t v = pVerts[i];
             preVerts[i * 3 + 0] = mesh->verts[v * 3 + 0];
             preVerts[i * 3 + 1] = mesh->verts[v * 3 + 1];
             preVerts[i * 3 + 2] = mesh->verts[v * 3 + 2];
@@ -693,8 +696,8 @@ int SculptManager::doStrokePass(
                     mesh->verts.data(),
                     mesh->normals.data(),
                     mesh->materials.data(),
-                    pickedVertices.data(),
-                    pickedVertices.size(),
+                    pData,
+                    nbVerts,
                     areaResults
                 )) {
                     if (!getCurrentSettings().flattenLockNormal) {
@@ -717,8 +720,8 @@ int SculptManager::doStrokePass(
                 mesh->verts.data(),
                 mesh->vertProxy.data(),
                 mesh->materials.data(),
-                pickedVertices.data(),
-                pickedVertices.size(),
+                pData,
+                nbVerts,
                 currentIntersection.x, currentIntersection.y, currentIntersection.z,
                 areaCenter.x, areaCenter.y, areaCenter.z,
                 areaNormal.x, areaNormal.y, areaNormal.z,
@@ -737,8 +740,8 @@ int SculptManager::doStrokePass(
                 mesh->vrvStartCount.data(),
                 mesh->vertRingVert.data(),
                 mesh->vertOnEdge.data(),
-                pickedVertices.data(),
-                pickedVertices.size(),
+                pData,
+                nbVerts,
                 currentIntersection.x, currentIntersection.y, currentIntersection.z,
                 localRadius, intensity,
                 getCurrentSettings().tangent,
@@ -748,14 +751,26 @@ int SculptManager::doStrokePass(
             break;
         }
         case BRUSH_RELAX: {
-            deformedCount = m_relaxEngine.relaxVertices(
-                mesh,
-                pickedVertices,
-                currentIntersection,
-                localRadius,
-                intensity,
-                getCurrentSettings()
-            );
+            if (pPickedVec) {
+                deformedCount = m_relaxEngine.relaxVertices(
+                    mesh,
+                    *const_cast<std::vector<uint32_t>*>(pPickedVec),
+                    currentIntersection,
+                    localRadius,
+                    intensity,
+                    getCurrentSettings()
+                );
+            } else {
+                std::vector<uint32_t> tempVerts(pVerts, pVerts + nbVerts);
+                deformedCount = m_relaxEngine.relaxVertices(
+                    mesh,
+                    tempVerts,
+                    currentIntersection,
+                    localRadius,
+                    intensity,
+                    getCurrentSettings()
+                );
+            }
             break;
         }
         case BRUSH_INFLATE: {
@@ -764,8 +779,8 @@ int SculptManager::doStrokePass(
                 mesh->vertProxy.data(),
                 mesh->materials.data(),
                 mesh->normals.data(),
-                pickedVertices.data(),
-                pickedVertices.size(),
+                pData,
+                nbVerts,
                 currentIntersection.x, currentIntersection.y, currentIntersection.z,
                 localRadius, intensity,
                 negative,
@@ -779,8 +794,8 @@ int SculptManager::doStrokePass(
             deformedCount = strokePinch(
                 mesh->verts.data(),
                 mesh->materials.data(),
-                pickedVertices.data(),
-                pickedVertices.size(),
+                pData,
+                nbVerts,
                 currentIntersection.x, currentIntersection.y, currentIntersection.z,
                 localRadius, intensity,
                 negative,
@@ -795,8 +810,8 @@ int SculptManager::doStrokePass(
                 mesh->verts.data(),
                 mesh->vertProxy.data(),
                 mesh->materials.data(),
-                pickedVertices.data(),
-                pickedVertices.size(),
+                pData,
+                nbVerts,
                 currentIntersection.x, currentIntersection.y, currentIntersection.z,
                 currentIntersectionNormal.x, currentIntersectionNormal.y, currentIntersectionNormal.z,
                 localRadius, intensity,
@@ -812,8 +827,8 @@ int SculptManager::doStrokePass(
                 mesh->verts.data(),
                 mesh->vertProxy.data(),
                 mesh->materials.data(),
-                pickedVertices.data(),
-                pickedVertices.size(),
+                pData,
+                nbVerts,
                 currentIntersection.x, currentIntersection.y, currentIntersection.z,
                 currentIntersectionNormal.x, currentIntersectionNormal.y, currentIntersectionNormal.z,
                 localRadius, intensity,
@@ -854,8 +869,8 @@ int SculptManager::doStrokePass(
                 mesh->verts.data(),
                 mesh->vertProxy.data(),
                 mesh->materials.data(),
-                pickedVertices.data(),
-                pickedVertices.size(),
+                pData,
+                nbVerts,
                 initialIntersection.x, initialIntersection.y, initialIntersection.z,
                 dragDirection.x, dragDirection.y, dragDirection.z,
                 localRadius,
@@ -894,8 +909,8 @@ int SculptManager::doStrokePass(
             deformedCount = strokeDrag(
                 mesh->verts.data(),
                 mesh->materials.data(),
-                pickedVertices.data(),
-                pickedVertices.size(),
+                pData,
+                nbVerts,
                 initialIntersection.x, initialIntersection.y, initialIntersection.z,
                 dragDirection.x, dragDirection.y, dragDirection.z,
                 localRadius,
@@ -935,8 +950,8 @@ int SculptManager::doStrokePass(
                 mesh->verts.data(),
                 mesh->vertProxy.data(),
                 mesh->materials.data(),
-                pickedVertices.data(),
-                pickedVertices.size(),
+                pData,
+                nbVerts,
                 initialIntersection.x, initialIntersection.y, initialIntersection.z,
                 dragDirection.x, dragDirection.y, dragDirection.z,
                 localRadius, getCurrentSettings().elasticity,
@@ -954,8 +969,8 @@ int SculptManager::doStrokePass(
             deformedCount = strokeSnakeHook(
                 mesh->verts.data(),
                 mesh->materials.data(),
-                pickedVertices.data(),
-                static_cast<int>(pickedVertices.size()),
+                pData,
+                static_cast<int>(nbVerts),
                 tipStart.x, tipStart.y, tipStart.z,
                 tipEnd.x, tipEnd.y, tipEnd.z,
                 localRadius, intensity,
@@ -976,7 +991,7 @@ int SculptManager::doStrokePass(
                     mesh->vrvStartCount.data(),
                     mesh->vertRingVert.data(),
                     mesh->vertOnEdge.data(),
-                    pickedVertices.data(),
+                    pData,
                     deformedCount,
                     tipEnd.x, tipEnd.y, tipEnd.z,
                     localRadius,
@@ -993,8 +1008,8 @@ int SculptManager::doStrokePass(
             deformedCount = strokeMask(
                 mesh->verts.data(),
                 mesh->materials.data(),
-                pickedVertices.data(),
-                pickedVertices.size(),
+                pData,
+                nbVerts,
                 currentIntersection.x, currentIntersection.y, currentIntersection.z,
                 localRadius, intensity, getSettings(activeBrush).hardness,
                 negative,
@@ -1008,8 +1023,8 @@ int SculptManager::doStrokePass(
                 mesh->verts.data(),
                 mesh->colors.data(),
                 mesh->materials.data(),
-                pickedVertices.data(),
-                pickedVertices.size(),
+                pData,
+                nbVerts,
                 currentIntersection.x, currentIntersection.y, currentIntersection.z,
                 localRadius, intensity, getCurrentSettings().hardness,
                 getCurrentSettings().paintColor.r, getCurrentSettings().paintColor.g, getCurrentSettings().paintColor.b,
@@ -1021,7 +1036,8 @@ int SculptManager::doStrokePass(
             break;
         }
         case BRUSH_POLYGROUP: {
-            for (uint32_t v : pickedVertices) {
+            for (size_t i = 0; i < nbVerts; ++i) {
+                uint32_t v = pVerts[i];
                 if (v * 2 + 1 < mesh->vrfStartCount.size()) {
                     uint32_t start = mesh->vrfStartCount[v * 2];
                     uint32_t count = mesh->vrfStartCount[v * 2 + 1];
@@ -1034,15 +1050,15 @@ int SculptManager::doStrokePass(
                 }
             }
             mesh->isFaceGroupDirty = true;
-            deformedCount = (int)pickedVertices.size();
+            deformedCount = (int)nbVerts;
             break;
         }
         case BRUSH_TWIST: {
             deformedCount = strokeTwist(
                 mesh->verts.data(),
                 mesh->materials.data(),
-                pickedVertices.data(),
-                pickedVertices.size(),
+                pData,
+                nbVerts,
                 currentIntersection.x, currentIntersection.y, currentIntersection.z,
                 currentIntersectionNormal.x, currentIntersectionNormal.y, currentIntersectionNormal.z,
                 localRadius, intensity * 3.14159f * 0.5f,
@@ -1055,8 +1071,8 @@ int SculptManager::doStrokePass(
             deformedCount = strokeLocalScale(
                 mesh->verts.data(),
                 mesh->materials.data(),
-                pickedVertices.data(),
-                pickedVertices.size(),
+                pData,
+                nbVerts,
                 currentIntersection.x, currentIntersection.y, currentIntersection.z,
                 localRadius, intensity,
                 getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
@@ -1078,8 +1094,8 @@ int SculptManager::doStrokePass(
                         mesh->verts.data(),
                         mesh->normals.data(),
                         mesh->materials.data(),
-                        pickedVertices.data(),
-                        pickedVertices.size(),
+                        pData,
+                        nbVerts,
                         areaResults
                     )) {
                         if (!getCurrentSettings().flattenLockNormal) {
@@ -1104,8 +1120,8 @@ int SculptManager::doStrokePass(
                 mesh->verts.data(),
                 mesh->vertProxy.data(),
                 mesh->materials.data(),
-                pickedVertices.data(),
-                pickedVertices.size(),
+                pData,
+                nbVerts,
                 currentIntersection.x, currentIntersection.y, currentIntersection.z,
                 areaCenter.x, areaCenter.y, areaCenter.z,
                 areaNormal.x, areaNormal.y, areaNormal.z,
@@ -1130,8 +1146,8 @@ int SculptManager::doStrokePass(
                         mesh->verts.data(),
                         mesh->normals.data(),
                         mesh->materials.data(),
-                        pickedVertices.data(),
-                        pickedVertices.size(),
+                        pData,
+                        nbVerts,
                         areaResults
                     )) {
                         if (!getCurrentSettings().flattenLockNormal) {
@@ -1196,8 +1212,8 @@ int SculptManager::doStrokePass(
             deformedCount = strokeSquareBrush(
                 mesh->verts.data(),
                 mesh->materials.data(),
-                pickedVertices.data(),
-                pickedVertices.size(),
+                pData,
+                nbVerts,
                 currentIntersection.x, currentIntersection.y, currentIntersection.z,
                 areaCenter.x, areaCenter.y, areaCenter.z,
                 areaNormal.x, areaNormal.y, areaNormal.z,
@@ -1214,8 +1230,8 @@ int SculptManager::doStrokePass(
                 mesh->verts.data(),
                 mesh->vertProxy.data(),
                 mesh->materials.data(),
-                pickedVertices.data(),
-                pickedVertices.size(),
+                pData,
+                nbVerts,
                 currentIntersection.x, currentIntersection.y, currentIntersection.z,
                 currentIntersectionNormal.x, currentIntersectionNormal.y, currentIntersectionNormal.z,
                 localRadius, intensity,
@@ -1234,8 +1250,8 @@ int SculptManager::doStrokePass(
                 mesh->verts.data(),
                 mesh->normals.data(),
                 mesh->materials.data(),
-                pickedVertices.data(),
-                pickedVertices.size(),
+                pData,
+                nbVerts,
                 areaResults
             )) {
                 areaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
@@ -1289,8 +1305,8 @@ int SculptManager::doStrokePass(
             deformedCount = strokeSquareBrush(
                 mesh->verts.data(),
                 mesh->materials.data(),
-                pickedVertices.data(),
-                pickedVertices.size(),
+                pData,
+                nbVerts,
                 currentIntersection.x, currentIntersection.y, currentIntersection.z,
                 areaCenter.x, areaCenter.y, areaCenter.z,
                 areaNormal.x, areaNormal.y, areaNormal.z,
@@ -1310,8 +1326,8 @@ int SculptManager::doStrokePass(
                 mesh->verts.data(),
                 mesh->normals.data(),
                 mesh->materials.data(),
-                pickedVertices.data(),
-                pickedVertices.size(),
+                pData,
+                nbVerts,
                 areaResults
             )) {
                 if (areaResults[6] > 0.0f) {
@@ -1387,8 +1403,8 @@ int SculptManager::doStrokePass(
                 mesh->verts.data(),
                 mesh->vertProxy.data(),
                 mesh->materials.data(),
-                pickedVertices.data(),
-                pickedVertices.size(),
+                pData,
+                nbVerts,
                 currentIntersection.x, currentIntersection.y, currentIntersection.z,
                 areaCenter.x, areaCenter.y, areaCenter.z,
                 areaNormal.x, areaNormal.y, areaNormal.z,
@@ -1418,8 +1434,8 @@ int SculptManager::doStrokePass(
                         mesh->verts.data(),
                         mesh->normals.data(),
                         mesh->materials.data(),
-                        pickedVertices.data(),
-                        pickedVertices.size(),
+                        pData,
+                        nbVerts,
                         areaResults
                     )) {
                         if (!getCurrentSettings().flattenLockNormal) {
@@ -1515,8 +1531,8 @@ int SculptManager::doStrokePass(
                 mesh->verts.data(),
                 mesh->vertProxy.data(),
                 mesh->materials.data(),
-                pickedVertices.data(),
-                pickedVertices.size(),
+                pData,
+                nbVerts,
                 currentIntersection.x, currentIntersection.y, currentIntersection.z,
                 areaCenter.x, areaCenter.y, areaCenter.z,
                 areaNormal.x, areaNormal.y, areaNormal.z,
@@ -1548,8 +1564,8 @@ int SculptManager::doStrokePass(
                 layer->deltaVerts.data(),
                 mesh->verts.data(),
                 mesh->materials.data(),
-                pickedVertices.data(),
-                pickedVertices.size(),
+                pData,
+                nbVerts,
                 currentIntersection.x, currentIntersection.y, currentIntersection.z,
                 localRadius, intensity,
                 layer->intensity,
@@ -1586,7 +1602,7 @@ int SculptManager::doStrokePass(
             bool isGrabBrush = (activeBrush == BRUSH_MOVE || activeBrush == BRUSH_DRAG || activeBrush == BRUSH_ELASTIC);
 
             for (int i = 0; i < deformedCount; ++i) {
-                uint32_t v = pickedVertices[i];
+                uint32_t v = pVerts[i];
                 if (v * 3 + 2 < mesh->verts.size() && v * 3 + 2 < layer->deltaVerts.size()) {
                     bool isSnakeBrush = (activeBrush == BRUSH_SNAKEHOOK);
                     float dx = isSnakeBrush ? ((mesh->verts[v * 3 + 0] - preVerts[i * 3 + 0]) * invIntensity)
@@ -1636,6 +1652,9 @@ void SculptManager::cancelStroke() {
     m_isSculpting = false;
     m_pendingBVHUpdate = false;
     m_grabbedNumIFaces = 0;
+    m_grabUndoRecorded = false;
+    m_grabbedMinV = 0xFFFFFFFF;
+    m_grabbedMaxV = 0;
     m_relaxEngine.endStroke();
     m_grabbedVertices.clear();
     m_grabbedVerticesSyms.clear();
@@ -2286,7 +2305,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             culledAndFiltered = true;
         }
     } else if (isGrabBrush && !m_firstStrokeFrame) {
-        pickedVertices = m_grabbedVertices;
+        // Zero-copy: do not copy m_grabbedVertices into pickedVerticesCache
         culledAndFiltered = true;
     } else {
         if (getSettings(activeBrush).topoCheck) {
@@ -2325,7 +2344,9 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         m_lastFrameProfile.symPickUsedMT = ps1.usedMT;
         m_lastFrameProfile.symPickThreads = ps1.numThreads;
     }
-    m_lastFrameProfile.pickedVertCount = (int)pickedVertices.size();
+    const uint32_t* primaryVerts = (isGrabBrush && !m_firstStrokeFrame) ? m_grabbedVertices.data() : pickedVertices.data();
+    const size_t primaryVertCount = (isGrabBrush && !m_firstStrokeFrame) ? m_grabbedVertices.size() : pickedVertices.size();
+    m_lastFrameProfile.pickedVertCount = (int)primaryVertCount;
 
     // --- Stage 3: Culling & PolyGroup Filtering ---
     tStage = std::chrono::high_resolution_clock::now();
@@ -2343,8 +2364,10 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     m_lastFrameProfile.cullingMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
 
     std::vector<uint32_t> allAffectedVerts;
-    if (!pickedVertices.empty()) {
-        allAffectedVerts.reserve(pickedVertices.size() * (m_useSym ? 2 : 1));
+    if (primaryVertCount > 0) {
+        if (!isGrabBrush || m_firstStrokeFrame) {
+            allAffectedVerts.reserve(primaryVertCount * (m_useSym ? 2 : 1));
+        }
         bool isMayaNav = m_hotkeyManager ? m_hotkeyManager->getModifierBehavior().ctrlAltInvertsBrush : (camera.getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
         bool isCtrl = (SDL_GetModState() & KMOD_CTRL) != 0;
         bool isAlt = (SDL_GetModState() & KMOD_ALT) != 0;
@@ -2368,10 +2391,10 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                         vertsData[idx + 2] = vertProxyData[idx + 2];
                     }
                 } else {
-                    int nbPicked = (int)pickedVertices.size();
+                    int nbPicked = (int)primaryVertCount;
                     #pragma omp parallel for schedule(static) if(nbPicked > 1000)
                     for (int i = 0; i < nbPicked; ++i) {
-                        uint32_t v = pickedVertices[i];
+                        uint32_t v = primaryVerts[i];
                         uint32_t idx = v * 3;
                         vertsData[idx]     = vertProxyData[idx];
                         vertsData[idx + 1] = vertProxyData[idx + 1];
@@ -2427,16 +2450,25 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                                        (activeBrush == BRUSH_MASK || activeBrush == BRUSH_MASK_GRADIENT_BLUR);
 
         // --- Stage 4: Undo Record ---
-        tStage = std::chrono::high_resolution_clock::now();
-        g_undoManager.recordAffectedVertices(scene, mesh->m_id, pickedVertices, strokeAffectsPositions, strokeAffectsColors, strokeAffectsMaterials);
-        if (m_useSym) {
-            for (const auto& symList : m_prePickedSymVerts) {
-                if (!symList.empty()) {
-                    g_undoManager.recordAffectedVertices(scene, mesh->m_id, symList, strokeAffectsPositions, strokeAffectsColors, strokeAffectsMaterials);
+        bool skipGrabUndo = isGrabBrush && !m_firstStrokeFrame && m_grabUndoRecorded;
+        if (!skipGrabUndo) {
+            tStage = std::chrono::high_resolution_clock::now();
+            if (isGrabBrush && !m_firstStrokeFrame) {
+                g_undoManager.recordAffectedVertices(scene, mesh->m_id, m_grabbedVertices, strokeAffectsPositions, strokeAffectsColors, strokeAffectsMaterials);
+            } else {
+                g_undoManager.recordAffectedVertices(scene, mesh->m_id, pickedVertices, strokeAffectsPositions, strokeAffectsColors, strokeAffectsMaterials);
+            }
+            if (m_useSym) {
+                for (const auto& symList : m_prePickedSymVerts) {
+                    if (!symList.empty()) {
+                        g_undoManager.recordAffectedVertices(scene, mesh->m_id, symList, strokeAffectsPositions, strokeAffectsColors, strokeAffectsMaterials);
+                    }
                 }
             }
+            m_lastFrameProfile.undoRecordMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
+        } else {
+            m_lastFrameProfile.undoRecordMs = 0.0;
         }
-        m_lastFrameProfile.undoRecordMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
 
         // --- Stage 5: Primary Deform Pass ---
         tStage = std::chrono::high_resolution_clock::now();
@@ -2445,7 +2477,8 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             mesh,
             activeBrush,
             negative,
-            pickedVertices,
+            primaryVerts,
+            primaryVertCount,
             m_currentIntersection,
             m_currentIntersectionNormal,
             m_initialIntersection,
@@ -2455,12 +2488,13 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             intensity,
             mouseX,
             false,
-            glm::vec3(1.0f)
+            glm::vec3(1.0f),
+            (isGrabBrush && !m_firstStrokeFrame) ? nullptr : &pickedVertices
         );
         m_lastFrameProfile.primaryDeformMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
 
-        if (primaryDeformed > 0) {
-            allAffectedVerts.insert(allAffectedVerts.end(), pickedVertices.begin(), pickedVertices.begin() + primaryDeformed);
+        if (primaryDeformed > 0 && (!isGrabBrush || m_firstStrokeFrame)) {
+            allAffectedVerts.insert(allAffectedVerts.end(), primaryVerts, primaryVerts + primaryDeformed);
         }
 
         // --- Stage 6: Symmetry Pass ---
@@ -2541,9 +2575,6 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                     } else {
                         symCenter = initSymInter;
                     }
-                    if (sIdx < m_grabbedVerticesSyms.size()) {
-                        symVerts = m_grabbedVerticesSyms[sIdx];
-                    }
                 } else {
                     symCenter = reflectPointSymmetry(m_currentIntersection, sScale, mesh, m_symmetryMode);
                     if (sIdx < m_prePickedSymVerts.size() && !m_prePickedSymVerts[sIdx].empty()) {
@@ -2581,19 +2612,29 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                         m_grabbedVerticesSyms[sIdx] = symVerts;
                     }
                 }
+                const uint32_t* pSymData = (isGrabBrush && !m_firstStrokeFrame && sIdx < m_grabbedVerticesSyms.size())
+                    ? m_grabbedVerticesSyms[sIdx].data()
+                    : symVerts.data();
+                size_t numSymData = (isGrabBrush && !m_firstStrokeFrame && sIdx < m_grabbedVerticesSyms.size())
+                    ? m_grabbedVerticesSyms[sIdx].size()
+                    : symVerts.size();
                 double thisSymPickMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tSymPick0).count() - thisSymCullMs;
                 m_lastFrameProfile.symPickMs += std::max(0.0, thisSymPickMs);
                 m_lastFrameProfile.symCullMs += thisSymCullMs;
 
-                if (!symVerts.empty()) {
+                if (numSymData > 0) {
                     glm::vec3 symAreaNormal = reflectVectorSymmetry(m_cachedAreaNormal, sScale, mesh, m_symmetryMode);
                     glm::vec3 symAreaCenter = reflectPointSymmetry(m_cachedAreaCenter, sScale, mesh, m_symmetryMode);
                     glm::vec3 symIntersectionNormal = reflectVectorSymmetry(m_currentIntersectionNormal, sScale, mesh, m_symmetryMode);
                     const glm::vec3& initSymInter = (sIdx < m_initialSymIntersections.size()) ? m_initialSymIntersections[sIdx] : reflectPointSymmetry(m_initialIntersection, sScale, mesh, m_symmetryMode);
 
-                    if (!fromPrePicked) {
+                    if (!fromPrePicked && !skipGrabUndo) {
                         auto tUndoSym = std::chrono::high_resolution_clock::now();
-                        g_undoManager.recordAffectedVertices(scene, mesh->m_id, symVerts, strokeAffectsPositions, strokeAffectsColors, strokeAffectsMaterials);
+                        if (isGrabBrush && !m_firstStrokeFrame) {
+                            g_undoManager.recordAffectedVertices(scene, mesh->m_id, m_grabbedVerticesSyms[sIdx], strokeAffectsPositions, strokeAffectsColors, strokeAffectsMaterials);
+                        } else {
+                            g_undoManager.recordAffectedVertices(scene, mesh->m_id, symVerts, strokeAffectsPositions, strokeAffectsColors, strokeAffectsMaterials);
+                        }
                         double uSymMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tUndoSym).count();
                         m_lastFrameProfile.undoRecordMs += uSymMs;
                         m_lastFrameProfile.symUndoMs += uSymMs;
@@ -2605,7 +2646,8 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                         mesh,
                         activeBrush,
                         negative,
-                        symVerts,
+                        pSymData,
+                        numSymData,
                         symCenter,
                         symIntersectionNormal,
                         initSymInter,
@@ -2615,25 +2657,35 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                         intensity,
                         mouseX,
                         true,
-                        sScale
+                        sScale,
+                        (isGrabBrush && !m_firstStrokeFrame) ? nullptr : &symVerts
                     );
                     m_lastFrameProfile.symDeformMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tSymDef0).count();
 
-                    if (symDeformed > 0) {
-                        allAffectedVerts.insert(allAffectedVerts.end(), symVerts.begin(), symVerts.begin() + symDeformed);
+                    if (symDeformed > 0 && (!isGrabBrush || m_firstStrokeFrame)) {
+                        allAffectedVerts.insert(allAffectedVerts.end(), pSymData, pSymData + symDeformed);
                     }
                 }
             }
         }
         m_lastFrameProfile.symmetryMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
+        if (isGrabBrush && m_firstStrokeFrame) {
+            m_grabUndoRecorded = true;
+        }
     }
 
     if (activeBrush == BRUSH_SNAKEHOOK) {
         m_snakePrevTipPos = m_currentIntersection;
     }
 
+    const uint32_t* pAff = nullptr;
+    size_t numAff = 0;
+
     if (isGrabBrush && !m_firstStrokeFrame && !m_grabbedAffectedVerts.empty()) {
-        allAffectedVerts = m_grabbedAffectedVerts;
+        pAff = m_grabbedAffectedVerts.data();
+        numAff = m_grabbedAffectedVerts.size();
+        m_affectedMinV = m_grabbedMinV;
+        m_affectedMaxV = m_grabbedMaxV;
         m_lastFrameProfile.sortDedupMs = 0.0;
     } else if (!allAffectedVerts.empty()) {
         tStage = std::chrono::high_resolution_clock::now();
@@ -2735,18 +2787,22 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         m_lastFrameProfile.sortDedupMs = std::chrono::duration<double, std::milli>(tSortEnd - tStage).count();
         if (isGrabBrush) {
             m_grabbedAffectedVerts = allAffectedVerts;
+            m_grabbedMinV = minV;
+            m_grabbedMaxV = maxV;
         }
+        pAff = allAffectedVerts.data();
+        numAff = allAffectedVerts.size();
     }
-    m_lastFrameProfile.affectedVertCount = (int)allAffectedVerts.size();
+    m_lastFrameProfile.affectedVertCount = (int)numAff;
 
-    if (!allAffectedVerts.empty()) {
+    if (numAff > 0) {
         bool isSculptDeform = (activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_MASK_GRADIENT_BLUR && activeBrush != BRUSH_POLYGROUP);
 
         if (isSculptDeform) {
             if (m_tagFlags.size() < (size_t)mesh->nbFaces) {
                 m_tagFlags.assign(mesh->nbFaces, 0);
             }
-            size_t neededFaces = std::min((size_t)mesh->nbFaces, allAffectedVerts.size() * 8 + 1024);
+            size_t neededFaces = std::min((size_t)mesh->nbFaces, numAff * 8 + 1024);
             if (m_iFacesCache.size() < neededFaces) {
                 m_iFacesCache.resize(neededFaces);
             }
@@ -2759,8 +2815,8 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             } else {
                 tStage = std::chrono::high_resolution_clock::now();
                 numIFaces = getFacesFromVerticesFast(
-                    allAffectedVerts.data(),
-                    allAffectedVerts.size(),
+                    pAff,
+                    numAff,
                     mesh->vrfStartCount.data(),
                     mesh->vertRingFace.data(),
                     m_iFacesCache.data(),
@@ -2790,7 +2846,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             // --- Stage 9: Vertex Normals ---
             tStage = std::chrono::high_resolution_clock::now();
             updateVertexNormals(
-                allAffectedVerts.data(), allAffectedVerts.size(), mesh->nbVerts,
+                pAff, numAff, mesh->nbVerts,
                 mesh->vrfStartCount.data(),
                 mesh->vertRingFace.data(),
                 mesh->faceNormals.data(),
@@ -2819,9 +2875,9 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 
         uint32_t minV = m_affectedMinV;
         uint32_t maxV = m_affectedMaxV;
-        if (minV > maxV && !allAffectedVerts.empty()) {
-            minV = allAffectedVerts.front();
-            maxV = allAffectedVerts.back();
+        if (minV > maxV && numAff > 0) {
+            minV = pAff[0];
+            maxV = pAff[numAff - 1];
         }
 
         if (mesh->isVertexDirty || mesh->isColorDirty || mesh->isMaterialDirty) {
@@ -3851,6 +3907,9 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 m_firstStrokeFrame = true;
                 m_pendingBVHUpdate = false;
                 m_grabbedNumIFaces = 0;
+                m_grabUndoRecorded = false;
+                m_grabbedMinV = 0xFFFFFFFF;
+                m_grabbedMaxV = 0;
                 m_hasAlphaOrigin = false;
                 m_hasRakeDir = false;
                 if (!m_isTubeMoveStroke) {
@@ -4571,6 +4630,9 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             }
             m_grabbedVertices.clear();
             m_grabbedVerticesSyms.clear();
+            m_grabUndoRecorded = false;
+            m_grabbedMinV = 0xFFFFFFFF;
+            m_grabbedMaxV = 0;
 
             if (m_isTubeMoveStroke) {
                 m_isTubeMoveStroke = false;

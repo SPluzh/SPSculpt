@@ -713,6 +713,9 @@ private:
     std::vector<uint32_t> m_grabbedAffectedVerts;
     std::vector<uint32_t> m_grabbedIFacesCache;
     uint32_t              m_grabbedNumIFaces = 0;
+    bool                  m_grabUndoRecorded = false;
+    uint32_t              m_grabbedMinV = 0xFFFFFFFF;
+    uint32_t              m_grabbedMaxV = 0;
     std::vector<std::vector<uint32_t>> m_prePickedSymVerts;
 
     // Measurement & Divider states
@@ -763,6 +766,26 @@ private:
         Mesh* mesh,
         BrushType activeBrush,
         bool negative,
+        const uint32_t* pVerts,
+        size_t nbVerts,
+        const glm::vec3& currentIntersection,
+        const glm::vec3& currentIntersectionNormal,
+        const glm::vec3& initialIntersection,
+        const glm::vec3& cachedAreaNormal,
+        const glm::vec3& cachedAreaCenter,
+        float localRadius,
+        float intensity,
+        float mouseX,
+        bool isSymmetry = false,
+        const glm::vec3& sScale = glm::vec3(1.0f),
+        const std::vector<uint32_t>* pPickedVec = nullptr
+    );
+
+    int doStrokePass(
+        Scene& scene,
+        Mesh* mesh,
+        BrushType activeBrush,
+        bool negative,
         std::vector<uint32_t>& pickedVertices,
         const glm::vec3& currentIntersection,
         const glm::vec3& currentIntersectionNormal,
@@ -774,7 +797,15 @@ private:
         float mouseX,
         bool isSymmetry = false,
         const glm::vec3& sScale = glm::vec3(1.0f)
-    );
+    ) {
+        return doStrokePass(
+            scene, mesh, activeBrush, negative,
+            pickedVertices.data(), pickedVertices.size(),
+            currentIntersection, currentIntersectionNormal,
+            initialIntersection, cachedAreaNormal, cachedAreaCenter,
+            localRadius, intensity, mouseX, isSymmetry, sScale, &pickedVertices
+        );
+    }
 };
 
 
