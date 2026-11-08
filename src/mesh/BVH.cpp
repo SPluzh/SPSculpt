@@ -178,6 +178,7 @@ void BVH::clear() {
     m_nodeVisitedEpoch = 0;
     m_dirtyLeaves.clear();
     m_dirtyInnerNodes.clear();
+    m_dirtyInnerNodesTemp.clear();
     lastCollectCellsMs = 0.0;
     lastCandidateVertsMs = 0.0;
     lastFilterVertsMs = 0.0;
@@ -210,6 +211,10 @@ void BVH::computeLeafAABB(const Mesh& mesh, BVHNode& node, uint32_t nodeIdx, boo
     if (hasFaceBoxes) {
         const float* const fb = mesh.faceBoxes.data();
         for (uint32_t i = 0; i < count; ++i) {
+            if (i + 4 < count) {
+                uint32_t nextFace = primIndices[first + i + 4];
+                __builtin_prefetch(fb + nextFace * 6, 0, 1);
+            }
             uint32_t faceId = primIndices[first + i];
             uint32_t idx = faceId * 6;
             bmin = glm::min(bmin, glm::vec3(fb[idx + 0], fb[idx + 1], fb[idx + 2]));
@@ -357,10 +362,11 @@ void BVH::build(const Mesh& mesh) {
             }
         }
 
+        const bool hasFaceBoxes = mesh.faceBoxes.size() >= (size_t)mesh.nbFaces * 6;
         #pragma omp parallel for schedule(static) if(m_nodes.size() > 500)
         for (int i = 0; i < (int)m_nodes.size(); ++i) {
             if (m_nodes[i].isLeaf()) {
-                computeLeafAABB(mesh, m_nodes[i], (uint32_t)i, false, true);
+                computeLeafAABB(mesh, m_nodes[i], (uint32_t)i, hasFaceBoxes, true);
             }
         }
 
@@ -1095,6 +1101,59 @@ void BVH::pickVerticesInSphere(
     }
 }
 
+static void radixSortDescending(std::vector<uint32_t>& arr, std::vector<uint32_t>& temp) {
+    const size_t n = arr.size();
+    if (n < 64) {
+        std::sort(arr.begin(), arr.end(), std::greater<uint32_t>());
+        return;
+    }
+    uint32_t maxVal = 0;
+    for (size_t i = 0; i < n; ++i) {
+        if (arr[i] > maxVal) maxVal = arr[i];
+    }
+    if (maxVal == 0) return;
+
+    if (temp.size() < n) {
+        temp.resize(n);
+    }
+
+    const int numPasses = (maxVal >= (1u << 24)) ? 3 : 2;
+    const int numBits = (numPasses == 3) ? 11 : 12;
+    const uint32_t numBuckets = 1u << numBits;
+    const uint32_t mask = numBuckets - 1;
+
+    uint32_t* src = arr.data();
+    uint32_t* dst = temp.data();
+
+    for (int p = 0; p < numPasses; ++p) {
+        uint32_t shift = p * numBits;
+        uint32_t count[4096] = {0};
+
+        for (size_t i = 0; i < n; ++i) {
+            uint32_t bucket = (src[i] >> shift) & mask;
+            count[bucket]++;
+        }
+
+        uint32_t offset[4096];
+        uint32_t sum = 0;
+        for (int b = (int)numBuckets - 1; b >= 0; --b) {
+            offset[b] = sum;
+            sum += count[b];
+        }
+
+        for (size_t i = 0; i < n; ++i) {
+            uint32_t bucket = (src[i] >> shift) & mask;
+            dst[offset[bucket]++] = src[i];
+        }
+
+        std::swap(src, dst);
+    }
+
+    if (src != arr.data()) {
+        std::memcpy(arr.data(), temp.data(), n * sizeof(uint32_t));
+    }
+}
+
 void BVH::refit(const Mesh& mesh, const uint32_t* modifiedFaces, size_t count, bool usePrecomputedBoxes) {
     BVHRefitStats stats;
     stats.inputFaces = (uint32_t)count;
@@ -1106,7 +1165,7 @@ void BVH::refit(const Mesh& mesh, const uint32_t* modifiedFaces, size_t count, b
     }
 
     if (count > (size_t)mesh.nbFaces * 0.40f) {
-        refitAll(mesh);
+        refitAll(mesh, usePrecomputedBoxes);
         m_lastRefitStats.inputFaces = (uint32_t)count;
         return;
     }
@@ -1124,19 +1183,63 @@ void BVH::refit(const Mesh& mesh, const uint32_t* modifiedFaces, size_t count, b
     }
 
     m_dirtyLeaves.clear();
-    if (m_dirtyLeaves.capacity() < count / 4 + 16) {
-        m_dirtyLeaves.reserve(count / 4 + 16);
-    }
+    const int maxThreads = omp_get_max_threads();
+    const bool inParallel = omp_in_parallel();
 
-    for (size_t i = 0; i < count; ++i) {
-        uint32_t faceId = modifiedFaces[i];
-        if (faceId >= m_faceToLeaf.size()) continue;
-        uint32_t leafIdx = m_faceToLeaf[faceId];
-        if (leafIdx >= m_nodes.size()) continue;
+    if (count >= 16384 && !inParallel && maxThreads > 1) {
+        std::vector<std::vector<uint32_t>> threadLeaves(maxThreads);
+        const uint8_t curEpoch = m_leafVisitedEpoch;
+        uint8_t* const leafFlags = m_leafVisitedFlags.data();
+        const uint32_t* const faceToLeaf = m_faceToLeaf.data();
+        const size_t faceToLeafSize = m_faceToLeaf.size();
+        const size_t numNodes = m_nodes.size();
 
-        if (m_leafVisitedFlags[leafIdx] != m_leafVisitedEpoch) {
-            m_leafVisitedFlags[leafIdx] = m_leafVisitedEpoch;
-            m_dirtyLeaves.push_back(leafIdx);
+        #pragma omp parallel
+        {
+            int tid = omp_get_thread_num();
+            auto& local = threadLeaves[tid];
+            local.reserve((count / 4 / maxThreads) + 64);
+            #pragma omp for schedule(static)
+            for (int64_t i = 0; i < (int64_t)count; ++i) {
+                uint32_t faceId = modifiedFaces[i];
+                if (faceId >= faceToLeafSize) continue;
+                uint32_t leafIdx = faceToLeaf[faceId];
+                if (leafIdx >= numNodes) continue;
+
+                if (leafFlags[leafIdx] == curEpoch) continue;
+                std::atomic_ref<uint8_t> ref(leafFlags[leafIdx]);
+                if (ref.exchange(curEpoch, std::memory_order_relaxed) != curEpoch) {
+                    local.push_back(leafIdx);
+                }
+            }
+        }
+        size_t totalLeaves = 0;
+        for (int t = 0; t < maxThreads; ++t) {
+            totalLeaves += threadLeaves[t].size();
+        }
+        m_dirtyLeaves.resize(totalLeaves);
+        size_t off = 0;
+        for (int t = 0; t < maxThreads; ++t) {
+            size_t c = threadLeaves[t].size();
+            if (c > 0) {
+                std::memcpy(m_dirtyLeaves.data() + off, threadLeaves[t].data(), c * sizeof(uint32_t));
+                off += c;
+            }
+        }
+    } else {
+        if (m_dirtyLeaves.capacity() < count / 4 + 16) {
+            m_dirtyLeaves.reserve(count / 4 + 16);
+        }
+        for (size_t i = 0; i < count; ++i) {
+            uint32_t faceId = modifiedFaces[i];
+            if (faceId >= m_faceToLeaf.size()) continue;
+            uint32_t leafIdx = m_faceToLeaf[faceId];
+            if (leafIdx >= m_nodes.size()) continue;
+
+            if (m_leafVisitedFlags[leafIdx] != m_leafVisitedEpoch) {
+                m_leafVisitedFlags[leafIdx] = m_leafVisitedEpoch;
+                m_dirtyLeaves.push_back(leafIdx);
+            }
         }
     }
     auto t1 = std::chrono::high_resolution_clock::now();
@@ -1145,7 +1248,7 @@ void BVH::refit(const Mesh& mesh, const uint32_t* modifiedFaces, size_t count, b
     // Refit dirty leaves in parallel for large sets, sequential for small
     const size_t numDirty = m_dirtyLeaves.size();
     stats.dirtyLeaves = (uint32_t)numDirty;
-    if (numDirty < 2048) {
+    if (numDirty < 512 || inParallel || maxThreads <= 1) {
         for (size_t i = 0; i < numDirty; ++i) {
             uint32_t leafIdx = m_dirtyLeaves[i];
             computeLeafAABB(mesh, m_nodes[leafIdx], leafIdx, usePrecomputedBoxes, false);
@@ -1188,7 +1291,7 @@ void BVH::refit(const Mesh& mesh, const uint32_t* modifiedFaces, size_t count, b
         }
     }
 
-    std::sort(m_dirtyInnerNodes.begin(), m_dirtyInnerNodes.end(), std::greater<uint32_t>());
+    radixSortDescending(m_dirtyInnerNodes, m_dirtyInnerNodesTemp);
     stats.dirtyInnerNodes = (uint32_t)m_dirtyInnerNodes.size();
     auto t3 = std::chrono::high_resolution_clock::now();
     stats.parentGatherMs = std::chrono::duration<double, std::milli>(t3 - t2).count();
@@ -1206,9 +1309,10 @@ void BVH::refit(const Mesh& mesh, const uint32_t* modifiedFaces, size_t count, b
     m_lastRefitStats = stats;
 }
 
-void BVH::refitAll(const Mesh& mesh) {
+void BVH::refitAll(const Mesh& mesh, bool usePrecomputedBoxes) {
     BVHRefitStats stats;
     stats.inputFaces = (uint32_t)mesh.nbFaces;
+    stats.usedPrecomputed = usePrecomputedBoxes;
     stats.fellBackToRefitAll = true;
     stats.dirtyLeaves = (uint32_t)m_leafCount;
     stats.dirtyInnerNodes = (uint32_t)(m_nodes.size() > m_leafCount ? m_nodes.size() - m_leafCount : 0);
@@ -1222,7 +1326,7 @@ void BVH::refitAll(const Mesh& mesh) {
     #pragma omp parallel for schedule(static) if(m_nodes.size() > 500)
     for (int i = 0; i < (int)m_nodes.size(); ++i) {
         if (m_nodes[i].isLeaf()) {
-            computeLeafAABB(mesh, m_nodes[i], (uint32_t)i, false, false);
+            computeLeafAABB(mesh, m_nodes[i], (uint32_t)i, usePrecomputedBoxes, false);
         }
     }
     auto t1 = std::chrono::high_resolution_clock::now();
@@ -1279,6 +1383,7 @@ size_t BVH::memoryBytes() const {
     bytes += m_nodeVisitedFlags.capacity() * sizeof(uint8_t);
     bytes += m_dirtyLeaves.capacity() * sizeof(uint32_t);
     bytes += m_dirtyInnerNodes.capacity() * sizeof(uint32_t);
+    bytes += m_dirtyInnerNodesTemp.capacity() * sizeof(uint32_t);
     return bytes;
 }
 

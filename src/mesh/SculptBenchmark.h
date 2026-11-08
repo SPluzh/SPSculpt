@@ -1246,7 +1246,7 @@ inline bool run(int targetFaces = 4000000) {
         }
         auto tBVHStart = std::chrono::high_resolution_clock::now();
         if (!meshUndoState.affectedFaces.empty()) {
-            mesh.bvh.refit(mesh, meshUndoState.affectedFaces.data(), meshUndoState.affectedFaces.size());
+            mesh.bvh.refit(mesh, meshUndoState.affectedFaces.data(), meshUndoState.affectedFaces.size(), true);
         }
         auto tUndoPrepStart = std::chrono::high_resolution_clock::now();
 

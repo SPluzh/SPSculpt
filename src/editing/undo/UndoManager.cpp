@@ -724,9 +724,9 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
                 auto tSpatialStart = std::chrono::high_resolution_clock::now();
 
                 if (numIFaces > 0) {
-                    mesh->bvh.refit(*mesh, s_undoIFaces.data(), numIFaces);
+                    mesh->bvh.refit(*mesh, s_undoIFaces.data(), numIFaces, true);
                 } else {
-                    mesh->bvh.refitAll(*mesh);
+                    mesh->bvh.refitAll(*mesh, true);
                 }
                 auto tDone = std::chrono::high_resolution_clock::now();
 
@@ -815,7 +815,7 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
                             auto tOct0 = std::chrono::high_resolution_clock::now();
                             msVNorms = std::chrono::duration<double, std::milli>(tOct0 - tVN0).count();
 
-                            mesh->bvh.refit(*mesh, item.affectedFaces.data(), item.affectedFaces.size());
+                            mesh->bvh.refit(*mesh, item.affectedFaces.data(), item.affectedFaces.size(), true);
                             auto tOct1 = std::chrono::high_resolution_clock::now();
                             msBVH = std::chrono::duration<double, std::milli>(tOct1 - tOct0).count();
                         }
@@ -857,7 +857,7 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
                             }
                             auto tOct0 = std::chrono::high_resolution_clock::now();
                             msVNorms = std::chrono::duration<double, std::milli>(tOct0 - tVN0).count();
-                            mesh->bvh.refitAll(*mesh);
+                            mesh->bvh.refitAll(*mesh, true);
                             auto tOct1 = std::chrono::high_resolution_clock::now();
                             msBVH = std::chrono::duration<double, std::milli>(tOct1 - tOct0).count();
                         } else {

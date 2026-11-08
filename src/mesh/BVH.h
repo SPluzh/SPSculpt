@@ -77,6 +77,7 @@ public:
         m_nodeVisitedEpoch = other.m_nodeVisitedEpoch; other.m_nodeVisitedEpoch = 0;
         m_dirtyLeaves = std::move(other.m_dirtyLeaves);
         m_dirtyInnerNodes = std::move(other.m_dirtyInnerNodes);
+        m_dirtyInnerNodesTemp = std::move(other.m_dirtyInnerNodesTemp);
         lastCollectCellsMs = other.lastCollectCellsMs;
         lastCandidateVertsMs = other.lastCandidateVertsMs;
         lastFilterVertsMs = other.lastFilterVertsMs;
@@ -102,6 +103,7 @@ public:
             m_nodeVisitedEpoch = other.m_nodeVisitedEpoch; other.m_nodeVisitedEpoch = 0;
             m_dirtyLeaves = std::move(other.m_dirtyLeaves);
             m_dirtyInnerNodes = std::move(other.m_dirtyInnerNodes);
+            m_dirtyInnerNodesTemp = std::move(other.m_dirtyInnerNodesTemp);
             lastCollectCellsMs = other.lastCollectCellsMs;
             lastCandidateVertsMs = other.lastCandidateVertsMs;
             lastFilterVertsMs = other.lastFilterVertsMs;
@@ -157,7 +159,7 @@ public:
     void refit(const Mesh& mesh, const uint32_t* modifiedFaces, size_t count, bool usePrecomputedBoxes = false);
 
     // Full refit of all leaf and inner node AABBs without rebuilding tree topology
-    void refitAll(const Mesh& mesh);
+    void refitAll(const Mesh& mesh, bool usePrecomputedBoxes = false);
 
     // Uniform/non-uniform scaling of all AABBs
     void scale(float sx, float sy, float sz);
@@ -235,6 +237,7 @@ private:
     // Reusable buffers for refit
     mutable std::vector<uint32_t> m_dirtyLeaves;
     mutable std::vector<uint32_t> m_dirtyInnerNodes;
+    mutable std::vector<uint32_t> m_dirtyInnerNodesTemp;
 
     void computeLeafAABB(const Mesh& mesh, BVHNode& node, uint32_t nodeIdx, bool usePrecomputedBoxes = false, bool assignFaceToLeaf = false);
 };

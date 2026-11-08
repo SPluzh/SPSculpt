@@ -4523,7 +4523,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 if (mesh && m_pendingBVHUpdate) {
                     auto tBvhStart = std::chrono::high_resolution_clock::now();
                     if (m_grabbedNumIFaces > 0) {
-                        mesh->bvh.refit(*mesh, m_iFacesCache.data(), m_grabbedNumIFaces);
+                        mesh->bvh.refit(*mesh, m_iFacesCache.data(), m_grabbedNumIFaces, true);
                         bvhMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tBvhStart).count();
                         const BVHRefitStats& rs = mesh->bvh.getLastRefitStats();
                         sculpt_log("[Stroke Release] Deferred Incremental BVH Refit completed in %.2f ms (%d faces | Dedup %.2f, AABB %.2f, ClimbSort %.2f, Inner %.2f | L=%u I=%u Pre=%d)\n",

@@ -7520,7 +7520,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                 selectedMesh->normals.data()
                             );
                         }
-                        selectedMesh->bvh.refitAll(*selectedMesh);
+                        selectedMesh->bvh.refitAll(*selectedMesh, true);
                     } else {
                         selectedMesh->postInit();
                     }
@@ -7582,7 +7582,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                     selectedMesh->normals.data()
                                 );
                             }
-                            selectedMesh->bvh.refitAll(*selectedMesh);
+                            selectedMesh->bvh.refitAll(*selectedMesh, true);
                         } else {
                             selectedMesh->postInit();
                         }
@@ -7689,7 +7689,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                 selectedMesh->normals.data()
                             );
                         }
-                        selectedMesh->bvh.refit(*selectedMesh, meshUndoState.affectedFaces.data(), meshUndoState.affectedFaces.size());
+                        selectedMesh->bvh.refit(*selectedMesh, meshUndoState.affectedFaces.data(), meshUndoState.affectedFaces.size(), true);
                     } else if (!selectedMesh->faceNormals.empty()) {
                         updateFaceNormalsAndBoxes(
                             selectedMesh->verts.data(), selectedMesh->nbVerts,
@@ -7708,7 +7708,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                 selectedMesh->normals.data()
                             );
                         }
-                        selectedMesh->bvh.refitAll(*selectedMesh);
+                        selectedMesh->bvh.refitAll(*selectedMesh, true);
                     } else {
                         selectedMesh->postInit();
                     }
