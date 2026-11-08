@@ -287,6 +287,10 @@ public:
     const PolyGroupTool& getPolyGroupTool() const { return m_polyGroupTool; }
     uint32_t getActiveGroupID() const { return m_activeGroupId; }
     void setActiveGroupID(uint32_t id) { m_activeGroupId = id; }
+    std::vector<uint32_t>& getTagFlags() { return m_tagFlags; }
+    uint32_t& getTagEpoch() { return m_tagEpoch; }
+    std::vector<uint32_t>& getVertTagFlags() { return m_vertTagFlags; }
+    uint32_t& getVertTagEpoch() { return m_vertTagEpoch; }
 
     RelaxEngine& getRelaxEngine() { return m_relaxEngine; }
     const RelaxEngine& getRelaxEngine() const { return m_relaxEngine; }
@@ -617,8 +621,6 @@ private:
     uint32_t m_tagEpoch = 0;
     std::vector<uint32_t> m_vertTagFlags;
     uint32_t m_vertTagEpoch = 0;
-    std::vector<uint32_t> m_topoVisitedFlags;
-    uint32_t m_topoVisitedEpoch = 0;
     uint32_t m_affectedMinV = 0;
     uint32_t m_affectedMaxV = 0;
     std::vector<uint32_t> m_iFacesCache;

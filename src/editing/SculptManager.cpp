@@ -1541,11 +1541,13 @@ void SculptManager::warmupMeshCaches(const Mesh* mesh) {
     if (m_tagFlags.size() < (size_t)mesh->nbFaces) {
         m_tagFlags.assign(mesh->nbFaces, 0);
     }
-    if (m_iFacesCache.size() < (size_t)mesh->nbFaces) {
-        m_iFacesCache.resize(mesh->nbFaces);
+    size_t strokeFacesCap = std::min((size_t)mesh->nbFaces, (size_t)4000000);
+    if (m_iFacesCache.size() < strokeFacesCap) {
+        m_iFacesCache.resize(strokeFacesCap);
     }
-    if (m_allAffectedVertsCache.size() < (size_t)mesh->nbVerts) {
-        m_allAffectedVertsCache.resize(mesh->nbVerts);
+    size_t strokeVertsCap = std::min((size_t)mesh->nbVerts, (size_t)2000000);
+    if (m_allAffectedVertsCache.size() < strokeVertsCap) {
+        m_allAffectedVertsCache.resize(strokeVertsCap);
     }
     if (mesh->vertProxy.size() != mesh->verts.size()) {
         const_cast<Mesh*>(mesh)->vertProxy = mesh->verts;
@@ -2030,7 +2032,8 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 
     // --- Stage 2: Pick Vertices ---
     tStage = std::chrono::high_resolution_clock::now();
-    std::vector<uint32_t> pickedVertices;
+    m_pickedVerticesCache.clear();
+    std::vector<uint32_t>& pickedVertices = m_pickedVerticesCache;
     std::vector<glm::vec3> symScales;
     if (m_useSym) {
         symScales = getActiveSymmetryScales();
@@ -2069,7 +2072,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             {
                 if (getSettings(activeBrush).topoCheck) {
                     pickVerticesInSphereTopological(mesh, m_currentIntersection, radius2, intersectFaceId,
-                                                    m_topoVisitedFlags, m_topoVisitedEpoch, pickedVertices);
+                                                    m_vertTagFlags, m_vertTagEpoch, pickedVertices);
                 } else {
                     mesh->bvh.pickVerticesInSphere(
                         *mesh, m_currentIntersection,
@@ -2114,7 +2117,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         if (m_firstStrokeFrame) {
             if (getSettings(activeBrush).topoCheck) {
                 pickVerticesInSphereTopological(mesh, m_currentIntersection, radius2, intersectFaceId,
-                                                m_topoVisitedFlags, m_topoVisitedEpoch, pickedVertices);
+                                                m_vertTagFlags, m_vertTagEpoch, pickedVertices);
             } else {
                 mesh->bvh.pickVerticesInSphere(
                     *mesh, m_currentIntersection, radius2, pickedVertices, mesh->vertVisible.data(), 0
@@ -2138,7 +2141,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     } else {
         if (getSettings(activeBrush).topoCheck) {
             pickVerticesInSphereTopological(mesh, m_currentIntersection, radius2, intersectFaceId,
-                                            m_topoVisitedFlags, m_topoVisitedEpoch, pickedVertices);
+                                            m_vertTagFlags, m_vertTagEpoch, pickedVertices);
         } else {
             mesh->bvh.pickVerticesInSphere(
                 *mesh, m_currentIntersection, radius2, pickedVertices, mesh->vertVisible.data(), 0
@@ -2478,8 +2481,9 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             if (m_tagFlags.size() < (size_t)mesh->nbFaces) {
                 m_tagFlags.assign(mesh->nbFaces, 0);
             }
-            if (m_iFacesCache.size() < (size_t)mesh->nbFaces) {
-                m_iFacesCache.resize(mesh->nbFaces);
+            size_t neededFaces = std::min((size_t)mesh->nbFaces, allAffectedVerts.size() * 8 + 1024);
+            if (m_iFacesCache.size() < neededFaces) {
+                m_iFacesCache.resize(neededFaces);
             }
 
             // --- Stage 7: Face Lookup ---
@@ -2535,7 +2539,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 m_lastFrameProfile.bvhUpdateMs = 0.0;
             } else {
                 tStage = std::chrono::high_resolution_clock::now();
-                mesh->bvh.refit(*mesh, m_iFacesCache.data(), numIFaces);
+                mesh->bvh.refit(*mesh, m_iFacesCache.data(), numIFaces, true);
                 m_lastFrameProfile.bvhUpdateMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
             }
         }

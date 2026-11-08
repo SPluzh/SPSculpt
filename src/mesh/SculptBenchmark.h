@@ -983,11 +983,15 @@ inline bool run(int targetFaces = 4000000) {
         }
         mesh.isMaterialDirty = true;
 
-        // Step 0: Check mask + Buffer copy (transformStartVerts)
+        // Step 0: Check mask + Buffer copy (transformStartVerts via vertProxy)
         auto tInitStart = std::chrono::high_resolution_clock::now();
         glm::mat4 pivotStartMatrix = mesh.matrix;
         bool transformHasMask = true;
-        std::vector<float> transformStartVerts = mesh.verts;
+        if (mesh.vertProxy.size() != mesh.verts.size()) {
+            mesh.vertProxy.resize(mesh.verts.size());
+        }
+        std::copy(mesh.verts.begin(), mesh.verts.end(), mesh.vertProxy.begin());
+        const float* transformStartVerts = mesh.vertProxy.data();
         auto tInitEnd = std::chrono::high_resolution_clock::now();
         double step0Ms = std::chrono::duration<double, std::milli>(tInitEnd - tInitStart).count();
 
@@ -1023,7 +1027,6 @@ inline bool run(int targetFaces = 4000000) {
 
         auto tFinStart = std::chrono::high_resolution_clock::now();
         mesh.matrix = pivotStartMatrix;
-        mesh.vertProxy = mesh.verts;
         mesh.invalidateLocalRadius();
         mesh.bumpVertsGeneration();
 
@@ -1062,10 +1065,11 @@ inline bool run(int targetFaces = 4000000) {
                 curOffset += threadVerts[t].size();
             }
         }
+        std::vector<std::vector<uint32_t>>().swap(threadVerts);
 
         meshUndoState.sparseBeforeCoords.resize(totalDeformed * 3);
         meshUndoState.sparseAfterCoords.resize(totalDeformed * 3);
-        const float* startVertsPtr = transformStartVerts.data();
+        const float* startVertsPtr = transformStartVerts;
         const float* curVertsPtr = mesh.verts.data();
         const uint32_t* defIndices = meshUndoState.sparseVertIndices.data();
         float* sBefore = meshUndoState.sparseBeforeCoords.data();
@@ -1083,23 +1087,30 @@ inline bool run(int targetFaces = 4000000) {
             sAfter[i3 + 1]  = curVertsPtr[v3 + 1];
             sAfter[i3 + 2]  = curVertsPtr[v3 + 2];
         }
+        std::copy(mesh.verts.begin(), mesh.verts.end(), mesh.vertProxy.begin());
 
         // Incremental face lookup for affected faces
         if (!mesh.vrfStartCount.empty() && !mesh.vertRingFace.empty() && mesh.nbFaces > 0) {
-            std::vector<uint32_t> tempFaces(mesh.nbFaces);
-            std::vector<uint32_t> tagFlags(mesh.nbFaces, 0);
-            uint32_t tagEpoch = 1;
+            size_t maxPossibleFaces = std::min((size_t)mesh.nbFaces, (size_t)totalDeformed * 6 + 1024);
+            meshUndoState.affectedFaces.resize(maxPossibleFaces);
+            auto& tagFlags = sculpt.getTagFlags();
+            auto& tagEpoch = sculpt.getTagEpoch();
+            if (tagFlags.size() < (size_t)mesh.nbFaces) {
+                tagFlags.assign(mesh.nbFaces, 0);
+                tagEpoch = 1;
+            }
             uint32_t numIFaces = getFacesFromVerticesFast(
                 meshUndoState.sparseVertIndices.data(),
                 (uint32_t)meshUndoState.sparseVertIndices.size(),
                 mesh.vrfStartCount.data(),
                 mesh.vertRingFace.data(),
-                tempFaces.data(),
+                meshUndoState.affectedFaces.data(),
                 tagFlags.data(),
                 &tagEpoch,
                 mesh.nbFaces
             );
-            meshUndoState.affectedFaces.assign(tempFaces.begin(), tempFaces.begin() + numIFaces);
+            meshUndoState.affectedFaces.resize(numIFaces);
+            meshUndoState.affectedFaces.shrink_to_fit();
         }
 
         auto tFNStart = std::chrono::high_resolution_clock::now();

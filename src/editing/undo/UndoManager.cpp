@@ -657,8 +657,9 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
                         s_undoTagFlags.assign(mesh->nbFaces, 0);
                         s_undoTagEpoch = 1;
                     }
-                    if (s_undoIFaces.size() < (size_t)mesh->nbFaces) {
-                        s_undoIFaces.resize(mesh->nbFaces);
+                    size_t capIFaces = std::min((size_t)mesh->nbFaces, std::max((size_t)4000000, delta.indices.size() * 6 + 1024));
+                    if (s_undoIFaces.size() < capIFaces) {
+                        s_undoIFaces.resize(capIFaces);
                     }
                     numIFaces = getFacesFromVerticesFast(
                         delta.indices.data(),

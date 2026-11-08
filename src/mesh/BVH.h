@@ -51,6 +51,8 @@ public:
         m_leafVisitedEpoch = other.m_leafVisitedEpoch; other.m_leafVisitedEpoch = 0;
         m_nodeVisitedFlags = std::move(other.m_nodeVisitedFlags);
         m_nodeVisitedEpoch = other.m_nodeVisitedEpoch; other.m_nodeVisitedEpoch = 0;
+        m_dirtyLeaves = std::move(other.m_dirtyLeaves);
+        m_dirtyInnerNodes = std::move(other.m_dirtyInnerNodes);
         lastCollectCellsMs = other.lastCollectCellsMs;
         lastCandidateVertsMs = other.lastCandidateVertsMs;
         lastFilterVertsMs = other.lastFilterVertsMs;
@@ -71,6 +73,8 @@ public:
             m_leafVisitedEpoch = other.m_leafVisitedEpoch; other.m_leafVisitedEpoch = 0;
             m_nodeVisitedFlags = std::move(other.m_nodeVisitedFlags);
             m_nodeVisitedEpoch = other.m_nodeVisitedEpoch; other.m_nodeVisitedEpoch = 0;
+            m_dirtyLeaves = std::move(other.m_dirtyLeaves);
+            m_dirtyInnerNodes = std::move(other.m_dirtyInnerNodes);
             lastCollectCellsMs = other.lastCollectCellsMs;
             lastCandidateVertsMs = other.lastCandidateVertsMs;
             lastFilterVertsMs = other.lastFilterVertsMs;
@@ -120,7 +124,7 @@ public:
     }
 
     // Incremental refit for vertices moved during a sculpt stroke (O(K log N))
-    void refit(const Mesh& mesh, const uint32_t* modifiedFaces, size_t count);
+    void refit(const Mesh& mesh, const uint32_t* modifiedFaces, size_t count, bool usePrecomputedBoxes = false);
 
     // Full refit of all leaf and inner node AABBs without rebuilding tree topology
     void refitAll(const Mesh& mesh);
@@ -190,6 +194,10 @@ private:
     std::vector<uint32_t> m_nodeVisitedFlags;
     uint32_t m_nodeVisitedEpoch = 0;
 
-    void computeLeafAABB(const Mesh& mesh, BVHNode& node, uint32_t nodeIdx, bool usePrecomputedBoxes = false);
+    // Reusable buffers for refit
+    mutable std::vector<uint32_t> m_dirtyLeaves;
+    mutable std::vector<uint32_t> m_dirtyInnerNodes;
+
+    void computeLeafAABB(const Mesh& mesh, BVHNode& node, uint32_t nodeIdx, bool usePrecomputedBoxes = false, bool assignFaceToLeaf = false);
 };
 
