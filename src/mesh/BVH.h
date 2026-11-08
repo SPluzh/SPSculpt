@@ -162,6 +162,9 @@ public:
     // Uniform/non-uniform scaling of all AABBs
     void scale(float sx, float sy, float sz);
 
+    // Warmup query scratch buffers to eliminate first-call page faults on large meshes
+    void warmup(int nbVerts);
+
     // True if cumulative sculpting strokes degraded AABB overlap enough to warrant a background rebuild
     bool isDegraded() const;
 
@@ -201,8 +204,8 @@ public:
 
 private:
     struct QueryScratch {
-        std::vector<uint32_t> visitedFlags;
-        uint32_t visitedEpoch = 0;
+        std::vector<uint8_t> visitedFlags;
+        uint8_t visitedEpoch = 0;
         std::vector<uint32_t> candidateLeaves;
         std::vector<std::vector<uint32_t>> threadPicked;
 
@@ -224,10 +227,10 @@ private:
     size_t m_editsSinceBuild = 0;
 
     // Epoch tracking for unique dirty leaves / parents during refit
-    std::vector<uint32_t> m_leafVisitedFlags;
-    uint32_t m_leafVisitedEpoch = 0;
-    std::vector<uint32_t> m_nodeVisitedFlags;
-    uint32_t m_nodeVisitedEpoch = 0;
+    std::vector<uint8_t> m_leafVisitedFlags;
+    uint8_t m_leafVisitedEpoch = 0;
+    std::vector<uint8_t> m_nodeVisitedFlags;
+    uint8_t m_nodeVisitedEpoch = 0;
 
     // Reusable buffers for refit
     mutable std::vector<uint32_t> m_dirtyLeaves;

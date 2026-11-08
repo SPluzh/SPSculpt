@@ -253,17 +253,57 @@ static void pickVerticesInSphereTopological(
 static void filterCullingVertices(
     std::vector<uint32_t>& pickedVertices, Mesh* mesh, const glm::vec3& eyeDirLocal
 ) {
-    std::vector<uint32_t> front;
-    front.reserve(pickedVertices.size());
-    for (uint32_t vid : pickedVertices) {
-        float nx = mesh->normals[vid * 3];
-        float ny = mesh->normals[vid * 3 + 1];
-        float nz = mesh->normals[vid * 3 + 2];
-        if (nx * eyeDirLocal.x + ny * eyeDirLocal.y + nz * eyeDirLocal.z <= 0.0f) {
-            front.push_back(vid);
+    const size_t total = pickedVertices.size();
+    if (total == 0) return;
+    const int maxThreads = omp_get_max_threads();
+    const bool inParallel = omp_in_parallel();
+    if (total < 4096 || inParallel || maxThreads <= 1) {
+        std::vector<uint32_t> front;
+        front.reserve(total);
+        const float* const norms = mesh->normals.data();
+        for (uint32_t vid : pickedVertices) {
+            float nx = norms[vid * 3];
+            float ny = norms[vid * 3 + 1];
+            float nz = norms[vid * 3 + 2];
+            if (nx * eyeDirLocal.x + ny * eyeDirLocal.y + nz * eyeDirLocal.z <= 0.0f) {
+                front.push_back(vid);
+            }
+        }
+        pickedVertices = std::move(front);
+        return;
+    }
+
+    std::vector<std::vector<uint32_t>> threadBuckets(maxThreads);
+    #pragma omp parallel
+    {
+        int tid = omp_get_thread_num();
+        auto& local = threadBuckets[tid];
+        local.reserve((total / maxThreads) + 64);
+        const float* const norms = mesh->normals.data();
+        #pragma omp for schedule(static)
+        for (int64_t i = 0; i < (int64_t)total; ++i) {
+            uint32_t vid = pickedVertices[i];
+            float nx = norms[vid * 3];
+            float ny = norms[vid * 3 + 1];
+            float nz = norms[vid * 3 + 2];
+            if (nx * eyeDirLocal.x + ny * eyeDirLocal.y + nz * eyeDirLocal.z <= 0.0f) {
+                local.push_back(vid);
+            }
         }
     }
-    pickedVertices = std::move(front);
+    size_t offsets[129] = {0};
+    int numMergeThreads = std::min(maxThreads, 128);
+    for (int t = 0; t < numMergeThreads; ++t) {
+        offsets[t + 1] = offsets[t] + threadBuckets[t].size();
+    }
+    pickedVertices.resize(offsets[numMergeThreads]);
+    #pragma omp parallel for schedule(static) if(offsets[numMergeThreads] > 8192)
+    for (int t = 0; t < numMergeThreads; ++t) {
+        size_t count = threadBuckets[t].size();
+        if (count > 0) {
+            std::memcpy(pickedVertices.data() + offsets[t], threadBuckets[t].data(), count * sizeof(uint32_t));
+        }
+    }
 }
 
 SculptManager::~SculptManager() = default;
@@ -1554,6 +1594,7 @@ void SculptManager::warmupMeshCaches(const Mesh* mesh) {
     }
     const_cast<Mesh*>(mesh)->ensureTopologyBuilt();
     const_cast<Mesh*>(mesh)->ensureBVHBuilt();
+    const_cast<Mesh*>(mesh)->bvh.warmup(mesh->nbVerts);
     mesh->computeLocalRadius();
     g_undoManager.warmupForMesh(mesh->m_id, mesh->nbVerts);
 }
@@ -2071,65 +2112,63 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         culledAndFiltered = true;
         m_lastFrameProfile.dualPickActive = true;
 
-        #pragma omp parallel sections
+        // 1. Primary Pick & Cull with full multithreading
         {
-            #pragma omp section
-            {
-                auto ts0 = std::chrono::high_resolution_clock::now();
-                if (getSettings(activeBrush).topoCheck) {
-                    primaryUsedTopo = true;
-                    pickVerticesInSphereTopological(mesh, m_currentIntersection, radius2, intersectFaceId,
-                                                    m_vertTagFlags, m_vertTagEpoch, pickedVertices);
-                } else {
-                    primaryUsedBVH = true;
-                    mesh->bvh.pickVerticesInSphere(
-                        *mesh, m_currentIntersection,
-                        radius2, pickedVertices, mesh->vertVisible.data(), 0
-                    );
-                }
-                auto tc0 = std::chrono::high_resolution_clock::now();
-                if (getSettings(activeBrush).culling) {
-                    filterCullingVertices(pickedVertices, mesh, localRayDir);
-                }
-                if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty()) {
-                    filterPolyGroupVertices(pickedVertices, mesh, m_strokeTargetPolyGroup);
-                }
-                auto tc1 = std::chrono::high_resolution_clock::now();
-                dualSec0CullMs = std::chrono::duration<double, std::milli>(tc1 - tc0).count();
-                if (isSnakeBrush) {
-                    m_snakeActiveVerts = pickedVertices;
-                } else if (isGrabBrush) {
-                    m_grabbedVertices = pickedVertices;
-                }
-                dualSec0Ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - ts0).count();
-            }
-            #pragma omp section
-            {
-                auto ts1 = std::chrono::high_resolution_clock::now();
-                symUsedBVHInDual = true;
+            auto ts0 = std::chrono::high_resolution_clock::now();
+            if (getSettings(activeBrush).topoCheck) {
+                primaryUsedTopo = true;
+                pickVerticesInSphereTopological(mesh, m_currentIntersection, radius2, intersectFaceId,
+                                                m_vertTagFlags, m_vertTagEpoch, pickedVertices);
+            } else {
+                primaryUsedBVH = true;
                 mesh->bvh.pickVerticesInSphere(
-                    *mesh, symCenter0,
-                    radius2, m_prePickedSymVerts[0], mesh->vertVisible.data(), 1
+                    *mesh, m_currentIntersection,
+                    radius2, pickedVertices, mesh->vertVisible.data(), 0
                 );
-                auto tc0 = std::chrono::high_resolution_clock::now();
-                if (getSettings(activeBrush).culling && !m_prePickedSymVerts[0].empty()) {
-                    glm::vec3 symRayDir = reflectVectorSymmetry(localRayDir, symScales[0], mesh, m_symmetryMode);
-                    filterCullingVertices(m_prePickedSymVerts[0], mesh, symRayDir);
-                }
-                if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty() && !m_prePickedSymVerts[0].empty()) {
-                    filterPolyGroupVertices(m_prePickedSymVerts[0], mesh, m_strokeTargetPolyGroup);
-                }
-                auto tc1 = std::chrono::high_resolution_clock::now();
-                dualSec1CullMs = std::chrono::duration<double, std::milli>(tc1 - tc0).count();
-                if (isSnakeBrush) {
-                    if (m_snakeActiveVertsSyms.size() < 1) m_snakeActiveVertsSyms.resize(1);
-                    m_snakeActiveVertsSyms[0] = m_prePickedSymVerts[0];
-                } else if (isGrabBrush) {
-                    if (m_grabbedVerticesSyms.size() < 1) m_grabbedVerticesSyms.resize(1);
-                    m_grabbedVerticesSyms[0] = m_prePickedSymVerts[0];
-                }
-                dualSec1Ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - ts1).count();
             }
+            auto tc0 = std::chrono::high_resolution_clock::now();
+            if (getSettings(activeBrush).culling) {
+                filterCullingVertices(pickedVertices, mesh, localRayDir);
+            }
+            if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty()) {
+                filterPolyGroupVertices(pickedVertices, mesh, m_strokeTargetPolyGroup);
+            }
+            auto tc1 = std::chrono::high_resolution_clock::now();
+            dualSec0CullMs = std::chrono::duration<double, std::milli>(tc1 - tc0).count();
+            if (isSnakeBrush) {
+                m_snakeActiveVerts = pickedVertices;
+            } else if (isGrabBrush) {
+                m_grabbedVertices = pickedVertices;
+            }
+            dualSec0Ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - ts0).count();
+        }
+
+        // 2. Symmetry Pick & Cull with full multithreading
+        {
+            auto ts1 = std::chrono::high_resolution_clock::now();
+            symUsedBVHInDual = true;
+            mesh->bvh.pickVerticesInSphere(
+                *mesh, symCenter0,
+                radius2, m_prePickedSymVerts[0], mesh->vertVisible.data(), 1
+            );
+            auto tc0 = std::chrono::high_resolution_clock::now();
+            if (getSettings(activeBrush).culling && !m_prePickedSymVerts[0].empty()) {
+                glm::vec3 symRayDir = reflectVectorSymmetry(localRayDir, symScales[0], mesh, m_symmetryMode);
+                filterCullingVertices(m_prePickedSymVerts[0], mesh, symRayDir);
+            }
+            if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty() && !m_prePickedSymVerts[0].empty()) {
+                filterPolyGroupVertices(m_prePickedSymVerts[0], mesh, m_strokeTargetPolyGroup);
+            }
+            auto tc1 = std::chrono::high_resolution_clock::now();
+            dualSec1CullMs = std::chrono::duration<double, std::milli>(tc1 - tc0).count();
+            if (isSnakeBrush) {
+                if (m_snakeActiveVertsSyms.size() < 1) m_snakeActiveVertsSyms.resize(1);
+                m_snakeActiveVertsSyms[0] = m_prePickedSymVerts[0];
+            } else if (isGrabBrush) {
+                if (m_grabbedVerticesSyms.size() < 1) m_grabbedVerticesSyms.resize(1);
+                m_grabbedVerticesSyms[0] = m_prePickedSymVerts[0];
+            }
+            dualSec1Ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - ts1).count();
         }
         m_lastFrameProfile.dualPickSec0Ms = dualSec0Ms;
         m_lastFrameProfile.dualPickSec1Ms = dualSec1Ms;
@@ -6000,21 +6039,61 @@ void SculptManager::filterPolyGroupVertices(std::vector<uint32_t>& pickedVertice
     if (!mesh || mesh->faceGroups.empty() || mesh->faceGroups.size() != (size_t)mesh->nbFaces) return;
     if (mesh->vrfStartCount.empty() || mesh->vertRingFace.empty()) return;
 
-    pickedVertices.erase(
-        std::remove_if(pickedVertices.begin(), pickedVertices.end(), [&](uint32_t v) {
-            if (v >= (uint32_t)mesh->nbVerts) return true;
-            uint32_t start = mesh->vrfStartCount[v * 2];
-            uint32_t count = mesh->vrfStartCount[v * 2 + 1];
-            for (uint32_t i = 0; i < count; ++i) {
-                uint32_t f = mesh->vertRingFace[start + i];
-                if (f < (uint32_t)mesh->nbFaces && mesh->faceGroups[f] == targetGroupId) {
-                    return false;
-                }
+    const size_t total = pickedVertices.size();
+    if (total == 0) return;
+    const int maxThreads = omp_get_max_threads();
+    const bool inParallel = omp_in_parallel();
+
+    auto isKeep = [&](uint32_t v) -> bool {
+        if (v >= (uint32_t)mesh->nbVerts) return false;
+        uint32_t start = mesh->vrfStartCount[v * 2];
+        uint32_t count = mesh->vrfStartCount[v * 2 + 1];
+        for (uint32_t i = 0; i < count; ++i) {
+            uint32_t f = mesh->vertRingFace[start + i];
+            if (f < (uint32_t)mesh->nbFaces && mesh->faceGroups[f] == targetGroupId) {
+                return true;
             }
-            return true;
-        }),
-        pickedVertices.end()
-    );
+        }
+        return false;
+    };
+
+    if (total < 4096 || inParallel || maxThreads <= 1) {
+        pickedVertices.erase(
+            std::remove_if(pickedVertices.begin(), pickedVertices.end(), [&](uint32_t v) {
+                return !isKeep(v);
+            }),
+            pickedVertices.end()
+        );
+        return;
+    }
+
+    std::vector<std::vector<uint32_t>> threadBuckets(maxThreads);
+    #pragma omp parallel
+    {
+        int tid = omp_get_thread_num();
+        auto& local = threadBuckets[tid];
+        local.reserve((total / maxThreads) + 64);
+        #pragma omp for schedule(static)
+        for (int64_t i = 0; i < (int64_t)total; ++i) {
+            uint32_t vid = pickedVertices[i];
+            if (isKeep(vid)) {
+                local.push_back(vid);
+            }
+        }
+    }
+    size_t offsets[129] = {0};
+    int numMergeThreads = std::min(maxThreads, 128);
+    for (int t = 0; t < numMergeThreads; ++t) {
+        offsets[t + 1] = offsets[t] + threadBuckets[t].size();
+    }
+    pickedVertices.resize(offsets[numMergeThreads]);
+    #pragma omp parallel for schedule(static) if(offsets[numMergeThreads] > 8192)
+    for (int t = 0; t < numMergeThreads; ++t) {
+        size_t count = threadBuckets[t].size();
+        if (count > 0) {
+            std::memcpy(pickedVertices.data() + offsets[t], threadBuckets[t].data(), count * sizeof(uint32_t));
+        }
+    }
 }
 
 

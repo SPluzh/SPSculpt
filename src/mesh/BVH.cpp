@@ -133,6 +133,36 @@ inline bool isFaceVisible(const Mesh& mesh, uint32_t faceId) {
 
 } // namespace
 
+void BVH::warmup(int nbVerts) {
+    if (nbVerts <= 0) return;
+    int maxThreads = omp_get_max_threads();
+    for (int s = 0; s < 2; ++s) {
+        if (m_scratch[s].visitedFlags.size() < (size_t)nbVerts) {
+            m_scratch[s].visitedFlags.assign(nbVerts, uint8_t(0));
+            m_scratch[s].visitedEpoch = 0;
+        }
+        if ((int)m_scratch[s].threadPicked.size() < maxThreads) {
+            m_scratch[s].threadPicked.resize(maxThreads);
+        }
+        for (int t = 0; t < maxThreads; ++t) {
+            if (m_scratch[s].threadPicked[t].capacity() < 65536) {
+                m_scratch[s].threadPicked[t].reserve(65536);
+            }
+        }
+    }
+    if (!m_nodes.empty()) {
+        size_t nodeCap = m_nodes.size();
+        if (m_leafVisitedFlags.size() < nodeCap) {
+            m_leafVisitedFlags.assign(nodeCap, uint8_t(0));
+            m_leafVisitedEpoch = 0;
+        }
+        if (m_nodeVisitedFlags.size() < nodeCap) {
+            m_nodeVisitedFlags.assign(nodeCap, uint8_t(0));
+            m_nodeVisitedEpoch = 0;
+        }
+    }
+}
+
 void BVH::clear() {
     m_nodes.clear();
     m_parents.clear();
@@ -866,22 +896,31 @@ void BVH::pickVerticesInSphere(
     sc.candidateLeaves.clear();
     uint32_t totalCandidateFaces = 0;
 
-    uint32_t stack[64];
+    struct StackEntry {
+        uint32_t nodeIdx;
+        bool fullyIn;
+    };
+    StackEntry stack[64];
     int stackPtr = 0;
-    stack[stackPtr++] = 0;
+    stack[stackPtr++] = {0, false};
 
     while (stackPtr > 0) {
-        uint32_t nodeIdx = stack[--stackPtr];
+        StackEntry entry = stack[--stackPtr];
+        uint32_t nodeIdx = entry.nodeIdx;
+        bool fullyIn = entry.fullyIn;
         const BVHNode& node = m_nodes[nodeIdx];
-        if (!sphereBoxIntersect(node.aabbMin, node.aabbMax, center, radiusSquared)) {
-            continue;
+        if (!fullyIn) {
+            if (!sphereBoxIntersect(node.aabbMin, node.aabbMax, center, radiusSquared)) {
+                continue;
+            }
+            fullyIn = boxFullyInSphere(node.aabbMin, node.aabbMax, center, radiusSquared);
         }
         if (node.isLeaf()) {
-            sc.candidateLeaves.push_back(nodeIdx);
+            sc.candidateLeaves.push_back(fullyIn ? (nodeIdx | 0x80000000u) : nodeIdx);
             totalCandidateFaces += node.count;
         } else {
-            stack[stackPtr++] = node.firstIndex;
-            stack[stackPtr++] = node.firstIndex + 1;
+            stack[stackPtr++] = {node.firstIndex, fullyIn};
+            stack[stackPtr++] = {node.firstIndex + 1, fullyIn};
         }
     }
 
@@ -901,18 +940,19 @@ void BVH::pickVerticesInSphere(
     }
 
     if (sc.visitedFlags.size() < (size_t)mesh.nbVerts) {
-        sc.visitedFlags.assign(mesh.nbVerts, 0);
+        sc.visitedFlags.assign(mesh.nbVerts, uint8_t(0));
+        sc.visitedEpoch = 0;
     }
     sc.visitedEpoch++;
     if (sc.visitedEpoch == 0) {
-        std::fill(sc.visitedFlags.begin(), sc.visitedFlags.end(), 0);
+        std::fill(sc.visitedFlags.begin(), sc.visitedFlags.end(), uint8_t(0));
         sc.visitedEpoch = 1;
     }
     auto tInitDone = std::chrono::high_resolution_clock::now();
     stats.visitedInitMs = std::chrono::duration<double, std::milli>(tInitDone - t1).count();
 
-    const uint32_t curEpoch = sc.visitedEpoch;
-    uint32_t* const vFlags = sc.visitedFlags.data();
+    const uint8_t curEpoch = sc.visitedEpoch;
+    uint8_t* const vFlags = sc.visitedFlags.data();
     const uint32_t limitVerts = (uint32_t)mesh.nbVerts;
     const float* const verts = mesh.verts.data();
     const uint32_t* const faces = mesh.faces.data();
@@ -921,14 +961,16 @@ void BVH::pickVerticesInSphere(
     const int maxThreads = omp_get_max_threads();
     const bool inParallel = omp_in_parallel();
 
-    if (totalCandidateFaces < 65536 || inParallel || maxThreads <= 1) {
+    if (totalCandidateFaces < 16384 || inParallel || maxThreads <= 1) {
         stats.usedMT = false;
         stats.numThreads = 1;
         size_t estCount = std::min((size_t)mesh.nbVerts, (size_t)totalCandidateFaces * 2);
         if (outVertices.capacity() < estCount) {
             outVertices.reserve(estCount);
         }
-        for (uint32_t nodeIdx : sc.candidateLeaves) {
+        for (uint32_t candEntry : sc.candidateLeaves) {
+            const bool fullyIn = (candEntry & 0x80000000u) != 0;
+            const uint32_t nodeIdx = candEntry & 0x7FFFFFFFu;
             const BVHNode& node = m_nodes[nodeIdx];
             const uint32_t* const leafPrims = primIndices + node.firstIndex;
             const uint32_t count = node.count;
@@ -940,20 +982,25 @@ void BVH::pickVerticesInSphere(
                     uint32_t v = fv[k];
                     if (v >= limitVerts || v == 0xFFFFFFFF) continue;
                     if (vFlags[v] == curEpoch) continue;
-                    vFlags[v] = curEpoch;
 
-                    if (vertVisible && vertVisible[v] == 0) continue;
-
-                    const float* const vp = verts + v * 3;
-                    float dx = center.x - vp[0];
-                    float dx2 = dx * dx;
-                    if (dx2 > radiusSquared) continue;
-                    float dy = center.y - vp[1];
-                    float dy2 = dy * dy;
-                    if (dx2 + dy2 > radiusSquared) continue;
-                    float dz = center.z - vp[2];
-                    if (dx2 + dy2 + dz * dz <= radiusSquared) {
+                    if (fullyIn) {
+                        vFlags[v] = curEpoch;
+                        if (vertVisible && vertVisible[v] == 0) continue;
                         outVertices.push_back(v);
+                    } else {
+                        const float* const vp = verts + v * 3;
+                        float dx = center.x - vp[0];
+                        float dx2 = dx * dx;
+                        if (dx2 > radiusSquared) continue;
+                        float dy = center.y - vp[1];
+                        float dy2 = dy * dy;
+                        if (dx2 + dy2 > radiusSquared) continue;
+                        float dz = center.z - vp[2];
+                        if (dx2 + dy2 + dz * dz <= radiusSquared) {
+                            vFlags[v] = curEpoch;
+                            if (vertVisible && vertVisible[v] == 0) continue;
+                            outVertices.push_back(v);
+                        }
                     }
                 }
             }
@@ -969,6 +1016,8 @@ void BVH::pickVerticesInSphere(
         }
         const size_t numCandLeaves = sc.candidateLeaves.size();
 
+        static_assert(std::atomic_ref<uint8_t>::is_always_lock_free, "std::atomic_ref<uint8_t> must be lock-free");
+
         #pragma omp parallel
         {
             int tid = omp_get_thread_num();
@@ -979,9 +1028,11 @@ void BVH::pickVerticesInSphere(
                 localPicked.reserve(estCount);
             }
 
-            #pragma omp for schedule(static)
+            #pragma omp for schedule(dynamic, 64)
             for (int64_t c = 0; c < (int64_t)numCandLeaves; ++c) {
-                uint32_t nodeIdx = sc.candidateLeaves[c];
+                const uint32_t candEntry = sc.candidateLeaves[c];
+                const bool fullyIn = (candEntry & 0x80000000u) != 0;
+                const uint32_t nodeIdx = candEntry & 0x7FFFFFFFu;
                 const BVHNode& node = m_nodes[nodeIdx];
                 const uint32_t* const leafPrims = primIndices + node.firstIndex;
                 const uint32_t count = node.count;
@@ -994,17 +1045,19 @@ void BVH::pickVerticesInSphere(
                         if (v >= limitVerts || v == 0xFFFFFFFF) continue;
                         if (vFlags[v] == curEpoch) continue;
 
-                        const float* const vp = verts + v * 3;
-                        float dx = center.x - vp[0];
-                        float dx2 = dx * dx;
-                        if (dx2 > radiusSquared) continue;
-                        float dy = center.y - vp[1];
-                        float dy2 = dy * dy;
-                        if (dx2 + dy2 > radiusSquared) continue;
-                        float dz = center.z - vp[2];
-                        if (dx2 + dy2 + dz * dz > radiusSquared) continue;
+                        if (!fullyIn) {
+                            const float* const vp = verts + v * 3;
+                            float dx = center.x - vp[0];
+                            float dx2 = dx * dx;
+                            if (dx2 > radiusSquared) continue;
+                            float dy = center.y - vp[1];
+                            float dy2 = dy * dy;
+                            if (dx2 + dy2 > radiusSquared) continue;
+                            float dz = center.z - vp[2];
+                            if (dx2 + dy2 + dz * dz > radiusSquared) continue;
+                        }
 
-                        std::atomic_ref<uint32_t> ref(vFlags[v]);
+                        std::atomic_ref<uint8_t> ref(vFlags[v]);
                         if (ref.exchange(curEpoch, std::memory_order_relaxed) != curEpoch) {
                             if (vertVisible && vertVisible[v] == 0) continue;
                             localPicked.push_back(v);
@@ -1062,11 +1115,11 @@ void BVH::refit(const Mesh& mesh, const uint32_t* modifiedFaces, size_t count, b
     m_editsSinceBuild += count;
 
     if (m_leafVisitedFlags.size() < m_nodes.size()) {
-        m_leafVisitedFlags.assign(m_nodes.size(), 0);
+        m_leafVisitedFlags.assign(m_nodes.size(), uint8_t(0));
     }
     m_leafVisitedEpoch++;
     if (m_leafVisitedEpoch == 0) {
-        std::fill(m_leafVisitedFlags.begin(), m_leafVisitedFlags.end(), 0);
+        std::fill(m_leafVisitedFlags.begin(), m_leafVisitedFlags.end(), uint8_t(0));
         m_leafVisitedEpoch = 1;
     }
 
@@ -1109,11 +1162,11 @@ void BVH::refit(const Mesh& mesh, const uint32_t* modifiedFaces, size_t count, b
 
     // Propagate up to root using topological invariant (parentIdx < childIdx)
     if (m_nodeVisitedFlags.size() < m_nodes.size()) {
-        m_nodeVisitedFlags.assign(m_nodes.size(), 0);
+        m_nodeVisitedFlags.assign(m_nodes.size(), uint8_t(0));
     }
     m_nodeVisitedEpoch++;
     if (m_nodeVisitedEpoch == 0) {
-        std::fill(m_nodeVisitedFlags.begin(), m_nodeVisitedFlags.end(), 0);
+        std::fill(m_nodeVisitedFlags.begin(), m_nodeVisitedFlags.end(), uint8_t(0));
         m_nodeVisitedEpoch = 1;
     }
 
@@ -1216,14 +1269,14 @@ size_t BVH::memoryBytes() const {
     bytes += m_primitiveIndices.capacity() * sizeof(uint32_t);
     bytes += m_faceToLeaf.capacity() * sizeof(uint32_t);
     for (int i = 0; i < 2; ++i) {
-        bytes += m_scratch[i].visitedFlags.capacity() * sizeof(uint32_t);
+        bytes += m_scratch[i].visitedFlags.capacity() * sizeof(uint8_t);
         bytes += m_scratch[i].candidateLeaves.capacity() * sizeof(uint32_t);
         for (const auto& tp : m_scratch[i].threadPicked) {
             bytes += tp.capacity() * sizeof(uint32_t);
         }
     }
-    bytes += m_leafVisitedFlags.capacity() * sizeof(uint32_t);
-    bytes += m_nodeVisitedFlags.capacity() * sizeof(uint32_t);
+    bytes += m_leafVisitedFlags.capacity() * sizeof(uint8_t);
+    bytes += m_nodeVisitedFlags.capacity() * sizeof(uint8_t);
     bytes += m_dirtyLeaves.capacity() * sizeof(uint32_t);
     bytes += m_dirtyInnerNodes.capacity() * sizeof(uint32_t);
     return bytes;
