@@ -1218,7 +1218,7 @@ inline bool run(int targetFaces = 4000000) {
         auto tProxyEnd = std::chrono::high_resolution_clock::now();
 
         // Incremental face lookup for affected faces
-        if (!mesh.vrfStartCount.empty() && !mesh.vertRingFace.empty() && mesh.nbFaces > 0) {
+        if (totalDeformed <= (size_t)mesh.nbFaces * 0.35f && !mesh.vrfStartCount.empty() && !mesh.vertRingFace.empty() && mesh.nbFaces > 0) {
             size_t maxPossibleFaces = std::min((size_t)mesh.nbFaces, (size_t)totalDeformed * 6 + 1024);
             meshUndoState.affectedFaces.resize(maxPossibleFaces);
             auto& tagFlags = sculpt.getTagFlags();
@@ -1242,6 +1242,8 @@ inline bool run(int targetFaces = 4000000) {
         auto tFLookupEnd = std::chrono::high_resolution_clock::now();
 
         auto tFNStart = std::chrono::high_resolution_clock::now();
+        std::chrono::high_resolution_clock::time_point tVNStart = tFNStart;
+        std::chrono::high_resolution_clock::time_point tBVHStart = tFNStart;
         if (!meshUndoState.affectedFaces.empty() && !mesh.faceNormals.empty() && !mesh.faceBoxes.empty() && !mesh.faceCenters.empty()) {
             updateFaceNormalsAndBoxes(
                 mesh.verts.data(), mesh.nbVerts,
@@ -1251,20 +1253,42 @@ inline bool run(int targetFaces = 4000000) {
                 mesh.faceBoxes.data(),
                 mesh.faceCenters.data()
             );
-        }
-        auto tVNStart = std::chrono::high_resolution_clock::now();
-        if (!meshUndoState.sparseVertIndices.empty() && !mesh.normals.empty() && !mesh.vrfStartCount.empty() && !mesh.vertRingFace.empty()) {
-            updateVertexNormals(
-                meshUndoState.sparseVertIndices.data(), (int)meshUndoState.sparseVertIndices.size(), mesh.nbVerts,
-                mesh.vrfStartCount.data(),
-                mesh.vertRingFace.data(),
-                mesh.faceNormals.data(),
-                mesh.normals.data()
-            );
-        }
-        auto tBVHStart = std::chrono::high_resolution_clock::now();
-        if (!meshUndoState.affectedFaces.empty()) {
+            tVNStart = std::chrono::high_resolution_clock::now();
+            if (!meshUndoState.sparseVertIndices.empty() && !mesh.normals.empty() && !mesh.vrfStartCount.empty() && !mesh.vertRingFace.empty()) {
+                updateVertexNormals(
+                    meshUndoState.sparseVertIndices.data(), (int)meshUndoState.sparseVertIndices.size(), mesh.nbVerts,
+                    mesh.vrfStartCount.data(),
+                    mesh.vertRingFace.data(),
+                    mesh.faceNormals.data(),
+                    mesh.normals.data()
+                );
+            }
+            tBVHStart = std::chrono::high_resolution_clock::now();
             mesh.bvh.refit(mesh, meshUndoState.affectedFaces.data(), meshUndoState.affectedFaces.size(), true);
+        } else if (!mesh.faceNormals.empty() && !mesh.faceBoxes.empty() && !mesh.faceCenters.empty()) {
+            updateFaceNormalsAndBoxes(
+                mesh.verts.data(), mesh.nbVerts,
+                mesh.faces.data(), mesh.nbFaces,
+                nullptr, -1,
+                mesh.faceNormals.data(),
+                mesh.faceBoxes.data(),
+                mesh.faceCenters.data()
+            );
+            tVNStart = std::chrono::high_resolution_clock::now();
+            if (!mesh.vrfStartCount.empty() && !mesh.vertRingFace.empty()) {
+                updateVertexNormals(
+                    nullptr, -1, mesh.nbVerts,
+                    mesh.vrfStartCount.data(),
+                    mesh.vertRingFace.data(),
+                    mesh.faceNormals.data(),
+                    mesh.normals.data()
+                );
+            }
+            tBVHStart = std::chrono::high_resolution_clock::now();
+            mesh.bvh.refitAll(mesh, true);
+        } else {
+            tVNStart = std::chrono::high_resolution_clock::now();
+            tBVHStart = tVNStart;
         }
         auto tUndoPrepStart = std::chrono::high_resolution_clock::now();
 

@@ -567,7 +567,10 @@ uint32_t getFacesFromVerticesFast(
 
     uint8_t epoch = *tagEpoch + 1;
     if (epoch == 0) {
-        std::fill(tagFlags, tagFlags + nbFaces, uint8_t(0));
+        #pragma omp parallel for schedule(static) if(nbFaces > 65536)
+        for (int64_t i = 0; i < (int64_t)nbFaces; ++i) {
+            tagFlags[i] = 0;
+        }
         epoch = 1;
     }
     *tagEpoch = epoch;

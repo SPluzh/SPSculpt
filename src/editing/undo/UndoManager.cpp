@@ -280,16 +280,6 @@ void UndoManager::warmupForMesh(uint32_t meshId, int nbVerts, int nbFaces) {
         sculpt_log("[Undo Diagnostics] warmupForMesh(%d) pre-allocated %.2f MB in %.2f ms\n",
                    nbVerts, (nbVerts * sizeof(uint32_t)) / (1024.0 * 1024.0), allocMs);
     }
-    if (nbFaces > 0) {
-        if (s_undoTagFlags.size() < (size_t)nbFaces) {
-            s_undoTagFlags.assign(nbFaces, uint8_t(0));
-            s_undoTagEpoch = 0;
-        }
-        size_t capIFaces = std::min((size_t)nbFaces, (size_t)4000000);
-        if (s_undoIFaces.size() < capIFaces) {
-            s_undoIFaces.resize(capIFaces);
-        }
-    }
 }
 
 void UndoManager::endSculptStroke(Scene& scene) {
@@ -855,6 +845,32 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
                             msVNorms = std::chrono::duration<double, std::milli>(tOct0 - tVN0).count();
 
                             mesh->bvh.refit(*mesh, item.affectedFaces.data(), item.affectedFaces.size(), true);
+                            auto tOct1 = std::chrono::high_resolution_clock::now();
+                            msBVH = std::chrono::duration<double, std::milli>(tOct1 - tOct0).count();
+                        } else if (!mesh->faceNormals.empty() && !mesh->faceBoxes.empty() && !mesh->faceCenters.empty()) {
+                            auto tFN0 = std::chrono::high_resolution_clock::now();
+                            updateFaceNormalsAndBoxes(
+                                mesh->verts.data(), mesh->nbVerts,
+                                mesh->faces.data(), mesh->nbFaces,
+                                nullptr, -1,
+                                mesh->faceNormals.data(),
+                                mesh->faceBoxes.data(),
+                                mesh->faceCenters.data()
+                            );
+                            auto tVN0 = std::chrono::high_resolution_clock::now();
+                            msFNorms = std::chrono::duration<double, std::milli>(tVN0 - tFN0).count();
+                            if (!mesh->vrfStartCount.empty() && !mesh->vertRingFace.empty()) {
+                                updateVertexNormals(
+                                    nullptr, -1, mesh->nbVerts,
+                                    mesh->vrfStartCount.data(),
+                                    mesh->vertRingFace.data(),
+                                    mesh->faceNormals.data(),
+                                    mesh->normals.data()
+                                );
+                            }
+                            auto tOct0 = std::chrono::high_resolution_clock::now();
+                            msVNorms = std::chrono::duration<double, std::milli>(tOct0 - tVN0).count();
+                            mesh->bvh.refitAll(*mesh, true);
                             auto tOct1 = std::chrono::high_resolution_clock::now();
                             msBVH = std::chrono::duration<double, std::milli>(tOct1 - tOct0).count();
                         }

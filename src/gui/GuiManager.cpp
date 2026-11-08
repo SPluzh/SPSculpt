@@ -7685,7 +7685,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         sAfter[i3 + 2]  = curVertsPtr[v3 + 2];
                     }
 
-                    if (!selectedMesh->vrfStartCount.empty() && !selectedMesh->vertRingFace.empty() && selectedMesh->nbFaces > 0) {
+                    if (totalDeformed <= (size_t)selectedMesh->nbFaces * 0.35f && !selectedMesh->vrfStartCount.empty() && !selectedMesh->vertRingFace.empty() && selectedMesh->nbFaces > 0) {
                         static std::vector<uint32_t> s_transformTempFaces;
                         static std::vector<uint8_t> s_transformTagFlags;
                         static uint8_t s_transformTagEpoch = 0;

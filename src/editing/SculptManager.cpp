@@ -1680,14 +1680,6 @@ void SculptManager::cancelStroke() {
 
 void SculptManager::warmupMeshCaches(const Mesh* mesh) {
     if (!mesh) return;
-    if (m_vertTagFlags.size() < (size_t)mesh->nbVerts) {
-        m_vertTagFlags.assign(mesh->nbVerts, uint8_t(0));
-        m_vertTagEpoch = 0;
-    }
-    if (m_tagFlags.size() < (size_t)mesh->nbFaces) {
-        m_tagFlags.assign(mesh->nbFaces, uint8_t(0));
-        m_tagEpoch = 0;
-    }
     size_t strokeFacesCap = std::min((size_t)mesh->nbFaces, (size_t)4000000);
     if (m_iFacesCache.size() < strokeFacesCap) {
         m_iFacesCache.resize(strokeFacesCap);
@@ -5565,11 +5557,13 @@ std::vector<uint32_t> SculptManager::getVerticesInLasso(Mesh* mesh, const Camera
         s_threadSelected.resize(maxThreads);
     }
     size_t maxPerThread = (size_t)(nbVerts / maxThreads) + 4096;
+    #pragma omp parallel for schedule(static)
     for (int t = 0; t < maxThreads; ++t) {
         if (s_threadSelected[t].size() < maxPerThread) {
             s_threadSelected[t].resize(maxPerThread);
         }
     }
+    std::vector<size_t> threadCounts(maxThreads, 0);
     auto tBufDone = std::chrono::high_resolution_clock::now();
 
     const uint8_t* vVis = mesh->vertVisible.empty() ? nullptr : mesh->vertVisible.data();
@@ -5663,7 +5657,7 @@ std::vector<uint32_t> SculptManager::getVerticesInLasso(Mesh* mesh, const Camera
                     }
                 }
             }
-            s_threadSelected[tid].resize(localCount);
+            threadCounts[tid] = localCount;
         }
     } else {
         #pragma omp parallel
@@ -5728,7 +5722,7 @@ std::vector<uint32_t> SculptManager::getVerticesInLasso(Mesh* mesh, const Camera
                     outPtr[localCount++] = (uint32_t)i;
                 }
             }
-            s_threadSelected[tid].resize(localCount);
+            threadCounts[tid] = localCount;
         }
     }
     auto tScanDone = std::chrono::high_resolution_clock::now();
@@ -5736,7 +5730,7 @@ std::vector<uint32_t> SculptManager::getVerticesInLasso(Mesh* mesh, const Camera
     // Prefix sum concatenation
     std::vector<size_t> offsets(maxThreads + 1, 0);
     for (int t = 0; t < maxThreads; ++t) {
-        offsets[t + 1] = offsets[t] + s_threadSelected[t].size();
+        offsets[t + 1] = offsets[t] + threadCounts[t];
     }
     size_t totalSelected = offsets[maxThreads];
 
@@ -5744,12 +5738,15 @@ std::vector<uint32_t> SculptManager::getVerticesInLasso(Mesh* mesh, const Camera
 
     #pragma omp parallel for schedule(static)
     for (int t = 0; t < maxThreads; ++t) {
-        size_t count = s_threadSelected[t].size();
+        size_t count = threadCounts[t];
         if (count > 0) {
             std::memcpy(insideVertices.data() + offsets[t],
                         s_threadSelected[t].data(),
                         count * sizeof(uint32_t));
         }
+    }
+    for (int t = 0; t < maxThreads; ++t) {
+        std::vector<uint32_t>().swap(s_threadSelected[t]);
     }
 
     auto t1 = std::chrono::high_resolution_clock::now();
