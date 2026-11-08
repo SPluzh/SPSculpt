@@ -2673,6 +2673,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     const uint32_t* pAff = nullptr;
     size_t numAff = 0;
 
+    double tagAllocMs = 0.0;
     if (isGrabBrush && !m_firstStrokeFrame && !m_grabbedAffectedVerts.empty()) {
         pAff = m_grabbedAffectedVerts.data();
         numAff = m_grabbedAffectedVerts.size();
@@ -2683,7 +2684,9 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         tStage = std::chrono::high_resolution_clock::now();
 
         if (m_vertTagFlags.size() < (size_t)mesh->nbVerts) {
+            auto tTagAlloc0 = std::chrono::high_resolution_clock::now();
             m_vertTagFlags.assign(mesh->nbVerts, uint8_t(0));
+            tagAllocMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tTagAlloc0).count();
         }
         m_vertTagEpoch++;
         if (m_vertTagEpoch == 0) {
@@ -2791,6 +2794,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         bool isSculptDeform = (activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_MASK_GRADIENT_BLUR && activeBrush != BRUSH_POLYGROUP);
 
         if (isSculptDeform) {
+            auto tTagAlloc1 = std::chrono::high_resolution_clock::now();
             if (m_tagFlags.size() < (size_t)mesh->nbFaces) {
                 m_tagFlags.assign(mesh->nbFaces, 0);
             }
@@ -2798,6 +2802,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             if (m_iFacesCache.size() < neededFaces) {
                 m_iFacesCache.resize(neededFaces);
             }
+            tagAllocMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tTagAlloc1).count();
 
             // --- Stage 7: Face Lookup ---
             uint32_t numIFaces = 0;
@@ -2925,8 +2930,10 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     double totalCpuMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tFrameStart).count();
     if (totalCpuMs > 5.0) {
         const auto& p = m_lastFrameProfile;
+        uint32_t dirtySpanVerts = (mesh && mesh->dirtyVertMax >= mesh->dirtyVertMin) ? (mesh->dirtyVertMax - mesh->dirtyVertMin + 1) : 0;
+        double dirtySpanRatio = (p.affectedVertCount > 0) ? ((double)dirtySpanVerts / (double)p.affectedVertCount) : 0.0;
         if (p.dualPickActive) {
-            sculpt_log("[SCULPT CPU STROKE] '%s' | Total CPU: %.2fms | Verts: %d (Picked: %d) | Faces: %d\n"
+            sculpt_log("[SCULPT CPU STROKE] '%s' | Total CPU: %.2fms | Verts: %d (Picked: %d) | Faces: %d | TagAlloc: %.2fms | DirtySpan: %u (%.1fx)\n"
                       "  |- Raycast:        %6.2f ms\n"
                       "  |- Pick Vertices:  %6.2f ms [Dual sec0=%.2f sec1=%.2f cull=%.2f | BVH0(%s %dt): Cells %.2f vInit %.2f P2 %.2f Mrg %.2f L=%u F=%u | Sym(%s %dt): P2 %.2f L=%u F=%u]\n"
                       "  |- Culling/Group:  %6.2f ms\n"
@@ -2941,7 +2948,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                       "  |- BVH Update:     %6.2f ms (Dedup: %.2f, AABB: %.2f, ClimbSort: %.2f, Inner: %.2f | L=%u I=%u Pre=%d)\n"
                       "  \\- Proxy Sync:     %6.2f ms\n",
                       getBrushNameStr(activeBrush),
-                      totalCpuMs, p.affectedVertCount, p.pickedVertCount, p.affectedFaceCount,
+                      totalCpuMs, p.affectedVertCount, p.pickedVertCount, p.affectedFaceCount, tagAllocMs, dirtySpanVerts, dirtySpanRatio,
                       p.raycastMs,
                       p.pickVertsMs, p.dualPickSec0Ms, p.dualPickSec1Ms, p.dualPickCullMs,
                       p.pickUsedTopo ? "TOPO" : (p.pickUsedMT ? "MT" : "ST"), p.pickThreads,
@@ -2958,7 +2965,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                       p.bvhUpdateMs, p.bvhLeafDedupMs, p.bvhLeafAABBMs, p.bvhParentSortMs, p.bvhInnerUpdMs, p.bvhDirtyLeaves, p.bvhDirtyInner, p.bvhUsedPrecomputed ? 1 : 0,
                       p.vertProxySyncMs);
         } else {
-            sculpt_log("[SCULPT CPU STROKE] '%s' | Total CPU: %.2fms | Verts: %d (Picked: %d) | Faces: %d\n"
+            sculpt_log("[SCULPT CPU STROKE] '%s' | Total CPU: %.2fms | Verts: %d (Picked: %d) | Faces: %d | TagAlloc: %.2fms | DirtySpan: %u (%.1fx)\n"
                       "  |- Raycast:        %6.2f ms\n"
                       "  |- Pick Vertices:  %6.2f ms [BVH0(%s %dt): Cells %.2f vInit %.2f P2 %.2f Mrg %.2f L=%u F=%u]\n"
                       "  |- Culling/Group:  %6.2f ms\n"
@@ -2973,7 +2980,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                       "  |- BVH Update:     %6.2f ms (Dedup: %.2f, AABB: %.2f, ClimbSort: %.2f, Inner: %.2f | L=%u I=%u Pre=%d)\n"
                       "  \\- Proxy Sync:     %6.2f ms\n",
                       getBrushNameStr(activeBrush),
-                      totalCpuMs, p.affectedVertCount, p.pickedVertCount, p.affectedFaceCount,
+                      totalCpuMs, p.affectedVertCount, p.pickedVertCount, p.affectedFaceCount, tagAllocMs, dirtySpanVerts, dirtySpanRatio,
                       p.raycastMs,
                       p.pickVertsMs,
                       p.pickUsedTopo ? "TOPO" : (p.pickUsedMT ? "MT" : "ST"), p.pickThreads,
@@ -5117,21 +5124,35 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             bool isGrabBrush = (activeBrush == BRUSH_MOVE || activeBrush == BRUSH_DRAG || activeBrush == BRUSH_ELASTIC || activeBrush == BRUSH_SNAKEHOOK || m_isTubeMoveStroke);
 
             if (isGrabBrush || minSpacing <= 0.0f) {
+                auto tMot0 = std::chrono::high_resolution_clock::now();
                 executeStroke(scene, targetMesh, camera, (float)mouseX, (float)mouseY, currentPressure);
+                double motMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tMot0).count();
+                if (motMs > 20.0) {
+                    sculpt_log("[SCULPT MOTION SUBSTEPS] '%s' (Grab/Immediate) | 1 step in SDL_MOUSEMOTION took %.2fms (dist=%.1fpx)\n",
+                               getBrushNameStr(activeBrush), motMs, dist);
+                }
                 m_lastStrokeX = mouseX;
                 m_lastStrokeY = mouseY;
             } else if (dist > minSpacing) {
+                auto tMot0 = std::chrono::high_resolution_clock::now();
                 float step = 1.0f / std::floor(dist / minSpacing);
                 float stepDx = strokeDx * step;
                 float stepDy = strokeDy * step;
 
                 float curX = (float)m_lastStrokeX + stepDx;
                 float curY = (float)m_lastStrokeY + stepDy;
+                int subStepCount = 0;
 
                 for (float i = step; i <= 1.01f; i += step) {
                     executeStroke(scene, targetMesh, camera, curX, curY, currentPressure);
                     curX += stepDx;
                     curY += stepDy;
+                    subStepCount++;
+                }
+                double motMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tMot0).count();
+                if (subStepCount > 1 || motMs > 20.0) {
+                    sculpt_log("[SCULPT MOTION SUBSTEPS] '%s' | %d sub-steps in single SDL_MOUSEMOTION took %.2fms (dist=%.1fpx, minSpacing=%.2fpx)\n",
+                               getBrushNameStr(activeBrush), subStepCount, motMs, dist, minSpacing);
                 }
                 m_lastStrokeX = mouseX;
                 m_lastStrokeY = mouseY;

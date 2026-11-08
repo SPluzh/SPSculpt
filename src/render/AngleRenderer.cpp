@@ -3496,18 +3496,20 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
                 mesh->isMaterialDirty = false;
             }
         } else {
+            size_t incrementalBytes = 0;
             if (mesh->isVertexDirty && mesh->dirtyVertMin <= mesh->dirtyVertMax && mesh->dirtyVertMax < (uint32_t)mesh->nbVerts) {
                 uploaded = true;
-                size_t offset = mesh->dirtyVertMin * 3 * sizeof(float);
-                size_t size   = (mesh->dirtyVertMax - mesh->dirtyVertMin + 1) * 3 * sizeof(float);
+                size_t offset = (size_t)mesh->dirtyVertMin * 3 * sizeof(float);
+                size_t size   = (size_t)(mesh->dirtyVertMax - mesh->dirtyVertMin + 1) * 3 * sizeof(float);
+                incrementalBytes += size * 2;
                 
                 glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
                 glBufferSubData(GL_ARRAY_BUFFER, offset, size,
-                                mesh->verts.data() + mesh->dirtyVertMin * 3);
+                                mesh->verts.data() + (size_t)mesh->dirtyVertMin * 3);
                 
                 glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
                 glBufferSubData(GL_ARRAY_BUFFER, offset, size,
-                                mesh->normals.data() + mesh->dirtyVertMin * 3);
+                                mesh->normals.data() + (size_t)mesh->dirtyVertMin * 3);
 
                 bufs->polygroupDirty = true;
                 if (m_showPolyGroups || m_activeBrush == BRUSH_POLYGROUP || m_shaderType == 5) {
@@ -3520,24 +3522,26 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
 
             if (mesh->isColorDirty && mesh->dirtyVertMin <= mesh->dirtyVertMax && mesh->dirtyVertMax < (uint32_t)mesh->nbVerts) {
                 uploaded = true;
-                size_t offset = mesh->dirtyVertMin * 3 * sizeof(float);
-                size_t size   = (mesh->dirtyVertMax - mesh->dirtyVertMin + 1) * 3 * sizeof(float);
+                size_t offset = (size_t)mesh->dirtyVertMin * 3 * sizeof(float);
+                size_t size   = (size_t)(mesh->dirtyVertMax - mesh->dirtyVertMin + 1) * 3 * sizeof(float);
+                incrementalBytes += size;
 
                 glBindBuffer(GL_ARRAY_BUFFER, bufs->vboColors);
                 glBufferSubData(GL_ARRAY_BUFFER, offset, size,
-                                mesh->colors.data() + mesh->dirtyVertMin * 3);
+                                mesh->colors.data() + (size_t)mesh->dirtyVertMin * 3);
 
                 mesh->isColorDirty = false;
             }
 
             if (mesh->isMaterialDirty && mesh->dirtyVertMin <= mesh->dirtyVertMax && mesh->dirtyVertMax < (uint32_t)mesh->nbVerts) {
                 uploaded = true;
-                size_t offset = mesh->dirtyVertMin * 3 * sizeof(float);
-                size_t size   = (mesh->dirtyVertMax - mesh->dirtyVertMin + 1) * 3 * sizeof(float);
+                size_t offset = (size_t)mesh->dirtyVertMin * 3 * sizeof(float);
+                size_t size   = (size_t)(mesh->dirtyVertMax - mesh->dirtyVertMin + 1) * 3 * sizeof(float);
+                incrementalBytes += size;
 
                 glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
                 glBufferSubData(GL_ARRAY_BUFFER, offset, size,
-                                mesh->materials.data() + mesh->dirtyVertMin * 3);
+                                mesh->materials.data() + (size_t)mesh->dirtyVertMin * 3);
 
                 mesh->isMaterialDirty = false;
             }
@@ -3566,15 +3570,23 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
                 
                 mesh->isTopologyDirty = false;
             }
+            if (incrementalBytes > 0) {
+                double incUploadMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tUploadStart).count();
+                m_lastUploadTiming.msVbo += incUploadMs;
+                m_lastUploadTiming.msTotal += incUploadMs;
+            }
         }
     }
 
     if (uploaded) {
         double uploadMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tUploadStart).count();
         if (uploadMs > 0.5) {
-            sculpt_log("[GPU UPLOAD] %s Upload: %.2fms | Mesh ID: %u | Verts range: %u..%u (Total %d)\n",
+            uint32_t spanVerts = (mesh->dirtyVertMax >= mesh->dirtyVertMin) ? (mesh->dirtyVertMax - mesh->dirtyVertMin + 1) : 0;
+            double spanPct = (mesh->nbVerts > 0) ? (100.0 * (double)spanVerts / (double)mesh->nbVerts) : 0.0;
+            double approxMB = (double)spanVerts * 24.0 / (1024.0 * 1024.0);
+            sculpt_log("[GPU UPLOAD] %s Upload: %.2fms | Mesh ID: %u | Verts range: %u..%u (Span: %u / %d = %.1f%%, ~%.1f MB V+N)\n",
                        isFullUpload ? "FULL" : "Incremental", uploadMs, mesh->getID(),
-                       mesh->dirtyVertMin, mesh->dirtyVertMax, mesh->nbVerts);
+                       mesh->dirtyVertMin, mesh->dirtyVertMax, spanVerts, mesh->nbVerts, spanPct, approxMB);
         }
     }
     return uploaded;

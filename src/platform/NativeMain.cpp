@@ -1042,6 +1042,9 @@ int main(int argc, char* argv[]) {
                 camRight->update(deltaTime);
             }
         }
+        auto tPollEventsStart = std::chrono::high_resolution_clock::now();
+        int sculptMotionEvents = 0;
+        bool wasSculptingInFrame = sculpt.isSculpting();
         while (SDL_PollEvent(&event)) {
             // Track user activity for idle throttle
             if (event.type == SDL_MOUSEMOTION || event.type == SDL_MOUSEBUTTONDOWN ||
@@ -1249,11 +1252,18 @@ int main(int argc, char* argv[]) {
                     }
 
                     if (!skipSculpt) {
+                        if (eventCopy.type == SDL_MOUSEMOTION && sculpt.isSculpting()) {
+                            sculptMotionEvents++;
+                        }
                         sculpt.handleEvent(eventCopy, scene);
+                        if (sculpt.isSculpting()) {
+                            wasSculptingInFrame = true;
+                        }
                     }
                 }
             }
         }
+        double pollEventsMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tPollEventsStart).count();
 
         // Manage hardware / system / software cursor
         // Poll raw mouse position right before rendering to eliminate input lag
@@ -1268,12 +1278,14 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        auto tProcessFrameStart = std::chrono::high_resolution_clock::now();
         if (gui.isRemeshRunning()) {
             sculpt.getCursor().hide();
         } else {
             sculpt.setModalMode(dispatcher.getModalMode());
             sculpt.processFrame(scene);
         }
+        double processFrameMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tProcessFrameStart).count();
 
         // Manage hardware / system / software cursor (activated ONLY over the mesh or during sculpt, or when hovering brush sliders)
         bool sculptingNow = sculpt.isSculpting();
@@ -1434,9 +1446,10 @@ int main(int argc, char* argv[]) {
             pendingLiveSyncActive = false;
         }
 
-        if (isSculptingActive && (renderMs + guiMs + swapMs > 5.0)) {
-            sculpt_log("[SCULPT RENDER FRAME] Render: %.2fms | GUI: %.2fms | Swap: %.2fms\n",
-                       renderMs, guiMs, swapMs);
+        if ((isSculptingActive || wasSculptingInFrame) && (pollEventsMs + processFrameMs + renderMs + guiMs + swapMs > 5.0)) {
+            const auto& uploadTiming = renderer.getLastUploadTiming();
+            sculpt_log("[SCULPT RENDER FRAME] PollEvents: %.2fms (%d motion) | ProcessFrame: %.2fms | Render: %.2fms (VBO Upload: %.2fms) | GUI: %.2fms | Swap: %.2fms\n",
+                       pollEventsMs, sculptMotionEvents, processFrameMs, renderMs, uploadTiming.msVbo, guiMs, swapMs);
         }
 
         // ---- GPU load limiter ----
