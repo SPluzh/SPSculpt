@@ -58,6 +58,25 @@ static void radixSort(uint32_t* arr, uint32_t n) {
     std::copy(temp.begin(), temp.end(), arr);
 }
 
+namespace {
+inline int mergeCompactedThreadBuffers(std::vector<std::vector<uint32_t>>& threadBufs, int numThreads, uint32_t* outIVerts) {
+    size_t offsets[129] = {0};
+    int nThreads = std::min(numThreads, 128);
+    for (int t = 0; t < nThreads; ++t) {
+        offsets[t + 1] = offsets[t] + threadBufs[t].size();
+    }
+    int totalCount = (int)offsets[nThreads];
+    #pragma omp parallel for schedule(static) if(totalCount > 4000)
+    for (int t = 0; t < nThreads; ++t) {
+        size_t sz = threadBufs[t].size();
+        if (sz > 0) {
+            std::memcpy(outIVerts + offsets[t], threadBufs[t].data(), sz * sizeof(uint32_t));
+        }
+    }
+    return totalCount;
+}
+}
+
 int strokeFlatten(
     float* verts,
     const float* vertProxy,
@@ -174,6 +193,7 @@ static void laplacianSmooth(
     const uint32_t* __restrict iVerts, int nbIVerts,
     float* __restrict outSmoothVerts
 ) {
+    #pragma omp parallel for schedule(static) if(nbIVerts > 1000)
     for (int i = 0; i < nbIVerts; ++i) {
         uint32_t id = iVerts[i];
         int i3 = i * 3;
@@ -280,118 +300,254 @@ int strokeSmooth(
         float p = (1.0f - focalShift) / 2.0f;
         const float pSq = p * p;
 
-        writeIdx = 0;
-        for (int i = 0; i < nbIVerts; ++i) {
-            uint32_t id = iVerts[i];
-            int ind = id * 3;
+        const int maxThreads = omp_get_max_threads();
+        const bool inParallel = omp_in_parallel();
 
-            float mIntensity = passWeight * materials[ind + 2];
-            if (mIntensity <= 0.0f) {
-                continue;
-            }
+        if (nbIVerts < 1000 || inParallel || maxThreads <= 1) {
+            writeIdx = 0;
+            for (int i = 0; i < nbIVerts; ++i) {
+                uint32_t id = iVerts[i];
+                int ind = id * 3;
 
-            float vx = verts[ind];
-            float vy = verts[ind + 1];
-            float vz = verts[ind + 2];
-
-            if (radius > 0.0f) {
-                float dx = vx - cx;
-                float dy = vy - cy;
-                float dz = vz - cz;
-                float distSq = (dx * dx + dy * dy + dz * dz) / (radius * radius);
-                if (distSq >= 1.0f) {
+                float mIntensity = passWeight * materials[ind + 2];
+                if (mIntensity <= 0.0f) {
                     continue;
                 }
-                if (distSq < pSq) {
-                    // fallOff = 1.0f, mIntensity is unchanged
-                } else if (p >= 1.0f) {
-                    continue;
-                } else {
-                    float dist = std::sqrt(distSq);
-                    float d = (dist - p) / (1.0f - p);
-                    float d2 = d * d;
-                    float fallOff = 3.0f * d2 * d2 - 4.0f * d2 * d + 1.0f;
-                    mIntensity *= fallOff;
+
+                float vx = verts[ind];
+                float vy = verts[ind + 1];
+                float vz = verts[ind + 2];
+
+                if (radius > 0.0f) {
+                    float dx = vx - cx;
+                    float dy = vy - cy;
+                    float dz = vz - cz;
+                    float distSq = (dx * dx + dy * dy + dz * dz) / (radius * radius);
+                    if (distSq >= 1.0f) {
+                        continue;
+                    }
+                    if (distSq < pSq) {
+                        // fallOff = 1.0f, mIntensity is unchanged
+                    } else if (p >= 1.0f) {
+                        continue;
+                    } else {
+                        float dist = std::sqrt(distSq);
+                        float d = (dist - p) / (1.0f - p);
+                        float d2 = d * d;
+                        float fallOff = 3.0f * d2 * d2 - 4.0f * d2 * d + 1.0f;
+                        mIntensity *= fallOff;
+                    }
                 }
-            }
 
-            // Alpha map value
-            float alphaVal = 1.0f;
-            if (hasAlpha && alphaTex && alphaLookAt) {
-                float xn = alphaRatioY * (alphaLookAt[0] * vx + alphaLookAt[4] * vy + alphaLookAt[8] * vz + alphaLookAt[12]) / (alphaXSym ? -alphaSide : alphaSide);
-                float yn = alphaRatioX * (alphaLookAt[1] * vx + alphaLookAt[5] * vy + alphaLookAt[9] * vz + alphaLookAt[13]) / alphaSide;
+                // Alpha map value
+                float alphaVal = 1.0f;
+                if (hasAlpha && alphaTex && alphaLookAt) {
+                    float xn = alphaRatioY * (alphaLookAt[0] * vx + alphaLookAt[4] * vy + alphaLookAt[8] * vz + alphaLookAt[12]) / (alphaXSym ? -alphaSide : alphaSide);
+                    float yn = alphaRatioX * (alphaLookAt[1] * vx + alphaLookAt[5] * vy + alphaLookAt[9] * vz + alphaLookAt[13]) / alphaSide;
 
-                float edgeDist = std::sqrt(xn * xn + yn * yn);
-                if (edgeDist > 1.0f) {
-                    alphaVal = 0.0f;
-                } else {
-                    const uint8_t* tex = alphaTex;
-                    int txn = std::max(0, std::min(alphaWidth - 1, static_cast<int>((0.5f - xn * 0.5f) * alphaWidth)));
-                    int tyn = std::max(0, std::min(alphaHeight - 1, static_cast<int>((0.5f - yn * 0.5f) * alphaHeight)));
-                    alphaVal = tex[txn + alphaWidth * tyn] / 255.0f;
+                    float edgeDist = std::sqrt(xn * xn + yn * yn);
+                    if (edgeDist > 1.0f) {
+                        alphaVal = 0.0f;
+                    } else {
+                        const uint8_t* tex = alphaTex;
+                        int txn = std::max(0, std::min(alphaWidth - 1, static_cast<int>((0.5f - xn * 0.5f) * alphaWidth)));
+                        int tyn = std::max(0, std::min(alphaHeight - 1, static_cast<int>((0.5f - yn * 0.5f) * alphaHeight)));
+                        alphaVal = tex[txn + alphaWidth * tyn] / 255.0f;
 
-                    float fs = focalShiftFalloff ? focalShift : 0.0f;
-                    if (fs != 0.0f) {
-                        if (fs > 0.0f) {
-                            float softRadius = (1.0f - fs) / 2.0f;
-                            if (edgeDist > softRadius) {
-                                float edgeFade = 1.0f - (edgeDist - softRadius) / (1.0f - softRadius);
-                                edgeFade = std::max(0.0f, std::min(1.0f, edgeFade));
-                                float smooth = edgeFade * edgeFade * (3.0f - 2.0f * edgeFade);
-                                alphaVal *= std::pow(smooth, 1.0f + fs * 5.0f);
+                        float fs = focalShiftFalloff ? focalShift : 0.0f;
+                        if (fs != 0.0f) {
+                            if (fs > 0.0f) {
+                                float softRadius = (1.0f - fs) / 2.0f;
+                                if (edgeDist > softRadius) {
+                                    float edgeFade = 1.0f - (edgeDist - softRadius) / (1.0f - softRadius);
+                                    edgeFade = std::max(0.0f, std::min(1.0f, edgeFade));
+                                    float smooth = edgeFade * edgeFade * (3.0f - 2.0f * edgeFade);
+                                    alphaVal *= std::pow(smooth, 1.0f + fs * 5.0f);
+                                }
+                            } else {
+                                alphaVal = std::pow(alphaVal, 1.0f / (1.0f - fs * 3.0f));
                             }
-                        } else {
-                            alphaVal = std::pow(alphaVal, 1.0f / (1.0f - fs * 3.0f));
                         }
                     }
                 }
-            }
 
-            mIntensity *= alphaVal;
-            mIntensity = std::min(1.0f, mIntensity);
+                mIntensity *= alphaVal;
+                mIntensity = std::min(1.0f, mIntensity);
 
-            if (mIntensity <= 0.0f) {
-                continue;
-            }
-
-            int i3 = i * 3;
-            float smx = smoothVerts[i3];
-            float smy = smoothVerts[i3 + 1];
-            float smz = smoothVerts[i3 + 2];
-
-            float diffX = smx - vx;
-            float diffY = smy - vy;
-            float diffZ = smz - vz;
-            if (diffX * diffX + diffY * diffY + diffZ * diffZ < 1e-12f) {
-                continue;
-            }
-
-            if (tangent) {
-                float nx = normals[ind];
-                float ny = normals[ind + 1];
-                float nz = normals[ind + 2];
-                float len = nx * nx + ny * ny + nz * nz;
-                if (len == 0.0f) {
+                if (mIntensity <= 0.0f) {
                     continue;
                 }
-                len = 1.0f / std::sqrt(len);
-                nx *= len;
-                ny *= len;
-                nz *= len;
 
-                float dot = nx * diffX + ny * diffY + nz * diffZ;
-                verts[ind] = vx + (smx - nx * dot - vx) * mIntensity;
-                verts[ind + 1] = vy + (smy - ny * dot - vy) * mIntensity;
-                verts[ind + 2] = vz + (smz - nz * dot - vz) * mIntensity;
-            } else {
-                float intComp = 1.0f - mIntensity;
-                verts[ind] = vx * intComp + smx * mIntensity;
-                verts[ind + 1] = vy * intComp + smy * mIntensity;
-                verts[ind + 2] = vz * intComp + smz * mIntensity;
+                int i3 = i * 3;
+                float smx = smoothVerts[i3];
+                float smy = smoothVerts[i3 + 1];
+                float smz = smoothVerts[i3 + 2];
+
+                float diffX = smx - vx;
+                float diffY = smy - vy;
+                float diffZ = smz - vz;
+                if (diffX * diffX + diffY * diffY + diffZ * diffZ < 1e-12f) {
+                    continue;
+                }
+
+                if (tangent) {
+                    float nx = normals[ind];
+                    float ny = normals[ind + 1];
+                    float nz = normals[ind + 2];
+                    float len = nx * nx + ny * ny + nz * nz;
+                    if (len == 0.0f) {
+                        continue;
+                    }
+                    len = 1.0f / std::sqrt(len);
+                    nx *= len;
+                    ny *= len;
+                    nz *= len;
+
+                    float dot = nx * diffX + ny * diffY + nz * diffZ;
+                    verts[ind] = vx + (smx - nx * dot - vx) * mIntensity;
+                    verts[ind + 1] = vy + (smy - ny * dot - vy) * mIntensity;
+                    verts[ind + 2] = vz + (smz - nz * dot - vz) * mIntensity;
+                } else {
+                    float intComp = 1.0f - mIntensity;
+                    verts[ind] = vx * intComp + smx * mIntensity;
+                    verts[ind + 1] = vy * intComp + smy * mIntensity;
+                    verts[ind + 2] = vz * intComp + smz * mIntensity;
+                }
+
+                iVerts[writeIdx++] = id;
+            }
+        } else {
+            static std::vector<std::vector<uint32_t>> s_threadIVerts;
+            if ((int)s_threadIVerts.size() < maxThreads) {
+                s_threadIVerts.resize(maxThreads);
             }
 
-            iVerts[writeIdx++] = id;
+            #pragma omp parallel
+            {
+                int tid = omp_get_thread_num();
+                auto& localVerts = s_threadIVerts[tid];
+                localVerts.clear();
+                size_t estCount = (nbIVerts / maxThreads) + 64;
+                if (localVerts.capacity() < estCount) {
+                    localVerts.reserve(estCount);
+                }
+
+                #pragma omp for schedule(static)
+                for (int i = 0; i < nbIVerts; ++i) {
+                    uint32_t id = iVerts[i];
+                    int ind = id * 3;
+
+                    float mIntensity = passWeight * materials[ind + 2];
+                    if (mIntensity <= 0.0f) {
+                        continue;
+                    }
+
+                    float vx = verts[ind];
+                    float vy = verts[ind + 1];
+                    float vz = verts[ind + 2];
+
+                    if (radius > 0.0f) {
+                        float dx = vx - cx;
+                        float dy = vy - cy;
+                        float dz = vz - cz;
+                        float distSq = (dx * dx + dy * dy + dz * dz) / (radius * radius);
+                        if (distSq >= 1.0f) {
+                            continue;
+                        }
+                        if (distSq < pSq) {
+                            // fallOff = 1.0f, mIntensity is unchanged
+                        } else if (p >= 1.0f) {
+                            continue;
+                        } else {
+                            float dist = std::sqrt(distSq);
+                            float d = (dist - p) / (1.0f - p);
+                            float d2 = d * d;
+                            float fallOff = 3.0f * d2 * d2 - 4.0f * d2 * d + 1.0f;
+                            mIntensity *= fallOff;
+                        }
+                    }
+
+                    // Alpha map value
+                    float alphaVal = 1.0f;
+                    if (hasAlpha && alphaTex && alphaLookAt) {
+                        float xn = alphaRatioY * (alphaLookAt[0] * vx + alphaLookAt[4] * vy + alphaLookAt[8] * vz + alphaLookAt[12]) / (alphaXSym ? -alphaSide : alphaSide);
+                        float yn = alphaRatioX * (alphaLookAt[1] * vx + alphaLookAt[5] * vy + alphaLookAt[9] * vz + alphaLookAt[13]) / alphaSide;
+
+                        float edgeDist = std::sqrt(xn * xn + yn * yn);
+                        if (edgeDist > 1.0f) {
+                            alphaVal = 0.0f;
+                        } else {
+                            const uint8_t* tex = alphaTex;
+                            int txn = std::max(0, std::min(alphaWidth - 1, static_cast<int>((0.5f - xn * 0.5f) * alphaWidth)));
+                            int tyn = std::max(0, std::min(alphaHeight - 1, static_cast<int>((0.5f - yn * 0.5f) * alphaHeight)));
+                            alphaVal = tex[txn + alphaWidth * tyn] / 255.0f;
+
+                            float fs = focalShiftFalloff ? focalShift : 0.0f;
+                            if (fs != 0.0f) {
+                                if (fs > 0.0f) {
+                                    float softRadius = (1.0f - fs) / 2.0f;
+                                    if (edgeDist > softRadius) {
+                                        float edgeFade = 1.0f - (edgeDist - softRadius) / (1.0f - softRadius);
+                                        edgeFade = std::max(0.0f, std::min(1.0f, edgeFade));
+                                        float smooth = edgeFade * edgeFade * (3.0f - 2.0f * edgeFade);
+                                        alphaVal *= std::pow(smooth, 1.0f + fs * 5.0f);
+                                    }
+                                } else {
+                                    alphaVal = std::pow(alphaVal, 1.0f / (1.0f - fs * 3.0f));
+                                }
+                            }
+                        }
+                    }
+
+                    mIntensity *= alphaVal;
+                    mIntensity = std::min(1.0f, mIntensity);
+
+                    if (mIntensity <= 0.0f) {
+                        continue;
+                    }
+
+                    int i3 = i * 3;
+                    float smx = smoothVerts[i3];
+                    float smy = smoothVerts[i3 + 1];
+                    float smz = smoothVerts[i3 + 2];
+
+                    float diffX = smx - vx;
+                    float diffY = smy - vy;
+                    float diffZ = smz - vz;
+                    if (diffX * diffX + diffY * diffY + diffZ * diffZ < 1e-12f) {
+                        continue;
+                    }
+
+                    if (tangent) {
+                        float nx = normals[ind];
+                        float ny = normals[ind + 1];
+                        float nz = normals[ind + 2];
+                        float len = nx * nx + ny * ny + nz * nz;
+                        if (len == 0.0f) {
+                            continue;
+                        }
+                        len = 1.0f / std::sqrt(len);
+                        nx *= len;
+                        ny *= len;
+                        nz *= len;
+
+                        float dot = nx * diffX + ny * diffY + nz * diffZ;
+                        verts[ind] = vx + (smx - nx * dot - vx) * mIntensity;
+                        verts[ind + 1] = vy + (smy - ny * dot - vy) * mIntensity;
+                        verts[ind + 2] = vz + (smz - nz * dot - vz) * mIntensity;
+                    } else {
+                        float intComp = 1.0f - mIntensity;
+                        verts[ind] = vx * intComp + smx * mIntensity;
+                        verts[ind + 1] = vy * intComp + smy * mIntensity;
+                        verts[ind + 2] = vz * intComp + smz * mIntensity;
+                    }
+
+                    localVerts.push_back(id);
+                }
+            }
+            writeIdx = mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
         }
+        nbIVerts = writeIdx;
     }
     return writeIdx;
 }
@@ -686,70 +842,156 @@ int strokeInflate(
     }
     const float radiusSq = radius * radius;
 
-    int writeIdx = 0;
-    for (int i = 0; i < nbIVerts; ++i) {
-        if (i + 8 < nbIVerts) {
-            uint32_t nextId = iVerts[i + 8];
-            __builtin_prefetch(&verts[nextId * 3], 1, 1);
-            __builtin_prefetch(&materials[nextId * 3], 0, 1);
-            __builtin_prefetch(&vertProxy[nextId * 3], 0, 1);
-            __builtin_prefetch(&normals[nextId * 3], 0, 1);
+    const int maxThreads = omp_get_max_threads();
+    const bool inParallel = omp_in_parallel();
+
+    if (nbIVerts < 500 || inParallel || maxThreads <= 1) {
+        int writeIdx = 0;
+        for (int i = 0; i < nbIVerts; ++i) {
+            if (i + 8 < nbIVerts) {
+                uint32_t nextId = iVerts[i + 8];
+                __builtin_prefetch(&verts[nextId * 3], 1, 1);
+                __builtin_prefetch(&materials[nextId * 3], 0, 1);
+                __builtin_prefetch(&vertProxy[nextId * 3], 0, 1);
+                __builtin_prefetch(&normals[nextId * 3], 0, 1);
+            }
+
+            uint32_t id = iVerts[i];
+            int ind = id * 3;
+
+            float matVal = materials[ind + 2];
+            if (matVal <= 0.0f) {
+                continue;
+            }
+
+            float dx = vertProxy[ind] - cx;
+            float dy = vertProxy[ind + 1] - cy;
+            float dz = vertProxy[ind + 2] - cz;
+            float distSq = (dx * dx + dy * dy + dz * dz) / radiusSq;
+            if (distSq >= 1.0f) {
+                continue;
+            }
+
+            float dist = std::sqrt(distSq);
+            float fallOff = getFallOff(dist, focalShift, useAccuCurve, accuCurveLut);
+            fallOff = deformIntensity * fallOff;
+
+            float vx = verts[ind];
+            float vy = verts[ind + 1];
+            float vz = verts[ind + 2];
+
+            float nx = normals[ind];
+            float ny = normals[ind + 1];
+            float nz = normals[ind + 2];
+
+            float normalLen = std::sqrt(nx * nx + ny * ny + nz * nz);
+            if (normalLen == 0.0f) {
+                continue;
+            }
+
+            fallOff /= normalLen;
+            float alphaVal = getAlphaVal(
+                vx, vy, vz,
+                hasAlpha, alphaTex, alphaWidth, alphaHeight,
+                alphaRatioX, alphaRatioY, alphaSide,
+                alphaLookAt, alphaXSym,
+                focalShift, focalShiftFalloff
+            );
+            fallOff *= matVal * alphaVal;
+
+            if (fallOff == 0.0f) {
+                continue;
+            }
+
+            verts[ind] += nx * fallOff;
+            verts[ind + 1] += ny * fallOff;
+            verts[ind + 2] += nz * fallOff;
+
+            iVerts[writeIdx++] = id;
         }
-
-        uint32_t id = iVerts[i];
-        int ind = id * 3;
-
-        float matVal = materials[ind + 2];
-        if (matVal <= 0.0f) {
-            continue;
-        }
-
-        float dx = vertProxy[ind] - cx;
-        float dy = vertProxy[ind + 1] - cy;
-        float dz = vertProxy[ind + 2] - cz;
-        float distSq = (dx * dx + dy * dy + dz * dz) / radiusSq;
-        if (distSq >= 1.0f) {
-            continue;
-        }
-
-        float dist = std::sqrt(distSq);
-        float fallOff = getFallOff(dist, focalShift, useAccuCurve, accuCurveLut);
-        fallOff = deformIntensity * fallOff;
-
-        float vx = verts[ind];
-        float vy = verts[ind + 1];
-        float vz = verts[ind + 2];
-
-        float nx = normals[ind];
-        float ny = normals[ind + 1];
-        float nz = normals[ind + 2];
-
-        float normalLen = std::sqrt(nx * nx + ny * ny + nz * nz);
-        if (normalLen == 0.0f) {
-            continue;
-        }
-
-        fallOff /= normalLen;
-        float alphaVal = getAlphaVal(
-            vx, vy, vz,
-            hasAlpha, alphaTex, alphaWidth, alphaHeight,
-            alphaRatioX, alphaRatioY, alphaSide,
-            alphaLookAt, alphaXSym,
-            focalShift, focalShiftFalloff
-        );
-        fallOff *= matVal * alphaVal;
-
-        if (fallOff == 0.0f) {
-            continue;
-        }
-
-        verts[ind] += nx * fallOff;
-        verts[ind + 1] += ny * fallOff;
-        verts[ind + 2] += nz * fallOff;
-
-        iVerts[writeIdx++] = id;
+        return writeIdx;
     }
-    return writeIdx;
+
+    static std::vector<std::vector<uint32_t>> s_threadIVerts;
+    if ((int)s_threadIVerts.size() < maxThreads) {
+        s_threadIVerts.resize(maxThreads);
+    }
+
+    #pragma omp parallel
+    {
+        int tid = omp_get_thread_num();
+        auto& localVerts = s_threadIVerts[tid];
+        localVerts.clear();
+        size_t estCount = (nbIVerts / maxThreads) + 64;
+        if (localVerts.capacity() < estCount) {
+            localVerts.reserve(estCount);
+        }
+
+        #pragma omp for schedule(static)
+        for (int i = 0; i < nbIVerts; ++i) {
+            if (i + 8 < nbIVerts) {
+                uint32_t nextId = iVerts[i + 8];
+                __builtin_prefetch(&verts[nextId * 3], 1, 1);
+                __builtin_prefetch(&materials[nextId * 3], 0, 1);
+                __builtin_prefetch(&vertProxy[nextId * 3], 0, 1);
+                __builtin_prefetch(&normals[nextId * 3], 0, 1);
+            }
+
+            uint32_t id = iVerts[i];
+            int ind = id * 3;
+
+            float matVal = materials[ind + 2];
+            if (matVal <= 0.0f) {
+                continue;
+            }
+
+            float dx = vertProxy[ind] - cx;
+            float dy = vertProxy[ind + 1] - cy;
+            float dz = vertProxy[ind + 2] - cz;
+            float distSq = (dx * dx + dy * dy + dz * dz) / radiusSq;
+            if (distSq >= 1.0f) {
+                continue;
+            }
+
+            float dist = std::sqrt(distSq);
+            float fallOff = getFallOff(dist, focalShift, useAccuCurve, accuCurveLut);
+            fallOff = deformIntensity * fallOff;
+
+            float vx = verts[ind];
+            float vy = verts[ind + 1];
+            float vz = verts[ind + 2];
+
+            float nx = normals[ind];
+            float ny = normals[ind + 1];
+            float nz = normals[ind + 2];
+
+            float normalLen = std::sqrt(nx * nx + ny * ny + nz * nz);
+            if (normalLen == 0.0f) {
+                continue;
+            }
+
+            fallOff /= normalLen;
+            float alphaVal = getAlphaVal(
+                vx, vy, vz,
+                hasAlpha, alphaTex, alphaWidth, alphaHeight,
+                alphaRatioX, alphaRatioY, alphaSide,
+                alphaLookAt, alphaXSym,
+                focalShift, focalShiftFalloff
+            );
+            fallOff *= matVal * alphaVal;
+
+            if (fallOff == 0.0f) {
+                continue;
+            }
+
+            verts[ind] += nx * fallOff;
+            verts[ind + 1] += ny * fallOff;
+            verts[ind + 2] += nz * fallOff;
+
+            localVerts.push_back(id);
+        }
+    }
+    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
 }
 
 int strokePinch(
@@ -772,56 +1014,128 @@ int strokePinch(
     }
     const float radiusSq = radius * radius;
 
-    int writeIdx = 0;
-    for (int i = 0; i < nbIVerts; ++i) {
-        if (i + 8 < nbIVerts) {
-            uint32_t nextId = iVerts[i + 8];
-            __builtin_prefetch(&verts[nextId * 3], 1, 1);
-            __builtin_prefetch(&materials[nextId * 3], 0, 1);
+    const int maxThreads = omp_get_max_threads();
+    const bool inParallel = omp_in_parallel();
+
+    if (nbIVerts < 500 || inParallel || maxThreads <= 1) {
+        int writeIdx = 0;
+        for (int i = 0; i < nbIVerts; ++i) {
+            if (i + 8 < nbIVerts) {
+                uint32_t nextId = iVerts[i + 8];
+                __builtin_prefetch(&verts[nextId * 3], 1, 1);
+                __builtin_prefetch(&materials[nextId * 3], 0, 1);
+            }
+
+            uint32_t id = iVerts[i];
+            int ind = id * 3;
+
+            float matVal = materials[ind + 2];
+            if (matVal <= 0.0f) {
+                continue;
+            }
+
+            float vx = verts[ind];
+            float vy = verts[ind + 1];
+            float vz = verts[ind + 2];
+
+            float dx = cx - vx;
+            float dy = cy - vy;
+            float dz = cz - vz;
+            float distSq = (dx * dx + dy * dy + dz * dz) / radiusSq;
+            if (distSq >= 1.0f) {
+                continue;
+            }
+
+            float dist = std::sqrt(distSq);
+            float fallOff = getFallOff(dist, focalShift, useAccuCurve, accuCurveLut);
+            float alphaVal = getAlphaVal(
+                vx, vy, vz,
+                hasAlpha, alphaTex, alphaWidth, alphaHeight,
+                alphaRatioX, alphaRatioY, alphaSide,
+                alphaLookAt, alphaXSym,
+                focalShift, focalShiftFalloff
+            );
+            fallOff = std::min(0.95f, fallOff * deformIntensity * matVal * alphaVal);
+
+            if (fallOff <= 0.0f) {
+                continue;
+            }
+
+            verts[ind] = vx + dx * fallOff;
+            verts[ind + 1] = vy + dy * fallOff;
+            verts[ind + 2] = vz + dz * fallOff;
+
+            iVerts[writeIdx++] = id;
         }
-
-        uint32_t id = iVerts[i];
-        int ind = id * 3;
-
-        float matVal = materials[ind + 2];
-        if (matVal <= 0.0f) {
-            continue;
-        }
-
-        float vx = verts[ind];
-        float vy = verts[ind + 1];
-        float vz = verts[ind + 2];
-
-        float dx = cx - vx;
-        float dy = cy - vy;
-        float dz = cz - vz;
-        float distSq = (dx * dx + dy * dy + dz * dz) / radiusSq;
-        if (distSq >= 1.0f) {
-            continue;
-        }
-
-        float dist = std::sqrt(distSq);
-        float fallOff = getFallOff(dist, focalShift, useAccuCurve, accuCurveLut);
-        float alphaVal = getAlphaVal(
-            vx, vy, vz,
-            hasAlpha, alphaTex, alphaWidth, alphaHeight,
-            alphaRatioX, alphaRatioY, alphaSide,
-            alphaLookAt, alphaXSym,
-            focalShift, focalShiftFalloff
-        );
-        fallOff = std::min(0.95f, fallOff * deformIntensity * matVal * alphaVal);
-
-        if (fallOff <= 0.0f) {
-            continue;
-        }
-
-        verts[ind] = vx + dx * fallOff;
-        verts[ind + 1] = vy + dy * fallOff;
-        verts[ind + 2] = vz + dz * fallOff;
-
-        iVerts[writeIdx++] = id;
+        return writeIdx;
     }
-    return writeIdx;
+
+    static std::vector<std::vector<uint32_t>> s_threadIVerts;
+    if ((int)s_threadIVerts.size() < maxThreads) {
+        s_threadIVerts.resize(maxThreads);
+    }
+
+    #pragma omp parallel
+    {
+        int tid = omp_get_thread_num();
+        auto& localVerts = s_threadIVerts[tid];
+        localVerts.clear();
+        size_t estCount = (nbIVerts / maxThreads) + 64;
+        if (localVerts.capacity() < estCount) {
+            localVerts.reserve(estCount);
+        }
+
+        #pragma omp for schedule(static)
+        for (int i = 0; i < nbIVerts; ++i) {
+            if (i + 8 < nbIVerts) {
+                uint32_t nextId = iVerts[i + 8];
+                __builtin_prefetch(&verts[nextId * 3], 1, 1);
+                __builtin_prefetch(&materials[nextId * 3], 0, 1);
+            }
+
+            uint32_t id = iVerts[i];
+            int ind = id * 3;
+
+            float matVal = materials[ind + 2];
+            if (matVal <= 0.0f) {
+                continue;
+            }
+
+            float vx = verts[ind];
+            float vy = verts[ind + 1];
+            float vz = verts[ind + 2];
+
+            float dx = cx - vx;
+            float dy = cy - vy;
+            float dz = cz - vz;
+            float distSq = (dx * dx + dy * dy + dz * dz) / radiusSq;
+            if (distSq >= 1.0f) {
+                continue;
+            }
+
+            float dist = std::sqrt(distSq);
+            float fallOff = getFallOff(dist, focalShift, useAccuCurve, accuCurveLut);
+            float alphaVal = getAlphaVal(
+                vx, vy, vz,
+                hasAlpha, alphaTex, alphaWidth, alphaHeight,
+                alphaRatioX, alphaRatioY, alphaSide,
+                alphaLookAt, alphaXSym,
+                focalShift, focalShiftFalloff
+            );
+            fallOff = std::min(0.95f, fallOff * deformIntensity * matVal * alphaVal);
+
+            if (fallOff <= 0.0f) {
+                continue;
+            }
+
+            verts[ind] = vx + dx * fallOff;
+            verts[ind + 1] = vy + dy * fallOff;
+            verts[ind + 2] = vz + dz * fallOff;
+
+            localVerts.push_back(id);
+        }
+    }
+    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
 }
 
 int strokeCrease(
@@ -847,60 +1161,136 @@ int strokeCrease(
     }
     const float radiusSq = radius * radius;
 
-    int writeIdx = 0;
-    for (int i = 0; i < nbIVerts; ++i) {
-        if (i + 8 < nbIVerts) {
-            uint32_t nextId = iVerts[i + 8];
-            __builtin_prefetch(&verts[nextId * 3], 1, 1);
-            __builtin_prefetch(&materials[nextId * 3], 0, 1);
-            __builtin_prefetch(&vertProxy[nextId * 3], 0, 1);
+    const int maxThreads = omp_get_max_threads();
+    const bool inParallel = omp_in_parallel();
+
+    if (nbIVerts < 500 || inParallel || maxThreads <= 1) {
+        int writeIdx = 0;
+        for (int i = 0; i < nbIVerts; ++i) {
+            if (i + 8 < nbIVerts) {
+                uint32_t nextId = iVerts[i + 8];
+                __builtin_prefetch(&verts[nextId * 3], 1, 1);
+                __builtin_prefetch(&materials[nextId * 3], 0, 1);
+                __builtin_prefetch(&vertProxy[nextId * 3], 0, 1);
+            }
+
+            uint32_t id = iVerts[i];
+            int ind = id * 3;
+
+            float matVal = materials[ind + 2];
+            if (matVal <= 0.0f) {
+                continue;
+            }
+
+            float vx = verts[ind];
+            float vy = verts[ind + 1];
+            float vz = verts[ind + 2];
+
+            float dx = cx - vertProxy[ind];
+            float dy = cy - vertProxy[ind + 1];
+            float dz = cz - vertProxy[ind + 2];
+            float distSq = (dx * dx + dy * dy + dz * dz) / radiusSq;
+            if (distSq >= 1.0f) {
+                continue;
+            }
+
+            float dist = std::sqrt(distSq);
+            float fallOff = getCreaseFallOff(dist, focalShift, useAccuCurve, accuCurveLut);
+            float alphaVal = getAlphaVal(
+                vx, vy, vz,
+                hasAlpha, alphaTex, alphaWidth, alphaHeight,
+                alphaRatioX, alphaRatioY, alphaSide,
+                alphaLookAt, alphaXSym,
+                focalShift, focalShiftFalloff
+            );
+            fallOff *= matVal * alphaVal;
+
+            if (fallOff == 0.0f) {
+                continue;
+            }
+
+            float brushModifier = std::pow(fallOff, 5.0f) * brushFactor;
+            float actualFallOff = fallOff * deformIntensity;
+
+            verts[ind] = vx + dx * actualFallOff + anx * brushModifier;
+            verts[ind + 1] = vy + dy * actualFallOff + any * brushModifier;
+            verts[ind + 2] = vz + dz * actualFallOff + anz * brushModifier;
+
+            iVerts[writeIdx++] = id;
         }
-
-        uint32_t id = iVerts[i];
-        int ind = id * 3;
-
-        float matVal = materials[ind + 2];
-        if (matVal <= 0.0f) {
-            continue;
-        }
-
-        float vx = verts[ind];
-        float vy = verts[ind + 1];
-        float vz = verts[ind + 2];
-
-        float dx = cx - vertProxy[ind];
-        float dy = cy - vertProxy[ind + 1];
-        float dz = cz - vertProxy[ind + 2];
-        float distSq = (dx * dx + dy * dy + dz * dz) / radiusSq;
-        if (distSq >= 1.0f) {
-            continue;
-        }
-
-        float dist = std::sqrt(distSq);
-        float fallOff = getCreaseFallOff(dist, focalShift, useAccuCurve, accuCurveLut);
-        float alphaVal = getAlphaVal(
-            vx, vy, vz,
-            hasAlpha, alphaTex, alphaWidth, alphaHeight,
-            alphaRatioX, alphaRatioY, alphaSide,
-            alphaLookAt, alphaXSym,
-            focalShift, focalShiftFalloff
-        );
-        fallOff *= matVal * alphaVal;
-
-        if (fallOff == 0.0f) {
-            continue;
-        }
-
-        float brushModifier = std::pow(fallOff, 5.0f) * brushFactor;
-        float actualFallOff = fallOff * deformIntensity;
-
-        verts[ind] = vx + dx * actualFallOff + anx * brushModifier;
-        verts[ind + 1] = vy + dy * actualFallOff + any * brushModifier;
-        verts[ind + 2] = vz + dz * actualFallOff + anz * brushModifier;
-
-        iVerts[writeIdx++] = id;
+        return writeIdx;
     }
-    return writeIdx;
+
+    static std::vector<std::vector<uint32_t>> s_threadIVerts;
+    if ((int)s_threadIVerts.size() < maxThreads) {
+        s_threadIVerts.resize(maxThreads);
+    }
+
+    #pragma omp parallel
+    {
+        int tid = omp_get_thread_num();
+        auto& localVerts = s_threadIVerts[tid];
+        localVerts.clear();
+        size_t estCount = (nbIVerts / maxThreads) + 64;
+        if (localVerts.capacity() < estCount) {
+            localVerts.reserve(estCount);
+        }
+
+        #pragma omp for schedule(static)
+        for (int i = 0; i < nbIVerts; ++i) {
+            if (i + 8 < nbIVerts) {
+                uint32_t nextId = iVerts[i + 8];
+                __builtin_prefetch(&verts[nextId * 3], 1, 1);
+                __builtin_prefetch(&materials[nextId * 3], 0, 1);
+                __builtin_prefetch(&vertProxy[nextId * 3], 0, 1);
+            }
+
+            uint32_t id = iVerts[i];
+            int ind = id * 3;
+
+            float matVal = materials[ind + 2];
+            if (matVal <= 0.0f) {
+                continue;
+            }
+
+            float vx = verts[ind];
+            float vy = verts[ind + 1];
+            float vz = verts[ind + 2];
+
+            float dx = cx - vertProxy[ind];
+            float dy = cy - vertProxy[ind + 1];
+            float dz = cz - vertProxy[ind + 2];
+            float distSq = (dx * dx + dy * dy + dz * dz) / radiusSq;
+            if (distSq >= 1.0f) {
+                continue;
+            }
+
+            float dist = std::sqrt(distSq);
+            float fallOff = getCreaseFallOff(dist, focalShift, useAccuCurve, accuCurveLut);
+            float alphaVal = getAlphaVal(
+                vx, vy, vz,
+                hasAlpha, alphaTex, alphaWidth, alphaHeight,
+                alphaRatioX, alphaRatioY, alphaSide,
+                alphaLookAt, alphaXSym,
+                focalShift, focalShiftFalloff
+            );
+            fallOff *= matVal * alphaVal;
+
+            if (fallOff == 0.0f) {
+                continue;
+            }
+
+            float brushModifier = std::pow(fallOff, 5.0f) * brushFactor;
+            float actualFallOff = fallOff * deformIntensity;
+
+            verts[ind] = vx + dx * actualFallOff + anx * brushModifier;
+            verts[ind + 1] = vy + dy * actualFallOff + any * brushModifier;
+            verts[ind + 2] = vz + dz * actualFallOff + anz * brushModifier;
+
+            localVerts.push_back(id);
+        }
+    }
+    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
 }
 
 int strokeVTool(
@@ -928,68 +1318,152 @@ int strokeVTool(
 
     float k = 1.0f; // 90 degree angle
 
-    int writeIdx = 0;
-    for (int i = 0; i < nbIVerts; ++i) {
-        if (i + 8 < nbIVerts) {
-            uint32_t nextId = iVerts[i + 8];
-            __builtin_prefetch(&verts[nextId * 3], 1, 1);
-            __builtin_prefetch(&materials[nextId * 3], 0, 1);
-            __builtin_prefetch(&vertProxy[nextId * 3], 0, 1);
+    const int maxThreads = omp_get_max_threads();
+    const bool inParallel = omp_in_parallel();
+
+    if (nbIVerts < 500 || inParallel || maxThreads <= 1) {
+        int writeIdx = 0;
+        for (int i = 0; i < nbIVerts; ++i) {
+            if (i + 8 < nbIVerts) {
+                uint32_t nextId = iVerts[i + 8];
+                __builtin_prefetch(&verts[nextId * 3], 1, 1);
+                __builtin_prefetch(&materials[nextId * 3], 0, 1);
+                __builtin_prefetch(&vertProxy[nextId * 3], 0, 1);
+            }
+
+            uint32_t id = iVerts[i];
+            int ind = id * 3;
+
+            float matVal = materials[ind + 2];
+            if (matVal <= 0.0f) {
+                continue;
+            }
+
+            float vx = verts[ind];
+            float vy = verts[ind + 1];
+            float vz = verts[ind + 2];
+
+            float dx = cx - vertProxy[ind];
+            float dy = cy - vertProxy[ind + 1];
+            float dz = cz - vertProxy[ind + 2];
+            float distSq = (dx * dx + dy * dy + dz * dz) / radiusSq;
+            if (distSq >= 1.0f) {
+                continue;
+            }
+
+            float dist = std::sqrt(distSq);
+            float fallOff = 1.0f - k * dist;
+            if (fallOff < 0.0f) fallOff = 0.0f;
+            if (useAccuCurve && accuCurveLut) {
+                float floatIndex = dist * 255.0f;
+                if (floatIndex > 254.0f) floatIndex = 254.0f;
+                int index = static_cast<int>(floatIndex);
+                float fract = floatIndex - index;
+                fallOff = accuCurveLut[index] * (1.0f - fract) + accuCurveLut[index + 1] * fract;
+            }
+            float alphaVal = getAlphaVal(
+                vx, vy, vz,
+                hasAlpha, alphaTex, alphaWidth, alphaHeight,
+                alphaRatioX, alphaRatioY, alphaSide,
+                alphaLookAt, alphaXSym,
+                focalShift, focalShiftFalloff
+            );
+            fallOff *= matVal * alphaVal;
+
+            if (fallOff == 0.0f) {
+                continue;
+            }
+
+            // Linear V-groove displacement
+            float brushModifier = fallOff * brushFactor;
+
+            verts[ind] = vx + anx * brushModifier;
+            verts[ind + 1] = vy + any * brushModifier;
+            verts[ind + 2] = vz + anz * brushModifier;
+
+            iVerts[writeIdx++] = id;
         }
-
-        uint32_t id = iVerts[i];
-        int ind = id * 3;
-
-        float matVal = materials[ind + 2];
-        if (matVal <= 0.0f) {
-            continue;
-        }
-
-        float vx = verts[ind];
-        float vy = verts[ind + 1];
-        float vz = verts[ind + 2];
-
-        float dx = cx - vertProxy[ind];
-        float dy = cy - vertProxy[ind + 1];
-        float dz = cz - vertProxy[ind + 2];
-        float distSq = (dx * dx + dy * dy + dz * dz) / radiusSq;
-        if (distSq >= 1.0f) {
-            continue;
-        }
-
-        float dist = std::sqrt(distSq);
-        float fallOff = 1.0f - k * dist;
-        if (fallOff < 0.0f) fallOff = 0.0f;
-        if (useAccuCurve && accuCurveLut) {
-            float floatIndex = dist * 255.0f;
-            if (floatIndex > 254.0f) floatIndex = 254.0f;
-            int index = static_cast<int>(floatIndex);
-            float fract = floatIndex - index;
-            fallOff = accuCurveLut[index] * (1.0f - fract) + accuCurveLut[index + 1] * fract;
-        }
-        float alphaVal = getAlphaVal(
-            vx, vy, vz,
-            hasAlpha, alphaTex, alphaWidth, alphaHeight,
-            alphaRatioX, alphaRatioY, alphaSide,
-            alphaLookAt, alphaXSym,
-            focalShift, focalShiftFalloff
-        );
-        fallOff *= matVal * alphaVal;
-
-        if (fallOff == 0.0f) {
-            continue;
-        }
-
-        // Linear V-groove displacement
-        float brushModifier = fallOff * brushFactor;
-
-        verts[ind] = vx + anx * brushModifier;
-        verts[ind + 1] = vy + any * brushModifier;
-        verts[ind + 2] = vz + anz * brushModifier;
-
-        iVerts[writeIdx++] = id;
+        return writeIdx;
     }
-    return writeIdx;
+
+    static std::vector<std::vector<uint32_t>> s_threadIVerts;
+    if ((int)s_threadIVerts.size() < maxThreads) {
+        s_threadIVerts.resize(maxThreads);
+    }
+
+    #pragma omp parallel
+    {
+        int tid = omp_get_thread_num();
+        auto& localVerts = s_threadIVerts[tid];
+        localVerts.clear();
+        size_t estCount = (nbIVerts / maxThreads) + 64;
+        if (localVerts.capacity() < estCount) {
+            localVerts.reserve(estCount);
+        }
+
+        #pragma omp for schedule(static)
+        for (int i = 0; i < nbIVerts; ++i) {
+            if (i + 8 < nbIVerts) {
+                uint32_t nextId = iVerts[i + 8];
+                __builtin_prefetch(&verts[nextId * 3], 1, 1);
+                __builtin_prefetch(&materials[nextId * 3], 0, 1);
+                __builtin_prefetch(&vertProxy[nextId * 3], 0, 1);
+            }
+
+            uint32_t id = iVerts[i];
+            int ind = id * 3;
+
+            float matVal = materials[ind + 2];
+            if (matVal <= 0.0f) {
+                continue;
+            }
+
+            float vx = verts[ind];
+            float vy = verts[ind + 1];
+            float vz = verts[ind + 2];
+
+            float dx = cx - vertProxy[ind];
+            float dy = cy - vertProxy[ind + 1];
+            float dz = cz - vertProxy[ind + 2];
+            float distSq = (dx * dx + dy * dy + dz * dz) / radiusSq;
+            if (distSq >= 1.0f) {
+                continue;
+            }
+
+            float dist = std::sqrt(distSq);
+            float fallOff = 1.0f - k * dist;
+            if (fallOff < 0.0f) fallOff = 0.0f;
+            if (useAccuCurve && accuCurveLut) {
+                float floatIndex = dist * 255.0f;
+                if (floatIndex > 254.0f) floatIndex = 254.0f;
+                int index = static_cast<int>(floatIndex);
+                float fract = floatIndex - index;
+                fallOff = accuCurveLut[index] * (1.0f - fract) + accuCurveLut[index + 1] * fract;
+            }
+            float alphaVal = getAlphaVal(
+                vx, vy, vz,
+                hasAlpha, alphaTex, alphaWidth, alphaHeight,
+                alphaRatioX, alphaRatioY, alphaSide,
+                alphaLookAt, alphaXSym,
+                focalShift, focalShiftFalloff
+            );
+            fallOff *= matVal * alphaVal;
+
+            if (fallOff == 0.0f) {
+                continue;
+            }
+
+            // Linear V-groove displacement
+            float brushModifier = fallOff * brushFactor;
+
+            verts[ind] = vx + anx * brushModifier;
+            verts[ind + 1] = vy + any * brushModifier;
+            verts[ind + 2] = vz + anz * brushModifier;
+
+            localVerts.push_back(id);
+        }
+    }
+    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
 }
 
 int strokeMove(
@@ -1020,6 +1494,13 @@ int strokeMove(
 
     #pragma omp parallel for schedule(static) if(nbIVerts > 1000)
     for (int i = 0; i < nbIVerts; ++i) {
+        if (i + 8 < nbIVerts) {
+            uint32_t nextId = iVerts[i + 8];
+            __builtin_prefetch(&vertProxy[nextId * 3], 0, 1);
+            __builtin_prefetch(&verts[nextId * 3], 1, 1);
+            __builtin_prefetch(&materials[nextId * 3], 0, 1);
+        }
+
         uint32_t id = iVerts[i];
         int ind = id * 3;
 
@@ -1341,48 +1822,112 @@ int strokeMask(
     float maskIntensity = negative ? intensity : -intensity;
     const float radiusSq = radius * radius;
 
-    int writeIdx = 0;
-    for (int i = 0; i < nbIVerts; ++i) {
-        if (i + 8 < nbIVerts) {
-            uint32_t nextId = iVerts[i + 8];
-            __builtin_prefetch(&verts[nextId * 3], 0, 1);
-            __builtin_prefetch(&materials[nextId * 3], 1, 1);
+    const int maxThreads = omp_get_max_threads();
+    const bool inParallel = omp_in_parallel();
+
+    if (nbIVerts < 500 || inParallel || maxThreads <= 1) {
+        int writeIdx = 0;
+        for (int i = 0; i < nbIVerts; ++i) {
+            if (i + 8 < nbIVerts) {
+                uint32_t nextId = iVerts[i + 8];
+                __builtin_prefetch(&verts[nextId * 3], 0, 1);
+                __builtin_prefetch(&materials[nextId * 3], 1, 1);
+            }
+
+            uint32_t id = iVerts[i];
+            int ind = id * 3;
+
+            float vx = verts[ind];
+            float vy = verts[ind + 1];
+            float vz = verts[ind + 2];
+
+            float dx = vx - cx;
+            float dy = vy - cy;
+            float dz = vz - cz;
+            float distSq = (dx * dx + dy * dy + dz * dz) / radiusSq;
+            if (distSq >= 1.0f) {
+                continue;
+            }
+
+            float dist = std::sqrt(distSq);
+            float fallOff = std::pow(1.0f - dist, softness);
+            float alphaVal = getAlphaVal(
+                vx, vy, vz,
+                hasAlpha, alphaTex, alphaWidth, alphaHeight,
+                alphaRatioX, alphaRatioY, alphaSide,
+                alphaLookAt, alphaXSym,
+                focalShift, focalShiftFalloff
+            );
+            fallOff *= maskIntensity * alphaVal;
+
+            float maskVal = materials[ind + 2] + fallOff;
+            if (maskVal < 0.0f) maskVal = 0.0f;
+            if (maskVal > 1.0f) maskVal = 1.0f;
+
+            materials[ind + 2] = maskVal;
+            iVerts[writeIdx++] = id;
         }
-
-        uint32_t id = iVerts[i];
-        int ind = id * 3;
-
-        float vx = verts[ind];
-        float vy = verts[ind + 1];
-        float vz = verts[ind + 2];
-
-        float dx = vx - cx;
-        float dy = vy - cy;
-        float dz = vz - cz;
-        float distSq = (dx * dx + dy * dy + dz * dz) / radiusSq;
-        if (distSq >= 1.0f) {
-            continue;
-        }
-
-        float dist = std::sqrt(distSq);
-        float fallOff = std::pow(1.0f - dist, softness);
-        float alphaVal = getAlphaVal(
-            vx, vy, vz,
-            hasAlpha, alphaTex, alphaWidth, alphaHeight,
-            alphaRatioX, alphaRatioY, alphaSide,
-            alphaLookAt, alphaXSym,
-            focalShift, focalShiftFalloff
-        );
-        fallOff *= maskIntensity * alphaVal;
-
-        float maskVal = materials[ind + 2] + fallOff;
-        if (maskVal < 0.0f) maskVal = 0.0f;
-        if (maskVal > 1.0f) maskVal = 1.0f;
-
-        materials[ind + 2] = maskVal;
-        iVerts[writeIdx++] = id;
+        return writeIdx;
     }
-    return writeIdx;
+
+    static std::vector<std::vector<uint32_t>> s_threadIVerts;
+    if ((int)s_threadIVerts.size() < maxThreads) {
+        s_threadIVerts.resize(maxThreads);
+    }
+
+    #pragma omp parallel
+    {
+        int tid = omp_get_thread_num();
+        auto& localVerts = s_threadIVerts[tid];
+        localVerts.clear();
+        size_t estCount = (nbIVerts / maxThreads) + 64;
+        if (localVerts.capacity() < estCount) {
+            localVerts.reserve(estCount);
+        }
+
+        #pragma omp for schedule(static)
+        for (int i = 0; i < nbIVerts; ++i) {
+            if (i + 8 < nbIVerts) {
+                uint32_t nextId = iVerts[i + 8];
+                __builtin_prefetch(&verts[nextId * 3], 0, 1);
+                __builtin_prefetch(&materials[nextId * 3], 1, 1);
+            }
+
+            uint32_t id = iVerts[i];
+            int ind = id * 3;
+
+            float vx = verts[ind];
+            float vy = verts[ind + 1];
+            float vz = verts[ind + 2];
+
+            float dx = vx - cx;
+            float dy = vy - cy;
+            float dz = vz - cz;
+            float distSq = (dx * dx + dy * dy + dz * dz) / radiusSq;
+            if (distSq >= 1.0f) {
+                continue;
+            }
+
+            float dist = std::sqrt(distSq);
+            float fallOff = std::pow(1.0f - dist, softness);
+            float alphaVal = getAlphaVal(
+                vx, vy, vz,
+                hasAlpha, alphaTex, alphaWidth, alphaHeight,
+                alphaRatioX, alphaRatioY, alphaSide,
+                alphaLookAt, alphaXSym,
+                focalShift, focalShiftFalloff
+            );
+            fallOff *= maskIntensity * alphaVal;
+
+            float maskVal = materials[ind + 2] + fallOff;
+            if (maskVal < 0.0f) maskVal = 0.0f;
+            if (maskVal > 1.0f) maskVal = 1.0f;
+
+            materials[ind + 2] = maskVal;
+            localVerts.push_back(id);
+        }
+    }
+    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
 }
 
 int strokePaint(
@@ -1404,59 +1949,134 @@ int strokePaint(
     float softness = 2.0f * (1.0f - hardness);
     const float radiusSq = radius * radius;
 
-    int writeIdx = 0;
-    for (int i = 0; i < nbIVerts; ++i) {
-        if (i + 8 < nbIVerts) {
-            uint32_t nextId = iVerts[i + 8];
-            __builtin_prefetch(&verts[nextId * 3], 0, 1);
-            __builtin_prefetch(&colors[nextId * 3], 1, 1);
-            __builtin_prefetch(&materials[nextId * 3], 1, 1);
+    const int maxThreads = omp_get_max_threads();
+    const bool inParallel = omp_in_parallel();
+
+    if (nbIVerts < 500 || inParallel || maxThreads <= 1) {
+        int writeIdx = 0;
+        for (int i = 0; i < nbIVerts; ++i) {
+            if (i + 8 < nbIVerts) {
+                uint32_t nextId = iVerts[i + 8];
+                __builtin_prefetch(&verts[nextId * 3], 0, 1);
+                __builtin_prefetch(&colors[nextId * 3], 1, 1);
+                __builtin_prefetch(&materials[nextId * 3], 1, 1);
+            }
+
+            uint32_t id = iVerts[i];
+            int ind = id * 3;
+
+            float vx = verts[ind];
+            float vy = verts[ind + 1];
+            float vz = verts[ind + 2];
+
+            float dx = vx - cx;
+            float dy = vy - cy;
+            float dz = vz - cz;
+            float distSq = (dx * dx + dy * dy + dz * dz) / radiusSq;
+            if (distSq >= 1.0f) {
+                continue;
+            }
+
+            float dist = std::sqrt(distSq);
+            float fallOff = std::pow(1.0f - dist, softness);
+            float alphaVal = getAlphaVal(
+                vx, vy, vz,
+                hasAlpha, alphaTex, alphaWidth, alphaHeight,
+                alphaRatioX, alphaRatioY, alphaSide,
+                alphaLookAt, alphaXSym,
+                focalShift, focalShiftFalloff
+            );
+            fallOff *= intensity * materials[ind + 2] * alphaVal;
+            float fallOffCompl = 1.0f - fallOff;
+
+            if (writeAlbedo) {
+                colors[ind] = colors[ind] * fallOffCompl + cr * fallOff;
+                colors[ind + 1] = colors[ind + 1] * fallOffCompl + cg * fallOff;
+                colors[ind + 2] = colors[ind + 2] * fallOffCompl + cb * fallOff;
+            }
+
+            if (writeRoughness) {
+                materials[ind] = materials[ind] * fallOffCompl + roughness * fallOff;
+            }
+
+            if (writeMetalness) {
+                materials[ind + 1] = materials[ind + 1] * fallOffCompl + metallic * fallOff;
+            }
+
+            iVerts[writeIdx++] = id;
         }
-
-        uint32_t id = iVerts[i];
-        int ind = id * 3;
-
-        float vx = verts[ind];
-        float vy = verts[ind + 1];
-        float vz = verts[ind + 2];
-
-        float dx = vx - cx;
-        float dy = vy - cy;
-        float dz = vz - cz;
-        float distSq = (dx * dx + dy * dy + dz * dz) / radiusSq;
-        if (distSq >= 1.0f) {
-            continue;
-        }
-
-        float dist = std::sqrt(distSq);
-        float fallOff = std::pow(1.0f - dist, softness);
-        float alphaVal = getAlphaVal(
-            vx, vy, vz,
-            hasAlpha, alphaTex, alphaWidth, alphaHeight,
-            alphaRatioX, alphaRatioY, alphaSide,
-            alphaLookAt, alphaXSym,
-            focalShift, focalShiftFalloff
-        );
-        fallOff *= intensity * materials[ind + 2] * alphaVal;
-        float fallOffCompl = 1.0f - fallOff;
-
-        if (writeAlbedo) {
-            colors[ind] = colors[ind] * fallOffCompl + cr * fallOff;
-            colors[ind + 1] = colors[ind + 1] * fallOffCompl + cg * fallOff;
-            colors[ind + 2] = colors[ind + 2] * fallOffCompl + cb * fallOff;
-        }
-
-        if (writeRoughness) {
-            materials[ind] = materials[ind] * fallOffCompl + roughness * fallOff;
-        }
-
-        if (writeMetalness) {
-            materials[ind + 1] = materials[ind + 1] * fallOffCompl + metallic * fallOff;
-        }
-
-        iVerts[writeIdx++] = id;
+        return writeIdx;
     }
-    return writeIdx;
+
+    static std::vector<std::vector<uint32_t>> s_threadIVerts;
+    if ((int)s_threadIVerts.size() < maxThreads) {
+        s_threadIVerts.resize(maxThreads);
+    }
+
+    #pragma omp parallel
+    {
+        int tid = omp_get_thread_num();
+        auto& localVerts = s_threadIVerts[tid];
+        localVerts.clear();
+        size_t estCount = (nbIVerts / maxThreads) + 64;
+        if (localVerts.capacity() < estCount) {
+            localVerts.reserve(estCount);
+        }
+
+        #pragma omp for schedule(static)
+        for (int i = 0; i < nbIVerts; ++i) {
+            if (i + 8 < nbIVerts) {
+                uint32_t nextId = iVerts[i + 8];
+                __builtin_prefetch(&verts[nextId * 3], 0, 1);
+                __builtin_prefetch(&colors[nextId * 3], 1, 1);
+                __builtin_prefetch(&materials[nextId * 3], 1, 1);
+            }
+
+            uint32_t id = iVerts[i];
+            int ind = id * 3;
+
+            float vx = verts[ind];
+            float vy = verts[ind + 1];
+            float vz = verts[ind + 2];
+
+            float dx = vx - cx;
+            float dy = vy - cy;
+            float dz = vz - cz;
+            float distSq = (dx * dx + dy * dy + dz * dz) / radiusSq;
+            if (distSq >= 1.0f) {
+                continue;
+            }
+
+            float dist = std::sqrt(distSq);
+            float fallOff = std::pow(1.0f - dist, softness);
+            float alphaVal = getAlphaVal(
+                vx, vy, vz,
+                hasAlpha, alphaTex, alphaWidth, alphaHeight,
+                alphaRatioX, alphaRatioY, alphaSide,
+                alphaLookAt, alphaXSym,
+                focalShift, focalShiftFalloff
+            );
+            fallOff *= intensity * materials[ind + 2] * alphaVal;
+            float fallOffCompl = 1.0f - fallOff;
+
+            if (writeAlbedo) {
+                colors[ind] = colors[ind] * fallOffCompl + cr * fallOff;
+                colors[ind + 1] = colors[ind + 1] * fallOffCompl + cg * fallOff;
+                colors[ind + 2] = colors[ind + 2] * fallOffCompl + cb * fallOff;
+            }
+
+            if (writeRoughness) {
+                materials[ind] = materials[ind] * fallOffCompl + roughness * fallOff;
+            }
+
+            if (writeMetalness) {
+                materials[ind + 1] = materials[ind + 1] * fallOffCompl + metallic * fallOff;
+            }
+
+            localVerts.push_back(id);
+        }
+    }
+    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
 }
 
 int strokePaintAll(
@@ -1467,38 +2087,90 @@ int strokePaintAll(
     float roughness, float metallic,
     bool writeAlbedo, bool writeRoughness, bool writeMetalness
 ) {
+    const int maxThreads = omp_get_max_threads();
+    const bool inParallel = omp_in_parallel();
 
-    int writeIdx = 0;
-    for (int i = 0; i < nbIVerts; ++i) {
-        if (i + 8 < nbIVerts) {
-            uint32_t nextId = iVerts[i + 8];
-            __builtin_prefetch(&colors[nextId * 3], 1, 1);
-            __builtin_prefetch(&materials[nextId * 3], 1, 1);
+    if (nbIVerts < 500 || inParallel || maxThreads <= 1) {
+        int writeIdx = 0;
+        for (int i = 0; i < nbIVerts; ++i) {
+            if (i + 8 < nbIVerts) {
+                uint32_t nextId = iVerts[i + 8];
+                __builtin_prefetch(&colors[nextId * 3], 1, 1);
+                __builtin_prefetch(&materials[nextId * 3], 1, 1);
+            }
+
+            uint32_t id = iVerts[i];
+            int ind = id * 3;
+
+            float fallOff = materials[ind + 2];
+            float fallOffCompl = 1.0f - fallOff;
+
+            if (writeAlbedo) {
+                colors[ind] = colors[ind] * fallOffCompl + cr * fallOff;
+                colors[ind + 1] = colors[ind + 1] * fallOffCompl + cg * fallOff;
+                colors[ind + 2] = colors[ind + 2] * fallOffCompl + cb * fallOff;
+            }
+
+            if (writeRoughness) {
+                materials[ind] = materials[ind] * fallOffCompl + roughness * fallOff;
+            }
+
+            if (writeMetalness) {
+                materials[ind + 1] = materials[ind + 1] * fallOffCompl + metallic * fallOff;
+            }
+
+            iVerts[writeIdx++] = id;
         }
-
-        uint32_t id = iVerts[i];
-        int ind = id * 3;
-
-        float fallOff = materials[ind + 2];
-        float fallOffCompl = 1.0f - fallOff;
-
-        if (writeAlbedo) {
-            colors[ind] = colors[ind] * fallOffCompl + cr * fallOff;
-            colors[ind + 1] = colors[ind + 1] * fallOffCompl + cg * fallOff;
-            colors[ind + 2] = colors[ind + 2] * fallOffCompl + cb * fallOff;
-        }
-
-        if (writeRoughness) {
-            materials[ind] = materials[ind] * fallOffCompl + roughness * fallOff;
-        }
-
-        if (writeMetalness) {
-            materials[ind + 1] = materials[ind + 1] * fallOffCompl + metallic * fallOff;
-        }
-
-        iVerts[writeIdx++] = id;
+        return writeIdx;
     }
-    return writeIdx;
+
+    static std::vector<std::vector<uint32_t>> s_threadIVerts;
+    if ((int)s_threadIVerts.size() < maxThreads) {
+        s_threadIVerts.resize(maxThreads);
+    }
+
+    #pragma omp parallel
+    {
+        int tid = omp_get_thread_num();
+        auto& localVerts = s_threadIVerts[tid];
+        localVerts.clear();
+        size_t estCount = (nbIVerts / maxThreads) + 64;
+        if (localVerts.capacity() < estCount) {
+            localVerts.reserve(estCount);
+        }
+
+        #pragma omp for schedule(static)
+        for (int i = 0; i < nbIVerts; ++i) {
+            if (i + 8 < nbIVerts) {
+                uint32_t nextId = iVerts[i + 8];
+                __builtin_prefetch(&colors[nextId * 3], 1, 1);
+                __builtin_prefetch(&materials[nextId * 3], 1, 1);
+            }
+
+            uint32_t id = iVerts[i];
+            int ind = id * 3;
+
+            float fallOff = materials[ind + 2];
+            float fallOffCompl = 1.0f - fallOff;
+
+            if (writeAlbedo) {
+                colors[ind] = colors[ind] * fallOffCompl + cr * fallOff;
+                colors[ind + 1] = colors[ind + 1] * fallOffCompl + cg * fallOff;
+                colors[ind + 2] = colors[ind + 2] * fallOffCompl + cb * fallOff;
+            }
+
+            if (writeRoughness) {
+                materials[ind] = materials[ind] * fallOffCompl + roughness * fallOff;
+            }
+
+            if (writeMetalness) {
+                materials[ind + 1] = materials[ind + 1] * fallOffCompl + metallic * fallOff;
+            }
+
+            localVerts.push_back(id);
+        }
+    }
+    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
 }
 
 inline void rotateVectorQuat(float& vx, float& vy, float& vz, float qx, float qy, float qz, float qw) {
@@ -1531,52 +2203,120 @@ int strokeLocalScale(
     const float radiusSq = radius * radius;
     if (radius <= 0.0f) return 0;
 
-    int writeIdx = 0;
-    for (int i = 0; i < nbIVerts; ++i) {
-        if (i + 8 < nbIVerts) {
-            uint32_t nextId = iVerts[i + 8];
-            __builtin_prefetch(&verts[nextId * 3], 1, 1);
-            __builtin_prefetch(&materials[nextId * 3], 0, 1);
+    const int maxThreads = omp_get_max_threads();
+    const bool inParallel = omp_in_parallel();
+
+    if (nbIVerts < 500 || inParallel || maxThreads <= 1) {
+        int writeIdx = 0;
+        for (int i = 0; i < nbIVerts; ++i) {
+            if (i + 8 < nbIVerts) {
+                uint32_t nextId = iVerts[i + 8];
+                __builtin_prefetch(&verts[nextId * 3], 1, 1);
+                __builtin_prefetch(&materials[nextId * 3], 0, 1);
+            }
+
+            uint32_t id = iVerts[i];
+            int ind = id * 3;
+
+            float matVal = materials[ind + 2];
+            if (matVal <= 0.0f) {
+                continue;
+            }
+
+            float vx = verts[ind];
+            float vy = verts[ind + 1];
+            float vz = verts[ind + 2];
+
+            float dx = vx - cx;
+            float dy = vy - cy;
+            float dz = vz - cz;
+            float distSq = (dx * dx + dy * dy + dz * dz) / radiusSq;
+            if (distSq >= 1.0f) {
+                continue;
+            }
+
+            float dist = std::sqrt(distSq);
+            float fallOff = getFallOff(dist, focalShift, false, nullptr);
+            float alphaVal = getAlphaVal(
+                vx, vy, vz,
+                hasAlpha, alphaTex, alphaWidth, alphaHeight,
+                alphaRatioX, alphaRatioY, alphaSide,
+                alphaLookAt, alphaXSym,
+                focalShift, focalShiftFalloff
+            );
+            fallOff *= deltaScale * matVal * alphaVal;
+
+            verts[ind] = vx + dx * fallOff;
+            verts[ind + 1] = vy + dy * fallOff;
+            verts[ind + 2] = vz + dz * fallOff;
+
+            iVerts[writeIdx++] = id;
         }
-
-        uint32_t id = iVerts[i];
-        int ind = id * 3;
-
-        float matVal = materials[ind + 2];
-        if (matVal <= 0.0f) {
-            continue;
-        }
-
-        float vx = verts[ind];
-        float vy = verts[ind + 1];
-        float vz = verts[ind + 2];
-
-        float dx = vx - cx;
-        float dy = vy - cy;
-        float dz = vz - cz;
-        float distSq = (dx * dx + dy * dy + dz * dz) / radiusSq;
-        if (distSq >= 1.0f) {
-            continue;
-        }
-
-        float dist = std::sqrt(distSq);
-        float fallOff = getFallOff(dist, focalShift, false, nullptr);
-        float alphaVal = getAlphaVal(
-            vx, vy, vz,
-            hasAlpha, alphaTex, alphaWidth, alphaHeight,
-            alphaRatioX, alphaRatioY, alphaSide,
-            alphaLookAt, alphaXSym,
-            focalShift, focalShiftFalloff
-        );
-        fallOff *= deltaScale * matVal * alphaVal;
-
-        verts[ind] = vx + dx * fallOff;
-        verts[ind + 1] = vy + dy * fallOff;
-        verts[ind + 2] = vz + dz * fallOff;
-
-        iVerts[writeIdx++] = id;
+        return writeIdx;
     }
-    return writeIdx;
+
+    static std::vector<std::vector<uint32_t>> s_threadIVerts;
+    if ((int)s_threadIVerts.size() < maxThreads) {
+        s_threadIVerts.resize(maxThreads);
+    }
+
+    #pragma omp parallel
+    {
+        int tid = omp_get_thread_num();
+        auto& localVerts = s_threadIVerts[tid];
+        localVerts.clear();
+        size_t estCount = (nbIVerts / maxThreads) + 64;
+        if (localVerts.capacity() < estCount) {
+            localVerts.reserve(estCount);
+        }
+
+        #pragma omp for schedule(static)
+        for (int i = 0; i < nbIVerts; ++i) {
+            if (i + 8 < nbIVerts) {
+                uint32_t nextId = iVerts[i + 8];
+                __builtin_prefetch(&verts[nextId * 3], 1, 1);
+                __builtin_prefetch(&materials[nextId * 3], 0, 1);
+            }
+
+            uint32_t id = iVerts[i];
+            int ind = id * 3;
+
+            float matVal = materials[ind + 2];
+            if (matVal <= 0.0f) {
+                continue;
+            }
+
+            float vx = verts[ind];
+            float vy = verts[ind + 1];
+            float vz = verts[ind + 2];
+
+            float dx = vx - cx;
+            float dy = vy - cy;
+            float dz = vz - cz;
+            float distSq = (dx * dx + dy * dy + dz * dz) / radiusSq;
+            if (distSq >= 1.0f) {
+                continue;
+            }
+
+            float dist = std::sqrt(distSq);
+            float fallOff = getFallOff(dist, focalShift, false, nullptr);
+            float alphaVal = getAlphaVal(
+                vx, vy, vz,
+                hasAlpha, alphaTex, alphaWidth, alphaHeight,
+                alphaRatioX, alphaRatioY, alphaSide,
+                alphaLookAt, alphaXSym,
+                focalShift, focalShiftFalloff
+            );
+            fallOff *= deltaScale * matVal * alphaVal;
+
+            verts[ind] = vx + dx * fallOff;
+            verts[ind + 1] = vy + dy * fallOff;
+            verts[ind + 2] = vz + dz * fallOff;
+
+            localVerts.push_back(id);
+        }
+    }
+    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
 }
 
 int strokeTwist(
@@ -1596,69 +2336,154 @@ int strokeTwist(
     if (radius <= 0.0f) return 0;
     const float invRadius = 1.0f / radius;
 
-    int writeIdx = 0;
-    for (int i = 0; i < nbIVerts; ++i) {
-        if (i + 8 < nbIVerts) {
-            uint32_t nextId = iVerts[i + 8];
-            __builtin_prefetch(&verts[nextId * 3], 1, 1);
-            __builtin_prefetch(&materials[nextId * 3], 0, 1);
+    const int maxThreads = omp_get_max_threads();
+    const bool inParallel = omp_in_parallel();
+
+    if (nbIVerts < 500 || inParallel || maxThreads <= 1) {
+        int writeIdx = 0;
+        for (int i = 0; i < nbIVerts; ++i) {
+            if (i + 8 < nbIVerts) {
+                uint32_t nextId = iVerts[i + 8];
+                __builtin_prefetch(&verts[nextId * 3], 1, 1);
+                __builtin_prefetch(&materials[nextId * 3], 0, 1);
+            }
+
+            uint32_t id = iVerts[i];
+            int ind = id * 3;
+
+            float matVal = materials[ind + 2];
+            if (matVal <= 0.0f) {
+                continue;
+            }
+
+            float vx = verts[ind];
+            float vy = verts[ind + 1];
+            float vz = verts[ind + 2];
+
+            float dx = vx - cx;
+            float dy = vy - cy;
+            float dz = vz - cz;
+            float distSq = dx * dx + dy * dy + dz * dz;
+            if (distSq >= radiusSq) {
+                continue;
+            }
+
+            float dist = std::sqrt(distSq) * invRadius;
+            float fallOff = getFallOff(dist, focalShift, false, nullptr);
+            float alphaVal = getAlphaVal(
+                vx, vy, vz,
+                hasAlpha, alphaTex, alphaWidth, alphaHeight,
+                alphaRatioX, alphaRatioY, alphaSide,
+                alphaLookAt, alphaXSym,
+                focalShift, focalShiftFalloff
+            );
+            fallOff *= angle * matVal * alphaVal;
+
+            if (fallOff == 0.0f) {
+                continue;
+            }
+
+            float halfAngle = fallOff * 0.5f;
+            float sinHalf = std::sin(halfAngle);
+            float cosHalf = std::cos(halfAngle);
+            float qx = nx * sinHalf;
+            float qy = ny * sinHalf;
+            float qz = nz * sinHalf;
+            float qw = cosHalf;
+
+            float rx = dx;
+            float ry = dy;
+            float rz = dz;
+            rotateVectorQuat(rx, ry, rz, qx, qy, qz, qw);
+
+            verts[ind] = cx + rx;
+            verts[ind + 1] = cy + ry;
+            verts[ind + 2] = cz + rz;
+
+            iVerts[writeIdx++] = id;
         }
-
-        uint32_t id = iVerts[i];
-        int ind = id * 3;
-
-        float matVal = materials[ind + 2];
-        if (matVal <= 0.0f) {
-            continue;
-        }
-
-        float vx = verts[ind];
-        float vy = verts[ind + 1];
-        float vz = verts[ind + 2];
-
-        float dx = vx - cx;
-        float dy = vy - cy;
-        float dz = vz - cz;
-        float distSq = dx * dx + dy * dy + dz * dz;
-        if (distSq >= radiusSq) {
-            continue;
-        }
-
-        float dist = std::sqrt(distSq) * invRadius;
-        float fallOff = getFallOff(dist, focalShift, false, nullptr);
-        float alphaVal = getAlphaVal(
-            vx, vy, vz,
-            hasAlpha, alphaTex, alphaWidth, alphaHeight,
-            alphaRatioX, alphaRatioY, alphaSide,
-            alphaLookAt, alphaXSym,
-            focalShift, focalShiftFalloff
-        );
-        fallOff *= angle * matVal * alphaVal;
-
-        if (fallOff == 0.0f) {
-            continue;
-        }
-
-        float halfAngle = fallOff * 0.5f;
-        float sinHalf = std::sin(halfAngle);
-        float cosHalf = std::cos(halfAngle);
-        float qx = nx * sinHalf;
-        float qy = ny * sinHalf;
-        float qz = nz * sinHalf;
-        float qw = cosHalf;
-
-        float rx = dx;
-        float ry = dy;
-        float rz = dz;
-        rotateVectorQuat(rx, ry, rz, qx, qy, qz, qw);
-
-        verts[ind] = cx + rx;
-        verts[ind + 1] = cy + ry;
-        verts[ind + 2] = cz + rz;
-
-        iVerts[writeIdx++] = id;
+        return writeIdx;
     }
-    return writeIdx;
+
+    static std::vector<std::vector<uint32_t>> s_threadIVerts;
+    if ((int)s_threadIVerts.size() < maxThreads) {
+        s_threadIVerts.resize(maxThreads);
+    }
+
+    #pragma omp parallel
+    {
+        int tid = omp_get_thread_num();
+        auto& localVerts = s_threadIVerts[tid];
+        localVerts.clear();
+        size_t estCount = (nbIVerts / maxThreads) + 64;
+        if (localVerts.capacity() < estCount) {
+            localVerts.reserve(estCount);
+        }
+
+        #pragma omp for schedule(static)
+        for (int i = 0; i < nbIVerts; ++i) {
+            if (i + 8 < nbIVerts) {
+                uint32_t nextId = iVerts[i + 8];
+                __builtin_prefetch(&verts[nextId * 3], 1, 1);
+                __builtin_prefetch(&materials[nextId * 3], 0, 1);
+            }
+
+            uint32_t id = iVerts[i];
+            int ind = id * 3;
+
+            float matVal = materials[ind + 2];
+            if (matVal <= 0.0f) {
+                continue;
+            }
+
+            float vx = verts[ind];
+            float vy = verts[ind + 1];
+            float vz = verts[ind + 2];
+
+            float dx = vx - cx;
+            float dy = vy - cy;
+            float dz = vz - cz;
+            float distSq = dx * dx + dy * dy + dz * dz;
+            if (distSq >= radiusSq) {
+                continue;
+            }
+
+            float dist = std::sqrt(distSq) * invRadius;
+            float fallOff = getFallOff(dist, focalShift, false, nullptr);
+            float alphaVal = getAlphaVal(
+                vx, vy, vz,
+                hasAlpha, alphaTex, alphaWidth, alphaHeight,
+                alphaRatioX, alphaRatioY, alphaSide,
+                alphaLookAt, alphaXSym,
+                focalShift, focalShiftFalloff
+            );
+            fallOff *= angle * matVal * alphaVal;
+
+            if (fallOff == 0.0f) {
+                continue;
+            }
+
+            float halfAngle = fallOff * 0.5f;
+            float sinHalf = std::sin(halfAngle);
+            float cosHalf = std::cos(halfAngle);
+            float qx = nx * sinHalf;
+            float qy = ny * sinHalf;
+            float qz = nz * sinHalf;
+            float qw = cosHalf;
+
+            float rx = dx;
+            float ry = dy;
+            float rz = dz;
+            rotateVectorQuat(rx, ry, rz, qx, qy, qz, qw);
+
+            verts[ind] = cx + rx;
+            verts[ind + 1] = cy + ry;
+            verts[ind + 2] = cz + rz;
+
+            localVerts.push_back(id);
+        }
+    }
+    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
 }
 
 int blurMask(
@@ -1674,9 +2499,14 @@ int blurMask(
 
     if (nbIVerts <= 0 || iterations <= 0 || !iVerts || !vrvStartCount || !vertRingVert || !tempMasks) return 0;
 
-    std::vector<float> smoothMasks(nbIVerts);
+    static std::vector<float> s_smoothMasks;
+    if (s_smoothMasks.size() < (size_t)nbIVerts) {
+        s_smoothMasks.resize(nbIVerts);
+    }
+    float* smoothMasks = s_smoothMasks.data();
 
     float origMin = 1.0f;
+    #pragma omp parallel for reduction(min:origMin) if(nbIVerts > 1000)
     for (int i = 0; i < nbIVerts; ++i) {
         uint32_t id = iVerts[i];
         float val = tempMasks[id * stride + offset];
@@ -1684,6 +2514,7 @@ int blurMask(
     }
 
     for (int iter = 0; iter < iterations; ++iter) {
+        #pragma omp parallel for schedule(static) if(nbIVerts > 1000)
         for (int i = 0; i < nbIVerts; ++i) {
             uint32_t id = iVerts[i];
             uint32_t start = vrvStartCount[id * 2];
@@ -1719,12 +2550,14 @@ int blurMask(
         }
 
         float iterMin = 1.0f;
+        #pragma omp parallel for reduction(min:iterMin) if(nbIVerts > 1000)
         for (int i = 0; i < nbIVerts; ++i) {
             if (smoothMasks[i] < iterMin) iterMin = smoothMasks[i];
         }
 
         float scale = (iterMin < 1.0f && iterMin > origMin) ? ((1.0f - origMin) / (1.0f - iterMin)) : 1.0f;
 
+        #pragma omp parallel for schedule(static) if(nbIVerts > 1000)
         for (int i = 0; i < nbIVerts; ++i) {
             uint32_t id = iVerts[i];
             float val = smoothMasks[i];
@@ -1767,6 +2600,7 @@ int applyGradientMask(
 
     int loopCount = blurMaskedOnly ? nbActiveVerts : totalNbVerts;
 
+    #pragma omp parallel for schedule(static) if(loopCount > 2000)
     for (int k = 0; k < loopCount; ++k) {
         uint32_t i = blurMaskedOnly ? activeVerts[k] : k;
         int ind = i * 3;
@@ -1853,67 +2687,149 @@ int strokeDamStandard(
     if (negative) {
         brushFactor = -brushFactor;
     }
-    int writeIdx = 0;
 
-    for (int i = 0; i < nbIVerts; ++i) {
-        if (i + 8 < nbIVerts) {
-            uint32_t nextId = iVerts[i + 8];
-            __builtin_prefetch(&verts[nextId * 3], 0, 1);
-            __builtin_prefetch(&materials[nextId * 3], 0, 1);
-        }
+    const int maxThreads = omp_get_max_threads();
+    const bool inParallel = omp_in_parallel();
 
-        uint32_t id = iVerts[i];
-        int ind = id * 3;
-
-        float dx = cx - vertProxy[ind];
-        float dy = cy - vertProxy[ind + 1];
-        float dz = cz - vertProxy[ind + 2];
-        float distSq = (dx * dx + dy * dy + dz * dz) / radiusSq;
-        if (distSq >= 1.0f) {
-            continue;
-        }
-
-        float dist = std::sqrt(distSq);
-        float vx = verts[ind];
-        float vy = verts[ind + 1];
-        float vz = verts[ind + 2];
-
-        float fallOff = 0.0f;
-        if (useAccuCurve && accuCurveLut) {
-            if (dist < 1.0f) {
-                float floatIndex = dist * 255.0f;
-                if (floatIndex > 254.0f) floatIndex = 254.0f;
-                int index = static_cast<int>(floatIndex);
-                float fract = floatIndex - index;
-                fallOff = accuCurveLut[index] * (1.0f - fract) + accuCurveLut[index + 1] * fract;
+    if (nbIVerts < 500 || inParallel || maxThreads <= 1) {
+        int writeIdx = 0;
+        for (int i = 0; i < nbIVerts; ++i) {
+            if (i + 8 < nbIVerts) {
+                uint32_t nextId = iVerts[i + 8];
+                __builtin_prefetch(&verts[nextId * 3], 0, 1);
+                __builtin_prefetch(&materials[nextId * 3], 0, 1);
             }
-        } else {
-            if (dist < 1.0f) {
-                float fs = focalShiftFalloff ? focalShift : 0.0f;
-                float power = std::pow(2.0f, fs * 2.0f);
-                fallOff = std::pow(1.0f - dist, power);
+
+            uint32_t id = iVerts[i];
+            int ind = id * 3;
+
+            float dx = cx - vertProxy[ind];
+            float dy = cy - vertProxy[ind + 1];
+            float dz = cz - vertProxy[ind + 2];
+            float distSq = (dx * dx + dy * dy + dz * dz) / radiusSq;
+            if (distSq >= 1.0f) {
+                continue;
             }
+
+            float dist = std::sqrt(distSq);
+            float vx = verts[ind];
+            float vy = verts[ind + 1];
+            float vz = verts[ind + 2];
+
+            float fallOff = 0.0f;
+            if (useAccuCurve && accuCurveLut) {
+                if (dist < 1.0f) {
+                    float floatIndex = dist * 255.0f;
+                    if (floatIndex > 254.0f) floatIndex = 254.0f;
+                    int index = static_cast<int>(floatIndex);
+                    float fract = floatIndex - index;
+                    fallOff = accuCurveLut[index] * (1.0f - fract) + accuCurveLut[index + 1] * fract;
+                }
+            } else {
+                if (dist < 1.0f) {
+                    float fs = focalShiftFalloff ? focalShift : 0.0f;
+                    float power = std::pow(2.0f, fs * 2.0f);
+                    fallOff = std::pow(1.0f - dist, power);
+                }
+            }
+
+            float alphaVal = getAlphaVal(
+                vx, vy, vz,
+                hasAlpha, alphaTex, alphaWidth, alphaHeight,
+                alphaRatioX, alphaRatioY, alphaSide,
+                alphaLookAt, alphaXSym,
+                focalShift, focalShiftFalloff
+            );
+            fallOff *= materials[ind + 2] * alphaVal;
+
+            float stamp = getStampProfile(fallOff);
+            float brushModifier = stamp * brushFactor;
+
+            verts[ind] = vx + anx * brushModifier;
+            verts[ind + 1] = vy + any * brushModifier;
+            verts[ind + 2] = vz + anz * brushModifier;
+
+            iVerts[writeIdx++] = id;
         }
-
-        float alphaVal = getAlphaVal(
-            vx, vy, vz,
-            hasAlpha, alphaTex, alphaWidth, alphaHeight,
-            alphaRatioX, alphaRatioY, alphaSide,
-            alphaLookAt, alphaXSym,
-            focalShift, focalShiftFalloff
-        );
-        fallOff *= materials[ind + 2] * alphaVal;
-
-        float stamp = getStampProfile(fallOff);
-        float brushModifier = stamp * brushFactor;
-
-        verts[ind] = vx + anx * brushModifier;
-        verts[ind + 1] = vy + any * brushModifier;
-        verts[ind + 2] = vz + anz * brushModifier;
-
-        iVerts[writeIdx++] = id;
+        return writeIdx;
     }
-    return writeIdx;
+
+    static std::vector<std::vector<uint32_t>> s_threadIVerts;
+    if ((int)s_threadIVerts.size() < maxThreads) {
+        s_threadIVerts.resize(maxThreads);
+    }
+
+    #pragma omp parallel
+    {
+        int tid = omp_get_thread_num();
+        auto& localVerts = s_threadIVerts[tid];
+        localVerts.clear();
+        size_t estCount = (nbIVerts / maxThreads) + 64;
+        if (localVerts.capacity() < estCount) {
+            localVerts.reserve(estCount);
+        }
+
+        #pragma omp for schedule(static)
+        for (int i = 0; i < nbIVerts; ++i) {
+            if (i + 8 < nbIVerts) {
+                uint32_t nextId = iVerts[i + 8];
+                __builtin_prefetch(&verts[nextId * 3], 0, 1);
+                __builtin_prefetch(&materials[nextId * 3], 0, 1);
+            }
+
+            uint32_t id = iVerts[i];
+            int ind = id * 3;
+
+            float dx = cx - vertProxy[ind];
+            float dy = cy - vertProxy[ind + 1];
+            float dz = cz - vertProxy[ind + 2];
+            float distSq = (dx * dx + dy * dy + dz * dz) / radiusSq;
+            if (distSq >= 1.0f) {
+                continue;
+            }
+
+            float dist = std::sqrt(distSq);
+            float vx = verts[ind];
+            float vy = verts[ind + 1];
+            float vz = verts[ind + 2];
+
+            float fallOff = 0.0f;
+            if (useAccuCurve && accuCurveLut) {
+                if (dist < 1.0f) {
+                    float floatIndex = dist * 255.0f;
+                    if (floatIndex > 254.0f) floatIndex = 254.0f;
+                    int index = static_cast<int>(floatIndex);
+                    float fract = floatIndex - index;
+                    fallOff = accuCurveLut[index] * (1.0f - fract) + accuCurveLut[index + 1] * fract;
+                }
+            } else {
+                if (dist < 1.0f) {
+                    float fs = focalShiftFalloff ? focalShift : 0.0f;
+                    float power = std::pow(2.0f, fs * 2.0f);
+                    fallOff = std::pow(1.0f - dist, power);
+                }
+            }
+
+            float alphaVal = getAlphaVal(
+                vx, vy, vz,
+                hasAlpha, alphaTex, alphaWidth, alphaHeight,
+                alphaRatioX, alphaRatioY, alphaSide,
+                alphaLookAt, alphaXSym,
+                focalShift, focalShiftFalloff
+            );
+            fallOff *= materials[ind + 2] * alphaVal;
+
+            float stamp = getStampProfile(fallOff);
+            float brushModifier = stamp * brushFactor;
+
+            verts[ind] = vx + anx * brushModifier;
+            verts[ind + 1] = vy + any * brushModifier;
+            verts[ind + 2] = vz + anz * brushModifier;
+
+            localVerts.push_back(id);
+        }
+    }
+    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
 }
 
 int strokeSquareBrush(
@@ -1934,11 +2850,21 @@ int strokeSquareBrush(
     float invAlphaSideX = 1.0f / (alphaXSym ? -alphaSide : alphaSide);
     float invAlphaSideY = 1.0f / alphaSide;
 
-    int writeIdx = 0;
+    const int maxThreads = omp_get_max_threads();
+    static std::vector<std::vector<uint32_t>> s_threadIVerts;
+    if ((int)s_threadIVerts.size() < maxThreads) {
+        s_threadIVerts.resize(maxThreads);
+    }
 
     #pragma omp parallel if(nbIVerts > 500)
     {
-        std::vector<uint32_t> localVerts;
+        int tid = omp_get_thread_num();
+        auto& localVerts = s_threadIVerts[tid];
+        localVerts.clear();
+        size_t estCount = (nbIVerts / maxThreads) + 64;
+        if (localVerts.capacity() < estCount) {
+            localVerts.reserve(estCount);
+        }
 
         #pragma omp for schedule(static)
         for (int i = 0; i < nbIVerts; ++i) {
@@ -1982,15 +2908,8 @@ int strokeSquareBrush(
 
             localVerts.push_back(id);
         }
-
-        #pragma omp critical
-        {
-            for (uint32_t id : localVerts) {
-                iVerts[writeIdx++] = id;
-            }
-        }
     }
-    return writeIdx;
+    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
 }
 
 int strokeBrush(
@@ -2014,11 +2933,23 @@ int strokeBrush(
     float sinA = std::sin(angleRad);
     float invRadiusX = 1.0f / (alphaXSym ? -radius : radius);
     float invRadiusY = 1.0f / radius;
-    int writeIdx = 0;
+
+    const int maxThreads = omp_get_max_threads();
+    static std::vector<std::vector<uint32_t>> s_threadIVerts;
+    if ((int)s_threadIVerts.size() < maxThreads) {
+        s_threadIVerts.resize(maxThreads);
+    }
 
     #pragma omp parallel if(nbIVerts > 500)
     {
-        std::vector<uint32_t> localVerts;
+        int tid = omp_get_thread_num();
+        auto& localVerts = s_threadIVerts[tid];
+        localVerts.clear();
+        size_t estCount = (nbIVerts / maxThreads) + 64;
+        if (localVerts.capacity() < estCount) {
+            localVerts.reserve(estCount);
+        }
+
         #pragma omp for schedule(static)
         for (int i = 0; i < nbIVerts; ++i) {
             uint32_t id = iVerts[i];
@@ -2149,15 +3080,8 @@ int strokeBrush(
 
             localVerts.push_back(id);
         }
-
-        #pragma omp critical
-        {
-            for (uint32_t id : localVerts) {
-                iVerts[writeIdx++] = id;
-            }
-        }
     }
-    return writeIdx;
+    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
 }
 
 int strokeRake(
@@ -2187,11 +3111,22 @@ int strokeRake(
     float fs = focalShiftFalloff ? focalShift : 0.0f;
     constexpr float PI = 3.14159265358979323846f;
     float teeth = static_cast<float>(std::max(1, rakeTeethCount));
-    int writeIdx = 0;
+
+    const int maxThreads = omp_get_max_threads();
+    static std::vector<std::vector<uint32_t>> s_threadIVerts;
+    if ((int)s_threadIVerts.size() < maxThreads) {
+        s_threadIVerts.resize(maxThreads);
+    }
 
     #pragma omp parallel if(nbIVerts > 500)
     {
-        std::vector<uint32_t> localVerts;
+        int tid = omp_get_thread_num();
+        auto& localVerts = s_threadIVerts[tid];
+        localVerts.clear();
+        size_t estCount = (nbIVerts / maxThreads) + 64;
+        if (localVerts.capacity() < estCount) {
+            localVerts.reserve(estCount);
+        }
 
         #pragma omp for schedule(static)
         for (int i = 0; i < nbIVerts; ++i) {
@@ -2323,15 +3258,8 @@ int strokeRake(
 
             localVerts.push_back(id);
         }
-
-        #pragma omp critical
-        {
-            for (uint32_t id : localVerts) {
-                iVerts[writeIdx++] = id;
-            }
-        }
     }
-    return writeIdx;
+    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
 }
 
 int strokeDeleteLayer(
@@ -2351,11 +3279,22 @@ int strokeDeleteLayer(
     if (nbIVerts <= 0 || !baseVerts || !layerDeltaVerts || !finalVerts || !iVerts) return 0;
     const float radiusSq = radius * radius;
 
-    int writeIdx = 0;
+    const int maxThreads = omp_get_max_threads();
+    static std::vector<std::vector<uint32_t>> s_threadIVerts;
+    if ((int)s_threadIVerts.size() < maxThreads) {
+        s_threadIVerts.resize(maxThreads);
+    }
 
     #pragma omp parallel if(nbIVerts > 500)
     {
-        std::vector<uint32_t> localVerts;
+        int tid = omp_get_thread_num();
+        auto& localVerts = s_threadIVerts[tid];
+        localVerts.clear();
+        size_t estCount = (nbIVerts / maxThreads) + 64;
+        if (localVerts.capacity() < estCount) {
+            localVerts.reserve(estCount);
+        }
+
         #pragma omp for schedule(static)
         for (int i = 0; i < nbIVerts; ++i) {
             if (i + 8 < nbIVerts) {
@@ -2413,15 +3352,8 @@ int strokeDeleteLayer(
 
             localVerts.push_back(id);
         }
-
-        #pragma omp critical
-        {
-            for (uint32_t id : localVerts) {
-                iVerts[writeIdx++] = id;
-            }
-        }
     }
-    return writeIdx;
+    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
 }
 
 

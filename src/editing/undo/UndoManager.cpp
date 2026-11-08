@@ -588,46 +588,75 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
             auto tCopyStart = std::chrono::high_resolution_clock::now();
             size_t count = delta.indices.size();
             bool vertsMoved = false;
-            for (size_t i = 0; i < count; ++i) {
-                uint32_t vi = delta.indices[i];
-                if (vi >= (uint32_t)mesh->nbVerts) continue;
 
-                if (delta.hasPositions && i * 3 + 2 < srcVerts.size()) {
-                    float nx = srcVerts[i * 3 + 0];
-                    float ny = srcVerts[i * 3 + 1];
-                    float nz = srcVerts[i * 3 + 2];
-                    if (mesh->verts[vi * 3 + 0] != nx ||
-                        mesh->verts[vi * 3 + 1] != ny ||
-                        mesh->verts[vi * 3 + 2] != nz) {
-                        vertsMoved = true;
-                        mesh->verts[vi * 3 + 0] = nx;
-                        mesh->verts[vi * 3 + 1] = ny;
-                        mesh->verts[vi * 3 + 2] = nz;
+            // Invariant: all elements in delta.indices are guaranteed unique (filtered via s_recordedStamps on record)
+            const uint32_t* pIndices = delta.indices.data();
+            const float* pSrcVerts = srcVerts.data();
+            const float* pSrcColors = srcColors.data();
+            const float* pSrcMats = srcMats.data();
+            const float* pSrcLayerDeltas = srcLayerDeltas.data();
+            float* pMeshVerts = mesh->verts.data();
+            float* pMeshProxy = mesh->vertProxy.data();
+            float* pMeshColors = mesh->colors.data();
+            float* pMeshMats = mesh->materials.data();
+            float* pLayerVerts = targetLayer ? targetLayer->deltaVerts.data() : nullptr;
+            bool hasPositions = delta.hasPositions;
+            bool hasColors = delta.hasColors;
+            bool hasMaterials = delta.hasMaterials;
+            bool hasLayerDeltas = (targetLayer != nullptr);
+            size_t maxVertIdx = (size_t)mesh->nbVerts;
+            size_t maxProxyIdx = mesh->vertProxy.size() / 3;
+            size_t maxLayerIdx = targetLayer ? targetLayer->deltaVerts.size() / 3 : 0;
+            size_t maxColorsIdx = mesh->colors.size() / 3;
+            size_t maxMatsIdx = mesh->materials.size() / 3;
+            size_t maxSrcVerts = srcVerts.size() / 3;
+            size_t maxSrcLayer = srcLayerDeltas.size() / 3;
+            size_t maxSrcColors = srcColors.size() / 3;
+            size_t maxSrcMats = srcMats.size() / 3;
+
+            int vertsMovedInt = 0;
+            #pragma omp parallel for schedule(static) reduction(|:vertsMovedInt) if(count > 2000)
+            for (int64_t i = 0; i < (int64_t)count; ++i) {
+                uint32_t vi = pIndices[i];
+                if (vi >= maxVertIdx) continue;
+
+                if (hasPositions && (size_t)i < maxSrcVerts) {
+                    float nx = pSrcVerts[i * 3 + 0];
+                    float ny = pSrcVerts[i * 3 + 1];
+                    float nz = pSrcVerts[i * 3 + 2];
+                    if (pMeshVerts[vi * 3 + 0] != nx ||
+                        pMeshVerts[vi * 3 + 1] != ny ||
+                        pMeshVerts[vi * 3 + 2] != nz) {
+                        vertsMovedInt = 1;
+                        pMeshVerts[vi * 3 + 0] = nx;
+                        pMeshVerts[vi * 3 + 1] = ny;
+                        pMeshVerts[vi * 3 + 2] = nz;
                     }
-                    if (vi * 3 + 2 < mesh->vertProxy.size()) {
-                        mesh->vertProxy[vi * 3 + 0] = nx;
-                        mesh->vertProxy[vi * 3 + 1] = ny;
-                        mesh->vertProxy[vi * 3 + 2] = nz;
+                    if (vi < maxProxyIdx) {
+                        pMeshProxy[vi * 3 + 0] = nx;
+                        pMeshProxy[vi * 3 + 1] = ny;
+                        pMeshProxy[vi * 3 + 2] = nz;
                     }
                 }
 
-                if (targetLayer && i * 3 + 2 < srcLayerDeltas.size() && vi * 3 + 2 < targetLayer->deltaVerts.size()) {
-                    targetLayer->deltaVerts[vi * 3 + 0] = srcLayerDeltas[i * 3 + 0];
-                    targetLayer->deltaVerts[vi * 3 + 1] = srcLayerDeltas[i * 3 + 1];
-                    targetLayer->deltaVerts[vi * 3 + 2] = srcLayerDeltas[i * 3 + 2];
+                if (hasLayerDeltas && (size_t)i < maxSrcLayer && vi < maxLayerIdx) {
+                    pLayerVerts[vi * 3 + 0] = pSrcLayerDeltas[i * 3 + 0];
+                    pLayerVerts[vi * 3 + 1] = pSrcLayerDeltas[i * 3 + 1];
+                    pLayerVerts[vi * 3 + 2] = pSrcLayerDeltas[i * 3 + 2];
                 }
 
-                if (delta.hasColors && i * 3 + 2 < srcColors.size() && vi * 3 + 2 < mesh->colors.size()) {
-                    mesh->colors[vi * 3 + 0] = srcColors[i * 3 + 0];
-                    mesh->colors[vi * 3 + 1] = srcColors[i * 3 + 1];
-                    mesh->colors[vi * 3 + 2] = srcColors[i * 3 + 2];
+                if (hasColors && (size_t)i < maxSrcColors && vi < maxColorsIdx) {
+                    pMeshColors[vi * 3 + 0] = pSrcColors[i * 3 + 0];
+                    pMeshColors[vi * 3 + 1] = pSrcColors[i * 3 + 1];
+                    pMeshColors[vi * 3 + 2] = pSrcColors[i * 3 + 2];
                 }
-                if (delta.hasMaterials && i * 3 + 2 < srcMats.size() && vi * 3 + 2 < mesh->materials.size()) {
-                    mesh->materials[vi * 3 + 0] = srcMats[i * 3 + 0];
-                    mesh->materials[vi * 3 + 1] = srcMats[i * 3 + 1];
-                    mesh->materials[vi * 3 + 2] = srcMats[i * 3 + 2];
+                if (hasMaterials && (size_t)i < maxSrcMats && vi < maxMatsIdx) {
+                    pMeshMats[vi * 3 + 0] = pSrcMats[i * 3 + 0];
+                    pMeshMats[vi * 3 + 1] = pSrcMats[i * 3 + 1];
+                    pMeshMats[vi * 3 + 2] = pSrcMats[i * 3 + 2];
                 }
             }
+            vertsMoved = (vertsMovedInt != 0);
             auto tCopyEnd = std::chrono::high_resolution_clock::now();
 
             if (targetLayer) {
