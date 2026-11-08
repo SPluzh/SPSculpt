@@ -654,12 +654,20 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
                 auto tFaceLookupStart = std::chrono::high_resolution_clock::now();
                 if (!mesh->vrfStartCount.empty() && !mesh->vertRingFace.empty() && mesh->nbFaces > 0) {
                     if (s_undoTagFlags.size() < (size_t)mesh->nbFaces) {
+                        auto tUAlloc0 = std::chrono::high_resolution_clock::now();
                         s_undoTagFlags.assign(mesh->nbFaces, 0);
                         s_undoTagEpoch = 1;
+                        double uAllocMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tUAlloc0).count();
+                        sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] s_undoTagFlags cold alloc (%d faces, %.2f MB) in %.2f ms\n",
+                                       mesh->nbFaces, (mesh->nbFaces * sizeof(uint32_t)) / (1024.0 * 1024.0), uAllocMs);
                     }
                     size_t capIFaces = std::min((size_t)mesh->nbFaces, std::max((size_t)4000000, delta.indices.size() * 6 + 1024));
                     if (s_undoIFaces.size() < capIFaces) {
+                        auto tIAlloc0 = std::chrono::high_resolution_clock::now();
                         s_undoIFaces.resize(capIFaces);
+                        double iAllocMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tIAlloc0).count();
+                        sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] s_undoIFaces cold alloc (%zu faces, %.2f MB) in %.2f ms\n",
+                                       capIFaces, (capIFaces * sizeof(uint32_t)) / (1024.0 * 1024.0), iAllocMs);
                     }
                     numIFaces = getFacesFromVerticesFast(
                         delta.indices.data(),
@@ -729,9 +737,11 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
                 double msBVH = std::chrono::duration<double, std::milli>(tDone - tSpatialStart).count();
                 double msTotal = std::chrono::duration<double, std::milli>(tDone - tStart).count();
 
+                const BVHRefitStats& brs = mesh->bvh.getLastRefitStats();
                 sculpt_log_lvl(LogLevel::Info,
-                    "[Undo Diagnostics] Sculpt apply (%s): %zu verts restored in %.2f ms (Copy: %.2fms, FaceLookup: %.2fms, FaceNorms: %.2fms, VertNorms: %.2fms, BVHRefit: %.2fms)\n",
-                    isUndo ? "UNDO" : "REDO", count, msTotal, msCopy, msFaceLookup, msFNorms, msVNorms, msBVH);
+                    "[Undo Diagnostics] Sculpt apply (%s): %zu verts (%u faces) restored in %.2f ms (Copy: %.2fms, FaceLookup: %.2fms, FaceNorms: %.2fms, VertNorms: %.2fms, BVHRefit: %.2fms [Dedup %.2f, AABB %.2f, ClimbSort %.2f, Inner %.2f | L=%u I=%u Pre=%d%s])\n",
+                    isUndo ? "UNDO" : "REDO", count, numIFaces, msTotal, msCopy, msFaceLookup, msFNorms, msVNorms, msBVH,
+                    brs.leafDedupMs, brs.leafAABBMs, brs.parentGatherMs, brs.innerUpdateMs, brs.dirtyLeaves, brs.dirtyInnerNodes, brs.usedPrecomputed ? 1 : 0, brs.fellBackToRefitAll ? " ALL" : "");
             }
         }
     } else if (entry->getType() == UndoEntryType::Topology) {
@@ -892,8 +902,10 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
                 auto tStateDone = std::chrono::high_resolution_clock::now();
                 double msState = std::chrono::duration<double, std::milli>(tStateDone - tStateStart).count();
                 if (item.hasVertexDeformation) {
-                    sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] Applied Transform (%s) | Mesh ID: %u | Mode: %s | Verts: %d | Time: %.2fms (FaceNorms: %.2fms, VertNorms: %.2fms, BVH: %.2fms)\n",
-                                   isUndo ? "UNDO" : "REDO", item.meshId, modeStr, mesh->nbVerts, msState, msFNorms, msVNorms, msBVH);
+                    const BVHRefitStats& brs = mesh->bvh.getLastRefitStats();
+                    sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] Applied Transform (%s) | Mesh ID: %u | Mode: %s | Verts: %d | Time: %.2fms (FaceNorms: %.2fms, VertNorms: %.2fms, BVH: %.2fms [Dedup %.2f, AABB %.2f, ClimbSort %.2f, Inner %.2f | L=%u I=%u Pre=%d%s])\n",
+                                   isUndo ? "UNDO" : "REDO", item.meshId, modeStr, mesh->nbVerts, msState, msFNorms, msVNorms, msBVH,
+                                   brs.leafDedupMs, brs.leafAABBMs, brs.parentGatherMs, brs.innerUpdateMs, brs.dirtyLeaves, brs.dirtyInnerNodes, brs.usedPrecomputed ? 1 : 0, brs.fellBackToRefitAll ? " ALL" : "");
                 } else {
                     sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] Applied Transform (%s) | Mesh ID: %u | Mode: %s | Verts: %d | Time: %.2fms\n",
                                    isUndo ? "UNDO" : "REDO", item.meshId, modeStr, mesh->nbVerts, msState);

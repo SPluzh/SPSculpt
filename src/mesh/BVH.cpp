@@ -151,6 +151,9 @@ void BVH::clear() {
     lastCollectCellsMs = 0.0;
     lastCandidateVertsMs = 0.0;
     lastFilterVertsMs = 0.0;
+    m_lastPickStats[0] = BVHPickStats{};
+    m_lastPickStats[1] = BVHPickStats{};
+    m_lastRefitStats = BVHRefitStats{};
 }
 
 void BVH::computeLeafAABB(const Mesh& mesh, BVHNode& node, uint32_t nodeIdx, bool usePrecomputedBoxes, bool assignFaceToLeaf) {
@@ -848,8 +851,10 @@ void BVH::pickVerticesInSphere(
     int sIdx = scratchIndex & 1;
     QueryScratch& sc = m_scratch[sIdx];
     outVertices.clear();
+    BVHPickStats stats;
 
     if (m_nodes.empty() || mesh.nbVerts <= 0 || mesh.nbFaces <= 0) {
+        m_lastPickStats[sIdx] = stats;
         if (sIdx == 0) {
             lastCollectCellsMs = lastCandidateVertsMs = lastFilterVertsMs = 0.0;
         }
@@ -881,13 +886,17 @@ void BVH::pickVerticesInSphere(
     }
 
     auto t1 = std::chrono::high_resolution_clock::now();
-    if (sIdx == 0) {
-        lastCollectCellsMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
-        lastCandidateVertsMs = 0.0;
-    }
+    stats.collectCellsMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    stats.candLeaves = (uint32_t)sc.candidateLeaves.size();
+    stats.candFaces = totalCandidateFaces;
 
     if (sc.candidateLeaves.empty()) {
-        if (sIdx == 0) lastFilterVertsMs = 0.0;
+        m_lastPickStats[sIdx] = stats;
+        if (sIdx == 0) {
+            lastCollectCellsMs = stats.collectCellsMs;
+            lastCandidateVertsMs = 0.0;
+            lastFilterVertsMs = 0.0;
+        }
         return;
     }
 
@@ -899,6 +908,8 @@ void BVH::pickVerticesInSphere(
         std::fill(sc.visitedFlags.begin(), sc.visitedFlags.end(), 0);
         sc.visitedEpoch = 1;
     }
+    auto tInitDone = std::chrono::high_resolution_clock::now();
+    stats.visitedInitMs = std::chrono::duration<double, std::milli>(tInitDone - t1).count();
 
     const uint32_t curEpoch = sc.visitedEpoch;
     uint32_t* const vFlags = sc.visitedFlags.data();
@@ -911,6 +922,8 @@ void BVH::pickVerticesInSphere(
     const bool inParallel = omp_in_parallel();
 
     if (totalCandidateFaces < 65536 || inParallel || maxThreads <= 1) {
+        stats.usedMT = false;
+        stats.numThreads = 1;
         size_t estCount = std::min((size_t)mesh.nbVerts, (size_t)totalCandidateFaces * 2);
         if (outVertices.capacity() < estCount) {
             outVertices.reserve(estCount);
@@ -945,7 +958,12 @@ void BVH::pickVerticesInSphere(
                 }
             }
         }
+        auto tPhase2End = std::chrono::high_resolution_clock::now();
+        stats.filterVertsMs = std::chrono::duration<double, std::milli>(tPhase2End - tInitDone).count();
+        stats.mergeMs = 0.0;
     } else {
+        stats.usedMT = true;
+        stats.numThreads = maxThreads;
         if ((int)sc.threadPicked.size() < maxThreads) {
             sc.threadPicked.resize(maxThreads);
         }
@@ -995,6 +1013,8 @@ void BVH::pickVerticesInSphere(
                 }
             }
         }
+        auto tMTLoopEnd = std::chrono::high_resolution_clock::now();
+        stats.filterVertsMs = std::chrono::duration<double, std::milli>(tMTLoopEnd - tInitDone).count();
 
         size_t totalFound = 0;
         for (int t = 0; t < maxThreads; ++t) {
@@ -1009,22 +1029,36 @@ void BVH::pickVerticesInSphere(
                 offset += count;
             }
         }
+        auto tMergeEnd = std::chrono::high_resolution_clock::now();
+        stats.mergeMs = std::chrono::duration<double, std::milli>(tMergeEnd - tMTLoopEnd).count();
     }
 
-    auto t2 = std::chrono::high_resolution_clock::now();
+    stats.outVerts = (uint32_t)outVertices.size();
+    m_lastPickStats[sIdx] = stats;
     if (sIdx == 0) {
-        lastFilterVertsMs = std::chrono::duration<double, std::milli>(t2 - t1).count();
+        lastCollectCellsMs = stats.collectCellsMs;
+        lastCandidateVertsMs = stats.visitedInitMs;
+        lastFilterVertsMs = stats.filterVertsMs + stats.mergeMs;
     }
 }
 
 void BVH::refit(const Mesh& mesh, const uint32_t* modifiedFaces, size_t count, bool usePrecomputedBoxes) {
-    if (m_nodes.empty() || !modifiedFaces || count == 0 || mesh.nbFaces <= 0 || mesh.nbVerts <= 0) return;
+    BVHRefitStats stats;
+    stats.inputFaces = (uint32_t)count;
+    stats.usedPrecomputed = usePrecomputedBoxes;
 
-    if (count > (size_t)mesh.nbFaces * 0.40f) {
-        refitAll(mesh);
+    if (m_nodes.empty() || !modifiedFaces || count == 0 || mesh.nbFaces <= 0 || mesh.nbVerts <= 0) {
+        m_lastRefitStats = stats;
         return;
     }
 
+    if (count > (size_t)mesh.nbFaces * 0.40f) {
+        refitAll(mesh);
+        m_lastRefitStats.inputFaces = (uint32_t)count;
+        return;
+    }
+
+    auto t0 = std::chrono::high_resolution_clock::now();
     m_editsSinceBuild += count;
 
     if (m_leafVisitedFlags.size() < m_nodes.size()) {
@@ -1052,9 +1086,12 @@ void BVH::refit(const Mesh& mesh, const uint32_t* modifiedFaces, size_t count, b
             m_dirtyLeaves.push_back(leafIdx);
         }
     }
+    auto t1 = std::chrono::high_resolution_clock::now();
+    stats.leafDedupMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
 
     // Refit dirty leaves in parallel for large sets, sequential for small
     const size_t numDirty = m_dirtyLeaves.size();
+    stats.dirtyLeaves = (uint32_t)numDirty;
     if (numDirty < 2048) {
         for (size_t i = 0; i < numDirty; ++i) {
             uint32_t leafIdx = m_dirtyLeaves[i];
@@ -1067,6 +1104,8 @@ void BVH::refit(const Mesh& mesh, const uint32_t* modifiedFaces, size_t count, b
             computeLeafAABB(mesh, m_nodes[leafIdx], leafIdx, usePrecomputedBoxes, false);
         }
     }
+    auto t2 = std::chrono::high_resolution_clock::now();
+    stats.leafAABBMs = std::chrono::duration<double, std::milli>(t2 - t1).count();
 
     // Propagate up to root using topological invariant (parentIdx < childIdx)
     if (m_nodeVisitedFlags.size() < m_nodes.size()) {
@@ -1097,6 +1136,9 @@ void BVH::refit(const Mesh& mesh, const uint32_t* modifiedFaces, size_t count, b
     }
 
     std::sort(m_dirtyInnerNodes.begin(), m_dirtyInnerNodes.end(), std::greater<uint32_t>());
+    stats.dirtyInnerNodes = (uint32_t)m_dirtyInnerNodes.size();
+    auto t3 = std::chrono::high_resolution_clock::now();
+    stats.parentGatherMs = std::chrono::duration<double, std::milli>(t3 - t2).count();
 
     for (uint32_t nodeIdx : m_dirtyInnerNodes) {
         BVHNode& node = m_nodes[nodeIdx];
@@ -1105,17 +1147,33 @@ void BVH::refit(const Mesh& mesh, const uint32_t* modifiedFaces, size_t count, b
         node.aabbMin = glm::min(m_nodes[left].aabbMin, m_nodes[right].aabbMin);
         node.aabbMax = glm::max(m_nodes[left].aabbMax, m_nodes[right].aabbMax);
     }
+    auto t4 = std::chrono::high_resolution_clock::now();
+    stats.innerUpdateMs = std::chrono::duration<double, std::milli>(t4 - t3).count();
+
+    m_lastRefitStats = stats;
 }
 
 void BVH::refitAll(const Mesh& mesh) {
-    if (m_nodes.empty() || mesh.nbFaces <= 0 || mesh.nbVerts <= 0) return;
+    BVHRefitStats stats;
+    stats.inputFaces = (uint32_t)mesh.nbFaces;
+    stats.fellBackToRefitAll = true;
+    stats.dirtyLeaves = (uint32_t)m_leafCount;
+    stats.dirtyInnerNodes = (uint32_t)(m_nodes.size() > m_leafCount ? m_nodes.size() - m_leafCount : 0);
 
+    if (m_nodes.empty() || mesh.nbFaces <= 0 || mesh.nbVerts <= 0) {
+        m_lastRefitStats = stats;
+        return;
+    }
+
+    auto t0 = std::chrono::high_resolution_clock::now();
     #pragma omp parallel for schedule(static) if(m_nodes.size() > 500)
     for (int i = 0; i < (int)m_nodes.size(); ++i) {
         if (m_nodes[i].isLeaf()) {
             computeLeafAABB(mesh, m_nodes[i], (uint32_t)i, false, false);
         }
     }
+    auto t1 = std::chrono::high_resolution_clock::now();
+    stats.leafAABBMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
 
     for (int i = (int)m_nodes.size() - 1; i >= 0; --i) {
         BVHNode& node = m_nodes[i];
@@ -1126,6 +1184,9 @@ void BVH::refitAll(const Mesh& mesh) {
             node.aabbMax = glm::max(m_nodes[left].aabbMax, m_nodes[right].aabbMax);
         }
     }
+    auto t2 = std::chrono::high_resolution_clock::now();
+    stats.innerUpdateMs = std::chrono::duration<double, std::milli>(t2 - t1).count();
+    m_lastRefitStats = stats;
 }
 
 void BVH::scale(float sx, float sy, float sz) {

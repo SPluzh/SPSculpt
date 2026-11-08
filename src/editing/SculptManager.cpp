@@ -2061,42 +2061,57 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 
     bool culledAndFiltered = false;
     bool canDualPick = m_useSym && (symScales.size() == 1) && (!isSnakeBrush || m_firstStrokeFrame) && (!isGrabBrush || m_firstStrokeFrame);
+    bool primaryUsedBVH = false;
+    bool symUsedBVHInDual = false;
+    bool primaryUsedTopo = false;
+    double dualSec0Ms = 0.0, dualSec1Ms = 0.0, dualSec0CullMs = 0.0, dualSec1CullMs = 0.0;
 
     if (canDualPick) {
         glm::vec3 symCenter0 = reflectPointSymmetry(m_currentIntersection, symScales[0], mesh, m_symmetryMode);
         culledAndFiltered = true;
+        m_lastFrameProfile.dualPickActive = true;
 
         #pragma omp parallel sections
         {
             #pragma omp section
             {
+                auto ts0 = std::chrono::high_resolution_clock::now();
                 if (getSettings(activeBrush).topoCheck) {
+                    primaryUsedTopo = true;
                     pickVerticesInSphereTopological(mesh, m_currentIntersection, radius2, intersectFaceId,
                                                     m_vertTagFlags, m_vertTagEpoch, pickedVertices);
                 } else {
+                    primaryUsedBVH = true;
                     mesh->bvh.pickVerticesInSphere(
                         *mesh, m_currentIntersection,
                         radius2, pickedVertices, mesh->vertVisible.data(), 0
                     );
                 }
+                auto tc0 = std::chrono::high_resolution_clock::now();
                 if (getSettings(activeBrush).culling) {
                     filterCullingVertices(pickedVertices, mesh, localRayDir);
                 }
                 if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty()) {
                     filterPolyGroupVertices(pickedVertices, mesh, m_strokeTargetPolyGroup);
                 }
+                auto tc1 = std::chrono::high_resolution_clock::now();
+                dualSec0CullMs = std::chrono::duration<double, std::milli>(tc1 - tc0).count();
                 if (isSnakeBrush) {
                     m_snakeActiveVerts = pickedVertices;
                 } else if (isGrabBrush) {
                     m_grabbedVertices = pickedVertices;
                 }
+                dualSec0Ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - ts0).count();
             }
             #pragma omp section
             {
+                auto ts1 = std::chrono::high_resolution_clock::now();
+                symUsedBVHInDual = true;
                 mesh->bvh.pickVerticesInSphere(
                     *mesh, symCenter0,
                     radius2, m_prePickedSymVerts[0], mesh->vertVisible.data(), 1
                 );
+                auto tc0 = std::chrono::high_resolution_clock::now();
                 if (getSettings(activeBrush).culling && !m_prePickedSymVerts[0].empty()) {
                     glm::vec3 symRayDir = reflectVectorSymmetry(localRayDir, symScales[0], mesh, m_symmetryMode);
                     filterCullingVertices(m_prePickedSymVerts[0], mesh, symRayDir);
@@ -2104,6 +2119,8 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty() && !m_prePickedSymVerts[0].empty()) {
                     filterPolyGroupVertices(m_prePickedSymVerts[0], mesh, m_strokeTargetPolyGroup);
                 }
+                auto tc1 = std::chrono::high_resolution_clock::now();
+                dualSec1CullMs = std::chrono::duration<double, std::milli>(tc1 - tc0).count();
                 if (isSnakeBrush) {
                     if (m_snakeActiveVertsSyms.size() < 1) m_snakeActiveVertsSyms.resize(1);
                     m_snakeActiveVertsSyms[0] = m_prePickedSymVerts[0];
@@ -2111,14 +2128,20 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                     if (m_grabbedVerticesSyms.size() < 1) m_grabbedVerticesSyms.resize(1);
                     m_grabbedVerticesSyms[0] = m_prePickedSymVerts[0];
                 }
+                dualSec1Ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - ts1).count();
             }
         }
+        m_lastFrameProfile.dualPickSec0Ms = dualSec0Ms;
+        m_lastFrameProfile.dualPickSec1Ms = dualSec1Ms;
+        m_lastFrameProfile.dualPickCullMs = dualSec0CullMs + dualSec1CullMs;
     } else if (isSnakeBrush) {
         if (m_firstStrokeFrame) {
             if (getSettings(activeBrush).topoCheck) {
+                primaryUsedTopo = true;
                 pickVerticesInSphereTopological(mesh, m_currentIntersection, radius2, intersectFaceId,
                                                 m_vertTagFlags, m_vertTagEpoch, pickedVertices);
             } else {
+                primaryUsedBVH = true;
                 mesh->bvh.pickVerticesInSphere(
                     *mesh, m_currentIntersection, radius2, pickedVertices, mesh->vertVisible.data(), 0
                 );
@@ -2140,18 +2163,41 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         culledAndFiltered = true;
     } else {
         if (getSettings(activeBrush).topoCheck) {
+            primaryUsedTopo = true;
             pickVerticesInSphereTopological(mesh, m_currentIntersection, radius2, intersectFaceId,
                                             m_vertTagFlags, m_vertTagEpoch, pickedVertices);
         } else {
+            primaryUsedBVH = true;
             mesh->bvh.pickVerticesInSphere(
                 *mesh, m_currentIntersection, radius2, pickedVertices, mesh->vertVisible.data(), 0
             );
         }
     }
     m_lastFrameProfile.pickVertsMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
-    m_lastFrameProfile.pickCellsMs = mesh->bvh.lastCollectCellsMs;
-    m_lastFrameProfile.pickDedupMs = mesh->bvh.lastCandidateVertsMs;
-    m_lastFrameProfile.pickFilterMs = mesh->bvh.lastFilterVertsMs;
+    m_lastFrameProfile.pickUsedTopo = primaryUsedTopo;
+    if (primaryUsedBVH) {
+        const BVHPickStats& ps0 = mesh->bvh.getLastPickStats(0);
+        m_lastFrameProfile.pickCellsMs = ps0.collectCellsMs;
+        m_lastFrameProfile.pickVisitedInitMs = ps0.visitedInitMs;
+        m_lastFrameProfile.pickDedupMs = ps0.visitedInitMs;
+        m_lastFrameProfile.pickFilterMs = ps0.filterVertsMs;
+        m_lastFrameProfile.pickMergeMs = ps0.mergeMs;
+        m_lastFrameProfile.pickCandLeaves = ps0.candLeaves;
+        m_lastFrameProfile.pickCandFaces = ps0.candFaces;
+        m_lastFrameProfile.pickUsedMT = ps0.usedMT;
+        m_lastFrameProfile.pickThreads = ps0.numThreads;
+    }
+    if (symUsedBVHInDual) {
+        const BVHPickStats& ps1 = mesh->bvh.getLastPickStats(1);
+        m_lastFrameProfile.symPickCellsMs = ps1.collectCellsMs;
+        m_lastFrameProfile.symPickVisitedInitMs = ps1.visitedInitMs;
+        m_lastFrameProfile.symPickFilterMs = ps1.filterVertsMs;
+        m_lastFrameProfile.symPickMergeMs = ps1.mergeMs;
+        m_lastFrameProfile.symPickCandLeaves = ps1.candLeaves;
+        m_lastFrameProfile.symPickCandFaces = ps1.candFaces;
+        m_lastFrameProfile.symPickUsedMT = ps1.usedMT;
+        m_lastFrameProfile.symPickThreads = ps1.numThreads;
+    }
     m_lastFrameProfile.pickedVertCount = (int)pickedVertices.size();
 
     // --- Stage 3: Culling & PolyGroup Filtering ---
@@ -2314,6 +2360,9 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 std::vector<uint32_t> symVerts;
                 bool fromPrePicked = false;
 
+                auto tSymPick0 = std::chrono::high_resolution_clock::now();
+                double thisSymCullMs = 0.0;
+
                 if (isSnakeBrush) {
                     symCenter = reflectPointSymmetry(m_currentIntersection, sScale, mesh, m_symmetryMode);
                     if (m_firstStrokeFrame) {
@@ -2325,6 +2374,17 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                                 *mesh, symCenter,
                                 radius2, mesh->vertVisible.data(), 1
                             );
+                            const BVHPickStats& ps1 = mesh->bvh.getLastPickStats(1);
+                            m_lastFrameProfile.symPickCellsMs += ps1.collectCellsMs;
+                            m_lastFrameProfile.symPickVisitedInitMs += ps1.visitedInitMs;
+                            m_lastFrameProfile.symPickFilterMs += ps1.filterVertsMs;
+                            m_lastFrameProfile.symPickMergeMs += ps1.mergeMs;
+                            m_lastFrameProfile.symPickCandLeaves += ps1.candLeaves;
+                            m_lastFrameProfile.symPickCandFaces += ps1.candFaces;
+                            m_lastFrameProfile.symPickUsedMT = ps1.usedMT;
+                            m_lastFrameProfile.symPickThreads = ps1.numThreads;
+
+                            auto tSc0 = std::chrono::high_resolution_clock::now();
                             if (getSettings(activeBrush).culling && !symVerts.empty()) {
                                 glm::vec3 symRayDir = reflectVectorSymmetry(localRayDir, sScale, mesh, m_symmetryMode);
                                 filterCullingVertices(symVerts, mesh, symRayDir);
@@ -2332,6 +2392,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                             if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty() && !symVerts.empty()) {
                                 filterPolyGroupVertices(symVerts, mesh, m_strokeTargetPolyGroup);
                             }
+                            thisSymCullMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tSc0).count();
                         }
                         if (sIdx >= m_snakeActiveVertsSyms.size()) m_snakeActiveVertsSyms.resize(sIdx + 1);
                         m_snakeActiveVertsSyms[sIdx] = symVerts;
@@ -2366,7 +2427,17 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                             *mesh, symCenter,
                             radius2, symVerts, mesh->vertVisible.data(), 1
                         );
+                        const BVHPickStats& ps1 = mesh->bvh.getLastPickStats(1);
+                        m_lastFrameProfile.symPickCellsMs += ps1.collectCellsMs;
+                        m_lastFrameProfile.symPickVisitedInitMs += ps1.visitedInitMs;
+                        m_lastFrameProfile.symPickFilterMs += ps1.filterVertsMs;
+                        m_lastFrameProfile.symPickMergeMs += ps1.mergeMs;
+                        m_lastFrameProfile.symPickCandLeaves += ps1.candLeaves;
+                        m_lastFrameProfile.symPickCandFaces += ps1.candFaces;
+                        m_lastFrameProfile.symPickUsedMT = ps1.usedMT;
+                        m_lastFrameProfile.symPickThreads = ps1.numThreads;
 
+                        auto tSc0 = std::chrono::high_resolution_clock::now();
                         if (getSettings(activeBrush).culling && !symVerts.empty()) {
                             glm::vec3 symRayDir = reflectVectorSymmetry(localRayDir, sScale, mesh, m_symmetryMode);
                             filterCullingVertices(symVerts, mesh, symRayDir);
@@ -2375,6 +2446,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                         if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty() && !symVerts.empty()) {
                             filterPolyGroupVertices(symVerts, mesh, m_strokeTargetPolyGroup);
                         }
+                        thisSymCullMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tSc0).count();
                     }
 
                     if (isGrabBrush) {
@@ -2382,6 +2454,9 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                         m_grabbedVerticesSyms[sIdx] = symVerts;
                     }
                 }
+                double thisSymPickMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tSymPick0).count() - thisSymCullMs;
+                m_lastFrameProfile.symPickMs += std::max(0.0, thisSymPickMs);
+                m_lastFrameProfile.symCullMs += thisSymCullMs;
 
                 if (!symVerts.empty()) {
                     glm::vec3 symAreaNormal = reflectVectorSymmetry(m_cachedAreaNormal, sScale, mesh, m_symmetryMode);
@@ -2392,9 +2467,12 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                     if (!fromPrePicked) {
                         auto tUndoSym = std::chrono::high_resolution_clock::now();
                         g_undoManager.recordAffectedVertices(scene, mesh->m_id, symVerts, strokeAffectsPositions, strokeAffectsColors, strokeAffectsMaterials);
-                        m_lastFrameProfile.undoRecordMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tUndoSym).count();
+                        double uSymMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tUndoSym).count();
+                        m_lastFrameProfile.undoRecordMs += uSymMs;
+                        m_lastFrameProfile.symUndoMs += uSymMs;
                     }
 
+                    auto tSymDef0 = std::chrono::high_resolution_clock::now();
                     int symDeformed = doStrokePass(
                         scene,
                         mesh,
@@ -2412,6 +2490,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                         true,
                         sScale
                     );
+                    m_lastFrameProfile.symDeformMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tSymDef0).count();
 
                     if (symDeformed > 0) {
                         allAffectedVerts.insert(allAffectedVerts.end(), symVerts.begin(), symVerts.begin() + symDeformed);
@@ -2460,14 +2539,18 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             }
         }
         allAffectedVerts.resize(writeIdx);
+        auto tDedupEnd = std::chrono::high_resolution_clock::now();
+        m_lastFrameProfile.dedupOnlyMs = std::chrono::duration<double, std::milli>(tDedupEnd - tStage).count();
         bool isSculptDeform = (activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_MASK_GRADIENT_BLUR && activeBrush != BRUSH_POLYGROUP);
         if (isSculptDeform && writeIdx > 1) {
             radixSortVertices(allAffectedVerts, m_allAffectedVertsCache, maxV);
         }
+        auto tSortEnd = std::chrono::high_resolution_clock::now();
+        m_lastFrameProfile.radixSortMs = std::chrono::duration<double, std::milli>(tSortEnd - tDedupEnd).count();
         m_affectedMinV = minV;
         m_affectedMaxV = maxV;
 
-        m_lastFrameProfile.sortDedupMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
+        m_lastFrameProfile.sortDedupMs = std::chrono::duration<double, std::milli>(tSortEnd - tStage).count();
         if (isGrabBrush) {
             m_grabbedAffectedVerts = allAffectedVerts;
         }
@@ -2541,6 +2624,14 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 tStage = std::chrono::high_resolution_clock::now();
                 mesh->bvh.refit(*mesh, m_iFacesCache.data(), numIFaces, true);
                 m_lastFrameProfile.bvhUpdateMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
+                const BVHRefitStats& rs = mesh->bvh.getLastRefitStats();
+                m_lastFrameProfile.bvhLeafDedupMs = rs.leafDedupMs;
+                m_lastFrameProfile.bvhLeafAABBMs = rs.leafAABBMs;
+                m_lastFrameProfile.bvhParentSortMs = rs.parentGatherMs;
+                m_lastFrameProfile.bvhInnerUpdMs = rs.innerUpdateMs;
+                m_lastFrameProfile.bvhDirtyLeaves = rs.dirtyLeaves;
+                m_lastFrameProfile.bvhDirtyInner = rs.dirtyInnerNodes;
+                m_lastFrameProfile.bvhUsedPrecomputed = rs.usedPrecomputed;
             }
         }
 
@@ -2575,6 +2666,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             mesh->isVertexDirty = true;
         }
 
+        auto tProxySync0 = std::chrono::high_resolution_clock::now();
         if (!isGrabBrush && mesh->vertProxy.size() == mesh->verts.size()) {
             for (uint32_t v : allAffectedVerts) {
                 if (v * 3 + 2 < mesh->verts.size()) {
@@ -2584,6 +2676,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 }
             }
         }
+        m_lastFrameProfile.vertProxySyncMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tProxySync0).count();
     }
 
     m_alphaOrigin = m_currentIntersection;
@@ -2593,28 +2686,72 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     // Log high CPU stroke durations (> 5ms)
     double totalCpuMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tFrameStart).count();
     if (totalCpuMs > 5.0) {
-        sculpt_log("[SCULPT CPU STROKE] '%s' | Total CPU: %.2fms | Verts: %d (Picked: %d) | Faces: %d\n"
-                  "  |- Raycast:        %6.2f ms\n"
-                  "  |- Pick Vertices:  %6.2f ms\n"
-                  "  |- Culling/Group:  %6.2f ms\n"
-                  "  |- Proxy Reset:    %6.2f ms\n"
-                  "  |- Undo Record:    %6.2f ms\n"
-                  "  |- Primary Deform: %6.2f ms (AreaNormal: %6.2f ms)\n"
-                  "  |- Symmetry Pass:  %6.2f ms\n"
-                  "  |- Sort & Dedup:   %6.2f ms\n"
-                  "  |- Face Lookup:    %6.2f ms (Verts input: %d)\n"
-                  "  |- Face Normals:   %6.2f ms\n"
-                  "  |- Vert Normals:   %6.2f ms\n"
-                  "  \\- BVH Update:     %6.2f ms\n",
-                  getBrushNameStr(activeBrush),
-                  totalCpuMs, m_lastFrameProfile.affectedVertCount, m_lastFrameProfile.pickedVertCount, m_lastFrameProfile.affectedFaceCount,
-                  m_lastFrameProfile.raycastMs, m_lastFrameProfile.pickVertsMs, m_lastFrameProfile.cullingMs,
-                  m_lastFrameProfile.vertProxyResetMs,
-                  m_lastFrameProfile.undoRecordMs, m_lastFrameProfile.primaryDeformMs, m_lastFrameProfile.areaComputeMs, m_lastFrameProfile.symmetryMs,
-                  m_lastFrameProfile.sortDedupMs,
-                  m_lastFrameProfile.faceLookupMs, m_lastFrameProfile.affectedVertCount,
-                  m_lastFrameProfile.faceNormalsMs, m_lastFrameProfile.vertNormalsMs,
-                  m_lastFrameProfile.bvhUpdateMs);
+        const auto& p = m_lastFrameProfile;
+        if (p.dualPickActive) {
+            sculpt_log("[SCULPT CPU STROKE] '%s' | Total CPU: %.2fms | Verts: %d (Picked: %d) | Faces: %d\n"
+                      "  |- Raycast:        %6.2f ms\n"
+                      "  |- Pick Vertices:  %6.2f ms [Dual sec0=%.2f sec1=%.2f cull=%.2f | BVH0(%s %dt): Cells %.2f vInit %.2f P2 %.2f Mrg %.2f L=%u F=%u | Sym(%s %dt): P2 %.2f L=%u F=%u]\n"
+                      "  |- Culling/Group:  %6.2f ms\n"
+                      "  |- Proxy Reset:    %6.2f ms\n"
+                      "  |- Undo Record:    %6.2f ms (SymUndo: %.2f ms)\n"
+                      "  |- Primary Deform: %6.2f ms (AreaNormal: %6.2f ms)\n"
+                      "  |- Symmetry Pass:  %6.2f ms (Pick/Copy: %.2f, Cull: %.2f, Deform: %.2f, Undo: %.2f)\n"
+                      "  |- Sort & Dedup:   %6.2f ms (Dedup: %.2f, Radix: %.2f)\n"
+                      "  |- Face Lookup:    %6.2f ms (Verts input: %d)\n"
+                      "  |- Face Normals:   %6.2f ms\n"
+                      "  |- Vert Normals:   %6.2f ms\n"
+                      "  |- BVH Update:     %6.2f ms (Dedup: %.2f, AABB: %.2f, ClimbSort: %.2f, Inner: %.2f | L=%u I=%u Pre=%d)\n"
+                      "  \\- Proxy Sync:     %6.2f ms\n",
+                      getBrushNameStr(activeBrush),
+                      totalCpuMs, p.affectedVertCount, p.pickedVertCount, p.affectedFaceCount,
+                      p.raycastMs,
+                      p.pickVertsMs, p.dualPickSec0Ms, p.dualPickSec1Ms, p.dualPickCullMs,
+                      p.pickUsedTopo ? "TOPO" : (p.pickUsedMT ? "MT" : "ST"), p.pickThreads,
+                      p.pickCellsMs, p.pickVisitedInitMs, p.pickFilterMs, p.pickMergeMs, p.pickCandLeaves, p.pickCandFaces,
+                      p.symPickUsedMT ? "MT" : "ST", p.symPickThreads, p.symPickFilterMs, p.symPickCandLeaves, p.symPickCandFaces,
+                      p.cullingMs,
+                      p.vertProxyResetMs,
+                      p.undoRecordMs, p.symUndoMs,
+                      p.primaryDeformMs, p.areaComputeMs,
+                      p.symmetryMs, p.symPickMs, p.symCullMs, p.symDeformMs, p.symUndoMs,
+                      p.sortDedupMs, p.dedupOnlyMs, p.radixSortMs,
+                      p.faceLookupMs, p.affectedVertCount,
+                      p.faceNormalsMs, p.vertNormalsMs,
+                      p.bvhUpdateMs, p.bvhLeafDedupMs, p.bvhLeafAABBMs, p.bvhParentSortMs, p.bvhInnerUpdMs, p.bvhDirtyLeaves, p.bvhDirtyInner, p.bvhUsedPrecomputed ? 1 : 0,
+                      p.vertProxySyncMs);
+        } else {
+            sculpt_log("[SCULPT CPU STROKE] '%s' | Total CPU: %.2fms | Verts: %d (Picked: %d) | Faces: %d\n"
+                      "  |- Raycast:        %6.2f ms\n"
+                      "  |- Pick Vertices:  %6.2f ms [BVH0(%s %dt): Cells %.2f vInit %.2f P2 %.2f Mrg %.2f L=%u F=%u]\n"
+                      "  |- Culling/Group:  %6.2f ms\n"
+                      "  |- Proxy Reset:    %6.2f ms\n"
+                      "  |- Undo Record:    %6.2f ms (SymUndo: %.2f ms)\n"
+                      "  |- Primary Deform: %6.2f ms (AreaNormal: %6.2f ms)\n"
+                      "  |- Symmetry Pass:  %6.2f ms (Pick/Copy: %.2f, Cull: %.2f, Deform: %.2f, Undo: %.2f | SymBVH(%s %dt): P2 %.2f L=%u F=%u)\n"
+                      "  |- Sort & Dedup:   %6.2f ms (Dedup: %.2f, Radix: %.2f)\n"
+                      "  |- Face Lookup:    %6.2f ms (Verts input: %d)\n"
+                      "  |- Face Normals:   %6.2f ms\n"
+                      "  |- Vert Normals:   %6.2f ms\n"
+                      "  |- BVH Update:     %6.2f ms (Dedup: %.2f, AABB: %.2f, ClimbSort: %.2f, Inner: %.2f | L=%u I=%u Pre=%d)\n"
+                      "  \\- Proxy Sync:     %6.2f ms\n",
+                      getBrushNameStr(activeBrush),
+                      totalCpuMs, p.affectedVertCount, p.pickedVertCount, p.affectedFaceCount,
+                      p.raycastMs,
+                      p.pickVertsMs,
+                      p.pickUsedTopo ? "TOPO" : (p.pickUsedMT ? "MT" : "ST"), p.pickThreads,
+                      p.pickCellsMs, p.pickVisitedInitMs, p.pickFilterMs, p.pickMergeMs, p.pickCandLeaves, p.pickCandFaces,
+                      p.cullingMs,
+                      p.vertProxyResetMs,
+                      p.undoRecordMs, p.symUndoMs,
+                      p.primaryDeformMs, p.areaComputeMs,
+                      p.symmetryMs, p.symPickMs, p.symCullMs, p.symDeformMs, p.symUndoMs,
+                      p.symPickUsedMT ? "MT" : "ST", p.symPickThreads, p.symPickFilterMs, p.symPickCandLeaves, p.symPickCandFaces,
+                      p.sortDedupMs, p.dedupOnlyMs, p.radixSortMs,
+                      p.faceLookupMs, p.affectedVertCount,
+                      p.faceNormalsMs, p.vertNormalsMs,
+                      p.bvhUpdateMs, p.bvhLeafDedupMs, p.bvhLeafAABBMs, p.bvhParentSortMs, p.bvhInnerUpdMs, p.bvhDirtyLeaves, p.bvhDirtyInner, p.bvhUsedPrecomputed ? 1 : 0,
+                      p.vertProxySyncMs);
+        }
     }
 }
 
@@ -4218,7 +4355,10 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             m_snakePrevTipPosSyms.clear();
             m_hasRakeDir = false;
 
+            auto tRelStart = std::chrono::high_resolution_clock::now();
+            double grabProxyMs = 0.0;
             if (!m_grabbedAffectedVerts.empty()) {
+                auto tGp0 = std::chrono::high_resolution_clock::now();
                 if (mesh && mesh->vertProxy.size() == mesh->verts.size()) {
                     for (uint32_t v : m_grabbedAffectedVerts) {
                         if (v * 3 + 2 < mesh->verts.size()) {
@@ -4229,6 +4369,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     }
                 }
                 m_grabbedAffectedVerts.clear();
+                grabProxyMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tGp0).count();
             }
             m_grabbedVertices.clear();
             m_grabbedVerticesSyms.clear();
@@ -4334,27 +4475,45 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     }
                 }
             } else {
+                auto tEndUndo0 = std::chrono::high_resolution_clock::now();
                 g_undoManager.endSculptStroke(scene);
+                double endUndoMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tEndUndo0).count();
+                double bvhMs = 0.0;
+                double bvhRebuildMs = 0.0;
+                double layerBakeMs = 0.0;
                 if (mesh && m_pendingBVHUpdate) {
                     auto tBvhStart = std::chrono::high_resolution_clock::now();
                     if (m_grabbedNumIFaces > 0) {
                         mesh->bvh.refit(*mesh, m_iFacesCache.data(), m_grabbedNumIFaces);
-                        double bvhMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tBvhStart).count();
-                        sculpt_log("[Stroke Release] Deferred Incremental BVH Refit completed in %.2f ms (%d faces)\n", bvhMs, (int)m_grabbedNumIFaces);
+                        bvhMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tBvhStart).count();
+                        const BVHRefitStats& rs = mesh->bvh.getLastRefitStats();
+                        sculpt_log("[Stroke Release] Deferred Incremental BVH Refit completed in %.2f ms (%d faces | Dedup %.2f, AABB %.2f, ClimbSort %.2f, Inner %.2f | L=%u I=%u Pre=%d)\n",
+                                   bvhMs, (int)m_grabbedNumIFaces, rs.leafDedupMs, rs.leafAABBMs, rs.parentGatherMs, rs.innerUpdateMs, rs.dirtyLeaves, rs.dirtyInnerNodes, rs.usedPrecomputed ? 1 : 0);
                     } else {
                         mesh->bvh.refitAll(*mesh);
-                        double bvhMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tBvhStart).count();
-                        sculpt_log("[Stroke Release] Deferred Full BVH Refit completed in %.2f ms (all %d faces)\n", bvhMs, mesh->nbFaces);
+                        bvhMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tBvhStart).count();
+                        const BVHRefitStats& rs = mesh->bvh.getLastRefitStats();
+                        sculpt_log("[Stroke Release] Deferred Full BVH Refit completed in %.2f ms (all %d faces | AABB %.2f, Inner %.2f)\n",
+                                   bvhMs, mesh->nbFaces, rs.leafAABBMs, rs.innerUpdateMs);
                     }
                     if (mesh->bvh.isDegraded()) {
+                        auto tRb0 = std::chrono::high_resolution_clock::now();
                         mesh->bvh.build(*mesh);
+                        bvhRebuildMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tRb0).count();
                     }
                     m_pendingBVHUpdate = false;
                     m_grabbedNumIFaces = 0;
                 }
                 if (mesh && mesh->isLayerRecording()) {
+                    auto tLb0 = std::chrono::high_resolution_clock::now();
                     mesh->layerStack.bake(mesh->layerStack.getBase(), mesh->verts);
                     mesh->updateAfterLayerBake();
+                    layerBakeMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tLb0).count();
+                }
+                double relTotalMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tRelStart).count();
+                if (relTotalMs > 5.0) {
+                    sculpt_log("[Stroke Release Detail] Total: %.2f ms (GrabProxy: %.2f, EndUndo: %.2f, BVHRefit: %.2f, BVHRebuild: %.2f, LayerBake: %.2f)\n",
+                               relTotalMs, grabProxyMs, endUndoMs, bvhMs, bvhRebuildMs, layerBakeMs);
                 }
             }
         }
@@ -5117,6 +5276,7 @@ std::vector<uint32_t> SculptManager::getVerticesInLasso(Mesh* mesh, const Camera
             s_threadSelected[t].resize(maxPerThread);
         }
     }
+    auto tBufDone = std::chrono::high_resolution_clock::now();
 
     const uint8_t* vVis = mesh->vertVisible.empty() ? nullptr : mesh->vertVisible.data();
 
@@ -5181,6 +5341,7 @@ std::vector<uint32_t> SculptManager::getVerticesInLasso(Mesh* mesh, const Camera
 
         s_threadSelected[tid].resize(localCount);
     }
+    auto tScanDone = std::chrono::high_resolution_clock::now();
 
     // Prefix sum concatenation
     std::vector<size_t> offsets(maxThreads + 1, 0);
@@ -5203,9 +5364,12 @@ std::vector<uint32_t> SculptManager::getVerticesInLasso(Mesh* mesh, const Camera
 
     auto t1 = std::chrono::high_resolution_clock::now();
     double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    double bufMs = std::chrono::duration<double, std::milli>(tBufDone - t0).count();
+    double scanMs = std::chrono::duration<double, std::milli>(tScanDone - tBufDone).count();
+    double gatherMs = std::chrono::duration<double, std::milli>(t1 - tScanDone).count();
 
-    sculpt_log("[getVerticesInLasso] Processed %d verts (Selected: %zu, Sym: %s, LassoPts: %zu) in %.2f ms\n",
-              nbVerts, insideVertices.size(), m_useSym ? "ON" : "OFF", m_lassoPoints.size(), ms);
+    sculpt_log("[getVerticesInLasso] Processed %d verts (Selected: %zu, Sym: %s, LassoPts: %zu) in %.2f ms (BufPrep: %.2f, Scan: %.2f, Gather: %.2f)\n",
+              nbVerts, insideVertices.size(), m_useSym ? "ON" : "OFF", m_lassoPoints.size(), ms, bufMs, scanMs, gatherMs);
 
     return insideVertices;
 }

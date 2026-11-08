@@ -17,6 +17,30 @@ struct RayHit {
     glm::vec3 normal{ 0.0f };
 };
 
+struct BVHPickStats {
+    double collectCellsMs = 0.0;
+    double visitedInitMs = 0.0;
+    double filterVertsMs = 0.0;
+    double mergeMs = 0.0;
+    uint32_t candLeaves = 0;
+    uint32_t candFaces = 0;
+    uint32_t outVerts = 0;
+    bool usedMT = false;
+    int numThreads = 1;
+};
+
+struct BVHRefitStats {
+    double leafDedupMs = 0.0;
+    double leafAABBMs = 0.0;
+    double parentGatherMs = 0.0;
+    double innerUpdateMs = 0.0;
+    uint32_t inputFaces = 0;
+    uint32_t dirtyLeaves = 0;
+    uint32_t dirtyInnerNodes = 0;
+    bool usedPrecomputed = false;
+    bool fellBackToRefitAll = false;
+};
+
 // 32-byte cache-aligned BVH node (2 nodes fit perfectly into a 64-byte L1 cache line)
 struct alignas(16) BVHNode {
     glm::vec3 aabbMin{ std::numeric_limits<float>::infinity() };
@@ -56,6 +80,9 @@ public:
         lastCollectCellsMs = other.lastCollectCellsMs;
         lastCandidateVertsMs = other.lastCandidateVertsMs;
         lastFilterVertsMs = other.lastFilterVertsMs;
+        m_lastPickStats[0] = other.m_lastPickStats[0];
+        m_lastPickStats[1] = other.m_lastPickStats[1];
+        m_lastRefitStats = other.m_lastRefitStats;
     }
 
     BVH& operator=(BVH&& other) noexcept {
@@ -78,6 +105,9 @@ public:
             lastCollectCellsMs = other.lastCollectCellsMs;
             lastCandidateVertsMs = other.lastCandidateVertsMs;
             lastFilterVertsMs = other.lastFilterVertsMs;
+            m_lastPickStats[0] = other.m_lastPickStats[0];
+            m_lastPickStats[1] = other.m_lastPickStats[1];
+            m_lastRefitStats = other.m_lastRefitStats;
         }
         return *this;
     }
@@ -163,6 +193,11 @@ public:
     mutable double lastCollectCellsMs = 0.0;
     mutable double lastCandidateVertsMs = 0.0;
     mutable double lastFilterVertsMs = 0.0;
+    mutable BVHPickStats m_lastPickStats[2];
+    mutable BVHRefitStats m_lastRefitStats;
+
+    const BVHPickStats& getLastPickStats(int scratchIndex = 0) const { return m_lastPickStats[scratchIndex & 1]; }
+    const BVHRefitStats& getLastRefitStats() const { return m_lastRefitStats; }
 
 private:
     struct QueryScratch {

@@ -103,15 +103,43 @@ struct StrokeStepMeasurement {
     double pickCellsMs = 0.0;
     double pickDedupMs = 0.0;
     double pickFilterMs = 0.0;
+    double pickVisitedInitMs = 0.0;
+    double pickMergeMs = 0.0;
+    uint32_t pickCandLeaves = 0;
+    uint32_t pickCandFaces = 0;
+    bool pickUsedMT = false;
+    int pickThreads = 1;
+    bool dualPickActive = false;
+    double dualPickSec0Ms = 0.0;
+    double dualPickSec1Ms = 0.0;
+    double dualPickCullMs = 0.0;
+    double symPickFilterMs = 0.0;
+    uint32_t symPickCandLeaves = 0;
+    uint32_t symPickCandFaces = 0;
+    bool symPickUsedMT = false;
+    int symPickThreads = 1;
+    double symPickMs = 0.0;
+    double symDeformMs = 0.0;
+    double symUndoMs = 0.0;
     double areaComputeMs = 0.0;
     double primaryDeformMs = 0.0;
     double symmetryMs = 0.0;
     double sortDedupMs = 0.0;
+    double dedupOnlyMs = 0.0;
+    double radixSortMs = 0.0;
     double undoRecordMs = 0.0;
     double faceLookupMs = 0.0;
     double faceNormalsMs = 0.0;
     double vertNormalsMs = 0.0;
     double spatialUpdateMs = 0.0;
+    double vertProxySyncMs = 0.0;
+    double bvhLeafDedupMs = 0.0;
+    double bvhLeafAABBMs = 0.0;
+    double bvhParentSortMs = 0.0;
+    double bvhInnerUpdMs = 0.0;
+    uint32_t bvhDirtyLeaves = 0;
+    uint32_t bvhDirtyInner = 0;
+    bool bvhUsedPrecomputed = false;
     int pickedVerts = 0;
     int affectedVerts = 0;
     int affectedFaces = 0;
@@ -258,6 +286,10 @@ inline bool run(int targetFaces = 4000000) {
             float r2 = test.r * test.r;
             std::vector<uint32_t> pickedVerts;
             double totalPickMs = 0.0;
+            double sumCellsMs = 0.0, sumInitMs = 0.0, sumFilterMs = 0.0, sumMergeMs = 0.0;
+            uint64_t sumLeaves = 0, sumFaces = 0;
+            bool lastMT = false;
+            int lastThreads = 1;
             size_t totalCount = 0;
             const int NUM_QUERIES = 30;
 
@@ -271,12 +303,29 @@ inline bool run(int targetFaces = 4000000) {
                 auto tEnd = std::chrono::high_resolution_clock::now();
                 totalPickMs += std::chrono::duration<double, std::milli>(tEnd - tStart).count();
                 totalCount += pickedVerts.size();
+
+                const BVHPickStats& ps = mesh.bvh.getLastPickStats(0);
+                sumCellsMs += ps.collectCellsMs;
+                sumInitMs += ps.visitedInitMs;
+                sumFilterMs += ps.filterVertsMs;
+                sumMergeMs += ps.mergeMs;
+                sumLeaves += ps.candLeaves;
+                sumFaces += ps.candFaces;
+                lastMT = ps.usedMT;
+                lastThreads = ps.numThreads;
             }
             double avgPickMs = totalPickMs / NUM_QUERIES;
             double avgVerts = (double)totalCount / NUM_QUERIES;
             std::cout << "      [Pick Vertices] " << test.name << ":\n";
             std::cout << "        - Avg Latency:  " << std::fixed << std::setprecision(3) << avgPickMs << " ms\n";
             std::cout << "        - Avg Vertices: " << (int)avgVerts << " vertices picked\n";
+            std::cout << "        - BVH Detail:   Cells=" << std::setprecision(3) << (sumCellsMs / NUM_QUERIES)
+                      << " ms, vInit=" << (sumInitMs / NUM_QUERIES)
+                      << " ms, Phase2=" << (sumFilterMs / NUM_QUERIES)
+                      << " ms, Merge=" << (sumMergeMs / NUM_QUERIES)
+                      << " ms | AvgLeaves=" << (sumLeaves / NUM_QUERIES)
+                      << ", AvgFaces=" << (sumFaces / NUM_QUERIES)
+                      << ", Mode=" << (lastMT ? "MT" : "ST") << "(" << lastThreads << "t)\n";
         }
     }
 
@@ -351,15 +400,43 @@ inline bool run(int targetFaces = 4000000) {
         m0.pickCellsMs = prof0.pickCellsMs;
         m0.pickDedupMs = prof0.pickDedupMs;
         m0.pickFilterMs = prof0.pickFilterMs;
+        m0.pickVisitedInitMs = prof0.pickVisitedInitMs;
+        m0.pickMergeMs = prof0.pickMergeMs;
+        m0.pickCandLeaves = prof0.pickCandLeaves;
+        m0.pickCandFaces = prof0.pickCandFaces;
+        m0.pickUsedMT = prof0.pickUsedMT;
+        m0.pickThreads = prof0.pickThreads;
+        m0.dualPickActive = prof0.dualPickActive;
+        m0.dualPickSec0Ms = prof0.dualPickSec0Ms;
+        m0.dualPickSec1Ms = prof0.dualPickSec1Ms;
+        m0.dualPickCullMs = prof0.dualPickCullMs;
+        m0.symPickFilterMs = prof0.symPickFilterMs;
+        m0.symPickCandLeaves = prof0.symPickCandLeaves;
+        m0.symPickCandFaces = prof0.symPickCandFaces;
+        m0.symPickUsedMT = prof0.symPickUsedMT;
+        m0.symPickThreads = prof0.symPickThreads;
+        m0.symPickMs = prof0.symPickMs;
+        m0.symDeformMs = prof0.symDeformMs;
+        m0.symUndoMs = prof0.symUndoMs;
         m0.areaComputeMs = prof0.areaComputeMs;
         m0.primaryDeformMs = prof0.primaryDeformMs;
         m0.symmetryMs = prof0.symmetryMs;
         m0.sortDedupMs = prof0.sortDedupMs;
+        m0.dedupOnlyMs = prof0.dedupOnlyMs;
+        m0.radixSortMs = prof0.radixSortMs;
         m0.undoRecordMs = prof0.undoRecordMs;
         m0.faceLookupMs = prof0.faceLookupMs;
         m0.faceNormalsMs = prof0.faceNormalsMs;
         m0.vertNormalsMs = prof0.vertNormalsMs;
         m0.spatialUpdateMs = getSpatialUpdateMs(prof0);
+        m0.vertProxySyncMs = prof0.vertProxySyncMs;
+        m0.bvhLeafDedupMs = prof0.bvhLeafDedupMs;
+        m0.bvhLeafAABBMs = prof0.bvhLeafAABBMs;
+        m0.bvhParentSortMs = prof0.bvhParentSortMs;
+        m0.bvhInnerUpdMs = prof0.bvhInnerUpdMs;
+        m0.bvhDirtyLeaves = prof0.bvhDirtyLeaves;
+        m0.bvhDirtyInner = prof0.bvhDirtyInner;
+        m0.bvhUsedPrecomputed = prof0.bvhUsedPrecomputed;
         m0.pickedVerts = prof0.pickedVertCount;
         m0.affectedVerts = prof0.affectedVertCount;
         m0.affectedFaces = prof0.affectedFaceCount;
@@ -388,15 +465,43 @@ inline bool run(int targetFaces = 4000000) {
             m.pickCellsMs = prof.pickCellsMs;
             m.pickDedupMs = prof.pickDedupMs;
             m.pickFilterMs = prof.pickFilterMs;
+            m.pickVisitedInitMs = prof.pickVisitedInitMs;
+            m.pickMergeMs = prof.pickMergeMs;
+            m.pickCandLeaves = prof.pickCandLeaves;
+            m.pickCandFaces = prof.pickCandFaces;
+            m.pickUsedMT = prof.pickUsedMT;
+            m.pickThreads = prof.pickThreads;
+            m.dualPickActive = prof.dualPickActive;
+            m.dualPickSec0Ms = prof.dualPickSec0Ms;
+            m.dualPickSec1Ms = prof.dualPickSec1Ms;
+            m.dualPickCullMs = prof.dualPickCullMs;
+            m.symPickFilterMs = prof.symPickFilterMs;
+            m.symPickCandLeaves = prof.symPickCandLeaves;
+            m.symPickCandFaces = prof.symPickCandFaces;
+            m.symPickUsedMT = prof.symPickUsedMT;
+            m.symPickThreads = prof.symPickThreads;
+            m.symPickMs = prof.symPickMs;
+            m.symDeformMs = prof.symDeformMs;
+            m.symUndoMs = prof.symUndoMs;
             m.areaComputeMs = prof.areaComputeMs;
             m.primaryDeformMs = prof.primaryDeformMs;
             m.symmetryMs = prof.symmetryMs;
             m.sortDedupMs = prof.sortDedupMs;
+            m.dedupOnlyMs = prof.dedupOnlyMs;
+            m.radixSortMs = prof.radixSortMs;
             m.undoRecordMs = prof.undoRecordMs;
             m.faceLookupMs = prof.faceLookupMs;
             m.faceNormalsMs = prof.faceNormalsMs;
             m.vertNormalsMs = prof.vertNormalsMs;
             m.spatialUpdateMs = getSpatialUpdateMs(prof);
+            m.vertProxySyncMs = prof.vertProxySyncMs;
+            m.bvhLeafDedupMs = prof.bvhLeafDedupMs;
+            m.bvhLeafAABBMs = prof.bvhLeafAABBMs;
+            m.bvhParentSortMs = prof.bvhParentSortMs;
+            m.bvhInnerUpdMs = prof.bvhInnerUpdMs;
+            m.bvhDirtyLeaves = prof.bvhDirtyLeaves;
+            m.bvhDirtyInner = prof.bvhDirtyInner;
+            m.bvhUsedPrecomputed = prof.bvhUsedPrecomputed;
             m.pickedVerts = prof.pickedVertCount;
             m.affectedVerts = prof.affectedVertCount;
             m.affectedFaces = prof.affectedFaceCount;
@@ -1039,6 +1144,7 @@ inline bool run(int targetFaces = 4000000) {
         meshUndoState.isSparse = true;
 
         // Detect deformed vertices in parallel
+        auto tDetect0 = std::chrono::high_resolution_clock::now();
         int maxThreads = omp_get_max_threads();
         std::vector<std::vector<uint32_t>> threadVerts(maxThreads);
         #pragma omp parallel
@@ -1066,6 +1172,7 @@ inline bool run(int targetFaces = 4000000) {
             }
         }
         std::vector<std::vector<uint32_t>>().swap(threadVerts);
+        auto tDetectEnd = std::chrono::high_resolution_clock::now();
 
         meshUndoState.sparseBeforeCoords.resize(totalDeformed * 3);
         meshUndoState.sparseAfterCoords.resize(totalDeformed * 3);
@@ -1087,7 +1194,9 @@ inline bool run(int targetFaces = 4000000) {
             sAfter[i3 + 1]  = curVertsPtr[v3 + 1];
             sAfter[i3 + 2]  = curVertsPtr[v3 + 2];
         }
+        auto tSparseEnd = std::chrono::high_resolution_clock::now();
         std::copy(mesh.verts.begin(), mesh.verts.end(), mesh.vertProxy.begin());
+        auto tProxyEnd = std::chrono::high_resolution_clock::now();
 
         // Incremental face lookup for affected faces
         if (!mesh.vrfStartCount.empty() && !mesh.vertRingFace.empty() && mesh.nbFaces > 0) {
@@ -1112,6 +1221,7 @@ inline bool run(int targetFaces = 4000000) {
             meshUndoState.affectedFaces.resize(numIFaces);
             meshUndoState.affectedFaces.shrink_to_fit();
         }
+        auto tFLookupEnd = std::chrono::high_resolution_clock::now();
 
         auto tFNStart = std::chrono::high_resolution_clock::now();
         if (!meshUndoState.affectedFaces.empty() && !mesh.faceNormals.empty() && !mesh.faceBoxes.empty() && !mesh.faceCenters.empty()) {
@@ -1144,13 +1254,23 @@ inline bool run(int targetFaces = 4000000) {
         g_undoManager.pushTransformChange(scene, std::move(undoEntry));
         auto tFinEnd = std::chrono::high_resolution_clock::now();
         double finalizeMs = std::chrono::duration<double, std::milli>(tFinEnd - tFinStart).count();
+        double detectMs = std::chrono::duration<double, std::milli>(tDetectEnd - tDetect0).count();
+        double sparseCopyMs = std::chrono::duration<double, std::milli>(tSparseEnd - tDetectEnd).count();
+        double proxyCopyMs = std::chrono::duration<double, std::milli>(tProxyEnd - tSparseEnd).count();
+        double fLookupMs = std::chrono::duration<double, std::milli>(tFLookupEnd - tProxyEnd).count();
         double fnMs = std::chrono::duration<double, std::milli>(tVNStart - tFNStart).count();
         double vnMs = std::chrono::duration<double, std::milli>(tBVHStart - tVNStart).count();
         double bvhMs = std::chrono::duration<double, std::milli>(tUndoPrepStart - tBVHStart).count();
         double undoPushMs = std::chrono::duration<double, std::milli>(tFinEnd - tUndoPrepStart).count();
+        const BVHRefitStats& tbrs = mesh.bvh.getLastRefitStats();
         std::cout << "      [Transform Masked Finalize Detail] Total: " << std::fixed << std::setprecision(2) << finalizeMs
-                  << " ms (FaceNorms: " << fnMs << " ms, VertNorms: " << vnMs
-                  << " ms, BVH: " << bvhMs << " ms, UndoPush: " << undoPushMs << " ms)\n";
+                  << " ms (Detect: " << detectMs << ", SparseCopy: " << sparseCopyMs << ", ProxyCopy: " << proxyCopyMs
+                  << ", FaceLookup: " << fLookupMs << ", FaceNorms: " << fnMs << ", VertNorms: " << vnMs
+                  << ", BVH: " << bvhMs << " [Dedup " << tbrs.leafDedupMs << ", AABB " << tbrs.leafAABBMs
+                  << ", ClimbSort " << tbrs.parentGatherMs << ", Inner " << tbrs.innerUpdateMs
+                  << " | L=" << tbrs.dirtyLeaves << " I=" << tbrs.dirtyInnerNodes
+                  << " Pre=" << (tbrs.usedPrecomputed ? 1 : 0) << (tbrs.fellBackToRefitAll ? " ALL" : "")
+                  << "], UndoPush: " << undoPushMs << ")\n";
 
         double totalStrokeMs = step0Ms + sumDragMs + finalizeMs;
         size_t undoBytes = !g_undoManager.getUndoStack().empty() ? g_undoManager.getUndoStack().back()->getMemoryUsage() : 0;
@@ -1332,6 +1452,62 @@ inline bool run(int targetFaces = 4000000) {
                   << std::setw(7) << (int)avgVerts << " |"
                   << std::setw(6) << (int)avgFaces << "\n";
         std::cout << "------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n";
+
+        double sumVInit = 0.0, sumMerge = 0.0, sumDualS0 = 0.0, sumDualS1 = 0.0, sumDualCull = 0.0;
+        double sumSymP2 = 0.0, sumSymDef = 0.0, sumSymUndo = 0.0;
+        double sumDedupOnly = 0.0, sumRadix = 0.0, sumProxySync = 0.0;
+        double sumBvhDedup = 0.0, sumBvhAABB = 0.0, sumBvhClimb = 0.0, sumBvhInner = 0.0;
+        uint64_t sumCandLeaves = 0, sumCandFaces = 0, sumSymLeaves = 0, sumSymFaces = 0;
+        uint64_t sumDirtyLeaves = 0, sumDirtyInner = 0;
+        for (const auto& m : clayMeasurements) {
+            sumVInit += m.pickVisitedInitMs;
+            sumMerge += m.pickMergeMs;
+            sumDualS0 += m.dualPickSec0Ms;
+            sumDualS1 += m.dualPickSec1Ms;
+            sumDualCull += m.dualPickCullMs;
+            sumSymP2 += m.symPickFilterMs;
+            sumSymDef += m.symDeformMs;
+            sumSymUndo += m.symUndoMs;
+            sumDedupOnly += m.dedupOnlyMs;
+            sumRadix += m.radixSortMs;
+            sumProxySync += m.vertProxySyncMs;
+            sumBvhDedup += m.bvhLeafDedupMs;
+            sumBvhAABB += m.bvhLeafAABBMs;
+            sumBvhClimb += m.bvhParentSortMs;
+            sumBvhInner += m.bvhInnerUpdMs;
+            sumCandLeaves += m.pickCandLeaves;
+            sumCandFaces += m.pickCandFaces;
+            sumSymLeaves += m.symPickCandLeaves;
+            sumSymFaces += m.symPickCandFaces;
+            sumDirtyLeaves += m.bvhDirtyLeaves;
+            sumDirtyInner += m.bvhDirtyInner;
+        }
+        const auto& lastM = clayMeasurements.back();
+        std::cout << "  [Clay AVG Sub-Profile] Pick0(Cells=" << std::fixed << std::setprecision(2) << (sumPickCells / nSteps)
+                  << "ms, vInit=" << (sumVInit / nSteps)
+                  << "ms, P2=" << (sumPickFilter / nSteps)
+                  << "ms, Merge=" << (sumMerge / nSteps)
+                  << "ms | Leaves=" << (sumCandLeaves / (uint64_t)nSteps)
+                  << ", Faces=" << (sumCandFaces / (uint64_t)nSteps)
+                  << ", " << (lastM.pickUsedMT ? "MT" : "ST") << "(" << lastM.pickThreads << "t))"
+                  << " | DualSym(s0=" << (sumDualS0 / nSteps)
+                  << "ms, s1=" << (sumDualS1 / nSteps)
+                  << "ms, cull=" << (sumDualCull / nSteps)
+                  << "ms, SymP2=" << (sumSymP2 / nSteps)
+                  << "ms, SymF=" << (sumSymFaces / (uint64_t)nSteps)
+                  << ", " << (lastM.symPickUsedMT ? "MT" : "ST") << "(" << lastM.symPickThreads << "t))\n";
+        std::cout << "  [Clay AVG Sub-Profile] SymDeform=" << (sumSymDef / nSteps)
+                  << "ms, SymUndo=" << (sumSymUndo / nSteps)
+                  << "ms | SortDedup(Dedup=" << (sumDedupOnly / nSteps)
+                  << "ms, Radix=" << (sumRadix / nSteps)
+                  << "ms) | BVHRefit(Dedup=" << (sumBvhDedup / nSteps)
+                  << "ms, AABB=" << (sumBvhAABB / nSteps)
+                  << "ms, ClimbSort=" << (sumBvhClimb / nSteps)
+                  << "ms, Inner=" << (sumBvhInner / nSteps)
+                  << "ms | L=" << (sumDirtyLeaves / (uint64_t)nSteps)
+                  << ", I=" << (sumDirtyInner / (uint64_t)nSteps)
+                  << ", Pre=" << (lastM.bvhUsedPrecomputed ? 1 : 0)
+                  << ") | ProxySync=" << (sumProxySync / nSteps) << "ms\n";
     }
 
     // =========================================================================

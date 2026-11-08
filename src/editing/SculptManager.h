@@ -50,6 +50,42 @@ struct SculptFrameProfile {
     double pickCellsMs = 0.0;
     double pickDedupMs = 0.0;
     double pickFilterMs = 0.0;
+    double pickVisitedInitMs = 0.0;
+    double pickMergeMs = 0.0;
+    uint32_t pickCandLeaves = 0;
+    uint32_t pickCandFaces = 0;
+    bool pickUsedMT = false;
+    int pickThreads = 1;
+    bool pickUsedTopo = false;
+    bool dualPickActive = false;
+    double dualPickSec0Ms = 0.0;
+    double dualPickSec1Ms = 0.0;
+    double dualPickCullMs = 0.0;
+
+    double symPickMs = 0.0;
+    double symCullMs = 0.0;
+    double symDeformMs = 0.0;
+    double symUndoMs = 0.0;
+    double symPickCellsMs = 0.0;
+    double symPickVisitedInitMs = 0.0;
+    double symPickFilterMs = 0.0;
+    double symPickMergeMs = 0.0;
+    uint32_t symPickCandLeaves = 0;
+    uint32_t symPickCandFaces = 0;
+    bool symPickUsedMT = false;
+    int symPickThreads = 1;
+
+    double dedupOnlyMs = 0.0;
+    double radixSortMs = 0.0;
+    double vertProxySyncMs = 0.0;
+
+    double bvhLeafDedupMs = 0.0;
+    double bvhLeafAABBMs = 0.0;
+    double bvhParentSortMs = 0.0;
+    double bvhInnerUpdMs = 0.0;
+    uint32_t bvhDirtyLeaves = 0;
+    uint32_t bvhDirtyInner = 0;
+    bool bvhUsedPrecomputed = false;
     
     int pickedVertCount = 0;
     int affectedVertCount = 0;
@@ -59,7 +95,22 @@ struct SculptFrameProfile {
         raycastMs = pickVertsMs = cullingMs = vertProxyResetMs = undoRecordMs = 0.0;
         primaryDeformMs = areaComputeMs = symmetryMs = sortDedupMs = faceLookupMs = faceNormalsMs = 0.0;
         vertNormalsMs = bvhUpdateMs = gpuUploadMs = renderMs = 0.0;
-        pickCellsMs = pickDedupMs = pickFilterMs = 0.0;
+        pickCellsMs = pickDedupMs = pickFilterMs = pickVisitedInitMs = pickMergeMs = 0.0;
+        pickCandLeaves = pickCandFaces = 0;
+        pickUsedMT = false;
+        pickThreads = 1;
+        pickUsedTopo = false;
+        dualPickActive = false;
+        dualPickSec0Ms = dualPickSec1Ms = dualPickCullMs = 0.0;
+        symPickMs = symCullMs = symDeformMs = symUndoMs = 0.0;
+        symPickCellsMs = symPickVisitedInitMs = symPickFilterMs = symPickMergeMs = 0.0;
+        symPickCandLeaves = symPickCandFaces = 0;
+        symPickUsedMT = false;
+        symPickThreads = 1;
+        dedupOnlyMs = radixSortMs = vertProxySyncMs = 0.0;
+        bvhLeafDedupMs = bvhLeafAABBMs = bvhParentSortMs = bvhInnerUpdMs = 0.0;
+        bvhDirtyLeaves = bvhDirtyInner = 0;
+        bvhUsedPrecomputed = false;
         pickedVertCount = affectedVertCount = affectedFaceCount = 0;
     }
 
