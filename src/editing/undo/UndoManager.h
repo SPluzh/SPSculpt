@@ -42,7 +42,7 @@ public:
                                 bool affectsColors = false,
                                 bool affectsMaterials = true);
 
-    void warmupForMesh(uint32_t meshId, int nbVerts);
+    void warmupForMesh(uint32_t meshId, int nbVerts, int nbFaces = 0);
 
     void endSculptStroke(Scene& scene);
     void cancelSculptStroke();

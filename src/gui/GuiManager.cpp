@@ -7655,20 +7655,28 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     }
 
                     if (!selectedMesh->vrfStartCount.empty() && !selectedMesh->vertRingFace.empty() && selectedMesh->nbFaces > 0) {
-                        std::vector<uint32_t> tempFaces(selectedMesh->nbFaces);
-                        std::vector<uint32_t> tagFlags(selectedMesh->nbFaces, 0);
-                        uint32_t tagEpoch = 1;
+                        static std::vector<uint32_t> s_transformTempFaces;
+                        static std::vector<uint8_t> s_transformTagFlags;
+                        static uint8_t s_transformTagEpoch = 0;
+
+                        if (s_transformTagFlags.size() < (size_t)selectedMesh->nbFaces) {
+                            s_transformTagFlags.assign(selectedMesh->nbFaces, uint8_t(0));
+                            s_transformTagEpoch = 0;
+                        }
+                        if (s_transformTempFaces.size() < (size_t)selectedMesh->nbFaces) {
+                            s_transformTempFaces.resize(selectedMesh->nbFaces);
+                        }
                         uint32_t numIFaces = getFacesFromVerticesFast(
                             meshUndoState.sparseVertIndices.data(),
                             (uint32_t)meshUndoState.sparseVertIndices.size(),
                             selectedMesh->vrfStartCount.data(),
                             selectedMesh->vertRingFace.data(),
-                            tempFaces.data(),
-                            tagFlags.data(),
-                            &tagEpoch,
+                            s_transformTempFaces.data(),
+                            s_transformTagFlags.data(),
+                            &s_transformTagEpoch,
                             selectedMesh->nbFaces
                         );
-                        meshUndoState.affectedFaces.assign(tempFaces.begin(), tempFaces.begin() + numIFaces);
+                        meshUndoState.affectedFaces.assign(s_transformTempFaces.begin(), s_transformTempFaces.begin() + numIFaces);
                     }
 
                     if (!meshUndoState.affectedFaces.empty() && !selectedMesh->faceNormals.empty() && !selectedMesh->faceBoxes.empty() && !selectedMesh->faceCenters.empty()) {

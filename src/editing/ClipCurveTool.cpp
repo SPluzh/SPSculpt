@@ -490,8 +490,8 @@ bool ClipCurveTool::execute(
 
     // Recalculate face and vertex normals & update BVH
     std::vector<uint32_t> iFaces(mesh->nbFaces);
-    std::vector<uint32_t> tagFlags(mesh->nbFaces, 0);
-    uint32_t tagEpoch = 1;
+    std::vector<uint8_t> tagFlags(mesh->nbFaces, 0);
+    uint8_t tagEpoch = 1;
 
     uint32_t numIFaces = getFacesFromVerticesFast(
         affectedVerts.data(),

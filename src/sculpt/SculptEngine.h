@@ -41,8 +41,8 @@ uint32_t getFacesFromVerticesFast(
     const uint32_t* vrfStartCount,
     const uint32_t* vertRingFace,
     uint32_t* outIFaces,
-    uint32_t* tagFlags,
-    uint32_t* tagEpoch,
+    uint8_t* tagFlags,
+    uint8_t* tagEpoch,
     uint32_t nbFaces
 );
 

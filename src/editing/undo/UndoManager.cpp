@@ -22,8 +22,8 @@ namespace {
 
     // Fast face lookup caches for incremental undo/redo normal and spatial structure updates
     static std::vector<uint32_t> s_undoIFaces;
-    static std::vector<uint32_t> s_undoTagFlags;
-    static uint32_t s_undoTagEpoch = 0;
+    static std::vector<uint8_t> s_undoTagFlags;
+    static uint8_t s_undoTagEpoch = 0;
 }
 
 UndoManager::UndoManager() {}
@@ -269,7 +269,7 @@ void UndoManager::recordAffectedVertices(Scene& scene,
     }
 }
 
-void UndoManager::warmupForMesh(uint32_t meshId, int nbVerts) {
+void UndoManager::warmupForMesh(uint32_t meshId, int nbVerts, int nbFaces) {
     if (nbVerts <= 0) return;
     auto& stamps = s_recordedStamps[meshId];
     if (stamps.size() < static_cast<size_t>(nbVerts)) {
@@ -279,6 +279,16 @@ void UndoManager::warmupForMesh(uint32_t meshId, int nbVerts) {
         double allocMs = std::chrono::duration<double, std::milli>(tAlloc1 - tAlloc0).count();
         sculpt_log("[Undo Diagnostics] warmupForMesh(%d) pre-allocated %.2f MB in %.2f ms\n",
                    nbVerts, (nbVerts * sizeof(uint32_t)) / (1024.0 * 1024.0), allocMs);
+    }
+    if (nbFaces > 0) {
+        if (s_undoTagFlags.size() < (size_t)nbFaces) {
+            s_undoTagFlags.assign(nbFaces, uint8_t(0));
+            s_undoTagEpoch = 0;
+        }
+        size_t capIFaces = std::min((size_t)nbFaces, (size_t)4000000);
+        if (s_undoIFaces.size() < capIFaces) {
+            s_undoIFaces.resize(capIFaces);
+        }
     }
 }
 
@@ -655,11 +665,11 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
                 if (!mesh->vrfStartCount.empty() && !mesh->vertRingFace.empty() && mesh->nbFaces > 0) {
                     if (s_undoTagFlags.size() < (size_t)mesh->nbFaces) {
                         auto tUAlloc0 = std::chrono::high_resolution_clock::now();
-                        s_undoTagFlags.assign(mesh->nbFaces, 0);
-                        s_undoTagEpoch = 1;
+                        s_undoTagFlags.assign(mesh->nbFaces, uint8_t(0));
+                        s_undoTagEpoch = 0;
                         double uAllocMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tUAlloc0).count();
                         sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] s_undoTagFlags cold alloc (%d faces, %.2f MB) in %.2f ms\n",
-                                       mesh->nbFaces, (mesh->nbFaces * sizeof(uint32_t)) / (1024.0 * 1024.0), uAllocMs);
+                                       mesh->nbFaces, (mesh->nbFaces * sizeof(uint8_t)) / (1024.0 * 1024.0), uAllocMs);
                     }
                     size_t capIFaces = std::min((size_t)mesh->nbFaces, std::max((size_t)4000000, delta.indices.size() * 6 + 1024));
                     if (s_undoIFaces.size() < capIFaces) {

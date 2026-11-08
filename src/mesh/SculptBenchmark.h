@@ -1205,8 +1205,8 @@ inline bool run(int targetFaces = 4000000) {
             auto& tagFlags = sculpt.getTagFlags();
             auto& tagEpoch = sculpt.getTagEpoch();
             if (tagFlags.size() < (size_t)mesh.nbFaces) {
-                tagFlags.assign(mesh.nbFaces, 0);
-                tagEpoch = 1;
+                tagFlags.assign(mesh.nbFaces, uint8_t(0));
+                tagEpoch = 0;
             }
             uint32_t numIFaces = getFacesFromVerticesFast(
                 meshUndoState.sparseVertIndices.data(),
@@ -1219,7 +1219,6 @@ inline bool run(int targetFaces = 4000000) {
                 mesh.nbFaces
             );
             meshUndoState.affectedFaces.resize(numIFaces);
-            meshUndoState.affectedFaces.shrink_to_fit();
         }
         auto tFLookupEnd = std::chrono::high_resolution_clock::now();
 

@@ -89,59 +89,132 @@ static inline void radixSortVertices(std::vector<uint32_t>& verts, std::vector<u
     if (n <= 1) return;
     if (temp.size() < n) temp.resize(n);
 
+    const int maxThreads = omp_get_max_threads();
+    const bool inParallel = omp_in_parallel();
+
+    // For maxV < 2^26 (up to 67.1M vertices, covering all meshes up to 50M):
+    // 2 passes of 13 bits (8192 buckets = 32 KB, perfectly fits L1d on Ryzen 5800H / Zen 3)
+    // Pass 1: bits 0..12 -> temp
+    // Pass 2: bits 13..25 -> verts (writes directly into verts, 0 memcpy!)
+    if (maxV < (1u << 26)) {
+        const uint32_t mask = 8191; // 13 bits
+        uint32_t* src = verts.data();
+        uint32_t* dst = temp.data();
+
+        if (n >= 32768 && !inParallel && maxThreads > 1) {
+            int numT = std::min(maxThreads, 32);
+            static std::vector<std::vector<uint32_t>> s_histograms;
+            if ((int)s_histograms.size() < numT) {
+                s_histograms.resize(numT, std::vector<uint32_t>(8192));
+            }
+
+            for (int pass = 0; pass < 2; ++pass) {
+                uint32_t shift = pass * 13;
+
+                #pragma omp parallel num_threads(numT)
+                {
+                    int tid = omp_get_thread_num();
+                    auto& hist = s_histograms[tid];
+                    std::fill(hist.begin(), hist.end(), 0);
+
+                    #pragma omp for schedule(static)
+                    for (int64_t i = 0; i < (int64_t)n; ++i) {
+                        uint32_t bucket = (src[i] >> shift) & mask;
+                        hist[bucket]++;
+                    }
+                }
+
+                // Global prefix sum per bucket across threads to guarantee stability:
+                std::vector<std::vector<uint32_t>> s_offsets(numT, std::vector<uint32_t>(8192));
+                uint32_t runningSum = 0;
+                for (uint32_t b = 0; b < 8192; ++b) {
+                    for (int t = 0; t < numT; ++t) {
+                        s_offsets[t][b] = runningSum;
+                        runningSum += s_histograms[t][b];
+                    }
+                }
+
+                #pragma omp parallel num_threads(numT)
+                {
+                    int tid = omp_get_thread_num();
+                    auto& localOffsets = s_offsets[tid];
+
+                    #pragma omp for schedule(static)
+                    for (int64_t i = 0; i < (int64_t)n; ++i) {
+                        uint32_t v = src[i];
+                        uint32_t bucket = (v >> shift) & mask;
+                        dst[localOffsets[bucket]++] = v;
+                    }
+                }
+
+                std::swap(src, dst);
+            }
+            return;
+        }
+
+        // Sequential 2-pass 13-bit Radix Sort
+        // Pass 1: bits 0..12
+        {
+            uint32_t count[8192] = {0};
+            for (size_t i = 0; i < n; ++i) {
+                count[src[i] & mask]++;
+            }
+            uint32_t offset[8192];
+            offset[0] = 0;
+            for (int i = 1; i < 8192; ++i) {
+                offset[i] = offset[i - 1] + count[i - 1];
+            }
+            for (size_t i = 0; i < n; ++i) {
+                uint32_t v = src[i];
+                dst[offset[v & mask]++] = v;
+            }
+        }
+
+        // Pass 2: bits 13..25 -> writes directly into verts (src)
+        {
+            uint32_t count[8192] = {0};
+            for (size_t i = 0; i < n; ++i) {
+                count[(dst[i] >> 13) & mask]++;
+            }
+            uint32_t offset[8192];
+            offset[0] = 0;
+            for (int i = 1; i < 8192; ++i) {
+                offset[i] = offset[i - 1] + count[i - 1];
+            }
+            for (size_t i = 0; i < n; ++i) {
+                uint32_t v = dst[i];
+                src[offset[(v >> 13) & mask]++] = v;
+            }
+        }
+        return;
+    }
+
+    // Fallback for massive > 67.1M meshes: 3 passes
     uint32_t* src = verts.data();
     uint32_t* dst = temp.data();
-
-    // Pass 1: bits 0..11 (4096 buckets = 16 KB histogram, 100% fits in L1 data cache)
     {
-        uint32_t count[4096] = {0};
-        for (size_t i = 0; i < n; ++i) {
-            count[src[i] & 0xFFF]++;
-        }
-        uint32_t offset[4096];
+        uint32_t count[2048] = {0};
+        for (size_t i = 0; i < n; ++i) count[src[i] & 0x7FF]++;
+        uint32_t offset[2048];
         offset[0] = 0;
-        for (int i = 1; i < 4096; ++i) {
-            offset[i] = offset[i - 1] + count[i - 1];
-        }
-        for (size_t i = 0; i < n; ++i) {
-            uint32_t v = src[i];
-            dst[offset[v & 0xFFF]++] = v;
-        }
+        for (int i = 1; i < 2048; ++i) offset[i] = offset[i - 1] + count[i - 1];
+        for (size_t i = 0; i < n; ++i) { uint32_t v = src[i]; dst[offset[v & 0x7FF]++] = v; }
     }
-
-    // Pass 2: bits 12..23 (4096 buckets = 16 KB histogram, 100% fits in L1 data cache)
-    // Writes directly back into verts (src), eliminating memcpy for all meshes up to 16.7M vertices
     {
-        uint32_t count[4096] = {0};
-        for (size_t i = 0; i < n; ++i) {
-            count[(dst[i] >> 12) & 0xFFF]++;
-        }
-        uint32_t offset[4096];
+        uint32_t count[2048] = {0};
+        for (size_t i = 0; i < n; ++i) count[(dst[i] >> 11) & 0x7FF]++;
+        uint32_t offset[2048];
         offset[0] = 0;
-        for (int i = 1; i < 4096; ++i) {
-            offset[i] = offset[i - 1] + count[i - 1];
-        }
-        for (size_t i = 0; i < n; ++i) {
-            uint32_t v = dst[i];
-            src[offset[(v >> 12) & 0xFFF]++] = v;
-        }
+        for (int i = 1; i < 2048; ++i) offset[i] = offset[i - 1] + count[i - 1];
+        for (size_t i = 0; i < n; ++i) { uint32_t v = dst[i]; src[offset[(v >> 11) & 0x7FF]++] = v; }
     }
-
-    // Pass 3 (only for meshes > 16.7M vertices): bits 24..31 (256 buckets)
-    if (maxV >= (1u << 24)) {
-        uint32_t count[256] = {0};
-        for (size_t i = 0; i < n; ++i) {
-            count[(src[i] >> 24) & 0xFF]++;
-        }
-        uint32_t offset[256];
+    {
+        uint32_t count[1024] = {0};
+        for (size_t i = 0; i < n; ++i) count[(src[i] >> 22) & 0x3FF]++;
+        uint32_t offset[1024];
         offset[0] = 0;
-        for (int i = 1; i < 256; ++i) {
-            offset[i] = offset[i - 1] + count[i - 1];
-        }
-        for (size_t i = 0; i < n; ++i) {
-            uint32_t v = src[i];
-            dst[offset[(v >> 24) & 0xFF]++] = v;
-        }
+        for (int i = 1; i < 1024; ++i) offset[i] = offset[i - 1] + count[i - 1];
+        for (size_t i = 0; i < n; ++i) { uint32_t v = src[i]; dst[offset[(v >> 22) & 0x3FF]++] = v; }
         std::memcpy(verts.data(), temp.data(), n * sizeof(uint32_t));
     }
 }
@@ -183,7 +256,7 @@ static float safe_stof(const std::string& str, float defaultVal = 0.0f) {
 
 static void pickVerticesInSphereTopological(
     Mesh* mesh, const glm::vec3& center, float radius2, uint32_t startFaceId,
-    std::vector<uint32_t>& topoVisitedFlags, uint32_t& topoVisitedEpoch,
+    std::vector<uint8_t>& topoVisitedFlags, uint8_t& topoVisitedEpoch,
     std::vector<uint32_t>& picked
 ) {
     picked.clear();
@@ -191,15 +264,15 @@ static void pickVerticesInSphereTopological(
 
     uint32_t nbVerts = (uint32_t)mesh->nbVerts;
     if (topoVisitedFlags.size() < (size_t)nbVerts) {
-        topoVisitedFlags.assign(nbVerts, 0);
+        topoVisitedFlags.assign(nbVerts, uint8_t(0));
     }
     topoVisitedEpoch++;
     if (topoVisitedEpoch == 0) {
-        std::fill(topoVisitedFlags.begin(), topoVisitedFlags.end(), 0);
+        std::fill(topoVisitedFlags.begin(), topoVisitedFlags.end(), uint8_t(0));
         topoVisitedEpoch = 1;
     }
-    uint32_t curEpoch = topoVisitedEpoch;
-    uint32_t* visited = topoVisitedFlags.data();
+    uint8_t curEpoch = topoVisitedEpoch;
+    uint8_t* visited = topoVisitedFlags.data();
 
     const float* verts = mesh->verts.data();
     const uint8_t* vertVisible = mesh->vertVisible.data();
@@ -218,9 +291,13 @@ static void pickVerticesInSphereTopological(
 
         uint32_t vid3 = vid * 3;
         float dx = verts[vid3] - center.x;
+        float dx2 = dx * dx;
+        if (dx2 > radius2) continue;
         float dy = verts[vid3 + 1] - center.y;
+        float dy2 = dy * dy;
+        if (dx2 + dy2 > radius2) continue;
         float dz = verts[vid3 + 2] - center.z;
-        if (dx * dx + dy * dy + dz * dz <= radius2) {
+        if (dx2 + dy2 + dz * dz <= radius2) {
             picked.push_back(vid);
             visited[vid] = curEpoch;
         }
@@ -239,11 +316,20 @@ static void pickVerticesInSphereTopological(
 
             if (vertVisible && !vertVisible[v]) continue;
 
+            if (j + 2 < count) {
+                uint32_t nextV = vertRingVert[start + j + 2];
+                __builtin_prefetch(&verts[nextV * 3], 0, 1);
+            }
+
             uint32_t v3 = v * 3;
             float dx = verts[v3] - center.x;
+            float dx2 = dx * dx;
+            if (dx2 > radius2) continue;
             float dy = verts[v3 + 1] - center.y;
+            float dy2 = dy * dy;
+            if (dx2 + dy2 > radius2) continue;
             float dz = verts[v3 + 2] - center.z;
-            if (dx * dx + dy * dy + dz * dz <= radius2) {
+            if (dx2 + dy2 + dz * dz <= radius2) {
                 picked.push_back(v);
             }
         }
@@ -1576,10 +1662,12 @@ void SculptManager::cancelStroke() {
 void SculptManager::warmupMeshCaches(const Mesh* mesh) {
     if (!mesh) return;
     if (m_vertTagFlags.size() < (size_t)mesh->nbVerts) {
-        m_vertTagFlags.assign(mesh->nbVerts, 0);
+        m_vertTagFlags.assign(mesh->nbVerts, uint8_t(0));
+        m_vertTagEpoch = 0;
     }
     if (m_tagFlags.size() < (size_t)mesh->nbFaces) {
-        m_tagFlags.assign(mesh->nbFaces, 0);
+        m_tagFlags.assign(mesh->nbFaces, uint8_t(0));
+        m_tagEpoch = 0;
     }
     size_t strokeFacesCap = std::min((size_t)mesh->nbFaces, (size_t)4000000);
     if (m_iFacesCache.size() < strokeFacesCap) {
@@ -1596,7 +1684,7 @@ void SculptManager::warmupMeshCaches(const Mesh* mesh) {
     const_cast<Mesh*>(mesh)->ensureBVHBuilt();
     const_cast<Mesh*>(mesh)->bvh.warmup(mesh->nbVerts);
     mesh->computeLocalRadius();
-    g_undoManager.warmupForMesh(mesh->m_id, mesh->nbVerts);
+    g_undoManager.warmupForMesh(mesh->m_id, mesh->nbVerts, mesh->nbFaces);
 }
 
 void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, float mouseX, float mouseY, float currentPressure) {
@@ -2551,16 +2639,16 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         tStage = std::chrono::high_resolution_clock::now();
 
         if (m_vertTagFlags.size() < (size_t)mesh->nbVerts) {
-            m_vertTagFlags.assign(mesh->nbVerts, 0);
+            m_vertTagFlags.assign(mesh->nbVerts, uint8_t(0));
         }
         m_vertTagEpoch++;
         if (m_vertTagEpoch == 0) {
-            std::fill(m_vertTagFlags.begin(), m_vertTagFlags.end(), 0);
+            std::fill(m_vertTagFlags.begin(), m_vertTagFlags.end(), uint8_t(0));
             m_vertTagEpoch = 1;
         }
 
-        uint32_t curEpoch = m_vertTagEpoch;
-        uint32_t* tagData = m_vertTagFlags.data();
+        uint8_t curEpoch = m_vertTagEpoch;
+        uint8_t* tagData = m_vertTagFlags.data();
         uint32_t* pVerts = allAffectedVerts.data();
         size_t total = allAffectedVerts.size();
         size_t writeIdx = 0;
@@ -2568,16 +2656,71 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         uint32_t minV = 0xFFFFFFFF;
         uint32_t maxV = 0;
 
-        for (size_t i = 0; i < total; ++i) {
-            uint32_t v = pVerts[i];
-            if (v < (uint32_t)mesh->nbVerts && tagData[v] != curEpoch) {
-                tagData[v] = curEpoch;
-                pVerts[writeIdx++] = v;
-                minV = std::min(minV, v);
-                maxV = std::max(maxV, v);
+        const int maxThreads = omp_get_max_threads();
+        const bool inParallel = omp_in_parallel();
+
+        if (total < 16384 || inParallel || maxThreads <= 1) {
+            for (size_t i = 0; i < total; ++i) {
+                uint32_t v = pVerts[i];
+                if (v < (uint32_t)mesh->nbVerts && tagData[v] != curEpoch) {
+                    tagData[v] = curEpoch;
+                    pVerts[writeIdx++] = v;
+                    minV = std::min(minV, v);
+                    maxV = std::max(maxV, v);
+                }
             }
+            allAffectedVerts.resize(writeIdx);
+        } else {
+            static std::vector<std::vector<uint32_t>> s_threadVerts;
+            if ((int)s_threadVerts.size() < maxThreads) {
+                s_threadVerts.resize(maxThreads);
+            }
+            uint32_t globalMin = 0xFFFFFFFF;
+            uint32_t globalMax = 0;
+
+            #pragma omp parallel reduction(min:globalMin) reduction(max:globalMax)
+            {
+                int tid = omp_get_thread_num();
+                auto& localVerts = s_threadVerts[tid];
+                localVerts.clear();
+                size_t estCount = (total / maxThreads) + 64;
+                if (localVerts.capacity() < estCount) {
+                    localVerts.reserve(estCount);
+                }
+
+                #pragma omp for schedule(static)
+                for (int64_t i = 0; i < (int64_t)total; ++i) {
+                    uint32_t v = pVerts[i];
+                    if (v < (uint32_t)mesh->nbVerts && tagData[v] != curEpoch) {
+                        std::atomic_ref<uint8_t> ref(tagData[v]);
+                        if (ref.exchange(curEpoch, std::memory_order_relaxed) != curEpoch) {
+                            localVerts.push_back(v);
+                            globalMin = std::min(globalMin, v);
+                            globalMax = std::max(globalMax, v);
+                        }
+                    }
+                }
+            }
+
+            size_t offsets[129] = {0};
+            int numMergeThreads = std::min(maxThreads, 128);
+            for (int t = 0; t < numMergeThreads; ++t) {
+                offsets[t + 1] = offsets[t] + s_threadVerts[t].size();
+            }
+            writeIdx = offsets[numMergeThreads];
+            allAffectedVerts.resize(writeIdx);
+            pVerts = allAffectedVerts.data();
+
+            #pragma omp parallel for schedule(static) if(writeIdx > 8192)
+            for (int t = 0; t < numMergeThreads; ++t) {
+                size_t sz = s_threadVerts[t].size();
+                if (sz > 0) {
+                    std::memcpy(pVerts + offsets[t], s_threadVerts[t].data(), sz * sizeof(uint32_t));
+                }
+            }
+            minV = globalMin;
+            maxV = globalMax;
         }
-        allAffectedVerts.resize(writeIdx);
         auto tDedupEnd = std::chrono::high_resolution_clock::now();
         m_lastFrameProfile.dedupOnlyMs = std::chrono::duration<double, std::milli>(tDedupEnd - tStage).count();
         bool isSculptDeform = (activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_MASK_GRADIENT_BLUR && activeBrush != BRUSH_POLYGROUP);
@@ -2706,12 +2849,20 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         }
 
         auto tProxySync0 = std::chrono::high_resolution_clock::now();
-        if (!isGrabBrush && mesh->vertProxy.size() == mesh->verts.size()) {
-            for (uint32_t v : allAffectedVerts) {
-                if (v * 3 + 2 < mesh->verts.size()) {
-                    mesh->vertProxy[v * 3 + 0] = mesh->verts[v * 3 + 0];
-                    mesh->vertProxy[v * 3 + 1] = mesh->verts[v * 3 + 1];
-                    mesh->vertProxy[v * 3 + 2] = mesh->verts[v * 3 + 2];
+        if (isSculptDeform && !isGrabBrush && mesh->vertProxy.size() == mesh->verts.size()) {
+            const size_t numAff = allAffectedVerts.size();
+            const uint32_t* pAff = allAffectedVerts.data();
+            float* dst = mesh->vertProxy.data();
+            const float* src = mesh->verts.data();
+            const size_t maxVertIdx = mesh->verts.size() / 3;
+
+            #pragma omp parallel for schedule(static) if(numAff > 4000)
+            for (int64_t i = 0; i < (int64_t)numAff; ++i) {
+                uint32_t v = pAff[i];
+                if (v < maxVertIdx) {
+                    dst[v * 3 + 0] = src[v * 3 + 0];
+                    dst[v * 3 + 1] = src[v * 3 + 1];
+                    dst[v * 3 + 2] = src[v * 3 + 2];
                 }
             }
         }
@@ -4399,11 +4550,19 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             if (!m_grabbedAffectedVerts.empty()) {
                 auto tGp0 = std::chrono::high_resolution_clock::now();
                 if (mesh && mesh->vertProxy.size() == mesh->verts.size()) {
-                    for (uint32_t v : m_grabbedAffectedVerts) {
-                        if (v * 3 + 2 < mesh->verts.size()) {
-                            mesh->vertProxy[v * 3 + 0] = mesh->verts[v * 3 + 0];
-                            mesh->vertProxy[v * 3 + 1] = mesh->verts[v * 3 + 1];
-                            mesh->vertProxy[v * 3 + 2] = mesh->verts[v * 3 + 2];
+                    const size_t numAff = m_grabbedAffectedVerts.size();
+                    const uint32_t* pAff = m_grabbedAffectedVerts.data();
+                    float* dst = mesh->vertProxy.data();
+                    const float* src = mesh->verts.data();
+                    const size_t maxVertIdx = mesh->verts.size() / 3;
+
+                    #pragma omp parallel for schedule(static) if(numAff > 4000)
+                    for (int64_t i = 0; i < (int64_t)numAff; ++i) {
+                        uint32_t v = pAff[i];
+                        if (v < maxVertIdx) {
+                            dst[v * 3 + 0] = src[v * 3 + 0];
+                            dst[v * 3 + 1] = src[v * 3 + 1];
+                            dst[v * 3 + 2] = src[v * 3 + 2];
                         }
                     }
                 }

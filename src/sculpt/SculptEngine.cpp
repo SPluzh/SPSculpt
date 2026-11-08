@@ -401,22 +401,25 @@ uint32_t getFacesFromVerticesFast(
     const uint32_t* vrfStartCount,
     const uint32_t* vertRingFace,
     uint32_t* outIFaces,
-    uint32_t* tagFlags,
-    uint32_t* tagEpoch,
+    uint8_t* tagFlags,
+    uint8_t* tagEpoch,
     uint32_t nbFaces
 ) {
     if (!tagEpoch || !tagFlags || !iVerts || !vrfStartCount || !vertRingFace || !outIFaces) {
         return 0;
     }
 
-    uint32_t epoch = *tagEpoch + 1;
+    uint8_t epoch = *tagEpoch + 1;
     if (epoch == 0) {
-        std::fill(tagFlags, tagFlags + nbFaces, 0);
+        std::fill(tagFlags, tagFlags + nbFaces, uint8_t(0));
         epoch = 1;
     }
     *tagEpoch = epoch;
 
-    if (nbIVerts < 2048) {
+    const int maxThreads = omp_get_max_threads();
+    const bool inParallel = omp_in_parallel();
+
+    if (nbIVerts < 2048 || inParallel || maxThreads <= 1) {
         uint32_t acc = 0;
         for (uint32_t i = 0; i < nbIVerts; ++i) {
             if (i + 4 < nbIVerts) {
@@ -442,7 +445,6 @@ uint32_t getFacesFromVerticesFast(
         return acc;
     }
 
-    int maxThreads = omp_get_max_threads();
     static std::vector<std::vector<uint32_t>> s_threadFaces;
     if ((int)s_threadFaces.size() < maxThreads) {
         s_threadFaces.resize(maxThreads);
@@ -475,7 +477,8 @@ uint32_t getFacesFromVerticesFast(
                 }
                 uint32_t iFace = vertRingFace[j];
                 if (tagFlags[iFace] != epoch) {
-                    if (__atomic_exchange_n(&tagFlags[iFace], epoch, __ATOMIC_RELAXED) != epoch) {
+                    std::atomic_ref<uint8_t> ref(tagFlags[iFace]);
+                    if (ref.exchange(epoch, std::memory_order_relaxed) != epoch) {
                         localFaces.push_back(iFace);
                     }
                 }
@@ -483,15 +486,20 @@ uint32_t getFacesFromVerticesFast(
         }
     }
 
-    uint32_t acc = 0;
-    for (int t = 0; t < maxThreads; ++t) {
+    size_t offsets[129] = {0};
+    int numMergeThreads = std::min(maxThreads, 128);
+    for (int t = 0; t < numMergeThreads; ++t) {
+        offsets[t + 1] = offsets[t] + s_threadFaces[t].size();
+    }
+    uint32_t totalFaces = (uint32_t)offsets[numMergeThreads];
+    #pragma omp parallel for schedule(static) if(totalFaces > 8192)
+    for (int t = 0; t < numMergeThreads; ++t) {
         size_t sz = s_threadFaces[t].size();
         if (sz > 0) {
-            std::memcpy(outIFaces + acc, s_threadFaces[t].data(), sz * sizeof(uint32_t));
-            acc += (uint32_t)sz;
+            std::memcpy(outIFaces + offsets[t], s_threadFaces[t].data(), sz * sizeof(uint32_t));
         }
     }
-    return acc;
+    return totalFaces;
 }
 
 bool computeAreaNormalAndCenter(
