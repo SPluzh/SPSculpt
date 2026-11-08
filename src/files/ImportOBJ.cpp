@@ -194,7 +194,7 @@ static void initMeshOBJ(Mesh* mesh,
         msUVs = std::chrono::duration<double, std::milli>(tUVEnd - tUVStart).count();
     }
 
-    // Now compute topology and build octree/normals
+    // Now compute topology and build BVH/normals
     std::vector<uint32_t> vrvStartCount;
     std::vector<uint32_t> vertRingVert;
     std::vector<uint32_t> vrfStartCount;

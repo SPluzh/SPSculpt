@@ -43,7 +43,7 @@ struct SculptFrameProfile {
     double faceLookupMs = 0.0;
     double faceNormalsMs = 0.0;
     double vertNormalsMs = 0.0;
-    double octreeUpdateMs = 0.0;
+    double bvhUpdateMs = 0.0;
     double gpuUploadMs = 0.0;
     double renderMs = 0.0;
 
@@ -58,7 +58,7 @@ struct SculptFrameProfile {
     void reset() {
         raycastMs = pickVertsMs = cullingMs = vertProxyResetMs = undoRecordMs = 0.0;
         primaryDeformMs = areaComputeMs = symmetryMs = sortDedupMs = faceLookupMs = faceNormalsMs = 0.0;
-        vertNormalsMs = octreeUpdateMs = gpuUploadMs = renderMs = 0.0;
+        vertNormalsMs = bvhUpdateMs = gpuUploadMs = renderMs = 0.0;
         pickCellsMs = pickDedupMs = pickFilterMs = 0.0;
         pickedVertCount = affectedVertCount = affectedFaceCount = 0;
     }
@@ -66,7 +66,7 @@ struct SculptFrameProfile {
     double getTotalMs() const {
         return raycastMs + pickVertsMs + cullingMs + vertProxyResetMs + undoRecordMs +
                primaryDeformMs + symmetryMs + sortDedupMs + faceLookupMs + faceNormalsMs +
-               vertNormalsMs + octreeUpdateMs + gpuUploadMs + renderMs;
+               vertNormalsMs + bvhUpdateMs + gpuUploadMs + renderMs;
     }
 };
 
@@ -627,7 +627,7 @@ private:
 
     // Cache for computeAreaNormalAndCenter & inverse mesh matrix & stroke start layer deltas
     bool m_firstStrokeFrame = false;
-    bool m_pendingOctreeUpdate = false;
+    bool m_pendingBVHUpdate = false;
     std::vector<float> m_strokeStartLayerDeltas;
     glm::vec3 m_cachedAreaNormal{0.0f};
     glm::vec3 m_cachedAreaCenter{0.0f};

@@ -26,7 +26,7 @@ struct TransformMeshState {
     std::vector<uint32_t> sparseVertIndices;
     std::vector<float> sparseBeforeCoords; // 3 floats per sparse vertex
     std::vector<float> sparseAfterCoords;  // 3 floats per sparse vertex
-    std::vector<uint32_t> affectedFaces;   // Faces adjacent to sparse vertices for fast normal & octree updates
+    std::vector<uint32_t> affectedFaces;   // Faces adjacent to sparse vertices for fast normal & BVH updates
 
     bool isPrimitive = false;
     glm::mat4 beforeLocalTransform = glm::mat4(1.0f);

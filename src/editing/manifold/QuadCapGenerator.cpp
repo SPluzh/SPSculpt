@@ -2436,7 +2436,7 @@ QuadCapResult QuadCapGenerator::generateQuadCap(Mesh& mesh, uint32_t capGroupID,
         mesh.nbVerts = origNbVerts;
 
         // If no patch was quad capped (e.g. preserved original manifold cap),
-        // ensure mesh has valid topology, normals, and octree because toMesh skipped runPostInit.
+        // ensure mesh has valid topology, normals, and BVH because toMesh skipped runPostInit.
         mesh.hasCustomNormals = false;
         mesh.postInit();
         mesh.isDirty = true;

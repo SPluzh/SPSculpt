@@ -944,7 +944,7 @@ inline VoxelBenchmarkRow runVoxelTest(
     );
     row.msTopology = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tTopoStart).count();
 
-    // 4. Stage: PostInit (normals, octree/bvh)
+    // 4. Stage: PostInit (normals, BVH)
     auto tPostInitStart = std::chrono::high_resolution_clock::now();
     mesh->postInit();
     remeshedMeshCopy->materials = mesh->materials;
@@ -1782,7 +1782,7 @@ inline bool run(int customResolution = 0, bool runMemoryStress = false) {
         std::cout << "    Recommendation -> Implement 3D Morton-order or Binned Triangle-Voxel traversal to avoid empty voxel distance queries.\n";
         std::cout << " 2. FLOOD-FILL SWEEP: 3-pass sequential sweep has strong memory latency on large grids.\n";
         std::cout << "    Recommendation -> Blocked 3D tiling (cache-friendly 16x16x16 subgrids) improves L3 cache hit rate significantly.\n";
-        std::cout << " 3. TOPOLOGY & POST-INIT: Reconstructing VRF/VRV rings and Octree/BVH represents up to 25% of pipeline time.\n";
+        std::cout << " 3. TOPOLOGY & POST-INIT: Reconstructing VRF/VRV rings and BVH represents up to 25% of pipeline time.\n";
         std::cout << "    Recommendation -> Leverage regular dual-cell connectivity to generate vertRingFace directly without general computeTopology.\n";
         std::cout << "===================================================================================================================================================\n\n";
 

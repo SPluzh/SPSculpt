@@ -352,7 +352,7 @@ bool runCliBenchmark(const std::string& customPath, Scene& scene, AngleRenderer&
     record.meshAllocMoveMs = parserStats.meshAllocMoveMs;
     record.normalsComputationMs = mesh->lastPostInitStats.msFaceNormals + mesh->lastPostInitStats.msVertexNormals;
     record.bboxAndCleanupMs = mesh->lastPostInitStats.msBbox;
-    record.topologyOctreeCheckMs = mesh->lastPostInitStats.msTopology + mesh->lastPostInitStats.msOctree;
+    record.topologyBVHCheckMs = mesh->lastPostInitStats.msTopology + mesh->lastPostInitStats.msBVH;
 
     // Phase IV: Scene Replace
     auto tSceneStart = std::chrono::high_resolution_clock::now();

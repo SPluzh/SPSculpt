@@ -756,7 +756,7 @@ DecimationResult MeshDecimator::decimate(Mesh& mesh, const DecimationOptions& op
     mesh.nbVerts = finalVertCount;
     mesh.nbFaces = finalFaceCount;
 
-    // Rebuild topology, normals, and octree
+    // Rebuild topology, normals, and BVH
     mesh.vrfStartCount.clear();
     mesh.vertRingFace.clear();
     mesh.vrvStartCount.clear();

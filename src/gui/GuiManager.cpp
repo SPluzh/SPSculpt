@@ -7520,12 +7520,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                 selectedMesh->normals.data()
                             );
                         }
-                        selectedMesh->octree.update(
-                            selectedMesh->verts.data(), selectedMesh->nbVerts,
-                            selectedMesh->faces.data(), selectedMesh->nbFaces,
-                            selectedMesh->faceBoxes.data(),
-                            nullptr, -1
-                        );
+                        selectedMesh->bvh.refitAll(*selectedMesh);
                     } else {
                         selectedMesh->postInit();
                     }
@@ -7587,12 +7582,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                     selectedMesh->normals.data()
                                 );
                             }
-                            selectedMesh->octree.update(
-                                selectedMesh->verts.data(), selectedMesh->nbVerts,
-                                selectedMesh->faces.data(), selectedMesh->nbFaces,
-                                selectedMesh->faceBoxes.data(),
-                                nullptr, -1
-                            );
+                            selectedMesh->bvh.refitAll(*selectedMesh);
                         } else {
                             selectedMesh->postInit();
                         }
@@ -7699,12 +7689,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                 selectedMesh->normals.data()
                             );
                         }
-                        selectedMesh->octree.update(
-                            selectedMesh->verts.data(), selectedMesh->nbVerts,
-                            selectedMesh->faces.data(), selectedMesh->nbFaces,
-                            selectedMesh->faceBoxes.data(),
-                            meshUndoState.affectedFaces.data(), (int)meshUndoState.affectedFaces.size()
-                        );
+                        selectedMesh->bvh.refit(*selectedMesh, meshUndoState.affectedFaces.data(), meshUndoState.affectedFaces.size());
                     } else if (!selectedMesh->faceNormals.empty()) {
                         updateFaceNormalsAndBoxes(
                             selectedMesh->verts.data(), selectedMesh->nbVerts,
@@ -7723,12 +7708,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                 selectedMesh->normals.data()
                             );
                         }
-                        selectedMesh->octree.update(
-                            selectedMesh->verts.data(), selectedMesh->nbVerts,
-                            selectedMesh->faces.data(), selectedMesh->nbFaces,
-                            selectedMesh->faceBoxes.data(),
-                            nullptr, -1
-                        );
+                        selectedMesh->bvh.refitAll(*selectedMesh);
                     } else {
                         selectedMesh->postInit();
                     }

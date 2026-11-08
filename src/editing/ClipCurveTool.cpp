@@ -488,7 +488,7 @@ bool ClipCurveTool::execute(
         }
     }
 
-    // Recalculate face and vertex normals & update octree
+    // Recalculate face and vertex normals & update BVH
     std::vector<uint32_t> iFaces(mesh->nbFaces);
     std::vector<uint32_t> tagFlags(mesh->nbFaces, 0);
     uint32_t tagEpoch = 1;
@@ -504,7 +504,7 @@ bool ClipCurveTool::execute(
         mesh->nbFaces
     );
 
-    sculpt_log("[ClipCurveTool] Normals & Octree update. Affected faces: %u / %d\n", numIFaces, mesh->nbFaces);
+    sculpt_log("[ClipCurveTool] Normals & BVH update. Affected faces: %u / %d\n", numIFaces, mesh->nbFaces);
 
     if (numIFaces > 0) {
         updateFaceNormalsAndBoxes(
@@ -524,12 +524,7 @@ bool ClipCurveTool::execute(
             mesh->normals.data()
         );
 
-        mesh->octree.update(
-            mesh->verts.data(), mesh->nbVerts,
-            mesh->faces.data(), mesh->nbFaces,
-            mesh->faceBoxes.data(),
-            iFaces.data(), numIFaces
-        );
+        mesh->bvh.refit(*mesh, iFaces.data(), numIFaces);
     }
 
     uint32_t minV = affectedVerts[0];

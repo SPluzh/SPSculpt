@@ -1,7 +1,7 @@
 #include "editing/CameraController.h"
 #include "platform/HotkeyManager.h"
 #include "mesh/Mesh.h"
-#include "mesh/Octree.h"
+#include "mesh/BVH.h"
 #include "scene/Scene.h"
 #include "render/AngleRenderer.h"
 #include <algorithm>
@@ -36,9 +36,9 @@ static bool pickPivot(Camera& camera, float mouseX, float mouseY, const std::vec
     if (!camera.getUsePivot()) return false;
 
     Ray ray = camera.getRay(mouseX, mouseY);
-    float minT = std::numeric_limits<float>::infinity();
-    Mesh* hitMesh = nullptr;
-    glm::vec3 localHitPoint(0.0f);
+    float minWorldT = std::numeric_limits<float>::infinity();
+    glm::vec3 bestWorldHit(0.0f);
+    bool hitAny = false;
 
     for (Mesh* mesh : meshes) {
         if (!mesh) continue;
@@ -46,51 +46,21 @@ static bool pickPivot(Camera& camera, float mouseX, float mouseY, const std::vec
         glm::vec3 localRayOrigin = glm::vec3(invMatrix * glm::vec4(ray.origin, 1.0f));
         glm::vec3 localRayDir = glm::normalize(glm::vec3(invMatrix * glm::vec4(ray.dir, 0.0f)));
 
-        std::vector<uint32_t> candidateFaces = mesh->octree.collectIntersectRay(
-            localRayOrigin.x, localRayOrigin.y, localRayOrigin.z,
-            localRayDir.x, localRayDir.y, localRayDir.z
-        );
-
-        for (uint32_t faceId : candidateFaces) {
-            if (faceId >= (uint32_t)mesh->nbFaces) continue;
-            uint32_t v0Id = mesh->faces[faceId * 4];
-            uint32_t v1Id = mesh->faces[faceId * 4 + 1];
-            uint32_t v2Id = mesh->faces[faceId * 4 + 2];
-            uint32_t v3Id = mesh->faces[faceId * 4 + 3];
-
-            if (!mesh->vertVisible[v0Id] || !mesh->vertVisible[v1Id] || !mesh->vertVisible[v2Id] || (v3Id != 0xffffffff && !mesh->vertVisible[v3Id])) {
-                continue;
-            }
-
-            glm::vec3 v0(mesh->verts[v0Id * 3], mesh->verts[v0Id * 3 + 1], mesh->verts[v0Id * 3 + 2]);
-            glm::vec3 v1(mesh->verts[v1Id * 3], mesh->verts[v1Id * 3 + 1], mesh->verts[v1Id * 3 + 2]);
-            glm::vec3 v2(mesh->verts[v2Id * 3], mesh->verts[v2Id * 3 + 1], mesh->verts[v2Id * 3 + 2]);
-
-            float t;
-            if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v1, v2, t)) {
-                if (t < minT) {
-                    minT = t;
-                    hitMesh = mesh;
-                    localHitPoint = localRayOrigin + t * localRayDir;
-                }
-            }
-
-            if (v3Id != 0xffffffff) {
-                glm::vec3 v3(mesh->verts[v3Id * 3], mesh->verts[v3Id * 3 + 1], mesh->verts[v3Id * 3 + 2]);
-                if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v2, v3, t)) {
-                    if (t < minT) {
-                        minT = t;
-                        hitMesh = mesh;
-                        localHitPoint = localRayOrigin + t * localRayDir;
-                    }
-                }
+        mesh->ensureBVHBuilt();
+        RayHit hit;
+        if (mesh->bvh.raycast(*mesh, localRayOrigin, localRayDir, hit)) {
+            glm::vec3 worldHit = glm::vec3(mesh->matrix * glm::vec4(hit.position, 1.0f));
+            float worldT = glm::distance(ray.origin, worldHit);
+            if (worldT < minWorldT) {
+                minWorldT = worldT;
+                bestWorldHit = worldHit;
+                hitAny = true;
             }
         }
     }
 
-    if (hitMesh) {
-        glm::vec3 worldHitPoint = glm::vec3(hitMesh->matrix * glm::vec4(localHitPoint, 1.0f));
-        camera.setPivot(worldHitPoint);
+    if (hitAny) {
+        camera.setPivot(bestWorldHit);
         return true;
     }
     return false;

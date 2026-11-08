@@ -552,7 +552,7 @@ static Mesh* parsePrimitive(const json& j, const json& primitive, const std::vec
     double msTopo = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tTopoStart).count();
     sculpt_log("[GLTF Primitive]   - Topology computed in %.2f ms\n", msTopo);
 
-    sculpt_log("[GLTF Primitive]   - Running mesh postInit (Octree & BBox)...\n");
+    sculpt_log("[GLTF Primitive]   - Running mesh postInit (BVH & BBox)...\n");
     auto tPostStart = std::chrono::high_resolution_clock::now();
     mesh->postInit();
     double msPost = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tPostStart).count();

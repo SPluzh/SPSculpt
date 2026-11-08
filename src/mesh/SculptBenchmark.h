@@ -26,78 +26,12 @@
 #include "common/Enums.h"
 #include <omp.h>
 
-#if __has_include("mesh/BVH.h")
-#define BENCH_USE_BVH 1
 #include "mesh/BVH.h"
-#else
-#define BENCH_USE_BVH 0
-#include "mesh/Octree.h"
-#endif
+#define BENCH_USE_BVH 1
 
 namespace SculptBenchmark {
 
-inline bool rayTriangleIntersect(
-    const glm::vec3& rayOrigin, const glm::vec3& rayDir,
-    const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2,
-    float& t
-) {
-    const float EPSILON = 1e-7f;
-    glm::vec3 edge1 = v1 - v0;
-    glm::vec3 edge2 = v2 - v0;
-    glm::vec3 h = glm::cross(rayDir, edge2);
-    float a = glm::dot(edge1, h);
-    if (std::abs(a) < EPSILON) return false;
-    float f = 1.0f / a;
-    glm::vec3 s = rayOrigin - v0;
-    float u = f * glm::dot(s, h);
-    if (u < 0.0f || u > 1.0f) return false;
-    glm::vec3 q = glm::cross(s, edge1);
-    float v = f * glm::dot(rayDir, q);
-    if (v < 0.0f || u + v > 1.0f) return false;
-    t = f * glm::dot(edge2, q);
-    return t > EPSILON;
-}
-
-inline bool octreeRaycast(const Mesh& mesh, const glm::vec3& origin, const glm::vec3& dir, float& outT, uint32_t& outFace) {
-#if !BENCH_USE_BVH
-    std::vector<uint32_t> candidateFaces = const_cast<Mesh&>(mesh).octree.collectIntersectRay(
-        origin.x, origin.y, origin.z, dir.x, dir.y, dir.z
-    );
-    float minT = std::numeric_limits<float>::infinity();
-    uint32_t hitFace = 0xffffffff;
-    for (uint32_t faceId : candidateFaces) {
-        if (faceId >= (uint32_t)mesh.nbFaces) continue;
-        uint32_t v0 = mesh.faces[faceId * 4 + 0];
-        uint32_t v1 = mesh.faces[faceId * 4 + 1];
-        uint32_t v2 = mesh.faces[faceId * 4 + 2];
-        uint32_t v3 = mesh.faces[faceId * 4 + 3];
-        glm::vec3 p0(mesh.verts[v0 * 3], mesh.verts[v0 * 3 + 1], mesh.verts[v0 * 3 + 2]);
-        glm::vec3 p1(mesh.verts[v1 * 3], mesh.verts[v1 * 3 + 1], mesh.verts[v1 * 3 + 2]);
-        glm::vec3 p2(mesh.verts[v2 * 3], mesh.verts[v2 * 3 + 1], mesh.verts[v2 * 3 + 2]);
-        float t;
-        if (rayTriangleIntersect(origin, dir, p0, p1, p2, t) && t < minT) {
-            minT = t;
-            hitFace = faceId;
-        }
-        if (v3 != 0xffffffff) {
-            glm::vec3 p3(mesh.verts[v3 * 3], mesh.verts[v3 * 3 + 1], mesh.verts[v3 * 3 + 2]);
-            if (rayTriangleIntersect(origin, dir, p0, p2, p3, t) && t < minT) {
-                minT = t;
-                hitFace = faceId;
-            }
-        }
-    }
-    if (hitFace != 0xffffffff) {
-        outT = minT;
-        outFace = hitFace;
-        return true;
-    }
-#endif
-    return false;
-}
-
 inline bool queryRaycast(const Mesh& mesh, const glm::vec3& origin, const glm::vec3& dir, float& outT, uint32_t& outFace) {
-#if BENCH_USE_BVH
     RayHit hit;
     if (mesh.raycast(origin, dir, hit)) {
         outT = hit.t;
@@ -105,46 +39,18 @@ inline bool queryRaycast(const Mesh& mesh, const glm::vec3& origin, const glm::v
         return true;
     }
     return false;
-#else
-    return octreeRaycast(mesh, origin, dir, outT, outFace);
-#endif
 }
 
 inline void queryPickVerticesInSphere(const Mesh& mesh, const glm::vec3& center, float r2, std::vector<uint32_t>& outVerts) {
-#if BENCH_USE_BVH
     mesh.bvh.pickVerticesInSphere(mesh, center, r2, outVerts);
-#else
-    const_cast<Mesh&>(mesh).octree.pickVerticesInSphere(center.x, center.y, center.z, r2, mesh.vertVisible.data(), outVerts);
-#endif
 }
 
 inline size_t getSpatialIndexMemoryBytes(const Mesh& mesh) {
-#if BENCH_USE_BVH
     return mesh.bvh.memoryBytes();
-#else
-    const auto& octree = mesh.octree;
-    size_t bytes = sizeof(Octree);
-    bytes += octree.faceLeaf.capacity() * sizeof(OctreeCell*);
-    bytes += octree.facePosInLeaf.capacity() * sizeof(int);
-    bytes += octree.cellPool.capacity() * sizeof(OctreeCell*);
-    for (int i = 0; i < octree.poolIndex && i < (int)octree.cellPool.size(); ++i) {
-        if (octree.cellPool[i]) {
-            bytes += sizeof(OctreeCell);
-            bytes += octree.cellPool[i]->iFaces.capacity() * sizeof(uint32_t);
-        }
-    }
-    bytes += octree.lastPickedVertices.capacity() * sizeof(uint32_t);
-    bytes += octree.lastIntersectedFaces.capacity() * sizeof(uint32_t);
-    return bytes;
-#endif
 }
 
 inline double getSpatialUpdateMs(const SculptFrameProfile& prof) {
-#if BENCH_USE_BVH
     return prof.bvhUpdateMs;
-#else
-    return prof.octreeUpdateMs;
-#endif
 }
 
 inline std::unique_ptr<Mesh> createSphereMesh(int rings, int sectors) {
@@ -256,7 +162,7 @@ inline std::string formatBytes(size_t bytes) {
 }
 
 inline bool run(int targetFaces = 4000000) {
-    const char* indexName = BENCH_USE_BVH ? "Linear BVH (feature/bvh-spatial-index)" : "Octree (master branch)";
+    const char* indexName = "Linear BVH";
     
     std::cout << "\n======================================================================\n";
     std::cout << " SPSculpt Multi-Tool Performance & Undo Benchmark @ " << std::fixed << std::setprecision(1) << (targetFaces / 1000000.0) << "M Polygons\n";
@@ -1217,14 +1123,9 @@ inline bool run(int targetFaces = 4000000) {
                 mesh.normals.data()
             );
         }
-        auto tOctStart = std::chrono::high_resolution_clock::now();
+        auto tBVHStart = std::chrono::high_resolution_clock::now();
         if (!meshUndoState.affectedFaces.empty()) {
-            mesh.octree.update(
-                mesh.verts.data(), mesh.nbVerts,
-                mesh.faces.data(), mesh.nbFaces,
-                mesh.faceBoxes.data(),
-                meshUndoState.affectedFaces.data(), (int)meshUndoState.affectedFaces.size()
-            );
+            mesh.bvh.refit(mesh, meshUndoState.affectedFaces.data(), meshUndoState.affectedFaces.size());
         }
         auto tUndoPrepStart = std::chrono::high_resolution_clock::now();
 
@@ -1233,12 +1134,12 @@ inline bool run(int targetFaces = 4000000) {
         auto tFinEnd = std::chrono::high_resolution_clock::now();
         double finalizeMs = std::chrono::duration<double, std::milli>(tFinEnd - tFinStart).count();
         double fnMs = std::chrono::duration<double, std::milli>(tVNStart - tFNStart).count();
-        double vnMs = std::chrono::duration<double, std::milli>(tOctStart - tVNStart).count();
-        double octMs = std::chrono::duration<double, std::milli>(tUndoPrepStart - tOctStart).count();
+        double vnMs = std::chrono::duration<double, std::milli>(tBVHStart - tVNStart).count();
+        double bvhMs = std::chrono::duration<double, std::milli>(tUndoPrepStart - tBVHStart).count();
         double undoPushMs = std::chrono::duration<double, std::milli>(tFinEnd - tUndoPrepStart).count();
         std::cout << "      [Transform Masked Finalize Detail] Total: " << std::fixed << std::setprecision(2) << finalizeMs
                   << " ms (FaceNorms: " << fnMs << " ms, VertNorms: " << vnMs
-                  << " ms, Octree: " << octMs << " ms, UndoPush: " << undoPushMs << " ms)\n";
+                  << " ms, BVH: " << bvhMs << " ms, UndoPush: " << undoPushMs << " ms)\n";
 
         double totalStrokeMs = step0Ms + sumDragMs + finalizeMs;
         size_t undoBytes = !g_undoManager.getUndoStack().empty() ? g_undoManager.getUndoStack().back()->getMemoryUsage() : 0;
@@ -1465,8 +1366,7 @@ inline bool run(int targetFaces = 4000000) {
     std::cout << "===========================================================================================================\n\n";
     std::cout.flush();
 
-    _Exit(0);
-    return true;
+    return allIntegrityPassed;
     } catch (const std::bad_alloc& e) {
         std::cerr << "\n[CRITICAL ERROR] std::bad_alloc caught! Out of memory while processing "
                   << std::fixed << std::setprecision(1) << (targetFaces / 1000000.0) << "M polygons!\n";

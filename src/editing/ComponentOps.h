@@ -15,7 +15,7 @@ enum class BevelType {
 class ComponentOps {
 public:
     // Delete selected components (vertices, edges, or faces).
-    // Cleans up orphan vertices and completely rebuilds mesh topology and octree.
+    // Cleans up orphan vertices and completely rebuilds mesh topology and BVH.
     static bool deleteSelection(Mesh& mesh, SelectionManager& selMgr);
 
     // Extrude selected faces or edges along their normal by offsetMagnitude.

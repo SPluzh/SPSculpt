@@ -92,7 +92,7 @@ void Multimesh::setSelection(int s) {
         }
         isFaceGroupDirty = true;
 
-        octree.build(nbVerts, nbFaces, faceCenters.data(), faceBoxes.data(), verts.data(), faces.data());
+        bvh.build(*this);
 
         sculpt_log("[Multimesh::setSelection] Selected level %d / %zu. nbVerts=%d, nbFaces=%d, nbEdges=%d\n",
                   sel, meshes.size(), nbVerts, nbFaces, nbEdges);

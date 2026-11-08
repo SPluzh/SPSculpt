@@ -952,7 +952,7 @@ void MaskExtractTool::updateThicknessFast(float newThickness) {
 bool MaskExtractTool::accept(Scene& scene) {
     if (!m_isPreviewActive || !m_previewMesh) return false;
 
-    // Full initialization with Octree for sculpting
+    // Full initialization with BVH for sculpting
     m_previewMesh->postInit(true);
 
     scene.pushHistoryState();

@@ -459,8 +459,8 @@ std::vector<Mesh*> importGoZ(const uint8_t* data, size_t size, bool triangulateQ
     double msMeshAllocMove = std::chrono::duration<double, std::milli>(tMoveEnd - tMoveStart).count();
 
     // Fast postInit for viewport display:
-    // Skips heavy computeTopology and octree build, computing vertex normals directly.
-    // Topology and octree will be built lazily on demand if sculpting tools are activated.
+    // Skips heavy computeTopology and BVH build, computing vertex normals directly.
+    // Topology and BVH will be built lazily on demand if sculpting tools are activated.
     mesh->postInit(false, false);
 
     if (outInfo) {

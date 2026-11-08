@@ -1,6 +1,9 @@
 #include "common/StringUtils.h"
 
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
 
 std::wstring utf8ToWide(const std::string& str) {

@@ -136,7 +136,7 @@ add_executable(SPSculpt
     src/mesh/Mesh.cpp
     src/mesh/MeshResolution.cpp
     src/mesh/Multimesh.cpp
-    src/mesh/Octree.cpp
+    src/mesh/BVH.cpp
     src/mesh/NormalCalc.cpp
     src/mesh/Topology.cpp
     src/mesh/Layer.cpp
@@ -243,6 +243,10 @@ target_compile_options(SPSculpt PRIVATE -O3)
 find_package(OpenMP)
 if(OpenMP_CXX_FOUND)
     target_link_libraries(SPSculpt PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
+if(WIN32)
+    target_compile_definitions(SPSculpt PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 endif()
 
 if(MINGW)

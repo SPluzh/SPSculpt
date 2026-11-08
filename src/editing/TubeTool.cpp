@@ -314,53 +314,17 @@ bool TubeTool::raycastSurface(
         glm::vec3 localRayOrigin = glm::vec3(invMatrix * glm::vec4(ray.origin, 1.0f));
         glm::vec3 localRayDir = glm::normalize(glm::vec3(invMatrix * glm::vec4(ray.dir, 0.0f)));
 
-        mesh->ensureOctreeBuilt();
-        std::vector<uint32_t> candidateFaces = mesh->octree.collectIntersectRay(
-            localRayOrigin.x, localRayOrigin.y, localRayOrigin.z,
-            localRayDir.x, localRayDir.y, localRayDir.z
-        );
-
-        for (uint32_t faceId : candidateFaces) {
-            if (faceId >= (uint32_t)mesh->nbFaces) continue;
-            uint32_t v0Id = mesh->faces[faceId * 4];
-            uint32_t v1Id = mesh->faces[faceId * 4 + 1];
-            uint32_t v2Id = mesh->faces[faceId * 4 + 2];
-            uint32_t v3Id = mesh->faces[faceId * 4 + 3];
-
-            glm::vec3 v0(mesh->verts[v0Id * 3], mesh->verts[v0Id * 3 + 1], mesh->verts[v0Id * 3 + 2]);
-            glm::vec3 v1(mesh->verts[v1Id * 3], mesh->verts[v1Id * 3 + 1], mesh->verts[v1Id * 3 + 2]);
-            glm::vec3 v2(mesh->verts[v2Id * 3], mesh->verts[v2Id * 3 + 1], mesh->verts[v2Id * 3 + 2]);
-
-            float t;
-            if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v1, v2, t)) {
-                glm::vec3 localHit = localRayOrigin + localRayDir * t;
-                glm::vec3 worldHit = glm::vec3(mesh->matrix * glm::vec4(localHit, 1.0f));
-                float worldT = glm::distance(ray.origin, worldHit);
-                if (worldT < minT) {
-                    minT = worldT;
-                    bestPos = worldHit;
-                    bestMesh = mesh;
-                    glm::vec3 localNorm = glm::normalize(glm::cross(v1 - v0, v2 - v0));
-                    bestNorm = glm::normalize(glm::vec3(glm::transpose(invMatrix) * glm::vec4(localNorm, 0.0f)));
-                    hitAny = true;
-                }
-            }
-
-            if (v3Id != 0xffffffff && v3Id < (uint32_t)mesh->nbVerts) {
-                glm::vec3 v3(mesh->verts[v3Id * 3], mesh->verts[v3Id * 3 + 1], mesh->verts[v3Id * 3 + 2]);
-                if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v2, v3, t)) {
-                    glm::vec3 localHit = localRayOrigin + localRayDir * t;
-                    glm::vec3 worldHit = glm::vec3(mesh->matrix * glm::vec4(localHit, 1.0f));
-                    float worldT = glm::distance(ray.origin, worldHit);
-                    if (worldT < minT) {
-                        minT = worldT;
-                        bestPos = worldHit;
-                        bestMesh = mesh;
-                        glm::vec3 localNorm = glm::normalize(glm::cross(v2 - v0, v3 - v0));
-                        bestNorm = glm::normalize(glm::vec3(glm::transpose(invMatrix) * glm::vec4(localNorm, 0.0f)));
-                        hitAny = true;
-                    }
-                }
+        mesh->ensureBVHBuilt();
+        RayHit hit;
+        if (mesh->bvh.raycast(*mesh, localRayOrigin, localRayDir, hit)) {
+            glm::vec3 worldHit = glm::vec3(mesh->matrix * glm::vec4(hit.position, 1.0f));
+            float worldT = glm::distance(ray.origin, worldHit);
+            if (worldT < minT) {
+                minT = worldT;
+                bestPos = worldHit;
+                bestMesh = mesh;
+                bestNorm = glm::normalize(glm::vec3(glm::transpose(invMatrix) * glm::vec4(hit.normal, 0.0f)));
+                hitAny = true;
             }
         }
     }

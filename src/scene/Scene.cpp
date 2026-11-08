@@ -380,7 +380,7 @@ void Scene::restoreState(const HistoryState& hs) {
                 }
 
                 if (isPureScale) {
-                    m->scaleFaceNormalsBoxesCentersAndOctree(scaleX, scaleY, scaleZ);
+                    m->scaleFaceNormalsBoxesCentersAndBVH(scaleX, scaleY, scaleZ);
                 } else {
                     m->vertProxy = m->verts;
                     m->invalidateLocalRadius();
@@ -402,12 +402,7 @@ void Scene::restoreState(const HistoryState& hs) {
                                 m->normals.data()
                             );
                         }
-                        m->octree.update(
-                            m->verts.data(), m->nbVerts,
-                            m->faces.data(), m->nbFaces,
-                            m->faceBoxes.data(),
-                            nullptr, -1
-                        );
+                        m->bvh.refitAll(*m);
                     } else {
                         m->postInit();
                     }

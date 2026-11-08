@@ -7,7 +7,7 @@
 #include <GLES3/gl3.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
-#include "mesh/Octree.h"
+#include "mesh/BVH.h"
 #include "mesh/Layer.h"
 #include "mesh/SubdivCache.h"
 #include "editing/Thickness.h"
@@ -101,8 +101,8 @@ public:
     bool isDynamicDirty = true;
     bool isDynamicTopologyBuilt = false;
 
-    // Octree
-    Octree octree;
+    // BVH
+    BVH bvh;
 
     // Layers
     LayerStack layerStack;
@@ -208,6 +208,7 @@ public:
     }
 
     void copyDataFrom(const Mesh& other) {
+        bvh.clear();
         isArmature = false;
         armatureGraph = nullptr;
         isTube = other.isTube;
@@ -300,24 +301,28 @@ public:
         double msTopology = 0.0;
         double msFaceNormals = 0.0;
         double msVertexNormals = 0.0;
-        double msOctree = 0.0;
+        double msBVH = 0.0;
         double msTotal = 0.0;
     };
     PostInitStats lastPostInitStats;
 
     void allocate(int nbV, int nbF, int nbRF, int nbRV);
-    void postInit(bool buildOctree = true, bool buildTopology = true);
-    void ensureOctreeBuilt();
+    void postInit(bool buildBVH = true, bool buildTopology = true);
+    void ensureBVHBuilt();
     void ensureTopologyBuilt();
     void updateAfterLayerBake();
 
     // Pointer getters for WASM / bindings
 
-
-    Octree* getOctree() {
-        ensureOctreeBuilt();
-        return &octree;
+    BVH* getBVH() {
+        ensureBVHBuilt();
+        return &bvh;
     }
+    const BVH* getBVH() const {
+        return &bvh;
+    }
+
+    bool raycast(const glm::vec3& origin, const glm::vec3& dir, RayHit& hit) const;
 
     void setDirty(bool dirty) { isDirty = dirty; }
     bool getDirty() const { return isDirty; }
@@ -378,7 +383,7 @@ public:
     void computeBbox(float* outBbox) const;
     float computeWorldStep(int resolution) const;
     void bakeScale();
-    void scaleFaceNormalsBoxesCentersAndOctree(float scaleX, float scaleY, float scaleZ);
+    void scaleFaceNormalsBoxesCentersAndBVH(float scaleX, float scaleY, float scaleZ);
 
 private:
     uint64_t m_vertsGeneration = 0;

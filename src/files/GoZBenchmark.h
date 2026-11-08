@@ -95,7 +95,7 @@ inline bool run(const std::string& customPath = "") {
                   << " | Groups: " << (infoQuads.hasGroups ? "YES" : "NO")
                   << " | Mask: " << (infoQuads.hasMask ? "YES" : "NO")
                   << " | Normals: " << (mQ->normals.size() == (size_t)mQ->nbVerts * 3 ? "VALID" : "INVALID")
-                  << " | Octree: " << (mQ->octree.root ? "BUILT" : "NONE")
+                  << " | BVH: " << (mQ->bvh.isBuilt() ? "BUILT" : "NONE")
                   << "\n";
 
         // Test 1b: ExportGoZ Binary Roundtrip Verification

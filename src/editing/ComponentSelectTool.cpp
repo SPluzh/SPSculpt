@@ -238,60 +238,14 @@ void ComponentSelectTool::updateHover(Scene& scene, const Camera& camera, float 
     glm::vec3 localRayOrigin = glm::vec3(invMatrix * glm::vec4(ray.origin, 1.0f));
     glm::vec3 localRayDir = glm::normalize(glm::vec3(invMatrix * glm::vec4(ray.dir, 0.0f)));
 
-    std::vector<uint32_t> candidateFaces = mesh->octree.collectIntersectRay(
-        localRayOrigin.x, localRayOrigin.y, localRayOrigin.z,
-        localRayDir.x, localRayDir.y, localRayDir.z
-    );
-
     float localMinT = std::numeric_limits<float>::infinity();
     uint32_t localFaceId = 0xffffffff;
 
-    auto testFace = [&](uint32_t faceId) {
-        if (faceId >= (uint32_t)mesh->nbFaces) return;
-        uint32_t v0Id = mesh->faces[faceId * 4];
-        uint32_t v1Id = mesh->faces[faceId * 4 + 1];
-        uint32_t v2Id = mesh->faces[faceId * 4 + 2];
-        uint32_t v3Id = mesh->faces[faceId * 4 + 3];
-
-        if (!mesh->faceVisible.empty() && !mesh->faceVisible[faceId]) return;
-        if (!mesh->vertVisible.empty()) {
-            if (v0Id >= (uint32_t)mesh->nbVerts || !mesh->vertVisible[v0Id]) return;
-            if (v1Id >= (uint32_t)mesh->nbVerts || !mesh->vertVisible[v1Id]) return;
-            if (v2Id >= (uint32_t)mesh->nbVerts || !mesh->vertVisible[v2Id]) return;
-            if (v3Id != 0xffffffff && (v3Id >= (uint32_t)mesh->nbVerts || !mesh->vertVisible[v3Id])) return;
-        }
-
-        glm::vec3 v0(mesh->verts[v0Id * 3], mesh->verts[v0Id * 3 + 1], mesh->verts[v0Id * 3 + 2]);
-        glm::vec3 v1(mesh->verts[v1Id * 3], mesh->verts[v1Id * 3 + 1], mesh->verts[v1Id * 3 + 2]);
-        glm::vec3 v2(mesh->verts[v2Id * 3], mesh->verts[v2Id * 3 + 1], mesh->verts[v2Id * 3 + 2]);
-
-        float t;
-        if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v1, v2, t)) {
-            if (t < localMinT) {
-                localMinT = t;
-                localFaceId = faceId;
-            }
-        }
-
-        if (v3Id != 0xffffffff) {
-            glm::vec3 v3(mesh->verts[v3Id * 3], mesh->verts[v3Id * 3 + 1], mesh->verts[v3Id * 3 + 2]);
-            if (rayTriangleIntersect(localRayOrigin, localRayDir, v0, v2, v3, t)) {
-                if (t < localMinT) {
-                    localMinT = t;
-                    localFaceId = faceId;
-                }
-            }
-        }
-    };
-
-    for (uint32_t faceId : candidateFaces) {
-        testFace(faceId);
-    }
-
-    if (localFaceId == 0xffffffff && mesh->nbFaces <= 4000) {
-        for (int f = 0; f < mesh->nbFaces; ++f) {
-            testFace((uint32_t)f);
-        }
+    mesh->ensureBVHBuilt();
+    RayHit hit;
+    if (mesh->bvh.raycast(*mesh, localRayOrigin, localRayDir, hit)) {
+        localMinT = hit.t;
+        localFaceId = hit.faceId;
     }
 
     ComponentMode mode = getSelectionManager().getMode();

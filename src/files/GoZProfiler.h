@@ -56,7 +56,7 @@ struct ProfileRecord {
     double meshAllocMoveMs = 0.0;
     double normalsComputationMs = 0.0;
     double bboxAndCleanupMs = 0.0;
-    double topologyOctreeCheckMs = 0.0;
+    double topologyBVHCheckMs = 0.0;
 
     // Phase IV: Scene
     double sceneReplaceMs = 0.0;

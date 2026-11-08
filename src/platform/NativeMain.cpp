@@ -22,7 +22,8 @@
 #include <ImGuizmo.h>
 
 #include "render/AngleRenderer.h"
-#include "mesh/Octree.h"
+#include "mesh/BVH.h"
+#include "mesh/BVHTest.h"
 #include "mesh/SculptBenchmark.h"
 #include "mesh/TrimClipBenchmark.h"
 #include "mesh/VoxelRemeshBenchmark.h"
@@ -345,6 +346,7 @@ int main(int argc, char* argv[]) {
     bool runGozBench = false;
     bool runBridgeBench = false;
     bool runGozProfile = false;
+    bool runBVHTest = false;
     std::string gozBenchPath = "";
     std::string gozProfilePath = "";
     int benchFaces = 4000000;
@@ -358,6 +360,9 @@ int main(int argc, char* argv[]) {
         for (int i = 1; i < numArgs; ++i) {
             std::string arg = wideToUtf8(szArgList[i]);
             if (arg == "--console" || arg == "-console" || arg == "-c" || arg == "--show-console") {
+                showConsole = true;
+            } else if (arg == "--test-bvh" || arg == "--bench-bvh") {
+                runBVHTest = true;
                 showConsole = true;
             } else if (arg == "--bench-bridge" || arg == "--bench-zbrush-bridge") {
                 runBridgeBench = true;
@@ -412,6 +417,9 @@ int main(int argc, char* argv[]) {
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--console" || arg == "-console" || arg == "-c" || arg == "--show-console") {
+            showConsole = true;
+        } else if (arg == "--test-bvh" || arg == "--bench-bvh") {
+            runBVHTest = true;
             showConsole = true;
         } else if (arg == "--bench-bridge" || arg == "--bench-zbrush-bridge") {
             runBridgeBench = true;
@@ -499,6 +507,17 @@ int main(int argc, char* argv[]) {
     sculpt_log_init();
 
     setvbuf(stdout, NULL, _IONBF, 0);
+    if (runBVHTest) {
+        bool success = BVHValidation::run();
+        fflush(stdout);
+        fflush(stderr);
+#ifdef _WIN32
+        ExitProcess(success ? 0 : 1);
+#else
+        _exit(success ? 0 : 1);
+#endif
+    }
+
     if (runBridgeBench) {
         bool success = ZBrushBridge::runZBrushBridgeBenchmark();
         fflush(stdout);
@@ -996,7 +1015,7 @@ int main(int argc, char* argv[]) {
                     pendingLiveSyncProfile.meshAllocMoveMs = parserStats.meshAllocMoveMs;
                     pendingLiveSyncProfile.normalsComputationMs = incomingMesh->lastPostInitStats.msFaceNormals + incomingMesh->lastPostInitStats.msVertexNormals;
                     pendingLiveSyncProfile.bboxAndCleanupMs = incomingMesh->lastPostInitStats.msBbox;
-                    pendingLiveSyncProfile.topologyOctreeCheckMs = incomingMesh->lastPostInitStats.msTopology + incomingMesh->lastPostInitStats.msOctree;
+                    pendingLiveSyncProfile.topologyBVHCheckMs = incomingMesh->lastPostInitStats.msTopology + incomingMesh->lastPostInitStats.msBVH;
                     pendingLiveSyncProfile.sceneReplaceMs = msScene;
 
                     tLiveSyncPipelineStart = watcherStats.detectTime.time_since_epoch().count() > 0 ? watcherStats.detectTime : tConsumed;

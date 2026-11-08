@@ -1975,61 +1975,13 @@ bool QuadDrawTool::isPointOccluded(const Scene& scene, const Camera& camera, con
             glm::vec3 localRayOrigin = glm::vec3(invMatrix * glm::vec4(camRay.origin, 1.0f));
             glm::vec3 localRayDir = glm::normalize(glm::vec3(invMatrix * glm::vec4(camRay.dir, 0.0f)));
 
-            std::vector<uint32_t> candidateFaces = m->octree.collectIntersectRay(
-                localRayOrigin.x, localRayOrigin.y, localRayOrigin.z,
-                localRayDir.x, localRayDir.y, localRayDir.z
-            );
-
-            auto rayTri = [](const glm::vec3& orig, const glm::vec3& dir, const glm::vec3& a, const glm::vec3& b, const glm::vec3& c, float& outT) -> bool {
-                glm::vec3 e1 = b - a;
-                glm::vec3 e2 = c - a;
-                glm::vec3 p = glm::cross(dir, e2);
-                float det = glm::dot(e1, p);
-                if (std::abs(det) < 1e-8f) return false;
-                float invDet = 1.0f / det;
-                glm::vec3 tvec = orig - a;
-                float u = glm::dot(tvec, p) * invDet;
-                if (u < 0.0f || u > 1.0f) return false;
-                glm::vec3 q = glm::cross(tvec, e1);
-                float v = glm::dot(dir, q) * invDet;
-                if (v < 0.0f || u + v > 1.0f) return false;
-                float t = glm::dot(e2, q) * invDet;
-                if (t < 1e-4f) return false;
-                outT = t;
-                return true;
-            };
-
-            for (uint32_t faceId : candidateFaces) {
-                if (faceId >= (uint32_t)m->nbFaces) continue;
-                uint32_t v0Id = m->faces[faceId * 4 + 0];
-                uint32_t v1Id = m->faces[faceId * 4 + 1];
-                uint32_t v2Id = m->faces[faceId * 4 + 2];
-                uint32_t v3Id = m->faces[faceId * 4 + 3];
-                if (v0Id >= (uint32_t)m->nbVerts || v1Id >= (uint32_t)m->nbVerts || v2Id >= (uint32_t)m->nbVerts) continue;
-
-                glm::vec3 v0(m->verts[v0Id * 3], m->verts[v0Id * 3 + 1], m->verts[v0Id * 3 + 2]);
-                glm::vec3 v1(m->verts[v1Id * 3], m->verts[v1Id * 3 + 1], m->verts[v1Id * 3 + 2]);
-                glm::vec3 v2(m->verts[v2Id * 3], m->verts[v2Id * 3 + 1], m->verts[v2Id * 3 + 2]);
-
-                float tHit = 0.0f;
-                if (rayTri(localRayOrigin, localRayDir, v0, v1, v2, tHit)) {
-                    glm::vec3 hitLocal = localRayOrigin + localRayDir * tHit;
-                    glm::vec3 hitWorld = glm::vec3(m->matrix * glm::vec4(hitLocal, 1.0f));
-                    glm::vec3 sHit = camera.project(hitWorld);
-                    if (sHit.z > 0.0f && sHit.z < screenPos.z - 0.003f) {
-                        return true;
-                    }
-                }
-                if (v3Id != 0xffffffff && v3Id < (uint32_t)m->nbVerts) {
-                    glm::vec3 v3(m->verts[v3Id * 3], m->verts[v3Id * 3 + 1], m->verts[v3Id * 3 + 2]);
-                    if (rayTri(localRayOrigin, localRayDir, v0, v2, v3, tHit)) {
-                        glm::vec3 hitLocal = localRayOrigin + localRayDir * tHit;
-                        glm::vec3 hitWorld = glm::vec3(m->matrix * glm::vec4(hitLocal, 1.0f));
-                        glm::vec3 sHit = camera.project(hitWorld);
-                        if (sHit.z > 0.0f && sHit.z < screenPos.z - 0.003f) {
-                            return true;
-                        }
-                    }
+            m->ensureBVHBuilt();
+            RayHit hit;
+            if (m->bvh.raycast(*m, localRayOrigin, localRayDir, hit)) {
+                glm::vec3 hitWorld = glm::vec3(m->matrix * glm::vec4(hit.position, 1.0f));
+                glm::vec3 sHit = camera.project(hitWorld);
+                if (sHit.z > 0.0f && sHit.z < screenPos.z - 0.003f) {
+                    return true;
                 }
             }
         }
