@@ -7499,7 +7499,16 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
                 if (hasCompSelection) {
                     auto tPI = std::chrono::high_resolution_clock::now();
-                    selectedMesh->vertProxy = selectedMesh->verts;
+                    if (selectedMesh->vertProxy.size() != selectedMesh->verts.size()) {
+                        selectedMesh->vertProxy.resize(selectedMesh->verts.size());
+                    }
+                    const float* srcV = selectedMesh->verts.data();
+                    float* dstV = selectedMesh->vertProxy.data();
+                    const size_t totalFloats = selectedMesh->verts.size();
+                    #pragma omp parallel for schedule(static) if(totalFloats > 8192)
+                    for (int64_t i = 0; i < (int64_t)totalFloats; ++i) {
+                        dstV[i] = srcV[i];
+                    }
                     selectedMesh->invalidateLocalRadius();
                     selectedMesh->bumpVertsGeneration();
                     if (!selectedMesh->faceNormals.empty() && !selectedMesh->faceBoxes.empty() && !selectedMesh->faceCenters.empty()) {
@@ -7561,7 +7570,16 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         selectedMesh->enMatrix = glm::mat3(1.0f);
 
                         auto tPI = std::chrono::high_resolution_clock::now();
-                        selectedMesh->vertProxy = selectedMesh->verts;
+                        if (selectedMesh->vertProxy.size() != selectedMesh->verts.size()) {
+                            selectedMesh->vertProxy.resize(selectedMesh->verts.size());
+                        }
+                        const float* srcV = selectedMesh->verts.data();
+                        float* dstV = selectedMesh->vertProxy.data();
+                        const size_t totalFloats = selectedMesh->verts.size();
+                        #pragma omp parallel for schedule(static) if(totalFloats > 8192)
+                        for (int64_t i = 0; i < (int64_t)totalFloats; ++i) {
+                            dstV[i] = srcV[i];
+                        }
                         selectedMesh->invalidateLocalRadius();
                         selectedMesh->bumpVertsGeneration();
                         if (!selectedMesh->faceNormals.empty() && !selectedMesh->faceBoxes.empty() && !selectedMesh->faceCenters.empty()) {
@@ -7598,7 +7616,16 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     selectedMesh->matrix = pivotStartMatrix;
 
                     auto tPI = std::chrono::high_resolution_clock::now();
-                    selectedMesh->vertProxy = selectedMesh->verts;
+                    if (selectedMesh->vertProxy.size() != selectedMesh->verts.size()) {
+                        selectedMesh->vertProxy.resize(selectedMesh->verts.size());
+                    }
+                    const float* srcV = selectedMesh->verts.data();
+                    float* dstV = selectedMesh->vertProxy.data();
+                    const size_t totalFloats = selectedMesh->verts.size();
+                    #pragma omp parallel for schedule(static) if(totalFloats > 8192)
+                    for (int64_t i = 0; i < (int64_t)totalFloats; ++i) {
+                        dstV[i] = srcV[i];
+                    }
                     selectedMesh->invalidateLocalRadius();
                     selectedMesh->bumpVertsGeneration();
 
@@ -7608,6 +7635,10 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     int maxThreads = omp_get_max_threads();
                     std::vector<std::vector<uint32_t>> threadVerts(maxThreads);
                     int nbVerts = selectedMesh->nbVerts;
+                    size_t estCount = (size_t)(nbVerts / maxThreads) + 1024;
+                    for (int t = 0; t < maxThreads; ++t) {
+                        threadVerts[t].reserve(estCount);
+                    }
                     #pragma omp parallel
                     {
                         int tid = omp_get_thread_num();

@@ -5441,63 +5441,6 @@ std::vector<uint32_t> SculptManager::getVerticesInLasso(Mesh* mesh, const Camera
         }
     }
 
-    // Fast screen AABB cull against BVH root
-    if (mesh->bvh.isBuilt()) {
-        float rootBox[6];
-        mesh->bvh.getRootAABB(rootBox);
-        auto checkAabbIntersect = [&](const glm::mat4& mat, const float* aabb) {
-            float minX = aabb[0], minY = aabb[1], minZ = aabb[2];
-            float maxX = aabb[3], maxY = aabb[4], maxZ = aabb[5];
-            glm::vec3 corners[8] = {
-                {minX, minY, minZ}, {maxX, minY, minZ},
-                {minX, maxY, minZ}, {maxX, maxY, minZ},
-                {minX, minY, maxZ}, {maxX, minY, maxZ},
-                {minX, maxY, maxZ}, {maxX, maxY, maxZ}
-            };
-            bool anyInFront = false;
-            float bMinX = std::numeric_limits<float>::max();
-            float bMaxX = -std::numeric_limits<float>::max();
-            float bMinY = std::numeric_limits<float>::max();
-            float bMaxY = -std::numeric_limits<float>::max();
-
-            for (int c = 0; c < 8; ++c) {
-                glm::vec4 clip = mat * glm::vec4(corners[c], 1.0f);
-                if (clip.w > 0.0f) {
-                    anyInFront = true;
-                    float invW = 1.0f / clip.w;
-                    float ndcX = clip.x * invW;
-                    float ndcY = clip.y * invW;
-                    if (is2D) {
-                        ndcX = ndcX * zoom2D + offX2D;
-                        ndcY = ndcY * zoom2D + offY2D;
-                    }
-                    float sx = (ndcX + 1.0f) * 0.5f * width;
-                    float sy = (1.0f - ndcY) * 0.5f * height;
-                    bMinX = std::min(bMinX, sx);
-                    bMaxX = std::max(bMaxX, sx);
-                    bMinY = std::min(bMinY, sy);
-                    bMaxY = std::max(bMaxY, sy);
-                }
-            }
-            if (!anyInFront) return false;
-            return !(bMaxX < lassoMinX || bMinX > lassoMaxX || bMaxY < lassoMinY || bMinY > lassoMaxY);
-        };
-
-        bool mayIntersect = checkAabbIntersect(mvp, rootBox);
-        if (!mayIntersect) {
-            for (const auto& csm : cachedSymMatrices) {
-                if (checkAabbIntersect(csm.symMvp, rootBox)) {
-                    mayIntersect = true;
-                    break;
-                }
-            }
-        }
-        if (!mayIntersect) {
-            sculpt_log("[getVerticesInLasso] Mesh AABB culled outside lasso screen bounds in 0.00 ms\n");
-            return {};
-        }
-    }
-
     float m00 = mvp[0][0], m10 = mvp[1][0], m20 = mvp[2][0], m30 = mvp[3][0];
     float m01 = mvp[0][1], m11 = mvp[1][1], m21 = mvp[2][1], m31 = mvp[3][1];
     float m03 = mvp[0][3], m13 = mvp[1][3], m23 = mvp[2][3], m33 = mvp[3][3];
@@ -5525,6 +5468,97 @@ std::vector<uint32_t> SculptManager::getVerticesInLasso(Mesh* mesh, const Camera
     size_t numSym = cachedSymCoeffs.size();
     const CachedSymCoeffs* symCoeffsData = cachedSymCoeffs.data();
 
+    struct FrustumPlane {
+        float a, b, c, d;
+    };
+    auto makeFrustum = [&](const glm::mat4& m, float nMinX, float nMaxX, float nMinY, float nMaxY) {
+        std::array<FrustumPlane, 5> p;
+        float r00 = m[0][0], r10 = m[1][0], r20 = m[2][0], r30 = m[3][0];
+        float r01 = m[0][1], r11 = m[1][1], r21 = m[2][1], r31 = m[3][1];
+        float r03 = m[0][3], r13 = m[1][3], r23 = m[2][3], r33 = m[3][3];
+        p[0] = { r00 - nMinX * r03, r10 - nMinX * r13, r20 - nMinX * r23, r30 - nMinX * r33 };
+        p[1] = { nMaxX * r03 - r00, nMaxX * r13 - r10, nMaxX * r23 - r20, nMaxX * r33 - r30 };
+        p[2] = { r01 - nMinY * r03, r11 - nMinY * r13, r21 - nMinY * r23, r31 - nMinY * r33 };
+        p[3] = { nMaxY * r03 - r01, nMaxY * r13 - r11, nMaxY * r23 - r21, nMaxY * r33 - r31 };
+        p[4] = { r03, r13, r23, r33 };
+        return p;
+    };
+
+    auto testAabbFrustum = [](const std::array<FrustumPlane, 5>& planes, const glm::vec3& bMin, const glm::vec3& bMax) -> bool {
+        for (int i = 0; i < 5; ++i) {
+            const auto& pl = planes[i];
+            float px = (pl.a >= 0.0f) ? bMax.x : bMin.x;
+            float py = (pl.b >= 0.0f) ? bMax.y : bMin.y;
+            float pz = (pl.c >= 0.0f) ? bMax.z : bMin.z;
+            if (pl.a * px + pl.b * py + pl.c * pz + pl.d < 0.0f) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    std::array<FrustumPlane, 5> primaryFrustum = makeFrustum(mvp, ndcMinX, ndcMaxX, ndcMinY, ndcMaxY);
+    std::vector<std::array<FrustumPlane, 5>> symFrustums;
+    if (numSym > 0) {
+        symFrustums.reserve(numSym);
+        for (const auto& csm : cachedSymMatrices) {
+            symFrustums.push_back(makeFrustum(csm.symMvp, ndcMinX, ndcMaxX, ndcMinY, ndcMaxY));
+        }
+    }
+
+    std::vector<uint32_t> candidateLeaves;
+    bool useCandidateLeaves = false;
+
+    if (mesh->bvh.isBuilt()) {
+        const auto& nodes = mesh->bvh.nodes();
+        bool rootIntersects = testAabbFrustum(primaryFrustum, nodes[0].aabbMin, nodes[0].aabbMax);
+        if (!rootIntersects && numSym > 0) {
+            for (const auto& sf : symFrustums) {
+                if (testAabbFrustum(sf, nodes[0].aabbMin, nodes[0].aabbMax)) {
+                    rootIntersects = true;
+                    break;
+                }
+            }
+        }
+        if (!rootIntersects) {
+            sculpt_log("[getVerticesInLasso] Mesh AABB culled outside lasso screen bounds in 0.00 ms\n");
+            return {};
+        }
+
+        candidateLeaves.reserve(mesh->bvh.leafCount());
+        uint32_t nodeStack[128];
+        int stackTop = 0;
+        nodeStack[stackTop++] = 0;
+
+        while (stackTop > 0) {
+            uint32_t nodeIdx = nodeStack[--stackTop];
+            const BVHNode& node = nodes[nodeIdx];
+            bool inFrustum = testAabbFrustum(primaryFrustum, node.aabbMin, node.aabbMax);
+            if (!inFrustum && numSym > 0) {
+                for (const auto& sf : symFrustums) {
+                    if (testAabbFrustum(sf, node.aabbMin, node.aabbMax)) {
+                        inFrustum = true;
+                        break;
+                    }
+                }
+            }
+            if (!inFrustum) continue;
+
+            if (node.isLeaf()) {
+                candidateLeaves.push_back(nodeIdx);
+            } else {
+                nodeStack[stackTop++] = node.firstIndex;
+                nodeStack[stackTop++] = node.firstIndex + 1;
+            }
+        }
+
+        size_t totalLeaves = mesh->bvh.leafCount();
+        float candRatio = totalLeaves > 0 ? ((float)candidateLeaves.size() / (float)totalLeaves) : 1.0f;
+        if (candRatio < 0.65f && !candidateLeaves.empty()) {
+            useCandidateLeaves = true;
+        }
+    }
+
     int maxThreads = omp_get_max_threads();
     static std::vector<std::vector<uint32_t>> s_threadSelected;
     if ((int)s_threadSelected.size() < maxThreads) {
@@ -5540,66 +5574,162 @@ std::vector<uint32_t> SculptManager::getVerticesInLasso(Mesh* mesh, const Camera
 
     const uint8_t* vVis = mesh->vertVisible.empty() ? nullptr : mesh->vertVisible.data();
 
-    #pragma omp parallel
-    {
-        int tid = omp_get_thread_num();
-        uint32_t* outPtr = s_threadSelected[tid].data();
-        size_t localCount = 0;
+    if (useCandidateLeaves) {
+        if (m_vertTagFlags.size() < (size_t)nbVerts) {
+            m_vertTagFlags.assign(nbVerts, uint8_t(0));
+            m_vertTagEpoch = 0;
+        }
+        m_vertTagEpoch++;
+        if (m_vertTagEpoch == 0) {
+            std::fill(m_vertTagFlags.begin(), m_vertTagFlags.end(), uint8_t(0));
+            m_vertTagEpoch = 1;
+        }
+        uint8_t curEpoch = m_vertTagEpoch;
+        uint8_t* tagData = m_vertTagFlags.data();
 
-        #pragma omp for schedule(static)
-        for (int i = 0; i < nbVerts; ++i) {
-            if (vVis && !vVis[i]) continue;
+        const auto& nodes = mesh->bvh.nodes();
+        const uint32_t* primIndices = mesh->bvh.primitiveIndices().data();
+        const uint32_t* faces = mesh->faces.data();
+        size_t numCand = candidateLeaves.size();
 
-            int ind = i * 3;
-            float px = verts[ind + 0], py = verts[ind + 1], pz = verts[ind + 2];
+        #pragma omp parallel
+        {
+            int tid = omp_get_thread_num();
+            uint32_t* outPtr = s_threadSelected[tid].data();
+            size_t localCount = 0;
 
-            // 1. Primary vertex screen-space check
-            float clipX = m00 * px + m10 * py + m20 * pz + m30;
-            float clipY = m01 * px + m11 * py + m21 * pz + m31;
-            float w     = m03 * px + m13 * py + m23 * pz + m33;
-            bool isInside = false;
+            #pragma omp for schedule(dynamic, 64)
+            for (int64_t l = 0; l < (int64_t)numCand; ++l) {
+                const BVHNode& leaf = nodes[candidateLeaves[l]];
+                for (uint32_t f = 0; f < leaf.count; ++f) {
+                    uint32_t faceId = primIndices[leaf.firstIndex + f];
+                    const uint32_t* fv = faces + (faceId << 2);
+                    for (int k = 0; k < 4; ++k) {
+                        uint32_t v = fv[k];
+                        if (v == 0xFFFFFFFF || v >= (uint32_t)nbVerts) continue;
+                        std::atomic_ref<uint8_t> ref(tagData[v]);
+                        if (ref.exchange(curEpoch, std::memory_order_relaxed) == curEpoch) continue;
 
-            if (w > 0.0f &&
-                clipX >= ndcMinX * w && clipX <= ndcMaxX * w &&
-                clipY >= ndcMinY * w && clipY <= ndcMaxY * w) {
-                float invW = 1.0f / w;
-                float screenX = clipX * (invW * sxScale) + sxBias;
-                float screenY = clipY * (invW * syScale) + syBias;
+                        if (vVis && !vVis[v]) continue;
 
-                if (isPointInPolygonFast(screenX, screenY, edgeData, numEdges)) {
-                    isInside = true;
-                }
-            }
+                        int ind = v * 3;
+                        float px = verts[ind + 0], py = verts[ind + 1], pz = verts[ind + 2];
 
-            // 2. Reflected symmetry check (if primary was not inside)
-            if (!isInside && numSym > 0) {
-                for (size_t s = 0; s < numSym; ++s) {
-                    const auto& csc = symCoeffsData[s];
-                    float symClipX = csc.sm00 * px + csc.sm10 * py + csc.sm20 * pz + csc.sm30;
-                    float symClipY = csc.sm01 * px + csc.sm11 * py + csc.sm21 * pz + csc.sm31;
-                    float sw       = csc.sm03 * px + csc.sm13 * py + csc.sm23 * pz + csc.sm33;
+                        float w = m03 * px + m13 * py + m23 * pz + m33;
+                        bool isInside = false;
 
-                    if (sw > 0.0f &&
-                        symClipX >= ndcMinX * sw && symClipX <= ndcMaxX * sw &&
-                        symClipY >= ndcMinY * sw && symClipY <= ndcMaxY * sw) {
-                        float invSw = 1.0f / sw;
-                        float screenX = symClipX * (invSw * sxScale) + sxBias;
-                        float screenY = symClipY * (invSw * syScale) + syBias;
+                        if (w > 0.0f) {
+                            float clipX = m00 * px + m10 * py + m20 * pz + m30;
+                            if (clipX >= ndcMinX * w && clipX <= ndcMaxX * w) {
+                                float clipY = m01 * px + m11 * py + m21 * pz + m31;
+                                if (clipY >= ndcMinY * w && clipY <= ndcMaxY * w) {
+                                    float invW = 1.0f / w;
+                                    float screenX = clipX * (invW * sxScale) + sxBias;
+                                    float screenY = clipY * (invW * syScale) + syBias;
 
-                        if (isPointInPolygonFast(screenX, screenY, edgeData, numEdges)) {
-                            isInside = true;
-                            break;
+                                    if (isPointInPolygonFast(screenX, screenY, edgeData, numEdges)) {
+                                        isInside = true;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (!isInside && numSym > 0) {
+                            for (size_t s = 0; s < numSym; ++s) {
+                                const auto& csc = symCoeffsData[s];
+                                float sw = csc.sm03 * px + csc.sm13 * py + csc.sm23 * pz + csc.sm33;
+                                if (sw > 0.0f) {
+                                    float symClipX = csc.sm00 * px + csc.sm10 * py + csc.sm20 * pz + csc.sm30;
+                                    if (symClipX >= ndcMinX * sw && symClipX <= ndcMaxX * sw) {
+                                        float symClipY = csc.sm01 * px + csc.sm11 * py + csc.sm21 * pz + csc.sm31;
+                                        if (symClipY >= ndcMinY * sw && symClipY <= ndcMaxY * sw) {
+                                            float invSw = 1.0f / sw;
+                                            float screenX = symClipX * (invSw * sxScale) + sxBias;
+                                            float screenY = symClipY * (invSw * syScale) + syBias;
+
+                                            if (isPointInPolygonFast(screenX, screenY, edgeData, numEdges)) {
+                                                isInside = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (isInside) {
+                            outPtr[localCount++] = v;
                         }
                     }
                 }
             }
-
-            if (isInside) {
-                outPtr[localCount++] = (uint32_t)i;
-            }
+            s_threadSelected[tid].resize(localCount);
         }
+    } else {
+        #pragma omp parallel
+        {
+            int tid = omp_get_thread_num();
+            uint32_t* outPtr = s_threadSelected[tid].data();
+            size_t localCount = 0;
 
-        s_threadSelected[tid].resize(localCount);
+            #pragma omp for schedule(static)
+            for (int i = 0; i < nbVerts; ++i) {
+                if (i + 16 < nbVerts) {
+                    __builtin_prefetch(&verts[(i + 16) * 3], 0, 1);
+                }
+                if (vVis && !vVis[i]) continue;
+
+                int ind = i * 3;
+                float px = verts[ind + 0], py = verts[ind + 1], pz = verts[ind + 2];
+
+                float w = m03 * px + m13 * py + m23 * pz + m33;
+                bool isInside = false;
+
+                if (w > 0.0f) {
+                    float clipX = m00 * px + m10 * py + m20 * pz + m30;
+                    if (clipX >= ndcMinX * w && clipX <= ndcMaxX * w) {
+                        float clipY = m01 * px + m11 * py + m21 * pz + m31;
+                        if (clipY >= ndcMinY * w && clipY <= ndcMaxY * w) {
+                            float invW = 1.0f / w;
+                            float screenX = clipX * (invW * sxScale) + sxBias;
+                            float screenY = clipY * (invW * syScale) + syBias;
+
+                            if (isPointInPolygonFast(screenX, screenY, edgeData, numEdges)) {
+                                isInside = true;
+                            }
+                        }
+                    }
+                }
+
+                if (!isInside && numSym > 0) {
+                    for (size_t s = 0; s < numSym; ++s) {
+                        const auto& csc = symCoeffsData[s];
+                        float sw = csc.sm03 * px + csc.sm13 * py + csc.sm23 * pz + csc.sm33;
+                        if (sw > 0.0f) {
+                            float symClipX = csc.sm00 * px + csc.sm10 * py + csc.sm20 * pz + csc.sm30;
+                            if (symClipX >= ndcMinX * sw && symClipX <= ndcMaxX * sw) {
+                                float symClipY = csc.sm01 * px + csc.sm11 * py + csc.sm21 * pz + csc.sm31;
+                                if (symClipY >= ndcMinY * sw && symClipY <= ndcMaxY * sw) {
+                                    float invSw = 1.0f / sw;
+                                    float screenX = symClipX * (invSw * sxScale) + sxBias;
+                                    float screenY = symClipY * (invSw * syScale) + syBias;
+
+                                    if (isPointInPolygonFast(screenX, screenY, edgeData, numEdges)) {
+                                        isInside = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (isInside) {
+                    outPtr[localCount++] = (uint32_t)i;
+                }
+            }
+            s_threadSelected[tid].resize(localCount);
+        }
     }
     auto tScanDone = std::chrono::high_resolution_clock::now();
 

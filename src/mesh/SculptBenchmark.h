@@ -1095,7 +1095,13 @@ inline bool run(int targetFaces = 4000000) {
         if (mesh.vertProxy.size() != mesh.verts.size()) {
             mesh.vertProxy.resize(mesh.verts.size());
         }
-        std::copy(mesh.verts.begin(), mesh.verts.end(), mesh.vertProxy.begin());
+        const float* srcInitV = mesh.verts.data();
+        float* dstInitV = mesh.vertProxy.data();
+        const size_t totalInitFloats = mesh.verts.size();
+        #pragma omp parallel for schedule(static) if(totalInitFloats > 8192)
+        for (int64_t i = 0; i < (int64_t)totalInitFloats; ++i) {
+            dstInitV[i] = srcInitV[i];
+        }
         const float* transformStartVerts = mesh.vertProxy.data();
         auto tInitEnd = std::chrono::high_resolution_clock::now();
         double step0Ms = std::chrono::duration<double, std::milli>(tInitEnd - tInitStart).count();
@@ -1147,6 +1153,10 @@ inline bool run(int targetFaces = 4000000) {
         auto tDetect0 = std::chrono::high_resolution_clock::now();
         int maxThreads = omp_get_max_threads();
         std::vector<std::vector<uint32_t>> threadVerts(maxThreads);
+        size_t estCount = (size_t)(nbVerts / maxThreads) + 1024;
+        for (int t = 0; t < maxThreads; ++t) {
+            threadVerts[t].reserve(estCount);
+        }
         #pragma omp parallel
         {
             int tid = omp_get_thread_num();
@@ -1195,7 +1205,16 @@ inline bool run(int targetFaces = 4000000) {
             sAfter[i3 + 2]  = curVertsPtr[v3 + 2];
         }
         auto tSparseEnd = std::chrono::high_resolution_clock::now();
-        std::copy(mesh.verts.begin(), mesh.verts.end(), mesh.vertProxy.begin());
+        if (mesh.vertProxy.size() != mesh.verts.size()) {
+            mesh.vertProxy.resize(mesh.verts.size());
+        }
+        const float* srcFinV = mesh.verts.data();
+        float* dstFinV = mesh.vertProxy.data();
+        const size_t totalFinFloats = mesh.verts.size();
+        #pragma omp parallel for schedule(static) if(totalFinFloats > 8192)
+        for (int64_t i = 0; i < (int64_t)totalFinFloats; ++i) {
+            dstFinV[i] = srcFinV[i];
+        }
         auto tProxyEnd = std::chrono::high_resolution_clock::now();
 
         // Incremental face lookup for affected faces
