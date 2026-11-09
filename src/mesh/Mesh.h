@@ -132,6 +132,7 @@ public:
         return ++g_tagFlag;
     }
     bool hasOnlyTriangles() const;
+    void triangulateQuads();
     int getNbEdges() const { return nbEdges; }
     int getNbQuads() const;
     int getNbTriangles() const;
@@ -184,6 +185,7 @@ public:
     void setSymmetryOffset(float val) { symmetryOffset = val; }
 
     float computeLocalRadius() const;
+    float computeBBoxDiagonal() const { return computeLocalRadius() * 2.0f; }
     void invalidateLocalRadius() const { m_localRadiusDirty = true; }
     glm::vec3 getSymmetryOriginForAxis(int axisIndex, SymmetryMode mode) const;
     glm::vec3 getSymmetryNormalForAxis(int axisIndex, SymmetryMode mode) const;

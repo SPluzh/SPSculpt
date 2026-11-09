@@ -43,6 +43,57 @@ bool Mesh::hasOnlyTriangles() const {
     return true;
 }
 
+void Mesh::triangulateQuads() {
+    if (hasOnlyTriangles()) return;
+    int origNbFaces = nbFaces;
+    std::vector<uint32_t> newFaces;
+    newFaces.reserve(nbFaces * 8);
+    std::vector<uint32_t> newFaceGroups;
+    bool hasFg = !faceGroups.empty();
+    if (hasFg) newFaceGroups.reserve(nbFaces * 2);
+
+    for (int i = 0; i < origNbFaces; ++i) {
+        uint32_t v0 = faces[i * 4 + 0];
+        uint32_t v1 = faces[i * 4 + 1];
+        uint32_t v2 = faces[i * 4 + 2];
+        uint32_t v3 = faces[i * 4 + 3];
+        uint32_t fg = hasFg ? faceGroups[i] : 0;
+
+        newFaces.push_back(v0);
+        newFaces.push_back(v1);
+        newFaces.push_back(v2);
+        newFaces.push_back(TRI_INDEX);
+        if (hasFg) newFaceGroups.push_back(fg);
+
+        if (v3 != TRI_INDEX) {
+            newFaces.push_back(v0);
+            newFaces.push_back(v2);
+            newFaces.push_back(v3);
+            newFaces.push_back(TRI_INDEX);
+            if (hasFg) newFaceGroups.push_back(fg);
+        }
+    }
+    faces = std::move(newFaces);
+    if (hasFg) faceGroups = std::move(newFaceGroups);
+    nbFaces = (int)(faces.size() / 4);
+    if (!faceVisible.empty()) faceVisible.assign(nbFaces, 1);
+    faceNormals.resize(nbFaces * 3, 0.0f);
+    faceBoxes.resize(nbFaces * 6, 0.0f);
+    faceCenters.resize(nbFaces * 3, 0.0f);
+    updateFaceNormalsAndBoxes(
+        verts.data(), nbVerts,
+        faces.data(), nbFaces,
+        nullptr, -1,
+        faceNormals.data(),
+        faceBoxes.data(),
+        faceCenters.data()
+    );
+    initTopology();
+    bvh.build(*this);
+    isTopologyDirty = true;
+    isDirty = true;
+}
+
 int Mesh::getNbQuads() const {
     int quads = 0;
     for (int i = 0; i < nbFaces; ++i) {
@@ -114,7 +165,7 @@ void Mesh::initEdges() {
             for (int k = 0; k < numE; ++k) {
                 uint32_t va = faces[id + k];
                 uint32_t vb = faces[id + ((k + 1) % numE)];
-                if (va >= (uint32_t)nbVerts || vb >= (uint32_t)nbVerts) continue;
+                if (va >= (uint32_t)nbVerts || vb >= (uint32_t)nbVerts || va == vb) continue;
 
                 uint32_t mn = std::min(va, vb);
                 uint32_t mx = std::max(va, vb);

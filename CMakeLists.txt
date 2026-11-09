@@ -141,6 +141,7 @@ add_executable(SPSculpt
     src/mesh/Topology.cpp
     src/mesh/Layer.cpp
     src/mesh/Decimation.cpp
+    src/mesh/dynamic/DynamicTopology.cpp
     # sculpt algorithms
     src/sculpt/SculptEngine.cpp
     src/sculpt/Remesh.cpp
@@ -227,7 +228,7 @@ add_executable(SPSculpt
 if(WIN32)
     set_target_properties(SPSculpt PROPERTIES WIN32_EXECUTABLE TRUE OUTPUT_NAME "SPSculpt")
     target_sources(SPSculpt PRIVATE resources/app.rc)
-    target_link_libraries(SPSculpt PRIVATE comdlg32 psapi)
+    target_link_libraries(SPSculpt PRIVATE comdlg32 psapi dbghelp)
 endif()
 
 if(TARGET SDL2::SDL2)
@@ -269,6 +270,16 @@ add_custom_command(
         $<TARGET_FILE_DIR:SPSculpt>/resources
     COMMENT "Copying resources to binary output directory"
 )
+
+if(EXISTS "${CMAKE_SOURCE_DIR}/_build_/dist")
+    add_custom_command(
+        TARGET SPSculpt POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:SPSculpt>
+            "${CMAKE_SOURCE_DIR}/_build_/dist/SPSculpt.exe"
+        COMMENT "Auto-syncing SPSculpt.exe to dist directory"
+    )
+endif()
 
 if(UNIX AND NOT APPLE)
     add_custom_command(

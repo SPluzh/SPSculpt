@@ -60,6 +60,7 @@
 #include "zbrush_bridge/ZBrushBridgeBenchmark.h"
 #include "stb_image.h"
 #include "editing/PrimitiveTool.h"
+#include "mesh/dynamic/DynamicTopologyTest.h"
 #include <cctype>
 #ifndef _WIN32
 #include <unistd.h>
@@ -109,6 +110,74 @@ static void setAppWindowIcon(SDL_Window* window, const char* iconPath) {
 #include <io.h>
 #include <fcntl.h>
 #include <SDL2/SDL_syswm.h>
+#include <dbghelp.h>
+
+static void printBacktrace(CONTEXT* pCtx = nullptr) {
+    HANDLE process = GetCurrentProcess();
+    HANDLE thread = GetCurrentThread();
+
+    SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
+    SymInitialize(process, NULL, TRUE);
+
+    CONTEXT ctx;
+    if (pCtx) {
+        ctx = *pCtx;
+    } else {
+        RtlCaptureContext(&ctx);
+    }
+
+    STACKFRAME64 sf;
+    std::memset(&sf, 0, sizeof(sf));
+    DWORD machine = IMAGE_FILE_MACHINE_AMD64;
+#if defined(_M_X64) || defined(__x86_64__)
+    machine = IMAGE_FILE_MACHINE_AMD64;
+    sf.AddrPC.Offset = ctx.Rip;
+    sf.AddrPC.Mode = AddrModeFlat;
+    sf.AddrFrame.Offset = ctx.Rbp;
+    sf.AddrFrame.Mode = AddrModeFlat;
+    sf.AddrStack.Offset = ctx.Rsp;
+    sf.AddrStack.Mode = AddrModeFlat;
+#elif defined(_M_IX86) || defined(__i386__)
+    machine = IMAGE_FILE_MACHINE_I386;
+    sf.AddrPC.Offset = ctx.Eip;
+    sf.AddrPC.Mode = AddrModeFlat;
+    sf.AddrFrame.Offset = ctx.Ebp;
+    sf.AddrFrame.Mode = AddrModeFlat;
+    sf.AddrStack.Offset = ctx.Esp;
+    sf.AddrStack.Mode = AddrModeFlat;
+#endif
+
+    alignas(IMAGEHLP_SYMBOL64) char symBuf[sizeof(IMAGEHLP_SYMBOL64) + 256];
+    PIMAGEHLP_SYMBOL64 symbol = (PIMAGEHLP_SYMBOL64)symBuf;
+    symbol->SizeOfStruct = sizeof(IMAGEHLP_SYMBOL64);
+    symbol->MaxNameLength = 255;
+
+    IMAGEHLP_LINE64 line;
+    std::memset(&line, 0, sizeof(line));
+    line.SizeOfStruct = sizeof(IMAGEHLP_LINE64);
+
+    sculpt_log("--- Call Stack ---\n");
+    for (int frame = 0; frame < 32; ++frame) {
+        if (!StackWalk64(machine, process, thread, &sf, &ctx,
+                         NULL, SymFunctionTableAccess64, SymGetModuleBase64, NULL)) {
+            break;
+        }
+        if (sf.AddrPC.Offset == 0) break;
+
+        DWORD64 displacement = 0;
+        DWORD lineDisp = 0;
+        const char* name = "(unknown)";
+        if (SymGetSymFromAddr64(process, sf.AddrPC.Offset, &displacement, symbol)) {
+            name = symbol->Name;
+        }
+
+        if (SymGetLineFromAddr64(process, sf.AddrPC.Offset, &lineDisp, &line)) {
+            sculpt_log("  [%02d] %s (0x%p) [%s:%lu]\n", frame, name, (void*)sf.AddrPC.Offset, line.FileName, line.LineNumber);
+        } else {
+            sculpt_log("  [%02d] %s (0x%p)\n", frame, name, (void*)sf.AddrPC.Offset);
+        }
+    }
+}
 
 LONG WINAPI windowsExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo) {
     DWORD code = ExceptionInfo->ExceptionRecord->ExceptionCode;
@@ -124,6 +193,7 @@ LONG WINAPI windowsExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo) {
         const char* opStr = (op == 0) ? "Read" : (op == 1 ? "Write" : (op == 8 ? "Execute" : "Unknown"));
         sculpt_log("[CRITICAL ERROR] Access Violation: %s access on memory address %p\n", opStr, (void*)targetAddr);
     }
+    printBacktrace(ExceptionInfo ? ExceptionInfo->ContextRecord : nullptr);
     sculpt_log("=============================================\n");
     system("pause");
     return EXCEPTION_EXECUTE_HANDLER;
@@ -232,6 +302,9 @@ void crashHandler(int signum) {
         case SIGTERM: sigName = "SIGTERM (Termination Request)"; break;
     }
     sculpt_log("[CRITICAL ERROR] Application crashed! Signal: %d (%s)\n", signum, sigName);
+#ifdef _WIN32
+    printBacktrace(nullptr);
+#endif
     sculpt_log("=============================================\n");
     #ifdef _WIN32
     system("pause");
@@ -347,6 +420,8 @@ int main(int argc, char* argv[]) {
     bool runBridgeBench = false;
     bool runGozProfile = false;
     bool runBVHTest = false;
+    bool runDyntopoTest = false;
+    bool runDyntopoBench = false;
     std::string gozBenchPath = "";
     std::string gozProfilePath = "";
     int benchFaces = 4000000;
@@ -363,6 +438,12 @@ int main(int argc, char* argv[]) {
                 showConsole = true;
             } else if (arg == "--test-bvh" || arg == "--bench-bvh") {
                 runBVHTest = true;
+                showConsole = true;
+            } else if (arg == "--test-dyntopo" || arg == "--test-dynamic-topology") {
+                runDyntopoTest = true;
+                showConsole = true;
+            } else if (arg == "--bench-dyntopo" || arg == "--bench-dynamic-topology") {
+                runDyntopoBench = true;
                 showConsole = true;
             } else if (arg == "--bench-bridge" || arg == "--bench-zbrush-bridge") {
                 runBridgeBench = true;
@@ -420,6 +501,12 @@ int main(int argc, char* argv[]) {
             showConsole = true;
         } else if (arg == "--test-bvh" || arg == "--bench-bvh") {
             runBVHTest = true;
+            showConsole = true;
+        } else if (arg == "--test-dyntopo" || arg == "--test-dynamic-topology") {
+            runDyntopoTest = true;
+            showConsole = true;
+        } else if (arg == "--bench-dyntopo" || arg == "--bench-dynamic-topology") {
+            runDyntopoBench = true;
             showConsole = true;
         } else if (arg == "--bench-bridge" || arg == "--bench-zbrush-bridge") {
             runBridgeBench = true;
@@ -507,6 +594,28 @@ int main(int argc, char* argv[]) {
     sculpt_log_init();
 
     setvbuf(stdout, NULL, _IONBF, 0);
+    if (runDyntopoTest) {
+        bool success = dynamic::DynamicTopologyTest::runAllTests();
+        fflush(stdout);
+        fflush(stderr);
+#ifdef _WIN32
+        ExitProcess(success ? 0 : 1);
+#else
+        _exit(success ? 0 : 1);
+#endif
+    }
+
+    if (runDyntopoBench) {
+        bool success = dynamic::DynamicTopologyTest::runBenchmark100Strokes();
+        fflush(stdout);
+        fflush(stderr);
+#ifdef _WIN32
+        ExitProcess(success ? 0 : 1);
+#else
+        _exit(success ? 0 : 1);
+#endif
+    }
+
     if (runBVHTest) {
         bool success = BVHValidation::run();
         fflush(stdout);

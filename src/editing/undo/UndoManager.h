@@ -2,6 +2,7 @@
 #include "UndoEntry.h"
 #include "SculptUndoEntry.h"
 #include "TopologyUndoEntry.h"
+#include "DynamicTopologyUndoEntry.h"
 #include "SceneMetaUndoEntry.h"
 #include "TransformUndoEntry.h"
 #include "MeasurementUndoEntry.h"
@@ -46,6 +47,7 @@ public:
 
     void endSculptStroke(Scene& scene);
     void cancelSculptStroke();
+    bool hasActiveSculptStroke() const { return m_activeSculptEntry != nullptr; }
 
     // Helper for direct/atomic sculpt operations
     void pushSculptOperation(Scene& scene,
@@ -63,6 +65,11 @@ public:
                             const std::string& description,
                             HistoryState beforeState,
                             HistoryState afterState);
+
+    void pushDynamicTopologyStroke(Scene& scene,
+                                   uint32_t meshId,
+                                   std::unique_ptr<dynamic::TopologyUndo> record,
+                                   const std::string& description = "Dynamic Topology");
 
     // --- API for scene meta changes ---
     void pushMetaChange(Scene& scene,

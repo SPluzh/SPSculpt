@@ -12,6 +12,8 @@
 #include "brushes/BrushPreset.h"
 #include "editing/PolyGroupTool.h"
 #include "sculpt/RelaxEngine.h"
+#include "mesh/dynamic/DyntopoSettings.h"
+#include "mesh/dynamic/DynamicTopology.h"
 
 class ArmatureTool;
 class PoseTool;
@@ -199,6 +201,11 @@ struct BrushSettings {
     bool useDynamicTopology = false;
     float subdivFactor = 1.0f;
     float decimFactor = 1.0f;
+
+    // Dynamic Topology Tool settings
+    float topologyEdgeSize = 0.02f;  // Target edge length for BRUSH_DYNAMIC_TOPOLOGY (world units)
+    float topologySmoothness = 0.5f; // Remesh smoothness
+    bool autoWireframe = true;       // Automatically show wireframe while sculpting with dyntopo / topology tool
     bool pressureIntensity = false;
     bool pressureRadius = false;
     bool useGlobalPressure = false;
@@ -245,6 +252,12 @@ private:
     AngleRenderer* m_renderer = nullptr;
     BrushType m_currentBrush = BRUSH_MOVE;
     BrushSettings m_brushSettings[64]; // Safe buffer to support all brushes including BRUSH_RELAX
+
+    dynamic::DyntopoSettings m_dyntopoSettings;
+    std::unique_ptr<dynamic::DynamicTopology> m_dyntopo;
+    bool m_prevWireframeState = false;
+    bool m_autoWireframeActive = false;
+    bool m_pickMeshSizeActive = false;
 
     RelaxEngine m_relaxEngine;
 
@@ -333,6 +346,17 @@ public:
     const BrushSettings& getCurrentSettings() const { return m_brushSettings[m_currentBrush]; }
     BrushSettings& getSettings(BrushType type) { return m_brushSettings[type]; }
     const BrushSettings& getSettings(BrushType type) const { return m_brushSettings[type]; }
+
+    dynamic::DyntopoSettings& getDyntopoSettings() { return m_dyntopoSettings; }
+    const dynamic::DyntopoSettings& getDyntopoSettings() const { return m_dyntopoSettings; }
+    dynamic::DynamicTopology* getDyntopo() const { return m_dyntopo.get(); }
+    void setDyntopoEnabled(bool enabled) { m_dyntopoSettings.enabled = enabled; }
+    bool isDyntopoEnabled() const { return m_dyntopoSettings.enabled; }
+    void toggleDyntopo() { m_dyntopoSettings.enabled = !m_dyntopoSettings.enabled; }
+    bool pickMeshSize(Mesh* mesh, uint32_t faceId);
+    void togglePickMeshSize() { m_pickMeshSizeActive = !m_pickMeshSizeActive; }
+    bool isPickMeshSizeActive() const { return m_pickMeshSizeActive; }
+    void setPickMeshSizeActive(bool v) { m_pickMeshSizeActive = v; }
 
     PolyGroupTool& getPolyGroupTool() { return m_polyGroupTool; }
     const PolyGroupTool& getPolyGroupTool() const { return m_polyGroupTool; }

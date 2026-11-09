@@ -388,6 +388,7 @@ static void populateCommonKeyBindings(HotkeyPreset& p) {
     p.keyBindings[HKAction::ToolDamStandard]   = { SDLK_e };
     p.keyBindings[HKAction::ToolPinch]         = { SDLK_r };
     p.keyBindings[HKAction::ToolTube]          = { SDLK_t };
+    p.keyBindings[HKAction::ToolTopology]      = { SDLK_d };
 
     p.keyBindings[HKAction::BrushIntensity]    = { SDLK_a };
     p.keyBindings[HKAction::BrushRadius]       = { SDLK_s };
@@ -423,7 +424,7 @@ static void populateCommonKeyBindings(HotkeyPreset& p) {
     p.keyBindings[HKAction::StrifeUp]          = { SDLK_UP };
     p.keyBindings[HKAction::StrifeDown]        = { SDLK_DOWN };
 
-    p.keyBindings[HKAction::DuplicateSelection]= { SDLK_d, true, false, false }; // Ctrl+D
+    p.keyBindings[HKAction::DuplicateSelection]= { SDLK_d, true, false, true };  // Ctrl+Shift+D
     p.keyBindings[HKAction::ClearScene]        = { SDLK_n, true, true, false };  // Ctrl+Alt+N
     p.keyBindings[HKAction::Undo]              = { SDLK_z, true, false, false }; // Ctrl+Z
     p.keyBindings[HKAction::Redo]              = { SDLK_y, true, false, false }; // Ctrl+Y
@@ -432,7 +433,7 @@ static void populateCommonKeyBindings(HotkeyPreset& p) {
     p.keyBindings[HKAction::SaveFile]          = { SDLK_s, true, false, false }; // Ctrl+S
     p.keyBindings[HKAction::SaveFileAs]        = { SDLK_s, true, false, true };  // Ctrl+Shift+S
     p.keyBindings[HKAction::ExportOBJ]         = { SDLK_e, true, false, false }; // Ctrl+E
-    p.keyBindings[HKAction::ToggleDyntopo]     = { SDLK_t, true, false, false }; // Ctrl+T
+    p.keyBindings[HKAction::ToggleDyntopo]     = { SDLK_d, true, false, false }; // Ctrl+D
     p.keyBindings[HKAction::RunRemesh]         = { SDLK_x, true, false, false }; // Ctrl+X
 
     p.keyBindings[HKAction::ToggleOutliner]    = { SDLK_F1 };

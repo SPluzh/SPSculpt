@@ -182,6 +182,12 @@ void BrushCursor::update(int mouseX, int mouseY,
         } else {
             m_state.color = glm::vec3(0.6f, 0.2f, 0.9f);
         }
+    } else if (brushType == BRUSH_DYNAMIC_TOPOLOGY) {
+        if (drawCircle && hitMesh) {
+            m_state.color = glm::vec3(0.66f, 0.33f, 0.97f);
+        } else {
+            m_state.color = glm::vec3(0.75f, 0.45f, 1.0f);
+        }
     } else if (brushType == BRUSH_PAINT) {
         m_state.color = paintColor;
     } else if (brushType == BRUSH_SNAKEHOOK) {

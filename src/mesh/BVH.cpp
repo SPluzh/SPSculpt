@@ -1,5 +1,6 @@
 #include "mesh/BVH.h"
 #include "mesh/Mesh.h"
+#include "common/Logger.h"
 
 #include <algorithm>
 #include <cmath>
@@ -22,6 +23,7 @@ inline glm::vec3 safeInvDir(const glm::vec3& dir) {
 inline bool rayBoxIntersect(
     const glm::vec3& boxMin, const glm::vec3& boxMax,
     const glm::vec3& origin, const glm::vec3& invDir, float tMax) {
+    if (boxMin.x > boxMax.x) return false;
     glm::vec3 t0 = (boxMin - origin) * invDir;
     glm::vec3 t1 = (boxMax - origin) * invDir;
     glm::vec3 tmin = glm::min(t0, t1);
@@ -35,6 +37,7 @@ inline bool rayBoxDistance(
     const glm::vec3& boxMin, const glm::vec3& boxMax,
     const glm::vec3& origin, const glm::vec3& invDir,
     float tMax, float& outEnter) {
+    if (boxMin.x > boxMax.x) return false;
     glm::vec3 t0 = (boxMin - origin) * invDir;
     glm::vec3 t1 = (boxMax - origin) * invDir;
     glm::vec3 tmin = glm::min(t0, t1);
@@ -77,6 +80,7 @@ inline bool rayTriangle(
 inline bool sphereBoxIntersect(
     const glm::vec3& boxMin, const glm::vec3& boxMax,
     const glm::vec3& center, float radiusSquared) {
+    if (boxMin.x > boxMax.x) return false;
     float dx = 0.0f;
     if (center.x < boxMin.x) dx = boxMin.x - center.x;
     else if (center.x > boxMax.x) dx = center.x - boxMax.x;
@@ -99,6 +103,7 @@ inline bool sphereBoxIntersect(
 inline bool boxFullyInSphere(
     const glm::vec3& boxMin, const glm::vec3& boxMax,
     const glm::vec3& center, float radiusSquared) {
+    if (boxMin.x > boxMax.x) return false;
     float dx = std::max(std::abs(boxMin.x - center.x), std::abs(boxMax.x - center.x));
     float d2 = dx * dx;
     if (d2 > radiusSquared) return false;
@@ -113,11 +118,13 @@ inline bool boxFullyInSphere(
 }
 
 inline bool isFaceVisible(const Mesh& mesh, uint32_t faceId) {
+    if (faceId >= (uint32_t)mesh.nbFaces) return false;
     if (!mesh.faceVisible.empty() && faceId < mesh.faceVisible.size() && !mesh.faceVisible[faceId]) {
         return false;
     }
     if (!mesh.vertVisible.empty()) {
         uint32_t idx = faceId * 4;
+        if (idx + 3 >= mesh.faces.size()) return false;
         uint32_t v0 = mesh.faces[idx + 0];
         uint32_t v1 = mesh.faces[idx + 1];
         uint32_t v2 = mesh.faces[idx + 2];
@@ -179,6 +186,10 @@ void BVH::clear() {
     m_dirtyLeaves.clear();
     m_dirtyInnerNodes.clear();
     m_dirtyInnerNodesTemp.clear();
+    m_leafCap.clear();
+    m_editedLeaves.clear();
+    m_leafEdited.clear();
+    m_unusedEntries = 0;
     lastCollectCellsMs = 0.0;
     lastCandidateVertsMs = 0.0;
     lastFilterVertsMs = 0.0;
@@ -210,20 +221,28 @@ void BVH::computeLeafAABB(const Mesh& mesh, BVHNode& node, uint32_t nodeIdx, boo
 
     if (hasFaceBoxes) {
         const float* const fb = mesh.faceBoxes.data();
+        const size_t maxFb = mesh.faceBoxes.size();
         for (uint32_t i = 0; i < count; ++i) {
+            uint32_t faceId = primIndices[first + i];
+            if (faceId >= (uint32_t)mesh.nbFaces) continue;
+            uint32_t idx = faceId * 6;
+            if (idx + 5 >= maxFb) continue;
             if (i + 4 < count) {
                 uint32_t nextFace = primIndices[first + i + 4];
-                __builtin_prefetch(fb + nextFace * 6, 0, 1);
+                if (nextFace < (uint32_t)mesh.nbFaces) {
+                    __builtin_prefetch(fb + nextFace * 6, 0, 1);
+                }
             }
-            uint32_t faceId = primIndices[first + i];
-            uint32_t idx = faceId * 6;
             bmin = glm::min(bmin, glm::vec3(fb[idx + 0], fb[idx + 1], fb[idx + 2]));
             bmax = glm::max(bmax, glm::vec3(fb[idx + 3], fb[idx + 4], fb[idx + 5]));
         }
     } else {
+        const size_t maxFaces = mesh.faces.size();
         for (uint32_t i = 0; i < count; ++i) {
             uint32_t faceId = primIndices[first + i];
+            if (faceId >= (uint32_t)mesh.nbFaces) continue;
             uint32_t idx = faceId * 4;
+            if (idx + 3 >= maxFaces) continue;
             for (int k = 0; k < 4; ++k) {
                 uint32_t v = faces[idx + k];
                 if (v == 0xFFFFFFFF || (size_t)v >= nbVerts) continue;
@@ -266,11 +285,16 @@ void BVH::build(const Mesh& mesh) {
             uint32_t v2 = faces[idx + 2];
             uint32_t v3 = faces[idx + 3];
 
+            if (v0 >= (uint32_t)mesh.nbVerts || v1 >= (uint32_t)mesh.nbVerts || v2 >= (uint32_t)mesh.nbVerts) {
+                fallbackCentroids[i] = glm::vec3(0.0f);
+                continue;
+            }
+
             glm::vec3 p0(verts[v0 * 3 + 0], verts[v0 * 3 + 1], verts[v0 * 3 + 2]);
             glm::vec3 p1(verts[v1 * 3 + 0], verts[v1 * 3 + 1], verts[v1 * 3 + 2]);
             glm::vec3 p2(verts[v2 * 3 + 0], verts[v2 * 3 + 1], verts[v2 * 3 + 2]);
 
-            if (v3 != 0xFFFFFFFF) {
+            if (v3 != 0xFFFFFFFF && v3 < (uint32_t)mesh.nbVerts) {
                 glm::vec3 p3(verts[v3 * 3 + 0], verts[v3 * 3 + 1], verts[v3 * 3 + 2]);
                 fallbackCentroids[i] = (p0 + p1 + p2 + p3) * 0.25f;
             } else {
@@ -763,7 +787,7 @@ bool BVH::raycast(const Mesh& mesh, const glm::vec3& origin, const glm::vec3& di
         uint32_t nodeIdx;
         float dist;
     };
-    TraversalEntry stack[64];
+    TraversalEntry stack[128];
     int stackPtr = 0;
 
     float rootDist = 0.0f;
@@ -784,9 +808,11 @@ bool BVH::raycast(const Mesh& mesh, const glm::vec3& origin, const glm::vec3& di
         if (node.isLeaf()) {
             for (uint32_t i = 0; i < node.count; ++i) {
                 uint32_t faceId = m_primitiveIndices[node.firstIndex + i];
+                if (faceId >= (uint32_t)mesh.nbFaces) continue;
                 if (!isFaceVisible(mesh, faceId)) continue;
 
                 uint32_t idx = faceId * 4;
+                if (idx + 3 >= mesh.faces.size()) continue;
                 uint32_t v0 = faces[idx + 0];
                 uint32_t v1 = faces[idx + 1];
                 uint32_t v2 = faces[idx + 2];
@@ -824,8 +850,16 @@ bool BVH::raycast(const Mesh& mesh, const glm::vec3& origin, const glm::vec3& di
                     }
                 }
             }
-        } else {
+        } else if (node.isInner()) {
             uint32_t left = node.firstIndex;
+            if (left + 1 >= (uint32_t)m_nodes.size()) {
+                ++m_emptyLeafHazardCount;
+                continue;
+            }
+            if (stackPtr >= 126) {
+                ++m_stackOverflowHazardCount;
+                continue;
+            }
             uint32_t right = left + 1;
             float distL = 0.0f, distR = 0.0f;
             bool hitL = rayBoxDistance(m_nodes[left].aabbMin, m_nodes[left].aabbMax, origin, invDir, closestT, distL);
@@ -854,7 +888,7 @@ void BVH::collectIntersectRay(const glm::vec3& origin, const glm::vec3& dir, std
     if (m_nodes.empty()) return;
 
     glm::vec3 invDir = safeInvDir(dir);
-    uint32_t stack[64];
+    uint32_t stack[128];
     int stackPtr = 0;
     stack[stackPtr++] = 0;
 
@@ -872,7 +906,10 @@ void BVH::collectIntersectRay(const glm::vec3& origin, const glm::vec3& dir, std
             for (uint32_t i = 0; i < node.count; ++i) {
                 outFaces.push_back(m_primitiveIndices[node.firstIndex + i]);
             }
-        } else {
+        } else if (node.isInner()) {
+            if (node.firstIndex + 1 >= (uint32_t)m_nodes.size() || stackPtr >= 126) {
+                continue;
+            }
             stack[stackPtr++] = node.firstIndex + 1;
             stack[stackPtr++] = node.firstIndex;
         }
@@ -906,7 +943,7 @@ void BVH::pickVerticesInSphere(
         uint32_t nodeIdx;
         bool fullyIn;
     };
-    StackEntry stack[64];
+    StackEntry stack[128];
     int stackPtr = 0;
     stack[stackPtr++] = {0, false};
 
@@ -924,7 +961,10 @@ void BVH::pickVerticesInSphere(
         if (node.isLeaf()) {
             sc.candidateLeaves.push_back(fullyIn ? (nodeIdx | 0x80000000u) : nodeIdx);
             totalCandidateFaces += node.count;
-        } else {
+        } else if (node.isInner()) {
+            if (node.firstIndex + 1 >= (uint32_t)m_nodes.size() || stackPtr >= 126) {
+                continue;
+            }
             stack[stackPtr++] = {node.firstIndex, fullyIn};
             stack[stackPtr++] = {node.firstIndex + 1, fullyIn};
         }
@@ -1334,8 +1374,11 @@ void BVH::refitAll(const Mesh& mesh, bool usePrecomputedBoxes) {
 
     for (int i = (int)m_nodes.size() - 1; i >= 0; --i) {
         BVHNode& node = m_nodes[i];
-        if (!node.isLeaf()) {
+        if (node.isInner()) {
             uint32_t left = node.firstIndex;
+            if (left + 1 >= (uint32_t)m_nodes.size()) {
+                continue;
+            }
             uint32_t right = left + 1;
             node.aabbMin = glm::min(m_nodes[left].aabbMin, m_nodes[right].aabbMin);
             node.aabbMax = glm::max(m_nodes[left].aabbMax, m_nodes[right].aabbMax);
@@ -1362,8 +1405,302 @@ void BVH::scale(float sx, float sy, float sz) {
     }
 }
 
+void BVH::editLeaf(uint32_t leaf) {
+    if (leaf >= m_nodes.size()) return;
+    if (m_leafCap.size() < m_nodes.size()) {
+        const size_t from = m_leafCap.size();
+        m_leafCap.resize(m_nodes.size());
+        for (size_t i = from; i < m_nodes.size(); ++i) {
+            m_leafCap[i] = m_nodes[i].isLeaf() ? m_nodes[i].count : 0;
+        }
+    }
+    if (m_leafEdited.size() < m_nodes.size()) {
+        m_leafEdited.resize(m_nodes.size(), 0);
+    }
+    if (!m_leafEdited[leaf]) {
+        m_leafEdited[leaf] = 1;
+        m_editedLeaves.push_back(leaf);
+    }
+    ++m_editsSinceBuild;
+}
+
+void BVH::insertTriangle(const Mesh& mesh, uint32_t t, uint32_t nearby) {
+    if (m_nodes.empty()) {
+        m_nodes.push_back(BVHNode{
+            glm::vec3(std::numeric_limits<float>::infinity()),
+            0xFFFFFFFF,
+            glm::vec3(-std::numeric_limits<float>::infinity()),
+            0
+        });
+        m_parents.push_back(0);
+        m_leafCount = 1;
+    }
+    uint32_t leaf = (nearby < m_faceToLeaf.size()) ? m_faceToLeaf[nearby] : 0xFFFFFFFF;
+    if (leaf == 0xFFFFFFFF || leaf >= m_nodes.size() || !m_nodes[leaf].isLeaf()) {
+        glm::vec3 c(0.0f);
+        if (t * 4 + 2 < mesh.faces.size()) {
+            const uint32_t* f = &mesh.faces[t * 4];
+            const float* v = mesh.verts.data();
+            if (f[0] < (uint32_t)mesh.nbVerts && f[1] < (uint32_t)mesh.nbVerts && f[2] < (uint32_t)mesh.nbVerts) {
+                c = (glm::vec3(v[f[0]*3], v[f[0]*3+1], v[f[0]*3+2]) +
+                     glm::vec3(v[f[1]*3], v[f[1]*3+1], v[f[1]*3+2]) +
+                     glm::vec3(v[f[2]*3], v[f[2]*3+1], v[f[2]*3+2])) * (1.0f / 3.0f);
+            }
+        }
+        leaf = 0;
+        while (!m_nodes[leaf].isLeaf() && m_nodes[leaf].firstIndex != 0xFFFFFFFF) {
+            uint32_t left = m_nodes[leaf].firstIndex;
+            uint32_t right = left + 1;
+            auto distSq = [&](const BVHNode& n) {
+                glm::vec3 d = glm::max(glm::max(n.aabbMin - c, c - n.aabbMax), glm::vec3(0.0f));
+                return glm::dot(d, d);
+            };
+            leaf = (distSq(m_nodes[left]) <= distSq(m_nodes[right])) ? left : right;
+        }
+    }
+    editLeaf(leaf);
+    BVHNode& n = m_nodes[leaf];
+    if (n.count == m_leafCap[leaf]) {
+        const uint32_t cap = std::max(2 * n.count, kLeafSize);
+        const uint32_t first = static_cast<uint32_t>(m_primitiveIndices.size());
+        m_primitiveIndices.resize(m_primitiveIndices.size() + cap);
+        if (n.count > 0 && n.firstIndex != 0xFFFFFFFF) {
+            std::copy_n(m_primitiveIndices.begin() + n.firstIndex, n.count, m_primitiveIndices.begin() + first);
+        }
+        m_unusedEntries += m_leafCap[leaf];
+        n.firstIndex = first;
+        m_leafCap[leaf] = cap;
+    }
+    m_primitiveIndices[n.firstIndex + n.count++] = t;
+    if (t >= m_faceToLeaf.size()) {
+        m_faceToLeaf.resize(t + 1, 0xFFFFFFFF);
+    }
+    m_faceToLeaf[t] = leaf;
+}
+
+void BVH::removeTriangle(uint32_t t) {
+    const uint32_t leaf = (t < m_faceToLeaf.size()) ? m_faceToLeaf[t] : 0xFFFFFFFF;
+    if (leaf == 0xFFFFFFFF || leaf >= m_nodes.size()) return;
+    editLeaf(leaf);
+    BVHNode& n = m_nodes[leaf];
+    for (uint32_t i = n.firstIndex; i < n.firstIndex + n.count; ++i) {
+        if (m_primitiveIndices[i] == t) {
+            m_primitiveIndices[i] = m_primitiveIndices[n.firstIndex + n.count - 1];
+            --n.count;
+            break;
+        }
+    }
+    if (n.count == 0) {
+        if (leaf < m_leafCap.size()) {
+            m_unusedEntries += m_leafCap[leaf];
+            m_leafCap[leaf] = 0;
+        }
+        n.firstIndex = 0xFFFFFFFF;
+    }
+    m_faceToLeaf[t] = 0xFFFFFFFF;
+}
+
+void BVH::renumberTriangle(uint32_t from, uint32_t to) {
+    const uint32_t leaf = (from < m_faceToLeaf.size()) ? m_faceToLeaf[from] : 0xFFFFFFFF;
+    if (leaf == 0xFFFFFFFF || leaf >= m_nodes.size()) return;
+    BVHNode& n = m_nodes[leaf];
+    for (uint32_t i = n.firstIndex; i < n.firstIndex + n.count; ++i) {
+        if (m_primitiveIndices[i] == from) {
+            m_primitiveIndices[i] = to;
+        }
+    }
+    if (to >= m_faceToLeaf.size()) {
+        m_faceToLeaf.resize(to + 1, 0xFFFFFFFF);
+    }
+    m_faceToLeaf[to] = leaf;
+    m_faceToLeaf[from] = 0xFFFFFFFF;
+}
+
+void BVH::resizeTriangles(size_t count) {
+    m_faceToLeaf.resize(count, 0xFFFFFFFF);
+}
+
+void BVH::touchTriangle(uint32_t t) {
+    if (t < m_faceToLeaf.size() && m_faceToLeaf[t] != 0xFFFFFFFF && m_faceToLeaf[t] < m_nodes.size()) {
+        editLeaf(m_faceToLeaf[t]);
+    }
+}
+
+void BVH::splitLeaf(const Mesh& mesh, uint32_t leaf) {
+    const uint32_t first = m_nodes[leaf].firstIndex;
+    const uint32_t count = m_nodes[leaf].count;
+    if (count <= 1) return;
+    const float* const verts = mesh.verts.data();
+    const uint32_t* const faces = mesh.faces.data();
+    auto centroid = [&](uint32_t t) -> glm::vec3 {
+        if (t >= (uint32_t)mesh.nbFaces || t * 4 + 2 >= mesh.faces.size()) return glm::vec3(0.0f);
+        uint32_t idx = t * 4;
+        uint32_t v0 = faces[idx], v1 = faces[idx + 1], v2 = faces[idx + 2];
+        if (v0 >= (uint32_t)mesh.nbVerts || v1 >= (uint32_t)mesh.nbVerts || v2 >= (uint32_t)mesh.nbVerts) return glm::vec3(0.0f);
+        return (glm::vec3(verts[v0*3], verts[v0*3+1], verts[v0*3+2]) +
+                glm::vec3(verts[v1*3], verts[v1*3+1], verts[v1*3+2]) +
+                glm::vec3(verts[v2*3], verts[v2*3+1], verts[v2*3+2])) * (1.0f / 3.0f);
+    };
+    glm::vec3 cmin(std::numeric_limits<float>::infinity());
+    glm::vec3 cmax(-std::numeric_limits<float>::infinity());
+    for (uint32_t i = first; i < first + count; ++i) {
+        glm::vec3 c = centroid(m_primitiveIndices[i]);
+        cmin = glm::min(cmin, c);
+        cmax = glm::max(cmax, c);
+    }
+    glm::vec3 ext = cmax - cmin;
+    int axis = 0;
+    if (ext.y > ext.x && ext.y > ext.z) axis = 1;
+    else if (ext.z > ext.x && ext.z > ext.y) axis = 2;
+    if (ext[axis] <= 1e-7f) return;
+
+    uint32_t mid = first + count / 2;
+    std::nth_element(
+        m_primitiveIndices.begin() + first,
+        m_primitiveIndices.begin() + mid,
+        m_primitiveIndices.begin() + first + count,
+        [&](uint32_t a, uint32_t b) {
+            return centroid(a)[axis] < centroid(b)[axis];
+        }
+    );
+    uint32_t left = static_cast<uint32_t>(m_nodes.size());
+    if (m_leafCap.size() < m_nodes.size()) {
+        const size_t from = m_leafCap.size();
+        m_leafCap.resize(m_nodes.size());
+        for (size_t i = from; i < m_nodes.size(); ++i) {
+            m_leafCap[i] = m_nodes[i].isLeaf() ? m_nodes[i].count : 0;
+        }
+    }
+    uint32_t cap = (leaf < m_leafCap.size()) ? m_leafCap[leaf] : count;
+    m_nodes.push_back(BVHNode{
+        glm::vec3(std::numeric_limits<float>::infinity()),
+        first,
+        glm::vec3(-std::numeric_limits<float>::infinity()),
+        mid - first
+    });
+    m_nodes.push_back(BVHNode{
+        glm::vec3(std::numeric_limits<float>::infinity()),
+        mid,
+        glm::vec3(-std::numeric_limits<float>::infinity()),
+        first + count - mid
+    });
+    m_parents.push_back(leaf);
+    m_parents.push_back(leaf);
+    m_leafCap.push_back(mid - first);
+    m_leafCap.push_back(cap - (mid - first));
+    m_leafEdited.resize(m_nodes.size(), 0);
+    m_nodes[leaf].firstIndex = left;
+    m_nodes[leaf].count = 0;
+    if (leaf < m_leafCap.size()) m_leafCap[leaf] = 0;
+    m_leafCount += 1;
+
+    for (uint32_t i = first; i < mid; ++i) {
+        uint32_t t = m_primitiveIndices[i];
+        if (t < m_faceToLeaf.size()) m_faceToLeaf[t] = left;
+    }
+    for (uint32_t i = mid; i < first + count; ++i) {
+        uint32_t t = m_primitiveIndices[i];
+        if (t < m_faceToLeaf.size()) m_faceToLeaf[t] = left + 1;
+    }
+
+    for (uint32_t cIdx : {left, left + 1}) {
+        computeLeafAABB(mesh, m_nodes[cIdx], cIdx, false, true);
+        glm::vec3 bmin = m_nodes[cIdx].aabbMin;
+        glm::vec3 bmax = m_nodes[cIdx].aabbMax;
+        for (uint32_t ni = cIdx; ni != 0;) {
+            ni = m_parents[ni];
+            m_nodes[ni].aabbMin = glm::min(m_nodes[ni].aabbMin, bmin);
+            m_nodes[ni].aabbMax = glm::max(m_nodes[ni].aabbMax, bmax);
+            bmin = m_nodes[ni].aabbMin;
+            bmax = m_nodes[ni].aabbMax;
+        }
+    }
+}
+
+void BVH::refitChanged(const Mesh& mesh) {
+    constexpr uint32_t kMaxLeaf = 3 * kLeafSize;
+    if (m_editedLeaves.empty()) return;
+    std::vector<uint32_t> leaves = std::move(m_editedLeaves);
+    m_editedLeaves.clear();
+
+    for (uint32_t leaf : leaves) {
+        if (leaf < m_leafEdited.size()) m_leafEdited[leaf] = 0;
+        if (leaf < m_nodes.size()) {
+            if (m_nodes[leaf].count > 0 && m_nodes[leaf].firstIndex != 0xFFFFFFFF) {
+                computeLeafAABB(mesh, m_nodes[leaf], leaf, false, true);
+            } else {
+                m_nodes[leaf].aabbMin = glm::vec3(std::numeric_limits<float>::infinity());
+                m_nodes[leaf].aabbMax = glm::vec3(-std::numeric_limits<float>::infinity());
+            }
+        }
+    }
+    // Propagate up ancestors
+    for (uint32_t leaf : leaves) {
+        if (leaf >= m_nodes.size()) continue;
+        for (uint32_t ni = leaf; ni != 0;) {
+            ni = m_parents[ni];
+            if (ni >= m_nodes.size()) break;
+            uint32_t left = m_nodes[ni].firstIndex;
+            uint32_t right = left + 1;
+            if (right < m_nodes.size()) {
+                m_nodes[ni].aabbMin = glm::min(m_nodes[left].aabbMin, m_nodes[right].aabbMin);
+                m_nodes[ni].aabbMax = glm::max(m_nodes[left].aabbMax, m_nodes[right].aabbMax);
+            }
+        }
+    }
+    for (uint32_t leaf : leaves) {
+        if (leaf < m_nodes.size() && m_nodes[leaf].count > kMaxLeaf) {
+            splitLeaf(mesh, leaf);
+        }
+    }
+}
+
+void BVH::queryTriangles(const Mesh& mesh, const glm::vec3& center, float radius, std::vector<uint32_t>& out) const {
+    out.clear();
+    if (m_nodes.empty()) return;
+    const float r2 = radius * radius;
+    const float* const verts = mesh.verts.data();
+    const uint32_t* const faces = mesh.faces.data();
+    const uint32_t* const primIndices = m_primitiveIndices.data();
+    const size_t nbFaces = (size_t)mesh.nbFaces;
+
+    thread_local std::vector<uint32_t> stack;
+    stack.clear();
+    stack.push_back(0);
+    while (!stack.empty()) {
+        uint32_t ni = stack.back();
+        stack.pop_back();
+        if (ni >= m_nodes.size()) continue;
+        const BVHNode& n = m_nodes[ni];
+        if (!sphereBoxIntersect(n.aabbMin, n.aabbMax, center, r2)) continue;
+        if (n.isLeaf()) {
+            for (uint32_t i = n.firstIndex; i < n.firstIndex + n.count; ++i) {
+                uint32_t t = primIndices[i];
+                if (t >= nbFaces) continue;
+                uint32_t idx = t * 4;
+                uint32_t v0 = faces[idx], v1 = faces[idx + 1], v2 = faces[idx + 2];
+                if (v0 >= (uint32_t)mesh.nbVerts || v1 >= (uint32_t)mesh.nbVerts || v2 >= (uint32_t)mesh.nbVerts) continue;
+                glm::vec3 p0(verts[v0*3], verts[v0*3+1], verts[v0*3+2]);
+                glm::vec3 p1(verts[v1*3], verts[v1*3+1], verts[v1*3+2]);
+                glm::vec3 p2(verts[v2*3], verts[v2*3+1], verts[v2*3+2]);
+                glm::vec3 tbmin = glm::min(p0, glm::min(p1, p2));
+                glm::vec3 tbmax = glm::max(p0, glm::max(p1, p2));
+                if (sphereBoxIntersect(tbmin, tbmax, center, r2)) {
+                    out.push_back(t);
+                }
+            }
+        } else if (n.isInner()) {
+            if (n.firstIndex + 1 < m_nodes.size()) {
+                stack.push_back(n.firstIndex);
+                stack.push_back(n.firstIndex + 1);
+            }
+        }
+    }
+}
+
 bool BVH::isDegraded() const {
-    return m_editsSinceBuild > m_primitiveIndices.size() * 2;
+    const size_t live = m_primitiveIndices.size();
+    return m_unusedEntries > live / 2 + 1024 || m_editsSinceBuild > live + 4096;
 }
 
 size_t BVH::memoryBytes() const {
@@ -1372,6 +1709,9 @@ size_t BVH::memoryBytes() const {
     bytes += m_parents.capacity() * sizeof(uint32_t);
     bytes += m_primitiveIndices.capacity() * sizeof(uint32_t);
     bytes += m_faceToLeaf.capacity() * sizeof(uint32_t);
+    bytes += m_leafCap.capacity() * sizeof(uint32_t);
+    bytes += m_editedLeaves.capacity() * sizeof(uint32_t);
+    bytes += m_leafEdited.capacity() * sizeof(uint8_t);
     for (int i = 0; i < 2; ++i) {
         bytes += m_scratch[i].visitedFlags.capacity() * sizeof(uint8_t);
         bytes += m_scratch[i].candidateLeaves.capacity() * sizeof(uint32_t);
@@ -1385,5 +1725,57 @@ size_t BVH::memoryBytes() const {
     bytes += m_dirtyInnerNodes.capacity() * sizeof(uint32_t);
     bytes += m_dirtyInnerNodesTemp.capacity() * sizeof(uint32_t);
     return bytes;
+}
+
+bool BVH::validateTree(const Mesh& mesh, std::string& outErr) const {
+    if (m_nodes.empty()) return true;
+
+    for (size_t i = 0; i < m_nodes.size(); ++i) {
+        const BVHNode& n = m_nodes[i];
+        if (n.isEmptyLeaf()) {
+            continue; // Empty leaf from dyntopo collapse
+        }
+        if (n.isLeaf()) {
+            if (n.firstIndex != 0xFFFFFFFF && n.firstIndex + n.count > m_primitiveIndices.size()) {
+                outErr = "Leaf " + std::to_string(i) + " primitive range out of bounds";
+                return false;
+            }
+            for (uint32_t k = 0; k < n.count; ++k) {
+                uint32_t t = m_primitiveIndices[n.firstIndex + k];
+                if (t >= (uint32_t)mesh.nbFaces) {
+                    outErr = "Leaf " + std::to_string(i) + " references invalid face " + std::to_string(t);
+                    return false;
+                }
+                if (t < m_faceToLeaf.size() && m_faceToLeaf[t] != (uint32_t)i) {
+                    outErr = "Face " + std::to_string(t) + " in leaf " + std::to_string(i) +
+                             " but m_faceToLeaf points to " + std::to_string(m_faceToLeaf[t]);
+                    return false;
+                }
+            }
+        } else if (n.isInner()) {
+            if (n.firstIndex >= m_nodes.size() || n.firstIndex + 1 >= m_nodes.size()) {
+                outErr = "Inner node " + std::to_string(i) + " has invalid children";
+                return false;
+            }
+        } else {
+            outErr = "Node " + std::to_string(i) + " is invalid";
+            return false;
+        }
+    }
+
+    for (size_t t = 0; t < m_faceToLeaf.size(); ++t) {
+        uint32_t leaf = m_faceToLeaf[t];
+        if (leaf != 0xFFFFFFFF) {
+            if (leaf >= m_nodes.size()) {
+                outErr = "m_faceToLeaf[" + std::to_string(t) + "] = " + std::to_string(leaf) + " out of bounds";
+                return false;
+            }
+            if (!m_nodes[leaf].isLeaf()) {
+                outErr = "m_faceToLeaf[" + std::to_string(t) + "] points to inner node " + std::to_string(leaf);
+                return false;
+            }
+        }
+    }
+    return true;
 }
 

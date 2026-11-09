@@ -526,10 +526,11 @@ public:
         }
     }
 
+    static void generateTriangleIndices(const Mesh* mesh, std::vector<uint32_t>& outIndices);
+    static void generateWireframeIndices(const Mesh* mesh, std::vector<uint32_t>& outEdges);
+    static void generateWireframeIndices(const Mesh* mesh, std::vector<uint32_t>& outCageEdges, std::vector<uint32_t>& outSubdivEdges);
+
 private:
-    void generateTriangleIndices(const Mesh* mesh, std::vector<uint32_t>& outIndices);
-    void generateWireframeIndices(const Mesh* mesh, std::vector<uint32_t>& outEdges);
-    void generateWireframeIndices(const Mesh* mesh, std::vector<uint32_t>& outCageEdges, std::vector<uint32_t>& outSubdivEdges);
     void buildPolyGroupBuffers(const Mesh* mesh, MeshRenderBuffers* bufs);
 
     void drawBackground(const Scene& scene, const Camera& camera);

@@ -49,6 +49,8 @@ struct alignas(16) BVHNode {
     uint32_t count = 0;      // > 0 for leaf (number of faces); 0 for inner node
 
     bool isLeaf() const { return count > 0; }
+    bool isInner() const { return count == 0 && firstIndex != 0xFFFFFFFF; }
+    bool isEmptyLeaf() const { return count == 0 && firstIndex == 0xFFFFFFFF; }
 };
 
 class BVH {
@@ -84,6 +86,10 @@ public:
         m_lastPickStats[0] = other.m_lastPickStats[0];
         m_lastPickStats[1] = other.m_lastPickStats[1];
         m_lastRefitStats = other.m_lastRefitStats;
+        m_leafCap = std::move(other.m_leafCap);
+        m_editedLeaves = std::move(other.m_editedLeaves);
+        m_leafEdited = std::move(other.m_leafEdited);
+        m_unusedEntries = other.m_unusedEntries; other.m_unusedEntries = 0;
     }
 
     BVH& operator=(BVH&& other) noexcept {
@@ -110,6 +116,10 @@ public:
             m_lastPickStats[0] = other.m_lastPickStats[0];
             m_lastPickStats[1] = other.m_lastPickStats[1];
             m_lastRefitStats = other.m_lastRefitStats;
+            m_leafCap = std::move(other.m_leafCap);
+            m_editedLeaves = std::move(other.m_editedLeaves);
+            m_leafEdited = std::move(other.m_leafEdited);
+            m_unusedEntries = other.m_unusedEntries; other.m_unusedEntries = 0;
         }
         return *this;
     }
@@ -167,6 +177,15 @@ public:
     // Warmup query scratch buffers to eliminate first-call page faults on large meshes
     void warmup(int nbVerts);
 
+    // Dynamic topology edits
+    void insertTriangle(const Mesh& mesh, uint32_t t, uint32_t nearby = 0xFFFFFFFF);
+    void removeTriangle(uint32_t t);
+    void renumberTriangle(uint32_t from, uint32_t to);
+    void resizeTriangles(size_t count);
+    void touchTriangle(uint32_t t);
+    void refitChanged(const Mesh& mesh);
+    void queryTriangles(const Mesh& mesh, const glm::vec3& center, float radius, std::vector<uint32_t>& out) const;
+
     // True if cumulative sculpting strokes degraded AABB overlap enough to warrant a background rebuild
     bool isDegraded() const;
 
@@ -176,7 +195,42 @@ public:
     size_t nodeCount() const { return m_nodes.size(); }
     size_t leafCount() const { return m_leafCount; }
     size_t primitiveCount() const { return m_primitiveIndices.size(); }
+    size_t editsSinceBuild() const { return m_editsSinceBuild; }
+    size_t unusedEntries() const { return m_unusedEntries; }
     size_t memoryBytes() const;
+    size_t countEmptyLeaves() const {
+        size_t c = 0;
+        for (const auto& n : m_nodes) {
+            if (n.count == 0 && n.firstIndex == 0xFFFFFFFF) ++c;
+        }
+        return c;
+    }
+    size_t computeMaxDepth() const {
+        if (m_nodes.empty()) return 0;
+        size_t maxD = 0;
+        struct Item { uint32_t idx; size_t d; };
+        std::vector<Item> st = {{0, 1}};
+        while (!st.empty()) {
+            Item cur = st.back();
+            st.pop_back();
+            if (cur.idx >= m_nodes.size()) continue;
+            if (cur.d > maxD) maxD = cur.d;
+            const BVHNode& n = m_nodes[cur.idx];
+            if (!n.isLeaf() && n.firstIndex != 0xFFFFFFFF && n.firstIndex + 1 < m_nodes.size()) {
+                st.push_back({n.firstIndex, cur.d + 1});
+                st.push_back({n.firstIndex + 1, cur.d + 1});
+            }
+        }
+        return maxD;
+    }
+    void resetDiagnosticCounters() const {
+        m_emptyLeafHazardCount = 0;
+        m_leafCapHazardCount = 0;
+        m_stackOverflowHazardCount = 0;
+    }
+    size_t emptyLeafHazardCount() const { return m_emptyLeafHazardCount; }
+    size_t leafCapHazardCount() const { return m_leafCapHazardCount; }
+    size_t stackOverflowHazardCount() const { return m_stackOverflowHazardCount; }
 
     void getRootAABB(float outAabb[6]) const {
         if (!m_nodes.empty()) {
@@ -200,9 +254,15 @@ public:
     mutable double lastFilterVertsMs = 0.0;
     mutable BVHPickStats m_lastPickStats[2];
     mutable BVHRefitStats m_lastRefitStats;
+    mutable size_t m_emptyLeafHazardCount = 0;
+    mutable size_t m_leafCapHazardCount = 0;
+    mutable size_t m_stackOverflowHazardCount = 0;
 
     const BVHPickStats& getLastPickStats(int scratchIndex = 0) const { return m_lastPickStats[scratchIndex & 1]; }
     const BVHRefitStats& getLastRefitStats() const { return m_lastRefitStats; }
+
+    // Validation
+    bool validateTree(const Mesh& mesh, std::string& outErr) const;
 
 private:
     struct QueryScratch {
@@ -239,6 +299,14 @@ private:
     mutable std::vector<uint32_t> m_dirtyInnerNodes;
     mutable std::vector<uint32_t> m_dirtyInnerNodesTemp;
 
+    // Dynamic topology edit tracking
+    std::vector<uint32_t> m_leafCap;
+    std::vector<uint32_t> m_editedLeaves;
+    std::vector<uint8_t> m_leafEdited;
+    size_t m_unusedEntries = 0;
+
+    void editLeaf(uint32_t leaf);
+    void splitLeaf(const Mesh& mesh, uint32_t leaf);
     void computeLeafAABB(const Mesh& mesh, BVHNode& node, uint32_t nodeIdx, bool usePrecomputedBoxes = false, bool assignFaceToLeaf = false);
 };
 

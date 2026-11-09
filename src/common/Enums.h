@@ -42,6 +42,7 @@ enum BrushType {
     BRUSH_EDGE_CREASE,
     BRUSH_CURVE_FOLDS,
     BRUSH_RAKE,
+    BRUSH_DYNAMIC_TOPOLOGY,
     BRUSH_COUNT
 };
 
@@ -101,6 +102,7 @@ inline const char* getBrushNameStr(BrushType brush) {
         case BRUSH_EDGE_CREASE: return "Edge Crease";
         case BRUSH_CURVE_FOLDS: return "Curve Folds";
         case BRUSH_RAKE: return "Rake";
+        case BRUSH_DYNAMIC_TOPOLOGY: return "Topology";
         default: return "Unknown";
     }
 }

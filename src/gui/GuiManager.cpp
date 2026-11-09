@@ -231,12 +231,14 @@ static const char* getBrushNameLocal(BrushType brush) {
         case BRUSH_EDGE_CREASE: return "Edge Crease";
         case BRUSH_CURVE_FOLDS: return "Curve Folds";
         case BRUSH_RAKE: return "Rake";
+        case BRUSH_DYNAMIC_TOPOLOGY: return "Topology";
     }
     return "Unknown";
 }
 
 static const char* getBrushHotkey(BrushType brush) {
     switch (brush) {
+        case BRUSH_DYNAMIC_TOPOLOGY: return "D";
         case BRUSH_INFLATE:     return "1";
         case BRUSH_FLATTEN:     return "2";
         case BRUSH_TRANSFORM:   return "4";
@@ -258,6 +260,7 @@ static const char* getBrushHotkey(BrushType brush) {
 
 static const char* getBrushIconKey(BrushType brush) {
     switch (brush) {
+        case BRUSH_DYNAMIC_TOPOLOGY: return "dyntopo_tool";
         case BRUSH_VTOOL:       return "vtool";
         case BRUSH_FLATTEN:     return "flatten_tool";
         case BRUSH_INFLATE:     return "inflate_tool";
@@ -2700,22 +2703,24 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Vary cursor dot/point size dynamically based on stylus pressure");
 
-            float intensityPct = settings.intensity * 100.0f;
-            float maxPct = (intensityPct > 100.0f) ? std::min(1000.0f, std::max(100.0f, intensityPct)) : 100.0f;
-            if (ImGui::SliderFloat("Intensity", &intensityPct, 0.0f, maxPct, "%.0f%%")) {
-                settings.intensity = std::max(0.0f, std::min(10.0f, intensityPct / 100.0f));
-            }
-            if (ImGui::IsItemActive() && ImGui::GetIO().MouseDelta.x > 0.0f && intensityPct >= maxPct - 0.1f) {
-                intensityPct = std::min(1000.0f, intensityPct + 10.0f);
-                settings.intensity = intensityPct / 100.0f;
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("%s", "Overall brush strength (0% to 1000%)");
-                float wheel = ImGui::GetIO().MouseWheel;
-                if (wheel != 0.0f) {
-                    float stepPct = (intensityPct < 100.0f) ? 5.0f : 25.0f;
-                    intensityPct = std::max(0.0f, std::min(1000.0f, intensityPct + wheel * stepPct));
+            if (brushType != BRUSH_DYNAMIC_TOPOLOGY) {
+                float intensityPct = settings.intensity * 100.0f;
+                float maxPct = (intensityPct > 100.0f) ? std::min(1000.0f, std::max(100.0f, intensityPct)) : 100.0f;
+                if (ImGui::SliderFloat("Intensity", &intensityPct, 0.0f, maxPct, "%.0f%%")) {
+                    settings.intensity = std::max(0.0f, std::min(10.0f, intensityPct / 100.0f));
+                }
+                if (ImGui::IsItemActive() && ImGui::GetIO().MouseDelta.x > 0.0f && intensityPct >= maxPct - 0.1f) {
+                    intensityPct = std::min(1000.0f, intensityPct + 10.0f);
                     settings.intensity = intensityPct / 100.0f;
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s", "Overall brush strength (0% to 1000%)");
+                    float wheel = ImGui::GetIO().MouseWheel;
+                    if (wheel != 0.0f) {
+                        float stepPct = (intensityPct < 100.0f) ? 5.0f : 25.0f;
+                        intensityPct = std::max(0.0f, std::min(1000.0f, intensityPct + wheel * stepPct));
+                        settings.intensity = intensityPct / 100.0f;
+                    }
                 }
             }
 
@@ -2793,7 +2798,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                  brushType == BRUSH_TRIM || brushType == BRUSH_SPLIT || brushType == BRUSH_POSE ||
                                  brushType == BRUSH_SNAKEHOOK || brushType == BRUSH_QUAD_DRAW ||
                                  brushType == BRUSH_COMPONENT_SELECT || brushType == BRUSH_EDGE_CREASE ||
-                                 brushType == BRUSH_RAKE);
+                                 brushType == BRUSH_RAKE || brushType == BRUSH_DYNAMIC_TOPOLOGY);
 
         if (hasSpecialParams) {
             if (ImGui::CollapsingHeader("Tool Specific Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -3961,6 +3966,29 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     if (ImGui::Button("Open Component Tools Window", ImVec2(-1, 26.0f))) {
                         m_showComponentPanel = true;
                     }
+                }
+                else if (brushType == BRUSH_DYNAMIC_TOPOLOGY) {
+                    ImGui::TextColored(ImVec4(0.66f, 0.33f, 0.97f, 1.0f), "Dynamic Topology Tool:");
+                    ImGui::TextDisabled("Pure local remeshing brush without surface displacement.");
+                    ImGui::Separator();
+
+                    ImGui::SliderFloat("Target Edge Size", &settings.topologyEdgeSize, 0.001f, 0.2f, "%.4f", ImGuiSliderFlags_Logarithmic);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Target edge length in world units (strictly independent of brush radius and zoom)");
+
+                    bool picking = sculpt.isPickMeshSizeActive();
+                    if (picking) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.66f, 0.33f, 0.97f, 1.0f));
+                    if (ImGui::Button(ICON_LC_PIPETTE " Pick Mesh Size")) {
+                        sculpt.togglePickMeshSize();
+                    }
+                    if (picking) ImGui::PopStyleColor();
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click on a mesh polygon to match its edge resolution (or Alt+Click while using tool)");
+
+                    ImGui::Separator();
+                    ImGui::Checkbox("Auto Wireframe", &settings.autoWireframe);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatically enables wireframe overlay during sculpting strokes");
+
+                    ImGui::SliderFloat("Remesh Smoothness", &settings.topologySmoothness, 0.0f, 1.0f, "%.2f");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Relaxes valence towards 6-connected regular topology");
                 }
             }
         }
@@ -10120,11 +10148,13 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
                                 (activeBrush == BRUSH_EXTRACT) ? ICON_LC_LAYERS "\nExtract" :
                                 (activeBrush == BRUSH_COMPONENT_SELECT) ? ICON_LC_SQUARE_DASHED_MOUSE_POINTER "\nSelect" :
                                 (activeBrush == BRUSH_EDGE_CREASE) ? ICON_LC_SQUARE_SPLIT_VERTICAL "\nCrease" :
-                                (activeBrush == BRUSH_CURVE_FOLDS) ? ICON_LC_SPLINE "\nFolds" : activeBrushName;
+                                (activeBrush == BRUSH_CURVE_FOLDS) ? ICON_LC_SPLINE "\nFolds" :
+                                (activeBrush == BRUSH_DYNAMIC_TOPOLOGY) ? ICON_LC_GRID "\nTopology" : activeBrushName;
             ImVec2 textSz = ImGui::CalcTextSize(label);
+            ImU32 textCol = (activeBrush == BRUSH_DYNAMIC_TOPOLOGY) ? IM_COL32(168, 85, 247, 255) : IM_COL32(255, 255, 255, 240);
             ImGui::GetWindowDrawList()->AddText(
                 ImVec2(pMin.x + (bigBtnSize - textSz.x) * 0.5f, pMin.y + (bigBtnSize - textSz.y) * 0.5f),
-                IM_COL32(255, 255, 255, 240), label);
+                textCol, label);
         }
 
         if (clickedActive) {
@@ -11748,6 +11778,93 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
             if (ImGui::Checkbox("Show Crease Lines (Pink)", &showCreasesPopup)) {
                 renderer.setShowCreaseLines(showCreasesPopup);
             }
+
+            ImGui::EndPopup();
+        }
+
+        ImGui::SameLine();
+
+        bool dyntopoEnabled = sculpt.isDyntopoEnabled();
+        if (dyntopoEnabled) {
+            // Purple accent: #A855F7 (168, 85, 247)
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.66f, 0.33f, 0.97f, 0.85f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.45f, 1.0f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.55f, 0.25f, 0.85f, 1.0f));
+        }
+
+        bool clickedDyn = ImGui::Button("Dyn##hudDyntopo", squareBtn);
+        if (clickedDyn) {
+            sculpt.toggleDyntopo();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Dynamic Topology (Ctrl+D)");
+
+        ImVec2 dynMin = ImGui::GetItemRectMin();
+
+        // Flush narrow arrow button directly attached to Dyntopo button
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, ImGui::GetStyle().FramePadding.y));
+        ImGui::SetWindowFontScale(fontScale * 0.65f);
+        bool openDynPopup = ImGui::Button(ICON_LC_CHEVRON_DOWN "##hudDyntopoArrow", halfSquareBtn);
+        ImGui::SetWindowFontScale(fontScale);
+        ImGui::PopStyleVar();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dynamic Topology Settings");
+
+        ImVec2 dynMax = ImGui::GetItemRectMax();
+
+        if (dyntopoEnabled) {
+            ImGui::PopStyleColor(3);
+        }
+
+        float dynCenterX = (dynMin.x + dynMax.x) * 0.5f;
+        float dynBottomY = dynMax.y + 4.0f * scale;
+
+        if (openDynPopup) {
+            ImGui::OpenPopup("##hudDyntopoPopup");
+        }
+
+        ImGui::SetNextWindowPos(ImVec2(dynCenterX, dynBottomY), ImGuiCond_Appearing, ImVec2(0.5f, 0.0f));
+        if (ImGui::BeginPopup("##hudDyntopoPopup")) {
+            ImGui::SetWindowFontScale(fontScale);
+            ImGui::TextUnformatted("Dynamic Topology Settings");
+            ImGui::Separator();
+
+            auto& dyntopo = sculpt.getDyntopoSettings();
+            bool dynEn = dyntopo.enabled;
+            if (ImGui::Checkbox("Enable Dynamic Topology", &dynEn)) {
+                sculpt.setDyntopoEnabled(dynEn);
+            }
+
+            ImGui::Separator();
+            ImGui::TextUnformatted("Detail Mode:");
+            int modeIdx = dyntopo.constantDetail ? 1 : 0;
+            if (ImGui::RadioButton("Relative (Radius & Zoom)", &modeIdx, 0)) {
+                dyntopo.constantDetail = false;
+            }
+            if (ImGui::RadioButton("Constant (World Space)", &modeIdx, 1)) {
+                dyntopo.constantDetail = true;
+            }
+
+            ImGui::Separator();
+            float detailPct = dyntopo.detail * 100.0f;
+            if (ImGui::SliderFloat("Detail", &detailPct, 0.0f, 100.0f, "%.0f%%")) {
+                dyntopo.detail = std::clamp(detailPct / 100.0f, 0.0f, 1.0f);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Higher detail produces smaller triangles");
+
+            bool picking = sculpt.isPickMeshSizeActive();
+            if (picking) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.66f, 0.33f, 0.97f, 1.0f));
+            if (ImGui::Button(ICON_LC_PIPETTE " Pick Detail from Surface")) {
+                sculpt.togglePickMeshSize();
+            }
+            if (picking) ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click on a mesh polygon to match its edge resolution");
+
+            ImGui::Separator();
+            ImGui::SliderFloat("Smooth Remesh", &dyntopo.smoothRemesh, 0.0f, 1.0f, "%.2f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = no remesh on Shift (smooth only)\n1 = simplifies triangles 2x during Shift");
+
+            ImGui::Checkbox("Auto Wireframe", &dyntopo.autoWireframe);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Temporarily shows wireframe while sculpting");
 
             ImGui::EndPopup();
         }

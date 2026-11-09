@@ -31,12 +31,16 @@ void updateFaceNormalsAndBoxes(
         uint32_t idFace = ind * 4;
         uint32_t idBox = ind * 6;
 
-        uint32_t ind1 = faces[idFace] * 3;
-        uint32_t ind2 = faces[idFace + 1] * 3;
-        uint32_t ind3 = faces[idFace + 2] * 3;
-        uint32_t ind4 = faces[idFace + 3];
-        bool isQuad = (ind4 != TRI_INDEX);
-        if (isQuad) ind4 *= 3;
+        uint32_t f1 = faces[idFace];
+        uint32_t f2 = faces[idFace + 1];
+        uint32_t f3 = faces[idFace + 2];
+        uint32_t f4 = faces[idFace + 3];
+        if (f1 >= (uint32_t)nbVerts || f2 >= (uint32_t)nbVerts || f3 >= (uint32_t)nbVerts) continue;
+        bool isQuad = (f4 != TRI_INDEX && f4 < (uint32_t)nbVerts);
+        uint32_t ind1 = f1 * 3;
+        uint32_t ind2 = f2 * 3;
+        uint32_t ind3 = f3 * 3;
+        uint32_t ind4 = f4 * 3;
 
         float v1x = verts[ind1];
         float v1y = verts[ind1 + 1];

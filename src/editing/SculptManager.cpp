@@ -23,6 +23,8 @@
 #include "mesh/Topology.h"
 #include "mesh/Mesh.h"
 #include "mesh/BVH.h"
+#include "mesh/dynamic/DynamicTopology.h"
+#include "render/AngleRenderer.h"
 #include <vector>
 #include <algorithm>
 #include <iostream>
@@ -618,6 +620,64 @@ SculptManager::SculptManager() {
     m_brushSettings[BRUSH_RAKE].rakeSharpness = 0.5f;
     m_brushSettings[BRUSH_RAKE].rakeTurnSmoothness = 0.65f;
     m_brushSettings[BRUSH_RAKE].rakeAngleOffset = 0.0f;
+
+    m_brushSettings[BRUSH_DYNAMIC_TOPOLOGY].radius = 120.0f;
+    m_brushSettings[BRUSH_DYNAMIC_TOPOLOGY].intensity = 0.0f;
+    m_brushSettings[BRUSH_DYNAMIC_TOPOLOGY].topologyEdgeSize = 1.0f;
+    m_brushSettings[BRUSH_DYNAMIC_TOPOLOGY].topologySmoothness = 0.5f;
+    m_brushSettings[BRUSH_DYNAMIC_TOPOLOGY].autoWireframe = true;
+    m_brushSettings[BRUSH_DYNAMIC_TOPOLOGY].spacing = 0.15f;
+    m_brushSettings[BRUSH_DYNAMIC_TOPOLOGY].culling = true;
+
+    m_dyntopo = std::make_unique<dynamic::DynamicTopology>();
+}
+
+bool SculptManager::pickMeshSize(Mesh* mesh, uint32_t faceId) {
+    if (!mesh || faceId >= (uint32_t)mesh->nbFaces || faceId * 4 + 2 >= mesh->faces.size()) return false;
+    uint32_t v0 = mesh->faces[faceId * 4 + 0];
+    uint32_t v1 = mesh->faces[faceId * 4 + 1];
+    uint32_t v2 = mesh->faces[faceId * 4 + 2];
+    uint32_t v3 = (faceId * 4 + 3 < mesh->faces.size()) ? mesh->faces[faceId * 4 + 3] : 0xffffffff;
+
+    if (v0 >= (uint32_t)mesh->nbVerts || v1 >= (uint32_t)mesh->nbVerts || v2 >= (uint32_t)mesh->nbVerts ||
+        v0 * 3 + 2 >= mesh->verts.size() || v1 * 3 + 2 >= mesh->verts.size() || v2 * 3 + 2 >= mesh->verts.size()) {
+        return false;
+    }
+
+    glm::vec3 p0(mesh->verts[v0 * 3], mesh->verts[v0 * 3 + 1], mesh->verts[v0 * 3 + 2]);
+    glm::vec3 p1(mesh->verts[v1 * 3], mesh->verts[v1 * 3 + 1], mesh->verts[v1 * 3 + 2]);
+    glm::vec3 p2(mesh->verts[v2 * 3], mesh->verts[v2 * 3 + 1], mesh->verts[v2 * 3 + 2]);
+
+    float len0 = glm::length(p0 - p1);
+    float len1 = glm::length(p1 - p2);
+    float len2 = glm::length(p2 - p0);
+    float avgEdge = (len0 + len1 + len2) / 3.0f;
+
+    if (v3 != 0xffffffff && v3 < (uint32_t)mesh->nbVerts) {
+        glm::vec3 p3(mesh->verts[v3 * 3], mesh->verts[v3 * 3 + 1], mesh->verts[v3 * 3 + 2]);
+        float len3 = glm::length(p3 - p0);
+        len2 = glm::length(p2 - p3);
+        avgEdge = (len0 + len1 + len2 + len3) * 0.25f;
+    }
+
+    if (avgEdge < 1e-6f) return false;
+
+    // Set topology brush edge size
+    m_brushSettings[BRUSH_DYNAMIC_TOPOLOGY].topologyEdgeSize = avgEdge;
+
+    // Also update dyntopoSettings detail
+    float bboxDiag = mesh->computeBBoxDiagonal();
+    if (bboxDiag > 1e-6f) {
+        float ratio = avgEdge / (bboxDiag * 0.05f);
+        if (ratio > 0.0f) {
+            float d = std::log(ratio) / std::log(0.04f);
+            m_dyntopoSettings.detail = std::clamp(d, 0.0f, 1.0f);
+        }
+    }
+
+    m_pickMeshSizeActive = false;
+    sculpt_log("[Dyntopo] Picked mesh edge size: %.5f (detail: %.2f)\n", avgEdge, m_dyntopoSettings.detail);
+    return true;
 }
 
 void SculptManager::notifyMeshDeletedTool(Mesh* mesh) {
@@ -1676,6 +1736,37 @@ void SculptManager::cancelStroke() {
         m_tubeMoveTargets.clear();
         m_tubeMoveOrigPoints.clear();
     }
+    if (m_dyntopo && m_dyntopo->active()) {
+        Mesh* m = m_dyntopo->strokeMesh();
+        BVH* b = m_dyntopo->strokeBvh();
+        if (m && b) {
+            auto undo = m_dyntopo->finish(*m, *b);
+            if (undo) {
+                undo->swapWith(*m);
+                m->initTopology();
+                m->faceNormals.resize(m->nbFaces * 3, 0.0f);
+                m->faceBoxes.resize(m->nbFaces * 6, 0.0f);
+                m->faceCenters.resize(m->nbFaces * 3, 0.0f);
+                m->vertProxy = m->verts;
+                updateFaceNormalsAndBoxes(
+                    m->verts.data(), m->nbVerts,
+                    m->faces.data(), m->nbFaces,
+                    nullptr, -1,
+                    m->faceNormals.data(),
+                    m->faceBoxes.data(),
+                    m->faceCenters.data()
+                );
+                b->build(*m);
+                m->isDirty = true;
+                m->isTopologyDirty = true;
+                m->isVertexDirty = true;
+            }
+        }
+    }
+    if (m_autoWireframeActive && m_renderer) {
+        m_renderer->setShowWireframe(m_prevWireframeState);
+        m_autoWireframeActive = false;
+    }
 }
 
 void SculptManager::warmupMeshCaches(const Mesh* mesh) {
@@ -1734,11 +1825,13 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     bool isAlt = (SDL_GetModState() & KMOD_ALT) != 0;
     bool isShift = (SDL_GetModState() & KMOD_SHIFT) != 0;
 
-    if (isShift) {
-        activeBrush = BRUSH_SMOOTH;
-    } else if (isMayaNav ? (isCtrl && !isAlt) : isCtrl) {
-        if (m_currentBrush != BRUSH_POLYGROUP) {
-            activeBrush = BRUSH_MASK;
+    if (m_currentBrush != BRUSH_DYNAMIC_TOPOLOGY) {
+        if (isShift) {
+            activeBrush = BRUSH_SMOOTH;
+        } else if (isMayaNav ? (isCtrl && !isAlt) : isCtrl) {
+            if (m_currentBrush != BRUSH_POLYGROUP) {
+                activeBrush = BRUSH_MASK;
+            }
         }
     }
     if (activeBrush != m_currentBrush && (activeBrush == BRUSH_SMOOTH || activeBrush == BRUSH_MASK)) {
@@ -1893,6 +1986,16 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         if (m_currentIntersectionValid && intersectFaceId != 0xffffffff) {
             pickColor(mesh, intersectFaceId, m_currentIntersection);
         }
+        return;
+    }
+
+    if (m_pickMeshSizeActive || (activeBrush == BRUSH_DYNAMIC_TOPOLOGY && (SDL_GetModState() & KMOD_ALT))) {
+        if (m_currentIntersectionValid && intersectFaceId != 0xffffffff && mesh) {
+            pickMeshSize(mesh, intersectFaceId);
+        }
+        m_pickMeshSizeActive = false;
+        m_isSculpting = false;
+        g_undoManager.cancelSculptStroke();
         return;
     }
 
@@ -2170,6 +2273,95 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         return;
     }
 
+    bool isDyntopoBrush = (activeBrush == BRUSH_DYNAMIC_TOPOLOGY);
+    bool isDyntopoActive = mesh && (isDyntopoBrush || m_dyntopoSettings.enabled);
+    if (isDyntopoActive) {
+        std::string blocker = dynamic::dyntopoBlocker(*mesh);
+        if (!blocker.empty()) {
+            static std::string lastBlockerMsg;
+            if (lastBlockerMsg != blocker) {
+                lastBlockerMsg = blocker;
+                sculpt_log("[Dyntopo] Blocked: %s\n", blocker.c_str());
+            }
+            isDyntopoActive = false;
+        }
+    }
+
+    if (m_firstStrokeFrame) {
+        bool autoWf = (isDyntopoBrush && getSettings(BRUSH_DYNAMIC_TOPOLOGY).autoWireframe) ||
+                      (m_dyntopoSettings.enabled && m_dyntopoSettings.autoWireframe);
+        if (autoWf && m_renderer) {
+            if (!m_autoWireframeActive) {
+                m_prevWireframeState = m_renderer->getShowWireframe();
+                if (!m_prevWireframeState) {
+                    m_renderer->setShowWireframe(true);
+                    m_autoWireframeActive = true;
+                }
+            }
+        }
+        if (isDyntopoActive) {
+            if (!mesh->hasOnlyTriangles()) {
+                mesh->triangulateQuads();
+            }
+            if (mesh->faceVisible.size() != (size_t)mesh->nbFaces) {
+                mesh->faceVisible.assign(mesh->nbFaces, 1);
+            }
+            if (mesh->vertVisible.size() != (size_t)mesh->nbVerts) {
+                mesh->vertVisible.assign(mesh->nbVerts, 1);
+            }
+        }
+    }
+
+    bool topoChanged = false;
+    if (isDyntopoActive) {
+        float targetLength = 0.0f;
+        if (isDyntopoBrush) {
+            targetLength = getSettings(BRUSH_DYNAMIC_TOPOLOGY).topologyEdgeSize;
+            if (targetLength <= 0.0f) {
+                float bboxDiag = mesh->computeBBoxDiagonal();
+                targetLength = dynamic::dyntopoEdgeLength(m_dyntopoSettings, localRadius, bboxDiag);
+            }
+        } else {
+            float bboxDiag = mesh->computeBBoxDiagonal();
+            float scaleSmooth = (activeBrush == BRUSH_SMOOTH) ? dynamic::dyntopoSmoothScale(m_dyntopoSettings) : 1.0f;
+            if (scaleSmooth > 0.0f) {
+                targetLength = dynamic::dyntopoEdgeLength(m_dyntopoSettings, localRadius, bboxDiag) * scaleSmooth;
+            }
+        }
+
+        if (targetLength > 1e-7f) {
+            std::vector<dynamic::SymCopy> mirrors;
+            if (m_useSym) {
+                mirrors.push_back(dynamic::SymCopy{}); // Identity
+                std::vector<glm::vec3> activeScales = getActiveSymmetryScales();
+                for (const auto& s : activeScales) {
+                    dynamic::SymCopy sym;
+                    sym.m = glm::mat3(glm::scale(glm::mat4(1.0f), s));
+                    sym.pivot = mesh->getSymmetryOriginForAxis(0, m_symmetryMode);
+                    mirrors.push_back(sym);
+                }
+            }
+
+            if (!m_dyntopo) {
+                m_dyntopo = std::make_unique<dynamic::DynamicTopology>();
+            }
+            topoChanged = m_dyntopo->remesh(*mesh, mesh->bvh, m_currentIntersection, localRadius, targetLength, mirrors);
+            if (topoChanged) {
+                mesh->isDirty = true;
+                mesh->isTopologyDirty = true;
+                mesh->isVertexDirty = true;
+                mesh->dirtyVertMin = 0;
+                mesh->dirtyVertMax = mesh->nbVerts > 0 ? (uint32_t)mesh->nbVerts - 1 : 0;
+                m_pendingBVHUpdate = true;
+            }
+        }
+
+        if (isDyntopoBrush) {
+            m_firstStrokeFrame = false;
+            return; // Topology brush does zero displacement!
+        }
+    }
+
     // --- Stage 2: Pick Vertices ---
     tStage = std::chrono::high_resolution_clock::now();
     m_pickedVerticesCache.clear();
@@ -2293,7 +2485,27 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             m_snakeActiveVerts = pickedVertices;
             culledAndFiltered = true;
         } else {
-            pickedVertices = m_snakeActiveVerts;
+            if (topoChanged) {
+                if (getSettings(activeBrush).topoCheck) {
+                    primaryUsedTopo = true;
+                    pickVerticesInSphereTopological(mesh, m_currentIntersection, radius2, intersectFaceId,
+                                                    m_vertTagFlags, m_vertTagEpoch, pickedVertices);
+                } else {
+                    primaryUsedBVH = true;
+                    mesh->bvh.pickVerticesInSphere(
+                        *mesh, m_currentIntersection, radius2, pickedVertices, mesh->vertVisible.data(), 0
+                    );
+                }
+                if (getSettings(activeBrush).culling) {
+                    filterCullingVertices(pickedVertices, mesh, localRayDir);
+                }
+                if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty()) {
+                    filterPolyGroupVertices(pickedVertices, mesh, m_strokeTargetPolyGroup);
+                }
+                m_snakeActiveVerts = pickedVertices;
+            } else {
+                pickedVertices = m_snakeActiveVerts;
+            }
             culledAndFiltered = true;
         }
     } else if (isGrabBrush && !m_firstStrokeFrame) {
@@ -2454,6 +2666,19 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 for (const auto& symList : m_prePickedSymVerts) {
                     if (!symList.empty()) {
                         g_undoManager.recordAffectedVertices(scene, mesh->m_id, symList, strokeAffectsPositions, strokeAffectsColors, strokeAffectsMaterials);
+                    }
+                }
+            }
+            if (m_dyntopo && m_dyntopo->active()) {
+                const auto& recPrimary = (isGrabBrush && !m_firstStrokeFrame) ? m_grabbedVertices : pickedVertices;
+                for (uint32_t v : recPrimary) {
+                    m_dyntopo->recordStrokeStart(v);
+                }
+                if (m_useSym) {
+                    for (const auto& symList : m_prePickedSymVerts) {
+                        for (uint32_t v : symList) {
+                            m_dyntopo->recordStrokeStart(v);
+                        }
                     }
                 }
             }
@@ -3035,7 +3260,7 @@ MeasurementAnchor SculptManager::pickAnchor(float mouseX, float mouseY, Scene& s
             minT = hit.t;
         }
 
-        if (intersectFaceId != 0xffffffff) {
+        if (intersectFaceId != 0xffffffff && intersectFaceId < (uint32_t)mesh->nbFaces && intersectFaceId * 4 + 3 < mesh->faces.size()) {
             glm::vec3 inter = localRayOrigin + minT * localRayDir;
             float bestDist2 = std::numeric_limits<float>::infinity();
             uint32_t closestVert = 0xffffffff;
@@ -3049,7 +3274,7 @@ MeasurementAnchor SculptManager::pickAnchor(float mouseX, float mouseY, Scene& s
 
             for (int k = 0; k < 4; ++k) {
                 uint32_t vid = faceVerts[k];
-                if (vid == 0xffffffff) break;
+                if (vid == 0xffffffff || vid >= (uint32_t)mesh->nbVerts || vid * 3 + 2 >= mesh->verts.size()) continue;
                 glm::vec3 v(mesh->verts[vid * 3], mesh->verts[vid * 3 + 1], mesh->verts[vid * 3 + 2]);
                 float dist2 = glm::dot(v - inter, v - inter);
                 if (dist2 < bestDist2) {
@@ -3343,21 +3568,23 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                         auto tStart = std::chrono::high_resolution_clock::now();
                         glm::vec3 localPt = closestLocalRayOrigin + closestLocalMinT * closestLocalRayDir;
                         glm::vec3 localNormal(0.0f, 0.0f, 1.0f);
-                        if (closestFaceId < (uint32_t)closestMesh->nbFaces && !closestMesh->faceNormals.empty()) {
+                        if (closestFaceId < (uint32_t)closestMesh->nbFaces && closestFaceId * 3 + 2 < closestMesh->faceNormals.size()) {
                             localNormal = glm::vec3(
                                 closestMesh->faceNormals[closestFaceId * 3],
                                 closestMesh->faceNormals[closestFaceId * 3 + 1],
                                 closestMesh->faceNormals[closestFaceId * 3 + 2]
                             );
                         }
-                        if (glm::length(localNormal) < 1e-6f) {
+                        if (glm::length(localNormal) < 1e-6f && closestFaceId * 4 + 2 < closestMesh->faces.size()) {
                             uint32_t v0Id = closestMesh->faces[closestFaceId * 4];
                             uint32_t v1Id = closestMesh->faces[closestFaceId * 4 + 1];
                             uint32_t v2Id = closestMesh->faces[closestFaceId * 4 + 2];
-                            glm::vec3 v0(closestMesh->verts[v0Id * 3], closestMesh->verts[v0Id * 3 + 1], closestMesh->verts[v0Id * 3 + 2]);
-                            glm::vec3 v1(closestMesh->verts[v1Id * 3], closestMesh->verts[v1Id * 3 + 1], closestMesh->verts[v1Id * 3 + 2]);
-                            glm::vec3 v2(closestMesh->verts[v2Id * 3], closestMesh->verts[v2Id * 3 + 1], closestMesh->verts[v2Id * 3 + 2]);
-                            localNormal = glm::cross(v1 - v0, v2 - v0);
+                            if (v0Id * 3 + 2 < closestMesh->verts.size() && v1Id * 3 + 2 < closestMesh->verts.size() && v2Id * 3 + 2 < closestMesh->verts.size()) {
+                                glm::vec3 v0(closestMesh->verts[v0Id * 3], closestMesh->verts[v0Id * 3 + 1], closestMesh->verts[v0Id * 3 + 2]);
+                                glm::vec3 v1(closestMesh->verts[v1Id * 3], closestMesh->verts[v1Id * 3 + 1], closestMesh->verts[v1Id * 3 + 2]);
+                                glm::vec3 v2(closestMesh->verts[v2Id * 3], closestMesh->verts[v2Id * 3 + 1], closestMesh->verts[v2Id * 3 + 2]);
+                                localNormal = glm::cross(v1 - v0, v2 - v0);
+                            }
                         }
                         if (glm::length(localNormal) > 1e-6f) {
                             localNormal = glm::normalize(localNormal);
@@ -3683,6 +3910,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             bool hitMesh = false;
             float minT = std::numeric_limits<float>::infinity();
             uint32_t intersectFaceId = 0xffffffff;
+            glm::vec3 hitNormal{0.0f, 0.0f, 1.0f};
             glm::vec3 localRayOrigin{0.0f};
             glm::vec3 localRayDir{0.0f};
 
@@ -3697,6 +3925,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 if (mesh->bvh.raycast(*mesh, localRayOrigin, localRayDir, hit)) {
                     minT = hit.t;
                     intersectFaceId = hit.faceId;
+                    hitNormal = hit.normal;
                     hitMesh = true;
                 }
             }
@@ -3876,11 +4105,13 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 bool isCtrl = (mod & KMOD_CTRL) != 0;
                 bool isAlt = (mod & KMOD_ALT) != 0;
                 bool isShift = (mod & KMOD_SHIFT) != 0;
-                if (isShift) {
-                    activeBrush = BRUSH_SMOOTH;
-                } else if (isMayaNav ? (isCtrl && !isAlt) : isCtrl) {
-                    if (m_currentBrush != BRUSH_POLYGROUP) {
-                        activeBrush = BRUSH_MASK;
+                if (m_currentBrush != BRUSH_DYNAMIC_TOPOLOGY) {
+                    if (isShift) {
+                        activeBrush = BRUSH_SMOOTH;
+                    } else if (isMayaNav ? (isCtrl && !isAlt) : isCtrl) {
+                        if (m_currentBrush != BRUSH_POLYGROUP) {
+                            activeBrush = BRUSH_MASK;
+                        }
                     }
                 }
                 bool isDeformBrush = (activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_POLYGROUP);
@@ -3894,7 +4125,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     return;
                 }
 
-                if (!m_isTubeMoveStroke) {
+                if (!m_isTubeMoveStroke && m_currentBrush != BRUSH_DYNAMIC_TOPOLOGY && !m_dyntopoSettings.enabled) {
                     bool strokeAffectsPositions = (m_currentBrush != BRUSH_PAINT && m_currentBrush != BRUSH_MASK && m_currentBrush != BRUSH_MASK_GRADIENT_BLUR);
                     bool strokeAffectsColors = (m_currentBrush == BRUSH_PAINT && getCurrentSettings().writeAlbedo);
                     bool strokeAffectsMaterials = (m_currentBrush == BRUSH_PAINT && (getCurrentSettings().writeRoughness || getCurrentSettings().writeMetalness)) ||
@@ -3913,15 +4144,19 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 m_hasRakeDir = false;
                 if (!m_isTubeMoveStroke) {
                     m_initialIntersection = localRayOrigin + minT * localRayDir;
-                    m_initialIntersectionNormal = glm::vec3(
-                        mesh->faceNormals[intersectFaceId * 3],
-                        mesh->faceNormals[intersectFaceId * 3 + 1],
-                        mesh->faceNormals[intersectFaceId * 3 + 2]
-                    );
+                    if (intersectFaceId != 0xffffffff && intersectFaceId < (uint32_t)mesh->nbFaces && intersectFaceId * 3 + 2 < mesh->faceNormals.size()) {
+                        m_initialIntersectionNormal = glm::vec3(
+                            mesh->faceNormals[intersectFaceId * 3],
+                            mesh->faceNormals[intersectFaceId * 3 + 1],
+                            mesh->faceNormals[intersectFaceId * 3 + 2]
+                        );
+                    } else {
+                        m_initialIntersectionNormal = hitNormal;
+                    }
                 }
                 m_currentIntersection = m_initialIntersection;
                 m_currentIntersectionNormal = m_initialIntersectionNormal;
-                if (intersectFaceId != 0xffffffff && !mesh->faceGroups.empty() && intersectFaceId < (uint32_t)mesh->nbFaces) {
+                if (intersectFaceId != 0xffffffff && !mesh->faceGroups.empty() && intersectFaceId < mesh->faceGroups.size()) {
                     m_strokeTargetPolyGroup = mesh->faceGroups[intersectFaceId];
                 }
 
@@ -4296,7 +4531,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                         hitMesh = true;
                     }
 
-                    if (intersectFaceId != 0xffffffff) {
+                    if (intersectFaceId != 0xffffffff && intersectFaceId < (uint32_t)mesh->nbFaces && intersectFaceId * 4 + 3 < mesh->faces.size()) {
                         hitMesh = true;
                         glm::vec3 inter = localRayOrigin + minT * localRayDir;
                         float bestDist2 = std::numeric_limits<float>::infinity();
@@ -4310,7 +4545,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
                         for (int k = 0; k < 4; ++k) {
                             uint32_t vid = faceVerts[k];
-                            if (vid == 0xffffffff) break;
+                            if (vid == 0xffffffff || vid >= (uint32_t)mesh->nbVerts || vid * 3 + 2 >= mesh->verts.size()) continue;
                             glm::vec3 v(mesh->verts[vid * 3], mesh->verts[vid * 3 + 1], mesh->verts[vid * 3 + 2]);
                             float dist2 = glm::dot(v - inter, v - inter);
                             if (dist2 < bestDist2) {
@@ -4684,7 +4919,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     intersectFaceId = hit.faceId;
                 }
 
-                if (intersectFaceId != 0xffffffff) {
+                if (intersectFaceId != 0xffffffff && intersectFaceId < (uint32_t)mesh->nbFaces && intersectFaceId * 4 + 3 < mesh->faces.size()) {
                     hitMesh = true;
                     glm::vec3 inter = localRayOrigin + minT * localRayDir;
                     float bestDist2 = std::numeric_limits<float>::infinity();
@@ -4698,7 +4933,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
                     for (int k = 0; k < 4; ++k) {
                         uint32_t vid = faceVerts[k];
-                        if (vid == 0xffffffff) break;
+                        if (vid == 0xffffffff || vid >= (uint32_t)mesh->nbVerts || vid * 3 + 2 >= mesh->verts.size()) continue;
                         glm::vec3 v(mesh->verts[vid * 3], mesh->verts[vid * 3 + 1], mesh->verts[vid * 3 + 2]);
                         float dist2 = glm::dot(v - inter, v - inter);
                         if (dist2 < bestDist2) {
@@ -4735,7 +4970,30 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 }
             } else {
                 auto tEndUndo0 = std::chrono::high_resolution_clock::now();
-                g_undoManager.endSculptStroke(scene);
+                if (m_dyntopo && m_dyntopo->active() && mesh) {
+                    auto undoRecord = m_dyntopo->finish(*mesh, mesh->bvh);
+                    if (undoRecord) {
+                        if (g_undoManager.hasActiveSculptStroke()) {
+                            g_undoManager.cancelSculptStroke();
+                        }
+                        g_undoManager.pushDynamicTopologyStroke(
+                            scene,
+                            mesh->getID(),
+                            std::move(undoRecord),
+                            m_currentBrush == BRUSH_DYNAMIC_TOPOLOGY ? "Topology Brush" : "Dynamic Topology Sculpt"
+                        );
+                        scene.setModified(true);
+                    } else if (g_undoManager.hasActiveSculptStroke()) {
+                        g_undoManager.endSculptStroke(scene);
+                    }
+                    m_pendingBVHUpdate = false;
+                } else if (g_undoManager.hasActiveSculptStroke()) {
+                    g_undoManager.endSculptStroke(scene);
+                }
+                if (m_autoWireframeActive && m_renderer) {
+                    m_renderer->setShowWireframe(m_prevWireframeState);
+                    m_autoWireframeActive = false;
+                }
                 double endUndoMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tEndUndo0).count();
                 double bvhMs = 0.0;
                 double bvhRebuildMs = 0.0;
@@ -5108,11 +5366,13 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             bool isAlt = (mod & KMOD_ALT) != 0;
             bool isShift = (mod & KMOD_SHIFT) != 0;
 
-            if (isShift) {
-                activeBrush = BRUSH_SMOOTH;
-            } else if (isMayaNav ? (isCtrl && !isAlt) : isCtrl) {
-                if (m_currentBrush != BRUSH_POLYGROUP) {
-                    activeBrush = BRUSH_MASK;
+            if (m_currentBrush != BRUSH_DYNAMIC_TOPOLOGY) {
+                if (isShift) {
+                    activeBrush = BRUSH_SMOOTH;
+                } else if (isMayaNav ? (isCtrl && !isAlt) : isCtrl) {
+                    if (m_currentBrush != BRUSH_POLYGROUP) {
+                        activeBrush = BRUSH_MASK;
+                    }
                 }
             }
             if (activeBrush != m_currentBrush && (activeBrush == BRUSH_SMOOTH || activeBrush == BRUSH_MASK)) {
@@ -5135,7 +5395,10 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 m_lastStrokeY = mouseY;
             } else if (dist > minSpacing) {
                 auto tMot0 = std::chrono::high_resolution_clock::now();
-                float step = 1.0f / std::floor(dist / minSpacing);
+                float numStepsF = std::floor(dist / minSpacing);
+                int maxSubSteps = (m_dyntopoSettings.enabled || activeBrush == BRUSH_DYNAMIC_TOPOLOGY) ? 4 : 16;
+                if (numStepsF > (float)maxSubSteps) numStepsF = (float)maxSubSteps;
+                float step = 1.0f / numStepsF;
                 float stepDx = strokeDx * step;
                 float stepDy = strokeDy * step;
 
@@ -5289,7 +5552,7 @@ void SculptManager::processFrame(Scene& scene) {
             RayHit hit;
             if (activeMesh->bvh.raycast(*activeMesh, localRayOrigin, localRayDir, hit)) {
                 localPt = hit.position;
-                if (hit.faceId < (uint32_t)activeMesh->nbFaces && !activeMesh->faceNormals.empty()) {
+                if (hit.faceId < (uint32_t)activeMesh->nbFaces && hit.faceId * 3 + 2 < activeMesh->faceNormals.size()) {
                     localNorm = glm::vec3(
                         activeMesh->faceNormals[hit.faceId * 3],
                         activeMesh->faceNormals[hit.faceId * 3 + 1],
@@ -6326,13 +6589,21 @@ void SculptManager::applyActivePreset() {
 }
 
 static glm::vec3 polyLerp(Mesh* mesh, uint32_t faceId, const glm::vec3& interPoint, const float* field) {
-    if (!mesh || faceId == 0xffffffff || faceId >= (uint32_t)mesh->nbFaces) return glm::vec3(0.0f);
+    if (!mesh || faceId == 0xffffffff || faceId >= (uint32_t)mesh->nbFaces || faceId * 4 + 2 >= mesh->faces.size()) return glm::vec3(0.0f);
     
     uint32_t iv1 = mesh->faces[faceId * 4];
     uint32_t iv2 = mesh->faces[faceId * 4 + 1];
     uint32_t iv3 = mesh->faces[faceId * 4 + 2];
-    uint32_t iv4 = mesh->faces[faceId * 4 + 3];
+    uint32_t iv4 = (faceId * 4 + 3 < mesh->faces.size()) ? mesh->faces[faceId * 4 + 3] : 0xffffffff;
     bool isQuad = (iv4 != 0xffffffff);
+
+    if (iv1 >= (uint32_t)mesh->nbVerts || iv2 >= (uint32_t)mesh->nbVerts || iv3 >= (uint32_t)mesh->nbVerts ||
+        iv1 * 3 + 2 >= mesh->verts.size() || iv2 * 3 + 2 >= mesh->verts.size() || iv3 * 3 + 2 >= mesh->verts.size()) {
+        return glm::vec3(0.0f);
+    }
+    if (isQuad && (iv4 >= (uint32_t)mesh->nbVerts || iv4 * 3 + 2 >= mesh->verts.size())) {
+        isQuad = false;
+    }
     
     glm::vec3 v1(mesh->verts[iv1 * 3], mesh->verts[iv1 * 3 + 1], mesh->verts[iv1 * 3 + 2]);
     glm::vec3 v2(mesh->verts[iv2 * 3], mesh->verts[iv2 * 3 + 1], mesh->verts[iv2 * 3 + 2]);

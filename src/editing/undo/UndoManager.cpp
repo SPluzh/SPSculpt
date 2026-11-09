@@ -445,6 +445,18 @@ void UndoManager::pushTopologyChange(Scene& scene,
     scene.setModified(true);
 }
 
+void UndoManager::pushDynamicTopologyStroke(Scene& scene,
+                                            uint32_t meshId,
+                                            std::unique_ptr<dynamic::TopologyUndo> record,
+                                            const std::string& description) {
+    if (!record) return;
+    auto entry = std::make_unique<DynamicTopologyUndoEntry>(meshId, std::move(record), description);
+    sculpt_log_lvl(LogLevel::Info, "[Undo] Dynamic Topology stroke pushed: '%s' (size: %.2f MB)\n",
+                   description.c_str(), entry->getMemoryUsage() / (1024.0f * 1024.0f));
+    pushEntry(std::move(entry));
+    scene.setModified(true);
+}
+
 void UndoManager::pushMetaChange(Scene& scene,
                                   const std::string& description,
                                   std::function<void()> operation) {
@@ -773,6 +785,47 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
                     brs.leafDedupMs, brs.leafAABBMs, brs.parentGatherMs, brs.innerUpdateMs, brs.dirtyLeaves, brs.dirtyInnerNodes, brs.usedPrecomputed ? 1 : 0, brs.fellBackToRefitAll ? " ALL" : "");
             }
         }
+    } else if (entry->getType() == UndoEntryType::DynamicTopology) {
+        auto* dynEntry = static_cast<DynamicTopologyUndoEntry*>(entry);
+        sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] Applying Dynamic Topology %s: '%s'\n",
+                       isUndo ? "UNDO" : "REDO", dynEntry->getDescription().c_str());
+        Mesh* mesh = scene.getMeshById(dynEntry->meshId);
+        if (mesh && dynEntry->record) {
+            dynEntry->record->swapWith(*mesh);
+            mesh->initTopology();
+            mesh->faceNormals.resize(mesh->nbFaces * 3, 0.0f);
+            mesh->faceBoxes.resize(mesh->nbFaces * 6, 0.0f);
+            mesh->faceCenters.resize(mesh->nbFaces * 3, 0.0f);
+            mesh->vertProxy = mesh->verts;
+            updateFaceNormalsAndBoxes(
+                mesh->verts.data(), mesh->nbVerts,
+                mesh->faces.data(), mesh->nbFaces,
+                nullptr, -1,
+                mesh->faceNormals.data(),
+                mesh->faceBoxes.data(),
+                mesh->faceCenters.data()
+            );
+            mesh->normals.resize(mesh->nbVerts * 3, 0.0f);
+            if (!mesh->vrfStartCount.empty() && !mesh->vertRingFace.empty()) {
+                updateVertexNormals(
+                    nullptr, -1, mesh->nbVerts,
+                    mesh->vrfStartCount.data(),
+                    mesh->vertRingFace.data(),
+                    mesh->faceNormals.data(),
+                    mesh->normals.data()
+                );
+            }
+            mesh->bvh.build(*mesh);
+            mesh->isDirty = true;
+            mesh->isTopologyDirty = true;
+            mesh->isVertexDirty = true;
+            mesh->dirtyVertMin = 0;
+            mesh->dirtyVertMax = mesh->nbVerts > 0 ? (uint32_t)mesh->nbVerts - 1 : 0;
+        }
+        auto tDone = std::chrono::high_resolution_clock::now();
+        double msTotal = std::chrono::duration<double, std::milli>(tDone - tStart).count();
+        sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] Dynamic Topology apply (%s) completed in %.2f ms\n",
+                       isUndo ? "UNDO" : "REDO", msTotal);
     } else if (entry->getType() == UndoEntryType::Topology) {
         auto* e = static_cast<TopologyUndoEntry*>(entry);
         sculpt_log_lvl(LogLevel::Info, "[Undo Diagnostics] Applying Topology %s: '%s'\n",
@@ -1045,6 +1098,7 @@ void UndoManager::undo(Scene& scene) {
     const char* typeStr = "SceneMeta";
     if (entry->getType() == UndoEntryType::Sculpt) typeStr = "Sculpt";
     else if (entry->getType() == UndoEntryType::Topology) typeStr = "Topology";
+    else if (entry->getType() == UndoEntryType::DynamicTopology) typeStr = "DynamicTopology";
     else if (entry->getType() == UndoEntryType::Measurement) typeStr = "Measurement";
 
     sculpt_log_lvl(LogLevel::Info, "[Undo] START UNDO: '%s' (Type: %s, UndoStack size left: %zu, Total Mem: %.2f MB)\n",
@@ -1079,6 +1133,7 @@ void UndoManager::redo(Scene& scene) {
     const char* typeStr = "SceneMeta";
     if (entry->getType() == UndoEntryType::Sculpt) typeStr = "Sculpt";
     else if (entry->getType() == UndoEntryType::Topology) typeStr = "Topology";
+    else if (entry->getType() == UndoEntryType::DynamicTopology) typeStr = "DynamicTopology";
     else if (entry->getType() == UndoEntryType::Measurement) typeStr = "Measurement";
 
     sculpt_log_lvl(LogLevel::Info, "[Undo] START REDO: '%s' (Type: %s, RedoStack size left: %zu, Total Mem: %.2f MB)\n",

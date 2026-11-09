@@ -145,6 +145,7 @@ static BrushType hkActionToBrushType(HKAction act, BrushType fallback) {
         case HKAction::ToolExtract: return BRUSH_EXTRACT;
         case HKAction::ToolCurveFolds: return BRUSH_CURVE_FOLDS;
         case HKAction::ToolRake: return BRUSH_RAKE;
+        case HKAction::ToolTopology: return BRUSH_DYNAMIC_TOPOLOGY;
         default: return fallback;
     }
 }
@@ -354,6 +355,7 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
                 gui.setShowSculptingPanel(true);
                 break;
             }
+            case HKAction::ToolTopology: sculpt.setBrush(BRUSH_DYNAMIC_TOPOLOGY); break;
             case HKAction::ToolMask: sculpt.setBrush(BRUSH_MASK); break;
             case HKAction::ToolVisibility: sculpt.setBrush(BRUSH_VISIBILITY); break;
             
@@ -501,7 +503,7 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
             case HKAction::SaveFile: gui.saveScene(scene, &sculpt); break;
             case HKAction::SaveFileAs: gui.saveSceneAs(scene, &sculpt); break;
             case HKAction::ExportOBJ: gui.exportFile(scene, &sculpt); break;
-            case HKAction::ToggleDyntopo: gui.toggleTopologyPanel(); break;
+            case HKAction::ToggleDyntopo: sculpt.toggleDyntopo(); break;
             case HKAction::ToggleOutliner: gui.toggleScenePanel(); break;
             case HKAction::ToggleCameraBookmarks: gui.toggleCameraBookmarksPanel(); break;
             case HKAction::OpenContextPopup: gui.m_openContextPopup = true; break;

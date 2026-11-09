@@ -2930,6 +2930,59 @@ void AngleRenderer::generateWireframeIndices(
 
     bool hasCageFlags = (!mesh->edgeIsCage.empty() && mesh->faceEdges.size() >= (size_t)(mesh->nbFaces * 4));
 
+    // Ultra-fast O(F) multithreaded path for pure triangle meshes without cage flags (Dyntopo / sculpting)
+    if (!hasCageFlags && mesh->hasOnlyTriangles()) {
+        int maxThreads = omp_get_max_threads();
+        std::vector<std::vector<uint32_t>> threadEdges(maxThreads);
+        int nbF = mesh->nbFaces;
+        const uint32_t* const faces = mesh->faces.data();
+
+        #pragma omp parallel
+        {
+            int tid = omp_get_thread_num();
+            int nthr = omp_get_num_threads();
+            int start = (int)((int64_t)nbF * tid / nthr);
+            int end = (int)((int64_t)nbF * (tid + 1) / nthr);
+            auto& local = threadEdges[tid];
+            local.reserve((size_t)(end - start) * 3);
+
+            for (int i = start; i < end; ++i) {
+                if (hasFaceVis) {
+                    if (!fVisible[i]) continue;
+                } else if (hasVisibility) {
+                    uint32_t v0 = faces[i * 4];
+                    uint32_t v1 = faces[i * 4 + 1];
+                    uint32_t v2 = faces[i * 4 + 2];
+                    if (v0 >= visible.size() || !visible[v0]) continue;
+                    if (v1 >= visible.size() || !visible[v1]) continue;
+                    if (v2 >= visible.size() || !visible[v2]) continue;
+                }
+
+                uint32_t v0 = faces[i * 4 + 0];
+                uint32_t v1 = faces[i * 4 + 1];
+                uint32_t v2 = faces[i * 4 + 2];
+
+                // In 2-manifold triangle mesh, condition a < b emits each unique edge exactly once
+                if (v0 < v1) { local.push_back(v0); local.push_back(v1); }
+                if (v1 < v2) { local.push_back(v1); local.push_back(v2); }
+                if (v2 < v0) { local.push_back(v2); local.push_back(v0); }
+            }
+        }
+
+        size_t total = 0;
+        for (int t = 0; t < maxThreads; ++t) total += threadEdges[t].size();
+        outCageEdges.resize(total);
+        size_t off = 0;
+        for (int t = 0; t < maxThreads; ++t) {
+            size_t sz = threadEdges[t].size();
+            if (sz > 0) {
+                std::memcpy(outCageEdges.data() + off, threadEdges[t].data(), sz * sizeof(uint32_t));
+                off += sz;
+            }
+        }
+        return;
+    }
+
     std::vector<uint64_t> cageEdges;
     std::vector<uint64_t> subdivEdges;
     cageEdges.reserve(mesh->nbFaces * 4);
@@ -3273,28 +3326,20 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
         
         bool needWireframe = m_showWireframe || (m_activeBrush == BRUSH_POLYGROUP) || (m_shaderType == 5);
         if (needWireframe) {
-            bool needWireframe = m_showWireframe || (m_activeBrush == BRUSH_POLYGROUP) || (m_shaderType == 5);
-            if (needWireframe) {
-                std::vector<uint32_t> cageWireIndices;
-                std::vector<uint32_t> subdivWireIndices;
-                generateWireframeIndices(uploadMesh, cageWireIndices, subdivWireIndices);
-                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboWireframe);
-                glBufferData(GL_ELEMENT_ARRAY_BUFFER, cageWireIndices.size() * sizeof(uint32_t), cageWireIndices.data(), GL_DYNAMIC_DRAW);
-                bufs->wireIndexCount = cageWireIndices.size();
+            std::vector<uint32_t> cageWireIndices;
+            std::vector<uint32_t> subdivWireIndices;
+            generateWireframeIndices(uploadMesh, cageWireIndices, subdivWireIndices);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboWireframe);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, cageWireIndices.size() * sizeof(uint32_t), cageWireIndices.data(), GL_DYNAMIC_DRAW);
+            bufs->wireIndexCount = cageWireIndices.size();
 
-                if (!subdivWireIndices.empty()) {
-                    if (!bufs->eboSubdivWire) glGenBuffers(1, &bufs->eboSubdivWire);
-                    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboSubdivWire);
-                    glBufferData(GL_ELEMENT_ARRAY_BUFFER, subdivWireIndices.size() * sizeof(uint32_t), subdivWireIndices.data(), GL_DYNAMIC_DRAW);
-                    bufs->subdivWireIndexCount = subdivWireIndices.size();
-                } else {
-                    bufs->subdivWireIndexCount = 0;
-                }
-                bufs->wireDirty = false;
+            if (!subdivWireIndices.empty()) {
+                if (!bufs->eboSubdivWire) glGenBuffers(1, &bufs->eboSubdivWire);
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboSubdivWire);
+                glBufferData(GL_ELEMENT_ARRAY_BUFFER, subdivWireIndices.size() * sizeof(uint32_t), subdivWireIndices.data(), GL_DYNAMIC_DRAW);
+                bufs->subdivWireIndexCount = subdivWireIndices.size();
             } else {
-                bufs->wireIndexCount = 0;
                 bufs->subdivWireIndexCount = 0;
-                bufs->wireDirty = true;
             }
             bufs->wireDirty = false;
         } else {

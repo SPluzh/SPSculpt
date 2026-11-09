@@ -3,10 +3,11 @@
 #include <string>
 
 enum class UndoEntryType {
-    Sculpt,      // Delta for vertex positions, colors, materials
-    Topology,    // Full state snapshot for mesh topology changes
-    SceneMeta,   // Scene metadata changes (transforms, names, visibility, selection)
-    Measurement  // Measurement / Divider tools
+    Sculpt,          // Delta for vertex positions, colors, materials
+    Topology,        // Full state snapshot for mesh topology changes
+    DynamicTopology, // Compact slot swap for dynamic topology strokes
+    SceneMeta,       // Scene metadata changes (transforms, names, visibility, selection)
+    Measurement      // Measurement / Divider tools
 };
 
 
