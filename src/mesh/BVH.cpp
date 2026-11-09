@@ -1685,6 +1685,12 @@ void BVH::queryTriangles(const Mesh& mesh, const glm::vec3& center, float radius
                 glm::vec3 p2(verts[v2*3], verts[v2*3+1], verts[v2*3+2]);
                 glm::vec3 tbmin = glm::min(p0, glm::min(p1, p2));
                 glm::vec3 tbmax = glm::max(p0, glm::max(p1, p2));
+                uint32_t v3 = faces[idx + 3];
+                if (v3 != 0xFFFFFFFF && v3 < (uint32_t)mesh.nbVerts) {
+                    glm::vec3 p3(verts[v3*3], verts[v3*3+1], verts[v3*3+2]);
+                    tbmin = glm::min(tbmin, p3);
+                    tbmax = glm::max(tbmax, p3);
+                }
                 if (sphereBoxIntersect(tbmin, tbmax, center, r2)) {
                     out.push_back(t);
                 }

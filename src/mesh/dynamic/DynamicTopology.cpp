@@ -138,11 +138,16 @@ void TopologyUndo::swapWith(Mesh& mesh) {
 
     // Swap triangles (faces)
     {
-        std::vector<glm::uvec3> current;
+        std::vector<glm::uvec4> current;
         current.reserve(triangleSlots.size());
         for (uint32_t s : triangleSlots) {
             if (s < nt) {
-                current.push_back(glm::uvec3(mesh.faces[s * 4], mesh.faces[s * 4 + 1], mesh.faces[s * 4 + 2]));
+                current.push_back(glm::uvec4(
+                    mesh.faces[s * 4 + 0],
+                    mesh.faces[s * 4 + 1],
+                    mesh.faces[s * 4 + 2],
+                    mesh.faces[s * 4 + 3]
+                ));
             }
         }
         mesh.faces.resize(triangleCount * 4);
@@ -152,7 +157,7 @@ void TopologyUndo::swapWith(Mesh& mesh) {
                 mesh.faces[s * 4 + 0] = triangles.triangles[k].x;
                 mesh.faces[s * 4 + 1] = triangles.triangles[k].y;
                 mesh.faces[s * 4 + 2] = triangles.triangles[k].z;
-                mesh.faces[s * 4 + 3] = 0xFFFFFFFF;
+                mesh.faces[s * 4 + 3] = triangles.triangles[k].w;
                 ++k;
             }
         }
@@ -232,7 +237,7 @@ void DynamicTopology::recordTriangle(uint32_t t) {
     if (!setBit(triRec_, t)) return;
     undo_->triangleSlots.push_back(t);
     if (t < startTriangles_) {
-        undo_->triangles.triangles.push_back(getTri(t));
+        undo_->triangles.triangles.push_back(getFace4(t));
         if (!mesh_->faceGroups.empty() && t < mesh_->faceGroups.size())
             undo_->triangles.faceGroups.push_back(mesh_->faceGroups[t]);
         if (!mesh_->faceVisible.empty() && t < mesh_->faceVisible.size())
@@ -405,10 +410,11 @@ void DynamicTopology::killTriangle(uint32_t t) {
     if (t >= deadT_.size() || deadT_[t]) return;
     Mesh& m = *mesh_;
     recordTriangle(t);
-    const glm::uvec3 tri = getTri(t);
-    for (int c = 0; c < 3; ++c) {
-        vtErase(tri[c], t);
-        markVertex(tri[c]);
+    const glm::uvec4 f4 = getFace4(t);
+    const int nc = (f4.w != 0xFFFFFFFF) ? 4 : 3;
+    for (int c = 0; c < nc; ++c) {
+        vtErase(f4[c], t);
+        markVertex(f4[c]);
     }
     bvh_->removeTriangle(t);
     deadT_[t] = 1;
@@ -427,8 +433,9 @@ void DynamicTopology::moveTriangle(uint32_t from, uint32_t to) {
     if (!m.faceGroups.empty()) m.faceGroups[to] = m.faceGroups[from];
     if (!m.faceVisible.empty()) m.faceVisible[to] = m.faceVisible[from];
 
-    const glm::uvec3 tri = getTri(to);
-    for (int c = 0; c < 3; ++c) vtReplace(tri[c], from, to);
+    const glm::uvec4 f4 = getFace4(to);
+    const int nc = (f4.w != 0xFFFFFFFF) ? 4 : 3;
+    for (int c = 0; c < nc; ++c) vtReplace(f4[c], from, to);
     bvh_->renumberTriangle(from, to);
     markTriangle(to);
     markTriangle(from);
@@ -455,12 +462,13 @@ void DynamicTopology::moveVertex(uint32_t from, uint32_t to) {
     m_vertTris.set(to, scratch2_);
     for (uint32_t t : scratch2_) {
         recordTriangle(t);
-        glm::uvec3 tri = getTri(t);
-        for (int c = 0; c < 3; ++c) {
-            if (tri[c] == from) tri[c] = to;
-            else markVertex(tri[c]);
+        glm::uvec4 f4 = getFace4(t);
+        const int nc = (f4.w != 0xFFFFFFFF) ? 4 : 3;
+        for (int c = 0; c < nc; ++c) {
+            if (f4[c] == from) f4[c] = to;
+            else markVertex(f4[c]);
         }
-        setTri(t, tri);
+        setFace4(t, f4);
         markTriangle(t);
     }
     m_vertTris.clearVert(from);
@@ -512,14 +520,16 @@ void DynamicTopology::compact() {
     deadV_.resize(nv);
     freeV_.clear();
 
-    // Defensive check: ensure every face vertex index is strictly < nv and triangle format
+    // Defensive check: ensure every face vertex index is strictly < nv
     for (size_t f = 0; f < nt; ++f) {
         for (int k = 0; k < 3; ++k) {
             if (m.faces[f * 4 + k] >= nv) {
                 m.faces[f * 4 + k] = 0;
             }
         }
-        m.faces[f * 4 + 3] = 0xFFFFFFFF;
+        if (m.faces[f * 4 + 3] != 0xFFFFFFFF && m.faces[f * 4 + 3] >= nv) {
+            m.faces[f * 4 + 3] = 0xFFFFFFFF;
+        }
     }
 }
 
@@ -531,10 +541,22 @@ int DynamicTopology::edgeTriangles(uint32_t a, uint32_t b, uint32_t* out) const 
     int n = 0;
     if (a >= m_vertTris.size()) return 0;
     for (uint32_t t : m_vertTris[a]) {
-        glm::uvec3 tri = getTri(t);
-        if (tri.x == b || tri.y == b || tri.z == b) {
-            if (n < 4) out[n] = t;
-            ++n;
+        if (t >= (uint32_t)mesh_->nbFaces || deadT_[t]) continue;
+        if (!isQuad(t)) {
+            glm::uvec3 tri = getTri(t);
+            if (tri.x == b || tri.y == b || tri.z == b) {
+                if (n < 4) out[n] = t;
+                ++n;
+            }
+        } else {
+            glm::uvec4 f4 = getFace4(t);
+            if ((f4.x == a && (f4.y == b || f4.w == b)) ||
+                (f4.y == a && (f4.z == b || f4.x == b)) ||
+                (f4.z == a && (f4.w == b || f4.y == b)) ||
+                (f4.w == a && (f4.x == b || f4.z == b))) {
+                if (n < 4) out[n] = t;
+                ++n;
+            }
         }
     }
     return n;
@@ -544,9 +566,21 @@ void DynamicTopology::ring(uint32_t v, std::vector<uint32_t>& out) const {
     out.clear();
     if (v >= m_vertTris.size()) return;
     for (uint32_t t : m_vertTris[v]) {
-        glm::uvec3 tri = getTri(t);
-        for (int c = 0; c < 3; ++c) {
-            if (tri[c] != v) out.push_back(tri[c]);
+        if (t >= (uint32_t)mesh_->nbFaces || deadT_[t]) continue;
+        if (!isQuad(t)) {
+            glm::uvec3 tri = getTri(t);
+            for (int c = 0; c < 3; ++c) {
+                if (tri[c] != v) out.push_back(tri[c]);
+            }
+        } else {
+            glm::uvec4 f4 = getFace4(t);
+            for (int k = 0; k < 4; ++k) {
+                if (f4[k] == v) {
+                    out.push_back(f4[(k + 1) % 4]);
+                    out.push_back(f4[(k + 3) % 4]);
+                    break;
+                }
+            }
         }
     }
     std::sort(out.begin(), out.end());
@@ -581,12 +615,87 @@ bool DynamicTopology::candidate(uint32_t a, uint32_t b) const {
     return orbitIncomplete_;
 }
 
+uint32_t DynamicTopology::triangulateQuad(uint32_t q) {
+    if (q >= (uint32_t)mesh_->nbFaces || deadT_[q] || !isQuad(q)) return kNone;
+    glm::uvec4 f = getFace4(q);
+    uint32_t v0 = f.x, v1 = f.y, v2 = f.z, v3 = f.w;
+
+    float d02 = len2(v0, v2);
+    float d13 = len2(v1, v3);
+    bool use02 = false;
+
+    float maxD = std::max(d02, d13);
+    if (std::abs(d02 - d13) > 1e-4f * maxD) {
+        use02 = (d02 < d13);
+    } else {
+        auto diagSymScore = [&](uint32_t a, uint32_t b) -> float {
+            glm::vec3 pa = getPos(a), pb = getPos(b);
+            glm::vec3 aa = glm::abs(pa), ab = glm::abs(pb);
+            if (std::tie(pa.y, pa.z, aa.x) > std::tie(pb.y, pb.z, ab.x)) {
+                std::swap(pa, pb);
+                std::swap(aa, ab);
+            }
+            glm::vec3 pa2 = pa * pa, pb2 = pb * pb;
+            return (pb2.x - pa2.x) * (pb.y - pa.y) +
+                   (pb2.y - pa2.y) * (pb.z - pa.z) +
+                   (pb2.z - pa2.z) * (ab.x - aa.x);
+        };
+        use02 = (diagSymScore(v0, v2) >= diagSymScore(v1, v3));
+    }
+
+    recordTriangle(q);
+    if (use02) {
+        vtErase(v3, q);
+        setTri(q, glm::uvec3(v0, v1, v2));
+        markVertex(v0); markVertex(v1); markVertex(v2); markVertex(v3);
+        bvh_->touchTriangle(q);
+        markTriangle(q);
+        uint32_t t2 = newTriangle(glm::uvec3(v0, v2, v3), q);
+        return t2;
+    } else {
+        vtErase(v2, q);
+        setTri(q, glm::uvec3(v0, v1, v3));
+        markVertex(v0); markVertex(v1); markVertex(v2); markVertex(v3);
+        bvh_->touchTriangle(q);
+        markTriangle(q);
+        uint32_t t2 = newTriangle(glm::uvec3(v1, v2, v3), q);
+        return t2;
+    }
+}
+
 void DynamicTopology::queryRegion() {
     bvh_->queryTriangles(*mesh_, center_, radius_, regionTris_);
     mirrorTris_.clear();
     slivers_.clear();
+
+    auto processQuadsInList = [&](std::vector<uint32_t>& list) {
+        std::vector<uint32_t> kept;
+        kept.reserve(list.size());
+        for (uint32_t t : list) {
+            if (t >= (uint32_t)mesh_->nbFaces || deadT_[t]) continue;
+            if (isQuad(t)) {
+                glm::uvec4 f = getFace4(t);
+                bool inBrush = inside(f[0], f[1], true) ||
+                               inside(f[1], f[2], true) ||
+                               inside(f[2], f[3], true) ||
+                               inside(f[3], f[0], true);
+                if (inBrush) {
+                    uint32_t t2 = triangulateQuad(t);
+                    kept.push_back(t);
+                    if (t2 != kNone) kept.push_back(t2);
+                }
+            } else {
+                kept.push_back(t);
+            }
+        }
+        list = std::move(kept);
+    };
+
+    processQuadsInList(regionTris_);
+
     auto addSlivers = [&](const std::vector<uint32_t>& tris) {
         for (uint32_t t : tris) {
+            if (t >= (uint32_t)mesh_->nbFaces || deadT_[t]) continue;
             glm::uvec3 tri = getTri(t);
             if (quality(getPos(tri.x), getPos(tri.y), getPos(tri.z)) < 0.05f) {
                 slivers_.push_back(t);
@@ -594,9 +703,11 @@ void DynamicTopology::queryRegion() {
         }
     };
     addSlivers(regionTris_);
+
     std::vector<uint32_t> more;
     for (const SymCopy& s : mirrorSigns_) {
         bvh_->queryTriangles(*mesh_, s.point(center_), radius_, more);
+        processQuadsInList(more);
         addSlivers(more);
         mirrorTris_.insert(mirrorTris_.end(), more.begin(), more.end());
     }
@@ -620,17 +731,37 @@ bool DynamicTopology::locked(uint32_t v) const {
             if (t < m.faceVisible.size() && !m.faceVisible[t]) return true;
         }
     }
+    auto getFaceNeighbors = [&](uint32_t t, uint32_t* neighbors) {
+        if (!isQuad(t)) {
+            glm::uvec3 tri = getTri(t);
+            int idx = 0;
+            for (int c = 0; c < 3; ++c) {
+                if (tri[c] != v && idx < 2) neighbors[idx++] = tri[c];
+            }
+        } else {
+            glm::uvec4 f4 = getFace4(t);
+            for (int k = 0; k < 4; ++k) {
+                if (f4[k] == v) {
+                    neighbors[0] = f4[(k + 1) % 4];
+                    neighbors[1] = f4[(k + 3) % 4];
+                    break;
+                }
+            }
+        }
+    };
     if (tris.size() <= 32) {
         uint32_t other[96], count[96];
         int n = 0;
         for (uint32_t t : tris) {
-            glm::uvec3 tri = getTri(t);
-            for (int c = 0; c < 3; ++c) {
-                if (tri[c] == v) continue;
+            if (t >= (uint32_t)mesh_->nbFaces || deadT_[t]) continue;
+            uint32_t nb[2];
+            getFaceNeighbors(t, nb);
+            for (int c = 0; c < 2; ++c) {
+                uint32_t u = nb[c];
                 int i = 0;
-                while (i < n && other[i] != tri[c]) ++i;
+                while (i < n && other[i] != u) ++i;
                 if (i == n) {
-                    other[n] = tri[c];
+                    other[n] = u;
                     count[n++] = 0;
                 }
                 if (++count[i] > 2) return true;
@@ -641,10 +772,11 @@ bool DynamicTopology::locked(uint32_t v) const {
     std::vector<uint32_t>& others = lockScratch_;
     others.clear();
     for (uint32_t t : tris) {
-        glm::uvec3 tri = getTri(t);
-        for (int c = 0; c < 3; ++c) {
-            if (tri[c] != v) others.push_back(tri[c]);
-        }
+        if (t >= (uint32_t)mesh_->nbFaces || deadT_[t]) continue;
+        uint32_t nb[2];
+        getFaceNeighbors(t, nb);
+        others.push_back(nb[0]);
+        others.push_back(nb[1]);
     }
     std::sort(others.begin(), others.end());
     for (size_t i = 0; i + 2 < others.size(); ++i) {
@@ -664,6 +796,7 @@ bool DynamicTopology::featureEdge(uint32_t a, uint32_t b) const {
     uint32_t tris[4];
     const int n = edgeTriangles(a, b, tris);
     if (n != 2) return true;
+    if (isQuad(tris[0]) || isQuad(tris[1])) return true;
     if (!mesh_->faceGroups.empty()) {
         uint32_t g0 = tris[0] < mesh_->faceGroups.size() ? mesh_->faceGroups[tris[0]] : 0;
         uint32_t g1 = tris[1] < mesh_->faceGroups.size() ? mesh_->faceGroups[tris[1]] : 0;
@@ -701,9 +834,16 @@ glm::vec3 DynamicTopology::faceNormalAt(uint32_t v) const {
     glm::vec3 n(0.0f);
     if (v >= m_vertTris.size()) return glm::vec3(0.0f, 1.0f, 0.0f);
     for (uint32_t t : m_vertTris[v]) {
-        glm::uvec3 tri = getTri(t);
-        glm::vec3 pa = getPos(tri.x), pb = getPos(tri.y), pc = getPos(tri.z);
-        n += glm::cross(pb - pa, pc - pa);
+        if (t >= (uint32_t)mesh_->nbFaces || deadT_[t]) continue;
+        if (!isQuad(t)) {
+            glm::uvec3 tri = getTri(t);
+            glm::vec3 pa = getPos(tri.x), pb = getPos(tri.y), pc = getPos(tri.z);
+            n += glm::cross(pb - pa, pc - pa);
+        } else {
+            glm::uvec4 f4 = getFace4(t);
+            glm::vec3 p0 = getPos(f4.x), p1 = getPos(f4.y), p2 = getPos(f4.z), p3 = getPos(f4.w);
+            n += glm::cross(p1 - p0, p2 - p0) + glm::cross(p2 - p0, p3 - p0);
+        }
     }
     const float len = glm::length(n);
     return len > 1e-30f ? n / len : glm::vec3(0.0f, 1.0f, 0.0f);
@@ -834,6 +974,22 @@ bool DynamicTopology::orbitSharesTriangle(const std::vector<std::pair<uint32_t, 
 
 uint32_t DynamicTopology::split(uint32_t a, uint32_t b) {
     Mesh& m = *mesh_;
+    if (a >= m_vertTris.size() || b >= m_vertTris.size()) return kNone;
+
+    for (size_t i = 0; i < m_vertTris[a].size(); ++i) {
+        uint32_t t = m_vertTris[a][i];
+        if (t < (uint32_t)mesh_->nbFaces && !deadT_[t] && isQuad(t)) {
+            glm::uvec4 f4 = getFace4(t);
+            if ((f4.x == a && (f4.y == b || f4.w == b)) ||
+                (f4.y == a && (f4.z == b || f4.x == b)) ||
+                (f4.z == a && (f4.w == b || f4.y == b)) ||
+                (f4.w == a && (f4.x == b || f4.z == b))) {
+                triangulateQuad(t);
+                i = (size_t)-1;
+            }
+        }
+    }
+
     uint32_t tris[4];
     const int n = edgeTriangles(a, b, tris);
     if (n < 1 || n > 2) return kNone;
@@ -896,6 +1052,23 @@ void DynamicTopology::pushEdgesAround(uint32_t v, bool longer) {
 void DynamicTopology::splitOrbit(uint32_t a, uint32_t b, int depth) {
     std::vector<std::pair<uint32_t, uint32_t>> edges;
     orbit(a, b, edges);
+    for (const auto& ed : edges) {
+        uint32_t ea = ed.first, eb = ed.second;
+        if (ea >= m_vertTris.size() || eb >= m_vertTris.size()) continue;
+        for (size_t i = 0; i < m_vertTris[ea].size(); ++i) {
+            uint32_t t = m_vertTris[ea][i];
+            if (t < (uint32_t)mesh_->nbFaces && !deadT_[t] && isQuad(t)) {
+                glm::uvec4 f4 = getFace4(t);
+                if ((f4.x == ea && (f4.y == eb || f4.w == eb)) ||
+                    (f4.y == ea && (f4.z == eb || f4.x == eb)) ||
+                    (f4.z == ea && (f4.w == eb || f4.y == eb)) ||
+                    (f4.w == ea && (f4.x == eb || f4.z == eb))) {
+                    triangulateQuad(t);
+                    i = (size_t)-1;
+                }
+            }
+        }
+    }
     if (edges.size() > 1 && depth < 3) {
         uint32_t ti[4], tj[4];
         bool again = false;
@@ -990,6 +1163,18 @@ void DynamicTopology::splitPass() {
 }
 
 bool DynamicTopology::collapseTarget(uint32_t a, uint32_t b, uint32_t& keep, uint32_t& drop, glm::vec3& p) const {
+    bool qa = hasIncidentQuad(a);
+    bool qb = hasIncidentQuad(b);
+    if (qa && qb) return false;
+    if (qa && !qb) {
+        keep = a; drop = b; p = getPos(a);
+        return true;
+    }
+    if (qb && !qa) {
+        keep = b; drop = a; p = getPos(b);
+        return true;
+    }
+
     uint32_t oa[2], ob[2];
     const int fa = featureEdges(a, oa), fb = featureEdges(b, ob);
     if (fa == 0 && fb == 0) {
@@ -1019,10 +1204,12 @@ bool DynamicTopology::collapseTarget(uint32_t a, uint32_t b, uint32_t& keep, uin
 }
 
 bool DynamicTopology::canCollapse(uint32_t keep, uint32_t drop, const glm::vec3& p) const {
+    if (hasIncidentQuad(drop)) return false;
     const Mesh& m = *mesh_;
     uint32_t tris[4];
     const int n = edgeTriangles(keep, drop, tris);
     if (n < 1 || n > 2) return false;
+    if (isQuad(tris[0]) || (n == 2 && isQuad(tris[1]))) return false;
     uint32_t opposite[2] = {kNone, kNone};
     for (int i = 0; i < n; ++i) {
         glm::uvec3 tri = getTri(tris[i]);
@@ -1066,6 +1253,7 @@ bool DynamicTopology::canCollapse(uint32_t keep, uint32_t drop, const glm::vec3&
         if (v >= m_vertTris.size()) continue;
         for (uint32_t t : m_vertTris[v]) {
             if (t == tris[0] || (n == 2 && t == tris[1])) continue;
+            if (isQuad(t)) continue;
             glm::uvec3 tri = getTri(t);
             glm::vec3 q[3], o[3];
             for (int c = 0; c < 3; ++c) {
@@ -1310,7 +1498,7 @@ void DynamicTopology::relaxPass() {
     uint32_t other[2];
     const float r2 = radius_ * radius_;
     for (uint32_t v : changedV_) {
-        if (deadV_[v] || locked(v)) continue;
+        if (deadV_[v] || locked(v) || hasIncidentQuad(v)) continue;
         const glm::vec3 pv = getPos(v);
         bool in = glm::dot(pv - center_, pv - center_) <= r2;
         for (const SymCopy& s : mirrorSigns_) {
@@ -1411,9 +1599,6 @@ bool DynamicTopology::remesh(Mesh& mesh, BVH& bvh, const glm::vec3& center, floa
 
     if (!mesh_) {
         const auto tInit0 = std::chrono::steady_clock::now();
-        if (!mesh.hasOnlyTriangles()) {
-            mesh.triangulateQuads();
-        }
         mesh_ = &mesh;
         bvh_ = &bvh;
         startVertices_ = (uint32_t)mesh.nbVerts;
@@ -1427,17 +1612,17 @@ bool DynamicTopology::remesh(Mesh& mesh, BVH& bvh, const glm::vec3& center, floa
 
         std::vector<uint32_t> degrees(mesh.nbVerts, 0);
         for (uint32_t t = 0; t < (uint32_t)mesh.nbFaces; ++t) {
-            glm::uvec3 tri = getTri(t);
-            if (tri.x < (uint32_t)mesh.nbVerts) degrees[tri.x]++;
-            if (tri.y < (uint32_t)mesh.nbVerts) degrees[tri.y]++;
-            if (tri.z < (uint32_t)mesh.nbVerts) degrees[tri.z]++;
+            const uint32_t* f = &mesh.faces[t * 4];
+            for (int c = 0; c < 4; ++c) {
+                if (f[c] != 0xFFFFFFFF && f[c] < (uint32_t)mesh.nbVerts) degrees[f[c]]++;
+            }
         }
         m_vertTris.init(degrees);
         for (uint32_t t = 0; t < (uint32_t)mesh.nbFaces; ++t) {
-            glm::uvec3 tri = getTri(t);
-            if (tri.x < (uint32_t)mesh.nbVerts) m_vertTris.appendInit(tri.x, t);
-            if (tri.y < (uint32_t)mesh.nbVerts) m_vertTris.appendInit(tri.y, t);
-            if (tri.z < (uint32_t)mesh.nbVerts) m_vertTris.appendInit(tri.z, t);
+            const uint32_t* f = &mesh.faces[t * 4];
+            for (int c = 0; c < 4; ++c) {
+                if (f[c] != 0xFFFFFFFF && f[c] < (uint32_t)mesh.nbVerts) m_vertTris.appendInit(f[c], t);
+            }
         }
         for (size_t v = 0; v < m_vertTris.size(); ++v) {
             m_vertTris.sortVert((uint32_t)v);
@@ -1600,6 +1785,11 @@ bool DynamicTopology::remesh(Mesh& mesh, BVH& bvh, const glm::vec3& center, floa
         if (mesh.vrvStartCount.size() < numV * 2) {
             mesh.vrvStartCount.resize(numV * 2, 0);
         }
+    }
+
+    if (ops_ > 0) {
+        if (!mesh.edgeIsCage.empty()) mesh.edgeIsCage.clear();
+        if (!mesh.faceEdges.empty()) mesh.faceEdges.clear();
     }
 
     lastMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - clock).count();

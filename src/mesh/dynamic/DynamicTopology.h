@@ -54,11 +54,11 @@ struct TopologyVertexValues {
 };
 
 struct TopologyTriangleValues {
-    std::vector<glm::uvec3> triangles;
+    std::vector<glm::uvec4> triangles;
     std::vector<uint32_t> faceGroups;
     std::vector<uint8_t> visible;
     size_t bytes() const {
-        return triangles.size() * sizeof(glm::uvec3) +
+        return triangles.size() * sizeof(glm::uvec4) +
                faceGroups.size() * sizeof(uint32_t) +
                visible.size() * sizeof(uint8_t);
     }
@@ -206,6 +206,26 @@ private:
         uint32_t* f = &mesh_->faces[t * 4];
         f[0] = tri.x; f[1] = tri.y; f[2] = tri.z; f[3] = 0xFFFFFFFF;
     }
+    bool isQuad(uint32_t t) const {
+        return mesh_->faces[t * 4 + 3] != 0xFFFFFFFF;
+    }
+    glm::uvec4 getFace4(uint32_t t) const {
+        const uint32_t* f = &mesh_->faces[t * 4];
+        return glm::uvec4(f[0], f[1], f[2], f[3]);
+    }
+    void setFace4(uint32_t t, const glm::uvec4& f4) {
+        uint32_t* f = &mesh_->faces[t * 4];
+        f[0] = f4.x; f[1] = f4.y; f[2] = f4.z; f[3] = f4.w;
+    }
+    bool hasIncidentQuad(uint32_t v) const {
+        if (v >= m_vertTris.size()) return false;
+        for (uint32_t t : m_vertTris[v]) {
+            if (!deadT_[t] && isQuad(t)) return true;
+        }
+        return false;
+    }
+
+    uint32_t triangulateQuad(uint32_t q);
 
     void recordVertex(uint32_t v);
     void recordTriangle(uint32_t t);

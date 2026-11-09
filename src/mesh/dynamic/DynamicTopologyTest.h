@@ -31,48 +31,55 @@ public:
         std::cout << "=======================================================\n\n";
 
         int passed = 0;
-        int total = 6;
+        int total = 7;
 
         if (testEdgeSplit()) {
-            std::cout << "[PASS] Test 1/6: Edge Split & Subdivision\n";
+            std::cout << "[PASS] Test 1/7: Edge Split & Subdivision\n";
             passed++;
         } else {
-            std::cout << "[FAIL] Test 1/6: Edge Split & Subdivision\n";
+            std::cout << "[FAIL] Test 1/7: Edge Split & Subdivision\n";
         }
 
         if (testEdgeCollapse()) {
-            std::cout << "[PASS] Test 2/6: Edge Collapse & Watertight Decimation\n";
+            std::cout << "[PASS] Test 2/7: Edge Collapse & Watertight Decimation\n";
             passed++;
         } else {
-            std::cout << "[FAIL] Test 2/6: Edge Collapse & Watertight Decimation\n";
+            std::cout << "[FAIL] Test 2/7: Edge Collapse & Watertight Decimation\n";
         }
 
         if (testStress1000Dabs()) {
-            std::cout << "[PASS] Test 3/6: Stress Test (1000 Dabs, Swap-With-End Compaction)\n";
+            std::cout << "[PASS] Test 3/7: Stress Test (1000 Dabs, Swap-With-End Compaction)\n";
             passed++;
         } else {
-            std::cout << "[FAIL] Test 3/6: Stress Test (1000 Dabs)\n";
+            std::cout << "[FAIL] Test 3/7: Stress Test (1000 Dabs)\n";
         }
 
         if (testSymmetryOrbits()) {
-            std::cout << "[PASS] Test 4/6: Symmetry Orbits & Reflection Preservation\n";
+            std::cout << "[PASS] Test 4/7: Symmetry Orbits & Reflection Preservation\n";
             passed++;
         } else {
-            std::cout << "[FAIL] Test 4/6: Symmetry Orbits\n";
+            std::cout << "[FAIL] Test 4/7: Symmetry Orbits\n";
         }
 
         if (testUndoRedo()) {
-            std::cout << "[PASS] Test 5/6: Compact Undo/Redo (Bit-for-Bit Exactness)\n";
+            std::cout << "[PASS] Test 5/7: Compact Undo/Redo (Bit-for-Bit Exactness)\n";
             passed++;
         } else {
-            std::cout << "[FAIL] Test 5/6: Compact Undo/Redo\n";
+            std::cout << "[FAIL] Test 5/7: Compact Undo/Redo\n";
         }
 
         if (testMultiStrokeGrowthAndRaycast()) {
-            std::cout << "[PASS] Test 6/6: Multi-Stroke Growth & Raycast Picking Lifecycle (15 Strokes, >150k Verts)\n";
+            std::cout << "[PASS] Test 6/7: Multi-Stroke Growth & Raycast Picking Lifecycle (15 Strokes, >150k Verts)\n";
             passed++;
         } else {
-            std::cout << "[FAIL] Test 6/6: Multi-Stroke Growth & Raycast Picking Lifecycle\n";
+            std::cout << "[FAIL] Test 6/7: Multi-Stroke Growth & Raycast Picking Lifecycle\n";
+        }
+
+        if (testLocalQuadPreservationAndUndo()) {
+            std::cout << "[PASS] Test 7/7: Local Quad Preservation & Bit-for-Bit Quad Undo\n";
+            passed++;
+        } else {
+            std::cout << "[FAIL] Test 7/7: Local Quad Preservation & Bit-for-Bit Quad Undo\n";
         }
 
         std::cout << "\n-------------------------------------------------------\n";
@@ -87,7 +94,7 @@ public:
         std::cout << "      SPSculpt Dynamic Topology 100-Stroke Benchmark & Crash Diagnostics\n";
         std::cout << "================================================================================\n\n";
 
-        auto meshPtr = createSphere(35.0f, 32, 64);
+        auto meshPtr = createQuadSphere(35.0f, 32, 64);
         Mesh* meshRaw = meshPtr.release();
         meshRaw->initFaceGroups();
         meshRaw->postInit(true);
@@ -168,7 +175,7 @@ public:
             dst.totalMs            += src.totalMs;
         };
 
-        std::cout << "Initial Mesh: " << meshRaw->nbVerts << " verts, " << meshRaw->nbFaces << " faces (R=35.0 world units, matching SPSculpt default sphere)\n";
+        std::cout << "Initial Mesh: " << meshRaw->nbVerts << " verts, " << meshRaw->nbFaces << " faces (Tris=" << (meshRaw->nbFaces - meshRaw->getNbQuads()) << ", Quads=" << meshRaw->getNbQuads() << ", R=35.0 world units, matching SPSculpt default sphere)\n";
         std::cout << "Executing 100 strokes (Phase 1: Default 0.02 Growth 1..10 | Phase 2: Collapse 11..55 | Phase 3: Mixed High-Poly 56..100)...\n\n";
 
         auto tBenchStart = std::chrono::high_resolution_clock::now();
@@ -309,6 +316,7 @@ public:
                 std::cout << "  [Stroke " << std::setw(3) << (s + 1) << "/100]"
                           << " V=" << std::setw(7) << meshRaw->nbVerts
                           << " F=" << std::setw(7) << meshRaw->nbFaces
+                          << " (Tris=" << (meshRaw->nbFaces - meshRaw->getNbQuads()) << ", Quads=" << meshRaw->getNbQuads() << ")"
                           << " | DragSum=" << std::fixed << std::setprecision(1) << std::setw(6) << strokeSubstepsMs << "ms"
                           << " | Finish=" << std::setw(6) << dt->lastFinishProfile.totalMs << "ms"
                           << " | WireEBO=" << std::setw(6) << wireMs << "ms"
@@ -361,7 +369,7 @@ public:
         std::cout << "Total Wall Time (100 Strokes): " << totalBenchMs << " ms (" << (totalBenchMs / 1000.0) << " s)\n";
         std::cout << "Total Substeps Executed:       " << totalSubsteps << " substeps (" << (totalRemeshProf.totalMs / std::max(1, totalSubsteps)) << " ms/substep avg, max " << maxSubstepMs << " ms at stroke " << maxSubstepStroke << ")\n";
         std::cout << "Total Topology Operations:     Splits=" << totalSplits << ", Collapses=" << totalCollapses << ", Flips=" << totalFlips << "\n";
-        std::cout << "Final Mesh Complexity:         " << meshRaw->nbVerts << " verts, " << meshRaw->nbFaces << " faces\n\n";
+        std::cout << "Final Mesh Complexity:         " << meshRaw->nbVerts << " verts, " << meshRaw->nbFaces << " faces (Tris=" << (meshRaw->nbFaces - meshRaw->getNbQuads()) << ", Quads=" << meshRaw->getNbQuads() << ")\n\n";
 
         auto printRemeshBreakdown = [](const char* title, const DyntopoRemeshProfile& p, int substeps) {
             double denom = std::max(1, substeps);
@@ -426,6 +434,87 @@ public:
     }
 
 private:
+    static std::unique_ptr<Mesh> createQuadSphere(float R = 1.0f, int rings = 24, int sectors = 24) {
+        auto mesh = std::make_unique<Mesh>();
+        mesh->verts.reserve(((rings - 1) * sectors + 2) * 3);
+        mesh->faces.reserve(((rings - 2) * sectors + 2 * sectors) * 4);
+
+        // South pole (index 0)
+        mesh->verts.push_back(0.0f); mesh->verts.push_back(-R); mesh->verts.push_back(0.0f);
+        uint32_t southPole = mesh->nbVerts++;
+
+        // Intermediate rings (r = 1 to rings - 1)
+        for (int r = 1; r < rings; ++r) {
+            float phi = -float(M_PI_2) + float(M_PI) * float(r) / float(rings);
+            float y = R * std::sin(phi);
+            float cos_phi = std::cos(phi);
+            for (int s = 0; s < sectors; ++s) {
+                float theta = 2.0f * float(M_PI) * float(s) / float(sectors);
+                float x = R * cos_phi * std::cos(theta);
+                float z = R * cos_phi * std::sin(theta);
+                mesh->verts.push_back(x);
+                mesh->verts.push_back(y);
+                mesh->verts.push_back(z);
+                mesh->nbVerts++;
+            }
+        }
+
+        // North pole (index nbVerts)
+        mesh->verts.push_back(0.0f); mesh->verts.push_back(R); mesh->verts.push_back(0.0f);
+        uint32_t northPole = mesh->nbVerts++;
+
+        // South pole faces (r = 0 to r = 1)
+        for (int s = 0; s < sectors; ++s) {
+            int s_next = (s + 1) % sectors;
+            uint32_t v_curr = 1 + s;
+            uint32_t v_next = 1 + s_next;
+            mesh->faces.push_back(southPole);
+            mesh->faces.push_back(v_curr);
+            mesh->faces.push_back(v_next);
+            mesh->faces.push_back(TRI_INDEX);
+            mesh->nbFaces++;
+        }
+
+        // Intermediate ring quads
+        for (int r = 1; r < rings - 1; ++r) {
+            for (int s = 0; s < sectors; ++s) {
+                int s_next = (s + 1) % sectors;
+                uint32_t v0 = 1 + (r - 1) * sectors + s;
+                uint32_t v1 = 1 + (r - 1) * sectors + s_next;
+                uint32_t v2 = 1 + r * sectors + s_next;
+                uint32_t v3 = 1 + r * sectors + s;
+
+                mesh->faces.push_back(v0);
+                mesh->faces.push_back(v3);
+                mesh->faces.push_back(v2);
+                mesh->faces.push_back(v1);
+                mesh->nbFaces++;
+            }
+        }
+
+        // North pole faces
+        int lastRingStart = 1 + (rings - 2) * sectors;
+        for (int s = 0; s < sectors; ++s) {
+            int s_next = (s + 1) % sectors;
+            uint32_t v_curr = lastRingStart + s;
+            uint32_t v_next = lastRingStart + s_next;
+
+            mesh->faces.push_back(v_curr);
+            mesh->faces.push_back(northPole);
+            mesh->faces.push_back(v_next);
+            mesh->faces.push_back(TRI_INDEX);
+            mesh->nbFaces++;
+        }
+
+        mesh->vertVisible.assign(mesh->nbVerts, 1);
+        mesh->faceVisible.assign(mesh->nbFaces, 1);
+        mesh->materials.assign(mesh->nbVerts * 3, 1.0f);
+        mesh->colors.assign(mesh->nbVerts * 3, 1.0f);
+        mesh->initTopology();
+        mesh->ensureBVHBuilt();
+        return mesh;
+    }
+
     static std::unique_ptr<Mesh> createSphere(float R = 1.0f, int rings = 24, int sectors = 24) {
         auto mesh = std::make_unique<Mesh>();
         mesh->verts.reserve((rings * sectors + 2) * 3);
@@ -575,24 +664,39 @@ private:
             uint32_t v2 = mesh.faces[f * 4 + 2];
             uint32_t v3 = mesh.faces[f * 4 + 3];
 
-            if (v3 != TRI_INDEX) {
-                outErr = "Face " + std::to_string(f) + " is not a triangle";
-                return false;
-            }
-            if (v0 >= (uint32_t)mesh.nbVerts || v1 >= (uint32_t)mesh.nbVerts || v2 >= (uint32_t)mesh.nbVerts) {
-                outErr = "Face " + std::to_string(f) + " has out-of-bounds vertex index";
-                return false;
-            }
-            if (v0 == v1 || v1 == v2 || v2 == v0) {
-                outErr = "Face " + std::to_string(f) + " is degenerate (duplicate vertex)";
-                return false;
-            }
+            if (v3 == TRI_INDEX) {
+                if (v0 >= (uint32_t)mesh.nbVerts || v1 >= (uint32_t)mesh.nbVerts || v2 >= (uint32_t)mesh.nbVerts) {
+                    outErr = "Face " + std::to_string(f) + " has out-of-bounds vertex index";
+                    return false;
+                }
+                if (v0 == v1 || v1 == v2 || v2 == v0) {
+                    outErr = "Face " + std::to_string(f) + " is degenerate (duplicate vertex)";
+                    return false;
+                }
 
-            uint32_t tri[3] = { v0, v1, v2 };
-            for (int e = 0; e < 3; ++e) {
-                uint32_t ea = std::min(tri[e], tri[(e + 1) % 3]);
-                uint32_t eb = std::max(tri[e], tri[(e + 1) % 3]);
-                edgeCount[{ea, eb}]++;
+                uint32_t tri[3] = { v0, v1, v2 };
+                for (int e = 0; e < 3; ++e) {
+                    uint32_t ea = std::min(tri[e], tri[(e + 1) % 3]);
+                    uint32_t eb = std::max(tri[e], tri[(e + 1) % 3]);
+                    edgeCount[{ea, eb}]++;
+                }
+            } else {
+                if (v0 >= (uint32_t)mesh.nbVerts || v1 >= (uint32_t)mesh.nbVerts ||
+                    v2 >= (uint32_t)mesh.nbVerts || v3 >= (uint32_t)mesh.nbVerts) {
+                    outErr = "Quad Face " + std::to_string(f) + " has out-of-bounds vertex index";
+                    return false;
+                }
+                if (v0 == v1 || v0 == v2 || v0 == v3 || v1 == v2 || v1 == v3 || v2 == v3) {
+                    outErr = "Quad Face " + std::to_string(f) + " is degenerate (duplicate vertex)";
+                    return false;
+                }
+
+                uint32_t quad[4] = { v0, v1, v2, v3 };
+                for (int e = 0; e < 4; ++e) {
+                    uint32_t ea = std::min(quad[e], quad[(e + 1) % 4]);
+                    uint32_t eb = std::max(quad[e], quad[(e + 1) % 4]);
+                    edgeCount[{ea, eb}]++;
+                }
             }
         }
 
@@ -600,7 +704,7 @@ private:
         for (const auto& [e, count] : edgeCount) {
             if (count > 2) {
                 outErr = "Non-manifold edge (" + std::to_string(e.a) + ", " + std::to_string(e.b) +
-                         ") shared by " + std::to_string(count) + " triangles";
+                         ") shared by " + std::to_string(count) + " faces";
                 return false;
             }
             if (count == 1) {
@@ -1107,6 +1211,110 @@ private:
             return false;
         }
 
+        return true;
+    }
+
+    // 7. testLocalQuadPreservationAndUndo: Local stroke on a quad sphere preserving untouched quads
+    static bool testLocalQuadPreservationAndUndo() {
+        auto mesh = createQuadSphere(35.0f, 32, 64);
+        int origVerts = mesh->nbVerts;
+        int origFaces = mesh->nbFaces;
+        int origQuads = mesh->getNbQuads();
+        int origTris = mesh->nbFaces - mesh->getNbQuads(); // 128 triangle faces on poles
+
+        if (origQuads != 1920 || origTris != 128 || origFaces != 2048 || origVerts != 1986) {
+            std::cerr << "  [Error] testLocalQuadPreservationAndUndo: initial sphere counts unexpected (V="
+                      << origVerts << ", F=" << origFaces << ", Q=" << origQuads << ", T=" << origTris << ")\n";
+            return false;
+        }
+
+        std::vector<float> origVertsCopy = mesh->verts;
+        std::vector<uint32_t> origFacesCopy = mesh->faces;
+
+        DynamicTopology dyntopo;
+        SymCopy id;
+        SymCopy mirrorX;
+        mirrorX.m = glm::mat3(glm::scale(glm::mat4(1.0f), glm::vec3(-1.0f, 1.0f, 1.0f)));
+        mirrorX.pivot = glm::vec3(0.0f);
+        std::vector<SymCopy> mirrors = { id, mirrorX };
+
+        // Stroke in equatorial neighborhood on +X side
+        glm::vec3 center(30.0f, 0.0f, 18.0f);
+        float radius = 10.0f;
+        float targetEdge = 1.0f;
+
+        bool changed = dyntopo.remesh(*mesh, mesh->bvh, center, radius, targetEdge, mirrors);
+        if (!changed) {
+            std::cerr << "  [Error] testLocalQuadPreservationAndUndo: remesh returned false\n";
+            return false;
+        }
+
+        auto undo = dyntopo.finish(*mesh, mesh->bvh);
+        if (!undo) {
+            std::cerr << "  [Error] testLocalQuadPreservationAndUndo: undo record is null\n";
+            return false;
+        }
+
+        int afterQuads = mesh->getNbQuads();
+        int afterTris = mesh->nbFaces - mesh->getNbQuads();
+
+        if (afterTris <= 128) {
+            std::cerr << "  [Error] testLocalQuadPreservationAndUndo: triangles did not increase under brush (afterTris="
+                      << afterTris << ")\n";
+            return false;
+        }
+
+        if (afterQuads <= 1500) {
+            std::cerr << "  [Error] testLocalQuadPreservationAndUndo: quads outside brush were unexpectedly triangulated (afterQuads="
+                      << afterQuads << ", expected > 1500)\n";
+            return false;
+        }
+
+        std::string err;
+        if (!verifyMeshIntegrity(*mesh, err, true)) {
+            std::cerr << "  [Error] testLocalQuadPreservationAndUndo: integrity check failed: " << err << "\n";
+            return false;
+        }
+
+        // Check X-symmetry: count vertices with x > 1e-3 and x < -1e-3
+        int countPos = 0, countNeg = 0;
+        for (int i = 0; i < mesh->nbVerts; ++i) {
+            float x = mesh->verts[i * 3 + 0];
+            if (x > 1e-3f) countPos++;
+            else if (x < -1e-3f) countNeg++;
+        }
+        if (countPos != countNeg) {
+            std::cerr << "  [Error] testLocalQuadPreservationAndUndo: vertex asymmetry across X=0 plane ("
+                      << countPos << " on +X vs " << countNeg << " on -X)\n";
+            return false;
+        }
+
+        // Test Undo: restore original quad mesh
+        undo->swapWith(*mesh);
+
+        int restoredQuads = mesh->getNbQuads();
+        int restoredTris = mesh->nbFaces - mesh->getNbQuads();
+
+        if (restoredQuads != origQuads || restoredTris != origTris ||
+            mesh->nbVerts != origVerts || mesh->nbFaces != origFaces) {
+            std::cerr << "  [Error] testLocalQuadPreservationAndUndo: undo did not restore face/vertex counts (V="
+                      << mesh->nbVerts << ", F=" << mesh->nbFaces << ", Q=" << restoredQuads
+                      << ", T=" << restoredTris << ")\n";
+            return false;
+        }
+
+        if (mesh->verts != origVertsCopy || mesh->faces != origFacesCopy) {
+            std::cerr << "  [Error] testLocalQuadPreservationAndUndo: undo did not restore verts/faces bit-for-bit\n";
+            return false;
+        }
+
+        if (!verifyMeshIntegrity(*mesh, err, true)) {
+            std::cerr << "  [Error] testLocalQuadPreservationAndUndo: integrity check failed after undo: " << err << "\n";
+            return false;
+        }
+
+        std::cout << "  [Detail] LocalQuadPreservation: Remeshed to V=" << (mesh->nbVerts)
+                  << " (Tris=" << afterTris << ", Quads=" << afterQuads << " preserved). Undo bit-for-bit exact!\n";
         return true;
     }
 };

@@ -2300,9 +2300,6 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             }
         }
         if (isDyntopoActive) {
-            if (!mesh->hasOnlyTriangles()) {
-                mesh->triangulateQuads();
-            }
             if (mesh->faceVisible.size() != (size_t)mesh->nbFaces) {
                 mesh->faceVisible.assign(mesh->nbFaces, 1);
             }

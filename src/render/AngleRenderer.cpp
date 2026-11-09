@@ -2930,8 +2930,8 @@ void AngleRenderer::generateWireframeIndices(
 
     bool hasCageFlags = (!mesh->edgeIsCage.empty() && mesh->faceEdges.size() >= (size_t)(mesh->nbFaces * 4));
 
-    // Ultra-fast O(F) multithreaded path for pure triangle meshes without cage flags (Dyntopo / sculpting)
-    if (!hasCageFlags && mesh->hasOnlyTriangles()) {
+    // Ultra-fast O(F) multithreaded path for meshes without cage flags (Dyntopo / sculpting, quads & tris)
+    if (!hasCageFlags) {
         int maxThreads = omp_get_max_threads();
         std::vector<std::vector<uint32_t>> threadEdges(maxThreads);
         int nbF = mesh->nbFaces;
@@ -2944,7 +2944,7 @@ void AngleRenderer::generateWireframeIndices(
             int start = (int)((int64_t)nbF * tid / nthr);
             int end = (int)((int64_t)nbF * (tid + 1) / nthr);
             auto& local = threadEdges[tid];
-            local.reserve((size_t)(end - start) * 3);
+            local.reserve((size_t)(end - start) * 4);
 
             for (int i = start; i < end; ++i) {
                 if (hasFaceVis) {
@@ -2953,19 +2953,28 @@ void AngleRenderer::generateWireframeIndices(
                     uint32_t v0 = faces[i * 4];
                     uint32_t v1 = faces[i * 4 + 1];
                     uint32_t v2 = faces[i * 4 + 2];
+                    uint32_t v3 = faces[i * 4 + 3];
                     if (v0 >= visible.size() || !visible[v0]) continue;
                     if (v1 >= visible.size() || !visible[v1]) continue;
                     if (v2 >= visible.size() || !visible[v2]) continue;
+                    if (v3 != 0xFFFFFFFF && (v3 >= visible.size() || !visible[v3])) continue;
                 }
 
                 uint32_t v0 = faces[i * 4 + 0];
                 uint32_t v1 = faces[i * 4 + 1];
                 uint32_t v2 = faces[i * 4 + 2];
+                uint32_t v3 = faces[i * 4 + 3];
 
-                // In 2-manifold triangle mesh, condition a < b emits each unique edge exactly once
-                if (v0 < v1) { local.push_back(v0); local.push_back(v1); }
-                if (v1 < v2) { local.push_back(v1); local.push_back(v2); }
-                if (v2 < v0) { local.push_back(v2); local.push_back(v0); }
+                if (v3 == 0xFFFFFFFF) {
+                    if (v0 < v1) { local.push_back(v0); local.push_back(v1); }
+                    if (v1 < v2) { local.push_back(v1); local.push_back(v2); }
+                    if (v2 < v0) { local.push_back(v2); local.push_back(v0); }
+                } else {
+                    if (v0 < v1) { local.push_back(v0); local.push_back(v1); }
+                    if (v1 < v2) { local.push_back(v1); local.push_back(v2); }
+                    if (v2 < v3) { local.push_back(v2); local.push_back(v3); }
+                    if (v3 < v0) { local.push_back(v3); local.push_back(v0); }
+                }
             }
         }
 
