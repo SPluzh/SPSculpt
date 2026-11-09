@@ -422,6 +422,7 @@ int main(int argc, char* argv[]) {
     bool runBVHTest = false;
     bool runDyntopoTest = false;
     bool runDyntopoBench = false;
+    bool runDyntopoBench1000 = false;
     std::string gozBenchPath = "";
     std::string gozProfilePath = "";
     int benchFaces = 4000000;
@@ -441,6 +442,9 @@ int main(int argc, char* argv[]) {
                 showConsole = true;
             } else if (arg == "--test-dyntopo" || arg == "--test-dynamic-topology") {
                 runDyntopoTest = true;
+                showConsole = true;
+            } else if (arg == "--bench-dyntopo-1000" || arg == "--bench-dyntopo1000" || arg == "--bench-1000") {
+                runDyntopoBench1000 = true;
                 showConsole = true;
             } else if (arg == "--bench-dyntopo" || arg == "--bench-dynamic-topology") {
                 runDyntopoBench = true;
@@ -504,6 +508,9 @@ int main(int argc, char* argv[]) {
             showConsole = true;
         } else if (arg == "--test-dyntopo" || arg == "--test-dynamic-topology") {
             runDyntopoTest = true;
+            showConsole = true;
+        } else if (arg == "--bench-dyntopo-1000" || arg == "--bench-dyntopo1000" || arg == "--bench-1000") {
+            runDyntopoBench1000 = true;
             showConsole = true;
         } else if (arg == "--bench-dyntopo" || arg == "--bench-dynamic-topology") {
             runDyntopoBench = true;
@@ -607,6 +614,17 @@ int main(int argc, char* argv[]) {
 
     if (runDyntopoBench) {
         bool success = dynamic::DynamicTopologyTest::runBenchmark100Strokes();
+        fflush(stdout);
+        fflush(stderr);
+#ifdef _WIN32
+        ExitProcess(success ? 0 : 1);
+#else
+        _exit(success ? 0 : 1);
+#endif
+    }
+
+    if (runDyntopoBench1000) {
+        bool success = dynamic::DynamicTopologyTest::runBenchmark1000Strokes();
         fflush(stdout);
         fflush(stderr);
 #ifdef _WIN32

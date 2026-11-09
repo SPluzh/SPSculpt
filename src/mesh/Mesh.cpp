@@ -283,7 +283,10 @@ void Mesh::allocate(int nbV, int nbF, int nbRF, int nbRV) {
 }
 
 void Mesh::ensureTopologyBuilt() {
-    if (isTopologyDirty || vrfStartCount.size() != (size_t)(nbVerts * 2) || vertRingFace.empty()) {
+    bool needTopology = isTopologyDirty ||
+                        vrfStartCount.size() != (size_t)(nbVerts * 2) || vertRingFace.empty() ||
+                        vrvStartCount.size() != (size_t)(nbVerts * 2) || vertRingVert.empty();
+    if (needTopology) {
         initTopology();
         isTopologyDirty = false;
     }
@@ -370,7 +373,8 @@ void Mesh::postInit(bool buildBVH, bool buildTopology) {
     auto tTopStart = std::chrono::high_resolution_clock::now();
     bool computedTopology = false;
     if (buildTopology) {
-        if (isTopologyDirty || vrfStartCount.size() != (size_t)(nbVerts * 2) || vertRingFace.empty()) {
+        if (isTopologyDirty || vrfStartCount.size() != (size_t)(nbVerts * 2) || vertRingFace.empty() ||
+            vrvStartCount.size() != (size_t)(nbVerts * 2) || vertRingVert.empty()) {
             initTopology();
             computedTopology = true;
         } else {

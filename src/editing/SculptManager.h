@@ -367,6 +367,12 @@ public:
     std::vector<uint8_t>& getVertTagFlags() { return m_vertTagFlags; }
     uint8_t& getVertTagEpoch() { return m_vertTagEpoch; }
 
+    static void pickVerticesInSphereTopological(
+        Mesh* mesh, const glm::vec3& center, float radius2, uint32_t startFaceId,
+        std::vector<uint8_t>& topoVisitedFlags, uint8_t& topoVisitedEpoch,
+        std::vector<uint32_t>& picked
+    );
+
     RelaxEngine& getRelaxEngine() { return m_relaxEngine; }
     const RelaxEngine& getRelaxEngine() const { return m_relaxEngine; }
 

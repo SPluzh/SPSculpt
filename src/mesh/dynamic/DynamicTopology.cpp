@@ -1727,6 +1727,7 @@ bool DynamicTopology::remesh(Mesh& mesh, BVH& bvh, const glm::vec3& center, floa
             setNormal(v, n);
             for (uint32_t t : m_vertTris[v]) {
                 bvh.touchTriangle(t);
+                markTriangle(t);
             }
         }
     }
@@ -1736,7 +1737,7 @@ bool DynamicTopology::remesh(Mesh& mesh, BVH& bvh, const glm::vec3& center, floa
     bvh.refitChanged(mesh);
     lastRemeshProfile.refit2Ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tStage).count();
 
-    if (changed && !changedT_.empty()) {
+    if (!changedT_.empty()) {
         tStage = std::chrono::steady_clock::now();
         mesh.faceNormals.resize(mesh.nbFaces * 3, 0.0f);
         mesh.faceBoxes.resize(mesh.nbFaces * 6, 0.0f);
@@ -1782,9 +1783,8 @@ bool DynamicTopology::remesh(Mesh& mesh, BVH& bvh, const glm::vec3& center, floa
                 off += count;
             }
         }
-        if (mesh.vrvStartCount.size() < numV * 2) {
-            mesh.vrvStartCount.resize(numV * 2, 0);
-        }
+        mesh.vrvStartCount.clear();
+        mesh.vertRingVert.clear();
     }
 
     if (ops_ > 0) {
@@ -1807,6 +1807,8 @@ std::unique_ptr<TopologyUndo> DynamicTopology::finish(Mesh& mesh, BVH& bvh) {
 
     auto tStage = std::chrono::steady_clock::now();
     // Do not rebuild heavy static topology on each release; mark dirty and keep dynamic CSR up-to-date
+    mesh.vrvStartCount.clear();
+    mesh.vertRingVert.clear();
     mesh.isTopologyDirty = true;
     lastFinishProfile.initTopologyMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tStage).count();
 

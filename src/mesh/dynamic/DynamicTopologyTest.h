@@ -8,6 +8,7 @@
 #include "editing/SculptManager.h"
 #include "editing/undo/UndoManager.h"
 #include "render/AngleRenderer.h"
+#include "sculpt/SculptEngine.h"
 #include <SDL2/SDL.h>
 
 #include <cassert>
@@ -31,55 +32,62 @@ public:
         std::cout << "=======================================================\n\n";
 
         int passed = 0;
-        int total = 7;
+        int total = 8;
 
         if (testEdgeSplit()) {
-            std::cout << "[PASS] Test 1/7: Edge Split & Subdivision\n";
+            std::cout << "[PASS] Test 1/8: Edge Split & Subdivision\n";
             passed++;
         } else {
-            std::cout << "[FAIL] Test 1/7: Edge Split & Subdivision\n";
+            std::cout << "[FAIL] Test 1/8: Edge Split & Subdivision\n";
         }
 
         if (testEdgeCollapse()) {
-            std::cout << "[PASS] Test 2/7: Edge Collapse & Watertight Decimation\n";
+            std::cout << "[PASS] Test 2/8: Edge Collapse & Watertight Decimation\n";
             passed++;
         } else {
-            std::cout << "[FAIL] Test 2/7: Edge Collapse & Watertight Decimation\n";
+            std::cout << "[FAIL] Test 2/8: Edge Collapse & Watertight Decimation\n";
         }
 
         if (testStress1000Dabs()) {
-            std::cout << "[PASS] Test 3/7: Stress Test (1000 Dabs, Swap-With-End Compaction)\n";
+            std::cout << "[PASS] Test 3/8: Stress Test (1000 Dabs, Swap-With-End Compaction)\n";
             passed++;
         } else {
-            std::cout << "[FAIL] Test 3/7: Stress Test (1000 Dabs)\n";
+            std::cout << "[FAIL] Test 3/8: Stress Test (1000 Dabs)\n";
         }
 
         if (testSymmetryOrbits()) {
-            std::cout << "[PASS] Test 4/7: Symmetry Orbits & Reflection Preservation\n";
+            std::cout << "[PASS] Test 4/8: Symmetry Orbits & Reflection Preservation\n";
             passed++;
         } else {
-            std::cout << "[FAIL] Test 4/7: Symmetry Orbits\n";
+            std::cout << "[FAIL] Test 4/8: Symmetry Orbits\n";
         }
 
         if (testUndoRedo()) {
-            std::cout << "[PASS] Test 5/7: Compact Undo/Redo (Bit-for-Bit Exactness)\n";
+            std::cout << "[PASS] Test 5/8: Compact Undo/Redo (Bit-for-Bit Exactness)\n";
             passed++;
         } else {
-            std::cout << "[FAIL] Test 5/7: Compact Undo/Redo\n";
+            std::cout << "[FAIL] Test 5/8: Compact Undo/Redo\n";
         }
 
         if (testMultiStrokeGrowthAndRaycast()) {
-            std::cout << "[PASS] Test 6/7: Multi-Stroke Growth & Raycast Picking Lifecycle (15 Strokes, >150k Verts)\n";
+            std::cout << "[PASS] Test 6/8: Multi-Stroke Growth & Raycast Picking Lifecycle (15 Strokes, >150k Verts)\n";
             passed++;
         } else {
-            std::cout << "[FAIL] Test 6/7: Multi-Stroke Growth & Raycast Picking Lifecycle\n";
+            std::cout << "[FAIL] Test 6/8: Multi-Stroke Growth & Raycast Picking Lifecycle\n";
         }
 
         if (testLocalQuadPreservationAndUndo()) {
-            std::cout << "[PASS] Test 7/7: Local Quad Preservation & Bit-for-Bit Quad Undo\n";
+            std::cout << "[PASS] Test 7/8: Local Quad Preservation & Bit-for-Bit Quad Undo\n";
             passed++;
         } else {
-            std::cout << "[FAIL] Test 7/7: Local Quad Preservation & Bit-for-Bit Quad Undo\n";
+            std::cout << "[FAIL] Test 7/8: Local Quad Preservation & Bit-for-Bit Quad Undo\n";
+        }
+
+        if (testMoveBrushAfterDynamicTopology()) {
+            std::cout << "[PASS] Test 8/8: Move Brush Reachability & Displacement After Dynamic Topology\n";
+            passed++;
+        } else {
+            std::cout << "[FAIL] Test 8/8: Move Brush Reachability & Displacement After Dynamic Topology\n";
         }
 
         std::cout << "\n-------------------------------------------------------\n";
@@ -313,6 +321,43 @@ public:
                     s + 1, meshRaw->nbVerts, meshRaw->nbFaces, triMs, wireMs, wireIdx.size()
                 });
 
+                // Move Brush Reachability & Frozen Vertices Audit
+                meshRaw->isTopologyDirty = false; // Simulate renderer upload clearing flag
+                meshRaw->ensureTopologyBuilt();
+
+                float hitAngle = float(s) * 0.47f;
+                glm::vec3 rOrig(50.0f * std::cos(hitAngle), 50.0f * std::sin(hitAngle), 50.0f);
+                glm::vec3 rDir = glm::normalize(glm::vec3(0.0f) - rOrig);
+                RayHit mHit;
+                int moveExpCount = 0, movePickedCount = 0, moveStuckCount = 0;
+                float moveReach = 100.0f;
+                if (meshRaw->bvh.raycast(*meshRaw, rOrig, rDir, mHit)) {
+                    float moveRadius = 8.0f;
+                    float moveRadius2 = moveRadius * moveRadius;
+                    std::vector<uint32_t> expected;
+                    meshRaw->bvh.pickVerticesInSphere(*meshRaw, mHit.position, moveRadius2, expected, meshRaw->vertVisible.data(), 0);
+                    moveExpCount = (int)expected.size();
+
+                    std::vector<uint8_t> visitedFlags(meshRaw->nbVerts, 0);
+                    uint8_t visitedEpoch = 1;
+                    std::vector<uint32_t> pickedTopo;
+                    SculptManager::pickVerticesInSphereTopological(
+                        meshRaw, mHit.position, moveRadius2, mHit.faceId,
+                        visitedFlags, visitedEpoch, pickedTopo
+                    );
+                    movePickedCount = (int)pickedTopo.size();
+
+                    std::unordered_set<uint32_t> pSet(pickedTopo.begin(), pickedTopo.end());
+                    for (uint32_t v : expected) {
+                        if (pSet.find(v) == pSet.end()) {
+                            glm::vec3 origP(meshRaw->verts[v * 3], meshRaw->verts[v * 3 + 1], meshRaw->verts[v * 3 + 2]);
+                            float d = glm::distance(origP, mHit.position);
+                            if (d < 0.7f * moveRadius) moveStuckCount++;
+                        }
+                    }
+                    moveReach = (moveExpCount > 0) ? (100.0f * (float)(moveExpCount - moveStuckCount) / (float)moveExpCount) : 100.0f;
+                }
+
                 std::cout << "  [Stroke " << std::setw(3) << (s + 1) << "/100]"
                           << " V=" << std::setw(7) << meshRaw->nbVerts
                           << " F=" << std::setw(7) << meshRaw->nbFaces
@@ -320,6 +365,7 @@ public:
                           << " | DragSum=" << std::fixed << std::setprecision(1) << std::setw(6) << strokeSubstepsMs << "ms"
                           << " | Finish=" << std::setw(6) << dt->lastFinishProfile.totalMs << "ms"
                           << " | WireEBO=" << std::setw(6) << wireMs << "ms"
+                          << " | MoveReach=" << std::setw(5) << moveReach << "% (Stuck=" << moveStuckCount << ")"
                           << " | EmptyLeaves=" << std::setw(4) << dragEmptyLeaves
                           << " | CrashHits=" << meshRaw->bvh.emptyLeafHazardCount() << "\n";
             }
@@ -428,9 +474,280 @@ public:
         std::cout << "  [CRASH #3] BVH splitLeaf / editLeaf m_leafCap & Traversal Stack Overflow:\n";
         std::cout << "             - m_leafCap OOB hazards:         " << meshRaw->bvh.leafCapHazardCount() << "\n";
         std::cout << "             - Stack overflow (>64) hazards:  " << meshRaw->bvh.stackOverflowHazardCount() << "\n";
+        std::cout << "  [BUG #4] Move Brush Frozen Vertices after Dynamic Topology (Stale vrvStartCount / Hijacked isTopologyDirty):\n";
+        std::cout << "             - Move brush reachability:       Audited at checkpoints (see table above)\n";
         std::cout << "================================================================================\n\n";
 
         return true;
+    }
+
+    static bool runBenchmark1000Strokes() {
+        std::cout << "\n================================================================================\n";
+        std::cout << "  SPSculpt Dynamic Topology 1000-Stroke Stress Benchmark & Move Brush Audit\n";
+        std::cout << "================================================================================\n\n";
+
+        auto meshPtr = createQuadSphere(35.0f, 32, 64);
+        Mesh* meshRaw = meshPtr.release();
+        meshRaw->initFaceGroups();
+        meshRaw->postInit(true);
+
+        Scene scene;
+        scene.addMesh(meshRaw);
+        scene.selectMesh(meshRaw);
+
+        Camera& camera = scene.getCamera();
+        camera.onResize(1920, 1080);
+        camera.resetViewToMesh(meshRaw, false);
+        camera.update(0.016f);
+
+        SculptManager sculpt;
+        sculpt.setRenderer(nullptr);
+        sculpt.setBrush(BRUSH_DYNAMIC_TOPOLOGY);
+
+        auto& settings = sculpt.getSettings(BRUSH_DYNAMIC_TOPOLOGY);
+        settings.radius = 120.0f;
+        settings.intensity = 0.5f;
+        settings.spacing = 0.15f;
+
+        DynamicTopology* dt = sculpt.getDyntopo();
+
+        constexpr int NUM_STROKES = 1000;
+        constexpr int DRAG_STEPS_PER_STROKE = 2; // 1 mouse down + 2 drag steps = 3 dabs/stroke
+
+        int totalSubsteps = 0;
+        size_t totalSplits = 0, totalCollapses = 0, totalFlips = 0;
+        double maxSubstepMs = 0.0;
+        int maxSubstepStroke = 0;
+        double totalRemeshMs = 0.0;
+
+        struct MoveVerificationResult {
+            int stroke;
+            int verts;
+            int faces;
+            int expectedVerts;
+            int pickedTopoVerts;
+            int stuckVerts;
+            float reachabilityPct;
+            bool bvhValid;
+        };
+        std::vector<MoveVerificationResult> verifications;
+
+        std::cout << "Initial Mesh: " << meshRaw->nbVerts << " verts, " << meshRaw->nbFaces
+                  << " faces (R=35.0 Quad Sphere, 1920 quads, 128 tris)\n";
+        std::cout << "Executing 1000 strokes across 4 phases with Move Brush audits at regular intervals...\n\n";
+
+        auto tBenchStart = std::chrono::high_resolution_clock::now();
+
+        for (int s = 0; s < NUM_STROKES; ++s) {
+            // Configure parameters according to phase:
+            // Phase 1 (1..300): Subdivision & Growth
+            // Phase 2 (301..600): Coarsening & Decimation
+            // Phase 3 (601..850): Mixed Dynamic Topology
+            // Phase 4 (851..1000): Global Dyntopo with ClayBuildup / Smooth
+            if (s < 300) {
+                sculpt.setBrush(BRUSH_DYNAMIC_TOPOLOGY);
+                settings.topologyEdgeSize = 0.5f + 0.3f * std::sin(float(s) * 0.1f);
+            } else if (s < 600) {
+                sculpt.setBrush(BRUSH_DYNAMIC_TOPOLOGY);
+                float t = float(s - 300) / 299.0f;
+                settings.topologyEdgeSize = 1.0f * (1.0f - t) + 2.2f * t;
+            } else if (s < 850) {
+                sculpt.setBrush(BRUSH_DYNAMIC_TOPOLOGY);
+                settings.topologyEdgeSize = (s % 2 == 0) ? 0.45f : 1.30f;
+            } else {
+                sculpt.setDyntopoEnabled(true);
+                sculpt.setBrush((s % 3 == 0) ? BRUSH_SMOOTH : BRUSH_CLAYBUILDUP);
+                sculpt.getCurrentSettings().topologyEdgeSize = 0.6f;
+            }
+
+            // Stroke trajectory around visible disk
+            float angle = float(s) * 0.37f;
+            float radial = 50.0f + 100.0f * std::sin(float(s) * 0.19f);
+            float startX = 960.0f + radial * std::cos(angle);
+            float startY = 540.0f + radial * std::sin(angle);
+            float dirAngle = angle + 1.1f;
+            float stepDist = 22.0f;
+            float dx = stepDist * std::cos(dirAngle);
+            float dy = stepDist * std::sin(dirAngle);
+
+            // 1. Mouse Down
+            SDL_Event evDown;
+            std::memset(&evDown, 0, sizeof(evDown));
+            evDown.type = SDL_MOUSEBUTTONDOWN;
+            evDown.button.button = SDL_BUTTON_LEFT;
+            evDown.button.x = (int)std::round(startX);
+            evDown.button.y = (int)std::round(startY);
+
+            dt->lastRemeshProfile = {};
+            sculpt.handleEvent(evDown, scene);
+            if (dt->lastRemeshProfile.totalMs > 0.0) {
+                totalRemeshMs += dt->lastRemeshProfile.totalMs;
+                totalSubsteps++;
+                totalSplits    += dt->stats.splits;
+                totalCollapses += dt->stats.collapses;
+                totalFlips     += dt->stats.flips;
+                if (dt->lastRemeshProfile.totalMs > maxSubstepMs) {
+                    maxSubstepMs = dt->lastRemeshProfile.totalMs;
+                    maxSubstepStroke = s + 1;
+                }
+            }
+
+            // 2. Drag Steps
+            for (int step = 1; step <= DRAG_STEPS_PER_STROKE; ++step) {
+                float curX = startX + float(step) * dx;
+                float curY = startY + float(step) * dy;
+
+                SDL_Event evMove;
+                std::memset(&evMove, 0, sizeof(evMove));
+                evMove.type = SDL_MOUSEMOTION;
+                evMove.motion.state = SDL_BUTTON_LMASK;
+                evMove.motion.x = (int)std::round(curX);
+                evMove.motion.y = (int)std::round(curY);
+
+                dt->lastRemeshProfile = {};
+                sculpt.handleEvent(evMove, scene);
+                if (dt->lastRemeshProfile.totalMs > 0.0) {
+                    totalRemeshMs += dt->lastRemeshProfile.totalMs;
+                    totalSubsteps++;
+                    totalSplits    += dt->stats.splits;
+                    totalCollapses += dt->stats.collapses;
+                    totalFlips     += dt->stats.flips;
+                    if (dt->lastRemeshProfile.totalMs > maxSubstepMs) {
+                        maxSubstepMs = dt->lastRemeshProfile.totalMs;
+                        maxSubstepStroke = s + 1;
+                    }
+                }
+            }
+
+            // 3. Mouse Up
+            SDL_Event evUp;
+            std::memset(&evUp, 0, sizeof(evUp));
+            evUp.type = SDL_MOUSEBUTTONUP;
+            evUp.button.button = SDL_BUTTON_LEFT;
+            evUp.button.x = (int)std::round(startX + float(DRAG_STEPS_PER_STROKE) * dx);
+            evUp.button.y = (int)std::round(startY + float(DRAG_STEPS_PER_STROKE) * dy);
+
+            sculpt.handleEvent(evUp, scene);
+
+            // Audit Checkpoint every 100 strokes and at final stroke
+            if ((s + 1) % 100 == 0 || (s + 1) == NUM_STROKES) {
+                // Simulate frame render upload: AngleRenderer clears mesh->isTopologyDirty
+                meshRaw->isTopologyDirty = false;
+
+                // Test Move Brush reachability
+                meshRaw->ensureTopologyBuilt();
+
+                // Raycast to find a hit point on the surface
+                float hitAngle = float(s) * 0.25f;
+                glm::vec3 rOrig(50.0f * std::cos(hitAngle), 50.0f * std::sin(hitAngle), 50.0f);
+                glm::vec3 rDir = glm::normalize(glm::vec3(0.0f) - rOrig);
+                RayHit hit;
+                int expCount = 0;
+                int pickedCount = 0;
+                int stuckCount = 0;
+                float reachability = 100.0f;
+
+                if (meshRaw->bvh.raycast(*meshRaw, rOrig, rDir, hit)) {
+                    float moveRadius = 8.0f;
+                    float moveRadius2 = moveRadius * moveRadius;
+
+                    std::vector<uint32_t> expected;
+                    meshRaw->bvh.pickVerticesInSphere(*meshRaw, hit.position, moveRadius2, expected, meshRaw->vertVisible.data(), 0);
+                    expCount = (int)expected.size();
+
+                    std::vector<uint8_t> visitedFlags(meshRaw->nbVerts, 0);
+                    uint8_t visitedEpoch = 1;
+                    std::vector<uint32_t> pickedTopo;
+                    SculptManager::pickVerticesInSphereTopological(
+                        meshRaw, hit.position, moveRadius2, hit.faceId,
+                        visitedFlags, visitedEpoch, pickedTopo
+                    );
+                    pickedCount = (int)pickedTopo.size();
+
+                    std::unordered_set<uint32_t> pSet(pickedTopo.begin(), pickedTopo.end());
+                    for (uint32_t v : expected) {
+                        if (pSet.find(v) == pSet.end()) {
+                            glm::vec3 origP(meshRaw->verts[v * 3], meshRaw->verts[v * 3 + 1], meshRaw->verts[v * 3 + 2]);
+                            float d = glm::distance(origP, hit.position);
+                            if (d < 0.7f * moveRadius) {
+                                stuckCount++;
+                            }
+                        }
+                    }
+                    reachability = (expCount > 0) ? (100.0f * (float)(expCount - stuckCount) / (float)expCount) : 100.0f;
+                }
+
+                std::string bvhErr;
+                bool bvhValid = meshRaw->bvh.validateTree(*meshRaw, bvhErr);
+
+                verifications.push_back({
+                    s + 1, meshRaw->nbVerts, meshRaw->nbFaces,
+                    expCount, pickedCount, stuckCount, reachability, bvhValid
+                });
+
+                std::cout << "  [Stroke " << std::setw(4) << (s + 1) << "/1000]"
+                          << " V=" << std::setw(7) << meshRaw->nbVerts
+                          << " F=" << std::setw(7) << meshRaw->nbFaces
+                          << " | MovePick=" << std::setw(4) << pickedCount << "/" << std::setw(4) << expCount
+                          << " | Stuck=" << std::setw(3) << stuckCount
+                          << " | MoveReach=" << std::fixed << std::setprecision(1) << std::setw(5) << reachability << "%"
+                          << " | BVH=" << (bvhValid ? "OK" : "CORRUPT") << "\n";
+            }
+        }
+
+        auto tBenchEnd = std::chrono::high_resolution_clock::now();
+        double totalBenchMs = std::chrono::duration<double, std::milli>(tBenchEnd - tBenchStart).count();
+
+        // 10 Undo + 10 Redo tests
+        double totalUndoMs = 0.0, totalRedoMs = 0.0;
+        constexpr int UNDO_COUNT = 10;
+        for (int i = 0; i < UNDO_COUNT; ++i) {
+            auto t0 = std::chrono::high_resolution_clock::now();
+            g_undoManager.undo(scene);
+            totalUndoMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - t0).count();
+        }
+        for (int i = 0; i < UNDO_COUNT; ++i) {
+            auto t0 = std::chrono::high_resolution_clock::now();
+            g_undoManager.redo(scene);
+            totalRedoMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - t0).count();
+        }
+
+        std::cout << "\n================================================================================\n";
+        std::cout << "             1000-STROKE BENCHMARK & MOVE BRUSH AUDIT REPORT\n";
+        std::cout << "================================================================================\n";
+        std::cout << std::fixed << std::setprecision(2);
+        std::cout << "Total Wall Time (1000 Strokes):  " << totalBenchMs << " ms (" << (totalBenchMs / 1000.0) << " s)\n";
+        std::cout << "Total Substeps Executed:         " << totalSubsteps << " substeps (Avg: "
+                  << (totalRemeshMs / std::max(1, totalSubsteps)) << " ms/substep, Max: " << maxSubstepMs << " ms at stroke " << maxSubstepStroke << ")\n";
+        std::cout << "Topology Operations:             Splits=" << totalSplits << ", Collapses=" << totalCollapses << ", Flips=" << totalFlips << "\n";
+        std::cout << "Final Mesh Complexity:           " << meshRaw->nbVerts << " verts, " << meshRaw->nbFaces << " faces\n\n";
+
+        std::cout << "--- MOVE BRUSH REACHABILITY AUDIT TABLE ---\n";
+        int totalStuck = 0;
+        float sumReach = 0.0f;
+        for (const auto& v : verifications) {
+            std::cout << "  Stroke " << std::setw(4) << v.stroke
+                      << " | V=" << std::setw(7) << v.verts
+                      << " | Picked: " << std::setw(4) << v.pickedTopoVerts << " / " << std::setw(4) << v.expectedVerts
+                      << " | Frozen/Stuck Verts: " << std::setw(3) << v.stuckVerts
+                      << " | Reachability: " << std::setw(5) << v.reachabilityPct << "%"
+                      << " | BVH: " << (v.bvhValid ? "PASS" : "FAIL") << "\n";
+            totalStuck += v.stuckVerts;
+            sumReach += v.reachabilityPct;
+        }
+        float avgReach = verifications.empty() ? 100.0f : (sumReach / (float)verifications.size());
+        std::cout << "\nAverage Move Brush Reachability: " << avgReach << "%\n";
+        std::cout << "Total Frozen Vertices Detected:  " << totalStuck << " vertices\n\n";
+
+        std::cout << "--- UNDO / REDO PERFORMANCE (10x Undo + 10x Redo) ---\n";
+        std::cout << "  Avg Undo Latency: " << (totalUndoMs / UNDO_COUNT) << " ms\n";
+        std::cout << "  Avg Redo Latency: " << (totalRedoMs / UNDO_COUNT) << " ms\n\n";
+
+        std::cout << "================================================================================\n";
+        std::cout << "VERDICT: " << ((totalStuck == 0 && avgReach > 99.0f) ? "[PASS] 1000 Strokes & Move Brush 100% Functional" : "[FAIL] Move Brush Frozen Vertices Detected") << "\n";
+        std::cout << "================================================================================\n\n";
+
+        return (totalStuck == 0 && avgReach > 99.0f);
     }
 
 private:
@@ -1315,6 +1632,151 @@ private:
 
         std::cout << "  [Detail] LocalQuadPreservation: Remeshed to V=" << (mesh->nbVerts)
                   << " (Tris=" << afterTris << ", Quads=" << afterQuads << " preserved). Undo bit-for-bit exact!\n";
+        return true;
+    }
+
+    // 8. testMoveBrushAfterDynamicTopology: Verifies that after applying Dynamic Topology (BRUSH_DYNAMIC_TOPOLOGY),
+    // the Move brush (BRUSH_MOVE) using topological picking correctly reaches 100% of vertices in its sphere
+    // and displaces them without stuck/frozen vertices, even after AngleRenderer clears isTopologyDirty.
+    static bool testMoveBrushAfterDynamicTopology() {
+        auto mesh = createQuadSphere(35.0f, 32, 64);
+        mesh->initFaceGroups();
+        mesh->postInit(true);
+
+        DynamicTopology dyntopo;
+        SymCopy id;
+        SymCopy mirrorX;
+        mirrorX.m = glm::mat3(glm::scale(glm::mat4(1.0f), glm::vec3(-1.0f, 1.0f, 1.0f)));
+        mirrorX.pivot = glm::vec3(0.0f);
+        std::vector<SymCopy> mirrors = { id, mirrorX };
+
+        // 1. Perform a Dynamic Topology stroke on the +X hemisphere (equatorial region)
+        glm::vec3 center(25.0f, 0.0f, 24.5f);
+        center = glm::normalize(center) * 35.0f;
+        float radius = 10.0f;
+        float targetEdge = 0.8f;
+
+        bool changed = dyntopo.remesh(*mesh, mesh->bvh, center, radius, targetEdge, mirrors);
+        if (!changed) {
+            std::cerr << "  [Error] testMoveBrushAfterDynamicTopology: remesh returned false\n";
+            return false;
+        }
+
+        auto undo = dyntopo.finish(*mesh, mesh->bvh);
+        if (!undo) {
+            std::cerr << "  [Error] testMoveBrushAfterDynamicTopology: finish returned null undo\n";
+            return false;
+        }
+
+        // 2. Simulate what AngleRenderer::uploadIfDirty does on the very next render frame:
+        // AngleRenderer uses mesh->isTopologyDirty as a GPU EBO upload flag and sets it to false!
+        mesh->isTopologyDirty = false;
+
+        // 3. User now switches to Move Brush and clicks on the remeshed area.
+        // SculptManager::executeStroke begins with mesh->ensureTopologyBuilt():
+        mesh->ensureTopologyBuilt();
+
+        // 4. Test topological picking with Move Brush on the newly remeshed region:
+        // Find a triangle in the center of the remeshed area
+        RayHit hit;
+        glm::vec3 rayOrig = center * 2.0f;
+        glm::vec3 rayDir = glm::normalize(center - rayOrig);
+        if (!mesh->bvh.raycast(*mesh, rayOrig, rayDir, hit)) {
+            std::cerr << "  [Error] testMoveBrushAfterDynamicTopology: raycast failed to hit remeshed area\n";
+            return false;
+        }
+
+        uint32_t intersectFaceId = hit.faceId;
+        float moveRadius = 8.0f;
+        float moveRadius2 = moveRadius * moveRadius;
+
+        std::vector<uint8_t> visitedFlags(mesh->nbVerts, 0);
+        uint8_t visitedEpoch = 1;
+        std::vector<uint32_t> pickedTopo;
+        SculptManager::pickVerticesInSphereTopological(
+            mesh.get(), hit.position, moveRadius2, intersectFaceId,
+            visitedFlags, visitedEpoch, pickedTopo
+        );
+
+        // Ground-truth: compute all connected vertices geometrically within moveRadius
+        std::vector<uint32_t> expectedVerts;
+        mesh->bvh.pickVerticesInSphere(*mesh, hit.position, moveRadius2, expectedVerts, mesh->vertVisible.data(), 0);
+
+        // 5. Test Move Brush displacement: apply strokeMove
+        std::vector<float> preMoveVerts = mesh->verts;
+        glm::vec3 dragDir(2.0f, 1.0f, 0.0f);
+        strokeMove(
+            mesh->verts.data(),
+            mesh->vertProxy.data(),
+            mesh->materials.data(),
+            pickedTopo.data(),
+            (int)pickedTopo.size(),
+            hit.position.x, hit.position.y, hit.position.z,
+            dragDir.x, dragDir.y, dragDir.z,
+            moveRadius,
+            0.0f, false,
+            false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false,
+            false, nullptr
+        );
+
+        int movedCount = 0;
+        int unmovedInsideHalfRadius = 0;
+        for (uint32_t ev : expectedVerts) {
+            float dx = mesh->verts[ev * 3] - preMoveVerts[ev * 3];
+            float dy = mesh->verts[ev * 3 + 1] - preMoveVerts[ev * 3 + 1];
+            float dz = mesh->verts[ev * 3 + 2] - preMoveVerts[ev * 3 + 2];
+            float disp2 = dx * dx + dy * dy + dz * dz;
+            if (disp2 > 1e-6f) {
+                movedCount++;
+            } else {
+                glm::vec3 origP(preMoveVerts[ev * 3], preMoveVerts[ev * 3 + 1], preMoveVerts[ev * 3 + 2]);
+                float distOrig = glm::distance(origP, hit.position);
+                if (distOrig < 0.7f * moveRadius) {
+                    unmovedInsideHalfRadius++;
+                }
+            }
+        }
+
+        // 6. Test Move Brush across boundary (clicking on untouched quad adjacent to remeshed region)
+        glm::vec3 boundaryPt = center + glm::vec3(0.0f, 0.0f, 12.0f);
+        boundaryPt = glm::normalize(boundaryPt) * 35.0f;
+        RayHit bHit;
+        mesh->bvh.raycast(*mesh, boundaryPt * 2.0f, glm::normalize(boundaryPt - boundaryPt * 2.0f), bHit);
+
+        std::vector<uint32_t> bPickedTopo;
+        visitedEpoch++;
+        SculptManager::pickVerticesInSphereTopological(
+            mesh.get(), bHit.position, moveRadius2, bHit.faceId,
+            visitedFlags, visitedEpoch, bPickedTopo
+        );
+
+        std::vector<uint32_t> bExpectedVerts;
+        mesh->bvh.pickVerticesInSphere(*mesh, bHit.position, moveRadius2, bExpectedVerts, mesh->vertVisible.data(), 0);
+
+        std::unordered_set<uint32_t> bTopoSet(bPickedTopo.begin(), bPickedTopo.end());
+        int boundaryStuckCount = 0;
+        for (uint32_t ev : bExpectedVerts) {
+            if (bTopoSet.find(ev) == bTopoSet.end()) {
+                glm::vec3 origP(mesh->verts[ev * 3], mesh->verts[ev * 3 + 1], mesh->verts[ev * 3 + 2]);
+                float d = glm::distance(origP, bHit.position);
+                if (d < 0.7f * moveRadius) {
+                    boundaryStuckCount++;
+                }
+            }
+        }
+
+        std::cout << "  [Detail] MoveBrushAfterDyntopo: Center Hit - Picked " << pickedTopo.size()
+                  << " / " << expectedVerts.size() << " expected verts (Moved=" << movedCount
+                  << ", UnmovedInCore=" << unmovedInsideHalfRadius << ")\n";
+        std::cout << "  [Detail] MoveBrushAfterDyntopo: Boundary Hit - Picked " << bPickedTopo.size()
+                  << " / " << bExpectedVerts.size() << " expected verts (StuckInCore=" << boundaryStuckCount << ")\n";
+
+        if (unmovedInsideHalfRadius > 0 || boundaryStuckCount > 0) {
+            std::cerr << "  [Error] testMoveBrushAfterDynamicTopology: Stale vrv/topology detected! "
+                      << (unmovedInsideHalfRadius + boundaryStuckCount) << " vertices inside Move brush radius were frozen!\n";
+            return false;
+        }
+
         return true;
     }
 };

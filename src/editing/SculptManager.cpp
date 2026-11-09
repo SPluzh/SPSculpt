@@ -256,7 +256,7 @@ static float safe_stof(const std::string& str, float defaultVal = 0.0f) {
     }
 }
 
-static void pickVerticesInSphereTopological(
+void SculptManager::pickVerticesInSphereTopological(
     Mesh* mesh, const glm::vec3& center, float radius2, uint32_t startFaceId,
     std::vector<uint8_t>& topoVisitedFlags, uint8_t& topoVisitedEpoch,
     std::vector<uint32_t>& picked
@@ -264,7 +264,16 @@ static void pickVerticesInSphereTopological(
     picked.clear();
     if (!mesh || startFaceId == 0xffffffff || startFaceId >= (uint32_t)mesh->nbFaces) return;
 
+    // 1. Ensure topology is built and up to date
+    if (mesh->isTopologyDirty ||
+        mesh->vrvStartCount.size() != (size_t)mesh->nbVerts * 2 || mesh->vertRingVert.empty() ||
+        mesh->vrfStartCount.size() != (size_t)mesh->nbVerts * 2 || mesh->vertRingFace.empty()) {
+        mesh->ensureTopologyBuilt();
+    }
+
     uint32_t nbVerts = (uint32_t)mesh->nbVerts;
+    if (nbVerts == 0) return;
+
     if (topoVisitedFlags.size() < (size_t)nbVerts) {
         topoVisitedFlags.assign(nbVerts, uint8_t(0));
     }
@@ -278,63 +287,137 @@ static void pickVerticesInSphereTopological(
 
     const float* verts = mesh->verts.data();
     const uint8_t* vertVisible = mesh->vertVisible.data();
-    const uint32_t* vrvStartCount = mesh->vrvStartCount.data();
-    const uint32_t* vertRingVert = mesh->vertRingVert.data();
 
     if (picked.capacity() < 65536) {
         picked.reserve(131072);
     }
 
+    // 2. Queue initialization from startFaceId
     const uint32_t* fv = mesh->faces.data() + (startFaceId << 2);
-    for (int i = 0; i < 4; ++i) {
+    int numFaceVerts = (fv[3] != TRI_INDEX) ? 4 : 3;
+    float closestDist2 = 1e30f;
+    uint32_t closestVid = 0xffffffff;
+
+    for (int i = 0; i < numFaceVerts; ++i) {
         uint32_t vid = fv[i];
         if (vid == 0xffffffff || vid >= nbVerts) continue;
         if (vertVisible && !vertVisible[vid]) continue;
 
         uint32_t vid3 = vid * 3;
         float dx = verts[vid3] - center.x;
-        float dx2 = dx * dx;
-        if (dx2 > radius2) continue;
         float dy = verts[vid3 + 1] - center.y;
-        float dy2 = dy * dy;
-        if (dx2 + dy2 > radius2) continue;
         float dz = verts[vid3 + 2] - center.z;
-        if (dx2 + dy2 + dz * dz <= radius2) {
+        float d2 = dx * dx + dy * dy + dz * dz;
+
+        if (d2 < closestDist2) {
+            closestDist2 = d2;
+            closestVid = vid;
+        }
+
+        if (d2 <= radius2) {
             picked.push_back(vid);
             visited[vid] = curEpoch;
         }
     }
 
-    size_t head = 0;
-    while (head < picked.size()) {
-        uint32_t u = picked[head++];
+    bool seededLargeFace = false;
+    if (picked.empty() && closestVid != 0xffffffff) {
+        picked.push_back(closestVid);
+        visited[closestVid] = curEpoch;
+        seededLargeFace = true;
+    }
 
-        uint32_t start = vrvStartCount[u * 2];
-        uint32_t count = vrvStartCount[u * 2 + 1];
-        for (uint32_t j = 0; j < count; ++j) {
-            uint32_t v = vertRingVert[start + j];
-            if (v >= nbVerts || visited[v] == curEpoch) continue;
-            visited[v] = curEpoch;
+    // 3. BFS Traversal
+    bool hasVrv = (!mesh->vertRingVert.empty() && mesh->vrvStartCount.size() >= (size_t)nbVerts * 2);
 
-            if (vertVisible && !vertVisible[v]) continue;
+    if (hasVrv) {
+        const uint32_t* vrvStartCount = mesh->vrvStartCount.data();
+        const uint32_t* vertRingVert = mesh->vertRingVert.data();
 
-            if (j + 2 < count) {
-                uint32_t nextV = vertRingVert[start + j + 2];
-                __builtin_prefetch(&verts[nextV * 3], 0, 1);
-            }
+        size_t head = 0;
+        while (head < picked.size()) {
+            uint32_t u = picked[head++];
 
-            uint32_t v3 = v * 3;
-            float dx = verts[v3] - center.x;
-            float dx2 = dx * dx;
-            if (dx2 > radius2) continue;
-            float dy = verts[v3 + 1] - center.y;
-            float dy2 = dy * dy;
-            if (dx2 + dy2 > radius2) continue;
-            float dz = verts[v3 + 2] - center.z;
-            if (dx2 + dy2 + dz * dz <= radius2) {
-                picked.push_back(v);
+            uint32_t start = vrvStartCount[u * 2];
+            uint32_t count = vrvStartCount[u * 2 + 1];
+            for (uint32_t j = 0; j < count; ++j) {
+                uint32_t v = vertRingVert[start + j];
+                if (v >= nbVerts || visited[v] == curEpoch) continue;
+                visited[v] = curEpoch;
+
+                if (vertVisible && !vertVisible[v]) continue;
+
+                if (j + 2 < count) {
+                    uint32_t nextV = vertRingVert[start + j + 2];
+                    __builtin_prefetch(&verts[nextV * 3], 0, 1);
+                }
+
+                uint32_t v3 = v * 3;
+                float dx = verts[v3] - center.x;
+                float dx2 = dx * dx;
+                if (dx2 > radius2) continue;
+                float dy = verts[v3 + 1] - center.y;
+                float dy2 = dy * dy;
+                if (dx2 + dy2 > radius2) continue;
+                float dz = verts[v3 + 2] - center.z;
+                if (dx2 + dy2 + dz * dz <= radius2) {
+                    picked.push_back(v);
+                }
             }
         }
+    } else if (!mesh->vertRingFace.empty() && mesh->vrfStartCount.size() >= (size_t)nbVerts * 2) {
+        // Fallback traversal via incident faces (vrfStartCount + vertRingFace + faces)
+        const uint32_t* vrfStartCount = mesh->vrfStartCount.data();
+        const uint32_t* vertRingFace = mesh->vertRingFace.data();
+        const uint32_t* faces = mesh->faces.data();
+        uint32_t nbFaces = (uint32_t)mesh->nbFaces;
+
+        size_t head = 0;
+        while (head < picked.size()) {
+            uint32_t u = picked[head++];
+            uint32_t fStart = vrfStartCount[u * 2];
+            uint32_t fCount = vrfStartCount[u * 2 + 1];
+
+            for (uint32_t j = 0; j < fCount; ++j) {
+                uint32_t fid = vertRingFace[fStart + j];
+                if (fid >= nbFaces) continue;
+                const uint32_t* faceVerts = faces + (fid << 2);
+                int numV = (faceVerts[3] != TRI_INDEX) ? 4 : 3;
+
+                for (int k = 0; k < numV; ++k) {
+                    uint32_t v = faceVerts[k];
+                    if (v >= nbVerts || visited[v] == curEpoch) continue;
+                    visited[v] = curEpoch;
+
+                    if (vertVisible && !vertVisible[v]) continue;
+
+                    uint32_t v3 = v * 3;
+                    float dx = verts[v3] - center.x;
+                    float dx2 = dx * dx;
+                    if (dx2 > radius2) continue;
+                    float dy = verts[v3 + 1] - center.y;
+                    float dy2 = dy * dy;
+                    if (dx2 + dy2 > radius2) continue;
+                    float dz = verts[v3 + 2] - center.z;
+                    if (dx2 + dy2 + dz * dz <= radius2) {
+                        picked.push_back(v);
+                    }
+                }
+            }
+        }
+    }
+
+    if (seededLargeFace && closestDist2 > radius2) {
+        if (picked.size() > 1 && picked.front() == closestVid) {
+            picked.erase(picked.begin());
+        } else if (picked.size() == 1 && picked.front() == closestVid) {
+            picked.clear();
+        }
+    }
+
+    // 4. Fallback if BFS returned 0 vertices upon hit
+    if (picked.empty() && mesh->bvh.isBuilt()) {
+        mesh->bvh.pickVerticesInSphere(*mesh, center, radius2, picked, vertVisible, 0);
     }
 }
 
