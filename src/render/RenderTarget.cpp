@@ -23,6 +23,8 @@ bool RenderTarget::init(int w, int h, bool hasDepth, GLuint sharedDepth, bool de
 
     width = 0;
     height = 0;
+    bytesPerColorPixel = 4;
+    bytesPerDepthPixel = (depth && ownsDepth) ? 4 : 0;
     resize(w, h);
     return true;
 }
@@ -35,8 +37,8 @@ bool RenderTarget::initDepthOnly(int w, int h) {
     depthAsTexture = true;
     width = w;
     height = h;
-    width = w;
-    height = h;
+    bytesPerColorPixel = 0;
+    bytesPerDepthPixel = 4;
     invW = (w > 0) ? 1.0f / w : 0.0f;
     invH = (h > 0) ? 1.0f / h : 0.0f;
 
@@ -79,6 +81,8 @@ bool RenderTarget::initFloat(int w, int h, bool hasDepth) {
 
     width = w;
     height = h;
+    bytesPerColorPixel = 8; // GL_RGBA16F
+    bytesPerDepthPixel = (depth && ownsDepth) ? 4 : 0;
     invW = (w > 0) ? 1.0f / w : 0.0f;
     invH = (h > 0) ? 1.0f / h : 0.0f;
 
@@ -116,6 +120,8 @@ void RenderTarget::resize(int w, int h) {
     if (width == w && height == h) return;
     width = w;
     height = h;
+    bytesPerColorPixel = 4;
+    bytesPerDepthPixel = (depth && ownsDepth) ? 4 : 0;
     invW = 1.0f / w;
     invH = 1.0f / h;
 
@@ -181,4 +187,6 @@ void RenderTarget::release() {
     }
     width = 0;
     height = 0;
+    bytesPerColorPixel = 0;
+    bytesPerDepthPixel = 0;
 }

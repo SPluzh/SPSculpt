@@ -2821,6 +2821,7 @@ void AngleRenderer::drawWireframe(Mesh* mesh, const Scene& scene, const Camera& 
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboWireframe);
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, cageWireIndices.size() * sizeof(uint32_t), cageWireIndices.data(), GL_DYNAMIC_DRAW);
         bufs->wireIndexCount = cageWireIndices.size();
+        bufs->gpuEboWireBytes = cageWireIndices.size() * sizeof(uint32_t);
         bufs->wireVaoReady = false;
 
         if (!subdivWireIndices.empty()) {
@@ -2828,6 +2829,7 @@ void AngleRenderer::drawWireframe(Mesh* mesh, const Scene& scene, const Camera& 
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboSubdivWire);
             glBufferData(GL_ELEMENT_ARRAY_BUFFER, subdivWireIndices.size() * sizeof(uint32_t), subdivWireIndices.data(), GL_DYNAMIC_DRAW);
             bufs->subdivWireIndexCount = subdivWireIndices.size();
+            bufs->gpuEboSubdivWireBytes = subdivWireIndices.size() * sizeof(uint32_t);
         } else {
             bufs->subdivWireIndexCount = 0;
         }
@@ -2871,6 +2873,7 @@ void AngleRenderer::drawWireframe(Mesh* mesh, const Scene& scene, const Camera& 
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->creaseEboWire);
             glBufferData(GL_ELEMENT_ARRAY_BUFFER, creaseLines.size() * sizeof(uint32_t), creaseLines.data(), GL_DYNAMIC_DRAW);
             bufs->creaseWireIndexCount = creaseLines.size();
+            bufs->gpuCreaseEboBytes = creaseLines.size() * sizeof(uint32_t);
             bufs->creaseVaoReady = false;
             bufs->creaseDirty = false;
         }
@@ -3946,6 +3949,7 @@ void AngleRenderer::buildPolyGroupBuffers(const Mesh* mesh, MeshRenderBuffers* b
                    + expandedNormals.size() * sizeof(float)
                    + expandedMaterials.size() * sizeof(float)
                    + expandedGroups.size() * sizeof(uint32_t);
+    bufs->gpuPolygroupBytes = pgBytes;
     m_lastUploadTiming.msPolygroupRebuild += pgMs;
     m_lastUploadTiming.bytesPolygroup += pgBytes;
     m_lastUploadTiming.msTotal += pgMs;
@@ -4042,21 +4046,25 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
         
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
         glBufferData(GL_ARRAY_BUFFER, uploadMesh->verts.size() * sizeof(float), uploadMesh->verts.data(), GL_DYNAMIC_DRAW);
+        bufs->gpuVertsBytes = uploadMesh->verts.size() * sizeof(float);
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
         glEnableVertexAttribArray(0);
         
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
         glBufferData(GL_ARRAY_BUFFER, uploadMesh->normals.size() * sizeof(float), uploadMesh->normals.data(), GL_DYNAMIC_DRAW);
+        bufs->gpuNormalsBytes = uploadMesh->normals.size() * sizeof(float);
         glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
         glEnableVertexAttribArray(1);
         
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboColors);
         glBufferData(GL_ARRAY_BUFFER, uploadMesh->colors.size() * sizeof(float), uploadMesh->colors.data(), GL_DYNAMIC_DRAW);
+        bufs->gpuColorsBytes = uploadMesh->colors.size() * sizeof(float);
         glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
         glEnableVertexAttribArray(2);
         
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
         glBufferData(GL_ARRAY_BUFFER, uploadMesh->materials.size() * sizeof(float), uploadMesh->materials.data(), GL_DYNAMIC_DRAW);
+        bufs->gpuMaterialsBytes = uploadMesh->materials.size() * sizeof(float);
         glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
         glEnableVertexAttribArray(3);
 
@@ -4076,6 +4084,7 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
         }
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboFaceGroups);
         glBufferData(GL_ARRAY_BUFFER, vertGroups.size() * sizeof(uint32_t), vertGroups.data(), GL_DYNAMIC_DRAW);
+        bufs->gpuFaceGroupsBytes = vertGroups.size() * sizeof(uint32_t);
         glVertexAttribIPointer(5, 1, GL_UNSIGNED_INT, sizeof(uint32_t), (void*)0);
         glEnableVertexAttribArray(5);
 
@@ -4083,6 +4092,7 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
             if (!bufs->vboTexCoords) glGenBuffers(1, &bufs->vboTexCoords);
             glBindBuffer(GL_ARRAY_BUFFER, bufs->vboTexCoords);
             glBufferData(GL_ARRAY_BUFFER, uploadMesh->uvFlat.size() * sizeof(float), uploadMesh->uvFlat.data(), GL_DYNAMIC_DRAW);
+            bufs->gpuTexCoordsBytes = uploadMesh->uvFlat.size() * sizeof(float);
             glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
             glEnableVertexAttribArray(4);
         }
@@ -4090,6 +4100,7 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
             if (!bufs->vboTangents) glGenBuffers(1, &bufs->vboTangents);
             glBindBuffer(GL_ARRAY_BUFFER, bufs->vboTangents);
             glBufferData(GL_ARRAY_BUFFER, uploadMesh->tangents.size() * sizeof(float), uploadMesh->tangents.data(), GL_DYNAMIC_DRAW);
+            bufs->gpuTangentsBytes = uploadMesh->tangents.size() * sizeof(float);
             glVertexAttribPointer(6, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
             glEnableVertexAttribArray(6);
         }
@@ -4102,6 +4113,7 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, triIndices.size() * sizeof(uint32_t), triIndices.data(), GL_DYNAMIC_DRAW);
         bufs->triIndexCount = triIndices.size();
+        bufs->gpuEboTriBytes = triIndices.size() * sizeof(uint32_t);
         glBindVertexArray(0);
         
         bool needWireframe = m_showWireframe || (m_activeBrush == BRUSH_POLYGROUP) || (m_shaderType == 5);
@@ -4112,12 +4124,14 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboWireframe);
             glBufferData(GL_ELEMENT_ARRAY_BUFFER, cageWireIndices.size() * sizeof(uint32_t), cageWireIndices.data(), GL_DYNAMIC_DRAW);
             bufs->wireIndexCount = cageWireIndices.size();
+            bufs->gpuEboWireBytes = cageWireIndices.size() * sizeof(uint32_t);
 
             if (!subdivWireIndices.empty()) {
                 if (!bufs->eboSubdivWire) glGenBuffers(1, &bufs->eboSubdivWire);
                 glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboSubdivWire);
                 glBufferData(GL_ELEMENT_ARRAY_BUFFER, subdivWireIndices.size() * sizeof(uint32_t), subdivWireIndices.data(), GL_DYNAMIC_DRAW);
                 bufs->subdivWireIndexCount = subdivWireIndices.size();
+                bufs->gpuEboSubdivWireBytes = subdivWireIndices.size() * sizeof(uint32_t);
             } else {
                 bufs->subdivWireIndexCount = 0;
             }
@@ -4148,6 +4162,7 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
 
             glBindBuffer(GL_ARRAY_BUFFER, bufs->cageVboVerts);
             glBufferData(GL_ARRAY_BUFFER, mesh->verts.size() * sizeof(float), mesh->verts.data(), GL_DYNAMIC_DRAW);
+            bufs->gpuCageVertsBytes = mesh->verts.size() * sizeof(float);
             glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
             glEnableVertexAttribArray(0);
 
@@ -4156,6 +4171,7 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->cageEboWire);
             glBufferData(GL_ELEMENT_ARRAY_BUFFER, cageWireIndices.size() * sizeof(uint32_t), cageWireIndices.data(), GL_DYNAMIC_DRAW);
             bufs->cageWireIndexCount = cageWireIndices.size();
+            bufs->gpuCageEboBytes = cageWireIndices.size() * sizeof(uint32_t);
 
             glBindVertexArray(0);
         } else {
@@ -4198,6 +4214,7 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->creaseEboWire);
             glBufferData(GL_ELEMENT_ARRAY_BUFFER, creaseLines.size() * sizeof(uint32_t), creaseLines.data(), GL_DYNAMIC_DRAW);
             bufs->creaseWireIndexCount = creaseLines.size();
+            bufs->gpuCreaseEboBytes = creaseLines.size() * sizeof(uint32_t);
             bufs->creaseDirty = false;
         } else {
             bufs->creaseWireIndexCount = 0;
@@ -4265,12 +4282,14 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
             }
             glBindBuffer(GL_ARRAY_BUFFER, bufs->vboFaceGroups);
             glBufferData(GL_ARRAY_BUFFER, vertGroups.size() * sizeof(uint32_t), vertGroups.data(), GL_DYNAMIC_DRAW);
+            bufs->gpuFaceGroupsBytes = vertGroups.size() * sizeof(uint32_t);
 
             std::vector<uint32_t> triIndices;
             generateTriangleIndices(uploadMesh, triIndices);
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
             glBufferData(GL_ELEMENT_ARRAY_BUFFER, triIndices.size() * sizeof(uint32_t), triIndices.data(), GL_DYNAMIC_DRAW);
             bufs->triIndexCount = triIndices.size();
+            bufs->gpuEboTriBytes = triIndices.size() * sizeof(uint32_t);
 
             bool needWireframe = m_showWireframe || (m_activeBrush == BRUSH_POLYGROUP) || (m_shaderType == 5);
             if (needWireframe) {
@@ -4280,12 +4299,14 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
                 glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboWireframe);
                 glBufferData(GL_ELEMENT_ARRAY_BUFFER, cageWireIndices.size() * sizeof(uint32_t), cageWireIndices.data(), GL_DYNAMIC_DRAW);
                 bufs->wireIndexCount = cageWireIndices.size();
+                bufs->gpuEboWireBytes = cageWireIndices.size() * sizeof(uint32_t);
 
                 if (!subdivWireIndices.empty()) {
                     if (!bufs->eboSubdivWire) glGenBuffers(1, &bufs->eboSubdivWire);
                     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboSubdivWire);
                     glBufferData(GL_ELEMENT_ARRAY_BUFFER, subdivWireIndices.size() * sizeof(uint32_t), subdivWireIndices.data(), GL_DYNAMIC_DRAW);
                     bufs->subdivWireIndexCount = subdivWireIndices.size();
+                    bufs->gpuEboSubdivWireBytes = subdivWireIndices.size() * sizeof(uint32_t);
                 } else {
                     bufs->subdivWireIndexCount = 0;
                 }
@@ -4437,6 +4458,7 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
                 glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
                 glBufferData(GL_ELEMENT_ARRAY_BUFFER, triIndices.size() * sizeof(uint32_t), triIndices.data(), GL_STATIC_DRAW);
                 bufs->triIndexCount = triIndices.size();
+                bufs->gpuEboTriBytes = triIndices.size() * sizeof(uint32_t);
                 incrementalEboBytes += triIndices.size() * sizeof(uint32_t);
                 
                 bool needWireframe = m_showWireframe || (m_activeBrush == BRUSH_POLYGROUP) || (m_shaderType == 5);
@@ -4446,6 +4468,7 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
                     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboWireframe);
                     glBufferData(GL_ELEMENT_ARRAY_BUFFER, wireIndices.size() * sizeof(uint32_t), wireIndices.data(), GL_STATIC_DRAW);
                     bufs->wireIndexCount = wireIndices.size();
+                    bufs->gpuEboWireBytes = wireIndices.size() * sizeof(uint32_t);
                     incrementalEboBytes += wireIndices.size() * sizeof(uint32_t);
                     bufs->wireDirty = false;
                 } else {
@@ -5271,6 +5294,7 @@ void AngleRenderer::loadEnvironmentTexture(int idx) {
 
     m_envWidth = width;
     m_envHeight = height;
+    m_envTextureBytes = static_cast<size_t>(width) * static_cast<size_t>(height) * 4ULL;
 
     m_exposure = env.exposure;
     std::memcpy(m_sph, env.sph, 27 * sizeof(float));
@@ -5424,6 +5448,7 @@ bool AngleRenderer::ensureMatcapLoaded(int idx) {
         
         glBindTexture(GL_TEXTURE_2D, 0);
         stbi_image_free(data);
+        preset.gpuBytes = static_cast<size_t>(width) * static_cast<size_t>(height) * 4ULL;
 
         std::cout << "Lazy loaded matcap: " << loadedPath 
                   << " (" << width << "x" << height << ")" << std::endl;
@@ -5493,6 +5518,7 @@ void AngleRenderer::loadBackgroundTexture(const std::string& path) {
 
     m_bgWidth = width;
     m_bgHeight = height;
+    m_bgTextureBytes = static_cast<size_t>(width) * static_cast<size_t>(height) * 4ULL;
 
     updateBackgroundGeometry();
 }
@@ -5505,6 +5531,7 @@ void AngleRenderer::deleteBackgroundTexture() {
     m_bgTexturePath = "";
     m_bgWidth = 1;
     m_bgHeight = 1;
+    m_bgTextureBytes = 0;
     updateBackgroundGeometry();
 }
 
@@ -5550,6 +5577,7 @@ void AngleRenderer::importMatcap(const std::string& name, const std::string& pat
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glBindTexture(GL_TEXTURE_2D, 0);
     stbi_image_free(data);
+    preset.gpuBytes = static_cast<size_t>(width) * static_cast<size_t>(height) * 4ULL;
     m_matcaps.push_back(preset);
 }
 
@@ -5851,6 +5879,56 @@ void AngleRenderer::toggleSnapshot(const Scene& scene) {
     } else {
         createSnapshot(scene);
     }
+}
+
+AngleRenderer::GpuMemoryBreakdown AngleRenderer::getGpuMemoryBreakdown(const Scene* scene) const {
+    GpuMemoryBreakdown out;
+
+    for (const auto& pair : m_meshBuffers) {
+        if (pair.second) {
+            out.meshBuffersBytes += pair.second->totalGpuBytes();
+        }
+    }
+
+    out.renderTargetsBytes += m_rttContour.getGpuMemoryBytes();
+    out.renderTargetsBytes += m_rttOpaque.getGpuMemoryBytes();
+    out.renderTargetsBytes += m_rttTransparent.getGpuMemoryBytes();
+    out.renderTargetsBytes += m_rttMerge.getGpuMemoryBytes();
+    out.renderTargetsBytes += m_rttComposite.getGpuMemoryBytes();
+    out.renderTargetsBytes += m_rttPrepass.getGpuMemoryBytes();
+    out.renderTargetsBytes += m_rttBevel.getGpuMemoryBytes();
+    out.renderTargetsBytes += m_rttNormals.getGpuMemoryBytes();
+    out.renderTargetsBytes += m_rttSsao.getGpuMemoryBytes();
+    out.renderTargetsBytes += m_rttSsaoBlur.getGpuMemoryBytes();
+    out.renderTargetsBytes += m_rttShadow.getGpuMemoryBytes();
+    out.renderTargetsBytes += m_rttSsr.getGpuMemoryBytes();
+    out.renderTargetsBytes += m_rttAccumA.getGpuMemoryBytes();
+    out.renderTargetsBytes += m_rttAccumB.getGpuMemoryBytes();
+    out.renderTargetsBytes += m_rttSvgfA.getGpuMemoryBytes();
+    out.renderTargetsBytes += m_rttSvgfB.getGpuMemoryBytes();
+    out.renderTargetsBytes += m_rttMotionVectors.getGpuMemoryBytes();
+    out.renderTargetsBytes += m_rttTaaAccumA.getGpuMemoryBytes();
+    out.renderTargetsBytes += m_rttTaaAccumB.getGpuMemoryBytes();
+    if (m_snapshot.active) {
+        out.renderTargetsBytes += m_snapshot.rt.getGpuMemoryBytes();
+    }
+
+    out.texturesBytes += m_envTextureBytes;
+    out.texturesBytes += m_bgTextureBytes;
+    for (const auto& mc : m_matcaps) {
+        if (mc.textureId != 0) {
+            out.texturesBytes += mc.gpuBytes;
+        }
+    }
+    if (scene) {
+        for (const auto& ref : scene->getReferenceImages()) {
+            if (ref.texId != 0 && ref.width > 0 && ref.height > 0) {
+                out.texturesBytes += static_cast<size_t>(ref.width) * static_cast<size_t>(ref.height) * 4ULL;
+            }
+        }
+    }
+
+    return out;
 }
 
 

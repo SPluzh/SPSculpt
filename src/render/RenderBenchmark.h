@@ -17,6 +17,7 @@
 
 #include "common/Enums.h"
 #include "common/OptFlags.h"
+#include "common/SystemStats.h"
 #include "editing/SculptManager.h"
 #include "editing/undo/UndoManager.h"
 #include "mesh/Mesh.h"
@@ -1039,6 +1040,57 @@ inline bool runStage1Tests(Scene& scene, SculptManager& sculpt, AngleRenderer& r
         allOk = checkNoGlError("Test 4") && allOk;
     }
 
+    // -------------------------------------------------------------------------
+    // Test 5: RAM, VRAM & App GPU Memory Telemetry Verification
+    // -------------------------------------------------------------------------
+    {
+        const auto bd = renderer.getGpuMemoryBreakdown(&scene);
+        const auto memStats = SystemStats::sampleMemoryStats(
+            bd.meshBuffersBytes,
+            bd.renderTargetsBytes,
+            bd.texturesBytes
+        );
+
+        std::cout << "  [Test 5] Memory Telemetry:\n";
+        std::cout << "    Process RAM (Working Set): " << SystemStats::formatMemoryBytes(memStats.processWorkingSetBytes)
+                  << " (Peak: " << SystemStats::formatMemoryBytes(memStats.processPeakWorkingSetBytes)
+                  << ", Commit: " << SystemStats::formatMemoryBytes(memStats.processPrivateCommitBytes) << ")\n";
+        if (memStats.systemTotalPhysBytes > 0) {
+            std::cout << "    System RAM:                " << SystemStats::formatMemoryBytes(memStats.systemUsedPhysBytes)
+                      << " / " << SystemStats::formatMemoryBytes(memStats.systemTotalPhysBytes)
+                      << " (" << memStats.systemMemoryLoadPct << "%)\n";
+        }
+        std::cout << "    GPU Adapter:               " << (memStats.gpuAdapterName.empty() ? "N/A" : memStats.gpuAdapterName)
+                  << " (DXGI=" << (memStats.dxgiAvailable ? "yes" : "no")
+                  << ", EGL_D3D11=" << (memStats.vramFromEglD3D11 ? "yes" : "no") << ")\n";
+        std::cout << "    DXGI Local / Budget / Shd: "
+                  << SystemStats::formatMemoryBytes(memStats.vramProcessLocalBytes) << " / "
+                  << SystemStats::formatMemoryBytes(memStats.vramProcessBudgetBytes) << " / "
+                  << SystemStats::formatMemoryBytes(memStats.vramProcessSharedBytes) << "\n";
+        const char* srcName =
+            (memStats.vramSource == VramSourceKind::DxgiDedicated) ? "DxgiDedicated" :
+            (memStats.vramSource == VramSourceKind::DxgiShared)    ? "DxgiShared" :
+            (memStats.vramSource == VramSourceKind::AppTracked)    ? "AppTracked" :
+            (memStats.vramSource == VramSourceKind::OpenGLExt)     ? "OpenGLExt" : "None";
+        std::cout << "    Effective VRAM (" << srcName << "): " << SystemStats::formatMemoryBytes(memStats.effectiveVramUsedBytes) << "\n";
+        std::cout << "    App Tracked GPU Breakdown: Meshes=" << SystemStats::formatMemoryBytes(bd.meshBuffersBytes)
+                  << ", RTTs=" << SystemStats::formatMemoryBytes(bd.renderTargetsBytes)
+                  << ", Tex=" << SystemStats::formatMemoryBytes(bd.texturesBytes)
+                  << ", Total=" << SystemStats::formatMemoryBytes(bd.totalBytes()) << "\n";
+
+        checkCond(memStats.processWorkingSetBytes > 0,
+                  "Test 5a: Process Working Set RAM telemetry > 0");
+        checkCond(bd.meshBuffersBytes > 0 && bd.renderTargetsBytes > 0,
+                  "Test 5b: AngleRenderer tracks non-zero mesh buffers and render targets");
+        checkCond(memStats.vramSource != VramSourceKind::None && memStats.effectiveVramUsedBytes > 0,
+                  "Test 5c: Effective VRAM telemetry resolved and > 0");
+        const std::string formattedRam = SystemStats::formatMemoryBytes(memStats.processWorkingSetBytes);
+        const std::string formattedVram = SystemStats::formatMemoryBytes(memStats.effectiveVramUsedBytes);
+        checkCond(!formattedRam.empty() && !formattedVram.empty(),
+                  "Test 5d: Memory byte formatting produces non-empty HUD strings");
+    }
+
+    SystemStats::shutdownGpuMonitor();
     g_undoManager.clear();
     scene.clear();
     OptFlags::get() = savedFlags;

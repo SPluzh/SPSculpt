@@ -18,6 +18,7 @@
 #include "timelapse/TimelapsePlayer.h"
 
 #include "common/RecentFiles.h"
+#include "common/SystemStats.h"
 #include "common/WorkTimer.h"
 #include "common/CrashReporter.h"
 #include "common/ErrorReporter.h"
@@ -101,10 +102,13 @@ private:
     int m_mirrorAxis = 0; // 0: X, 1: Y, 2: Z
     bool m_mirrorPositiveToNegative = true;
 
-    // FPS calculation variables
+    // FPS & performance telemetry calculation variables
     std::deque<std::chrono::steady_clock::time_point> m_fpsTimes;
     std::chrono::steady_clock::time_point m_fpsLastUpdate = std::chrono::steady_clock::now();
     int m_fpsValue = 0;
+    SystemMemoryStats m_perfStats;
+    std::chrono::steady_clock::time_point m_perfLastSampleTime{};
+    bool m_perfHasSample = false;
 
     // FPS limiter
     bool m_fpsLimitEnabled = true;
@@ -222,6 +226,7 @@ private:
     void drawPreferencesPanel(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer, SDL_Window* window = nullptr);
     void drawHotkeyHUD();
     void drawToastHUD();
+    void updatePerformanceMetrics(const Scene& scene, const AngleRenderer& renderer);
     void drawBrushIconCapturePanel(const Scene& scene, AngleRenderer& renderer);
     void drawBrushIconFrameOverlay();
     void captureBrushIcon(const Scene& scene, AngleRenderer& renderer);

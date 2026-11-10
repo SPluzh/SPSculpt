@@ -129,6 +129,7 @@ add_executable(SPSculpt
     src/common/IniFile.cpp
     src/common/RecentFiles.cpp
     src/common/StringUtils.cpp
+    src/common/SystemStats.cpp
     src/common/WorkTimer.cpp
     # scene
     src/scene/Camera.cpp

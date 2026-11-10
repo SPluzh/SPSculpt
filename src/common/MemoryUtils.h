@@ -27,6 +27,7 @@ inline ProcessMemorySnapshot getProcessMemorySnapshot() {
 #if defined(_WIN32)
     PROCESS_MEMORY_COUNTERS_EX pmc;
     std::memset(&pmc, 0, sizeof(pmc));
+    pmc.cb = sizeof(pmc);
     if (GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc))) {
         snap.currentWorkingSetBytes = pmc.WorkingSetSize;
         snap.peakWorkingSetBytes = pmc.PeakWorkingSetSize;

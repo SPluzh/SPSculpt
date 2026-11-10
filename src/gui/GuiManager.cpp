@@ -1037,6 +1037,7 @@ void GuiManager::shutdown() {
     ImGui::DestroyContext();
 
     m_imguiInitialized = false;
+    SystemStats::shutdownGpuMonitor();
 }
 
 void GuiManager::thumbEnsureFbo(MeshThumbnail& t) {
@@ -1422,6 +1423,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     if (m_timelapsePlayer.isOpen()) {
         m_timelapsePlayer.update(ImGui::GetIO().DeltaTime, scene);
     }
+
+    updatePerformanceMetrics(scene, renderer);
 
     // 1. Main Menu Bar (fallback when floating island is disabled)
     if (!m_showFloatingIsland) {
@@ -6892,7 +6895,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         ImGui::End();
     }
 
-    // 9. Mesh Statistics & FPS HUD Window (bottom-right)
+    // 9. Mesh Statistics, FPS, RAM & VRAM HUD Window (bottom-right)
     if (m_showMeshInfo) {
         ImGuiViewport* viewport = ImGui::GetMainViewport();
 
@@ -6918,7 +6921,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             // Get mesh stats
             Mesh* activeMesh = scene.getSelected();
             int activePoints = activeMesh ? activeMesh->getNbVertices() : 0;
-            
+
             int totalPoints = 0;
             for (Mesh* m : scene.getMeshes()) {
                 if (m) {
@@ -6926,53 +6929,141 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 }
             }
 
-            // Calculate sliding-window FPS
-            m_fpsTimes.push_back(std::chrono::steady_clock::now());
-            while (m_fpsTimes.size() > 60) {
-                m_fpsTimes.pop_front();
-            }
-
-            auto now = std::chrono::steady_clock::now();
-            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_fpsLastUpdate).count();
-            if (elapsed > 500 && m_fpsTimes.size() >= 2) {
-                auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_fpsTimes.front()).count();
-                if (duration > 0) {
-                    m_fpsValue = (int)std::round(((m_fpsTimes.size() - 1) * 1000.0f) / duration);
-                }
-                m_fpsLastUpdate = now;
-            }
-
             if (ImGui::BeginTable("##MeshStatsHUDTable", 2, ImGuiTableFlags_SizingFixedFit)) {
+                const float valColW = std::max(68.0f * scale, ImGui::CalcTextSize("999.9 MB").x + 4.0f * scale);
                 ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed, 60.0f * scale);
+                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed, valColW);
+
+                const ImVec4 defaultValCol(1.0f, 0.85f, 0.35f, 1.0f);
+                const ImVec4 warnValCol(1.0f, 0.65f, 0.25f, 1.0f);
+                const ImVec4 critValCol(1.0f, 0.42f, 0.30f, 1.0f);
 
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
                 ImGui::TextDisabled("Active points");
                 ImGui::TableNextColumn();
-                ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.35f, 1.0f), "%s", formatCount(activePoints).c_str());
+                ImGui::TextColored(defaultValCol, "%s", formatCount(activePoints).c_str());
 
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
                 ImGui::TextDisabled("Total points");
                 ImGui::TableNextColumn();
-                ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.35f, 1.0f), "%s", formatCount(totalPoints).c_str());
+                ImGui::TextColored(defaultValCol, "%s", formatCount(totalPoints).c_str());
 
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
                 ImGui::TextDisabled("FPS");
                 ImGui::TableNextColumn();
                 if (m_fpsValue > 0) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.35f, 1.0f), "%d", m_fpsValue);
+                    ImGui::TextColored(defaultValCol, "%d", m_fpsValue);
                 } else {
-                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.35f, 1.0f), "--");
+                    ImGui::TextColored(defaultValCol, "--");
+                }
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextDisabled("RAM");
+                ImGui::TableNextColumn();
+                if (m_perfStats.processWorkingSetBytes > 0) {
+                    ImVec4 ramCol = defaultValCol;
+                    if (m_perfStats.systemMemoryLoadPct >= 92) {
+                        ramCol = critValCol;
+                    } else if (m_perfStats.systemMemoryLoadPct >= 82) {
+                        ramCol = warnValCol;
+                    }
+                    ImGui::TextColored(ramCol, "%s",
+                                       SystemStats::formatMemoryBytes(m_perfStats.processWorkingSetBytes).c_str());
+                } else {
+                    ImGui::TextColored(defaultValCol, "--");
+                }
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextDisabled("VRAM");
+                ImGui::TableNextColumn();
+                if (m_perfStats.vramSource != VramSourceKind::None && m_perfStats.effectiveVramUsedBytes > 0) {
+                    ImVec4 vramCol = defaultValCol;
+                    if (m_perfStats.vramSource == VramSourceKind::DxgiDedicated && m_perfStats.vramProcessBudgetBytes > 0) {
+                        const double ratio = static_cast<double>(m_perfStats.effectiveVramUsedBytes) /
+                                             static_cast<double>(m_perfStats.vramProcessBudgetBytes);
+                        if (ratio >= 0.95) {
+                            vramCol = critValCol;
+                        } else if (ratio >= 0.85) {
+                            vramCol = warnValCol;
+                        }
+                    }
+                    ImGui::TextColored(vramCol, "%s",
+                                       SystemStats::formatMemoryBytes(m_perfStats.effectiveVramUsedBytes).c_str());
+                } else {
+                    ImGui::TextColored(defaultValCol, "--");
                 }
 
                 ImGui::EndTable();
             }
+
+            if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup)) {
+                ImGui::BeginTooltip();
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Performance & Memory");
+                ImGui::Separator();
+                if (m_fpsValue > 0) {
+                    if (m_fpsLimitEnabled) {
+                        ImGui::Text("FPS: %d (Limit: %d FPS)", m_fpsValue, m_fpsLimit);
+                    } else {
+                        ImGui::Text("FPS: %d (Uncapped)", m_fpsValue);
+                    }
+                } else {
+                    ImGui::TextUnformatted("FPS: --");
+                }
+
+                ImGui::Spacing();
+                ImGui::Text("RAM (Process): %s (Peak: %s)",
+                            SystemStats::formatMemoryBytes(m_perfStats.processWorkingSetBytes).c_str(),
+                            SystemStats::formatMemoryBytes(m_perfStats.processPeakWorkingSetBytes).c_str());
+                if (m_perfStats.processPrivateCommitBytes > 0) {
+                    ImGui::TextDisabled("  Private Commit: %s",
+                                        SystemStats::formatMemoryBytes(m_perfStats.processPrivateCommitBytes).c_str());
+                }
+                if (m_perfStats.systemTotalPhysBytes > 0) {
+                    ImGui::Text("RAM (System): %s / %s (%u%%)",
+                                SystemStats::formatMemoryBytes(m_perfStats.systemUsedPhysBytes).c_str(),
+                                SystemStats::formatMemoryBytes(m_perfStats.systemTotalPhysBytes).c_str(),
+                                m_perfStats.systemMemoryLoadPct);
+                }
+
+                ImGui::Spacing();
+                if (!m_perfStats.gpuAdapterName.empty()) {
+                    ImGui::Text("GPU: %s", m_perfStats.gpuAdapterName.c_str());
+                }
+                const char* vramSrcLabel =
+                    (m_perfStats.vramSource == VramSourceKind::DxgiDedicated) ? "DXGI Process VRAM" :
+                    (m_perfStats.vramSource == VramSourceKind::DxgiShared)    ? "DXGI Shared GPU" :
+                    (m_perfStats.vramSource == VramSourceKind::AppTracked)    ? "App Tracked GPU" :
+                    (m_perfStats.vramSource == VramSourceKind::OpenGLExt)     ? "GL Driver VRAM" : "N/A";
+                ImGui::Text("VRAM (%s): %s",
+                            vramSrcLabel,
+                            SystemStats::formatMemoryBytes(m_perfStats.effectiveVramUsedBytes).c_str());
+                if (m_perfStats.dxgiAvailable && m_perfStats.vramDedicatedTotalBytes > 0) {
+                    ImGui::TextDisabled("  Adapter Dedicated: %s | Budget: %s",
+                                        SystemStats::formatMemoryBytes(m_perfStats.vramDedicatedTotalBytes).c_str(),
+                                        SystemStats::formatMemoryBytes(m_perfStats.vramProcessBudgetBytes).c_str());
+                } else if (m_perfStats.vramDedicatedTotalBytes > 0 || m_perfStats.vramSharedTotalBytes > 0) {
+                    ImGui::TextDisabled("  Adapter Memory: Ded %s | Shared %s",
+                                        SystemStats::formatMemoryBytes(m_perfStats.vramDedicatedTotalBytes).c_str(),
+                                        SystemStats::formatMemoryBytes(m_perfStats.vramSharedTotalBytes).c_str());
+                }
+                if (m_perfStats.dxgiAvailable && m_perfStats.vramProcessSharedBytes > 0) {
+                    ImGui::TextDisabled("  Process Shared GPU: %s",
+                                        SystemStats::formatMemoryBytes(m_perfStats.vramProcessSharedBytes).c_str());
+                }
+                ImGui::TextDisabled("  App GPU: Meshes %s | RTTs %s | Tex %s",
+                                    SystemStats::formatMemoryBytes(m_perfStats.appMeshGpuBytes).c_str(),
+                                    SystemStats::formatMemoryBytes(m_perfStats.appRenderTargetsGpuBytes).c_str(),
+                                    SystemStats::formatMemoryBytes(m_perfStats.appTexturesGpuBytes).c_str());
+                ImGui::EndTooltip();
+            }
         }
         ImGui::End();
-        
+
         ImGui::PopStyleVar(3);
         ImGui::PopStyleColor(2);
     }
@@ -10353,6 +10444,7 @@ void GuiManager::drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRend
         ImGui::MenuItem("Multiresolution & Dynamic Subdiv", nullptr, &m_showMultiresPanel);
         ImGui::MenuItem("Camera Bookmarks", "F2", &m_showCameraBookmarksPanel);
         ImGui::MenuItem("Sculpt Timelapse", nullptr, &m_showTimelapsePanel);
+        ImGui::MenuItem("Stats & Performance HUD", nullptr, &m_showMeshInfo);
         ImGui::MenuItem("Hotkey HUD", nullptr, &m_showHotkeyHUD);
         if (ImGui::MenuItem("Brush Icon Capture...", nullptr, m_showBrushIconCapture)) {
             toggleBrushIconCapturePanel();
@@ -13167,8 +13259,8 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                 ImGui::Spacing();
                 ImGui::Checkbox("Show Floating Island HUD", &m_showFloatingIsland);
                 ImGui::Checkbox("Show Navigation Cube", &m_showGizmoCube);
-                ImGui::Checkbox("Show Point Count & FPS HUD", &m_showMeshInfo);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle the Mesh Statistics HUD (active/total points and FPS) in the bottom-right corner");
+                ImGui::Checkbox("Show Stats HUD (Points, FPS, RAM, VRAM)", &m_showMeshInfo);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle the Statistics HUD (active/total points, FPS, RAM and VRAM usage) in the bottom-right corner");
                 ImGui::Checkbox("Show Hotkey HUD (Bottom-Left)", &m_showHotkeyHUD);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle the Keyboard Shortcuts HUD overlay in the bottom-left corner");
 
@@ -14153,11 +14245,34 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
 
                 ImGui::Spacing();
                 ImGui::Spacing();
-                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Statistics");
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "HUD & Memory Statistics");
                 ImGui::Separator();
                 ImGui::Spacing();
 
+                ImGui::Checkbox("Show Stats HUD Overlay (Points, FPS, RAM, VRAM)", &m_showMeshInfo);
+                ImGui::Spacing();
+
                 ImGui::Text("Current Measured Frame Rate: %d FPS", m_fpsValue);
+                ImGui::Text("Process RAM (Working Set): %s (Peak: %s)",
+                            SystemStats::formatMemoryBytes(m_perfStats.processWorkingSetBytes).c_str(),
+                            SystemStats::formatMemoryBytes(m_perfStats.processPeakWorkingSetBytes).c_str());
+                if (m_perfStats.systemTotalPhysBytes > 0) {
+                    ImGui::Text("System RAM: %s / %s (%u%%)",
+                                SystemStats::formatMemoryBytes(m_perfStats.systemUsedPhysBytes).c_str(),
+                                SystemStats::formatMemoryBytes(m_perfStats.systemTotalPhysBytes).c_str(),
+                                m_perfStats.systemMemoryLoadPct);
+                }
+                if (!m_perfStats.gpuAdapterName.empty()) {
+                    ImGui::Text("GPU Adapter: %s", m_perfStats.gpuAdapterName.c_str());
+                }
+                ImGui::Text("VRAM Usage: %s",
+                            SystemStats::formatMemoryBytes(m_perfStats.effectiveVramUsedBytes).c_str());
+                if (m_perfStats.appTrackedGpuBytes > 0) {
+                    ImGui::TextDisabled("App GPU Breakdown: Meshes %s | RTT FBOs %s | Textures %s",
+                                        SystemStats::formatMemoryBytes(m_perfStats.appMeshGpuBytes).c_str(),
+                                        SystemStats::formatMemoryBytes(m_perfStats.appRenderTargetsGpuBytes).c_str(),
+                                        SystemStats::formatMemoryBytes(m_perfStats.appTexturesGpuBytes).c_str());
+                }
 
                 break;
             }
@@ -15846,6 +15961,59 @@ void GuiManager::drawHotkeysTab(Scene& scene, SculptManager& sculpt) {
         ImGui::Checkbox("Alt alone inverts brush stroke (ZBrush / Blender mode)", &preset.modifierBehavior.altInvertsBrush);
         ImGui::Checkbox("Ctrl+Alt inverts brush stroke (Maya mode)", &preset.modifierBehavior.ctrlAltInvertsBrush);
         ImGui::Checkbox("Ctrl+Alt selects SubTool (Maya mode)", &preset.modifierBehavior.ctrlAltSubToolSelect);
+    }
+}
+
+void GuiManager::updatePerformanceMetrics(const Scene& scene, const AngleRenderer& renderer) {
+    const auto now = std::chrono::steady_clock::now();
+
+    if (!m_fpsTimes.empty()) {
+        const auto gapMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_fpsTimes.back()).count();
+        if (gapMs > 1500) {
+            m_fpsTimes.clear();
+        } else if (gapMs <= 250 && m_fpsTimes.size() >= 2) {
+            size_t dropCount = 0;
+            for (size_t i = m_fpsTimes.size() - 1; i > 0; --i) {
+                const auto stepGapMs = std::chrono::duration_cast<std::chrono::milliseconds>(m_fpsTimes[i] - m_fpsTimes[i - 1]).count();
+                if (stepGapMs > 250) {
+                    dropCount = i;
+                    break;
+                }
+            }
+            for (size_t d = 0; d < dropCount; ++d) {
+                m_fpsTimes.pop_front();
+            }
+        }
+    }
+
+    m_fpsTimes.push_back(now);
+    while (m_fpsTimes.size() > 120 ||
+           (m_fpsTimes.size() > 2 &&
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - m_fpsTimes.front()).count() > 1200)) {
+        m_fpsTimes.pop_front();
+    }
+
+    const auto fpsElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_fpsLastUpdate).count();
+    if (fpsElapsed >= 500 && m_fpsTimes.size() >= 2) {
+        const auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_fpsTimes.front()).count();
+        if (duration > 0) {
+            m_fpsValue = static_cast<int>(std::round(((m_fpsTimes.size() - 1) * 1000.0) / static_cast<double>(duration)));
+        }
+        m_fpsLastUpdate = now;
+    }
+
+    const auto memElapsed = m_perfHasSample
+        ? std::chrono::duration_cast<std::chrono::milliseconds>(now - m_perfLastSampleTime).count()
+        : 1000LL;
+    if (!m_perfHasSample || memElapsed >= 500) {
+        const auto gpuBreakdown = renderer.getGpuMemoryBreakdown(&scene);
+        m_perfStats = SystemStats::sampleMemoryStats(
+            gpuBreakdown.meshBuffersBytes,
+            gpuBreakdown.renderTargetsBytes,
+            gpuBreakdown.texturesBytes
+        );
+        m_perfLastSampleTime = now;
+        m_perfHasSample = true;
     }
 }
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <GLES3/gl3.h>
 
 struct RenderTarget {
@@ -10,6 +11,8 @@ struct RenderTarget {
     float invH = 0.0f;
     int width = 0;
     int height = 0;
+    int bytesPerColorPixel = 0;
+    int bytesPerDepthPixel = 0;
     bool ownsDepth = true;
     bool depthAsTexture = false;
 
@@ -18,4 +21,9 @@ struct RenderTarget {
     bool initFloat(int w, int h, bool hasDepth = false);
     void resize(int w, int h);
     void release();
+    size_t getGpuMemoryBytes() const {
+        if (width <= 0 || height <= 0) return 0;
+        return static_cast<size_t>(width) * static_cast<size_t>(height) *
+               static_cast<size_t>(bytesPerColorPixel + bytesPerDepthPixel);
+    }
 };

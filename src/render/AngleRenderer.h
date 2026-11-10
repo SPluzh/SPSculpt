@@ -117,6 +117,29 @@ struct MeshRenderBuffers {
     bool wireDirty = true;
     bool creaseDirty = true;
 
+    // Tracked GPU allocation sizes (bytes)
+    size_t gpuVertsBytes = 0;
+    size_t gpuNormalsBytes = 0;
+    size_t gpuColorsBytes = 0;
+    size_t gpuMaterialsBytes = 0;
+    size_t gpuFaceGroupsBytes = 0;
+    size_t gpuTexCoordsBytes = 0;
+    size_t gpuTangentsBytes = 0;
+    size_t gpuEboTriBytes = 0;
+    size_t gpuEboWireBytes = 0;
+    size_t gpuEboSubdivWireBytes = 0;
+    size_t gpuPolygroupBytes = 0;
+    size_t gpuCageVertsBytes = 0;
+    size_t gpuCageEboBytes = 0;
+    size_t gpuCreaseEboBytes = 0;
+
+    size_t totalGpuBytes() const {
+        return gpuVertsBytes + gpuNormalsBytes + gpuColorsBytes + gpuMaterialsBytes +
+               gpuFaceGroupsBytes + gpuTexCoordsBytes + gpuTangentsBytes +
+               gpuEboTriBytes + gpuEboWireBytes + gpuEboSubdivWireBytes +
+               gpuPolygroupBytes + gpuCageVertsBytes + gpuCageEboBytes + gpuCreaseEboBytes;
+    }
+
     ~MeshRenderBuffers() {
         if (vao) glDeleteVertexArrays(1, &vao);
         if (wireVao) glDeleteVertexArrays(1, &wireVao);
@@ -202,6 +225,14 @@ public:
     void resetLastUploadTiming() { m_lastUploadTiming = {}; }
     const GpuRenderStats& getLastRenderStats() const { return m_lastRenderStats; }
     void resetLastRenderStats() { m_lastRenderStats = {}; }
+
+    struct GpuMemoryBreakdown {
+        size_t meshBuffersBytes = 0;
+        size_t renderTargetsBytes = 0;
+        size_t texturesBytes = 0;
+        size_t totalBytes() const { return meshBuffersBytes + renderTargetsBytes + texturesBytes; }
+    };
+    GpuMemoryBreakdown getGpuMemoryBreakdown(const Scene* scene = nullptr) const;
 
     // Core render loop called from JS requestAnimationFrame or SDL main loop
     void render(const Scene& scene, unsigned int targetFbo = 0);
@@ -473,6 +504,7 @@ public:
         std::string name;
         std::string texPath;
         GLuint textureId = 0;
+        size_t gpuBytes = 0;
     };
     const std::vector<MatcapPreset>& getMatcaps() const { return m_matcaps; }
     void importMatcap(const std::string& name, const std::string& path);
@@ -873,6 +905,7 @@ private:
     GLuint m_envTexture = 0;
     int m_envWidth = 1024;
     int m_envHeight = 512;
+    size_t m_envTextureBytes = 0;
 
     // Matcap presets
     std::vector<MatcapPreset> m_matcaps;
@@ -883,6 +916,7 @@ private:
     GLuint m_bgTexCoordVbo = 0;
     GLuint m_bgTexture = 0;
     GLuint m_bgMonoTexture = 0;
+    size_t m_bgTextureBytes = 0;
     bool m_bgFill = true;
     int m_bgWidth = 1;
     int m_bgHeight = 1;
