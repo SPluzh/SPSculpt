@@ -1653,8 +1653,11 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    std::cout << "Cleaning up..." << std::endl;
+
     if (zbrushWatcher) {
         zbrushWatcher->stop();
+        zbrushWatcher.reset();
     }
 
     hardwareCursor.shutdown();
@@ -1677,11 +1680,25 @@ int main(int argc, char* argv[]) {
 
     gui.shutdown();
 
-    std::cout << "Cleaning up..." << std::endl;
+    // 1. Detach undo manager while sculpt and scene are still alive
+    g_undoManager.clear();
+    g_undoManager.setSculptManager(nullptr);
+
+    // 2. Cleanly destroy all meshes and mesh GPU buffers while OpenGL context is still valid
+    scene.setSculptManager(nullptr);
+    scene.clear();
+    scene.setOnMeshDeletedCallback(nullptr);
+    sculpt.setRenderer(nullptr);
+    gui.setRenderer(nullptr);
+
     SDL_GL_DeleteContext(glContext);
     SDL_DestroyWindow(window);
     SDL_Quit();
+#ifdef _WIN32
+    ExitProcess(0);
+#else
     return 0;
+#endif
 } catch (const std::exception& e) {
         std::cerr << "\n=============================================" << std::endl;
         std::cerr << "[UNHANDLED EXCEPTION] " << e.what() << std::endl;

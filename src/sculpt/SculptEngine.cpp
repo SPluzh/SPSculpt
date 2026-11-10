@@ -1305,22 +1305,23 @@ int strokeVTool(
     const float* materials,
     uint32_t* iVerts, int nbIVerts,
     float cx, float cy, float cz,
+    float ax, float ay, float az,
     float anx, float any, float anz,
     float radius, float intensity,
-    bool negative,
+    bool negative, bool accumulate,
     float focalShift, bool focalShiftFalloff,
     bool hasAlpha, const uint8_t* alphaTex, int alphaWidth, int alphaHeight,
     float alphaRatioX, float alphaRatioY, float alphaSide,
     const float* alphaLookAt, bool alphaXSym,
     bool useAccuCurve, const float* accuCurveLut
 ) {
+    if (radius <= 0.0f) return 0;
+    const float radiusSq = radius * radius;
+    float comp = negative ? -1.0f : 1.0f;
+    float maxDepth = radius * intensity * 2.2f;
 
     float deformIntensity = intensity * 0.08f;
-    float brushFactor = deformIntensity * radius;
-    if (negative) {
-        brushFactor = -brushFactor;
-    }
-    const float radiusSq = radius * radius;
+    float brushFactor = deformIntensity * radius * comp;
 
     float k = 1.0f; // 90 degree angle
 
@@ -1359,7 +1360,7 @@ int strokeVTool(
 
             float dist = std::sqrt(distSq);
             float fallOff = 1.0f - k * dist;
-            if (fallOff < 0.0f) fallOff = 0.0f;
+            if (fallOff <= 0.0f) continue;
             if (useAccuCurve && accuCurveLut) {
                 float floatIndex = dist * 255.0f;
                 if (floatIndex > 254.0f) floatIndex = 254.0f;
@@ -1374,18 +1375,33 @@ int strokeVTool(
                 alphaLookAt, alphaXSym,
                 focalShift, focalShiftFalloff
             );
-            fallOff *= matVal * alphaVal;
+            fallOff *= alphaVal;
 
-            if (fallOff == 0.0f) {
+            if (fallOff <= 0.0f) {
                 continue;
             }
 
-            // Linear V-groove displacement
-            float brushModifier = fallOff * brushFactor;
+            if (accumulate) {
+                float brushModifier = fallOff * brushFactor * matVal;
+                verts[ind] = vx + anx * brushModifier;
+                verts[ind + 1] = vy + any * brushModifier;
+                verts[ind + 2] = vz + anz * brushModifier;
+            } else {
+                // Target-bounded V-groove depth (consistent across mesh densities like ClayBuildup)
+                float targetDepth = comp * maxDepth * fallOff;
+                float distToTarget = (vx - ax) * anx + (vy - ay) * any + (vz - az) * anz - targetDepth;
+                if (std::isnan(distToTarget) || distToTarget * comp >= 0.0f) {
+                    continue;
+                }
 
-            verts[ind] = vx + anx * brushModifier;
-            verts[ind + 1] = vy + any * brushModifier;
-            verts[ind + 2] = vz + anz * brushModifier;
+                float stepRate = 0.35f;
+                float deform = distToTarget * stepRate * fallOff * matVal;
+                if (deform == 0.0f || !std::isfinite(deform)) continue;
+
+                verts[ind] -= anx * deform;
+                verts[ind + 1] -= any * deform;
+                verts[ind + 2] -= anz * deform;
+            }
 
             iVerts[writeIdx++] = id;
         }
@@ -1438,7 +1454,7 @@ int strokeVTool(
 
             float dist = std::sqrt(distSq);
             float fallOff = 1.0f - k * dist;
-            if (fallOff < 0.0f) fallOff = 0.0f;
+            if (fallOff <= 0.0f) continue;
             if (useAccuCurve && accuCurveLut) {
                 float floatIndex = dist * 255.0f;
                 if (floatIndex > 254.0f) floatIndex = 254.0f;
@@ -1453,18 +1469,33 @@ int strokeVTool(
                 alphaLookAt, alphaXSym,
                 focalShift, focalShiftFalloff
             );
-            fallOff *= matVal * alphaVal;
+            fallOff *= alphaVal;
 
-            if (fallOff == 0.0f) {
+            if (fallOff <= 0.0f) {
                 continue;
             }
 
-            // Linear V-groove displacement
-            float brushModifier = fallOff * brushFactor;
+            if (accumulate) {
+                float brushModifier = fallOff * brushFactor * matVal;
+                verts[ind] = vx + anx * brushModifier;
+                verts[ind + 1] = vy + any * brushModifier;
+                verts[ind + 2] = vz + anz * brushModifier;
+            } else {
+                // Target-bounded V-groove depth (consistent across mesh densities like ClayBuildup)
+                float targetDepth = comp * maxDepth * fallOff;
+                float distToTarget = (vx - ax) * anx + (vy - ay) * any + (vz - az) * anz - targetDepth;
+                if (std::isnan(distToTarget) || distToTarget * comp >= 0.0f) {
+                    continue;
+                }
 
-            verts[ind] = vx + anx * brushModifier;
-            verts[ind + 1] = vy + any * brushModifier;
-            verts[ind + 2] = vz + anz * brushModifier;
+                float stepRate = 0.35f;
+                float deform = distToTarget * stepRate * fallOff * matVal;
+                if (deform == 0.0f || !std::isfinite(deform)) continue;
+
+                verts[ind] -= anx * deform;
+                verts[ind + 1] -= any * deform;
+                verts[ind + 2] -= anz * deform;
+            }
 
             localVerts.push_back(id);
         }
@@ -2678,21 +2709,23 @@ int strokeDamStandard(
     const float* materials,
     uint32_t* iVerts, int nbIVerts,
     float cx, float cy, float cz,
+    float ax, float ay, float az,
     float anx, float any, float anz,
     float radius, float intensity,
-    bool negative,
+    bool negative, bool accumulate,
     float focalShift, bool focalShiftFalloff,
     bool hasAlpha, const uint8_t* alphaTex, int alphaWidth, int alphaHeight,
     float alphaRatioX, float alphaRatioY, float alphaSide,
     const float* alphaLookAt, bool alphaXSym,
     bool useAccuCurve, const float* accuCurveLut
 ) {
+    if (radius <= 0.0f) return 0;
     const float radiusSq = radius * radius;
+    float comp = negative ? -1.0f : 1.0f;
+    float maxDepth = radius * intensity * 0.8f;
+
     float deformIntensity = (intensity / 3.0f) * 0.08f;
-    float brushFactor = deformIntensity * radius;
-    if (negative) {
-        brushFactor = -brushFactor;
-    }
+    float brushFactor = deformIntensity * radius * comp;
 
     const int maxThreads = omp_get_max_threads();
     const bool inParallel = omp_in_parallel();
@@ -2702,12 +2735,22 @@ int strokeDamStandard(
         for (int i = 0; i < nbIVerts; ++i) {
             if (i + 8 < nbIVerts) {
                 uint32_t nextId = iVerts[i + 8];
-                __builtin_prefetch(&verts[nextId * 3], 0, 1);
+                __builtin_prefetch(&verts[nextId * 3], 1, 1);
                 __builtin_prefetch(&materials[nextId * 3], 0, 1);
+                __builtin_prefetch(&vertProxy[nextId * 3], 0, 1);
             }
 
             uint32_t id = iVerts[i];
             int ind = id * 3;
+
+            float matVal = materials[ind + 2];
+            if (matVal <= 0.0f) {
+                continue;
+            }
+
+            float vx = verts[ind];
+            float vy = verts[ind + 1];
+            float vz = verts[ind + 2];
 
             float dx = cx - vertProxy[ind];
             float dy = cy - vertProxy[ind + 1];
@@ -2718,9 +2761,6 @@ int strokeDamStandard(
             }
 
             float dist = std::sqrt(distSq);
-            float vx = verts[ind];
-            float vy = verts[ind + 1];
-            float vz = verts[ind + 2];
 
             float fallOff = 0.0f;
             if (useAccuCurve && accuCurveLut) {
@@ -2746,14 +2786,34 @@ int strokeDamStandard(
                 alphaLookAt, alphaXSym,
                 focalShift, focalShiftFalloff
             );
-            fallOff *= materials[ind + 2] * alphaVal;
+            fallOff *= alphaVal;
 
             float stamp = getStampProfile(fallOff);
-            float brushModifier = stamp * brushFactor;
+            if (stamp <= 0.0f) {
+                continue;
+            }
 
-            verts[ind] = vx + anx * brushModifier;
-            verts[ind + 1] = vy + any * brushModifier;
-            verts[ind + 2] = vz + anz * brushModifier;
+            if (accumulate) {
+                float brushModifier = stamp * brushFactor * matVal;
+                verts[ind] = vx + anx * brushModifier;
+                verts[ind + 1] = vy + any * brushModifier;
+                verts[ind + 2] = vz + anz * brushModifier;
+            } else {
+                // Target-bounded DamStandard crease depth (consistent across mesh densities like ClayBuildup)
+                float targetDepth = comp * maxDepth * stamp;
+                float distToTarget = (vx - ax) * anx + (vy - ay) * any + (vz - az) * anz - targetDepth;
+                if (std::isnan(distToTarget) || distToTarget * comp >= 0.0f) {
+                    continue;
+                }
+
+                float stepRate = 0.35f;
+                float deform = distToTarget * stepRate * stamp * matVal;
+                if (deform == 0.0f || !std::isfinite(deform)) continue;
+
+                verts[ind] -= anx * deform;
+                verts[ind + 1] -= any * deform;
+                verts[ind + 2] -= anz * deform;
+            }
 
             iVerts[writeIdx++] = id;
         }
@@ -2779,12 +2839,18 @@ int strokeDamStandard(
         for (int i = 0; i < nbIVerts; ++i) {
             if (i + 8 < nbIVerts) {
                 uint32_t nextId = iVerts[i + 8];
-                __builtin_prefetch(&verts[nextId * 3], 0, 1);
+                __builtin_prefetch(&verts[nextId * 3], 1, 1);
                 __builtin_prefetch(&materials[nextId * 3], 0, 1);
+                __builtin_prefetch(&vertProxy[nextId * 3], 0, 1);
             }
 
             uint32_t id = iVerts[i];
             int ind = id * 3;
+
+            float matVal = materials[ind + 2];
+            if (matVal <= 0.0f) {
+                continue;
+            }
 
             float dx = cx - vertProxy[ind];
             float dy = cy - vertProxy[ind + 1];
@@ -2823,14 +2889,34 @@ int strokeDamStandard(
                 alphaLookAt, alphaXSym,
                 focalShift, focalShiftFalloff
             );
-            fallOff *= materials[ind + 2] * alphaVal;
+            fallOff *= alphaVal;
 
             float stamp = getStampProfile(fallOff);
-            float brushModifier = stamp * brushFactor;
+            if (stamp <= 0.0f) {
+                continue;
+            }
 
-            verts[ind] = vx + anx * brushModifier;
-            verts[ind + 1] = vy + any * brushModifier;
-            verts[ind + 2] = vz + anz * brushModifier;
+            if (accumulate) {
+                float brushModifier = stamp * brushFactor * matVal;
+                verts[ind] = vx + anx * brushModifier;
+                verts[ind + 1] = vy + any * brushModifier;
+                verts[ind + 2] = vz + anz * brushModifier;
+            } else {
+                // Target-bounded DamStandard crease depth (consistent across mesh densities like ClayBuildup)
+                float targetDepth = comp * maxDepth * stamp;
+                float distToTarget = (vx - ax) * anx + (vy - ay) * any + (vz - az) * anz - targetDepth;
+                if (std::isnan(distToTarget) || distToTarget * comp >= 0.0f) {
+                    continue;
+                }
+
+                float stepRate = 0.35f;
+                float deform = distToTarget * stepRate * stamp * matVal;
+                if (deform == 0.0f || !std::isfinite(deform)) continue;
+
+                verts[ind] -= anx * deform;
+                verts[ind + 1] -= any * deform;
+                verts[ind + 2] -= anz * deform;
+            }
 
             localVerts.push_back(id);
         }

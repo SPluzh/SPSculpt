@@ -477,7 +477,11 @@ static void filterCullingVertices(
     }
 }
 
-SculptManager::~SculptManager() = default;
+SculptManager::~SculptManager() {
+    if (g_undoManager.getSculptManager() == this) {
+        g_undoManager.setSculptManager(nullptr);
+    }
+}
 
 SculptManager::SculptManager() {
     m_armatureTool = std::make_unique<ArmatureTool>(*this);
@@ -550,6 +554,8 @@ SculptManager::SculptManager() {
     m_brushSettings[BRUSH_VTOOL].focalShift = -0.825f;
     m_brushSettings[BRUSH_VTOOL].spacing = 0.05f;
     m_brushSettings[BRUSH_VTOOL].negative = true;
+    m_brushSettings[BRUSH_VTOOL].clay = true;
+    m_brushSettings[BRUSH_VTOOL].accumulate = false;
     m_brushSettings[BRUSH_VTOOL].culling = false;
 
     m_brushSettings[BRUSH_MOVE].radius = 352.0f;
@@ -605,6 +611,8 @@ SculptManager::SculptManager() {
     m_brushSettings[BRUSH_DAMSTANDARD].focalShift = 0.175f;
     m_brushSettings[BRUSH_DAMSTANDARD].spacing = 0.05f;
     m_brushSettings[BRUSH_DAMSTANDARD].negative = true;
+    m_brushSettings[BRUSH_DAMSTANDARD].clay = true;
+    m_brushSettings[BRUSH_DAMSTANDARD].accumulate = false;
     m_brushSettings[BRUSH_DAMSTANDARD].culling = false;
 
     m_brushSettings[BRUSH_SQUAREBRUSH].radius = 78.5f;
@@ -966,6 +974,45 @@ int SculptManager::doStrokePass(
             break;
         }
         case BRUSH_VTOOL: {
+            glm::vec3 areaNormal = cachedAreaNormal;
+            glm::vec3 areaCenter = cachedAreaCenter;
+
+            if (!isSymmetry && !m_firstStrokeFrame && (!getCurrentSettings().flattenLockNormal || !getCurrentSettings().flattenLockOrigin)) {
+                bool moved = glm::distance(currentIntersection, m_prevClayIntersection) > localRadius * 0.15f;
+                bool intervalElapsed = (m_strokeFrameCounter - m_clayAreaNormalFrame) >= 3;
+                if (moved || intervalElapsed) {
+                    auto tAreaStart = std::chrono::high_resolution_clock::now();
+                    float areaResults[7] = {0.0f};
+                    if (computeAreaNormalAndCenter(
+                        mesh->verts.data(),
+                        mesh->normals.data(),
+                        mesh->materials.data(),
+                        pData,
+                        nbVerts,
+                        areaResults
+                    )) {
+                        if (!getCurrentSettings().flattenLockNormal) {
+                            m_cachedAreaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
+                        }
+                        if (!getCurrentSettings().flattenLockOrigin) {
+                            m_cachedAreaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
+                        }
+                        m_clayAreaNormalFrame = m_strokeFrameCounter;
+                        m_prevClayIntersection = currentIntersection;
+                    }
+                    m_lastFrameProfile.areaComputeMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tAreaStart).count();
+                }
+                areaNormal = m_cachedAreaNormal;
+                areaCenter = m_cachedAreaCenter;
+            }
+
+            float anLen2 = glm::dot(areaNormal, areaNormal);
+            if (anLen2 > 1e-6f && std::isfinite(anLen2)) {
+                areaNormal /= std::sqrt(anLen2);
+            } else {
+                areaNormal = glm::vec3(0.0f, 1.0f, 0.0f);
+            }
+
             deformedCount = strokeVTool(
                 mesh->verts.data(),
                 mesh->vertProxy.data(),
@@ -973,10 +1020,11 @@ int SculptManager::doStrokePass(
                 pData,
                 nbVerts,
                 currentIntersection.x, currentIntersection.y, currentIntersection.z,
-                currentIntersectionNormal.x, currentIntersectionNormal.y, currentIntersectionNormal.z,
+                areaCenter.x, areaCenter.y, areaCenter.z,
+                areaNormal.x, areaNormal.y, areaNormal.z,
                 localRadius, intensity,
-                negative,
-                -0.4f, true,
+                negative, getCurrentSettings().accumulate,
+                getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
                 false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false,
                 false, nullptr
             );
@@ -1411,6 +1459,45 @@ int SculptManager::doStrokePass(
             break;
         }
         case BRUSH_DAMSTANDARD: {
+            glm::vec3 areaNormal = cachedAreaNormal;
+            glm::vec3 areaCenter = cachedAreaCenter;
+
+            if (!isSymmetry && !m_firstStrokeFrame && (!getCurrentSettings().flattenLockNormal || !getCurrentSettings().flattenLockOrigin)) {
+                bool moved = glm::distance(currentIntersection, m_prevClayIntersection) > localRadius * 0.15f;
+                bool intervalElapsed = (m_strokeFrameCounter - m_clayAreaNormalFrame) >= 3;
+                if (moved || intervalElapsed) {
+                    auto tAreaStart = std::chrono::high_resolution_clock::now();
+                    float areaResults[7] = {0.0f};
+                    if (computeAreaNormalAndCenter(
+                        mesh->verts.data(),
+                        mesh->normals.data(),
+                        mesh->materials.data(),
+                        pData,
+                        nbVerts,
+                        areaResults
+                    )) {
+                        if (!getCurrentSettings().flattenLockNormal) {
+                            m_cachedAreaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
+                        }
+                        if (!getCurrentSettings().flattenLockOrigin) {
+                            m_cachedAreaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
+                        }
+                        m_clayAreaNormalFrame = m_strokeFrameCounter;
+                        m_prevClayIntersection = currentIntersection;
+                    }
+                    m_lastFrameProfile.areaComputeMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tAreaStart).count();
+                }
+                areaNormal = m_cachedAreaNormal;
+                areaCenter = m_cachedAreaCenter;
+            }
+
+            float anLen2 = glm::dot(areaNormal, areaNormal);
+            if (anLen2 > 1e-6f && std::isfinite(anLen2)) {
+                areaNormal /= std::sqrt(anLen2);
+            } else {
+                areaNormal = glm::vec3(0.0f, 1.0f, 0.0f);
+            }
+
             deformedCount = strokeDamStandard(
                 mesh->verts.data(),
                 mesh->vertProxy.data(),
@@ -1418,9 +1505,10 @@ int SculptManager::doStrokePass(
                 pData,
                 nbVerts,
                 currentIntersection.x, currentIntersection.y, currentIntersection.z,
-                currentIntersectionNormal.x, currentIntersectionNormal.y, currentIntersectionNormal.z,
+                areaCenter.x, areaCenter.y, areaCenter.z,
+                areaNormal.x, areaNormal.y, areaNormal.z,
                 localRadius, intensity,
-                negative,
+                negative, getCurrentSettings().accumulate,
                 getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
                 false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false,
                 false, nullptr
@@ -2792,8 +2880,8 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             m_lastFrameProfile.vertProxyResetMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
         }
 
-        // Cache area normal and center for Clay/Flatten/Brush tools on first frame
-        if (m_firstStrokeFrame && (activeBrush == BRUSH_CLAY || activeBrush == BRUSH_CLAYBUILDUP || activeBrush == BRUSH_FLATTEN || activeBrush == BRUSH_SQUAREBRUSH || activeBrush == BRUSH_BRUSH || activeBrush == BRUSH_RAKE)) {
+        // Cache area normal and center for Clay/Flatten/Brush/VTool/DamStandard tools on first frame
+        if (m_firstStrokeFrame && (activeBrush == BRUSH_CLAY || activeBrush == BRUSH_CLAYBUILDUP || activeBrush == BRUSH_FLATTEN || activeBrush == BRUSH_SQUAREBRUSH || activeBrush == BRUSH_BRUSH || activeBrush == BRUSH_RAKE || activeBrush == BRUSH_DAMSTANDARD || activeBrush == BRUSH_VTOOL)) {
             auto tAreaStart = std::chrono::high_resolution_clock::now();
             float areaResults[7] = {0.0f};
             if (computeAreaNormalAndCenter(
@@ -5555,7 +5643,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             const auto& activeSettings = getSettings(activeBrush);
             bool isDyntopoActive = (m_dyntopoSettings.enabled || activeBrush == BRUSH_DYNAMIC_TOPOLOGY);
             float effectiveSpacing = activeSettings.spacing;
-            if (isDyntopoActive && activeBrush == BRUSH_CLAYBUILDUP) {
+            if (isDyntopoActive && (activeBrush == BRUSH_CLAYBUILDUP || activeBrush == BRUSH_DAMSTANDARD || activeBrush == BRUSH_VTOOL)) {
                 effectiveSpacing = std::max(effectiveSpacing, 0.15f);
             }
             float minSpacing = effectiveSpacing * activeSettings.radius;

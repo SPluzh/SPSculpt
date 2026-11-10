@@ -2856,11 +2856,13 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tangential relaxation to reduce polygon distortion without losing volume");
                 }
                 else if (brushType == BRUSH_CLAY || brushType == BRUSH_CLAYBUILDUP || 
-                         brushType == BRUSH_SQUAREBRUSH) {
+                         brushType == BRUSH_SQUAREBRUSH || brushType == BRUSH_DAMSTANDARD || brushType == BRUSH_VTOOL) {
                     ImGui::Checkbox("Accumulate", &settings.accumulate);
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Allows the brush to build up stroke details on overlap");
                     
-                    ImGui::Checkbox("Lock Position", &settings.lockPosition);
+                    if (brushType == BRUSH_CLAY || brushType == BRUSH_CLAYBUILDUP || brushType == BRUSH_SQUAREBRUSH) {
+                        ImGui::Checkbox("Lock Position", &settings.lockPosition);
+                    }
                 }
                 else if (brushType == BRUSH_BRUSH) {
                     ImGui::Checkbox("Clay Mode", &settings.clay);

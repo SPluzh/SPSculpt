@@ -74,6 +74,8 @@ void Scene::rotateAllLights(float deltaAngleRad) {
 }
 
 Scene::~Scene() {
+    m_sculptManager = nullptr;
+    m_onMeshDeletedCallback = nullptr;
     clear();
 }
 
