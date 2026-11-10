@@ -15,31 +15,34 @@ uniform mat4 uInvProjection[2];
 uniform int uSplitMode;
 
 uniform vec2 uNoiseScale;          // screen_resolution / 4.0
+uniform vec2 uUvScale;
+uniform vec2 uUvMax;
 uniform float uRadius;             // AO effect radius
 uniform float uBias;               // Depth bias to prevent self-shadowing
 
 // Reconstruct view-space position from depth
-vec3 getViewPos(vec2 uv, int camIdx) {
-    float depth = texture(uDepthTex, uv).r;
+vec3 getViewPos(vec2 texCoord, vec2 ndcUv, int camIdx) {
+    float depth = texture(uDepthTex, clamp(texCoord, vec2(0.0), uUvMax)).r;
     // Map NDC back to view-space
-    vec4 clipPos = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    vec4 clipPos = vec4(ndcUv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
     vec4 viewPos = uInvProjection[camIdx] * clipPos;
     return viewPos.xyz / viewPos.w;
 }
 
 void main() {
-    int camIdx = (vTexCoord.x < 0.5 && uSplitMode == 1) ? 0 : 1;
+    vec2 localUv = vTexCoord / max(uUvScale, vec2(1e-5));
+    int camIdx = (localUv.x < 0.5 && uSplitMode == 1) ? 0 : 1;
     
     // In split mode, the texture coordinate needs to be scaled to [0, 1] range for the noise texture wrap,
-    // but uNoiseScale already takes care of the screen space frequency, so vTexCoord * uNoiseScale is fine.
+    // but uNoiseScale already takes care of the screen space frequency, so localUv * uNoiseScale is fine.
     
-    vec3 fragPos = getViewPos(vTexCoord, camIdx);
+    vec3 fragPos = getViewPos(vTexCoord, localUv, camIdx);
     
     // View-space normals are stored mapped to [0,1], unpack to [-1,1]
-    vec3 normal = texture(uNormalsTex, vTexCoord).rgb * 2.0 - 1.0;
+    vec3 normal = texture(uNormalsTex, clamp(vTexCoord, vec2(0.0), uUvMax)).rgb * 2.0 - 1.0;
     normal = normalize(normal);
     
-    vec3 randomVec = texture(uNoiseTex, vTexCoord * uNoiseScale).rgb;
+    vec3 randomVec = texture(uNoiseTex, localUv * uNoiseScale).rgb;
     
     // Gram-Schmidt process to create tangent-to-view space matrix (TBN)
     vec3 tangent = normalize(randomVec - normal * dot(randomVec, normal));
@@ -56,10 +59,11 @@ void main() {
         vec4 offset = vec4(samplePos, 1.0);
         offset = uProjection[camIdx] * offset;
         offset.xyz /= offset.w;
-        vec2 sampleUV = offset.xy * 0.5 + 0.5;
+        vec2 sampleLocalUV = offset.xy * 0.5 + 0.5;
+        vec2 sampleTexUV = sampleLocalUV * uUvScale;
         
         // Get depth of sample's projected point on the actual geometry
-        vec3 actualPos = getViewPos(sampleUV, camIdx);
+        vec3 actualPos = getViewPos(sampleTexUV, sampleLocalUV, camIdx);
         
         // Range check to prevent depth-bleeding on far edges
         float rangeCheck = smoothstep(0.0, 1.0, uRadius / abs(fragPos.z - actualPos.z));

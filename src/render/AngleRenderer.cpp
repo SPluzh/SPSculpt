@@ -4,6 +4,9 @@
 #include <random>
 #include <cmath>
 #include <cstring>
+#include <cstdint>
+#include <limits>
+#include <atomic>
 #include <algorithm>
 #include <fstream>
 #include <filesystem>
@@ -280,6 +283,11 @@ bool AngleRenderer::init(int width, int height) {
     m_height = height;
     m_mainViewportWidth = width;
     m_mainViewportHeight = height;
+    m_activeRenderW = width;
+    m_activeRenderH = height;
+    m_activeScale = 1.0f;
+    m_uvScale = glm::vec2(1.0f, 1.0f);
+    m_uvMax = glm::vec2(1.0f, 1.0f);
 
     // Compile Shaders from files
     m_bgProgram = loadAndCompileProgram("background.vert", "background.frag");
@@ -479,6 +487,14 @@ bool AngleRenderer::init(int width, int height) {
 void AngleRenderer::resize(int width, int height, float dpiScale) {
     m_width = width;
     m_height = height;
+    m_activeRenderW = width;
+    m_activeRenderH = height;
+    m_activeScale = 1.0f;
+    m_uvScale = glm::vec2(1.0f, 1.0f);
+    m_uvMax = glm::vec2(1.0f, 1.0f);
+    m_orbitCooldownFrames = 0;
+    m_hasPrevVP = false;
+    m_hasPrevRightVP = false;
     if (!m_isTakingScreenshot) {
         m_mainViewportWidth = width;
         m_mainViewportHeight = height;
@@ -747,6 +763,70 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
         }
     }
 
+    // Adaptive Orbit Resolution Scaling (Stage 1)
+    {
+        const Camera* camLeft0 = scene.getCameraByIndex(0);
+        if (!camLeft0) camLeft0 = &scene.getCamera();
+        const glm::mat4 curLeftVP = camLeft0->getProjMatrix() * camLeft0->getViewMatrix();
+        bool cameraMoved = false;
+        if (m_hasPrevVP && curLeftVP != m_prevLeftVP) {
+            cameraMoved = true;
+        }
+        m_prevLeftVP = curLeftVP;
+        m_hasPrevVP = true;
+
+        const Camera* camRight0 = m_splitMode ? scene.getCameraByIndex(1) : nullptr;
+        if (camRight0) {
+            const glm::mat4 curRightVP = camRight0->getProjMatrix() * camRight0->getViewMatrix();
+            if (m_hasPrevRightVP && curRightVP != m_prevRightVP) {
+                cameraMoved = true;
+            }
+            m_prevRightVP = curRightVP;
+            m_hasPrevRightVP = true;
+        } else {
+            m_hasPrevRightVP = false;
+        }
+
+        const bool canOrbitScale = OptFlags::get().orbitScale &&
+                                   m_width > 0 && m_height > 0 &&
+                                   !m_isTakingScreenshot &&
+                                   m_renderMode != RenderMode::SSPT &&
+                                   !m_useTaa &&
+                                   !m_sculptHintActive &&
+                                   !anyMeshUploaded &&
+                                   !camLeft0->getRef2DMode();
+
+        if (!canOrbitScale) {
+            m_orbitCooldownFrames = 0;
+        } else if (m_orbitHintActive || cameraMoved) {
+            m_orbitCooldownFrames = 2;
+        } else if (m_orbitCooldownFrames > 0) {
+            --m_orbitCooldownFrames;
+        }
+
+        m_activeScale = (canOrbitScale && m_orbitCooldownFrames > 0) ? 0.65f : 1.0f;
+        if (m_activeScale < 0.999f) {
+            m_activeRenderW = std::max(2, static_cast<int>(std::lround(m_width * m_activeScale)));
+            m_activeRenderH = std::max(2, static_cast<int>(std::lround(m_height * m_activeScale)));
+            if (m_splitMode) {
+                m_activeRenderW = std::max(2, m_activeRenderW & ~1);
+            }
+            m_uvScale = glm::vec2(
+                static_cast<float>(m_activeRenderW) / static_cast<float>(m_width),
+                static_cast<float>(m_activeRenderH) / static_cast<float>(m_height)
+            );
+            m_uvMax = glm::vec2(
+                (static_cast<float>(m_activeRenderW) - 0.5f) / static_cast<float>(m_width),
+                (static_cast<float>(m_activeRenderH) - 0.5f) / static_cast<float>(m_height)
+            );
+        } else {
+            m_activeRenderW = m_width;
+            m_activeRenderH = m_height;
+            m_uvScale = glm::vec2(1.0f, 1.0f);
+            m_uvMax = glm::vec2(1.0f, 1.0f);
+        }
+    }
+
     // Auto-update Model Snapshot if geometry changed or update requested
     if (targetFbo == 0 && m_snapshot.active) {
         if (m_snapshot.needsUpdate || anyMeshUploaded) {
@@ -804,6 +884,7 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
 
             if (m_shadowProgram) {
                 glUseProgram(m_shadowProgram);
+                bool shadowAnyCulled = false;
                 for (auto* mesh : scene.getMeshes()) {
                     if (scene.isMeshRenderVisible(mesh, 0)) {
                         mesh->updateMatrices(scene.getCamera());
@@ -812,12 +893,30 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
                         glUniformMatrix4fv(glGetUniformLocation(m_shadowProgram, "uEM"), 1, GL_FALSE, glm::value_ptr(mesh->editMatrix));
                         auto it = m_meshBuffers.find(mesh);
                         if (it != m_meshBuffers.end() && it->second->triIndexCount > 0) {
-                            glBindVertexArray(it->second->vao);
-                            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, it->second->eboTriangles);
-                            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(it->second->triIndexCount), GL_UNSIGNED_INT, nullptr);
-                            glBindVertexArray(0);
+                            const Mesh* uploadMesh = mesh->getRenderMesh();
+                            if (canMeshCull(mesh, uploadMesh, it->second.get(), false)) {
+                                glEnable(GL_CULL_FACE);
+                                glCullFace(GL_BACK);
+                                shadowAnyCulled = true;
+                            } else {
+                                glDisable(GL_CULL_FACE);
+                            }
+                            if (OptFlags::get().vaoCache) {
+                                ensureMeshVaoConfigured(it->second.get(), uploadMesh);
+                                glBindVertexArray(it->second->vao);
+                                glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(it->second->triIndexCount), GL_UNSIGNED_INT, nullptr);
+                                glBindVertexArray(0);
+                            } else {
+                                glBindVertexArray(it->second->vao);
+                                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, it->second->eboTriangles);
+                                glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(it->second->triIndexCount), GL_UNSIGNED_INT, nullptr);
+                                glBindVertexArray(0);
+                            }
                         }
                     }
+                }
+                if (shadowAnyCulled) {
+                    glDisable(GL_CULL_FACE);
                 }
             }
         }
@@ -826,13 +925,13 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
     // 0b. Bevel Pre-pass and Filtering
     if (m_bevelEnabled) {
         glBindFramebuffer(GL_FRAMEBUFFER, m_rttPrepass.fbo);
-        glViewport(0, 0, m_width, m_height);
+        glViewport(0, 0, m_activeRenderW, m_activeRenderH);
         glClearColor(0.5f, 0.5f, 0.5f, 1.0f); // Default normal is (0,0,1) -> encoded as (0.5,0.5,1.0)
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         renderScenePass(scene, 4); // 4 = Bevel prepass
         
         glBindFramebuffer(GL_FRAMEBUFFER, m_rttBevel.fbo);
-        glViewport(0, 0, m_width, m_height);
+        glViewport(0, 0, m_activeRenderW, m_activeRenderH);
         glClearColor(0.5f, 0.5f, 0.5f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
         
@@ -849,7 +948,9 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
         glUniform1i(glGetUniformLocation(m_bevelFilterProgram, "uDepthMap"), 1);
         
         glUniform2f(glGetUniformLocation(m_bevelFilterProgram, "uInvViewportSize"), 1.0f / m_width, 1.0f / m_height);
-        glUniform1f(glGetUniformLocation(m_bevelFilterProgram, "uBevelRadius"), m_bevelRadius);
+        glUniform2f(glGetUniformLocation(m_bevelFilterProgram, "uUvScale"), m_uvScale.x, m_uvScale.y);
+        glUniform2f(glGetUniformLocation(m_bevelFilterProgram, "uUvMax"), m_uvMax.x, m_uvMax.y);
+        glUniform1f(glGetUniformLocation(m_bevelFilterProgram, "uBevelRadius"), m_bevelRadius * m_activeScale);
         glUniform1f(glGetUniformLocation(m_bevelFilterProgram, "uBevelStrength"), m_bevelStrength);
 
         const Camera* camLeft = scene.getCameraByIndex(0);
@@ -928,14 +1029,14 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
     if (m_useSsao && needsLightingPasses) {
         // A. Normals pre-pass
         glBindFramebuffer(GL_FRAMEBUFFER, m_rttNormals.fbo);
-        glViewport(0, 0, m_width, m_height);
+        glViewport(0, 0, m_activeRenderW, m_activeRenderH);
         glClearColor(0.5f, 0.5f, 1.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         renderScenePass(scene, 5); // 5 = Normals pre-pass
         
         // B. SSAO Calculation Pass
         glBindFramebuffer(GL_FRAMEBUFFER, m_rttSsao.fbo);
-        glViewport(0, 0, m_width, m_height);
+        glViewport(0, 0, m_activeRenderW, m_activeRenderH);
         glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
         
@@ -973,7 +1074,9 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
         glUniform1i(glGetUniformLocation(m_ssaoProgram, "uSplitMode"), m_splitMode ? 1 : 0);
         
         glUniform3fv(glGetUniformLocation(m_ssaoProgram, "uSamples"), 64, glm::value_ptr(m_ssaoKernel[0]));
-        glUniform2f(glGetUniformLocation(m_ssaoProgram, "uNoiseScale"), m_width / 4.0f, m_height / 4.0f);
+        glUniform2f(glGetUniformLocation(m_ssaoProgram, "uNoiseScale"), m_activeRenderW / 4.0f, m_activeRenderH / 4.0f);
+        glUniform2f(glGetUniformLocation(m_ssaoProgram, "uUvScale"), m_uvScale.x, m_uvScale.y);
+        glUniform2f(glGetUniformLocation(m_ssaoProgram, "uUvMax"), m_uvMax.x, m_uvMax.y);
         glUniform1f(glGetUniformLocation(m_ssaoProgram, "uRadius"), m_ssaoRadius);
         glUniform1f(glGetUniformLocation(m_ssaoProgram, "uBias"), m_ssaoBias);
         
@@ -983,7 +1086,7 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
         
         // C. Bilateral Blur Pass
         glBindFramebuffer(GL_FRAMEBUFFER, m_rttSsaoBlur.fbo);
-        glViewport(0, 0, m_width, m_height);
+        glViewport(0, 0, m_activeRenderW, m_activeRenderH);
         glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
         glUseProgram(m_ssaoBlurProgram);
@@ -995,6 +1098,8 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, m_rttOpaque.depth);
         glUniform1i(glGetUniformLocation(m_ssaoBlurProgram, "uDepthTex"), 1);
+        glUniform2f(glGetUniformLocation(m_ssaoBlurProgram, "uUvScale"), m_uvScale.x, m_uvScale.y);
+        glUniform2f(glGetUniformLocation(m_ssaoBlurProgram, "uUvMax"), m_uvMax.x, m_uvMax.y);
         
         glBindVertexArray(m_fsqVao);
         glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -1006,7 +1111,7 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
     // 2c. SSR Pass
     if (m_useSsr && needsLightingPasses && m_ssrProgram) {
         glBindFramebuffer(GL_FRAMEBUFFER, m_rttSsr.fbo);
-        glViewport(0, 0, m_width, m_height);
+        glViewport(0, 0, m_activeRenderW, m_activeRenderH);
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
@@ -1037,6 +1142,8 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
         glUniform1f(glGetUniformLocation(m_ssrProgram, "uMaxDistance"), m_ssrMaxDistance);
         glUniform1f(glGetUniformLocation(m_ssrProgram, "uIntensity"), m_ssrIntensity);
         glUniform1i(glGetUniformLocation(m_ssrProgram, "uSplitMode"), m_splitMode ? 1 : 0);
+        glUniform2f(glGetUniformLocation(m_ssrProgram, "uUvScale"), m_uvScale.x, m_uvScale.y);
+        glUniform2f(glGetUniformLocation(m_ssrProgram, "uUvMax"), m_uvMax.x, m_uvMax.y);
 
         glBindVertexArray(m_fsqVao);
         glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -1065,6 +1172,7 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
         glDisable(GL_CULL_FACE);
 
         glUseProgram(m_ssptProgram);
+        glUniform2f(glGetUniformLocation(m_ssptProgram, "uUvScale"), 1.0f, 1.0f);
 
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, m_rttOpaque.texture);
@@ -1106,6 +1214,7 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
             glBindFramebuffer(GL_FRAMEBUFFER, m_rttSvgfA.fbo);
             glViewport(0, 0, m_width, m_height);
             glUseProgram(m_svgfTemporalProgram);
+            glUniform2f(glGetUniformLocation(m_svgfTemporalProgram, "uUvScale"), 1.0f, 1.0f);
 
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, currentAccum.texture);
@@ -1126,6 +1235,7 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
             glBindFramebuffer(GL_FRAMEBUFFER, m_rttSvgfB.fbo);
             glViewport(0, 0, m_width, m_height);
             glUseProgram(m_svgfSpatialProgram);
+            glUniform2f(glGetUniformLocation(m_svgfSpatialProgram, "uUvScale"), 1.0f, 1.0f);
 
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, m_rttSvgfA.texture);
@@ -1163,7 +1273,7 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
 
     // 4. Merge Pass (FBO Opaque + FBO Transparent -> FBO Merge)
     glBindFramebuffer(GL_FRAMEBUFFER, m_rttMerge.fbo);
-    glViewport(0, 0, m_width, m_height);
+    glViewport(0, 0, m_activeRenderW, m_activeRenderH);
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT);
     drawFullscreenMerge(scene);
@@ -1328,8 +1438,8 @@ GLuint AngleRenderer::getXrayMatcapTexture() const {
 
 void AngleRenderer::renderScenePass(const Scene& scene, int passType) {
     if (!m_splitMode) {
-        glViewport(0, 0, m_width, m_height);
-        glScissor(0, 0, m_width, m_height);
+        glViewport(0, 0, m_activeRenderW, m_activeRenderH);
+        glScissor(0, 0, m_activeRenderW, m_activeRenderH);
         glEnable(GL_SCISSOR_TEST);
         const Camera* camLeft = scene.getCameraByIndex(0);
         if (camLeft) {
@@ -1340,15 +1450,16 @@ void AngleRenderer::renderScenePass(const Scene& scene, int passType) {
         }
         glDisable(GL_SCISSOR_TEST);
     } else {
-        int w2 = m_width / 2;
+        int w2 = m_activeRenderW / 2;
+        int logW2 = m_width / 2;
         
         // Left camera (main scene camera)
-        glViewport(0, 0, w2, m_height);
-        glScissor(0, 0, w2, m_height);
+        glViewport(0, 0, w2, m_activeRenderH);
+        glScissor(0, 0, w2, m_activeRenderH);
         glEnable(GL_SCISSOR_TEST);
         const Camera* camLeft = scene.getCameraByIndex(0);
         if (camLeft) {
-            int logicalW2 = (int)(w2 / m_dpiScale);
+            int logicalW2 = (int)(logW2 / m_dpiScale);
             int logicalH = (int)(m_height / m_dpiScale);
             const_cast<Camera*>(camLeft)->onResize(logicalW2, logicalH);
             drawPassGeometry(scene, passType, *camLeft, 0);
@@ -1357,9 +1468,9 @@ void AngleRenderer::renderScenePass(const Scene& scene, int passType) {
         // Right camera (mirror or independent)
         const Camera* camRight = scene.getCameraByIndex(1);
         if (camRight) {
-            glViewport(w2, 0, m_width - w2, m_height);
-            glScissor(w2, 0, m_width - w2, m_height);
-            int logicalWRight = (int)((m_width - w2) / m_dpiScale);
+            glViewport(w2, 0, m_activeRenderW - w2, m_activeRenderH);
+            glScissor(w2, 0, m_activeRenderW - w2, m_activeRenderH);
+            int logicalWRight = (int)((m_width - logW2) / m_dpiScale);
             int logicalH = (int)(m_height / m_dpiScale);
             const_cast<Camera*>(camRight)->onResize(logicalWRight, logicalH);
             drawPassGeometry(scene, passType, *camRight, 1);
@@ -1575,6 +1686,482 @@ void AngleRenderer::drawMesh(Mesh* mesh, const Scene& scene) {
     }
 }
 
+void AngleRenderer::ensureMeshVaoConfigured(MeshRenderBuffers* bufs, const Mesh* uploadMesh) {
+    if (!bufs || bufs->vao == 0) return;
+    const bool hasUv = (uploadMesh && !uploadMesh->uvFlat.empty() && bufs->vboTexCoords != 0);
+    const bool hasTangents = (uploadMesh && !uploadMesh->tangents.empty() && bufs->vboTangents != 0);
+    if (bufs->vaoReady &&
+        bufs->cachedHasUv == hasUv &&
+        bufs->cachedHasTangents == hasTangents) {
+        return;
+    }
+
+    glBindVertexArray(bufs->vao);
+
+    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(1);
+
+    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboColors);
+    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(2);
+
+    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
+    glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(3);
+
+    if (hasUv) {
+        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboTexCoords);
+        glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(4);
+    } else {
+        glDisableVertexAttribArray(4);
+    }
+
+    if (bufs->vboFaceGroups) {
+        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboFaceGroups);
+        glVertexAttribIPointer(5, 1, GL_UNSIGNED_INT, sizeof(uint32_t), (void*)0);
+        glEnableVertexAttribArray(5);
+    } else {
+        glDisableVertexAttribArray(5);
+    }
+
+    if (hasTangents) {
+        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboTangents);
+        glVertexAttribPointer(6, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(6);
+    } else {
+        glDisableVertexAttribArray(6);
+    }
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
+    glBindVertexArray(0);
+
+    bufs->vaoReady = true;
+    bufs->cachedHasUv = hasUv;
+    bufs->cachedHasTangents = hasTangents;
+}
+
+void AngleRenderer::ensureAuxWireVaoConfigured(GLuint& vao, bool& vaoReady, MeshRenderBuffers* bufs, GLuint ebo) {
+    if (!bufs || ebo == 0) return;
+    if (!vao) {
+        glGenVertexArrays(1, &vao);
+        vaoReady = false;
+    }
+    if (vaoReady) return;
+
+    glBindVertexArray(vao);
+
+    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(1);
+
+    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
+    glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(3);
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+    glBindVertexArray(0);
+
+    vaoReady = true;
+}
+
+bool AngleRenderer::evaluateMeshClosedShell(const Mesh* uploadMesh, bool canTrustVertOnEdge) {
+    if (!uploadMesh || uploadMesh->nbFaces <= 0 || uploadMesh->nbVerts <= 0) {
+        return false;
+    }
+    const int nbFaces = uploadMesh->nbFaces;
+    const int nbVerts = uploadMesh->nbVerts;
+    if (uploadMesh->verts.size() < static_cast<size_t>(nbVerts) * 3) {
+        return false;
+    }
+
+    if (!uploadMesh->faceVisible.empty()) {
+        if (uploadMesh->faceVisible.size() != static_cast<size_t>(nbFaces)) {
+            return false;
+        }
+        if (std::memchr(uploadMesh->faceVisible.data(), 0, uploadMesh->faceVisible.size()) != nullptr) {
+            return false;
+        }
+    }
+    if (!uploadMesh->vertVisible.empty()) {
+        if (uploadMesh->vertVisible.size() != static_cast<size_t>(nbVerts)) {
+            return false;
+        }
+        if (std::memchr(uploadMesh->vertVisible.data(), 0, uploadMesh->vertVisible.size()) != nullptr) {
+            return false;
+        }
+    }
+
+    const bool hasTexCoordFaces = (!uploadMesh->facesTexCoord.empty() &&
+                                   uploadMesh->facesTexCoord.size() == static_cast<size_t>(nbFaces) * 4);
+    const auto& faceArray = hasTexCoordFaces ? uploadMesh->facesTexCoord : uploadMesh->faces;
+    if (faceArray.size() < static_cast<size_t>(nbFaces) * 4) {
+        return false;
+    }
+    const uint32_t* fData = faceArray.data();
+    const uint32_t nbVertsU = static_cast<uint32_t>(nbVerts);
+    const float* vPos = uploadMesh->verts.data();
+
+    constexpr uint64_t kSignMask = (1ULL << 63);
+    constexpr uint64_t kCoordMask = ~kSignMask;
+    struct QuantEdge16 {
+        uint64_t u;
+        uint64_t vWithSign;
+        bool operator<(const QuantEdge16& rhs) const {
+            if (u != rhs.u) return u < rhs.u;
+            return (vWithSign & kCoordMask) < (rhs.vWithSign & kCoordMask);
+        }
+    };
+
+    auto buildQuantState = [&](bool precomputeAllVerts,
+                               double& outMinX, double& outMinY, double& outMinZ,
+                               double& outQuantScale,
+                               std::vector<uint64_t>& outPackedVerts) -> bool {
+        float minX = std::numeric_limits<float>::max();
+        float minY = std::numeric_limits<float>::max();
+        float minZ = std::numeric_limits<float>::max();
+        float maxX = std::numeric_limits<float>::lowest();
+        float maxY = std::numeric_limits<float>::lowest();
+        float maxZ = std::numeric_limits<float>::lowest();
+        int hasInvalid = 0;
+
+#pragma omp parallel for reduction(min:minX,minY,minZ) reduction(max:maxX,maxY,maxZ) reduction(|:hasInvalid) schedule(static) if(nbVerts > 16384)
+        for (int i = 0; i < nbVerts; ++i) {
+            const float x = vPos[i * 3 + 0];
+            const float y = vPos[i * 3 + 1];
+            const float z = vPos[i * 3 + 2];
+            if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) {
+                hasInvalid |= 1;
+            } else {
+                if (x < minX) minX = x;
+                if (y < minY) minY = y;
+                if (z < minZ) minZ = z;
+                if (x > maxX) maxX = x;
+                if (y > maxY) maxY = y;
+                if (z > maxZ) maxZ = z;
+            }
+        }
+        if (hasInvalid || minX > maxX) {
+            return false;
+        }
+        const double extent = std::max({
+            static_cast<double>(maxX) - static_cast<double>(minX),
+            static_cast<double>(maxY) - static_cast<double>(minY),
+            static_cast<double>(maxZ) - static_cast<double>(minZ),
+            1e-4
+        });
+        outMinX = static_cast<double>(minX);
+        outMinY = static_cast<double>(minY);
+        outMinZ = static_cast<double>(minZ);
+        outQuantScale = 16384.0 / extent;
+
+        if (precomputeAllVerts) {
+            outPackedVerts.resize(static_cast<size_t>(nbVerts));
+#pragma omp parallel for schedule(static) if(nbVerts > 16384)
+            for (int i = 0; i < nbVerts; ++i) {
+                const double dx = static_cast<double>(vPos[i * 3 + 0]) - outMinX;
+                const double dy = static_cast<double>(vPos[i * 3 + 1]) - outMinY;
+                const double dz = static_cast<double>(vPos[i * 3 + 2]) - outMinZ;
+                const uint64_t qx = static_cast<uint64_t>(std::clamp<long long>(std::llround(dx * outQuantScale), 0LL, 1048575LL));
+                const uint64_t qy = static_cast<uint64_t>(std::clamp<long long>(std::llround(dy * outQuantScale), 0LL, 1048575LL));
+                const uint64_t qz = static_cast<uint64_t>(std::clamp<long long>(std::llround(dz * outQuantScale), 0LL, 1048575LL));
+                outPackedVerts[i] = (qx << 40) | (qy << 20) | qz;
+            }
+        }
+        return true;
+    };
+
+    auto verifySortedBucket = [&](std::vector<QuantEdge16>& edgesList) -> bool {
+        if (edgesList.empty()) return true;
+        std::sort(edgesList.begin(), edgesList.end());
+        size_t i = 0;
+        while (i < edgesList.size()) {
+            const uint64_t cu = edgesList[i].u;
+            const uint64_t cv = edgesList[i].vWithSign & kCoordMask;
+            int netDir = (edgesList[i].vWithSign & kSignMask) ? -1 : 1;
+            size_t j = i + 1;
+            while (j < edgesList.size() && edgesList[j].u == cu && (edgesList[j].vWithSign & kCoordMask) == cv) {
+                netDir += (edgesList[j].vWithSign & kSignMask) ? -1 : 1;
+                ++j;
+            }
+            if (netDir != 0) {
+                return false;
+            }
+            i = j;
+        }
+        return true;
+    };
+
+    auto checkDirectedHalfEdgesBalanced = [&](const std::vector<std::pair<uint32_t, uint32_t>>& halfEdges) -> bool {
+        if (halfEdges.empty()) return true;
+
+        const bool usePackedVerts = (halfEdges.size() >= static_cast<size_t>(nbVerts) / 4 && nbVerts > 4096);
+        double minX = 0.0, minY = 0.0, minZ = 0.0, quantScale = 1.0;
+        std::vector<uint64_t> packedVerts;
+        if (!buildQuantState(usePackedVerts, minX, minY, minZ, quantScale, packedVerts)) {
+            return false;
+        }
+
+        auto getPackedVertex = [&](uint32_t vid) -> uint64_t {
+            if (!packedVerts.empty()) return packedVerts[vid];
+            const double dx = static_cast<double>(vPos[vid * 3 + 0]) - minX;
+            const double dy = static_cast<double>(vPos[vid * 3 + 1]) - minY;
+            const double dz = static_cast<double>(vPos[vid * 3 + 2]) - minZ;
+            const uint64_t qx = static_cast<uint64_t>(std::clamp<long long>(std::llround(dx * quantScale), 0LL, 1048575LL));
+            const uint64_t qy = static_cast<uint64_t>(std::clamp<long long>(std::llround(dy * quantScale), 0LL, 1048575LL));
+            const uint64_t qz = static_cast<uint64_t>(std::clamp<long long>(std::llround(dz * quantScale), 0LL, 1048575LL));
+            return (qx << 40) | (qy << 20) | qz;
+        };
+
+        if (halfEdges.size() < 65536) {
+            std::vector<QuantEdge16> edgesList;
+            edgesList.reserve(halfEdges.size());
+            for (const auto& he : halfEdges) {
+                if (he.first >= nbVertsU || he.second >= nbVertsU) {
+                    return false;
+                }
+                const uint64_t qa = getPackedVertex(he.first);
+                const uint64_t qb = getPackedVertex(he.second);
+                if (qa == qb) continue;
+                if (qa < qb) {
+                    edgesList.push_back({qa, qb});
+                } else {
+                    edgesList.push_back({qb, qa | kSignMask});
+                }
+            }
+            return verifySortedBucket(edgesList);
+        }
+
+        constexpr int kBuckets = 256;
+        const int numThreads = std::max(1, omp_get_max_threads());
+        std::vector<std::vector<QuantEdge16>> threadBuckets(static_cast<size_t>(numThreads) * kBuckets);
+        std::atomic<bool> failed{false};
+
+#pragma omp parallel num_threads(numThreads)
+        {
+            const int tid = omp_get_thread_num();
+            const size_t base = static_cast<size_t>(tid) * kBuckets;
+            const size_t estPerBucket = std::max<size_t>(16, halfEdges.size() / (static_cast<size_t>(numThreads) * kBuckets) + 8);
+            for (int b = 0; b < kBuckets; ++b) {
+                threadBuckets[base + b].reserve(estPerBucket);
+            }
+
+#pragma omp for schedule(static)
+            for (int64_t idx = 0; idx < static_cast<int64_t>(halfEdges.size()); ++idx) {
+                if (failed.load(std::memory_order_relaxed)) continue;
+                const auto& he = halfEdges[static_cast<size_t>(idx)];
+                if (he.first >= nbVertsU || he.second >= nbVertsU) {
+                    failed.store(true, std::memory_order_relaxed);
+                    continue;
+                }
+                const uint64_t qa = getPackedVertex(he.first);
+                const uint64_t qb = getPackedVertex(he.second);
+                if (qa == qb) continue;
+                const uint64_t u = (qa < qb) ? qa : qb;
+                const uint64_t v = (qa < qb) ? qb : qa;
+                const uint64_t vSigned = (qa < qb) ? v : (v | kSignMask);
+                const int b = static_cast<int>((((u * 0x9E3779B97F4A7C15ULL) ^ v) * 0xBF58476D1CE4E5B9ULL) >> 56) & (kBuckets - 1);
+                threadBuckets[base + b].push_back({u, vSigned});
+            }
+        }
+        if (failed.load(std::memory_order_relaxed)) return false;
+
+        std::atomic<bool> balanced{true};
+#pragma omp parallel for schedule(dynamic, 1) num_threads(numThreads)
+        for (int b = 0; b < kBuckets; ++b) {
+            if (!balanced.load(std::memory_order_relaxed)) continue;
+            size_t totalB = 0;
+            for (int t = 0; t < numThreads; ++t) {
+                totalB += threadBuckets[static_cast<size_t>(t) * kBuckets + b].size();
+            }
+            if (totalB == 0) continue;
+            std::vector<QuantEdge16> merged;
+            merged.reserve(totalB);
+            for (int t = 0; t < numThreads; ++t) {
+                auto& src = threadBuckets[static_cast<size_t>(t) * kBuckets + b];
+                merged.insert(merged.end(), src.begin(), src.end());
+                std::vector<QuantEdge16>().swap(src);
+            }
+            if (!verifySortedBucket(merged)) {
+                balanced.store(false, std::memory_order_relaxed);
+            }
+        }
+        return balanced.load(std::memory_order_relaxed);
+    };
+
+    const bool canEdgesBeTrusted = (!hasTexCoordFaces &&
+                                    uploadMesh->nbEdges > 0 &&
+                                    uploadMesh->edges.size() == static_cast<size_t>(uploadMesh->nbEdges) &&
+                                    uploadMesh->faceEdges.size() == static_cast<size_t>(nbFaces) * 4 &&
+                                    !uploadMesh->isTopologyDirty &&
+                                    canTrustVertOnEdge);
+
+    if (canEdgesBeTrusted) {
+        const uint32_t* eData = uploadMesh->edges.data();
+        const uint32_t* feData = uploadMesh->faceEdges.data();
+        const uint32_t nbEdgesU = static_cast<uint32_t>(uploadMesh->nbEdges);
+        std::vector<int8_t> edgeDirSum(nbEdgesU, 0);
+        std::vector<std::pair<uint32_t, uint32_t>> candidateHalfEdges;
+
+        for (int f = 0; f < nbFaces; ++f) {
+            const int id = f * 4;
+            const int numE = (fData[id + 3] != 0xffffffffu) ? 4 : 3;
+            for (int k = 0; k < numE; ++k) {
+                const uint32_t va = fData[id + k];
+                const uint32_t vb = fData[id + ((k + 1) % numE)];
+                if (va >= nbVertsU || vb >= nbVertsU) {
+                    return false;
+                }
+                if (va == vb) {
+                    continue;
+                }
+                const uint32_t fe = feData[id + k];
+                if (fe < nbEdgesU && eData[fe] == 2) {
+                    edgeDirSum[fe] += (va < vb) ? static_cast<int8_t>(1) : static_cast<int8_t>(-1);
+                } else {
+                    candidateHalfEdges.emplace_back(va, vb);
+                }
+            }
+        }
+        for (uint32_t e = 0; e < nbEdgesU; ++e) {
+            if (eData[e] == 2 && edgeDirSum[e] != 0) {
+                return false;
+            }
+        }
+        if (candidateHalfEdges.empty()) {
+            return true;
+        }
+        return checkDirectedHalfEdgesBalanced(candidateHalfEdges);
+    }
+
+    // Direct parallel hash-bucketed half-edge balance check without intermediate allHalfEdges array
+    double minX = 0.0, minY = 0.0, minZ = 0.0, quantScale = 1.0;
+    std::vector<uint64_t> packedVerts;
+    if (!buildQuantState(true, minX, minY, minZ, quantScale, packedVerts)) {
+        return false;
+    }
+
+    if (nbFaces < 16384) {
+        std::vector<QuantEdge16> edgesList;
+        edgesList.reserve(static_cast<size_t>(nbFaces) * 4);
+        for (int f = 0; f < nbFaces; ++f) {
+            const int id = f * 4;
+            const int numE = (fData[id + 3] != 0xffffffffu) ? 4 : 3;
+            for (int k = 0; k < numE; ++k) {
+                const uint32_t va = fData[id + k];
+                const uint32_t vb = fData[id + ((k + 1) % numE)];
+                if (va >= nbVertsU || vb >= nbVertsU) return false;
+                const uint64_t qa = packedVerts[va];
+                const uint64_t qb = packedVerts[vb];
+                if (qa == qb) continue;
+                edgesList.push_back((qa < qb) ? QuantEdge16{qa, qb} : QuantEdge16{qb, qa | kSignMask});
+            }
+        }
+        return verifySortedBucket(edgesList);
+    }
+
+    constexpr int kBuckets = 256;
+    const int numThreads = std::max(1, omp_get_max_threads());
+    std::vector<std::vector<QuantEdge16>> threadBuckets(static_cast<size_t>(numThreads) * kBuckets);
+    std::atomic<bool> failed{false};
+
+#pragma omp parallel num_threads(numThreads)
+    {
+        const int tid = omp_get_thread_num();
+        const size_t base = static_cast<size_t>(tid) * kBuckets;
+        const size_t estPerBucket = std::max<size_t>(16, (static_cast<size_t>(nbFaces) * 4) / (static_cast<size_t>(numThreads) * kBuckets) + 8);
+        for (int b = 0; b < kBuckets; ++b) {
+            threadBuckets[base + b].reserve(estPerBucket);
+        }
+
+#pragma omp for schedule(static)
+        for (int f = 0; f < nbFaces; ++f) {
+            if (failed.load(std::memory_order_relaxed)) continue;
+            const int id = f * 4;
+            const int numE = (fData[id + 3] != 0xffffffffu) ? 4 : 3;
+            for (int k = 0; k < numE; ++k) {
+                const uint32_t va = fData[id + k];
+                const uint32_t vb = fData[id + ((k + 1) % numE)];
+                if (va >= nbVertsU || vb >= nbVertsU) {
+                    failed.store(true, std::memory_order_relaxed);
+                    break;
+                }
+                const uint64_t qa = packedVerts[va];
+                const uint64_t qb = packedVerts[vb];
+                if (qa == qb) continue;
+                const uint64_t u = (qa < qb) ? qa : qb;
+                const uint64_t v = (qa < qb) ? qb : qa;
+                const uint64_t vSigned = (qa < qb) ? v : (v | kSignMask);
+                const int b = static_cast<int>((((u * 0x9E3779B97F4A7C15ULL) ^ v) * 0xBF58476D1CE4E5B9ULL) >> 56) & (kBuckets - 1);
+                threadBuckets[base + b].push_back({u, vSigned});
+            }
+        }
+    }
+    if (failed.load(std::memory_order_relaxed)) return false;
+
+    std::vector<uint64_t>().swap(packedVerts);
+
+    std::atomic<bool> balanced{true};
+#pragma omp parallel for schedule(dynamic, 1) num_threads(numThreads)
+    for (int b = 0; b < kBuckets; ++b) {
+        if (!balanced.load(std::memory_order_relaxed)) continue;
+        size_t totalB = 0;
+        for (int t = 0; t < numThreads; ++t) {
+            totalB += threadBuckets[static_cast<size_t>(t) * kBuckets + b].size();
+        }
+        if (totalB == 0) continue;
+        std::vector<QuantEdge16> merged;
+        merged.reserve(totalB);
+        for (int t = 0; t < numThreads; ++t) {
+            auto& src = threadBuckets[static_cast<size_t>(t) * kBuckets + b];
+            merged.insert(merged.end(), src.begin(), src.end());
+            std::vector<QuantEdge16>().swap(src);
+        }
+        if (!verifySortedBucket(merged)) {
+            balanced.store(false, std::memory_order_relaxed);
+        }
+    }
+    return balanced.load(std::memory_order_relaxed);
+}
+
+bool AngleRenderer::canMeshCull(const Mesh* mesh, const Mesh* uploadMesh, MeshRenderBuffers* bufs, bool isXRay) const {
+    if (!OptFlags::get().cullFace) {
+        return isXRay;
+    }
+    if (isXRay) {
+        return true;
+    }
+    if (!mesh || !uploadMesh || !bufs) {
+        return false;
+    }
+    if (m_showInvertedNormals) {
+        return false;
+    }
+    if (mesh->isPrimitive && mesh->primitiveData &&
+        mesh->primitiveData->type == PrimitiveType::Plane &&
+        !(mesh->dynamicSettings.enabled && mesh->dynamicSettings.enableThickness && mesh->dynamicSettings.thickness > 1e-5f)) {
+        return false;
+    }
+    if (glm::determinant(glm::mat3(mesh->matrix)) <= 1e-12f ||
+        glm::determinant(glm::mat3(mesh->editMatrix)) <= 1e-12f) {
+        return false;
+    }
+    if (!bufs->closedShellValid) {
+        bufs->isClosedShell = evaluateMeshClosedShell(uploadMesh, bufs->canTrustVertOnEdge);
+        bufs->closedShellValid = true;
+    }
+    return bufs->isClosedShell;
+}
+
 void AngleRenderer::drawMeshForThumbnail(Mesh* mesh, const Camera& cam) {
     if (!m_matcapProgram) return;
     auto it = m_meshBuffers.find(mesh);
@@ -1625,35 +2212,44 @@ void AngleRenderer::drawMeshForThumbnail(Mesh* mesh, const Camera& cam) {
     glUniform1i(glGetUniformLocation(m_matcapProgram, "uUseTexture"), matcapTex != 0 ? 1 : 0);
     glUniform1i(glGetUniformLocation(m_matcapProgram, "uIsXRay"), 0);
 
-    glBindVertexArray(it->second->vao);
+    if (OptFlags::get().vaoCache) {
+        ensureMeshVaoConfigured(it->second.get(), mesh ? mesh->getRenderMesh() : nullptr);
+        glBindVertexArray(it->second->vao);
+        glDrawElements(GL_TRIANGLES,
+                       static_cast<GLsizei>(it->second->triIndexCount),
+                       GL_UNSIGNED_INT, nullptr);
+        glBindVertexArray(0);
+    } else {
+        glBindVertexArray(it->second->vao);
 
-    glBindBuffer(GL_ARRAY_BUFFER, it->second->vboVertices);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, it->second->vboVertices);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
 
-    glBindBuffer(GL_ARRAY_BUFFER, it->second->vboNormals);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(1);
+        glBindBuffer(GL_ARRAY_BUFFER, it->second->vboNormals);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(1);
 
-    glBindBuffer(GL_ARRAY_BUFFER, it->second->vboColors);
-    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(2);
+        glBindBuffer(GL_ARRAY_BUFFER, it->second->vboColors);
+        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(2);
 
-    glBindBuffer(GL_ARRAY_BUFFER, it->second->vboMaterials);
-    glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(3);
+        glBindBuffer(GL_ARRAY_BUFFER, it->second->vboMaterials);
+        glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(3);
 
-    if (it->second->vboFaceGroups) {
-        glBindBuffer(GL_ARRAY_BUFFER, it->second->vboFaceGroups);
-        glVertexAttribIPointer(5, 1, GL_UNSIGNED_INT, sizeof(uint32_t), (void*)0);
-        glEnableVertexAttribArray(5);
+        if (it->second->vboFaceGroups) {
+            glBindBuffer(GL_ARRAY_BUFFER, it->second->vboFaceGroups);
+            glVertexAttribIPointer(5, 1, GL_UNSIGNED_INT, sizeof(uint32_t), (void*)0);
+            glEnableVertexAttribArray(5);
+        }
+
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, it->second->eboTriangles);
+        glDrawElements(GL_TRIANGLES,
+                       static_cast<GLsizei>(it->second->triIndexCount),
+                       GL_UNSIGNED_INT, nullptr);
+        glBindVertexArray(0);
     }
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, it->second->eboTriangles);
-    glDrawElements(GL_TRIANGLES,
-                   static_cast<GLsizei>(it->second->triIndexCount),
-                   GL_UNSIGNED_INT, nullptr);
-    glBindVertexArray(0);
     glUniform1i(glGetUniformLocation(m_matcapProgram, "uIsThumbnail"), 0);
 }
 
@@ -1663,16 +2259,6 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
     auto& bufs = it->second;
 
     bool isXRay = isMeshXRay(scene, mesh);
-
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LEQUAL);
-    if (isXRay) {
-        glEnable(GL_CULL_FACE);
-        glCullFace(GL_BACK);
-    } else {
-        glDisable(GL_CULL_FACE);
-    }
-
     GLuint program = m_flatProgram;
     if (isXRay) program = m_matcapProgram;
     else if (m_showPolyGroups || m_activeBrush == BRUSH_POLYGROUP || m_shaderType == 5) program = m_polygroupProgram;
@@ -1684,6 +2270,19 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
     else if (m_shaderType == 6) program = m_silhouetteProgram;
 
     if (program == 0) return;
+
+    const Mesh* uploadMesh = mesh->getRenderMesh();
+    const bool useCull = canMeshCull(mesh, uploadMesh, bufs.get(), isXRay);
+
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    if (useCull) {
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
+    } else {
+        glDisable(GL_CULL_FACE);
+    }
+
     glUseProgram(program);
 
     mesh->updateMatrices(camera);
@@ -1826,23 +2425,64 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
 
         glm::mat4 viewMatrix = camera.getViewMatrix();
 
-        for (int i = 0; i < numLights; ++i) {
-            const auto& L = lights[i];
-            std::string base = "uLights[" + std::to_string(i) + "].";
+        if (OptFlags::get().vaoCache) {
+            struct LightUniformNames {
+                const char* position;
+                const char* direction;
+                const char* color;
+                const char* intensity;
+                const char* range;
+                const char* innerCos;
+                const char* outerCos;
+                const char* type;
+                const char* castShadow;
+                const char* enabled;
+            };
+            static constexpr LightUniformNames kLightUniformNames[8] = {
+                { "uLights[0].position", "uLights[0].direction", "uLights[0].color", "uLights[0].intensity", "uLights[0].range", "uLights[0].innerCos", "uLights[0].outerCos", "uLights[0].type", "uLights[0].castShadow", "uLights[0].enabled" },
+                { "uLights[1].position", "uLights[1].direction", "uLights[1].color", "uLights[1].intensity", "uLights[1].range", "uLights[1].innerCos", "uLights[1].outerCos", "uLights[1].type", "uLights[1].castShadow", "uLights[1].enabled" },
+                { "uLights[2].position", "uLights[2].direction", "uLights[2].color", "uLights[2].intensity", "uLights[2].range", "uLights[2].innerCos", "uLights[2].outerCos", "uLights[2].type", "uLights[2].castShadow", "uLights[2].enabled" },
+                { "uLights[3].position", "uLights[3].direction", "uLights[3].color", "uLights[3].intensity", "uLights[3].range", "uLights[3].innerCos", "uLights[3].outerCos", "uLights[3].type", "uLights[3].castShadow", "uLights[3].enabled" },
+                { "uLights[4].position", "uLights[4].direction", "uLights[4].color", "uLights[4].intensity", "uLights[4].range", "uLights[4].innerCos", "uLights[4].outerCos", "uLights[4].type", "uLights[4].castShadow", "uLights[4].enabled" },
+                { "uLights[5].position", "uLights[5].direction", "uLights[5].color", "uLights[5].intensity", "uLights[5].range", "uLights[5].innerCos", "uLights[5].outerCos", "uLights[5].type", "uLights[5].castShadow", "uLights[5].enabled" },
+                { "uLights[6].position", "uLights[6].direction", "uLights[6].color", "uLights[6].intensity", "uLights[6].range", "uLights[6].innerCos", "uLights[6].outerCos", "uLights[6].type", "uLights[6].castShadow", "uLights[6].enabled" },
+                { "uLights[7].position", "uLights[7].direction", "uLights[7].color", "uLights[7].intensity", "uLights[7].range", "uLights[7].innerCos", "uLights[7].outerCos", "uLights[7].type", "uLights[7].castShadow", "uLights[7].enabled" },
+            };
+            for (int i = 0; i < numLights; ++i) {
+                const auto& L = lights[i];
+                const auto& U = kLightUniformNames[i];
+                glm::vec3 viewPos = glm::vec3(viewMatrix * glm::vec4(L.position, 1.0f));
+                glm::vec3 viewDir = glm::normalize(glm::vec3(viewMatrix * glm::vec4(L.direction, 0.0f)));
+                glUniform3fv(glGetUniformLocation(program, U.position), 1, glm::value_ptr(viewPos));
+                glUniform3fv(glGetUniformLocation(program, U.direction), 1, glm::value_ptr(viewDir));
+                glUniform3fv(glGetUniformLocation(program, U.color), 1, glm::value_ptr(L.color));
+                glUniform1f(glGetUniformLocation(program, U.intensity), L.intensity);
+                glUniform1f(glGetUniformLocation(program, U.range), L.range);
+                glUniform1f(glGetUniformLocation(program, U.innerCos), std::cos(glm::radians(L.innerAngle)));
+                glUniform1f(glGetUniformLocation(program, U.outerCos), std::cos(glm::radians(L.outerAngle)));
+                glUniform1i(glGetUniformLocation(program, U.type), (int)L.type);
+                glUniform1i(glGetUniformLocation(program, U.castShadow), L.castShadow ? 1 : 0);
+                glUniform1i(glGetUniformLocation(program, U.enabled), L.enabled ? 1 : 0);
+            }
+        } else {
+            for (int i = 0; i < numLights; ++i) {
+                const auto& L = lights[i];
+                std::string base = "uLights[" + std::to_string(i) + "].";
 
-            glm::vec3 viewPos = glm::vec3(viewMatrix * glm::vec4(L.position, 1.0f));
-            glm::vec3 viewDir = glm::normalize(glm::vec3(viewMatrix * glm::vec4(L.direction, 0.0f)));
+                glm::vec3 viewPos = glm::vec3(viewMatrix * glm::vec4(L.position, 1.0f));
+                glm::vec3 viewDir = glm::normalize(glm::vec3(viewMatrix * glm::vec4(L.direction, 0.0f)));
 
-            glUniform3fv(glGetUniformLocation(program, (base + "position").c_str()), 1, glm::value_ptr(viewPos));
-            glUniform3fv(glGetUniformLocation(program, (base + "direction").c_str()), 1, glm::value_ptr(viewDir));
-            glUniform3fv(glGetUniformLocation(program, (base + "color").c_str()), 1, glm::value_ptr(L.color));
-            glUniform1f(glGetUniformLocation(program, (base + "intensity").c_str()), L.intensity);
-            glUniform1f(glGetUniformLocation(program, (base + "range").c_str()), L.range);
-            glUniform1f(glGetUniformLocation(program, (base + "innerCos").c_str()), std::cos(glm::radians(L.innerAngle)));
-            glUniform1f(glGetUniformLocation(program, (base + "outerCos").c_str()), std::cos(glm::radians(L.outerAngle)));
-            glUniform1i(glGetUniformLocation(program, (base + "type").c_str()), (int)L.type);
-            glUniform1i(glGetUniformLocation(program, (base + "castShadow").c_str()), L.castShadow ? 1 : 0);
-            glUniform1i(glGetUniformLocation(program, (base + "enabled").c_str()), L.enabled ? 1 : 0);
+                glUniform3fv(glGetUniformLocation(program, (base + "position").c_str()), 1, glm::value_ptr(viewPos));
+                glUniform3fv(glGetUniformLocation(program, (base + "direction").c_str()), 1, glm::value_ptr(viewDir));
+                glUniform3fv(glGetUniformLocation(program, (base + "color").c_str()), 1, glm::value_ptr(L.color));
+                glUniform1f(glGetUniformLocation(program, (base + "intensity").c_str()), L.intensity);
+                glUniform1f(glGetUniformLocation(program, (base + "range").c_str()), L.range);
+                glUniform1f(glGetUniformLocation(program, (base + "innerCos").c_str()), std::cos(glm::radians(L.innerAngle)));
+                glUniform1f(glGetUniformLocation(program, (base + "outerCos").c_str()), std::cos(glm::radians(L.outerAngle)));
+                glUniform1i(glGetUniformLocation(program, (base + "type").c_str()), (int)L.type);
+                glUniform1i(glGetUniformLocation(program, (base + "castShadow").c_str()), L.castShadow ? 1 : 0);
+                glUniform1i(glGetUniformLocation(program, (base + "enabled").c_str()), L.enabled ? 1 : 0);
+            }
         }
 
         glUniform1i(glGetUniformLocation(program, "uShadowEnabled"), m_shadowEnabled ? 1 : 0);
@@ -1887,45 +2527,13 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
             m_lastRenderStats.meshDrawCalls++;
             m_lastRenderStats.polygroupDraws++;
             m_lastRenderStats.trisSubmitted += (uint64_t)(bufs->polygroupVertCount / 3);
-            if (isXRay) m_lastRenderStats.cullEnabledDraws++;
+            if (useCull) m_lastRenderStats.cullEnabledDraws++;
             else m_lastRenderStats.cullDisabledDraws++;
         }
+        if (useCull && !isXRay) {
+            glDisable(GL_CULL_FACE);
+        }
         return;
-    }
-
-    glBindVertexArray(bufs->vao);
-
-    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-
-    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(1);
-
-    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboColors);
-    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(2);
-
-    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
-    glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(3);
-
-    if (bufs->vboFaceGroups) {
-        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboFaceGroups);
-        glVertexAttribIPointer(5, 1, GL_UNSIGNED_INT, sizeof(uint32_t), (void*)0);
-        glEnableVertexAttribArray(5);
-    }
-
-    if (bufs->vboTexCoords && mesh->normalMapTexId != 0) {
-        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboTexCoords);
-        glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(4);
-    }
-    if (bufs->vboTangents && mesh->normalMapTexId != 0) {
-        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboTangents);
-        glVertexAttribPointer(6, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(6);
     }
 
     if (program == m_pbrProgram || program == m_matcapProgram) {
@@ -1935,27 +2543,81 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
         glUniform1i(glGetUniformLocation(program, "uHasNormalMap"), (mesh->normalMapTexId != 0 && !mesh->uvFlat.empty()) ? 1 : 0);
     }
 
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
-    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
+    if (OptFlags::get().vaoCache) {
+        ensureMeshVaoConfigured(bufs.get(), uploadMesh);
+        glBindVertexArray(bufs->vao);
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
+        glBindVertexArray(0);
+    } else {
+        glBindVertexArray(bufs->vao);
 
-    glBindVertexArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
+
+        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(1);
+
+        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboColors);
+        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(2);
+
+        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
+        glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(3);
+
+        if (bufs->vboFaceGroups) {
+            glBindBuffer(GL_ARRAY_BUFFER, bufs->vboFaceGroups);
+            glVertexAttribIPointer(5, 1, GL_UNSIGNED_INT, sizeof(uint32_t), (void*)0);
+            glEnableVertexAttribArray(5);
+        }
+
+        if (bufs->vboTexCoords && mesh->normalMapTexId != 0) {
+            glBindBuffer(GL_ARRAY_BUFFER, bufs->vboTexCoords);
+            glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+            glEnableVertexAttribArray(4);
+        }
+        if (bufs->vboTangents && mesh->normalMapTexId != 0) {
+            glBindBuffer(GL_ARRAY_BUFFER, bufs->vboTangents);
+            glVertexAttribPointer(6, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+            glEnableVertexAttribArray(6);
+        }
+
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
+
+        glBindVertexArray(0);
+    }
+
+    if (useCull && !isXRay) {
+        glDisable(GL_CULL_FACE);
+    }
 
     m_lastRenderStats.meshDrawCalls++;
     m_lastRenderStats.trisSubmitted += (uint64_t)(bufs->triIndexCount / 3);
-    if (isXRay) m_lastRenderStats.cullEnabledDraws++;
+    if (useCull) m_lastRenderStats.cullEnabledDraws++;
     else m_lastRenderStats.cullDisabledDraws++;
 }
 
 void AngleRenderer::drawMeshPrepass(Mesh* mesh, const Scene& scene, const Camera& camera) {
+    if (m_bevelPrepassProgram == 0) return;
     auto it = m_meshBuffers.find(mesh);
     if (it == m_meshBuffers.end() || it->second->triIndexCount == 0) return;
     auto& bufs = it->second;
 
+    const Mesh* uploadMesh = mesh->getRenderMesh();
+    const bool useCull = canMeshCull(mesh, uploadMesh, bufs.get(), false);
+
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
-    glDisable(GL_CULL_FACE);
+    if (useCull) {
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
+    } else {
+        glDisable(GL_CULL_FACE);
+    }
 
-    if (m_bevelPrepassProgram == 0) return;
     glUseProgram(m_bevelPrepassProgram);
 
     mesh->updateMatrices(camera);
@@ -1968,28 +2630,41 @@ void AngleRenderer::drawMeshPrepass(Mesh* mesh, const Scene& scene, const Camera
     glUniform1i(glGetUniformLocation(m_bevelPrepassProgram, "uFlat"), m_flatShading ? 1 : 0);
     glUniform1i(glGetUniformLocation(m_bevelPrepassProgram, "uOrtho"), camera.isOrthographic() ? 1 : 0);
 
-    glBindVertexArray(bufs->vao);
+    if (OptFlags::get().vaoCache) {
+        ensureMeshVaoConfigured(bufs.get(), uploadMesh);
+        glBindVertexArray(bufs->vao);
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
+        glBindVertexArray(0);
+    } else {
+        glBindVertexArray(bufs->vao);
 
-    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
 
-    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(1);
+        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(1);
 
-    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
-    glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(3);
+        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
+        glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(3);
 
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
-    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
 
-    glBindVertexArray(0);
+        glBindVertexArray(0);
+    }
+
+    if (useCull) {
+        glDisable(GL_CULL_FACE);
+        m_lastRenderStats.cullEnabledDraws++;
+    } else {
+        m_lastRenderStats.cullDisabledDraws++;
+    }
 
     m_lastRenderStats.meshDrawCalls++;
     m_lastRenderStats.trisSubmitted += (uint64_t)(bufs->triIndexCount / 3);
-    m_lastRenderStats.cullDisabledDraws++;
 }
 
 void AngleRenderer::drawVoxelPreview(const Scene& scene, const Camera& camera, int viewportIdx) {
@@ -2019,16 +2694,23 @@ void AngleRenderer::drawVoxelPreview(const Scene& scene, const Camera& camera, i
         glUniformMatrix4fv(glGetUniformLocation(m_voxelCheckerProgram, "uMV"), 1, GL_FALSE, glm::value_ptr(mesh->mvMatrix));
         glUniformMatrix4fv(glGetUniformLocation(m_voxelCheckerProgram, "uMVP"), 1, GL_FALSE, glm::value_ptr(mesh->mvpMatrix));
 
-        glBindVertexArray(bufs->vao);
+        if (OptFlags::get().vaoCache) {
+            ensureMeshVaoConfigured(bufs.get(), mesh->getRenderMesh());
+            glBindVertexArray(bufs->vao);
+            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
+            glBindVertexArray(0);
+        } else {
+            glBindVertexArray(bufs->vao);
 
-        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(0);
+            glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+            glEnableVertexAttribArray(0);
 
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
-        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
+            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
 
-        glBindVertexArray(0);
+            glBindVertexArray(0);
+        }
     }
 
     glDisable(GL_POLYGON_OFFSET_FILL);
@@ -2036,15 +2718,23 @@ void AngleRenderer::drawVoxelPreview(const Scene& scene, const Camera& camera, i
 }
 
 void AngleRenderer::drawMeshFlatColor(Mesh* mesh, const Scene& scene, const Camera& camera, const glm::vec4& color) {
+    if (m_flatProgram == 0) return;
     auto it = m_meshBuffers.find(mesh);
     if (it == m_meshBuffers.end() || it->second->triIndexCount == 0) return;
     auto& bufs = it->second;
 
+    const Mesh* uploadMesh = mesh->getRenderMesh();
+    const bool useCull = canMeshCull(mesh, uploadMesh, bufs.get(), false);
+
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
-    glDisable(GL_CULL_FACE);
+    if (useCull) {
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
+    } else {
+        glDisable(GL_CULL_FACE);
+    }
 
-    if (m_flatProgram == 0) return;
     glUseProgram(m_flatProgram);
 
     mesh->updateMatrices(camera);
@@ -2075,32 +2765,45 @@ void AngleRenderer::drawMeshFlatColor(Mesh* mesh, const Scene& scene, const Came
         glUniform2f(glGetUniformLocation(m_flatProgram, "uInvViewportSize"), 1.0f / m_width, 1.0f / m_height);
     }
 
-    glBindVertexArray(bufs->vao);
+    if (OptFlags::get().vaoCache) {
+        ensureMeshVaoConfigured(bufs.get(), uploadMesh);
+        glBindVertexArray(bufs->vao);
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
+        glBindVertexArray(0);
+    } else {
+        glBindVertexArray(bufs->vao);
 
-    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
 
-    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(1);
+        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(1);
 
-    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboColors);
-    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(2);
+        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboColors);
+        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(2);
 
-    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
-    glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(3);
+        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
+        glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(3);
 
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
-    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
 
-    glBindVertexArray(0);
+        glBindVertexArray(0);
+    }
+
+    if (useCull) {
+        glDisable(GL_CULL_FACE);
+        m_lastRenderStats.cullEnabledDraws++;
+    } else {
+        m_lastRenderStats.cullDisabledDraws++;
+    }
 
     m_lastRenderStats.meshDrawCalls++;
     m_lastRenderStats.trisSubmitted += (uint64_t)(bufs->triIndexCount / 3);
-    m_lastRenderStats.cullDisabledDraws++;
 }
 
 void AngleRenderer::drawWireframe(Mesh* mesh, const Scene& scene, const Camera& camera) {
@@ -2109,6 +2812,7 @@ void AngleRenderer::drawWireframe(Mesh* mesh, const Scene& scene, const Camera& 
     auto& bufs = it->second;
 
     if (bufs->wireDirty && m_showWireframe) {
+        glBindVertexArray(0);
         const Mesh* uploadMesh = mesh->getRenderMesh();
         std::vector<uint32_t> cageWireIndices;
         std::vector<uint32_t> subdivWireIndices;
@@ -2117,6 +2821,7 @@ void AngleRenderer::drawWireframe(Mesh* mesh, const Scene& scene, const Camera& 
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboWireframe);
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, cageWireIndices.size() * sizeof(uint32_t), cageWireIndices.data(), GL_DYNAMIC_DRAW);
         bufs->wireIndexCount = cageWireIndices.size();
+        bufs->wireVaoReady = false;
 
         if (!subdivWireIndices.empty()) {
             if (!bufs->eboSubdivWire) glGenBuffers(1, &bufs->eboSubdivWire);
@@ -2126,10 +2831,12 @@ void AngleRenderer::drawWireframe(Mesh* mesh, const Scene& scene, const Camera& 
         } else {
             bufs->subdivWireIndexCount = 0;
         }
+        bufs->subdivWireVaoReady = false;
         bufs->wireDirty = false;
     }
 
     if (bufs->creaseDirty && m_showCreaseLines) {
+        glBindVertexArray(0);
         const Mesh* uploadMesh = mesh->getRenderMesh();
         if (uploadMesh && uploadMesh->nbFaces > 0) {
             if (!bufs->creaseEboWire) {
@@ -2164,6 +2871,7 @@ void AngleRenderer::drawWireframe(Mesh* mesh, const Scene& scene, const Camera& 
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->creaseEboWire);
             glBufferData(GL_ELEMENT_ARRAY_BUFFER, creaseLines.size() * sizeof(uint32_t), creaseLines.data(), GL_DYNAMIC_DRAW);
             bufs->creaseWireIndexCount = creaseLines.size();
+            bufs->creaseVaoReady = false;
             bufs->creaseDirty = false;
         }
     }
@@ -2219,9 +2927,16 @@ void AngleRenderer::drawWireframe(Mesh* mesh, const Scene& scene, const Camera& 
                     subAlpha);
         glUniform1i(glGetUniformLocation(m_wireframeProgram, "uDashed"), 0);
 
-        glBindVertexArray(bufs->vao);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboSubdivWire);
-        glDrawElements(GL_LINES, static_cast<GLsizei>(bufs->subdivWireIndexCount), GL_UNSIGNED_INT, nullptr);
+        if (OptFlags::get().vaoCache) {
+            ensureAuxWireVaoConfigured(bufs->subdivWireVao, bufs->subdivWireVaoReady, bufs.get(), bufs->eboSubdivWire);
+            glBindVertexArray(bufs->subdivWireVao);
+            glDrawElements(GL_LINES, static_cast<GLsizei>(bufs->subdivWireIndexCount), GL_UNSIGNED_INT, nullptr);
+        } else {
+            bufs->vaoReady = false;
+            glBindVertexArray(bufs->vao);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboSubdivWire);
+            glDrawElements(GL_LINES, static_cast<GLsizei>(bufs->subdivWireIndexCount), GL_UNSIGNED_INT, nullptr);
+        }
     }
 
     // 2. Draw regular wireframe / cage wireframe on surface (full opacity primary polygon edges)
@@ -2234,9 +2949,16 @@ void AngleRenderer::drawWireframe(Mesh* mesh, const Scene& scene, const Camera& 
                     alpha);
         glUniform1i(glGetUniformLocation(m_wireframeProgram, "uDashed"), 0);
 
-        glBindVertexArray(bufs->vao);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboWireframe);
-        glDrawElements(GL_LINES, static_cast<GLsizei>(bufs->wireIndexCount), GL_UNSIGNED_INT, nullptr);
+        if (OptFlags::get().vaoCache) {
+            ensureAuxWireVaoConfigured(bufs->wireVao, bufs->wireVaoReady, bufs.get(), bufs->eboWireframe);
+            glBindVertexArray(bufs->wireVao);
+            glDrawElements(GL_LINES, static_cast<GLsizei>(bufs->wireIndexCount), GL_UNSIGNED_INT, nullptr);
+        } else {
+            bufs->vaoReady = false;
+            glBindVertexArray(bufs->vao);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboWireframe);
+            glDrawElements(GL_LINES, static_cast<GLsizei>(bufs->wireIndexCount), GL_UNSIGNED_INT, nullptr);
+        }
     }
 
     // 3. Draw cage wireframe if Dynamic Subdiv cage display is enabled (the floating 3D cage)
@@ -2269,9 +2991,16 @@ void AngleRenderer::drawWireframe(Mesh* mesh, const Scene& scene, const Camera& 
         // Slight depth offset so crease dashed line floats right above solid wireframe lines
         glPolygonOffset(-1.0f, -2.0f);
 
-        glBindVertexArray(bufs->vao);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->creaseEboWire);
-        glDrawElements(GL_LINES, static_cast<GLsizei>(bufs->creaseWireIndexCount), GL_UNSIGNED_INT, nullptr);
+        if (OptFlags::get().vaoCache) {
+            ensureAuxWireVaoConfigured(bufs->creaseVao, bufs->creaseVaoReady, bufs.get(), bufs->creaseEboWire);
+            glBindVertexArray(bufs->creaseVao);
+            glDrawElements(GL_LINES, static_cast<GLsizei>(bufs->creaseWireIndexCount), GL_UNSIGNED_INT, nullptr);
+        } else {
+            bufs->vaoReady = false;
+            glBindVertexArray(bufs->vao);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->creaseEboWire);
+            glDrawElements(GL_LINES, static_cast<GLsizei>(bufs->creaseWireIndexCount), GL_UNSIGNED_INT, nullptr);
+        }
 
         glPolygonOffset(-0.5f, -1.0f);
     }
@@ -3243,12 +3972,20 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
 
     // Check dynamic subdivision
     bool isDynamic = mesh->dynamicSettings.enabled;
+    const bool wasDynamicRebuild = isDynamic && (mesh->isDynamicDirty || mesh->isTopologyDirty || !mesh->dynamicCacheMesh);
     if (isDynamic) {
         if (mesh->isDirty || mesh->isVertexDirty || mesh->isTopologyDirty || mesh->isDynamicDirty || !mesh->dynamicCacheMesh) {
             mesh->updateDynamicMesh();
         }
     }
     Mesh* uploadMesh = (isDynamic && mesh->dynamicCacheMesh) ? mesh->dynamicCacheMesh.get() : mesh;
+
+    // Ignore default Mesh::isDynamicDirty=true when Dynamic Subdiv is disabled
+    const bool hadCpuTopologyDirty = (uploadMesh && uploadMesh->isTopologyDirty) ||
+                                     (!isDynamic && mesh->isTopologyDirty);
+    const bool hadTopologyDirtyBeforeClear = hadCpuTopologyDirty || wasDynamicRebuild;
+    const bool hadFaceGroupDirtyBeforeClear = mesh->isFaceGroupDirty ||
+                                              (uploadMesh && uploadMesh->isFaceGroupDirty);
 
     auto& bufs = m_meshBuffers[mesh];
     if (!bufs) {
@@ -3365,6 +4102,7 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, triIndices.size() * sizeof(uint32_t), triIndices.data(), GL_DYNAMIC_DRAW);
         bufs->triIndexCount = triIndices.size();
+        glBindVertexArray(0);
         
         bool needWireframe = m_showWireframe || (m_activeBrush == BRUSH_POLYGROUP) || (m_shaderType == 5);
         if (needWireframe) {
@@ -3390,7 +4128,6 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
             bufs->wireDirty = true;
         }
         
-        glBindVertexArray(0);
         bufs->vertCount = uploadMesh->nbVerts;
 
         bufs->polygroupDirty = true;
@@ -3507,6 +4244,7 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
         mesh->isTopologyDirty = false;
         mesh->isDynamicDirty = false;
     } else {
+        glBindVertexArray(0);
         if (mesh->isFaceGroupDirty) {
             uploaded = true;
             auto tFgStart = std::chrono::high_resolution_clock::now();
@@ -3737,6 +4475,18 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
                 m_lastUploadTiming.dirtyMeshVerts = std::max(m_lastUploadTiming.dirtyMeshVerts, (uint32_t)mesh->nbVerts);
             }
         }
+    }
+
+    if (isFullUpload || hadTopologyDirtyBeforeClear || hadFaceGroupDirtyBeforeClear || bufs->lastUploadMeshPtr != uploadMesh) {
+        bufs->closedShellValid = false;
+        bufs->vaoReady = false;
+        bufs->wireVaoReady = false;
+        bufs->subdivWireVaoReady = false;
+        bufs->creaseVaoReady = false;
+        if (isFullUpload || hadTopologyDirtyBeforeClear || bufs->lastUploadMeshPtr != uploadMesh) {
+            bufs->canTrustVertOnEdge = !hadCpuTopologyDirty;
+        }
+        bufs->lastUploadMeshPtr = uploadMesh;
     }
 
     if (uploaded) {
@@ -4198,6 +4948,7 @@ void AngleRenderer::drawFullscreenMerge(const Scene& scene) {
     glDisable(GL_CULL_FACE);
 
     glUseProgram(m_mergeProgram);
+    glUniform2f(glGetUniformLocation(m_mergeProgram, "uUvScale"), m_uvScale.x, m_uvScale.y);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_rttOpaque.texture);
@@ -4281,6 +5032,7 @@ void AngleRenderer::drawFullscreenTaa() {
     glDisable(GL_CULL_FACE);
 
     glUseProgram(m_taaProgram);
+    glUniform2f(glGetUniformLocation(m_taaProgram, "uUvScale"), 1.0f, 1.0f);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_rttMerge.texture);
@@ -4316,6 +5068,8 @@ void AngleRenderer::drawFullscreenFxaa() {
     glDisable(GL_CULL_FACE);
 
     glUseProgram(m_fxaaProgram);
+    glUniform2f(glGetUniformLocation(m_fxaaProgram, "uUvScale"), m_uvScale.x, m_uvScale.y);
+    glUniform2f(glGetUniformLocation(m_fxaaProgram, "uUvMax"), m_uvMax.x, m_uvMax.y);
 
     glActiveTexture(GL_TEXTURE0);
     GLuint inputTex = (m_useTaa && m_taaProgram != 0) ? (m_taaPing ? m_rttTaaAccumB.texture : m_rttTaaAccumA.texture) : m_rttMerge.texture;
@@ -4341,6 +5095,7 @@ void AngleRenderer::drawFullscreenViewport2D(const Scene& scene) {
     glDisable(GL_CULL_FACE);
 
     glUseProgram(m_viewport2DProgram);
+    glUniform2f(glGetUniformLocation(m_viewport2DProgram, "uUvMax"), 1.0f, 1.0f);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_rttComposite.texture);
@@ -4392,6 +5147,8 @@ void AngleRenderer::drawContourOverlay(const Scene& scene) {
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     glUseProgram(m_contourProgram);
+    glUniform2f(glGetUniformLocation(m_contourProgram, "uUvScale"), m_uvScale.x, m_uvScale.y);
+    glUniform2f(glGetUniformLocation(m_contourProgram, "uUvMax"), m_uvMax.x, m_uvMax.y);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_rttContour.texture);
@@ -4753,6 +5510,16 @@ void AngleRenderer::deleteBackgroundTexture() {
 
 GLint AngleRenderer::getCachedUniformLocation(GLuint program, const char* name) {
     auto& programMap = m_uniformLocations[program];
+    if (OptFlags::get().vaoCache) {
+        std::string_view sv(name ? name : "");
+        auto it = programMap.find(sv);
+        if (it != programMap.end()) {
+            return it->second;
+        }
+        GLint loc = (::glGetUniformLocation)(program, name);
+        programMap.emplace(std::string(sv), loc);
+        return loc;
+    }
     std::string nameStr(name);
     auto it = programMap.find(nameStr);
     if (it != programMap.end()) {
@@ -4856,15 +5623,23 @@ void AngleRenderer::initSsaoNoiseTexture() {
 }
 
 void AngleRenderer::drawMeshNormals(Mesh* mesh, const Scene& scene, const Camera& camera) {
+    if (m_ssaoNormalsProgram == 0) return;
     auto it = m_meshBuffers.find(mesh);
     if (it == m_meshBuffers.end() || it->second->triIndexCount == 0) return;
     auto& bufs = it->second;
 
+    const Mesh* uploadMesh = mesh->getRenderMesh();
+    const bool useCull = canMeshCull(mesh, uploadMesh, bufs.get(), false);
+
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
-    glDisable(GL_CULL_FACE);
+    if (useCull) {
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
+    } else {
+        glDisable(GL_CULL_FACE);
+    }
 
-    if (m_ssaoNormalsProgram == 0) return;
     glUseProgram(m_ssaoNormalsProgram);
 
     mesh->updateMatrices(camera);
@@ -4885,40 +5660,61 @@ void AngleRenderer::drawMeshNormals(Mesh* mesh, const Scene& scene, const Camera
         glUniform2f(glGetUniformLocation(m_ssaoNormalsProgram, "uInvViewportSize"), 1.0f / m_width, 1.0f / m_height);
     }
 
-    glBindVertexArray(bufs->vao);
+    if (OptFlags::get().vaoCache) {
+        ensureMeshVaoConfigured(bufs.get(), uploadMesh);
+        glBindVertexArray(bufs->vao);
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
+        glBindVertexArray(0);
+    } else {
+        glBindVertexArray(bufs->vao);
 
-    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
 
-    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(1);
+        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(1);
 
-    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
-    glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(3);
+        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
+        glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(3);
 
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
-    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
 
-    glBindVertexArray(0);
+        glBindVertexArray(0);
+    }
+
+    if (useCull) {
+        glDisable(GL_CULL_FACE);
+        m_lastRenderStats.cullEnabledDraws++;
+    } else {
+        m_lastRenderStats.cullDisabledDraws++;
+    }
 
     m_lastRenderStats.meshDrawCalls++;
     m_lastRenderStats.trisSubmitted += (uint64_t)(bufs->triIndexCount / 3);
-    m_lastRenderStats.cullDisabledDraws++;
 }
 
 void AngleRenderer::drawMeshGBuffer(Mesh* mesh, const Scene& scene, const Camera& camera) {
+    if (m_gbufferProgram == 0) return;
     auto it = m_meshBuffers.find(mesh);
     if (it == m_meshBuffers.end() || it->second->triIndexCount == 0) return;
     auto& bufs = it->second;
 
+    const Mesh* uploadMesh = mesh->getRenderMesh();
+    const bool useCull = canMeshCull(mesh, uploadMesh, bufs.get(), false);
+
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
-    glDisable(GL_CULL_FACE);
+    if (useCull) {
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
+    } else {
+        glDisable(GL_CULL_FACE);
+    }
 
-    if (m_gbufferProgram == 0) return;
     glUseProgram(m_gbufferProgram);
 
     mesh->updateMatrices(camera);
@@ -4938,32 +5734,45 @@ void AngleRenderer::drawMeshGBuffer(Mesh* mesh, const Scene& scene, const Camera
     glUniform1f(glGetUniformLocation(m_gbufferProgram, "uRoughness"), m_useVertexMaterials ? -1.0f : m_roughness);
     glUniform1f(glGetUniformLocation(m_gbufferProgram, "uMetallic"), m_useVertexMaterials ? -1.0f : m_metallic);
 
-    glBindVertexArray(bufs->vao);
+    if (OptFlags::get().vaoCache) {
+        ensureMeshVaoConfigured(bufs.get(), uploadMesh);
+        glBindVertexArray(bufs->vao);
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
+        glBindVertexArray(0);
+    } else {
+        glBindVertexArray(bufs->vao);
 
-    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
 
-    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(1);
+        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(1);
 
-    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboColors);
-    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(2);
+        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboColors);
+        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(2);
 
-    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
-    glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(3);
+        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
+        glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(3);
 
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
-    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
 
-    glBindVertexArray(0);
+        glBindVertexArray(0);
+    }
+
+    if (useCull) {
+        glDisable(GL_CULL_FACE);
+        m_lastRenderStats.cullEnabledDraws++;
+    } else {
+        m_lastRenderStats.cullDisabledDraws++;
+    }
 
     m_lastRenderStats.meshDrawCalls++;
     m_lastRenderStats.trisSubmitted += (uint64_t)(bufs->triIndexCount / 3);
-    m_lastRenderStats.cullDisabledDraws++;
 }
 
 void AngleRenderer::createSnapshot(const Scene& scene) {

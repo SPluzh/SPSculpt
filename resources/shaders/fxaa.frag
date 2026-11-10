@@ -7,6 +7,7 @@ in vec2 vUVSE;
 in vec2 vUVM;
 uniform sampler2D uTexture0;
 uniform vec2 uInvSize;
+uniform vec2 uUvMax;
 uniform bool uEnabled;
 uniform bool uSharpMode;
 out vec4 fragColor;
@@ -14,9 +15,10 @@ out vec4 fragColor;
 #include "fxaa.glsl"
 
 void main() {
+    vec2 uvM = clamp(vUVM, vec2(0.0), uUvMax);
     if (uEnabled) {
-        fragColor = vec4(fxaa(uTexture0, vUVNW, vUVNE, vUVSW, vUVSE, vUVM, uInvSize, uSharpMode), texture(uTexture0, vUVM).a);
+        fragColor = vec4(fxaa(uTexture0, vUVNW, vUVNE, vUVSW, vUVSE, uvM, uInvSize, uSharpMode, uUvMax), texture(uTexture0, uvM).a);
     } else {
-        fragColor = texture(uTexture0, vUVM);
+        fragColor = texture(uTexture0, uvM);
     }
 }

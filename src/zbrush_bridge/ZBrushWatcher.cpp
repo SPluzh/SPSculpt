@@ -509,9 +509,16 @@ void ZBrushWatcher::watchThreadFunc() {
                                        >> snap.xR >> comma >> snap.yR >> comma >> snap.zR >> comma
                                        >> snap.sc) {
                                     snap.valid = true;
-                                    std::lock_guard<std::mutex> lock(m_cameraMutex);
-                                    m_pendingCamera = snap;
-                                    m_cameraPending.store(true);
+                                    {
+                                        std::lock_guard<std::mutex> lock(m_cameraMutex);
+                                        m_pendingCamera = snap;
+                                        m_cameraPending.store(true);
+                                    }
+                                    SDL_Event ev;
+                                    std::memset(&ev, 0, sizeof(ev));
+                                    ev.type = SDL_USEREVENT;
+                                    ev.user.code = 0x676F63; // 'goc'
+                                    SDL_PushEvent(&ev);
                                 }
                             }
                         }

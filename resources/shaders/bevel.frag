@@ -7,6 +7,8 @@ uniform sampler2D uNormalMap;
 uniform sampler2D uDepthMap;
 
 uniform vec2 uInvViewportSize;
+uniform vec2 uUvScale;
+uniform vec2 uUvMax;
 uniform float uBevelRadius;
 uniform float uBevelStrength;
 uniform float uNear[2];
@@ -22,7 +24,7 @@ uniform int uBevelScaleWithDistance;
 out vec4 fragColor;
 
 void main() {
-    vec2 uv = vTexCoord;
+    vec2 uv = clamp(vTexCoord, vec2(0.0), uUvMax);
     
     vec3 N0 = texture(uNormalMap, uv).rgb;
     float D0 = texture(uDepthMap, uv).r;
@@ -45,7 +47,7 @@ void main() {
     float radius = uBevelRadius;
     if (uBevelScaleWithDistance == 1) {
         int camIdx = 0;
-        if (uSplitMode == 1 && uv.x >= 0.5) {
+        if (uSplitMode == 1 && uv.x >= 0.5 * uUvScale.x) {
             camIdx = 1;
         }
         
@@ -79,7 +81,7 @@ void main() {
     for (int y = -r; y <= r; ++y) {
         for (int x = -r; x <= r; ++x) {
             vec2 offset = vec2(float(x), float(y)) * uInvViewportSize;
-            vec2 neighborUv = uv + offset;
+            vec2 neighborUv = clamp(uv + offset, vec2(0.0), uUvMax);
             
             float Di = texture(uDepthMap, neighborUv).r;
             if (Di >= 1.0) continue;

@@ -311,6 +311,7 @@ private:
 public:
     static void showToast(const std::string& message, float duration = 3.0f);
     static void showErrorToast(const std::string& message, float duration = 5.0f);
+    static bool hasActiveToasts();
     void setPreviousCrashInfo(const CrashReporter::PreviousCrashInfo& info) {
         m_prevCrashInfo = info;
         m_showCrashModal = info.found;
@@ -403,6 +404,7 @@ public:
 
     void setRecentFiles(RecentFiles* rf) { m_recentFiles = rf; }
     RecentFiles* getRecentFiles() const { return m_recentFiles; }
+    bool hasPendingRecentThumbTasks() const { return !m_recentLoadTasks.empty(); }
     bool getShowRecentFilesWindow() const { return m_showRecentFilesWindow; }
     void setShowRecentFilesWindow(bool show) { m_showRecentFilesWindow = show; }
     std::vector<uint8_t> renderSceneThumbnailPng(const Scene& scene, AngleRenderer& renderer, int w = 0, int h = 0);
@@ -422,6 +424,11 @@ public:
     bool getShowTimelapsePanel() const { return m_showTimelapsePanel; }
     void setShowTimelapsePanel(bool show) { m_showTimelapsePanel = show; }
     TimelapsePlayer& getTimelapsePlayer() { return m_timelapsePlayer; }
+    bool isTimelapsePlaying() const {
+        auto st = m_timelapsePlayer.getState();
+        return st == TimelapsePlayer::State::PLAYING || st == TimelapsePlayer::State::EXPORTING;
+    }
+    bool hasPendingGizmoClick() const { return m_gizmoClickPending; }
 
     bool getShowScenePanel() const { return m_showScenePanel; }
     void setShowScenePanel(bool show) { m_showScenePanel = show; }

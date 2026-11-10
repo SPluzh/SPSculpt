@@ -15945,6 +15945,11 @@ void GuiManager::showErrorToast(const std::string& message, float duration) {
     }
 }
 
+bool GuiManager::hasActiveToasts() {
+    std::lock_guard<std::mutex> lock(s_toastMutex);
+    return !s_toasts.empty();
+}
+
 void GuiManager::drawToastHUD() {
     std::vector<ToastItem> toastsCopy;
     {

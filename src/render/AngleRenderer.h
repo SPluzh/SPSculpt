@@ -2,6 +2,8 @@
 
 #include <vector>
 #include <string>
+#include <string_view>
+#include <functional>
 #include <unordered_map>
 #include <memory>
 #include <chrono>
@@ -11,6 +13,7 @@
 #include "render/ReferenceImage.h"
 #include "render/RenderTarget.h"
 #include "common/Enums.h"
+#include "common/OptFlags.h"
 
 class Mesh;
 class Scene;
@@ -90,6 +93,22 @@ struct MeshRenderBuffers {
     GLuint creaseVboVerts = 0;
     GLuint creaseEboWire = 0;
     size_t creaseWireIndexCount = 0;
+
+    // Dedicated VAOs for wireframe overlays so bufs->vao's EBO is never clobbered
+    GLuint wireVao = 0;
+    GLuint subdivWireVao = 0;
+
+    // Stage 1 VAO / UV / Tangent / Closed-shell caches
+    bool vaoReady = false;
+    bool cachedHasUv = false;
+    bool cachedHasTangents = false;
+    bool wireVaoReady = false;
+    bool subdivWireVaoReady = false;
+    bool creaseVaoReady = false;
+    bool closedShellValid = false;
+    bool isClosedShell = false;
+    bool canTrustVertOnEdge = true;
+    const Mesh* lastUploadMeshPtr = nullptr;
     
     size_t vertCount = 0;
     size_t triIndexCount = 0;
@@ -100,6 +119,8 @@ struct MeshRenderBuffers {
 
     ~MeshRenderBuffers() {
         if (vao) glDeleteVertexArrays(1, &vao);
+        if (wireVao) glDeleteVertexArrays(1, &wireVao);
+        if (subdivWireVao) glDeleteVertexArrays(1, &subdivWireVao);
         if (vboVertices) glDeleteBuffers(1, &vboVertices);
         if (vboNormals) glDeleteBuffers(1, &vboNormals);
         if (vboColors) glDeleteBuffers(1, &vboColors);
@@ -259,6 +280,14 @@ public:
     void setSelectionAnimDuration(float dur) { m_selectionAnimDuration = std::max(0.05f, dur); }
     float getSelectionAnimDuration() const { return m_selectionAnimDuration; }
     void triggerSelectionFlash() { m_selectionAnimTimer = m_selectionAnimDuration; }
+    bool isSelectionFlashActive() const { return m_enableSelectionFlash && m_selectionAnimTimer > 0.0f; }
+    int getAccumFrameCount() const { return m_accumFrameCount; }
+    void setOrbitInteractionHint(bool orbitActive, bool sculptingActive) {
+        m_orbitHintActive = orbitActive;
+        m_sculptHintActive = sculptingActive;
+    }
+    bool isOrbitScaleSettling() const { return OptFlags::get().orbitScale && (m_orbitCooldownFrames > 0 || m_activeScale < 0.999f); }
+    float getActiveRenderScale() const { return m_activeScale; }
     void setCursorThickness(float thickness) { m_cursorThickness = thickness; }
     float getCursorThickness() const { return m_cursorThickness; }
     void setSmoothCursor(bool smooth) { m_smoothCursor = smooth; }
@@ -313,6 +342,10 @@ public:
     }
     bool isTempSymmetryLineActive() const {
         return m_symmetryAnimTimer > 0.0f || m_symmetryCurrentAlpha > 0.001f;
+    }
+    bool isSymmetryLineAnimating() const {
+        if (m_symmetryAnimTimer > 0.0f) return true;
+        return m_showSymmetryLine ? (m_symmetryCurrentAlpha < 0.999f) : (m_symmetryCurrentAlpha > 0.001f);
     }
     bool isSymmetryLineVisible() const {
         return m_showSymmetryLine || isTempSymmetryLineActive();
@@ -583,6 +616,11 @@ private:
     void renderScenePass(const Scene& scene, int passType);
     void drawPassGeometry(const Scene& scene, int passType, const Camera& camera, int viewportIdx);
     void drawMeshGBuffer(Mesh* mesh, const Scene& scene, const Camera& camera);
+
+    void ensureMeshVaoConfigured(MeshRenderBuffers* bufs, const Mesh* uploadMesh);
+    void ensureAuxWireVaoConfigured(GLuint& vao, bool& vaoReady, MeshRenderBuffers* bufs, GLuint ebo);
+    bool canMeshCull(const Mesh* mesh, const Mesh* uploadMesh, MeshRenderBuffers* bufs, bool isXRay) const;
+    static bool evaluateMeshClosedShell(const Mesh* uploadMesh, bool canTrustVertOnEdge);
 
     int m_width = 0;
     int m_height = 0;
@@ -876,7 +914,30 @@ private:
     // Model Snapshot storage
     ModelSnapshot m_snapshot;
 
-    // Uniform locations cache
-    std::unordered_map<GLuint, std::unordered_map<std::string, GLint>> m_uniformLocations;
+    // Adaptive Orbit Resolution Scaling (Stage 1)
+    bool m_orbitHintActive = false;
+    bool m_sculptHintActive = false;
+    int m_orbitCooldownFrames = 0;
+    float m_activeScale = 1.0f;
+    int m_activeRenderW = 0;
+    int m_activeRenderH = 0;
+    glm::vec2 m_uvScale{1.0f, 1.0f};
+    glm::vec2 m_uvMax{1.0f, 1.0f};
+    bool m_hasPrevVP = false;
+    glm::mat4 m_prevLeftVP{1.0f};
+    bool m_hasPrevRightVP = false;
+    glm::mat4 m_prevRightVP{1.0f};
+
+    // Uniform locations cache (zero-alloc heterogeneous lookup when vaoCache enabled)
+    struct TransparentStringHash {
+        using is_transparent = void;
+        size_t operator()(std::string_view sv) const noexcept {
+            return std::hash<std::string_view>{}(sv);
+        }
+        size_t operator()(const std::string& s) const noexcept {
+            return std::hash<std::string_view>{}(std::string_view(s));
+        }
+    };
+    std::unordered_map<GLuint, std::unordered_map<std::string, GLint, TransparentStringHash, std::equal_to<>>> m_uniformLocations;
     GLint getCachedUniformLocation(GLuint program, const char* name);
 };

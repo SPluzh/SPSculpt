@@ -13,6 +13,7 @@
 #include <SDL2/SDL.h>
 #include <GLES3/gl3.h>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include "common/Enums.h"
 #include "common/OptFlags.h"
@@ -161,6 +162,7 @@ inline bool run(int targetFaces, Scene& scene, SculptManager& sculpt, AngleRende
     renderer.setShowPolyGroups(false);
     renderer.setEnableSelectionFlash(false);
     renderer.setShowSymmetryLine(false);
+    renderer.setShowInvertedNormals(false);
     renderer.setXrayEnabled(false);
     renderer.setShowGrid(false);
 
@@ -737,6 +739,314 @@ inline bool run(int targetFaces, Scene& scene, SculptManager& sculpt, AngleRende
     std::cout << "  RenderBenchmark Complete: " << (undoRedoOk ? "ALL CHECKS PASSED" : "CHECK FAILED") << "\n";
     std::cout << "================================================================================\n\n";
     return undoRedoOk;
+}
+
+inline bool runStage1Tests(Scene& scene, SculptManager& sculpt, AngleRenderer& renderer, SDL_Window* window) {
+    int winW = 1920, winH = 1080;
+    if (window) {
+        SDL_GetWindowSize(window, &winW, &winH);
+    }
+    if (winW <= 0) winW = 1920;
+    if (winH <= 0) winH = 1080;
+
+    const OptFlags::Config savedFlags = OptFlags::get();
+    OptFlags::get().idleSleep = true;
+    OptFlags::get().cullFace = true;
+    OptFlags::get().vaoCache = true;
+    OptFlags::get().orbitScale = true;
+
+    std::cout << "\n================================================================================\n";
+    std::cout << "  Stage 1 Invariant Verification (--test-stage1)\n";
+    std::cout << "================================================================================\n";
+
+    bool allOk = true;
+    auto drainGlErrors = []() {
+        while (glGetError() != GL_NO_ERROR) {}
+    };
+    auto checkNoGlError = [&](const char* label) -> bool {
+        GLenum err = GL_NO_ERROR;
+        bool clean = true;
+        while ((err = glGetError()) != GL_NO_ERROR) {
+            std::cerr << "  [FAIL] " << label << ": GL error 0x" << std::hex << err << std::dec << "\n";
+            clean = false;
+        }
+        return clean;
+    };
+    auto checkCond = [&](bool cond, const char* msg) {
+        if (!cond) {
+            std::cerr << "  [FAIL] " << msg << "\n";
+            allOk = false;
+        } else {
+            std::cout << "  [PASS] " << msg << "\n";
+        }
+    };
+    auto resetRendererClean = [&]() {
+        renderer.setRenderMode(RenderMode::PBR);
+        int fvIdx = renderer.findMatcapIndexByName("Matcap FV");
+        renderer.setMatcap(fvIdx >= 0 ? fvIdx : 3);
+        renderer.setShaderType(1);
+        renderer.setTextureId(0);
+        renderer.setAlpha(1.0f);
+        renderer.setUseShadows(false);
+        renderer.setUseSsao(false);
+        renderer.setUseSsr(false);
+        renderer.setUseTaa(false);
+        renderer.setUseFxaa(false);
+        renderer.setBevelEnabled(false);
+        renderer.setShowContour(false);
+        renderer.setShowWireframe(false);
+        renderer.setShowCreaseLines(false);
+        renderer.setShowPolyGroups(false);
+        renderer.setEnableSelectionFlash(false);
+        renderer.setShowSymmetryLine(false);
+        renderer.setShowInvertedNormals(false);
+        renderer.setXrayEnabled(false);
+        renderer.setShowGrid(false);
+        renderer.setOrbitInteractionHint(false, false);
+    };
+
+    drainGlErrors();
+
+    // -------------------------------------------------------------------------
+    // Test 1: Closed UV sphere culling & safety guards
+    // -------------------------------------------------------------------------
+    {
+        scene.clear();
+        g_undoManager.clear();
+        scene.setSplitMode(Scene::SplitMode::OFF);
+        resetRendererClean();
+
+        Mesh* sphere = createSphereMeshWithPolygroups(48, 96).release();
+        sphere->postInit(true);
+        scene.addMesh(sphere);
+        scene.selectMesh(sphere);
+
+        Camera& cam = scene.getCamera();
+        cam.onResize(winW, winH);
+        cam.resetViewToMesh(sphere, false);
+        cam.update(0.016f);
+
+        renderer.render(scene);
+        glFinish();
+        auto st1a = renderer.getLastRenderStats();
+        checkCond(st1a.cullEnabledDraws >= 1 && st1a.cullDisabledDraws == 0,
+                  "Test 1a: Closed UV sphere enables backface culling when showInvertedNormals=false");
+
+        renderer.setShowInvertedNormals(true);
+        renderer.render(scene);
+        glFinish();
+        auto st1b = renderer.getLastRenderStats();
+        checkCond(st1b.cullEnabledDraws == 0 && st1b.cullDisabledDraws >= 1,
+                  "Test 1b: showInvertedNormals=true disables backface culling");
+
+        renderer.setShowInvertedNormals(false);
+        sphere->matrix = glm::scale(glm::mat4(1.0f), glm::vec3(-1.0f, 1.0f, 1.0f));
+        renderer.render(scene);
+        glFinish();
+        auto st1c = renderer.getLastRenderStats();
+        checkCond(st1c.cullEnabledDraws == 0 && st1c.cullDisabledDraws >= 1,
+                  "Test 1c: Negative-determinant mesh matrix disables backface culling");
+        sphere->matrix = glm::mat4(1.0f);
+
+        sphere->faceVisible[0] = 0;
+        sphere->isDirty = true;
+        renderer.render(scene);
+        glFinish();
+        auto st1d = renderer.getLastRenderStats();
+        checkCond(st1d.cullEnabledDraws == 0 && st1d.cullDisabledDraws >= 1,
+                  "Test 1d: Hiding a face disables backface culling (open hole invariant)");
+        sphere->faceVisible[0] = 1;
+        sphere->isDirty = true;
+
+        allOk = checkNoGlError("Test 1") && allOk;
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 2: Open Plane, DynamicSubdiv + Thickness, X-Ray
+    // -------------------------------------------------------------------------
+    {
+        scene.clear();
+        g_undoManager.clear();
+        resetRendererClean();
+
+        scene.addPlane();
+        Mesh* plane = scene.getSelected();
+        checkCond(plane != nullptr, "Test 2 setup: Scene::addPlane created Plane primitive");
+        if (plane) {
+            Camera& cam = scene.getCamera();
+            cam.onResize(winW, winH);
+            cam.resetViewToMesh(plane, false);
+            cam.update(0.016f);
+
+            renderer.render(scene);
+            glFinish();
+            auto st2a = renderer.getLastRenderStats();
+            checkCond(st2a.cullEnabledDraws == 0 && st2a.cullDisabledDraws >= 1,
+                      "Test 2a: Open Plane keeps backface culling disabled (two-sided shading)");
+
+            plane->dynamicSettings.enabled = true;
+            plane->dynamicSettings.enableSubdiv = false;
+            plane->dynamicSettings.enableThickness = true;
+            plane->dynamicSettings.thickness = 0.1f;
+            plane->isDynamicDirty = true;
+            plane->isDirty = true;
+            renderer.render(scene);
+            glFinish();
+            auto st2b = renderer.getLastRenderStats();
+            checkCond(st2b.cullEnabledDraws >= 1,
+                      "Test 2b: Plane + DynamicSubdiv Thickness forms closed shell & enables culling");
+
+            plane->dynamicSettings.enabled = false;
+            plane->isDynamicDirty = true;
+            plane->isDirty = true;
+            renderer.setXrayEnabled(true);
+            renderer.setXrayTarget(2);
+            renderer.render(scene);
+            glFinish();
+            auto st2c = renderer.getLastRenderStats();
+            checkCond(st2c.cullEnabledDraws >= 1,
+                      "Test 2c: X-Ray pass preserves culling");
+            renderer.setXrayEnabled(false);
+        }
+        allOk = checkNoGlError("Test 2") && allOk;
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 3: Full Feature Stress (VAO Cache + Uniform Cache + Creases + Split)
+    // -------------------------------------------------------------------------
+    {
+        scene.clear();
+        g_undoManager.clear();
+        resetRendererClean();
+
+        Mesh* sphere = createSphereMeshWithPolygroups(32, 64).release();
+        sphere->postInit(true);
+        sphere->initCreases();
+        if (sphere->nbEdges > 16) {
+            sphere->creaseEdge(0, true);
+            sphere->creaseEdge(8, true);
+            sphere->creaseEdge(16, true);
+        }
+        sphere->isDirty = true;
+        scene.addMesh(sphere);
+        scene.selectMesh(sphere);
+
+        Camera& cam = scene.getCamera();
+        cam.onResize(winW, winH);
+        cam.resetViewToMesh(sphere, false);
+        cam.update(0.016f);
+
+        renderer.setShaderType(0); // PBR
+        renderer.setUseShadows(true);
+        renderer.setBevelEnabled(true);
+        renderer.setUseSsao(true);
+        renderer.setUseSsr(true);
+        renderer.setUseFxaa(true);
+        renderer.setShowContour(true);
+        renderer.setShowWireframe(true);
+        renderer.setShowCreaseLines(true);
+
+        sphere->dynamicSettings.enabled = true;
+        sphere->dynamicSettings.enableSubdiv = true;
+        sphere->dynamicSettings.smoothLevel = 1;
+        sphere->dynamicSettings.showCage = true;
+        sphere->isDynamicDirty = true;
+        sphere->isDirty = true;
+
+        for (int f = 0; f < 3; ++f) {
+            if (f == 1) {
+                cam.start(winW * 0.5f, winH * 0.5f, true);
+                cam.rotate(winW * 0.5f + 24.0f, winH * 0.5f + 12.0f, 1.0f);
+                renderer.setOrbitInteractionHint(true, false);
+            } else {
+                renderer.setOrbitInteractionHint(false, false);
+            }
+            renderer.render(scene);
+            glFinish();
+        }
+        checkCond(checkNoGlError("Test 3a (PBR+Shadows+Bevel+SSAO+SSR+FXAA+Contour+Wire+Crease+SubdivCage)"),
+                  "Test 3a: Full feature render under vaoCache+orbitScale produces zero GL errors");
+
+        renderer.setShowPolyGroups(true);
+        scene.setSplitMode(Scene::SplitMode::MIRROR);
+        for (int f = 0; f < 2; ++f) {
+            renderer.render(scene);
+            glFinish();
+        }
+        scene.setSplitMode(Scene::SplitMode::INDEPENDENT);
+        for (int f = 0; f < 2; ++f) {
+            renderer.render(scene);
+            glFinish();
+        }
+        checkCond(checkNoGlError("Test 3b (PolyGroup + SplitMode MIRROR & INDEPENDENT)"),
+                  "Test 3b: PolyGroup + Wireframe/Creases + Split-Viewport produces zero GL errors");
+
+        scene.setSplitMode(Scene::SplitMode::OFF);
+        sphere->dynamicSettings.enabled = false;
+        sphere->dynamicSettings.showCage = false;
+        resetRendererClean();
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 4: Adaptive Orbit Scaling, Settle Cooldown & Sculpt Immunity
+    // -------------------------------------------------------------------------
+    {
+        scene.clear();
+        g_undoManager.clear();
+        resetRendererClean();
+
+        Mesh* sphere = createSphereMeshWithPolygroups(32, 64).release();
+        sphere->postInit(true);
+        scene.addMesh(sphere);
+        scene.selectMesh(sphere);
+
+        Camera& cam = scene.getCamera();
+        cam.onResize(winW, winH);
+        cam.resetViewToMesh(sphere, false);
+        cam.update(0.016f);
+
+        for (int f = 0; f < 4; ++f) {
+            renderer.setOrbitInteractionHint(false, false);
+            renderer.render(scene);
+            glFinish();
+        }
+        checkCond(renderer.getActiveRenderScale() > 0.999f && !renderer.isOrbitScaleSettling(),
+                  "Test 4a: Static view runs at full 1.0x resolution and settles cleanly");
+
+        cam.start(winW * 0.5f, winH * 0.5f, true);
+        cam.rotate(winW * 0.5f + 20.0f, winH * 0.5f + 10.0f, 1.0f);
+        renderer.setOrbitInteractionHint(true, false);
+        renderer.render(scene);
+        glFinish();
+        checkCond(renderer.getActiveRenderScale() < 0.999f && renderer.isOrbitScaleSettling(),
+                  "Test 4b: Orbit interaction drops internal scale (< 1.0) and reports settling");
+
+        renderer.setOrbitInteractionHint(false, false);
+        for (int f = 0; f < 3; ++f) {
+            renderer.render(scene);
+            glFinish();
+        }
+        checkCond(renderer.getActiveRenderScale() > 0.999f && !renderer.isOrbitScaleSettling(),
+                  "Test 4c: Releasing orbit returns scale to 1.0x within 3 frames");
+
+        renderer.setOrbitInteractionHint(true, true);
+        renderer.render(scene);
+        glFinish();
+        checkCond(renderer.getActiveRenderScale() > 0.999f,
+                  "Test 4d: Active sculpting enforces 1.0x full resolution even with orbit hint");
+        renderer.setOrbitInteractionHint(false, false);
+
+        allOk = checkNoGlError("Test 4") && allOk;
+    }
+
+    g_undoManager.clear();
+    scene.clear();
+    OptFlags::get() = savedFlags;
+
+    std::cout << "================================================================================\n";
+    std::cout << "  Stage 1 Tests Complete: " << (allOk ? "ALL PASSED" : "FAILED") << "\n";
+    std::cout << "================================================================================\n\n";
+    return allOk;
 }
 
 } // namespace RenderBenchmark

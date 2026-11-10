@@ -312,6 +312,7 @@ int main(int argc, char* argv[]) {
     bool runBridgeBench = false;
     bool runGozProfile = false;
     bool runRenderBench = false;
+    bool runStage1Test = false;
     bool runBVHTest = false;
     bool runDyntopoTest = false;
     bool runDyntopoBench = false;
@@ -401,6 +402,9 @@ int main(int argc, char* argv[]) {
             } else if (arg == "--bench-render" || arg == "--render-bench") {
                 runRenderBench = true;
                 showConsole = true;
+            } else if (arg == "--test-stage1" || arg == "--stage1-test") {
+                runStage1Test = true;
+                showConsole = true;
             } else if ((arg == "--bench-render-faces" || arg == "--bench-faces" || arg == "-bf") && i + 1 < numArgs) {
                 showConsole = true;
                 benchFaces = std::atoi(wideToUtf8(szArgList[++i]).c_str());
@@ -482,6 +486,9 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--bench-render" || arg == "--render-bench") {
             runRenderBench = true;
             showConsole = true;
+        } else if (arg == "--test-stage1" || arg == "--stage1-test") {
+            runStage1Test = true;
+            showConsole = true;
         } else if ((arg == "--bench-render-faces" || arg == "--bench-faces" || arg == "-bf") && i + 1 < argc) {
             showConsole = true;
             benchFaces = std::atoi(argv[++i]);
@@ -528,7 +535,7 @@ int main(int argc, char* argv[]) {
                                runDyntopoBench1000 || runClayBench1000 || runClayDyntopoBench1000 ||
                                runBVHTest || runBridgeBench || runGozBench || runVoxelBench ||
                                runTrimClipBench || runBench || runGozProfile || runRenderBench ||
-                               runCrashReporterTest;
+                               runStage1Test || runCrashReporterTest;
 
     CrashReporter::init(isHeadlessRun);
     sculpt_log_init(isHeadlessRun);
@@ -830,7 +837,7 @@ int main(int argc, char* argv[]) {
         renderer.releaseMeshBuffers(m);
     });
     scene.getCamera().onResize(width, height);
-    if (fileToOpen.empty() && !runRenderBench && !runGozProfile) {
+    if (fileToOpen.empty() && !runRenderBench && !runStage1Test && !runGozProfile) {
         if (gui.getCreateDefaultSphereOnStartup()) {
             scene.loadDefaultSphere();
         }
@@ -866,6 +873,26 @@ int main(int argc, char* argv[]) {
         g_undoManager.setSculptManager(&sculpt);
         sculpt.setRenderer(&renderer);
         bool ok = RenderBenchmark::run(benchFaces, scene, sculpt, renderer, window);
+        scene.setSculptManager(nullptr);
+        fflush(stdout);
+        fflush(stderr);
+        SDL_GL_DeleteContext(glContext);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+#ifdef _WIN32
+        ExitProcess(ok ? 0 : 1);
+#else
+        _exit(ok ? 0 : 1);
+#endif
+    }
+
+    if (runStage1Test) {
+        BrushPresetManager::instance().loadDefaults();
+        SculptManager sculpt;
+        scene.setSculptManager(&sculpt);
+        g_undoManager.setSculptManager(&sculpt);
+        sculpt.setRenderer(&renderer);
+        bool ok = RenderBenchmark::runStage1Tests(scene, sculpt, renderer, window);
         scene.setSculptManager(nullptr);
         fflush(stdout);
         fflush(stderr);
@@ -986,6 +1013,12 @@ int main(int argc, char* argv[]) {
     SDL_Event event;
     std::cout << "[Debug] Entering main loop." << std::endl;
     bool wasRemeshRunning = false;
+    bool wasDecimRunning = false;
+    bool pendingWakeActivity = false;
+    int settleFramesRemaining = 2;
+    int lastMotionX = std::numeric_limits<int>::min();
+    int lastMotionY = std::numeric_limits<int>::min();
+    uint64_t lastWorkTimerSecond = gui.getWorkTimer().getSessionSeconds();
     int consecutiveRenderErrors = 0;
 
     // Start background watcher for ZBrush live companion viewport
@@ -1006,7 +1039,8 @@ int main(int argc, char* argv[]) {
         float deltaTime = std::chrono::duration<float>(currentFrameTime - lastFrameTime).count();
         lastFrameTime = currentFrameTime;
 
-        bool hadActivity = false; // set true on any user input this frame
+        bool hadActivity = pendingWakeActivity; // set true on any user input this frame
+        pendingWakeActivity = false;
 
         // Check for live ZBrush full scene sync updates
         if (zbrushWatcher && zbrushWatcher->hasPendingScene()) {
@@ -1097,6 +1131,7 @@ int main(int argc, char* argv[]) {
 
                     scene.setModified(true);
                     hadActivity = true;
+                    settleFramesRemaining = 2;
                     lastActivityTime = std::chrono::high_resolution_clock::now();
                     auto tSceneSyncEnd = std::chrono::high_resolution_clock::now();
                     double msSync = std::chrono::duration<double, std::milli>(tSceneSyncEnd - tSceneSyncStart).count();
@@ -1202,6 +1237,7 @@ int main(int argc, char* argv[]) {
 
                         scene.setModified(true);
                         hadActivity = true;
+                        settleFramesRemaining = 2;
                         lastActivityTime = std::chrono::high_resolution_clock::now();
                         double msUpdate = std::chrono::duration<double, std::milli>(
                             std::chrono::high_resolution_clock::now() - tGoZStart).count();
@@ -1234,25 +1270,64 @@ int main(int argc, char* argv[]) {
         auto tPollEventsStart = std::chrono::high_resolution_clock::now();
         int sculptMotionEvents = 0;
         bool wasSculptingInFrame = sculpt.isSculpting();
-        while (SDL_PollEvent(&event)) {
-            // Track user activity for idle throttle
-            if (event.type == SDL_MOUSEMOTION || event.type == SDL_MOUSEBUTTONDOWN ||
-                event.type == SDL_MOUSEBUTTONUP || event.type == SDL_MOUSEWHEEL ||
-                event.type == SDL_KEYDOWN || event.type == SDL_KEYUP ||
-                (event.type == SDL_USEREVENT && event.user.code == 0x676F7A)) {
+        auto processSdlEvent = [&](const SDL_Event& rawEvent) {
+            SDL_Event eventCopyLocal = rawEvent;
+            // Track user/window activity for idle throttle & event-driven sleep
+            bool isWakeActivity = false;
+            if (eventCopyLocal.type == SDL_MOUSEMOTION) {
+                if (eventCopyLocal.motion.x != lastMotionX || eventCopyLocal.motion.y != lastMotionY) {
+                    lastMotionX = eventCopyLocal.motion.x;
+                    lastMotionY = eventCopyLocal.motion.y;
+                    isWakeActivity = true;
+                }
+            } else if (eventCopyLocal.type == SDL_MOUSEBUTTONDOWN ||
+                       eventCopyLocal.type == SDL_MOUSEBUTTONUP ||
+                       eventCopyLocal.type == SDL_MOUSEWHEEL ||
+                       eventCopyLocal.type == SDL_KEYDOWN ||
+                       eventCopyLocal.type == SDL_KEYUP ||
+                       eventCopyLocal.type == SDL_TEXTINPUT ||
+                       eventCopyLocal.type == SDL_TEXTEDITING ||
+                       eventCopyLocal.type == SDL_FINGERDOWN ||
+                       eventCopyLocal.type == SDL_FINGERUP ||
+                       eventCopyLocal.type == SDL_FINGERMOTION ||
+                       eventCopyLocal.type == SDL_MULTIGESTURE ||
+                       eventCopyLocal.type == SDL_DROPFILE ||
+                       (eventCopyLocal.type == SDL_USEREVENT &&
+                        (eventCopyLocal.user.code == 0x676F7A ||
+                         eventCopyLocal.user.code == 0x676F73 ||
+                         eventCopyLocal.user.code == 0x676F63))) {
+                isWakeActivity = true;
+            } else if (eventCopyLocal.type == SDL_WINDOWEVENT) {
+                if (eventCopyLocal.window.event == SDL_WINDOWEVENT_RESIZED ||
+                    eventCopyLocal.window.event == SDL_WINDOWEVENT_SIZE_CHANGED ||
+                    eventCopyLocal.window.event == SDL_WINDOWEVENT_EXPOSED ||
+                    eventCopyLocal.window.event == SDL_WINDOWEVENT_MOVED ||
+                    eventCopyLocal.window.event == SDL_WINDOWEVENT_MAXIMIZED ||
+                    eventCopyLocal.window.event == SDL_WINDOWEVENT_RESTORED ||
+                    eventCopyLocal.window.event == SDL_WINDOWEVENT_FOCUS_GAINED ||
+                    eventCopyLocal.window.event == SDL_WINDOWEVENT_FOCUS_LOST ||
+                    eventCopyLocal.window.event == SDL_WINDOWEVENT_ENTER ||
+                    eventCopyLocal.window.event == SDL_WINDOWEVENT_LEAVE ||
+                    eventCopyLocal.window.event == SDL_WINDOWEVENT_CLOSE) {
+                    isWakeActivity = true;
+                }
+            }
+            if (isWakeActivity) {
                 hadActivity = true;
+                settleFramesRemaining = 2;
                 lastActivityTime = std::chrono::high_resolution_clock::now();
             }
-            if (event.type == SDL_QUIT || (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_CLOSE)) {
+
+            if (eventCopyLocal.type == SDL_QUIT || (eventCopyLocal.type == SDL_WINDOWEVENT && eventCopyLocal.window.event == SDL_WINDOWEVENT_CLOSE)) {
                 if (scene.isModified()) {
                     gui.requestExit();
                 } else {
                     quit = true;
                 }
-            } else if (event.type == SDL_WINDOWEVENT) {
-                if (event.window.event == SDL_WINDOWEVENT_RESIZED) {
-                     width = event.window.data1;
-                     height = event.window.data2;
+            } else if (eventCopyLocal.type == SDL_WINDOWEVENT) {
+                if (eventCopyLocal.window.event == SDL_WINDOWEVENT_RESIZED) {
+                     width = eventCopyLocal.window.data1;
+                     height = eventCopyLocal.window.data2;
                      
                      int drawableW, drawableH;
                      SDL_GL_GetDrawableSize(window, &drawableW, &drawableH);
@@ -1273,32 +1348,33 @@ int main(int argc, char* argv[]) {
                      int wx, wy;
                      SDL_GetWindowPosition(window, &wx, &wy);
                      gui.updateWindowBounds(wx, wy, width, height, isMax);
-                } else if (event.window.event == SDL_WINDOWEVENT_MOVED) {
-                     int wx = event.window.data1;
-                     int wy = event.window.data2;
+                } else if (eventCopyLocal.window.event == SDL_WINDOWEVENT_MOVED) {
+                     int wx = eventCopyLocal.window.data1;
+                     int wy = eventCopyLocal.window.data2;
                      Uint32 flags = SDL_GetWindowFlags(window);
                      bool isMax = (flags & SDL_WINDOW_MAXIMIZED) != 0;
                      int ww, wh;
                      SDL_GetWindowSize(window, &ww, &wh);
                      gui.updateWindowBounds(wx, wy, ww, wh, isMax);
-                } else if (event.window.event == SDL_WINDOWEVENT_MAXIMIZED) {
+                } else if (eventCopyLocal.window.event == SDL_WINDOWEVENT_MAXIMIZED) {
                      int wx, wy, ww, wh;
                      SDL_GetWindowPosition(window, &wx, &wy);
                      SDL_GetWindowSize(window, &ww, &wh);
                      gui.updateWindowBounds(wx, wy, ww, wh, true);
-                } else if (event.window.event == SDL_WINDOWEVENT_RESTORED) {
+                } else if (eventCopyLocal.window.event == SDL_WINDOWEVENT_RESTORED) {
                      int wx, wy, ww, wh;
                      SDL_GetWindowPosition(window, &wx, &wy);
                      SDL_GetWindowSize(window, &ww, &wh);
                      gui.updateWindowBounds(wx, wy, ww, wh, false);
                 }
-            } else if (event.type == SDL_DROPFILE) {
-                char* droppedFile = event.drop.file;
+            } else if (eventCopyLocal.type == SDL_DROPFILE) {
+                char* droppedFile = eventCopyLocal.drop.file;
                 if (droppedFile) {
                     std::string droppedPath(droppedFile);
                     SDL_free(droppedFile);
 
                     hadActivity = true;
+                    settleFramesRemaining = 2;
                     lastActivityTime = std::chrono::high_resolution_clock::now();
 
                     HistoryState dropRollback = scene.saveCurrentState(false);
@@ -1363,10 +1439,10 @@ int main(int argc, char* argv[]) {
                 if (scene.getSplitMode() != Scene::SplitMode::OFF) {
                     if (!sculpt.isSculpting() && !sculpt.getCameraController().isDragging()) {
                         int mx = -1;
-                        if (event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP) {
-                            mx = event.button.x;
-                        } else if (event.type == SDL_MOUSEMOTION) {
-                            mx = event.motion.x;
+                        if (eventCopyLocal.type == SDL_MOUSEBUTTONDOWN || eventCopyLocal.type == SDL_MOUSEBUTTONUP) {
+                            mx = eventCopyLocal.button.x;
+                        } else if (eventCopyLocal.type == SDL_MOUSEMOTION) {
+                            mx = eventCopyLocal.motion.x;
                         }
                         if (mx >= 0) {
                             int halfW = width / 2;
@@ -1377,7 +1453,7 @@ int main(int argc, char* argv[]) {
                 }
 
                 // If active viewport is 1 (right viewport), translate coordinates to local space for sculpt events
-                SDL_Event eventCopy = event;
+                SDL_Event eventCopy = eventCopyLocal;
                 if (scene.getSplitMode() != Scene::SplitMode::OFF && scene.getActiveViewport() == 1) {
                     int halfW = width / 2;
                     if (eventCopy.type == SDL_MOUSEBUTTONDOWN || eventCopy.type == SDL_MOUSEBUTTONUP) {
@@ -1387,11 +1463,11 @@ int main(int argc, char* argv[]) {
                     }
                 }
 
-                ImGui_ImplSDL2_ProcessEvent(&event);
+                ImGui_ImplSDL2_ProcessEvent(&eventCopyLocal);
 
                 if (gui.isCapturingHotkey()) {
                     if (gui.handleCapturedKeyEvent(eventCopy)) {
-                        continue;
+                        return;
                     }
                 }
 
@@ -1476,6 +1552,9 @@ int main(int argc, char* argv[]) {
                     ErrorReporter::instance().reportError("Input / Tool Error", "Recovered from an unknown error during input handling.", "", true);
                 }
             }
+        };
+        while (SDL_PollEvent(&event)) {
+            processSdlEvent(event);
         }
         double pollEventsMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tPollEventsStart).count();
 
@@ -1618,6 +1697,11 @@ int main(int argc, char* argv[]) {
         if (isSculptingActive && renderer.getTaaResetOnStroke()) {
             renderer.resetTaaHistory();
         }
+        bool orbitActive = (sculpt.getCameraController().isDragging() &&
+                            sculpt.getCameraController().getDragMode() != CameraController::DragMode::RotateLight) ||
+                           scene.getCamera().isAnimating() ||
+                           (scene.getCameraRight() && scene.getCameraRight()->isAnimating());
+        renderer.setOrbitInteractionHint(orbitActive, isSculptingActive);
         renderer.resetLastUploadTiming();
         auto tRenderStart = std::chrono::high_resolution_clock::now();
         try {
@@ -1643,6 +1727,7 @@ int main(int argc, char* argv[]) {
         appHasFocus = (winFlags & SDL_WINDOW_INPUT_FOCUS) != 0;
         bool activeActivity = hadActivity || isSculptingActive || sculpt.getCameraController().isDragging();
         gui.getWorkTimer().tick(deltaTime, appHasFocus, activeActivity);
+        lastWorkTimerSecond = gui.getWorkTimer().getSessionSeconds();
 
         auto tGuiStart = std::chrono::high_resolution_clock::now();
         try {
@@ -1668,18 +1753,30 @@ int main(int argc, char* argv[]) {
         bool isRemeshRunning = gui.isRemeshRunning();
         if (wasRemeshRunning && !isRemeshRunning) {
             dispatcher.resetModifiers(sculpt, &renderer);
+            settleFramesRemaining = std::max(settleFramesRemaining, 2);
         }
         wasRemeshRunning = isRemeshRunning;
+
+        bool isDecimRunning = gui.isDecimationRunning();
+        if (wasDecimRunning && !isDecimRunning) {
+            settleFramesRemaining = std::max(settleFramesRemaining, 2);
+        }
+        wasDecimRunning = isDecimRunning;
 
         // If actively sculpting, mark as active
         if (isSculptingActive || sculpt.getCameraController().isDragging()) {
             hadActivity = true;
+            settleFramesRemaining = 2;
             lastActivityTime = std::chrono::high_resolution_clock::now();
         }
 
         auto tSwapStart = std::chrono::high_resolution_clock::now();
         SDL_GL_SwapWindow(window);
         double swapMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tSwapStart).count();
+
+        if (settleFramesRemaining > 0) {
+            --settleFramesRemaining;
+        }
 
         if (pendingLiveSyncActive) {
             auto tFrameDone = std::chrono::high_resolution_clock::now();
@@ -1706,18 +1803,111 @@ int main(int argc, char* argv[]) {
                        pollEventsMs, sculptMotionEvents, processFrameMs, renderMs, uploadTiming.msVbo, guiMs, swapMs);
         }
 
-        // ---- GPU load limiter ----
+        // ---- GPU load limiter & Event-Driven Idle Sleep (Stage 1) ----
         {
             auto frameEnd = std::chrono::high_resolution_clock::now();
             float frameMs = std::chrono::duration<float, std::milli>(frameEnd - currentFrameTime).count();
+
+            float idleMs = std::chrono::duration<float, std::milli>(
+                               frameEnd - lastActivityTime).count();
+
+            const bool canDeepSleep = OptFlags::get().idleSleep &&
+                                      !quit &&
+                                      !hadActivity &&
+                                      settleFramesRemaining <= 0 &&
+                                      idleMs > 500.0f &&
+                                      !sculpt.isSculpting() &&
+                                      !sculpt.getCameraController().isDragging() &&
+                                      !scene.getCamera().isAnimating() &&
+                                      !(scene.getCameraRight() && scene.getCameraRight()->isAnimating()) &&
+                                      !gui.isRemeshRunning() &&
+                                      !gui.isDecimationRunning() &&
+                                      !gui.isTimelapsePlaying() &&
+                                      !gui.hasActiveToasts() &&
+                                      !gui.hasPendingRecentThumbTasks() &&
+                                      !gui.isCapturingHotkey() &&
+                                      !gui.hasPendingGizmoClick() &&
+                                      !ImGui::GetIO().WantTextInput &&
+                                      !renderer.isSelectionFlashActive() &&
+                                      !renderer.isSymmetryLineAnimating() &&
+                                      !renderer.isOrbitScaleSettling() &&
+                                      !(renderer.getRenderMode() == RenderMode::SSPT && renderer.getAccumFrameCount() < 128) &&
+                                      !(zbrushWatcher && (zbrushWatcher->hasPendingScene() || zbrushWatcher->hasPendingMesh()));
+
+            if (canDeepSleep) {
+                bool wokeForRender = false;
+                while (!quit) {
+                    if (zbrushWatcher && (zbrushWatcher->hasPendingScene() || zbrushWatcher->hasPendingMesh())) {
+                        hadActivity = true;
+                        settleFramesRemaining = std::max(settleFramesRemaining, 2);
+                        lastActivityTime = std::chrono::high_resolution_clock::now();
+                        wokeForRender = true;
+                        break;
+                    }
+
+                    const int waitTimeoutMs = gui.getWorkTimer().isRunning() ? 250 : 500;
+                    SDL_Event waitEvent;
+                    auto sleepStart = std::chrono::high_resolution_clock::now();
+                    int gotEvent = SDL_WaitEventTimeout(&waitEvent, waitTimeoutMs);
+                    auto sleepNow = std::chrono::high_resolution_clock::now();
+                    float sleepDt = std::chrono::duration<float>(sleepNow - sleepStart).count();
+
+                    Uint32 sleepWinFlags = SDL_GetWindowFlags(window);
+                    bool sleepHasFocus = (sleepWinFlags & SDL_WINDOW_INPUT_FOCUS) != 0;
+                    gui.getWorkTimer().tick(sleepDt, sleepHasFocus, false);
+
+                    if (gotEvent == 1) {
+                        processSdlEvent(waitEvent);
+                        while (SDL_PollEvent(&event)) {
+                            processSdlEvent(event);
+                        }
+                        if (gui.isPendingQuit() && !scene.isModified() && !gui.isUnsavedModalOpen()) {
+                            quit = true;
+                            break;
+                        }
+                        if (hadActivity || quit) {
+                            wokeForRender = !quit;
+                            break;
+                        }
+                    }
+
+                    uint64_t curSec = gui.getWorkTimer().getSessionSeconds();
+                    if (curSec != lastWorkTimerSecond) {
+                        lastWorkTimerSecond = curSec;
+                        settleFramesRemaining = std::max(settleFramesRemaining, 1);
+                        wokeForRender = true;
+                        break;
+                    }
+
+                    if (zbrushWatcher && (zbrushWatcher->hasPendingScene() || zbrushWatcher->hasPendingMesh())) {
+                        hadActivity = true;
+                        settleFramesRemaining = std::max(settleFramesRemaining, 2);
+                        lastActivityTime = std::chrono::high_resolution_clock::now();
+                        wokeForRender = true;
+                        break;
+                    }
+
+                    if (gui.isRemeshRunning() || gui.isDecimationRunning() || gui.isTimelapsePlaying() ||
+                        gui.hasActiveToasts() || gui.hasPendingRecentThumbTasks()) {
+                        wokeForRender = true;
+                        break;
+                    }
+                }
+                if (wokeForRender && !quit) {
+                    pendingWakeActivity = hadActivity;
+                    lastFrameTime = std::chrono::high_resolution_clock::now() - std::chrono::milliseconds(16);
+                    continue;
+                }
+                if (quit) {
+                    break;
+                }
+            }
 
             bool fpsLimitOn  = gui.getFpsLimitEnabled();
             int  targetFps   = gui.getFpsLimit();          // e.g. 60
             float targetMs   = 1000.0f / (float)targetFps;
 
             // Idle throttle: >500 ms since last activity → drop to 15 FPS
-            float idleMs = std::chrono::duration<float, std::milli>(
-                               frameEnd - lastActivityTime).count();
             bool isIdle = (idleMs > 500.0f) && !gui.isRemeshRunning();
             if (isIdle) {
                 targetMs = 1000.0f / 15.0f; // 15 FPS while idle
@@ -1732,8 +1922,9 @@ int main(int argc, char* argv[]) {
                         Uint32 step = std::min<Uint32>(5, sleepMs - elapsed);
                         SDL_Delay(step);
                         elapsed += step;
-                        if (zbrushWatcher && zbrushWatcher->hasPendingMesh()) {
+                        if (zbrushWatcher && (zbrushWatcher->hasPendingMesh() || zbrushWatcher->hasPendingScene())) {
                             hadActivity = true;
+                            settleFramesRemaining = std::max(settleFramesRemaining, 2);
                             lastActivityTime = std::chrono::high_resolution_clock::now();
                             break;
                         }
