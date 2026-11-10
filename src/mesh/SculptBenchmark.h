@@ -1248,15 +1248,24 @@ inline bool run(int targetFaces = 4000000) {
         auto tFNStart = std::chrono::high_resolution_clock::now();
         std::chrono::high_resolution_clock::time_point tVNStart = tFNStart;
         std::chrono::high_resolution_clock::time_point tBVHStart = tFNStart;
-        if (!meshUndoState.affectedFaces.empty() && !mesh.faceNormals.empty() && !mesh.faceBoxes.empty() && !mesh.faceCenters.empty()) {
-            updateFaceNormalsAndBoxes(
-                mesh.verts.data(), mesh.nbVerts,
-                mesh.faces.data(), mesh.nbFaces,
-                meshUndoState.affectedFaces.data(), (int)meshUndoState.affectedFaces.size(),
-                mesh.faceNormals.data(),
-                mesh.faceBoxes.data(),
-                mesh.faceCenters.data()
-            );
+        if (!meshUndoState.affectedFaces.empty() && !mesh.faceNormals.empty()) {
+            if (OptFlags::get().faceNormalsOnly) {
+                updateFaceNormalsOnly(
+                    mesh.verts.data(), mesh.nbVerts,
+                    mesh.faces.data(), mesh.nbFaces,
+                    meshUndoState.affectedFaces.data(), (int)meshUndoState.affectedFaces.size(),
+                    mesh.faceNormals.data()
+                );
+            } else if (!mesh.faceBoxes.empty() && !mesh.faceCenters.empty()) {
+                updateFaceNormalsAndBoxes(
+                    mesh.verts.data(), mesh.nbVerts,
+                    mesh.faces.data(), mesh.nbFaces,
+                    meshUndoState.affectedFaces.data(), (int)meshUndoState.affectedFaces.size(),
+                    mesh.faceNormals.data(),
+                    mesh.faceBoxes.data(),
+                    mesh.faceCenters.data()
+                );
+            }
             tVNStart = std::chrono::high_resolution_clock::now();
             if (!meshUndoState.sparseVertIndices.empty() && !mesh.normals.empty() && !mesh.vrfStartCount.empty() && !mesh.vertRingFace.empty()) {
                 updateVertexNormals(
@@ -1268,16 +1277,25 @@ inline bool run(int targetFaces = 4000000) {
                 );
             }
             tBVHStart = std::chrono::high_resolution_clock::now();
-            mesh.bvh.refit(mesh, meshUndoState.affectedFaces.data(), meshUndoState.affectedFaces.size(), true);
-        } else if (!mesh.faceNormals.empty() && !mesh.faceBoxes.empty() && !mesh.faceCenters.empty()) {
-            updateFaceNormalsAndBoxes(
-                mesh.verts.data(), mesh.nbVerts,
-                mesh.faces.data(), mesh.nbFaces,
-                nullptr, -1,
-                mesh.faceNormals.data(),
-                mesh.faceBoxes.data(),
-                mesh.faceCenters.data()
-            );
+            mesh.bvh.refit(mesh, meshUndoState.affectedFaces.data(), meshUndoState.affectedFaces.size(), !OptFlags::get().faceNormalsOnly);
+        } else if (!mesh.faceNormals.empty()) {
+            if (OptFlags::get().faceNormalsOnly) {
+                updateFaceNormalsOnly(
+                    mesh.verts.data(), mesh.nbVerts,
+                    mesh.faces.data(), mesh.nbFaces,
+                    nullptr, -1,
+                    mesh.faceNormals.data()
+                );
+            } else if (!mesh.faceBoxes.empty() && !mesh.faceCenters.empty()) {
+                updateFaceNormalsAndBoxes(
+                    mesh.verts.data(), mesh.nbVerts,
+                    mesh.faces.data(), mesh.nbFaces,
+                    nullptr, -1,
+                    mesh.faceNormals.data(),
+                    mesh.faceBoxes.data(),
+                    mesh.faceCenters.data()
+                );
+            }
             tVNStart = std::chrono::high_resolution_clock::now();
             if (!mesh.vrfStartCount.empty() && !mesh.vertRingFace.empty()) {
                 updateVertexNormals(
@@ -1289,7 +1307,7 @@ inline bool run(int targetFaces = 4000000) {
                 );
             }
             tBVHStart = std::chrono::high_resolution_clock::now();
-            mesh.bvh.refitAll(mesh, true);
+            mesh.bvh.refitAll(mesh, !OptFlags::get().faceNormalsOnly);
         } else {
             tVNStart = std::chrono::high_resolution_clock::now();
             tBVHStart = tVNStart;

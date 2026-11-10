@@ -13,6 +13,13 @@ void updateFaceNormalsAndBoxes(
 void updateFaceNormalsOnly(
     const float* verts, int nbVerts,
     const uint32_t* faces, int nbFaces,
+    const uint32_t* iFaces, int nbIFaces,
+    float* faceNormals
+);
+
+void updateFaceNormalsOnly(
+    const float* verts, int nbVerts,
+    const uint32_t* faces, int nbFaces,
     float* faceNormals
 );
 

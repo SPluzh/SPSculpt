@@ -47,6 +47,7 @@ struct Config {
     bool faceNormalsOnly = false;
     bool cpuReuse = false;
     bool moveOptim = false;
+    bool fastLog = false;
 
     // Stage 4: Coalescing, Batching, Cursor Throttle, BVH Leaf Refit
     bool coalesceGrab = false;
@@ -76,6 +77,7 @@ struct Config {
         c.faceNormalsOnly = readEnvBool("SP_OPT_FACE_NORMALS_ONLY", st3);
         c.cpuReuse = readEnvBool("SP_OPT_CPU_REUSE", st3);
         c.moveOptim = readEnvBool("SP_OPT_MOVE_OPTIM", st3);
+        c.fastLog = readEnvBool("SP_OPT_FAST_LOG", st3);
 
         c.coalesceGrab = readEnvBool("SP_OPT_COALESCE_GRAB", st4);
         c.batchSubsteps = readEnvBool("SP_OPT_BATCH_SUBSTEPS", st4);
@@ -110,6 +112,7 @@ inline std::string formatSummary() {
     add("FACE_NORM_ONLY", c.faceNormalsOnly);
     add("CPU_REUSE", c.cpuReuse);
     add("MOVE_OPTIM", c.moveOptim);
+    add("FAST_LOG", c.fastLog);
     add("COALESCE_GRAB", c.coalesceGrab);
     add("BATCH_SUBSTEPS", c.batchSubsteps);
     add("CURSOR_THROTTLE", c.cursorThrottle);

@@ -16,12 +16,14 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "common/Enums.h"
+#include "common/Logger.h"
 #include "common/OptFlags.h"
 #include "common/SystemStats.h"
 #include "editing/PrimitiveTool.h"
 #include "editing/SculptManager.h"
 #include "editing/undo/UndoManager.h"
 #include "mesh/Mesh.h"
+#include "mesh/NormalCalc.h"
 #include "render/AngleRenderer.h"
 #include "scene/Camera.h"
 #include "scene/Scene.h"
@@ -2093,6 +2095,399 @@ inline bool runStage2Tests(Scene& scene, SculptManager& sculpt, AngleRenderer& r
 
     std::cout << "================================================================================\n";
     std::cout << "  Stage 2 Tests Complete: " << (allOk ? "ALL PASSED" : "FAILED") << "\n";
+    std::cout << "================================================================================\n\n";
+    return allOk;
+}
+
+inline bool runStage3Tests(Scene& scene, SculptManager& sculpt, AngleRenderer& renderer, SDL_Window* window) {
+    int winW = 1920, winH = 1080;
+    if (window) {
+        SDL_GetWindowSize(window, &winW, &winH);
+    }
+    if (winW <= 0) winW = 1920;
+    if (winH <= 0) winH = 1080;
+
+    const OptFlags::Config savedFlags = OptFlags::get();
+    OptFlags::get().idleSleep = false;
+    OptFlags::get().cullFace = false;
+    OptFlags::get().vaoCache = true;
+    OptFlags::get().orbitScale = false;
+    OptFlags::get().dirtyBlocks = true;
+    OptFlags::get().indexedPolygroup = true;
+    OptFlags::get().faceNormalsOnly = true;
+    OptFlags::get().cpuReuse = true;
+    OptFlags::get().moveOptim = true;
+    OptFlags::get().fastLog = true;
+
+    const float scalePx = std::max(0.5f, (float)std::min(winW, winH) / 1080.0f);
+    const float centerX = (float)winW * 0.5f;
+    const float centerY = (float)winH * 0.5f;
+
+    std::cout << "\n================================================================================\n";
+    std::cout << "  Stage 3 Invariant Verification (--test-stage3)\n";
+    std::cout << "================================================================================\n";
+
+    bool allOk = true;
+    auto checkCond = [&](bool cond, const char* msg) {
+        if (!cond) {
+            std::cerr << "  [FAIL] " << msg << "\n";
+            allOk = false;
+        } else {
+            std::cout << "  [PASS] " << msg << "\n";
+        }
+    };
+
+    auto doStrokeStep = [&](float x, float y, bool isDown, BrushType brush) {
+        SDL_PumpEvents();
+        SDL_Event ev;
+        std::memset(&ev, 0, sizeof(ev));
+        if (isDown) {
+            ev.type = SDL_MOUSEBUTTONDOWN;
+            ev.button.button = SDL_BUTTON_LEFT;
+            ev.button.x = (int)std::round(x);
+            ev.button.y = (int)std::round(y);
+        } else {
+            ev.type = SDL_MOUSEMOTION;
+            ev.motion.state = SDL_BUTTON_LMASK;
+            ev.motion.x = (int)std::round(x);
+            ev.motion.y = (int)std::round(y);
+        }
+        sculpt.handleEvent(ev, scene);
+        sculpt.setRawMousePos((int)std::round(x), (int)std::round(y));
+        sculpt.processFrame(scene);
+        renderer.setActiveBrush(brush);
+    };
+
+    auto releaseStroke = [&](float x, float y) {
+        SDL_Event evUp;
+        std::memset(&evUp, 0, sizeof(evUp));
+        evUp.type = SDL_MOUSEBUTTONUP;
+        evUp.button.button = SDL_BUTTON_LEFT;
+        evUp.button.x = (int)std::round(x);
+        evUp.button.y = (int)std::round(y);
+        sculpt.handleEvent(evUp, scene);
+    };
+
+    // -------------------------------------------------------------------------
+    // Test 1: updateFaceNormalsOnly numerical identity vs updateFaceNormalsAndBoxes
+    // -------------------------------------------------------------------------
+    {
+        Mesh* sphere = createSphereMeshWithPolygroups(120, 240).release();
+        sphere->postInit(true);
+
+        for (int i = 0; i < sphere->nbVerts; i += 2) {
+            sphere->verts[i * 3 + 1] += 0.35f * std::sin((float)i * 0.1f);
+            sphere->verts[i * 3 + 0] += 0.15f * std::cos((float)i * 0.15f);
+        }
+
+        std::vector<float> fnFullBoxes(sphere->nbFaces * 3, 0.0f);
+        std::vector<float> boxesFull(sphere->nbFaces * 6, 0.0f);
+        std::vector<float> centersFull(sphere->nbFaces * 3, 0.0f);
+        std::vector<float> fnFullOnly(sphere->nbFaces * 3, 0.0f);
+
+        updateFaceNormalsAndBoxes(
+            sphere->verts.data(), sphere->nbVerts,
+            sphere->faces.data(), sphere->nbFaces,
+            nullptr, -1,
+            fnFullBoxes.data(), boxesFull.data(), centersFull.data()
+        );
+
+        updateFaceNormalsOnly(
+            sphere->verts.data(), sphere->nbVerts,
+            sphere->faces.data(), sphere->nbFaces,
+            fnFullOnly.data()
+        );
+
+        float maxDiffFull = 0.0f;
+        for (size_t i = 0; i < fnFullBoxes.size(); ++i) {
+            maxDiffFull = std::max(maxDiffFull, std::abs(fnFullBoxes[i] - fnFullOnly[i]));
+        }
+
+        std::vector<uint32_t> iFaces;
+        iFaces.reserve(3000);
+        for (uint32_t f = 0; f < (uint32_t)sphere->nbFaces; f += 9) {
+            iFaces.push_back(f);
+        }
+
+        std::vector<float> fnSparseBoxes(sphere->nbFaces * 3, 0.0f);
+        std::vector<float> fnSparseOnly(sphere->nbFaces * 3, 0.0f);
+
+        updateFaceNormalsAndBoxes(
+            sphere->verts.data(), sphere->nbVerts,
+            sphere->faces.data(), sphere->nbFaces,
+            iFaces.data(), (int)iFaces.size(),
+            fnSparseBoxes.data(), boxesFull.data(), centersFull.data()
+        );
+
+        updateFaceNormalsOnly(
+            sphere->verts.data(), sphere->nbVerts,
+            sphere->faces.data(), sphere->nbFaces,
+            iFaces.data(), (int)iFaces.size(),
+            fnSparseOnly.data()
+        );
+
+        float maxDiffSparse = 0.0f;
+        for (uint32_t fid : iFaces) {
+            maxDiffSparse = std::max({maxDiffSparse,
+                std::abs(fnSparseBoxes[fid * 3 + 0] - fnSparseOnly[fid * 3 + 0]),
+                std::abs(fnSparseBoxes[fid * 3 + 1] - fnSparseOnly[fid * 3 + 1]),
+                std::abs(fnSparseBoxes[fid * 3 + 2] - fnSparseOnly[fid * 3 + 2])});
+        }
+
+        sphere->bvh.refit(*sphere, iFaces.data(), iFaces.size(), false);
+        const auto& rs = sphere->bvh.getLastRefitStats();
+
+        std::cout << "  [Info] Test 1 Normals: maxDiffFull=" << maxDiffFull
+                  << ", maxDiffSparse=" << maxDiffSparse
+                  << ", bvhUsedPrecomputed=" << rs.usedPrecomputed << "\n";
+
+        checkCond(maxDiffFull == 0.0f && maxDiffSparse == 0.0f && !rs.usedPrecomputed,
+                  "Test 1: updateFaceNormalsOnly matches updateFaceNormalsAndBoxes 100% (diff=0.000000) and BVH refits without boxes");
+        delete sphere;
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 2: Sort & Dedup bypass for non-overlapping symmetry & paint/mask
+    // -------------------------------------------------------------------------
+    {
+        scene.clear();
+        g_undoManager.clear();
+
+        Mesh* sphere = createSphereMeshWithPolygroups(180, 360).release();
+        sphere->postInit(true);
+        scene.addMesh(sphere);
+        scene.selectMesh(sphere);
+
+        Camera& cam = scene.getCamera();
+        cam.onResize(winW, winH);
+        cam.resetViewToMesh(sphere, false);
+        cam.update(0.016f);
+
+        sculpt.setUseSym(true);
+        sculpt.setSymX(true);
+        sculpt.setSymY(false);
+        sculpt.setSymZ(false);
+        sculpt.saveSymmetryToMesh(sphere);
+        sculpt.warmupMeshCaches(sphere);
+
+        sculpt.setBrush(BRUSH_CLAYBUILDUP);
+        auto& claySet = sculpt.getSettings(BRUSH_CLAYBUILDUP);
+        claySet.radius = 35.0f * scalePx;
+        claySet.intensity = 1.0f;
+        claySet.culling = false;
+
+        float strokeX = centerX + 180.0f * scalePx;
+        doStrokeStep(strokeX, centerY, true, BRUSH_CLAYBUILDUP);
+        releaseStroke(strokeX, centerY);
+
+        const auto profClay = sculpt.getLastFrameProfile();
+        std::cout << "  [Info] Test 2 ClayBuildup SymX: Dedup=" << profClay.dedupOnlyMs
+                  << "ms, Radix=" << profClay.radixSortMs << "ms, Verts=" << profClay.affectedVertCount << "\n";
+
+        g_undoManager.undo(scene);
+        float undoDiff = 0.0f;
+        auto* redoEntry = !g_undoManager.getRedoStack().empty()
+            ? dynamic_cast<SculptUndoEntry*>(g_undoManager.getRedoStack().back().get())
+            : nullptr;
+        if (redoEntry && !redoEntry->deltas.empty() && redoEntry->deltas[0].hasPositions) {
+            const auto& d = redoEntry->deltas[0];
+            for (size_t i = 0; i < d.indices.size(); ++i) {
+                uint32_t vid = d.indices[i];
+                undoDiff = std::max({undoDiff,
+                    std::abs(sphere->verts[vid * 3 + 0] - d.prevVerts[i * 3 + 0]),
+                    std::abs(sphere->verts[vid * 3 + 1] - d.prevVerts[i * 3 + 1]),
+                    std::abs(sphere->verts[vid * 3 + 2] - d.prevVerts[i * 3 + 2])});
+            }
+        }
+        g_undoManager.redo(scene);
+
+        checkCond(profClay.dedupOnlyMs == 0.0 && profClay.affectedVertCount > 0 && undoDiff == 0.0f,
+                  "Test 2a: Non-overlapping symmetry skips Tag-Dedup pass with exact 0.000000 UndoDiff");
+
+        sculpt.setBrush(BRUSH_MASK);
+        auto& maskSet = sculpt.getSettings(BRUSH_MASK);
+        maskSet.radius = 45.0f * scalePx;
+        maskSet.intensity = 1.0f;
+
+        doStrokeStep(strokeX, centerY, true, BRUSH_MASK);
+        releaseStroke(strokeX, centerY);
+        const auto profMask = sculpt.getLastFrameProfile();
+
+        std::cout << "  [Info] Test 2b Mask Brush: SortDedup=" << profMask.sortDedupMs
+                  << "ms, Verts=" << profMask.affectedVertCount << "\n";
+
+        checkCond(profMask.sortDedupMs == 0.0 && profMask.affectedVertCount > 0,
+                  "Test 2b: BRUSH_MASK bypasses Sort & Dedup completely (sortDedupMs = 0.0)");
+
+        sculpt.setBrush(BRUSH_PAINT);
+        auto& paintSet = sculpt.getSettings(BRUSH_PAINT);
+        paintSet.radius = 45.0f * scalePx;
+        paintSet.intensity = 1.0f;
+
+        doStrokeStep(strokeX, centerY, true, BRUSH_PAINT);
+        releaseStroke(strokeX, centerY);
+        const auto profPaint = sculpt.getLastFrameProfile();
+
+        std::cout << "  [Info] Test 2c Paint Brush: SortDedup=" << profPaint.sortDedupMs
+                  << "ms, Verts=" << profPaint.affectedVertCount << "\n";
+
+        checkCond(profPaint.sortDedupMs == 0.0 && profPaint.affectedVertCount > 0,
+                  "Test 2c: BRUSH_PAINT bypasses Sort & Dedup completely (sortDedupMs = 0.0)");
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 3: Move Tool Step 0 Idle & pickVerticesInSphereTopological acceleration
+    // -------------------------------------------------------------------------
+    {
+        scene.clear();
+        g_undoManager.clear();
+
+        Mesh* sphere = createSphereMeshWithPolygroups(120, 240).release();
+        sphere->postInit(true);
+        scene.addMesh(sphere);
+        scene.selectMesh(sphere);
+
+        Camera& cam = scene.getCamera();
+        cam.onResize(winW, winH);
+        cam.resetViewToMesh(sphere, false);
+        cam.update(0.016f);
+
+        sculpt.setUseSym(false);
+        sculpt.saveSymmetryToMesh(sphere);
+        sculpt.warmupMeshCaches(sphere);
+
+        glm::vec3 testCenter(0.0f, 2.0f, 0.0f);
+        float testR2 = 0.35f * 0.35f;
+        uint32_t startFace = 0;
+
+        std::vector<uint32_t> pickedLegacy;
+        std::vector<uint8_t> visLegacy;
+        uint8_t epLegacy = 0;
+        OptFlags::get().moveOptim = false;
+        SculptManager::pickVerticesInSphereTopological(sphere, testCenter, testR2, startFace, visLegacy, epLegacy, pickedLegacy);
+        std::sort(pickedLegacy.begin(), pickedLegacy.end());
+
+        std::vector<uint32_t> pickedOptim;
+        std::vector<uint8_t> visOptim;
+        uint8_t epOptim = 0;
+        OptFlags::get().moveOptim = true;
+        SculptManager::pickVerticesInSphereTopological(sphere, testCenter, testR2, startFace, visOptim, epOptim, pickedOptim);
+        std::sort(pickedOptim.begin(), pickedOptim.end());
+
+        bool topoPickIdentical = (pickedLegacy.size() == pickedOptim.size());
+        if (topoPickIdentical) {
+            for (size_t i = 0; i < pickedLegacy.size(); ++i) {
+                if (pickedLegacy[i] != pickedOptim[i]) {
+                    topoPickIdentical = false;
+                    break;
+                }
+            }
+        }
+        std::cout << "  [Info] Test 3 Topo Pick: legacyCount=" << pickedLegacy.size()
+                  << ", optimCount=" << pickedOptim.size() << ", match=" << topoPickIdentical << "\n";
+
+        checkCond(topoPickIdentical && !pickedOptim.empty(),
+                  "Test 3a: Topological pick with BVH candidate pre-filtering matches legacy BFS 100%");
+
+        sculpt.setBrush(BRUSH_MOVE);
+        auto& moveSet = sculpt.getSettings(BRUSH_MOVE);
+        moveSet.radius = 60.0f * scalePx;
+        moveSet.intensity = 1.0f;
+        moveSet.topoCheck = true;
+
+        doStrokeStep(centerX, centerY, true, BRUSH_MOVE);
+        const auto profMoveStep0 = sculpt.getLastFrameProfile();
+
+        std::cout << "  [Info] Test 3b Move Step 0: FaceLookup=" << profMoveStep0.faceLookupMs
+                  << "ms, FaceNorm=" << profMoveStep0.faceNormalsMs
+                  << "ms, VertNorm=" << profMoveStep0.vertNormalsMs
+                  << "ms, BVHRefit=" << profMoveStep0.bvhUpdateMs << "ms\n";
+
+        checkCond(profMoveStep0.faceNormalsMs == 0.0 && profMoveStep0.vertNormalsMs == 0.0 &&
+                  profMoveStep0.bvhUpdateMs == 0.0 && profMoveStep0.pickedVertCount > 0,
+                  "Test 3b: Move tool Step 0 (0 displacement) skips all idle Normals & BVH updates");
+
+        doStrokeStep(centerX + 30.0f * scalePx, centerY, false, BRUSH_MOVE);
+        releaseStroke(centerX + 30.0f * scalePx, centerY);
+
+        g_undoManager.undo(scene);
+        float moveUndoDiff = 0.0f;
+        auto* redoMove = !g_undoManager.getRedoStack().empty()
+            ? dynamic_cast<SculptUndoEntry*>(g_undoManager.getRedoStack().back().get())
+            : nullptr;
+        if (redoMove && !redoMove->deltas.empty() && redoMove->deltas[0].hasPositions) {
+            const auto& d = redoMove->deltas[0];
+            for (size_t i = 0; i < d.indices.size(); ++i) {
+                uint32_t vid = d.indices[i];
+                moveUndoDiff = std::max({moveUndoDiff,
+                    std::abs(sphere->verts[vid * 3 + 0] - d.prevVerts[i * 3 + 0]),
+                    std::abs(sphere->verts[vid * 3 + 1] - d.prevVerts[i * 3 + 1]),
+                    std::abs(sphere->verts[vid * 3 + 2] - d.prevVerts[i * 3 + 2])});
+            }
+        }
+        checkCond(moveUndoDiff == 0.0f,
+                  "Test 3c: Move tool Drag & Undo restores mesh with 0.000000 epsilon discrepancy");
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 4: Buffer reuse & lazy vertProxy sync across multiple steps
+    // -------------------------------------------------------------------------
+    {
+        scene.clear();
+        g_undoManager.clear();
+
+        Mesh* sphere = createSphereMeshWithPolygroups(120, 240).release();
+        sphere->postInit(true);
+        scene.addMesh(sphere);
+        scene.selectMesh(sphere);
+
+        sculpt.setUseSym(false);
+        sculpt.saveSymmetryToMesh(sphere);
+        sculpt.warmupMeshCaches(sphere);
+
+        sculpt.setBrush(BRUSH_CLAYBUILDUP);
+        auto& claySet = sculpt.getSettings(BRUSH_CLAYBUILDUP);
+        claySet.radius = 40.0f * scalePx;
+        claySet.intensity = 1.0f;
+        claySet.culling = false;
+
+        bool proxySyncClean = true;
+        for (int step = 0; step < 10; ++step) {
+            float sx = centerX + (float)(step - 5) * 8.0f * scalePx;
+            doStrokeStep(sx, centerY, step == 0, BRUSH_CLAYBUILDUP);
+            const auto p = sculpt.getLastFrameProfile();
+            if (p.vertProxySyncMs > 0.0) {
+                proxySyncClean = false;
+            }
+        }
+        releaseStroke(centerX + 32.0f * scalePx, centerY);
+
+        std::cout << "  [Info] Test 4 Lazy Proxy: proxySyncClean=" << proxySyncClean << "\n";
+        checkCond(proxySyncClean, "Test 4: Lazy vertProxy sync eliminates per-step OpenMP proxy copies during ClayBuildup");
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 5: Fast log flush verification
+    // -------------------------------------------------------------------------
+    {
+        auto t0 = std::chrono::high_resolution_clock::now();
+        for (int i = 0; i < 50; ++i) {
+            sculpt_log("[STAGE3 BENCH] Test log line %d\n", i);
+        }
+        auto t1 = std::chrono::high_resolution_clock::now();
+        double logMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
+        Logger::instance().flush();
+
+        std::cout << "  [Info] Test 5 FastLog: 50 log messages took " << logMs << " ms\n";
+        checkCond(logMs < 25.0, "Test 5: FastLog buffers Info/Debug without per-line synchronous disk flush (< 25 ms)");
+    }
+
+    g_undoManager.clear();
+    scene.clear();
+    OptFlags::get() = savedFlags;
+
+    std::cout << "================================================================================\n";
+    std::cout << "  Stage 3 Tests Complete: " << (allOk ? "ALL PASSED" : "FAILED") << "\n";
     std::cout << "================================================================================\n\n";
     return allOk;
 }

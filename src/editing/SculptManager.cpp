@@ -295,6 +295,141 @@ void SculptManager::pickVerticesInSphereTopological(
         picked.reserve(131072);
     }
 
+    if (OptFlags::get().moveOptim) {
+        thread_local std::vector<uint32_t> s_pickedVerticesCache;
+        thread_local std::vector<uint8_t> s_sphereTagFlags;
+        thread_local uint8_t s_sphereTagEpoch = 0;
+
+        // Step A: Fast parallel BVH spatial pick
+        s_pickedVerticesCache.clear();
+        mesh->bvh.pickVerticesInSphere(
+            *mesh, center, radius2, s_pickedVerticesCache,
+            vertVisible, 0
+        );
+
+        if (s_sphereTagFlags.size() < (size_t)nbVerts) {
+            s_sphereTagFlags.assign(nbVerts, uint8_t(0));
+            s_sphereTagEpoch = 1;
+        }
+        s_sphereTagEpoch++;
+        if (s_sphereTagEpoch == 0) {
+            std::fill(s_sphereTagFlags.begin(), s_sphereTagFlags.end(), uint8_t(0));
+            s_sphereTagEpoch = 1;
+        }
+        const uint8_t sphereEpoch = s_sphereTagEpoch;
+        uint8_t* const inSphere = s_sphereTagFlags.data();
+        const size_t numInSphere = s_pickedVerticesCache.size();
+        const uint32_t* const inSphereVerts = s_pickedVerticesCache.data();
+        for (size_t i = 0; i < numInSphere; ++i) {
+            uint32_t v = inSphereVerts[i];
+            if (v < nbVerts) {
+                inSphere[v] = sphereEpoch;
+            }
+        }
+
+        // Step B: Seed BFS from startFaceId
+        const uint32_t* fv = mesh->faces.data() + (size_t)(startFaceId << 2);
+        int numFaceVerts = (fv[3] != TRI_INDEX) ? 4 : 3;
+        float closestDist2 = 1e30f;
+        uint32_t closestVid = 0xffffffff;
+
+        for (int i = 0; i < numFaceVerts; ++i) {
+            uint32_t vid = fv[i];
+            if (vid == 0xffffffff || vid >= nbVerts) continue;
+            if (vertVisible && !vertVisible[vid]) continue;
+
+            if (inSphere[vid] == sphereEpoch && visited[vid] != curEpoch) {
+                visited[vid] = curEpoch;
+                picked.push_back(vid);
+            }
+            if (picked.empty()) {
+                uint32_t vid3 = vid * 3;
+                float dx = verts[vid3] - center.x;
+                float dy = verts[vid3 + 1] - center.y;
+                float dz = verts[vid3 + 2] - center.z;
+                float d2 = dx * dx + dy * dy + dz * dz;
+                if (d2 < closestDist2) {
+                    closestDist2 = d2;
+                    closestVid = vid;
+                }
+            }
+        }
+
+        bool seededLargeFace = false;
+        if (picked.empty() && closestVid != 0xffffffff) {
+            picked.push_back(closestVid);
+            visited[closestVid] = curEpoch;
+            seededLargeFace = true;
+        }
+
+        // Step C: Fast BFS using connectivity and inSphere tags (zero float math inside loop)
+        bool hasVrv = (!mesh->vertRingVert.empty() && mesh->vrvStartCount.size() >= (size_t)nbVerts * 2);
+        if (hasVrv) {
+            const uint32_t* vrvStartCount = mesh->vrvStartCount.data();
+            const uint32_t* vertRingVert = mesh->vertRingVert.data();
+            const size_t vrvSize = mesh->vertRingVert.size();
+            size_t head = 0;
+            while (head < picked.size()) {
+                uint32_t u = picked[head++];
+                if (u >= nbVerts) continue;
+                uint32_t start = vrvStartCount[u * 2];
+                uint32_t count = vrvStartCount[u * 2 + 1];
+                if ((size_t)start + (size_t)count > vrvSize) continue;
+                for (uint32_t j = 0; j < count; ++j) {
+                    uint32_t v = vertRingVert[start + j];
+                    if (v >= nbVerts || visited[v] == curEpoch) continue;
+                    visited[v] = curEpoch;
+                    if (vertVisible && !vertVisible[v]) continue;
+                    if (inSphere[v] == sphereEpoch) {
+                        picked.push_back(v);
+                    }
+                }
+            }
+        } else if (!mesh->vertRingFace.empty() && mesh->vrfStartCount.size() >= (size_t)nbVerts * 2) {
+            const uint32_t* vrfStartCount = mesh->vrfStartCount.data();
+            const uint32_t* vertRingFace = mesh->vertRingFace.data();
+            const size_t vrfSize = mesh->vertRingFace.size();
+            const uint32_t* faces = mesh->faces.data();
+            uint32_t nbFaces = (uint32_t)std::min<size_t>((size_t)mesh->nbFaces, mesh->faces.size() / 4);
+            size_t head = 0;
+            while (head < picked.size()) {
+                uint32_t u = picked[head++];
+                if (u >= nbVerts) continue;
+                uint32_t fStart = vrfStartCount[u * 2];
+                uint32_t fCount = vrfStartCount[u * 2 + 1];
+                if ((size_t)fStart + (size_t)fCount > vrfSize) continue;
+                for (uint32_t j = 0; j < fCount; ++j) {
+                    uint32_t fid = vertRingFace[fStart + j];
+                    if (fid >= nbFaces) continue;
+                    const uint32_t* faceVerts = faces + (size_t)(fid << 2);
+                    int numV = (faceVerts[3] != TRI_INDEX) ? 4 : 3;
+                    for (int k = 0; k < numV; ++k) {
+                        uint32_t v = faceVerts[k];
+                        if (v >= nbVerts || visited[v] == curEpoch) continue;
+                        visited[v] = curEpoch;
+                        if (vertVisible && !vertVisible[v]) continue;
+                        if (inSphere[v] == sphereEpoch) {
+                            picked.push_back(v);
+                        }
+                    }
+                }
+            }
+        }
+
+        if (seededLargeFace && closestDist2 > radius2) {
+            if (picked.size() > 1 && picked.front() == closestVid) {
+                picked.erase(picked.begin());
+            } else if (picked.size() == 1 && picked.front() == closestVid) {
+                picked.clear();
+            }
+        }
+
+        if (picked.empty() && mesh->bvh.isBuilt()) {
+            mesh->bvh.pickVerticesInSphere(*mesh, center, radius2, picked, vertVisible, 0);
+        }
+        return;
+    }
+
     // 2. Queue initialization from startFaceId
     const uint32_t* fv = mesh->faces.data() + (size_t)(startFaceId << 2);
     int numFaceVerts = (fv[3] != TRI_INDEX) ? 4 : 3;
@@ -2103,6 +2238,25 @@ void SculptManager::cancelStroke() {
     CrashReporter::clearStrokeContext();
 }
 
+void SculptManager::ensureVertProxySynced(Mesh* mesh) {
+    if (!mesh) return;
+    if (mesh->vertProxy.size() != mesh->verts.size()) {
+        mesh->vertProxy = mesh->verts;
+        m_vertProxyDirty = false;
+        return;
+    }
+    if (m_vertProxyDirty) {
+        const float* src = mesh->verts.data();
+        float* dst = mesh->vertProxy.data();
+        const size_t sz = mesh->verts.size();
+        #pragma omp parallel for schedule(static) if(sz > 8192)
+        for (int64_t i = 0; i < (int64_t)sz; ++i) {
+            dst[i] = src[i];
+        }
+        m_vertProxyDirty = false;
+    }
+}
+
 void SculptManager::warmupMeshCaches(const Mesh* mesh) {
     if (!mesh) return;
     size_t strokeFacesCap = std::min((size_t)mesh->nbFaces, (size_t)4000000);
@@ -2113,8 +2267,25 @@ void SculptManager::warmupMeshCaches(const Mesh* mesh) {
     if (m_allAffectedVertsCache.size() < strokeVertsCap) {
         m_allAffectedVertsCache.resize(strokeVertsCap);
     }
+    if (OptFlags::get().cpuReuse) {
+        if (m_allAffectedVerts.capacity() < strokeVertsCap) {
+            m_allAffectedVerts.reserve(strokeVertsCap);
+        }
+        if (m_symVerts.capacity() < 131072) {
+            m_symVerts.reserve(131072);
+        }
+        if (m_vertTagFlags.size() < (size_t)mesh->nbVerts) {
+            m_vertTagFlags.assign(mesh->nbVerts, uint8_t(0));
+            m_vertTagEpoch = 1;
+        }
+        if (m_tagFlags.size() < (size_t)mesh->nbFaces) {
+            m_tagFlags.assign(mesh->nbFaces, 0);
+            m_tagEpoch = 1;
+        }
+    }
     if (mesh->vertProxy.size() != mesh->verts.size()) {
         const_cast<Mesh*>(mesh)->vertProxy = mesh->verts;
+        m_vertProxyDirty = false;
     }
     const_cast<Mesh*>(mesh)->ensureTopologyBuilt();
     const_cast<Mesh*>(mesh)->ensureBVHBuilt();
@@ -2944,10 +3115,15 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     m_lastFrameProfile.pickedVertCount = (int)primaryVertCount;
     CrashReporter::updateStrokeCounts((uint32_t)primaryVertCount, 0u);
 
-    std::vector<uint32_t> allAffectedVerts;
+    std::vector<uint32_t> localAffectedVerts;
+    std::vector<uint32_t>& allAffectedVerts = OptFlags::get().cpuReuse ? m_allAffectedVerts : localAffectedVerts;
+    allAffectedVerts.clear();
     if (primaryVertCount > 0) {
         if (!isGrabBrush || m_firstStrokeFrame) {
-            allAffectedVerts.reserve(primaryVertCount * (m_useSym ? 2 : 1));
+            size_t needed = primaryVertCount * (m_useSym ? 2 : 1);
+            if (allAffectedVerts.capacity() < needed) {
+                allAffectedVerts.reserve(needed);
+            }
         }
         bool isMayaNav = m_hotkeyManager ? m_hotkeyManager->getModifierBehavior().ctrlAltInvertsBrush : (camera.getNavigationStyle() == CameraEnums::NavigationStyle::MAYA);
         bool isCtrl = (SDL_GetModState() & KMOD_CTRL) != 0;
@@ -2956,6 +3132,9 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         bool negative = getSettings(activeBrush).negative ^ invertModifier;
 
         if (isGrabBrush) {
+            if (m_firstStrokeFrame && OptFlags::get().cpuReuse) {
+                ensureVertProxySynced(mesh);
+            }
             tStage = std::chrono::high_resolution_clock::now();
             if (!m_firstStrokeFrame) {
                 const float* vertProxyData = mesh->vertProxy.data();
@@ -3113,7 +3292,9 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             for (size_t sIdx = 0; sIdx < symScales.size(); ++sIdx) {
                 glm::vec3 sScale = symScales[sIdx];
                 glm::vec3 symCenter;
-                std::vector<uint32_t> symVerts;
+                std::vector<uint32_t> localSymVerts;
+                std::vector<uint32_t>& symVerts = OptFlags::get().cpuReuse ? m_symVerts : localSymVerts;
+                symVerts.clear();
                 bool fromPrePicked = false;
 
                 auto tSymPick0 = std::chrono::high_resolution_clock::now();
@@ -3123,7 +3304,6 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                     symCenter = reflectPointSymmetry(m_currentIntersection, sScale, mesh, m_symmetryMode);
                     if (m_firstStrokeFrame) {
                         if (sIdx < m_prePickedSymVerts.size() && !m_prePickedSymVerts[sIdx].empty()) {
-                            symVerts = std::move(m_prePickedSymVerts[sIdx]);
                             fromPrePicked = true;
                         } else {
                             symVerts = mesh->bvh.pickVerticesInSphere(
@@ -3151,7 +3331,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                             thisSymCullMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tSc0).count();
                         }
                         if (sIdx >= m_snakeActiveVertsSyms.size()) m_snakeActiveVertsSyms.resize(sIdx + 1);
-                        m_snakeActiveVertsSyms[sIdx] = symVerts;
+                        m_snakeActiveVertsSyms[sIdx] = fromPrePicked ? m_prePickedSymVerts[sIdx] : symVerts;
                     } else {
                         if (sIdx < m_snakeActiveVertsSyms.size()) {
                             symVerts = m_snakeActiveVertsSyms[sIdx];
@@ -3173,7 +3353,6 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 } else {
                     symCenter = reflectPointSymmetry(m_currentIntersection, sScale, mesh, m_symmetryMode);
                     if (sIdx < m_prePickedSymVerts.size() && !m_prePickedSymVerts[sIdx].empty()) {
-                        symVerts = std::move(m_prePickedSymVerts[sIdx]);
                         fromPrePicked = true;
                     } else {
                         mesh->bvh.pickVerticesInSphere(
@@ -3204,15 +3383,15 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 
                     if (isGrabBrush) {
                         if (sIdx >= m_grabbedVerticesSyms.size()) m_grabbedVerticesSyms.resize(sIdx + 1);
-                        m_grabbedVerticesSyms[sIdx] = symVerts;
+                        m_grabbedVerticesSyms[sIdx] = fromPrePicked ? m_prePickedSymVerts[sIdx] : symVerts;
                     }
                 }
                 const uint32_t* pSymData = (isGrabBrush && !m_firstStrokeFrame && sIdx < m_grabbedVerticesSyms.size())
                     ? m_grabbedVerticesSyms[sIdx].data()
-                    : symVerts.data();
+                    : (fromPrePicked ? m_prePickedSymVerts[sIdx].data() : symVerts.data());
                 size_t numSymData = (isGrabBrush && !m_firstStrokeFrame && sIdx < m_grabbedVerticesSyms.size())
                     ? m_grabbedVerticesSyms[sIdx].size()
-                    : symVerts.size();
+                    : (fromPrePicked ? m_prePickedSymVerts[sIdx].size() : symVerts.size());
                 double thisSymPickMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tSymPick0).count() - thisSymCullMs;
                 m_lastFrameProfile.symPickMs += std::max(0.0, thisSymPickMs);
                 m_lastFrameProfile.symCullMs += thisSymCullMs;
@@ -3227,6 +3406,8 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                         auto tUndoSym = std::chrono::high_resolution_clock::now();
                         if (isGrabBrush && !m_firstStrokeFrame) {
                             g_undoManager.recordAffectedVertices(scene, mesh->m_id, m_grabbedVerticesSyms[sIdx], strokeAffectsPositions, strokeAffectsColors, strokeAffectsMaterials);
+                        } else if (fromPrePicked) {
+                            g_undoManager.recordAffectedVertices(scene, mesh->m_id, m_prePickedSymVerts[sIdx], strokeAffectsPositions, strokeAffectsColors, strokeAffectsMaterials);
                         } else {
                             g_undoManager.recordAffectedVertices(scene, mesh->m_id, symVerts, strokeAffectsPositions, strokeAffectsColors, strokeAffectsMaterials);
                         }
@@ -3253,7 +3434,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                         mouseX,
                         true,
                         sScale,
-                        (isGrabBrush && !m_firstStrokeFrame) ? nullptr : &symVerts
+                        (isGrabBrush && !m_firstStrokeFrame) ? nullptr : (fromPrePicked ? &m_prePickedSymVerts[sIdx] : &symVerts)
                     );
                     m_lastFrameProfile.symDeformMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tSymDef0).count();
 
@@ -3286,120 +3467,185 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         m_lastFrameProfile.sortDedupMs = 0.0;
     } else if (!allAffectedVerts.empty()) {
         tStage = std::chrono::high_resolution_clock::now();
+        bool isSculptDeform = (activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_MASK_GRADIENT_BLUR && activeBrush != BRUSH_POLYGROUP);
 
-        if (m_vertTagFlags.size() < (size_t)mesh->nbVerts) {
-            auto tTagAlloc0 = std::chrono::high_resolution_clock::now();
-            m_vertTagFlags.assign(mesh->nbVerts, uint8_t(0));
-            tagAllocMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tTagAlloc0).count();
-        }
-        m_vertTagEpoch++;
-        if (m_vertTagEpoch == 0) {
-            std::fill(m_vertTagFlags.begin(), m_vertTagFlags.end(), uint8_t(0));
-            m_vertTagEpoch = 1;
-        }
-
-        uint8_t curEpoch = m_vertTagEpoch;
-        uint8_t* tagData = m_vertTagFlags.data();
-        uint32_t* pVerts = allAffectedVerts.data();
-        size_t total = allAffectedVerts.size();
-        size_t writeIdx = 0;
-
-        uint32_t minV = 0xFFFFFFFF;
-        uint32_t maxV = 0;
-
-        const int maxThreads = omp_get_max_threads();
-        const bool inParallel = omp_in_parallel();
-
-        if (total < 16384 || inParallel || maxThreads <= 1) {
+        if (OptFlags::get().cpuReuse && !isSculptDeform) {
+            uint32_t minV = 0xFFFFFFFF;
+            uint32_t maxV = 0;
+            const size_t total = allAffectedVerts.size();
+            const uint32_t* pVerts = allAffectedVerts.data();
             for (size_t i = 0; i < total; ++i) {
                 uint32_t v = pVerts[i];
-                if (v < (uint32_t)mesh->nbVerts && tagData[v] != curEpoch) {
-                    tagData[v] = curEpoch;
-                    pVerts[writeIdx++] = v;
-                    minV = std::min(minV, v);
-                    maxV = std::max(maxV, v);
-                }
+                if (v < minV) minV = v;
+                if (v > maxV) maxV = v;
             }
-            allAffectedVerts.resize(writeIdx);
+            m_affectedMinV = minV;
+            m_affectedMaxV = maxV;
+            pAff = allAffectedVerts.data();
+            numAff = total;
+            m_lastFrameProfile.dedupOnlyMs = 0.0;
+            m_lastFrameProfile.radixSortMs = 0.0;
+            m_lastFrameProfile.sortDedupMs = 0.0;
         } else {
-            static std::vector<std::vector<uint32_t>> s_threadVerts;
-            static std::vector<size_t> s_offsets;
-            if ((int)s_threadVerts.size() < maxThreads) {
-                s_threadVerts.resize(maxThreads);
-            }
-            s_offsets.assign((size_t)maxThreads + 1, 0);
-            uint32_t globalMin = 0xFFFFFFFF;
-            uint32_t globalMax = 0;
-
-            #pragma omp parallel reduction(min:globalMin) reduction(max:globalMax)
-            {
-                int tid = omp_get_thread_num();
-                std::vector<uint32_t> fallbackVerts;
-                auto& localVerts = (tid >= 0 && tid < (int)s_threadVerts.size()) ? s_threadVerts[tid] : fallbackVerts;
-                localVerts.clear();
-                size_t estCount = (total / maxThreads) + 64;
-                if (localVerts.capacity() < estCount) {
-                    localVerts.reserve(estCount);
-                }
-
-                #pragma omp for schedule(static)
-                for (int64_t i = 0; i < (int64_t)total; ++i) {
-                    uint32_t v = pVerts[i];
-                    if (v < (uint32_t)mesh->nbVerts && tagData[v] != curEpoch) {
-                        std::atomic_ref<uint8_t> ref(tagData[v]);
-                        if (ref.exchange(curEpoch, std::memory_order_relaxed) != curEpoch) {
-                            localVerts.push_back(v);
-                            globalMin = std::min(globalMin, v);
-                            globalMax = std::max(globalMax, v);
-                        }
+            bool canSkipDedup = false;
+            if (OptFlags::get().cpuReuse) {
+                if (!m_useSym) {
+                    canSkipDedup = true;
+                } else if (symScales.size() == 1) {
+                    glm::vec3 symCenter0 = reflectPointSymmetry(m_currentIntersection, symScales[0], mesh, m_symmetryMode);
+                    glm::vec3 diffCenter = m_currentIntersection - symCenter0;
+                    float dist2 = glm::dot(diffCenter, diffCenter);
+                    if (dist2 > 4.0001f * localRadius * localRadius) {
+                        canSkipDedup = true;
                     }
                 }
             }
 
-            const int numMergeThreads = maxThreads;
-            for (int t = 0; t < numMergeThreads; ++t) {
-                s_offsets[t + 1] = s_offsets[t] + s_threadVerts[t].size();
-            }
-            writeIdx = s_offsets[numMergeThreads];
-            allAffectedVerts.resize(writeIdx);
-            pVerts = allAffectedVerts.data();
-
-            #pragma omp parallel for schedule(static) if(writeIdx > 8192)
-            for (int t = 0; t < numMergeThreads; ++t) {
-                size_t sz = s_threadVerts[t].size();
-                if (sz > 0) {
-                    std::memcpy(pVerts + s_offsets[t], s_threadVerts[t].data(), sz * sizeof(uint32_t));
+            if (canSkipDedup) {
+                uint32_t minV = 0xFFFFFFFF;
+                uint32_t maxV = 0;
+                const size_t total = allAffectedVerts.size();
+                const uint32_t* pVerts = allAffectedVerts.data();
+                for (size_t i = 0; i < total; ++i) {
+                    uint32_t v = pVerts[i];
+                    if (v < minV) minV = v;
+                    if (v > maxV) maxV = v;
                 }
-            }
-            minV = globalMin;
-            maxV = globalMax;
-        }
-        auto tDedupEnd = std::chrono::high_resolution_clock::now();
-        m_lastFrameProfile.dedupOnlyMs = std::chrono::duration<double, std::milli>(tDedupEnd - tStage).count();
-        bool isSculptDeform = (activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_MASK_GRADIENT_BLUR && activeBrush != BRUSH_POLYGROUP);
-        if (isSculptDeform && writeIdx > 1) {
-            radixSortVertices(allAffectedVerts, m_allAffectedVertsCache, maxV);
-        }
-        auto tSortEnd = std::chrono::high_resolution_clock::now();
-        m_lastFrameProfile.radixSortMs = std::chrono::duration<double, std::milli>(tSortEnd - tDedupEnd).count();
-        m_affectedMinV = minV;
-        m_affectedMaxV = maxV;
+                auto tDedupEnd = std::chrono::high_resolution_clock::now();
+                m_lastFrameProfile.dedupOnlyMs = 0.0;
+                if (isSculptDeform && total > 1) {
+                    radixSortVertices(allAffectedVerts, m_allAffectedVertsCache, maxV);
+                }
+                auto tSortEnd = std::chrono::high_resolution_clock::now();
+                m_lastFrameProfile.radixSortMs = std::chrono::duration<double, std::milli>(tSortEnd - tDedupEnd).count();
+                m_affectedMinV = minV;
+                m_affectedMaxV = maxV;
+                m_lastFrameProfile.sortDedupMs = m_lastFrameProfile.radixSortMs;
+                if (isGrabBrush) {
+                    m_grabbedAffectedVerts = allAffectedVerts;
+                    m_grabbedMinV = minV;
+                    m_grabbedMaxV = maxV;
+                }
+                pAff = allAffectedVerts.data();
+                numAff = allAffectedVerts.size();
+            } else {
+                if (m_vertTagFlags.size() < (size_t)mesh->nbVerts) {
+                    auto tTagAlloc0 = std::chrono::high_resolution_clock::now();
+                    m_vertTagFlags.assign(mesh->nbVerts, uint8_t(0));
+                    tagAllocMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tTagAlloc0).count();
+                }
+                m_vertTagEpoch++;
+                if (m_vertTagEpoch == 0) {
+                    std::fill(m_vertTagFlags.begin(), m_vertTagFlags.end(), uint8_t(0));
+                    m_vertTagEpoch = 1;
+                }
 
-        m_lastFrameProfile.sortDedupMs = std::chrono::duration<double, std::milli>(tSortEnd - tStage).count();
-        if (isGrabBrush) {
-            m_grabbedAffectedVerts = allAffectedVerts;
-            m_grabbedMinV = minV;
-            m_grabbedMaxV = maxV;
+                uint8_t curEpoch = m_vertTagEpoch;
+                uint8_t* tagData = m_vertTagFlags.data();
+                uint32_t* pVerts = allAffectedVerts.data();
+                size_t total = allAffectedVerts.size();
+                size_t writeIdx = 0;
+
+                uint32_t minV = 0xFFFFFFFF;
+                uint32_t maxV = 0;
+
+                const int maxThreads = omp_get_max_threads();
+                const bool inParallel = omp_in_parallel();
+
+                if (total < 16384 || inParallel || maxThreads <= 1) {
+                    for (size_t i = 0; i < total; ++i) {
+                        uint32_t v = pVerts[i];
+                        if (v < (uint32_t)mesh->nbVerts && tagData[v] != curEpoch) {
+                            tagData[v] = curEpoch;
+                            pVerts[writeIdx++] = v;
+                            minV = std::min(minV, v);
+                            maxV = std::max(maxV, v);
+                        }
+                    }
+                    allAffectedVerts.resize(writeIdx);
+                } else {
+                    static std::vector<std::vector<uint32_t>> s_threadVerts;
+                    static std::vector<size_t> s_offsets;
+                    if ((int)s_threadVerts.size() < maxThreads) {
+                        s_threadVerts.resize(maxThreads);
+                    }
+                    s_offsets.assign((size_t)maxThreads + 1, 0);
+                    uint32_t globalMin = 0xFFFFFFFF;
+                    uint32_t globalMax = 0;
+
+                    #pragma omp parallel reduction(min:globalMin) reduction(max:globalMax)
+                    {
+                        int tid = omp_get_thread_num();
+                        std::vector<uint32_t> fallbackVerts;
+                        auto& localVerts = (tid >= 0 && tid < (int)s_threadVerts.size()) ? s_threadVerts[tid] : fallbackVerts;
+                        localVerts.clear();
+                        size_t estCount = (total / maxThreads) + 64;
+                        if (localVerts.capacity() < estCount) {
+                            localVerts.reserve(estCount);
+                        }
+
+                        #pragma omp for schedule(static)
+                        for (int64_t i = 0; i < (int64_t)total; ++i) {
+                            uint32_t v = pVerts[i];
+                            if (v < (uint32_t)mesh->nbVerts && tagData[v] != curEpoch) {
+                                std::atomic_ref<uint8_t> ref(tagData[v]);
+                                if (ref.exchange(curEpoch, std::memory_order_relaxed) != curEpoch) {
+                                    localVerts.push_back(v);
+                                    globalMin = std::min(globalMin, v);
+                                    globalMax = std::max(globalMax, v);
+                                }
+                            }
+                        }
+                    }
+
+                    const int numMergeThreads = maxThreads;
+                    for (int t = 0; t < numMergeThreads; ++t) {
+                        s_offsets[t + 1] = s_offsets[t] + s_threadVerts[t].size();
+                    }
+                    writeIdx = s_offsets[numMergeThreads];
+                    allAffectedVerts.resize(writeIdx);
+                    pVerts = allAffectedVerts.data();
+
+                    #pragma omp parallel for schedule(static) if(writeIdx > 8192)
+                    for (int t = 0; t < numMergeThreads; ++t) {
+                        size_t sz = s_threadVerts[t].size();
+                        if (sz > 0) {
+                            std::memcpy(pVerts + s_offsets[t], s_threadVerts[t].data(), sz * sizeof(uint32_t));
+                        }
+                    }
+                    minV = globalMin;
+                    maxV = globalMax;
+                }
+                auto tDedupEnd = std::chrono::high_resolution_clock::now();
+                m_lastFrameProfile.dedupOnlyMs = std::chrono::duration<double, std::milli>(tDedupEnd - tStage).count();
+                if (isSculptDeform && writeIdx > 1) {
+                    radixSortVertices(allAffectedVerts, m_allAffectedVertsCache, maxV);
+                }
+                auto tSortEnd = std::chrono::high_resolution_clock::now();
+                m_lastFrameProfile.radixSortMs = std::chrono::duration<double, std::milli>(tSortEnd - tDedupEnd).count();
+                m_affectedMinV = minV;
+                m_affectedMaxV = maxV;
+
+                m_lastFrameProfile.sortDedupMs = std::chrono::duration<double, std::milli>(tSortEnd - tStage).count();
+                if (isGrabBrush) {
+                    m_grabbedAffectedVerts = allAffectedVerts;
+                    m_grabbedMinV = minV;
+                    m_grabbedMaxV = maxV;
+                }
+                pAff = allAffectedVerts.data();
+                numAff = allAffectedVerts.size();
+            }
         }
-        pAff = allAffectedVerts.data();
-        numAff = allAffectedVerts.size();
     }
     m_lastFrameProfile.affectedVertCount = (int)numAff;
 
     if (numAff > 0) {
         bool isSculptDeform = (activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_MASK_GRADIENT_BLUR && activeBrush != BRUSH_POLYGROUP);
+        glm::vec3 stepDiff = m_currentIntersection - m_initialIntersection;
+        bool isIdleGrabStep0 = OptFlags::get().moveOptim && isGrabBrush && m_firstStrokeFrame &&
+                               (glm::dot(stepDiff, stepDiff) < 1e-10f);
 
-        if (isSculptDeform) {
+        if (isSculptDeform && !isIdleGrabStep0) {
             auto tTagAlloc1 = std::chrono::high_resolution_clock::now();
             if (m_tagFlags.size() < (size_t)mesh->nbFaces) {
                 m_tagFlags.assign(mesh->nbFaces, 0);
@@ -3442,14 +3688,23 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 
             // --- Stage 8: Face Normals & Boxes ---
             tStage = std::chrono::high_resolution_clock::now();
-            updateFaceNormalsAndBoxes(
-                mesh->verts.data(), mesh->nbVerts,
-                mesh->faces.data(), mesh->nbFaces,
-                m_iFacesCache.data(), numIFaces,
-                mesh->faceNormals.data(),
-                mesh->faceBoxes.data(),
-                mesh->faceCenters.data()
-            );
+            if (OptFlags::get().faceNormalsOnly) {
+                updateFaceNormalsOnly(
+                    mesh->verts.data(), mesh->nbVerts,
+                    mesh->faces.data(), mesh->nbFaces,
+                    m_iFacesCache.data(), numIFaces,
+                    mesh->faceNormals.data()
+                );
+            } else {
+                updateFaceNormalsAndBoxes(
+                    mesh->verts.data(), mesh->nbVerts,
+                    mesh->faces.data(), mesh->nbFaces,
+                    m_iFacesCache.data(), numIFaces,
+                    mesh->faceNormals.data(),
+                    mesh->faceBoxes.data(),
+                    mesh->faceCenters.data()
+                );
+            }
             m_lastFrameProfile.faceNormalsMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
 
             // --- Stage 9: Vertex Normals ---
@@ -3469,7 +3724,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 m_lastFrameProfile.bvhUpdateMs = 0.0;
             } else {
                 tStage = std::chrono::high_resolution_clock::now();
-                mesh->bvh.refit(*mesh, m_iFacesCache.data(), numIFaces, true);
+                mesh->bvh.refit(*mesh, m_iFacesCache.data(), numIFaces, !OptFlags::get().faceNormalsOnly);
                 m_lastFrameProfile.bvhUpdateMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
                 const BVHRefitStats& rs = mesh->bvh.getLastRefitStats();
                 m_lastFrameProfile.bvhLeafDedupMs = rs.leafDedupMs;
@@ -3489,66 +3744,95 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             maxV = pAff[numAff - 1];
         }
 
-        if (mesh->isVertexDirty || mesh->isColorDirty || mesh->isMaterialDirty) {
-            mesh->dirtyVertMin = std::min(mesh->dirtyVertMin, minV);
-            mesh->dirtyVertMax = std::max(mesh->dirtyVertMax, maxV);
-        } else {
-            mesh->dirtyVertMin = minV;
-            mesh->dirtyVertMax = maxV;
-        }
+        if (!isIdleGrabStep0) {
+            if (mesh->isVertexDirty || mesh->isColorDirty || mesh->isMaterialDirty) {
+                mesh->dirtyVertMin = std::min(mesh->dirtyVertMin, minV);
+                mesh->dirtyVertMax = std::max(mesh->dirtyVertMax, maxV);
+            } else {
+                mesh->dirtyVertMin = minV;
+                mesh->dirtyVertMax = maxV;
+            }
 
-        const auto& settings = getCurrentSettings();
-        if (OptFlags::get().dirtyBlocks) {
-            if (activeBrush == BRUSH_PAINT) {
-                if (settings.writeAlbedo) {
-                    mesh->markDirtyColors(pAff, numAff);
-                }
-                if (settings.writeRoughness || settings.writeMetalness) {
+            const auto& settings = getCurrentSettings();
+            if (OptFlags::get().dirtyBlocks) {
+                if (activeBrush == BRUSH_PAINT) {
+                    if (settings.writeAlbedo) {
+                        mesh->markDirtyColors(pAff, numAff);
+                    }
+                    if (settings.writeRoughness || settings.writeMetalness) {
+                        mesh->markDirtyMaterials(pAff, numAff);
+                    }
+                } else if (activeBrush == BRUSH_MASK || activeBrush == BRUSH_MASK_GRADIENT_BLUR) {
                     mesh->markDirtyMaterials(pAff, numAff);
+                } else if (activeBrush == BRUSH_POLYGROUP) {
+                    mesh->isFaceGroupDirty = true;
+                } else {
+                    mesh->markDirtyVerts(pAff, numAff);
                 }
-            } else if (activeBrush == BRUSH_MASK || activeBrush == BRUSH_MASK_GRADIENT_BLUR) {
-                mesh->markDirtyMaterials(pAff, numAff);
-            } else if (activeBrush == BRUSH_POLYGROUP) {
-                mesh->isFaceGroupDirty = true;
             } else {
-                mesh->markDirtyVerts(pAff, numAff);
-            }
-        } else {
-            if (activeBrush == BRUSH_PAINT) {
-                if (settings.writeAlbedo) {
-                    mesh->isColorDirty = true;
-                }
-                if (settings.writeRoughness || settings.writeMetalness) {
+                if (activeBrush == BRUSH_PAINT) {
+                    if (settings.writeAlbedo) {
+                        mesh->isColorDirty = true;
+                    }
+                    if (settings.writeRoughness || settings.writeMetalness) {
+                        mesh->isMaterialDirty = true;
+                    }
+                } else if (activeBrush == BRUSH_MASK || activeBrush == BRUSH_MASK_GRADIENT_BLUR) {
                     mesh->isMaterialDirty = true;
+                } else if (activeBrush == BRUSH_POLYGROUP) {
+                    mesh->isFaceGroupDirty = true;
+                } else {
+                    mesh->isVertexDirty = true;
                 }
-            } else if (activeBrush == BRUSH_MASK || activeBrush == BRUSH_MASK_GRADIENT_BLUR) {
-                mesh->isMaterialDirty = true;
-            } else if (activeBrush == BRUSH_POLYGROUP) {
-                mesh->isFaceGroupDirty = true;
+            }
+        }
+
+        m_lastFrameProfile.vertProxySyncMs = 0.0;
+        if (isSculptDeform && !isIdleGrabStep0 && !isGrabBrush && mesh->vertProxy.size() == mesh->verts.size()) {
+            if (OptFlags::get().cpuReuse) {
+                bool needLiveProxy = mesh->isLayerRecording() ||
+                    (activeBrush == BRUSH_CLAY && !getCurrentSettings().accumulate);
+                if (needLiveProxy) {
+                    auto tProxySync0 = std::chrono::high_resolution_clock::now();
+                    const size_t numAff = allAffectedVerts.size();
+                    const uint32_t* pAff = allAffectedVerts.data();
+                    float* dst = mesh->vertProxy.data();
+                    const float* src = mesh->verts.data();
+                    const size_t maxVertIdx = mesh->verts.size() / 3;
+
+                    #pragma omp parallel for schedule(static) if(numAff > 4000)
+                    for (int64_t i = 0; i < (int64_t)numAff; ++i) {
+                        uint32_t v = pAff[i];
+                        if (v < maxVertIdx) {
+                            dst[v * 3 + 0] = src[v * 3 + 0];
+                            dst[v * 3 + 1] = src[v * 3 + 1];
+                            dst[v * 3 + 2] = src[v * 3 + 2];
+                        }
+                    }
+                    m_lastFrameProfile.vertProxySyncMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tProxySync0).count();
+                } else {
+                    m_vertProxyDirty = true;
+                }
             } else {
-                mesh->isVertexDirty = true;
-            }
-        }
+                auto tProxySync0 = std::chrono::high_resolution_clock::now();
+                const size_t numAff = allAffectedVerts.size();
+                const uint32_t* pAff = allAffectedVerts.data();
+                float* dst = mesh->vertProxy.data();
+                const float* src = mesh->verts.data();
+                const size_t maxVertIdx = mesh->verts.size() / 3;
 
-        auto tProxySync0 = std::chrono::high_resolution_clock::now();
-        if (isSculptDeform && !isGrabBrush && mesh->vertProxy.size() == mesh->verts.size()) {
-            const size_t numAff = allAffectedVerts.size();
-            const uint32_t* pAff = allAffectedVerts.data();
-            float* dst = mesh->vertProxy.data();
-            const float* src = mesh->verts.data();
-            const size_t maxVertIdx = mesh->verts.size() / 3;
-
-            #pragma omp parallel for schedule(static) if(numAff > 4000)
-            for (int64_t i = 0; i < (int64_t)numAff; ++i) {
-                uint32_t v = pAff[i];
-                if (v < maxVertIdx) {
-                    dst[v * 3 + 0] = src[v * 3 + 0];
-                    dst[v * 3 + 1] = src[v * 3 + 1];
-                    dst[v * 3 + 2] = src[v * 3 + 2];
+                #pragma omp parallel for schedule(static) if(numAff > 4000)
+                for (int64_t i = 0; i < (int64_t)numAff; ++i) {
+                    uint32_t v = pAff[i];
+                    if (v < maxVertIdx) {
+                        dst[v * 3 + 0] = src[v * 3 + 0];
+                        dst[v * 3 + 1] = src[v * 3 + 1];
+                        dst[v * 3 + 2] = src[v * 3 + 2];
+                    }
                 }
+                m_lastFrameProfile.vertProxySyncMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tProxySync0).count();
             }
         }
-        m_lastFrameProfile.vertProxySyncMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tProxySync0).count();
     }
 
     m_alphaOrigin = m_currentIntersection;

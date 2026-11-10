@@ -16,6 +16,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include "common/OptFlags.h"
 
 enum class LogLevel {
     Debug,
@@ -177,21 +178,40 @@ public:
 
         // Output to stdout
         std::printf("[%s] %s%s", timeStr, lvlTag, fileMsg.c_str());
-        std::fflush(stdout);
 
         // Write to session log and legacy log
         if (m_sessionLogFile.is_open()) {
             m_sessionLogFile << "[" << timeStr << "] " << lvlTag << fileMsg;
-            m_sessionLogFile.flush();
         }
         if (m_logFile.is_open()) {
             m_logFile << "[" << timeStr << "] " << lvlTag << fileMsg;
-            m_logFile.flush();
+        }
+
+        const bool shouldFlush = !OptFlags::get().fastLog || (level == LogLevel::Warning || level == LogLevel::Error);
+        if (shouldFlush) {
+            std::fflush(stdout);
+            if (m_sessionLogFile.is_open()) {
+                m_sessionLogFile.flush();
+            }
+            if (m_logFile.is_open()) {
+                m_logFile.flush();
+            }
         }
 
         m_entries.push_back({level, timeStr, uiMsg});
         if (m_entries.size() > kMaxEntries) {
             m_entries.pop_front();
+        }
+    }
+
+    void flush() {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        std::fflush(stdout);
+        if (m_sessionLogFile.is_open()) {
+            m_sessionLogFile.flush();
+        }
+        if (m_logFile.is_open()) {
+            m_logFile.flush();
         }
     }
 

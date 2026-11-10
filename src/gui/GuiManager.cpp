@@ -8,6 +8,7 @@
 #include "common/Constants.h"
 #include "common/Version.h"
 #include "common/Logger.h"
+#include "common/OptFlags.h"
 #include "common/CrashReporter.h"
 #include "common/ErrorReporter.h"
 #include "common/FormatConstants.h"
@@ -7874,15 +7875,24 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     }
                     selectedMesh->invalidateLocalRadius();
                     selectedMesh->bumpVertsGeneration();
-                    if (!selectedMesh->faceNormals.empty() && !selectedMesh->faceBoxes.empty() && !selectedMesh->faceCenters.empty()) {
-                        updateFaceNormalsAndBoxes(
-                            selectedMesh->verts.data(), selectedMesh->nbVerts,
-                            selectedMesh->faces.data(), selectedMesh->nbFaces,
-                            nullptr, -1,
-                            selectedMesh->faceNormals.data(),
-                            selectedMesh->faceBoxes.data(),
-                            selectedMesh->faceCenters.data()
-                        );
+                    if (!selectedMesh->faceNormals.empty()) {
+                        if (OptFlags::get().faceNormalsOnly) {
+                            updateFaceNormalsOnly(
+                                selectedMesh->verts.data(), selectedMesh->nbVerts,
+                                selectedMesh->faces.data(), selectedMesh->nbFaces,
+                                nullptr, -1,
+                                selectedMesh->faceNormals.data()
+                            );
+                        } else if (!selectedMesh->faceBoxes.empty() && !selectedMesh->faceCenters.empty()) {
+                            updateFaceNormalsAndBoxes(
+                                selectedMesh->verts.data(), selectedMesh->nbVerts,
+                                selectedMesh->faces.data(), selectedMesh->nbFaces,
+                                nullptr, -1,
+                                selectedMesh->faceNormals.data(),
+                                selectedMesh->faceBoxes.data(),
+                                selectedMesh->faceCenters.data()
+                            );
+                        }
                         if (!selectedMesh->vrfStartCount.empty() && !selectedMesh->vertRingFace.empty()) {
                             updateVertexNormals(
                                 nullptr, -1, selectedMesh->nbVerts,
@@ -7892,7 +7902,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                 selectedMesh->normals.data()
                             );
                         }
-                        selectedMesh->bvh.refitAll(*selectedMesh, true);
+                        selectedMesh->bvh.refitAll(*selectedMesh, !OptFlags::get().faceNormalsOnly);
                     } else {
                         selectedMesh->postInit();
                     }
@@ -7945,15 +7955,24 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         }
                         selectedMesh->invalidateLocalRadius();
                         selectedMesh->bumpVertsGeneration();
-                        if (!selectedMesh->faceNormals.empty() && !selectedMesh->faceBoxes.empty() && !selectedMesh->faceCenters.empty()) {
-                            updateFaceNormalsAndBoxes(
-                                selectedMesh->verts.data(), selectedMesh->nbVerts,
-                                selectedMesh->faces.data(), selectedMesh->nbFaces,
-                                nullptr, -1,
-                                selectedMesh->faceNormals.data(),
-                                selectedMesh->faceBoxes.data(),
-                                selectedMesh->faceCenters.data()
-                            );
+                        if (!selectedMesh->faceNormals.empty()) {
+                            if (OptFlags::get().faceNormalsOnly) {
+                                updateFaceNormalsOnly(
+                                    selectedMesh->verts.data(), selectedMesh->nbVerts,
+                                    selectedMesh->faces.data(), selectedMesh->nbFaces,
+                                    nullptr, -1,
+                                    selectedMesh->faceNormals.data()
+                                );
+                            } else if (!selectedMesh->faceBoxes.empty() && !selectedMesh->faceCenters.empty()) {
+                                updateFaceNormalsAndBoxes(
+                                    selectedMesh->verts.data(), selectedMesh->nbVerts,
+                                    selectedMesh->faces.data(), selectedMesh->nbFaces,
+                                    nullptr, -1,
+                                    selectedMesh->faceNormals.data(),
+                                    selectedMesh->faceBoxes.data(),
+                                    selectedMesh->faceCenters.data()
+                                );
+                            }
                             if (!selectedMesh->vrfStartCount.empty() && !selectedMesh->vertRingFace.empty()) {
                                 updateVertexNormals(
                                     nullptr, -1, selectedMesh->nbVerts,
@@ -7963,7 +7982,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                     selectedMesh->normals.data()
                                 );
                             }
-                            selectedMesh->bvh.refitAll(*selectedMesh, true);
+                            selectedMesh->bvh.refitAll(*selectedMesh, !OptFlags::get().faceNormalsOnly);
                         } else {
                             selectedMesh->postInit();
                         }
@@ -8075,15 +8094,24 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         meshUndoState.affectedFaces.assign(s_transformTempFaces.begin(), s_transformTempFaces.begin() + numIFaces);
                     }
 
-                    if (!meshUndoState.affectedFaces.empty() && !selectedMesh->faceNormals.empty() && !selectedMesh->faceBoxes.empty() && !selectedMesh->faceCenters.empty()) {
-                        updateFaceNormalsAndBoxes(
-                            selectedMesh->verts.data(), selectedMesh->nbVerts,
-                            selectedMesh->faces.data(), selectedMesh->nbFaces,
-                            meshUndoState.affectedFaces.data(), (int)meshUndoState.affectedFaces.size(),
-                            selectedMesh->faceNormals.data(),
-                            selectedMesh->faceBoxes.data(),
-                            selectedMesh->faceCenters.data()
-                        );
+                    if (!meshUndoState.affectedFaces.empty() && !selectedMesh->faceNormals.empty()) {
+                        if (OptFlags::get().faceNormalsOnly) {
+                            updateFaceNormalsOnly(
+                                selectedMesh->verts.data(), selectedMesh->nbVerts,
+                                selectedMesh->faces.data(), selectedMesh->nbFaces,
+                                meshUndoState.affectedFaces.data(), (int)meshUndoState.affectedFaces.size(),
+                                selectedMesh->faceNormals.data()
+                            );
+                        } else if (!selectedMesh->faceBoxes.empty() && !selectedMesh->faceCenters.empty()) {
+                            updateFaceNormalsAndBoxes(
+                                selectedMesh->verts.data(), selectedMesh->nbVerts,
+                                selectedMesh->faces.data(), selectedMesh->nbFaces,
+                                meshUndoState.affectedFaces.data(), (int)meshUndoState.affectedFaces.size(),
+                                selectedMesh->faceNormals.data(),
+                                selectedMesh->faceBoxes.data(),
+                                selectedMesh->faceCenters.data()
+                            );
+                        }
                         if (!selectedMesh->vrfStartCount.empty() && !selectedMesh->vertRingFace.empty()) {
                             updateVertexNormals(
                                 meshUndoState.sparseVertIndices.data(), (int)meshUndoState.sparseVertIndices.size(), selectedMesh->nbVerts,
@@ -8093,16 +8121,25 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                 selectedMesh->normals.data()
                             );
                         }
-                        selectedMesh->bvh.refit(*selectedMesh, meshUndoState.affectedFaces.data(), meshUndoState.affectedFaces.size(), true);
+                        selectedMesh->bvh.refit(*selectedMesh, meshUndoState.affectedFaces.data(), meshUndoState.affectedFaces.size(), !OptFlags::get().faceNormalsOnly);
                     } else if (!selectedMesh->faceNormals.empty()) {
-                        updateFaceNormalsAndBoxes(
-                            selectedMesh->verts.data(), selectedMesh->nbVerts,
-                            selectedMesh->faces.data(), selectedMesh->nbFaces,
-                            nullptr, -1,
-                            selectedMesh->faceNormals.data(),
-                            selectedMesh->faceBoxes.data(),
-                            selectedMesh->faceCenters.data()
-                        );
+                        if (OptFlags::get().faceNormalsOnly) {
+                            updateFaceNormalsOnly(
+                                selectedMesh->verts.data(), selectedMesh->nbVerts,
+                                selectedMesh->faces.data(), selectedMesh->nbFaces,
+                                nullptr, -1,
+                                selectedMesh->faceNormals.data()
+                            );
+                        } else if (!selectedMesh->faceBoxes.empty() && !selectedMesh->faceCenters.empty()) {
+                            updateFaceNormalsAndBoxes(
+                                selectedMesh->verts.data(), selectedMesh->nbVerts,
+                                selectedMesh->faces.data(), selectedMesh->nbFaces,
+                                nullptr, -1,
+                                selectedMesh->faceNormals.data(),
+                                selectedMesh->faceBoxes.data(),
+                                selectedMesh->faceCenters.data()
+                            );
+                        }
                         if (!selectedMesh->vrfStartCount.empty() && !selectedMesh->vertRingFace.empty()) {
                             updateVertexNormals(
                                 nullptr, -1, selectedMesh->nbVerts,
@@ -8112,7 +8149,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                 selectedMesh->normals.data()
                             );
                         }
-                        selectedMesh->bvh.refitAll(*selectedMesh, true);
+                        selectedMesh->bvh.refitAll(*selectedMesh, !OptFlags::get().faceNormalsOnly);
                     } else {
                         selectedMesh->postInit();
                     }

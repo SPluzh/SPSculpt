@@ -707,6 +707,11 @@ private:
     std::vector<uint32_t> m_iFacesCache;
     std::vector<uint32_t> m_pickedVerticesCache;
     std::vector<uint32_t> m_allAffectedVertsCache;
+    std::vector<uint32_t> m_allAffectedVerts;
+    std::vector<uint32_t> m_symVerts;
+    bool m_vertProxyDirty = false;
+
+    void ensureVertProxySynced(Mesh* mesh);
 
     // Cache for computeAreaNormalAndCenter & inverse mesh matrix & stroke start layer deltas
     bool m_firstStrokeFrame = false;

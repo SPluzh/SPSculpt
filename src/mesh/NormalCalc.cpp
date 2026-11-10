@@ -111,20 +111,32 @@ void updateFaceNormalsAndBoxes(
 void updateFaceNormalsOnly(
     const float* verts, int nbVerts,
     const uint32_t* faces, int nbFaces,
+    const uint32_t* iFaces, int nbIFaces,
     float* faceNormals
 ) {
     if (!verts || !faces || !faceNormals || nbFaces <= 0 || nbVerts <= 0) return;
+    bool full = (nbIFaces < 0 || (iFaces == nullptr && nbIFaces != 0));
+    int loopCount = full ? nbFaces : nbIFaces;
 
-    #pragma omp parallel for schedule(static) if(nbFaces > 500)
-    for (int i = 0; i < nbFaces; ++i) {
-        uint32_t idTri = i * 3;
-        uint32_t idFace = i * 4;
+    #pragma omp parallel for schedule(static) if(loopCount > 500)
+    for (int i = 0; i < loopCount; ++i) {
+        uint32_t ind = full ? i : iFaces[i];
+        if (ind >= (uint32_t)nbFaces) continue;
 
-        uint32_t ind1 = faces[idFace] * 3;
-        uint32_t ind2 = faces[idFace + 1] * 3;
-        uint32_t ind3 = faces[idFace + 2] * 3;
-        uint32_t ind4 = faces[idFace + 3];
-        bool isQuad = (ind4 != TRI_INDEX);
+        uint32_t idTri = ind * 3;
+        uint32_t idFace = ind * 4;
+
+        uint32_t f1 = faces[idFace];
+        uint32_t f2 = faces[idFace + 1];
+        uint32_t f3 = faces[idFace + 2];
+        uint32_t f4 = faces[idFace + 3];
+        if (f1 >= (uint32_t)nbVerts || f2 >= (uint32_t)nbVerts || f3 >= (uint32_t)nbVerts) continue;
+        bool isQuad = (f4 != TRI_INDEX && f4 < (uint32_t)nbVerts);
+
+        uint32_t ind1 = f1 * 3;
+        uint32_t ind2 = f2 * 3;
+        uint32_t ind3 = f3 * 3;
+        uint32_t ind4 = f4 * 3;
 
         float v1x = verts[ind1];
         float v1y = verts[ind1 + 1];
@@ -147,14 +159,9 @@ void updateFaceNormalsOnly(
         float crz = ax * by - ay * bx;
 
         if (isQuad) {
-            uint32_t ind4_3 = ind4 * 3;
-            float v4x = verts[ind4_3];
-            float v4y = verts[ind4_3 + 1];
-            float v4z = verts[ind4_3 + 2];
-
-            float ax2 = v3x - v4x;
-            float ay2 = v3y - v4y;
-            float az2 = v3z - v4z;
+            float ax2 = v3x - verts[ind4];
+            float ay2 = v3y - verts[ind4 + 1];
+            float az2 = v3z - verts[ind4 + 2];
             crx += ay2 * bz - az2 * by;
             cry += az2 * bx - ax2 * bz;
             crz += ax2 * by - ay2 * bx;
@@ -164,6 +171,14 @@ void updateFaceNormalsOnly(
         faceNormals[idTri + 1] = cry;
         faceNormals[idTri + 2] = crz;
     }
+}
+
+void updateFaceNormalsOnly(
+    const float* verts, int nbVerts,
+    const uint32_t* faces, int nbFaces,
+    float* faceNormals
+) {
+    updateFaceNormalsOnly(verts, nbVerts, faces, nbFaces, nullptr, -1, faceNormals);
 }
 
 #if defined(__x86_64__) || defined(_M_X64)
