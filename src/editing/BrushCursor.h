@@ -62,8 +62,20 @@ public:
 
     const BrushCursorState& getState() const { return m_state; }
 
+    size_t getOcclusionQueryCount() const { return m_occlusionQueryCount; }
+    void resetOcclusionQueryCount() { m_occlusionQueryCount = 0; }
+
 private:
     BrushCursorState m_state;
+
+    int m_lastOccMouseX = -99999;
+    int m_lastOccMouseY = -99999;
+    glm::mat4 m_lastOccViewLeft{0.0f};
+    glm::mat4 m_lastOccViewRight{0.0f};
+    uint64_t m_lastOccTicks = 0;
+    std::vector<char> m_cachedSymOccluded;
+    std::vector<char> m_cachedSymOccludedRight;
+    size_t m_occlusionQueryCount = 0;
 
     glm::mat4 buildCircleMVP(const glm::vec3& center,
                              const glm::vec3& normal,

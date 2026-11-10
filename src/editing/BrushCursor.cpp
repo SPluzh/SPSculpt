@@ -5,6 +5,8 @@
 #include "render/AngleRenderer.h"
 #include "mesh/Mesh.h"
 #include "platform/TabletInput.h"
+#include "common/OptFlags.h"
+#include <SDL.h>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <cmath>
@@ -260,6 +262,15 @@ void BrushCursor::update(int mouseX, int mouseY,
 
         m_state.symMVPs.clear();
         m_state.symOccluded.clear();
+        const bool throttle = OptFlags::get().cursorThrottle;
+        const uint64_t nowTicks = SDL_GetTicks64();
+        const bool camChangedLeft = (cameraLeft.getViewMatrix() != m_lastOccViewLeft);
+        const bool camChangedRight = (cameraRight && cameraRight->getViewMatrix() != m_lastOccViewRight);
+        const float dxOcc = (float)(mouseX - m_lastOccMouseX);
+        const float dyOcc = (float)(mouseY - m_lastOccMouseY);
+        const bool mouseMovedSignificantly = (dxOcc * dxOcc + dyOcc * dyOcc) > 2.25f; // > 1.5 px
+        const bool timeExpired = (nowTicks - m_lastOccTicks) > 40; // ~25 Hz
+
         if (useSym && (symX || symY || symZ) && mesh) {
             glm::mat4 invMatrix = glm::inverse(mesh->matrix);
             glm::vec3 lPt = glm::vec3(invMatrix * glm::vec4(worldPt, 1.0f));
@@ -272,6 +283,9 @@ void BrushCursor::update(int mouseX, int mouseY,
             if (symX) xVals.push_back(-1.0f);
             if (symY) yVals.push_back(-1.0f);
             if (symZ) zVals.push_back(-1.0f);
+
+            std::vector<glm::vec3> worldSymPts;
+            worldSymPts.reserve(7);
 
             for (float sx : xVals) {
                 for (float sy : yVals) {
@@ -298,11 +312,24 @@ void BrushCursor::update(int mouseX, int mouseY,
 
                         glm::mat4 symMVP = buildCircleMVP(worldSymPt, circleSymNormalLeft, constRadiusLeft, cameraLeft, tiltX, tiltY);
                         m_state.symMVPs.push_back(symMVP);
-
-                        bool occluded = checkOcclusion(worldSymPt, cameraLeft, mesh);
-                        m_state.symOccluded.push_back(occluded ? 1 : 0);
+                        worldSymPts.push_back(worldSymPt);
                     }
                 }
+            }
+
+            bool recomputeOccLeft = !throttle || camChangedLeft || mouseMovedSignificantly || timeExpired ||
+                                    (m_cachedSymOccluded.size() != m_state.symMVPs.size());
+            if (recomputeOccLeft) {
+                m_state.symOccluded.clear();
+                m_state.symOccluded.reserve(worldSymPts.size());
+                for (const auto& wpt : worldSymPts) {
+                    m_occlusionQueryCount++;
+                    bool occluded = checkOcclusion(wpt, cameraLeft, mesh);
+                    m_state.symOccluded.push_back(occluded ? 1 : 0);
+                }
+                m_cachedSymOccluded = m_state.symOccluded;
+            } else {
+                m_state.symOccluded = m_cachedSymOccluded;
             }
         }
 
@@ -353,6 +380,9 @@ void BrushCursor::update(int mouseX, int mouseY,
                 if (symY) yVals.push_back(-1.0f);
                 if (symZ) zVals.push_back(-1.0f);
 
+                std::vector<glm::vec3> worldSymPtsRight;
+                worldSymPtsRight.reserve(7);
+
                 for (float sx : xVals) {
                     for (float sy : yVals) {
                         for (float sz : zVals) {
@@ -378,13 +408,34 @@ void BrushCursor::update(int mouseX, int mouseY,
 
                             glm::mat4 symMVP = buildCircleMVP(worldSymPt, circleSymNormalRight, constRadiusRight, *cameraRight, tiltX, tiltY);
                             m_state.symMVPsRight.push_back(symMVP);
-
-                            bool occluded = checkOcclusion(worldSymPt, *cameraRight, mesh);
-                            m_state.symOccludedRight.push_back(occluded ? 1 : 0);
+                            worldSymPtsRight.push_back(worldSymPt);
                         }
                     }
                 }
+
+                bool recomputeOccRight = !throttle || camChangedRight || mouseMovedSignificantly || timeExpired ||
+                                         (m_cachedSymOccludedRight.size() != m_state.symMVPsRight.size());
+                if (recomputeOccRight) {
+                    m_state.symOccludedRight.clear();
+                    m_state.symOccludedRight.reserve(worldSymPtsRight.size());
+                    for (const auto& wpt : worldSymPtsRight) {
+                        m_occlusionQueryCount++;
+                        bool occluded = checkOcclusion(wpt, *cameraRight, mesh);
+                        m_state.symOccludedRight.push_back(occluded ? 1 : 0);
+                    }
+                    m_cachedSymOccludedRight = m_state.symOccludedRight;
+                } else {
+                    m_state.symOccludedRight = m_cachedSymOccludedRight;
+                }
             }
+        }
+
+        if (throttle) {
+            m_lastOccMouseX = mouseX;
+            m_lastOccMouseY = mouseY;
+            m_lastOccViewLeft = cameraLeft.getViewMatrix();
+            m_lastOccViewRight = cameraRight ? cameraRight->getViewMatrix() : glm::mat4(0.0f);
+            m_lastOccTicks = nowTicks;
         }
     } else {
         // Background Screenspace Mode

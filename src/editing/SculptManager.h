@@ -326,9 +326,15 @@ public:
 
     void handleEvent(const SDL_Event& event, Scene& scene);
     void processFrame(Scene& scene);
-    void executeStroke(Scene& scene, Mesh* mesh, Camera& camera, float mouseX, float mouseY, float currentPressure);
+    void executeStroke(Scene& scene, Mesh* mesh, Camera& camera, float mouseX, float mouseY, float currentPressure = 1.0f, bool deferPostProcess = false, bool isSubstepBatch = false);
+    void flushPendingGrabMotion(Scene& scene, const Camera& camera);
+    bool hasPendingGrabMotion() const { return m_pendingGrabMotion; }
     void cancelStroke();
     void warmupMeshCaches(const Mesh* mesh);
+
+    size_t getCoalescedGrabCount() const { return m_coalescedGrabStrokeCount; }
+    size_t getBatchedSubstepsCount() const { return m_batchedSubstepsCount; }
+    void resetStage4Stats() { m_coalescedGrabStrokeCount = 0; m_batchedSubstepsCount = 0; }
 
     bool saveSettings(IniFile& ini);
     bool loadSettings(const IniFile& ini);
@@ -754,6 +760,17 @@ private:
     uint32_t              m_grabbedMinV = 0xFFFFFFFF;
     uint32_t              m_grabbedMaxV = 0;
     std::vector<std::vector<uint32_t>> m_prePickedSymVerts;
+
+    // Stage 4: Grab Coalescence & Sub-step Batching
+    bool                  m_pendingGrabMotion = false;
+    float                 m_pendingGrabX = 0.0f;
+    float                 m_pendingGrabY = 0.0f;
+    float                 m_pendingGrabPressure = 1.0f;
+    Mesh*                 m_pendingGrabMesh = nullptr;
+    float                 m_strokeArcRemainder = 0.0f;
+    std::vector<uint32_t> m_batchedAffectedVerts;
+    size_t                m_coalescedGrabStrokeCount = 0;
+    size_t                m_batchedSubstepsCount = 0;
 
     // Measurement & Divider states
     std::vector<MeasurementSegment> m_measureSegments;

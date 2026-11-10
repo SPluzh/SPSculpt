@@ -81,14 +81,25 @@ inline int mergeCompactedThreadBuffers(std::vector<std::vector<uint32_t>>& threa
     if (maxOutCapacity > 0 && totalCount > (size_t)maxOutCapacity) {
         totalCount = (size_t)maxOutCapacity;
     }
-    #pragma omp parallel for schedule(static) if(totalCount > 4000)
-    for (int t = 0; t < nThreads; ++t) {
-        size_t sz = threadBufs[t].size();
-        if (sz > 0 && offsets[t] < totalCount) {
-            size_t toCopy = std::min(sz, totalCount - offsets[t]);
-            std::memcpy(outIVerts + offsets[t], threadBufs[t].data(), toCopy * sizeof(uint32_t));
+    if (totalCount > 32768 && !omp_in_parallel()) {
+        #pragma omp parallel for schedule(static)
+        for (int t = 0; t < nThreads; ++t) {
+            size_t sz = threadBufs[t].size();
+            if (sz > 0 && offsets[t] < totalCount) {
+                size_t toCopy = std::min(sz, totalCount - offsets[t]);
+                std::memcpy(outIVerts + offsets[t], threadBufs[t].data(), toCopy * sizeof(uint32_t));
+            }
+            threadBufs[t].clear();
         }
-        threadBufs[t].clear();
+    } else {
+        for (int t = 0; t < nThreads; ++t) {
+            size_t sz = threadBufs[t].size();
+            if (sz > 0 && offsets[t] < totalCount) {
+                size_t toCopy = std::min(sz, totalCount - offsets[t]);
+                std::memcpy(outIVerts + offsets[t], threadBufs[t].data(), toCopy * sizeof(uint32_t));
+            }
+            threadBufs[t].clear();
+        }
     }
     for (size_t t = (size_t)nThreads; t < threadBufs.size(); ++t) {
         threadBufs[t].clear();
@@ -714,14 +725,25 @@ uint32_t getFacesFromVerticesFast(
     if (outCapacity > 0 && totalFaces > (size_t)outCapacity) {
         totalFaces = (size_t)outCapacity;
     }
-    #pragma omp parallel for schedule(static) if(totalFaces > 8192)
-    for (int t = 0; t < numMergeThreads; ++t) {
-        size_t sz = s_threadFaces[t].size();
-        if (sz > 0 && offsets[t] < totalFaces) {
-            size_t toCopy = std::min(sz, totalFaces - offsets[t]);
-            std::memcpy(outIFaces + offsets[t], s_threadFaces[t].data(), toCopy * sizeof(uint32_t));
+    if (totalFaces > 32768 && !omp_in_parallel()) {
+        #pragma omp parallel for schedule(static)
+        for (int t = 0; t < numMergeThreads; ++t) {
+            size_t sz = s_threadFaces[t].size();
+            if (sz > 0 && offsets[t] < totalFaces) {
+                size_t toCopy = std::min(sz, totalFaces - offsets[t]);
+                std::memcpy(outIFaces + offsets[t], s_threadFaces[t].data(), toCopy * sizeof(uint32_t));
+            }
+            s_threadFaces[t].clear();
         }
-        s_threadFaces[t].clear();
+    } else {
+        for (int t = 0; t < numMergeThreads; ++t) {
+            size_t sz = s_threadFaces[t].size();
+            if (sz > 0 && offsets[t] < totalFaces) {
+                size_t toCopy = std::min(sz, totalFaces - offsets[t]);
+                std::memcpy(outIFaces + offsets[t], s_threadFaces[t].data(), toCopy * sizeof(uint32_t));
+            }
+            s_threadFaces[t].clear();
+        }
     }
     for (size_t t = (size_t)numMergeThreads; t < s_threadFaces.size(); ++t) {
         s_threadFaces[t].clear();
@@ -865,13 +887,23 @@ uint32_t getFacesFromVerticesFast(
         outIFaces.resize(totalFaces);
     }
     uint32_t* dstPtr = outIFaces.data();
-    #pragma omp parallel for schedule(static) if(totalFaces > 8192)
-    for (int t = 0; t < numMergeThreads; ++t) {
-        size_t sz = s_threadFacesVec[t].size();
-        if (sz > 0) {
-            std::memcpy(dstPtr + offsets[t], s_threadFacesVec[t].data(), sz * sizeof(uint32_t));
+    if (totalFaces > 32768 && !omp_in_parallel()) {
+        #pragma omp parallel for schedule(static)
+        for (int t = 0; t < numMergeThreads; ++t) {
+            size_t sz = s_threadFacesVec[t].size();
+            if (sz > 0) {
+                std::memcpy(dstPtr + offsets[t], s_threadFacesVec[t].data(), sz * sizeof(uint32_t));
+            }
+            s_threadFacesVec[t].clear();
         }
-        s_threadFacesVec[t].clear();
+    } else {
+        for (int t = 0; t < numMergeThreads; ++t) {
+            size_t sz = s_threadFacesVec[t].size();
+            if (sz > 0) {
+                std::memcpy(dstPtr + offsets[t], s_threadFacesVec[t].data(), sz * sizeof(uint32_t));
+            }
+            s_threadFacesVec[t].clear();
+        }
     }
     for (size_t t = (size_t)numMergeThreads; t < s_threadFacesVec.size(); ++t) {
         s_threadFacesVec[t].clear();

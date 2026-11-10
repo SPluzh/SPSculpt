@@ -315,6 +315,7 @@ int main(int argc, char* argv[]) {
     bool runStage1Test = false;
     bool runStage2Test = false;
     bool runStage3Test = false;
+    bool runStage4Test = false;
     bool runBVHTest = false;
     bool runDyntopoTest = false;
     bool runDyntopoBench = false;
@@ -413,6 +414,9 @@ int main(int argc, char* argv[]) {
             } else if (arg == "--test-stage3" || arg == "--stage3-test") {
                 runStage3Test = true;
                 showConsole = true;
+            } else if (arg == "--test-stage4" || arg == "--stage4-test") {
+                runStage4Test = true;
+                showConsole = true;
             } else if ((arg == "--bench-render-faces" || arg == "--bench-faces" || arg == "-bf") && i + 1 < numArgs) {
                 showConsole = true;
                 benchFaces = std::atoi(wideToUtf8(szArgList[++i]).c_str());
@@ -502,6 +506,9 @@ int main(int argc, char* argv[]) {
             showConsole = true;
         } else if (arg == "--test-stage3" || arg == "--stage3-test") {
             runStage3Test = true;
+            showConsole = true;
+        } else if (arg == "--test-stage4" || arg == "--stage4-test") {
+            runStage4Test = true;
             showConsole = true;
         } else if ((arg == "--bench-render-faces" || arg == "--bench-faces" || arg == "-bf") && i + 1 < argc) {
             showConsole = true;
@@ -947,6 +954,26 @@ int main(int argc, char* argv[]) {
         g_undoManager.setSculptManager(&sculpt);
         sculpt.setRenderer(&renderer);
         bool ok = RenderBenchmark::runStage3Tests(scene, sculpt, renderer, window);
+        scene.setSculptManager(nullptr);
+        fflush(stdout);
+        fflush(stderr);
+        SDL_GL_DeleteContext(glContext);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+#ifdef _WIN32
+        ExitProcess(ok ? 0 : 1);
+#else
+        _exit(ok ? 0 : 1);
+#endif
+    }
+
+    if (runStage4Test) {
+        BrushPresetManager::instance().loadDefaults();
+        SculptManager sculpt;
+        scene.setSculptManager(&sculpt);
+        g_undoManager.setSculptManager(&sculpt);
+        sculpt.setRenderer(&renderer);
+        bool ok = RenderBenchmark::runStage4Tests(scene, sculpt, renderer, window);
         scene.setSculptManager(nullptr);
         fflush(stdout);
         fflush(stderr);

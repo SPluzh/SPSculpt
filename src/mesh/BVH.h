@@ -86,6 +86,7 @@ public:
         m_lastPickStats[0] = other.m_lastPickStats[0];
         m_lastPickStats[1] = other.m_lastPickStats[1];
         m_lastRefitStats = other.m_lastRefitStats;
+        m_lastQueriedLeaves = std::move(other.m_lastQueriedLeaves);
         m_leafCap = std::move(other.m_leafCap);
         m_editedLeaves = std::move(other.m_editedLeaves);
         m_leafEdited = std::move(other.m_leafEdited);
@@ -116,6 +117,7 @@ public:
             m_lastPickStats[0] = other.m_lastPickStats[0];
             m_lastPickStats[1] = other.m_lastPickStats[1];
             m_lastRefitStats = other.m_lastRefitStats;
+            m_lastQueriedLeaves = std::move(other.m_lastQueriedLeaves);
             m_leafCap = std::move(other.m_leafCap);
             m_editedLeaves = std::move(other.m_editedLeaves);
             m_leafEdited = std::move(other.m_leafEdited);
@@ -167,6 +169,14 @@ public:
 
     // Incremental refit for vertices moved during a sculpt stroke (O(K log N))
     void refit(const Mesh& mesh, const uint32_t* modifiedFaces, size_t count, bool usePrecomputedBoxes = false);
+
+    // Incremental refit directly for leaves identified during vertex picking (skips face-to-leaf mapping)
+    void refitLeaves(const Mesh& mesh, const uint32_t* leafIndices, size_t numLeaves, bool usePrecomputedBoxes = false);
+    void refitLeaves(const Mesh& mesh, const std::vector<uint32_t>& leaves, bool usePrecomputedBoxes = false) {
+        refitLeaves(mesh, leaves.data(), leaves.size(), usePrecomputedBoxes);
+    }
+    const std::vector<uint32_t>& getLastQueriedLeaves() const { return m_lastQueriedLeaves; }
+    void clearLastQueriedLeaves() const { m_lastQueriedLeaves.clear(); }
 
     // Full refit of all leaf and inner node AABBs without rebuilding tree topology
     void refitAll(const Mesh& mesh, bool usePrecomputedBoxes = false);
@@ -298,6 +308,7 @@ private:
     mutable std::vector<uint32_t> m_dirtyLeaves;
     mutable std::vector<uint32_t> m_dirtyInnerNodes;
     mutable std::vector<uint32_t> m_dirtyInnerNodesTemp;
+    mutable std::vector<uint32_t> m_lastQueriedLeaves;
 
     // Dynamic topology edit tracking
     std::vector<uint32_t> m_leafCap;
@@ -308,5 +319,6 @@ private:
     void editLeaf(uint32_t leaf);
     void splitLeaf(const Mesh& mesh, uint32_t leaf);
     void computeLeafAABB(const Mesh& mesh, BVHNode& node, uint32_t nodeIdx, bool usePrecomputedBoxes = false, bool assignFaceToLeaf = false);
+    void propagateDirtyLeaves(const Mesh& mesh, bool usePrecomputedBoxes, BVHRefitStats& stats);
 };
 

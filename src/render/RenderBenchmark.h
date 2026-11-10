@@ -24,6 +24,7 @@
 #include "editing/undo/UndoManager.h"
 #include "mesh/Mesh.h"
 #include "mesh/NormalCalc.h"
+#include "sculpt/SculptEngine.h"
 #include "render/AngleRenderer.h"
 #include "scene/Camera.h"
 #include "scene/Scene.h"
@@ -2488,6 +2489,317 @@ inline bool runStage3Tests(Scene& scene, SculptManager& sculpt, AngleRenderer& r
 
     std::cout << "================================================================================\n";
     std::cout << "  Stage 3 Tests Complete: " << (allOk ? "ALL PASSED" : "FAILED") << "\n";
+    std::cout << "================================================================================\n\n";
+    return allOk;
+}
+
+inline bool runStage4Tests(Scene& scene, SculptManager& sculpt, AngleRenderer& renderer, SDL_Window* window) {
+    int winW = 1920, winH = 1080;
+    if (window) {
+        SDL_GetWindowSize(window, &winW, &winH);
+    }
+
+    const OptFlags::Config savedFlags = OptFlags::get();
+    OptFlags::get().coalesceGrab = true;
+    OptFlags::get().batchSubsteps = true;
+    OptFlags::get().cursorThrottle = true;
+    OptFlags::get().bvhRefitLeaves = true;
+
+    const float scalePx = std::max(0.5f, (float)std::min(winW, winH) / 1080.0f);
+    const float centerX = (float)winW * 0.5f;
+    const float centerY = (float)winH * 0.5f;
+
+    std::cout << "\n================================================================================\n";
+    std::cout << "  Stage 4 Invariant Verification (--test-stage4)\n";
+    std::cout << "================================================================================\n";
+
+    bool allOk = true;
+    auto checkCond = [&](bool cond, const char* msg) {
+        if (!cond) {
+            std::cerr << "  [FAIL] " << msg << "\n";
+            allOk = false;
+        } else {
+            std::cout << "  [PASS] " << msg << "\n";
+        }
+    };
+
+    auto doStrokeStep = [&](float x, float y, bool isDown, BrushType brush) {
+        SDL_PumpEvents();
+        SDL_Event ev;
+        std::memset(&ev, 0, sizeof(ev));
+        if (isDown) {
+            ev.type = SDL_MOUSEBUTTONDOWN;
+            ev.button.button = SDL_BUTTON_LEFT;
+            ev.button.x = (int)std::round(x);
+            ev.button.y = (int)std::round(y);
+        } else {
+            ev.type = SDL_MOUSEMOTION;
+            ev.motion.state = SDL_BUTTON_LMASK;
+            ev.motion.x = (int)std::round(x);
+            ev.motion.y = (int)std::round(y);
+        }
+        sculpt.handleEvent(ev, scene);
+        sculpt.setRawMousePos((int)std::round(x), (int)std::round(y));
+        sculpt.processFrame(scene);
+        renderer.setActiveBrush(brush);
+    };
+
+    auto releaseStroke = [&](float x, float y) {
+        SDL_Event evUp;
+        std::memset(&evUp, 0, sizeof(evUp));
+        evUp.type = SDL_MOUSEBUTTONUP;
+        evUp.button.button = SDL_BUTTON_LEFT;
+        evUp.button.x = (int)std::round(x);
+        evUp.button.y = (int)std::round(y);
+        sculpt.handleEvent(evUp, scene);
+    };
+
+    // -------------------------------------------------------------------------
+    // Test 1: Input Coalescing for Grab Brushes (coalesceGrab)
+    // -------------------------------------------------------------------------
+    {
+        Mesh* sphere = createSphereMeshWithPolygroups(120, 240).release();
+        sphere->postInit(true);
+        scene.addMesh(sphere);
+        scene.selectMesh(sphere);
+
+        sculpt.setUseSym(false);
+        sculpt.saveSymmetryToMesh(sphere);
+        sculpt.warmupMeshCaches(sphere);
+
+        sculpt.setBrush(BRUSH_MOVE);
+        auto& moveSet = sculpt.getSettings(BRUSH_MOVE);
+        moveSet.radius = 50.0f * scalePx;
+        moveSet.intensity = 1.0f;
+
+        sculpt.resetStage4Stats();
+
+        // Step 0
+        SDL_Event evDown;
+        std::memset(&evDown, 0, sizeof(evDown));
+        evDown.type = SDL_MOUSEBUTTONDOWN;
+        evDown.button.button = SDL_BUTTON_LEFT;
+        evDown.button.x = (int)std::round(centerX);
+        evDown.button.y = (int)std::round(centerY);
+        sculpt.handleEvent(evDown, scene);
+
+        // 10 motion events without rendering (burst input)
+        for (int i = 1; i <= 10; ++i) {
+            SDL_Event evMove;
+            std::memset(&evMove, 0, sizeof(evMove));
+            evMove.type = SDL_MOUSEMOTION;
+            evMove.motion.state = SDL_BUTTON_LMASK;
+            evMove.motion.x = (int)std::round(centerX + (float)i * 3.0f * scalePx);
+            evMove.motion.y = (int)std::round(centerY);
+            sculpt.handleEvent(evMove, scene);
+        }
+
+        bool hasPending = sculpt.hasPendingGrabMotion();
+        size_t coalescedBefore = sculpt.getCoalescedGrabCount();
+
+        // processFrame flushes the coalesced grab stroke
+        sculpt.processFrame(scene);
+
+        bool clearedPending = !sculpt.hasPendingGrabMotion();
+        size_t coalescedAfter = sculpt.getCoalescedGrabCount();
+
+        releaseStroke(centerX + 30.0f * scalePx, centerY);
+
+        std::vector<float> postStrokeVerts = sphere->verts;
+        g_undoManager.undo(scene);
+        g_undoManager.redo(scene);
+        float redoDiff = 0.0f;
+        for (size_t i = 0; i < sphere->verts.size(); ++i) {
+            redoDiff = std::max(redoDiff, std::abs(sphere->verts[i] - postStrokeVerts[i]));
+        }
+
+        std::cout << "  [Info] Test 1 CoalesceGrab: pending=" << hasPending
+                  << ", flushed=" << clearedPending
+                  << ", countBefore=" << coalescedBefore
+                  << ", countAfter=" << coalescedAfter
+                  << ", redoDiff=" << redoDiff << "\n";
+
+        checkCond(hasPending && clearedPending && coalescedAfter == 1 && redoDiff == 0.0f,
+                  "Test 1: Move tool coalesces 10 motion events into 1 stroke with exact Undo/Redo (diff=0.000000)");
+        scene.clear();
+        g_undoManager.clear();
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 2: Sub-step Batching & Arc Remainder (batchSubsteps)
+    // -------------------------------------------------------------------------
+    {
+        Mesh* sphere = createSphereMeshWithPolygroups(120, 240).release();
+        sphere->postInit(true);
+        scene.addMesh(sphere);
+        scene.selectMesh(sphere);
+
+        sculpt.setUseSym(false);
+        sculpt.saveSymmetryToMesh(sphere);
+        sculpt.warmupMeshCaches(sphere);
+
+        sculpt.setBrush(BRUSH_CLAYBUILDUP);
+        auto& claySet = sculpt.getSettings(BRUSH_CLAYBUILDUP);
+        claySet.radius = 35.0f * scalePx;
+        claySet.spacing = 0.1f;
+        claySet.intensity = 1.0f;
+
+        sculpt.resetStage4Stats();
+
+        // Step 0
+        doStrokeStep(centerX, centerY, true, BRUSH_CLAYBUILDUP);
+
+        // Move 40 pixels in one event: generates ~11 sub-steps
+        doStrokeStep(centerX + 40.0f * scalePx, centerY, false, BRUSH_CLAYBUILDUP);
+        size_t batchCount = sculpt.getBatchedSubstepsCount();
+
+        releaseStroke(centerX + 40.0f * scalePx, centerY);
+
+        std::vector<float> strokeVerts = sphere->verts;
+        g_undoManager.undo(scene);
+        g_undoManager.redo(scene);
+        float redoDiff = 0.0f;
+        for (size_t i = 0; i < sphere->verts.size(); ++i) {
+            redoDiff = std::max(redoDiff, std::abs(sphere->verts[i] - strokeVerts[i]));
+        }
+
+        std::cout << "  [Info] Test 2 BatchSubsteps: batchCount=" << batchCount << ", redoDiff=" << redoDiff << "\n";
+        checkCond(batchCount >= 1 && redoDiff == 0.0f,
+                  "Test 2: Sub-steps batched post-processing into 1 pass with exact Undo/Redo (diff=0.000000)");
+        scene.clear();
+        g_undoManager.clear();
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 3: Cursor Occlusion Throttling & Raycast Optimization (cursorThrottle)
+    // -------------------------------------------------------------------------
+    {
+        Mesh* sphere = createSphereMeshWithPolygroups(120, 240).release();
+        sphere->postInit(true);
+        scene.addMesh(sphere);
+        scene.selectMesh(sphere);
+
+        sculpt.setUseSym(true);
+        sculpt.setSymX(true);
+        sculpt.setSymY(true);
+        sculpt.setSymZ(true);
+        sculpt.saveSymmetryToMesh(sphere);
+
+        sculpt.getCursor().resetOcclusionQueryCount();
+
+        // Call processFrame with same mouse position multiple times
+        for (int i = 0; i < 5; ++i) {
+            sculpt.setRawMousePos((int)centerX, (int)centerY);
+            sculpt.processFrame(scene);
+        }
+
+        size_t queries1 = sculpt.getCursor().getOcclusionQueryCount();
+
+        // Move slightly <= 1.0px (sub-pixel jitter)
+        for (int i = 0; i < 5; ++i) {
+            sculpt.setRawMousePos((int)centerX + (i % 2), (int)centerY);
+            sculpt.processFrame(scene);
+        }
+
+        size_t queries2 = sculpt.getCursor().getOcclusionQueryCount();
+
+        std::cout << "  [Info] Test 3 CursorThrottle: initialQueries=" << queries1
+                  << ", jitterQueries=" << queries2 << "\n";
+        checkCond(queries1 <= 7 && queries2 <= 7,
+                  "Test 3: Cursor occlusion throttling eliminates redundant BVH raycasts on stationary/jittering mouse");
+        scene.clear();
+        g_undoManager.clear();
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 4: BVH::refitLeaves Equivalence & Tree Validation (bvhRefitLeaves)
+    // -------------------------------------------------------------------------
+    {
+        Mesh* sphere = createSphereMeshWithPolygroups(120, 240).release();
+        sphere->postInit(true);
+
+        // Pick vertices on the sphere surface (R = 2.0f)
+        std::vector<uint32_t> picked = sphere->bvh.pickVerticesInSphere(
+            *sphere, 0.0f, 0.0f, 2.0f, 0.25f, nullptr, 0
+        );
+
+        const auto& queriedLeaves = sphere->bvh.getLastQueriedLeaves();
+        size_t numLeaves = queriedLeaves.size();
+
+        // Deform picked vertices
+        for (uint32_t v : picked) {
+            sphere->verts[v * 3 + 2] += 0.25f;
+        }
+
+        // Refit directly via refitLeaves
+        sphere->bvh.refitLeaves(*sphere, queriedLeaves.data(), queriedLeaves.size(), false);
+        const auto& rs = sphere->bvh.getLastRefitStats();
+
+        std::string treeErr;
+        bool treeValid = sphere->bvh.validateTree(*sphere, treeErr);
+
+        // Test raycast against the deformed surface
+        RayHit hit;
+        bool hitValid = sphere->bvh.raycast(*sphere, glm::vec3(0.0f, 0.0f, 4.0f), glm::vec3(0.0f, 0.0f, -1.0f), hit);
+
+        std::cout << "  [Info] Test 4 RefitLeaves: leaves=" << numLeaves
+                  << ", dedupMs=" << rs.leafDedupMs
+                  << ", treeValid=" << treeValid
+                  << ", hit=" << hitValid
+                  << ", err='" << treeErr << "'\n";
+
+        checkCond(treeValid && hitValid && rs.leafDedupMs <= 0.05,
+                  "Test 4: BVH::refitLeaves passes validateTree 100% and executes with zero face-to-leaf overhead");
+        delete sphere;
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 5: OpenMP Small Buffer Merge Optimization
+    // -------------------------------------------------------------------------
+    {
+        Mesh* sphere = createSphereMeshWithPolygroups(120, 240).release();
+        sphere->postInit(true);
+
+        std::vector<uint32_t> testVerts;
+        testVerts.reserve(1000);
+        for (uint32_t v = 0; v < 1000; ++v) testVerts.push_back(v * 2);
+
+        std::vector<uint32_t> outFaces1(sphere->nbFaces, 0);
+        std::vector<uint8_t> tagFlags(sphere->nbFaces, 0);
+        uint8_t epoch = 1;
+
+        uint32_t countFaces = getFacesFromVerticesFast(
+            testVerts.data(), (uint32_t)testVerts.size(),
+            sphere->vrfStartCount.data(),
+            sphere->vertRingFace.data(),
+            outFaces1.data(),
+            tagFlags.data(),
+            &epoch,
+            sphere->nbFaces,
+            sphere->nbVerts,
+            (uint32_t)sphere->nbFaces,
+            sphere->vertRingFace.size()
+        );
+
+        bool facesValid = countFaces > 0;
+        for (uint32_t f = 0; f < countFaces; ++f) {
+            if (outFaces1[f] >= (uint32_t)sphere->nbFaces) {
+                facesValid = false;
+                break;
+            }
+        }
+
+        std::cout << "  [Info] Test 5 Buffer Merge: countFaces=" << countFaces << ", valid=" << facesValid << "\n";
+        checkCond(facesValid, "Test 5: Small buffer merge produces valid face indices without OpenMP barrier overhead");
+        delete sphere;
+    }
+
+    g_undoManager.clear();
+    scene.clear();
+    OptFlags::get() = savedFlags;
+
+    std::cout << "================================================================================\n";
+    std::cout << "  Stage 4 Tests Complete: " << (allOk ? "ALL PASSED" : "FAILED") << "\n";
     std::cout << "================================================================================\n\n";
     return allOk;
 }

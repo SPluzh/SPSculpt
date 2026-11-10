@@ -2179,6 +2179,10 @@ int SculptManager::doStrokePass(
 void SculptManager::cancelStroke() {
     m_isSculpting = false;
     m_pendingBVHUpdate = false;
+    m_pendingGrabMotion = false;
+    m_pendingGrabMesh = nullptr;
+    m_strokeArcRemainder = 0.0f;
+    m_batchedAffectedVerts.clear();
     m_grabbedNumIFaces = 0;
     m_grabUndoRecorded = false;
     m_grabbedMinV = 0xFFFFFFFF;
@@ -2238,6 +2242,15 @@ void SculptManager::cancelStroke() {
     CrashReporter::clearStrokeContext();
 }
 
+void SculptManager::flushPendingGrabMotion(Scene& scene, const Camera& camera) {
+    if (!m_pendingGrabMotion) return;
+    m_pendingGrabMotion = false;
+    Mesh* targetMesh = m_pendingGrabMesh ? m_pendingGrabMesh : scene.getSelected();
+    if (!targetMesh) return;
+    m_coalescedGrabStrokeCount++;
+    executeStroke(scene, targetMesh, const_cast<Camera&>(camera), m_pendingGrabX, m_pendingGrabY, m_pendingGrabPressure);
+}
+
 void SculptManager::ensureVertProxySynced(Mesh* mesh) {
     if (!mesh) return;
     if (mesh->vertProxy.size() != mesh->verts.size()) {
@@ -2294,7 +2307,7 @@ void SculptManager::warmupMeshCaches(const Mesh* mesh) {
     g_undoManager.warmupForMesh(mesh->m_id, mesh->nbVerts, mesh->nbFaces);
 }
 
-void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, float mouseX, float mouseY, float currentPressure) {
+void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, float mouseX, float mouseY, float currentPressure, bool deferPostProcess, bool isSubstepBatch) {
     m_lastFrameProfile.reset();
     CrashReporter::ScopedStage strokeStage("Sculpt::executeStroke");
 
@@ -3455,6 +3468,23 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         m_snakePrevTipPos = m_currentIntersection;
     }
 
+    if (isSubstepBatch && !allAffectedVerts.empty()) {
+        m_batchedAffectedVerts.insert(m_batchedAffectedVerts.end(), allAffectedVerts.begin(), allAffectedVerts.end());
+    }
+
+    if (deferPostProcess) {
+        m_firstStrokeFrame = false;
+        m_lastStrokeX = (int)std::round(mouseX);
+        m_lastStrokeY = (int)std::round(mouseY);
+        return;
+    }
+
+    if (!m_batchedAffectedVerts.empty()) {
+        allAffectedVerts.insert(allAffectedVerts.end(), m_batchedAffectedVerts.begin(), m_batchedAffectedVerts.end());
+        m_batchedAffectedVerts.clear();
+        m_batchedSubstepsCount++;
+    }
+
     const uint32_t* pAff = nullptr;
     size_t numAff = 0;
 
@@ -3724,7 +3754,11 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 m_lastFrameProfile.bvhUpdateMs = 0.0;
             } else {
                 tStage = std::chrono::high_resolution_clock::now();
-                mesh->bvh.refit(*mesh, m_iFacesCache.data(), numIFaces, !OptFlags::get().faceNormalsOnly);
+                if (OptFlags::get().bvhRefitLeaves && !mesh->bvh.getLastQueriedLeaves().empty()) {
+                    mesh->bvh.refitLeaves(*mesh, mesh->bvh.getLastQueriedLeaves().data(), mesh->bvh.getLastQueriedLeaves().size(), !OptFlags::get().faceNormalsOnly);
+                } else {
+                    mesh->bvh.refit(*mesh, m_iFacesCache.data(), numIFaces, !OptFlags::get().faceNormalsOnly);
+                }
                 m_lastFrameProfile.bvhUpdateMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
                 const BVHRefitStats& rs = mesh->bvh.getLastRefitStats();
                 m_lastFrameProfile.bvhLeafDedupMs = rs.leafDedupMs;
@@ -4832,6 +4866,10 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     mesh ? mesh->nbFaces : 0
                 );
                 m_isSculpting = true;
+                m_pendingGrabMotion = false;
+                m_pendingGrabMesh = nullptr;
+                m_strokeArcRemainder = 0.0f;
+                m_batchedAffectedVerts.clear();
                 m_currentIntersectionValid = true;
                 m_firstStrokeFrame = true;
                 m_pendingBVHUpdate = false;
@@ -5729,6 +5767,9 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     }
                 }
             } else {
+                if (m_isSculpting && m_pendingGrabMotion) {
+                    flushPendingGrabMotion(scene, camera);
+                }
                 auto tEndUndo0 = std::chrono::high_resolution_clock::now();
                 if (m_dyntopo && m_dyntopo->active() && mesh) {
                     auto undoRecord = m_dyntopo->finish(*mesh, mesh->bvh);
@@ -5760,7 +5801,13 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 double layerBakeMs = 0.0;
                 if (mesh && m_pendingBVHUpdate) {
                     auto tBvhStart = std::chrono::high_resolution_clock::now();
-                    if (m_grabbedNumIFaces > 0) {
+                    if (OptFlags::get().bvhRefitLeaves && !mesh->bvh.getLastQueriedLeaves().empty()) {
+                        mesh->bvh.refitLeaves(*mesh, mesh->bvh.getLastQueriedLeaves().data(), mesh->bvh.getLastQueriedLeaves().size(), true);
+                        bvhMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tBvhStart).count();
+                        const BVHRefitStats& rs = mesh->bvh.getLastRefitStats();
+                        sculpt_log("[Stroke Release] Deferred Incremental BVH Leaf Refit completed in %.2f ms (%d leaves | Dedup %.2f, AABB %.2f, ClimbSort %.2f, Inner %.2f | L=%u I=%u Pre=%d)\n",
+                                   bvhMs, (int)mesh->bvh.getLastQueriedLeaves().size(), rs.leafDedupMs, rs.leafAABBMs, rs.parentGatherMs, rs.innerUpdateMs, rs.dirtyLeaves, rs.dirtyInnerNodes, rs.usedPrecomputed ? 1 : 0);
+                    } else if (m_grabbedNumIFaces > 0) {
                         mesh->bvh.refit(*mesh, m_iFacesCache.data(), m_grabbedNumIFaces, true);
                         bvhMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tBvhStart).count();
                         const BVHRefitStats& rs = mesh->bvh.getLastRefitStats();
@@ -6161,7 +6208,15 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
             bool isGrabBrush = (activeBrush == BRUSH_MOVE || activeBrush == BRUSH_DRAG || activeBrush == BRUSH_ELASTIC || activeBrush == BRUSH_SNAKEHOOK || m_isTubeMoveStroke);
 
-            if (isGrabBrush || minSpacing <= 0.0f) {
+            if (isGrabBrush && OptFlags::get().coalesceGrab) {
+                m_pendingGrabMotion = true;
+                m_pendingGrabX = (float)mouseX;
+                m_pendingGrabY = (float)mouseY;
+                m_pendingGrabPressure = currentPressure;
+                m_pendingGrabMesh = targetMesh;
+                m_lastStrokeX = mouseX;
+                m_lastStrokeY = mouseY;
+            } else if (isGrabBrush || minSpacing <= 0.0f) {
                 auto tMot0 = std::chrono::high_resolution_clock::now();
                 executeStroke(scene, targetMesh, camera, (float)mouseX, (float)mouseY, currentPressure);
                 double motMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tMot0).count();
@@ -6171,33 +6226,58 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 }
                 m_lastStrokeX = mouseX;
                 m_lastStrokeY = mouseY;
-            } else if (dist > minSpacing) {
-                auto tMot0 = std::chrono::high_resolution_clock::now();
-                float numStepsF = std::floor(dist / minSpacing);
-                int maxSubSteps = (activeBrush == BRUSH_DYNAMIC_TOPOLOGY && activeSettings.topologyEdgeSize <= 0.25f) ? 1 : (isDyntopoActive ? 2 : 16);
-                if (numStepsF > (float)maxSubSteps) numStepsF = (float)maxSubSteps;
-                if (numStepsF < 1.0f) numStepsF = 1.0f;
-                float step = 1.0f / numStepsF;
-                float stepDx = strokeDx * step;
-                float stepDy = strokeDy * step;
-
-                float curX = (float)m_lastStrokeX + stepDx;
-                float curY = (float)m_lastStrokeY + stepDy;
-                int subStepCount = 0;
-
-                for (float i = step; i <= 1.01f; i += step) {
-                    executeStroke(scene, targetMesh, camera, curX, curY, currentPressure);
-                    curX += stepDx;
-                    curY += stepDy;
-                    subStepCount++;
+            } else {
+                float totalDist = dist;
+                if (OptFlags::get().batchSubsteps) {
+                    totalDist += m_strokeArcRemainder;
                 }
-                double motMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tMot0).count();
-                if (subStepCount > 1 || motMs > 20.0) {
-                    sculpt_log("[SCULPT MOTION SUBSTEPS] '%s' | %d sub-steps in single SDL_MOUSEMOTION took %.2fms (dist=%.1fpx, minSpacing=%.2fpx)\n",
-                               getBrushNameStr(activeBrush), subStepCount, motMs, dist, minSpacing);
+                if (totalDist > minSpacing) {
+                    auto tMot0 = std::chrono::high_resolution_clock::now();
+                    float numStepsF = std::floor(totalDist / minSpacing);
+                    int maxSubSteps = (activeBrush == BRUSH_DYNAMIC_TOPOLOGY && activeSettings.topologyEdgeSize <= 0.25f) ? 1 : (isDyntopoActive ? 2 : 16);
+                    if (numStepsF > (float)maxSubSteps) numStepsF = (float)maxSubSteps;
+                    if (numStepsF < 1.0f) numStepsF = 1.0f;
+                    int numSteps = (int)numStepsF;
+                    if (OptFlags::get().batchSubsteps) {
+                        m_strokeArcRemainder = totalDist - (float)numSteps * minSpacing;
+                    }
+
+                    float step = 1.0f / numStepsF;
+                    float stepDx = strokeDx * step;
+                    float stepDy = strokeDy * step;
+
+                    float curX = (float)m_lastStrokeX + stepDx;
+                    float curY = (float)m_lastStrokeY + stepDy;
+                    int subStepCount = 0;
+
+                    const bool canBatch = OptFlags::get().batchSubsteps && !isDyntopoActive && (numSteps > 1);
+
+                    for (int s = 0; s < numSteps; ++s) {
+                        bool isLastSubStep = (s == numSteps - 1);
+                        double elapsedMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tMot0).count();
+                        if (canBatch && !isLastSubStep && s >= 1 && elapsedMs > 12.0) {
+                            // Budget exceeded: finalize the batch early on this step
+                            isLastSubStep = true;
+                        }
+
+                        bool deferPost = canBatch && !isLastSubStep;
+                        executeStroke(scene, targetMesh, camera, curX, curY, currentPressure, deferPost, canBatch);
+                        curX += stepDx;
+                        curY += stepDy;
+                        subStepCount++;
+
+                        if (isLastSubStep) {
+                            break;
+                        }
+                    }
+                    double motMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tMot0).count();
+                    if (subStepCount > 1 || motMs > 20.0) {
+                        sculpt_log("[SCULPT MOTION SUBSTEPS] '%s' | %d sub-steps in single SDL_MOUSEMOTION took %.2fms (dist=%.1fpx, minSpacing=%.2fpx, batched=%d)\n",
+                                   getBrushNameStr(activeBrush), subStepCount, motMs, dist, minSpacing, canBatch ? 1 : 0);
+                    }
+                    m_lastStrokeX = mouseX;
+                    m_lastStrokeY = mouseY;
                 }
-                m_lastStrokeX = mouseX;
-                m_lastStrokeY = mouseY;
             }
         }
     }
@@ -6222,6 +6302,13 @@ void SculptManager::loadSymmetryFromMesh(const Mesh* mesh) {
 }
 
 void SculptManager::processFrame(Scene& scene) {
+    const Camera& camera = (scene.getSplitMode() != Scene::SplitMode::OFF && scene.getActiveViewport() == 1 && scene.getCameraRight()) 
+                           ? *scene.getCameraRight() 
+                           : scene.getCamera();
+    if (m_isSculpting && m_pendingGrabMotion) {
+        flushPendingGrabMotion(scene, camera);
+    }
+
     Mesh* activeMeshSelected = scene.getSelected();
     const auto& sceneMeshes = scene.getMeshes();
 
@@ -6319,28 +6406,30 @@ void SculptManager::processFrame(Scene& scene) {
         bool hasIntersection = m_isSculpting ? m_hasAnyValidIntersection : m_currentIntersectionValid;
 
         if (m_isSculpting && activeMesh) {
-            const Camera& camera = (scene.getSplitMode() != Scene::SplitMode::OFF && scene.getActiveViewport() == 1 && scene.getCameraRight()) 
-                                   ? *scene.getCameraRight() 
-                                   : scene.getCamera();
-            Ray ray = camera.getRay((float)m_rawMouseX, (float)m_rawMouseY);
-            glm::mat4 invMatrix = glm::inverse(activeMesh->matrix);
-            glm::vec3 localRayOrigin = glm::vec3(invMatrix * glm::vec4(ray.origin, 1.0f));
-            glm::vec3 localRayDir = glm::normalize(glm::vec3(invMatrix * glm::vec4(ray.dir, 0.0f)));
+            if (!OptFlags::get().cursorThrottle) {
+                const Camera& camera = (scene.getSplitMode() != Scene::SplitMode::OFF && scene.getActiveViewport() == 1 && scene.getCameraRight()) 
+                                       ? *scene.getCameraRight() 
+                                       : scene.getCamera();
+                Ray ray = camera.getRay((float)m_rawMouseX, (float)m_rawMouseY);
+                glm::mat4 invMatrix = glm::inverse(activeMesh->matrix);
+                glm::vec3 localRayOrigin = glm::vec3(invMatrix * glm::vec4(ray.origin, 1.0f));
+                glm::vec3 localRayDir = glm::normalize(glm::vec3(invMatrix * glm::vec4(ray.dir, 0.0f)));
 
-            activeMesh->ensureBVHBuilt();
-            RayHit hit;
-            if (activeMesh->bvh.raycast(*activeMesh, localRayOrigin, localRayDir, hit)) {
-                localPt = hit.position;
-                if (hit.faceId < (uint32_t)activeMesh->nbFaces && hit.faceId * 3 + 2 < activeMesh->faceNormals.size()) {
-                    localNorm = glm::vec3(
-                        activeMesh->faceNormals[hit.faceId * 3],
-                        activeMesh->faceNormals[hit.faceId * 3 + 1],
-                        activeMesh->faceNormals[hit.faceId * 3 + 2]
-                    );
-                } else {
-                    localNorm = hit.normal;
+                activeMesh->ensureBVHBuilt();
+                RayHit hit;
+                if (activeMesh->bvh.raycast(*activeMesh, localRayOrigin, localRayDir, hit)) {
+                    localPt = hit.position;
+                    if (hit.faceId < (uint32_t)activeMesh->nbFaces && hit.faceId * 3 + 2 < activeMesh->faceNormals.size()) {
+                        localNorm = glm::vec3(
+                            activeMesh->faceNormals[hit.faceId * 3],
+                            activeMesh->faceNormals[hit.faceId * 3 + 1],
+                            activeMesh->faceNormals[hit.faceId * 3 + 2]
+                        );
+                    } else {
+                        localNorm = hit.normal;
+                    }
+                    hasIntersection = true;
                 }
-                hasIntersection = true;
             }
         }
 

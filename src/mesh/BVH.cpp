@@ -186,6 +186,7 @@ void BVH::clear() {
     m_dirtyLeaves.clear();
     m_dirtyInnerNodes.clear();
     m_dirtyInnerNodesTemp.clear();
+    m_lastQueriedLeaves.clear();
     m_leafCap.clear();
     m_editedLeaves.clear();
     m_leafEdited.clear();
@@ -985,6 +986,19 @@ void BVH::pickVerticesInSphere(
     stats.candLeaves = (uint32_t)sc.candidateLeaves.size();
     stats.candFaces = totalCandidateFaces;
 
+    if (sIdx == 0) {
+        m_lastQueriedLeaves.clear();
+        m_lastQueriedLeaves.reserve(sc.candidateLeaves.size());
+        for (uint32_t candEntry : sc.candidateLeaves) {
+            m_lastQueriedLeaves.push_back(candEntry & 0x7FFFFFFFu);
+        }
+    } else {
+        m_lastQueriedLeaves.reserve(m_lastQueriedLeaves.size() + sc.candidateLeaves.size());
+        for (uint32_t candEntry : sc.candidateLeaves) {
+            m_lastQueriedLeaves.push_back(candEntry & 0x7FFFFFFFu);
+        }
+    }
+
     if (sc.candidateLeaves.empty()) {
         m_lastPickStats[sIdx] = stats;
         if (sIdx == 0) {
@@ -1305,6 +1319,63 @@ void BVH::refit(const Mesh& mesh, const uint32_t* modifiedFaces, size_t count, b
     auto t1 = std::chrono::high_resolution_clock::now();
     stats.leafDedupMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
 
+    propagateDirtyLeaves(mesh, usePrecomputedBoxes, stats);
+    m_lastRefitStats = stats;
+}
+
+void BVH::refitLeaves(const Mesh& mesh, const uint32_t* leafIndices, size_t numLeaves, bool usePrecomputedBoxes) {
+    BVHRefitStats stats;
+    stats.inputFaces = 0;
+    stats.usedPrecomputed = usePrecomputedBoxes;
+
+    if (m_nodes.empty() || !leafIndices || numLeaves == 0 || mesh.nbFaces <= 0 || mesh.nbVerts <= 0) {
+        m_lastRefitStats = stats;
+        return;
+    }
+
+    if (numLeaves > m_leafCount * 0.40f) {
+        refitAll(mesh, usePrecomputedBoxes);
+        return;
+    }
+
+    auto t0 = std::chrono::high_resolution_clock::now();
+    m_editsSinceBuild += numLeaves;
+
+    if (m_leafVisitedFlags.size() < m_nodes.size()) {
+        m_leafVisitedFlags.assign(m_nodes.size(), uint8_t(0));
+    }
+    m_leafVisitedEpoch++;
+    if (m_leafVisitedEpoch == 0) {
+        std::fill(m_leafVisitedFlags.begin(), m_leafVisitedFlags.end(), uint8_t(0));
+        m_leafVisitedEpoch = 1;
+    }
+
+    m_dirtyLeaves.clear();
+    if (m_dirtyLeaves.capacity() < numLeaves) {
+        m_dirtyLeaves.reserve(numLeaves);
+    }
+
+    for (size_t i = 0; i < numLeaves; ++i) {
+        uint32_t leafIdx = leafIndices[i];
+        if (leafIdx >= m_nodes.size() || !m_nodes[leafIdx].isLeaf()) continue;
+        if (m_leafVisitedFlags[leafIdx] != m_leafVisitedEpoch) {
+            m_leafVisitedFlags[leafIdx] = m_leafVisitedEpoch;
+            m_dirtyLeaves.push_back(leafIdx);
+        }
+    }
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    stats.leafDedupMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+    propagateDirtyLeaves(mesh, usePrecomputedBoxes, stats);
+    m_lastRefitStats = stats;
+}
+
+void BVH::propagateDirtyLeaves(const Mesh& mesh, bool usePrecomputedBoxes, BVHRefitStats& stats) {
+    const int maxThreads = omp_get_max_threads();
+    const bool inParallel = omp_in_parallel();
+    auto t1 = std::chrono::high_resolution_clock::now();
+
     // Refit dirty leaves in parallel for large sets, sequential for small
     const size_t numDirty = m_dirtyLeaves.size();
     stats.dirtyLeaves = (uint32_t)numDirty;
@@ -1373,8 +1444,6 @@ void BVH::refit(const Mesh& mesh, const uint32_t* modifiedFaces, size_t count, b
     }
     auto t4 = std::chrono::high_resolution_clock::now();
     stats.innerUpdateMs = std::chrono::duration<double, std::milli>(t4 - t3).count();
-
-    m_lastRefitStats = stats;
 }
 
 void BVH::refitAll(const Mesh& mesh, bool usePrecomputedBoxes) {
