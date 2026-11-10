@@ -101,6 +101,7 @@ struct DyntopoRemeshProfile {
     double vertNormalsAndTouchMs = 0.0;
     double refit2Ms = 0.0;
     double fullFaceNormalsBoxesMs = 0.0;
+    double syncCsrMs = 0.0;
     double totalMs = 0.0;
     size_t splits = 0;
     size_t collapses = 0;

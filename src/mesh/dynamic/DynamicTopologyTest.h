@@ -170,6 +170,7 @@ public:
             dst.vertNormalsAndTouchMs  += src.vertNormalsAndTouchMs;
             dst.refit2Ms               += src.refit2Ms;
             dst.fullFaceNormalsBoxesMs += src.fullFaceNormalsBoxesMs;
+            dst.syncCsrMs              += src.syncCsrMs;
             dst.totalMs                += src.totalMs;
         };
 
@@ -432,7 +433,8 @@ public:
             std::cout << "  9. compact (tris + verts):       " << std::setw(8) << p.compactMs              << " ms (" << std::setw(5) << (p.compactMs * pct)              << "%) | Avg: " << (p.compactMs / denom) << " ms\n";
             std::cout << " 10. vertNormals & touchLeaf:      " << std::setw(8) << p.vertNormalsAndTouchMs  << " ms (" << std::setw(5) << (p.vertNormalsAndTouchMs * pct)  << "%) | Avg: " << (p.vertNormalsAndTouchMs / denom) << " ms\n";
             std::cout << " 11. refitChanged #2 (final):      " << std::setw(8) << p.refit2Ms               << " ms (" << std::setw(5) << (p.refit2Ms * pct)               << "%) | Avg: " << (p.refit2Ms / denom) << " ms\n";
-            std::cout << " 12. updateFaceNormalsAndBoxes:    " << std::setw(8) << p.fullFaceNormalsBoxesMs << " ms (" << std::setw(5) << (p.fullFaceNormalsBoxesMs * pct) << "%) | Avg: " << (p.fullFaceNormalsBoxesMs / denom) << " ms  <-- FULL MESH RECOMPUTE!\n\n";
+            std::cout << " 12. updateFaceNormalsAndBoxes:    " << std::setw(8) << p.fullFaceNormalsBoxesMs << " ms (" << std::setw(5) << (p.fullFaceNormalsBoxesMs * pct) << "%) | Avg: " << (p.fullFaceNormalsBoxesMs / denom) << " ms\n";
+            std::cout << " 13. syncDynamicCSR (mesh rebuild):" << std::setw(8) << p.syncCsrMs              << " ms (" << std::setw(5) << (p.syncCsrMs * pct)              << "%) | Avg: " << (p.syncCsrMs / denom) << " ms\n\n";
         };
 
         printRemeshBreakdown("ALL 100 STROKES REMESH BREAKDOWN", totalRemeshProf, totalSubsteps);
@@ -478,6 +480,331 @@ public:
         std::cout << "             - Move brush reachability:       Audited at checkpoints (see table above)\n";
         std::cout << "================================================================================\n\n";
 
+        return true;
+    }
+
+    static bool runBenchmarkTool02() {
+        std::cout << "\n================================================================================\n";
+        std::cout << "  SPSculpt Dynamic Topology Tool 0.2 Latency Benchmark & Profiling Analysis\n";
+        std::cout << "================================================================================\n\n";
+
+        // 1. Setup Scene with Default Sphere (R=50.0 geosphere, matching SPSculpt initial startup)
+        Scene scene;
+        scene.loadDefaultSphere();
+        Mesh* meshRaw = scene.getSelected();
+        if (!meshRaw) {
+            std::cerr << "Failed to load default sphere!\n";
+            return false;
+        }
+
+        meshRaw->initFaceGroups();
+        meshRaw->postInit(true);
+        meshRaw->bvh.resetDiagnosticCounters();
+
+        Camera& camera = scene.getCamera();
+        camera.onResize(1920, 1080);
+        camera.resetViewToMesh(meshRaw, false);
+        camera.update(0.016f);
+
+        SculptManager sculpt;
+        sculpt.setRenderer(nullptr);
+        sculpt.setBrush(BRUSH_DYNAMIC_TOPOLOGY);
+
+        auto& settings = sculpt.getSettings(BRUSH_DYNAMIC_TOPOLOGY);
+        settings.radius = 120.0f;
+        settings.intensity = 0.5f;
+        settings.spacing = 0.15f; // minSpacing = 18.0 px
+        settings.topologyEdgeSize = 0.2f; // User's exact target setting: 0.2
+        settings.autoWireframe = true;
+
+        DynamicTopology* dt = sculpt.getDyntopo();
+
+        // Compute average edge length of initial sphere
+        float initialAvgEdge = 0.0f;
+        int sampleEdges = 0;
+        for (int f = 0; f < std::min(500, meshRaw->nbFaces); ++f) {
+            uint32_t v0 = meshRaw->faces[f * 4 + 0];
+            uint32_t v1 = meshRaw->faces[f * 4 + 1];
+            uint32_t v2 = meshRaw->faces[f * 4 + 2];
+            glm::vec3 p0(meshRaw->verts[v0 * 3], meshRaw->verts[v0 * 3 + 1], meshRaw->verts[v0 * 3 + 2]);
+            glm::vec3 p1(meshRaw->verts[v1 * 3], meshRaw->verts[v1 * 3 + 1], meshRaw->verts[v1 * 3 + 2]);
+            glm::vec3 p2(meshRaw->verts[v2 * 3], meshRaw->verts[v2 * 3 + 1], meshRaw->verts[v2 * 3 + 2]);
+            initialAvgEdge += (glm::distance(p0, p1) + glm::distance(p1, p2) + glm::distance(p2, p0)) / 3.0f;
+            sampleEdges++;
+        }
+        if (sampleEdges > 0) initialAvgEdge /= float(sampleEdges);
+
+        std::cout << "Initial Mesh: " << meshRaw->nbVerts << " verts, " << meshRaw->nbFaces << " faces (Default Geosphere R=50.0)\n";
+        std::cout << "Initial Average Edge Length: " << std::fixed << std::setprecision(4) << initialAvgEdge << " world units\n";
+        std::cout << "Tool Target Edge Size: " << settings.topologyEdgeSize << " world units\n";
+        std::cout << "Subdivision Ratio: ~" << std::setprecision(1) << (initialAvgEdge / settings.topologyEdgeSize)
+                  << "x edge split (~" << ((initialAvgEdge / settings.topologyEdgeSize) * (initialAvgEdge / settings.topologyEdgeSize))
+                  << "x face density increase in stroke footprint!)\n";
+        std::cout << "Brush Screen Radius: " << settings.radius << " px, Spacing: " << settings.spacing << "\n\n";
+
+        constexpr int NUM_STROKES = 15;
+        constexpr int DRAG_STEPS_PER_STROKE = 4; // 1 down + 4 drag steps = 5 dabs/stroke
+
+        DyntopoRemeshProfile totalRemeshProf{};
+        DyntopoFinishProfile totalFinishProf{};
+        int totalSubsteps = 0;
+        double maxSubstepMs = 0.0;
+        int maxSubstepStroke = 0;
+        double maxReleaseMs = 0.0;
+        int maxReleaseStroke = 0;
+
+        auto accumulateRemesh = [](DyntopoRemeshProfile& dst, const DyntopoRemeshProfile& src) {
+            dst.initAdjacencyMs        += src.initAdjacencyMs;
+            dst.gatherRegionMs         += src.gatherRegionMs;
+            dst.splitPassMs            += src.splitPassMs;
+            dst.refit1Ms               += src.refit1Ms;
+            dst.queryRegion2Ms         += src.queryRegion2Ms;
+            dst.collapsePassMs         += src.collapsePassMs;
+            dst.flipPassMs             += src.flipPassMs;
+            dst.relaxPassMs            += src.relaxPassMs;
+            dst.compactMs              += src.compactMs;
+            dst.vertNormalsAndTouchMs  += src.vertNormalsAndTouchMs;
+            dst.refit2Ms               += src.refit2Ms;
+            dst.fullFaceNormalsBoxesMs += src.fullFaceNormalsBoxesMs;
+            dst.syncCsrMs              += src.syncCsrMs;
+            dst.totalMs                += src.totalMs;
+        };
+
+        auto accumulateFinish = [](DyntopoFinishProfile& dst, const DyntopoFinishProfile& src) {
+            dst.initTopologyMs     += src.initTopologyMs;
+            dst.vertProxyCopyMs    += src.vertProxyCopyMs;
+            dst.faceNormalsBoxesMs += src.faceNormalsBoxesMs;
+            dst.vertNormalsMs      += src.vertNormalsMs;
+            dst.bvhBuildMs         += src.bvhBuildMs;
+            dst.cleanupMs          += src.cleanupMs;
+            dst.totalMs            += src.totalMs;
+        };
+
+        std::cout << "--- PART A: Executing " << NUM_STROKES << " strokes on Default Geosphere (R=50.0) ---\n";
+
+        for (int s = 0; s < NUM_STROKES; ++s) {
+            float angle = float(s) * 0.47f;
+            float radial = 60.0f + 80.0f * std::sin(float(s) * 0.31f);
+            float startX = 960.0f + radial * std::cos(angle);
+            float startY = 540.0f + radial * std::sin(angle);
+            float dirAngle = angle + 1.2f;
+            float stepDist = 23.0f;
+            float dx = stepDist * std::cos(dirAngle);
+            float dy = stepDist * std::sin(dirAngle);
+
+            double strokeSubstepsMs = 0.0;
+            double strokeMaxSubstepMs = 0.0;
+            size_t splitsBefore = dt->stats.splits;
+            size_t collapsesBefore = dt->stats.collapses;
+            size_t flipsBefore = dt->stats.flips;
+
+            // 1. Mouse Down (Substep 0)
+            SDL_Event evDown;
+            std::memset(&evDown, 0, sizeof(evDown));
+            evDown.type = SDL_MOUSEBUTTONDOWN;
+            evDown.button.button = SDL_BUTTON_LEFT;
+            evDown.button.x = (int)std::round(startX);
+            evDown.button.y = (int)std::round(startY);
+
+            dt->lastRemeshProfile = {};
+            sculpt.handleEvent(evDown, scene);
+            if (dt->lastRemeshProfile.totalMs > 0.0) {
+                accumulateRemesh(totalRemeshProf, dt->lastRemeshProfile);
+                strokeSubstepsMs += dt->lastRemeshProfile.totalMs;
+                totalSubsteps++;
+                if (dt->lastRemeshProfile.totalMs > strokeMaxSubstepMs) strokeMaxSubstepMs = dt->lastRemeshProfile.totalMs;
+                if (dt->lastRemeshProfile.totalMs > maxSubstepMs) {
+                    maxSubstepMs = dt->lastRemeshProfile.totalMs;
+                    maxSubstepStroke = s + 1;
+                }
+            }
+
+            // 2. Drag Motion Steps (Substeps 1..DRAG_STEPS_PER_STROKE)
+            for (int step = 1; step <= DRAG_STEPS_PER_STROKE; ++step) {
+                float curX = startX + float(step) * dx;
+                float curY = startY + float(step) * dy;
+
+                SDL_Event evMove;
+                std::memset(&evMove, 0, sizeof(evMove));
+                evMove.type = SDL_MOUSEMOTION;
+                evMove.motion.state = SDL_BUTTON_LMASK;
+                evMove.motion.x = (int)std::round(curX);
+                evMove.motion.y = (int)std::round(curY);
+
+                dt->lastRemeshProfile = {};
+                sculpt.handleEvent(evMove, scene);
+                if (dt->lastRemeshProfile.totalMs > 0.0) {
+                    accumulateRemesh(totalRemeshProf, dt->lastRemeshProfile);
+                    strokeSubstepsMs += dt->lastRemeshProfile.totalMs;
+                    totalSubsteps++;
+                    if (dt->lastRemeshProfile.totalMs > strokeMaxSubstepMs) strokeMaxSubstepMs = dt->lastRemeshProfile.totalMs;
+                    if (dt->lastRemeshProfile.totalMs > maxSubstepMs) {
+                        maxSubstepMs = dt->lastRemeshProfile.totalMs;
+                        maxSubstepStroke = s + 1;
+                    }
+                }
+            }
+
+            // 3. Mouse Up (Stroke Release -> DynamicTopology::finish)
+            SDL_Event evUp;
+            std::memset(&evUp, 0, sizeof(evUp));
+            evUp.type = SDL_MOUSEBUTTONUP;
+            evUp.button.button = SDL_BUTTON_LEFT;
+            evUp.button.x = (int)std::round(startX + float(DRAG_STEPS_PER_STROKE) * dx);
+            evUp.button.y = (int)std::round(startY + float(DRAG_STEPS_PER_STROKE) * dy);
+
+            dt->lastFinishProfile = {};
+            sculpt.handleEvent(evUp, scene);
+            accumulateFinish(totalFinishProf, dt->lastFinishProfile);
+            if (dt->lastFinishProfile.totalMs > maxReleaseMs) {
+                maxReleaseMs = dt->lastFinishProfile.totalMs;
+                maxReleaseStroke = s + 1;
+            }
+
+            // 4. Measure Wireframe and Triangle EBO generation time (as done by renderer on frame draw)
+            std::vector<uint32_t> triIdx;
+            AngleRenderer::generateTriangleIndices(meshRaw, triIdx);
+            std::vector<uint32_t> wireIdx;
+            auto tWire0 = std::chrono::high_resolution_clock::now();
+            AngleRenderer::generateWireframeIndices(meshRaw, wireIdx);
+            double wireMs = std::chrono::duration<double, std::milli>(
+                std::chrono::high_resolution_clock::now() - tWire0).count();
+
+            size_t strokeSplits = dt->stats.splits - splitsBefore;
+            size_t strokeCollapses = dt->stats.collapses - collapsesBefore;
+            size_t strokeFlips = dt->stats.flips - flipsBefore;
+
+            std::cout << "  [Stroke " << std::setw(2) << (s + 1) << "/" << NUM_STROKES << "] V="
+                      << std::setw(7) << meshRaw->nbVerts << " F=" << std::setw(7) << meshRaw->nbFaces
+                      << " | DragSum=" << std::setw(7) << std::fixed << std::setprecision(1) << strokeSubstepsMs << "ms"
+                      << " (MaxSubstep=" << std::setw(6) << strokeMaxSubstepMs << "ms)"
+                      << " | Finish=" << std::setw(5) << dt->lastFinishProfile.totalMs << "ms"
+                      << " | WireEBO=" << std::setw(5) << wireMs << "ms"
+                      << " | Splits=" << std::setw(5) << strokeSplits
+                      << " | Collapses=" << std::setw(5) << strokeCollapses << "\n";
+        }
+
+        // Print breakdown table
+        double denom = std::max(1, totalSubsteps);
+        double pct = (totalRemeshProf.totalMs > 0.0) ? (100.0 / totalRemeshProf.totalMs) : 0.0;
+        std::cout << "\n================================================================================\n";
+        std::cout << "       DYNAMIC TOPOLOGY TOOL 0.2: SUBSTEP STAGE TIMING BREAKDOWN\n";
+        std::cout << "================================================================================\n";
+        std::cout << "Total Substeps Executed: " << totalSubsteps << "\n";
+        std::cout << "Total Remesh Time: " << totalRemeshProf.totalMs << " ms (Avg: " << (totalRemeshProf.totalMs / denom)
+                  << " ms/substep, Max: " << maxSubstepMs << " ms at stroke " << maxSubstepStroke << ")\n\n";
+
+        std::cout << "  1. initAdjacency (m_vertTris):      " << std::setw(8) << totalRemeshProf.initAdjacencyMs        << " ms (" << std::setw(5) << std::fixed << std::setprecision(2) << (totalRemeshProf.initAdjacencyMs * pct)        << "%) | Avg: " << (totalRemeshProf.initAdjacencyMs / denom) << " ms\n";
+        std::cout << "  2. gatherRegion (BVH query 1):      " << std::setw(8) << totalRemeshProf.gatherRegionMs         << " ms (" << std::setw(5) << (totalRemeshProf.gatherRegionMs * pct)         << "%) | Avg: " << (totalRemeshProf.gatherRegionMs / denom) << " ms\n";
+        std::cout << "  3. splitPass:                       " << std::setw(8) << totalRemeshProf.splitPassMs            << " ms (" << std::setw(5) << (totalRemeshProf.splitPassMs * pct)            << "%) | Avg: " << (totalRemeshProf.splitPassMs / denom) << " ms\n";
+        std::cout << "  4. refitChanged #1 (post-split):    " << std::setw(8) << totalRemeshProf.refit1Ms               << " ms (" << std::setw(5) << (totalRemeshProf.refit1Ms * pct)               << "%) | Avg: " << (totalRemeshProf.refit1Ms / denom) << " ms\n";
+        std::cout << "  5. queryRegion #2 (BVH query 2):    " << std::setw(8) << totalRemeshProf.queryRegion2Ms         << " ms (" << std::setw(5) << (totalRemeshProf.queryRegion2Ms * pct)         << "%) | Avg: " << (totalRemeshProf.queryRegion2Ms / denom) << " ms\n";
+        std::cout << "  6. collapsePass:                    " << std::setw(8) << totalRemeshProf.collapsePassMs         << " ms (" << std::setw(5) << (totalRemeshProf.collapsePassMs * pct)         << "%) | Avg: " << (totalRemeshProf.collapsePassMs / denom) << " ms\n";
+        std::cout << "  7. flipPass:                        " << std::setw(8) << totalRemeshProf.flipPassMs             << " ms (" << std::setw(5) << (totalRemeshProf.flipPassMs * pct)             << "%) | Avg: " << (totalRemeshProf.flipPassMs / denom) << " ms\n";
+        std::cout << "  8. relaxPass:                       " << std::setw(8) << totalRemeshProf.relaxPassMs            << " ms (" << std::setw(5) << (totalRemeshProf.relaxPassMs * pct)            << "%) | Avg: " << (totalRemeshProf.relaxPassMs / denom) << " ms\n";
+        std::cout << "  9. compact (tris + verts):          " << std::setw(8) << totalRemeshProf.compactMs              << " ms (" << std::setw(5) << (totalRemeshProf.compactMs * pct)              << "%) | Avg: " << (totalRemeshProf.compactMs / denom) << " ms\n";
+        std::cout << " 10. vertNormals & touchLeaf:         " << std::setw(8) << totalRemeshProf.vertNormalsAndTouchMs  << " ms (" << std::setw(5) << (totalRemeshProf.vertNormalsAndTouchMs * pct)  << "%) | Avg: " << (totalRemeshProf.vertNormalsAndTouchMs / denom) << " ms\n";
+        std::cout << " 11. refitChanged #2 (final):         " << std::setw(8) << totalRemeshProf.refit2Ms               << " ms (" << std::setw(5) << (totalRemeshProf.refit2Ms * pct)               << "%) | Avg: " << (totalRemeshProf.refit2Ms / denom) << " ms\n";
+        std::cout << " 12. updateFaceNormalsAndBoxes:       " << std::setw(8) << totalRemeshProf.fullFaceNormalsBoxesMs << " ms (" << std::setw(5) << (totalRemeshProf.fullFaceNormalsBoxesMs * pct) << "%) | Avg: " << (totalRemeshProf.fullFaceNormalsBoxesMs / denom) << " ms\n";
+        std::cout << " 13. syncDynamicCSR (CSR recompute):  " << std::setw(8) << totalRemeshProf.syncCsrMs              << " ms (" << std::setw(5) << (totalRemeshProf.syncCsrMs * pct)              << "%) | Avg: " << (totalRemeshProf.syncCsrMs / denom) << " ms\n";
+
+        double finPct = (totalFinishProf.totalMs > 0.0) ? (100.0 / totalFinishProf.totalMs) : 0.0;
+        std::cout << "\n--- STROKE RELEASE (DynamicTopology::finish) BREAKDOWN (15 releases, Total: " << totalFinishProf.totalMs
+                  << " ms, Avg: " << (totalFinishProf.totalMs / float(NUM_STROKES)) << " ms, Max: " << maxReleaseMs << " ms at stroke " << maxReleaseStroke << ") ---\n";
+        std::cout << "  1. mesh.initTopology (CSR rebuild):  " << std::setw(8) << totalFinishProf.initTopologyMs     << " ms (" << std::setw(5) << (totalFinishProf.initTopologyMs * finPct)     << "%) | Avg: " << (totalFinishProf.initTopologyMs / float(NUM_STROKES)) << " ms\n";
+        std::cout << "  2. vertProxy copy:                   " << std::setw(8) << totalFinishProf.vertProxyCopyMs    << " ms (" << std::setw(5) << (totalFinishProf.vertProxyCopyMs * finPct)    << "%) | Avg: " << (totalFinishProf.vertProxyCopyMs / float(NUM_STROKES)) << " ms\n";
+        std::cout << "  3. updateFaceNormalsAndBoxes (full): " << std::setw(8) << totalFinishProf.faceNormalsBoxesMs << " ms (" << std::setw(5) << (totalFinishProf.faceNormalsBoxesMs * finPct) << "%) | Avg: " << (totalFinishProf.faceNormalsBoxesMs / float(NUM_STROKES)) << " ms\n";
+        std::cout << "  4. updateVertexNormals (full):       " << std::setw(8) << totalFinishProf.vertNormalsMs      << " ms (" << std::setw(5) << (totalFinishProf.vertNormalsMs * finPct)      << "%) | Avg: " << (totalFinishProf.vertNormalsMs / float(NUM_STROKES)) << " ms\n";
+        std::cout << "  5. bvh.build (full rebuild):         " << std::setw(8) << totalFinishProf.bvhBuildMs         << " ms (" << std::setw(5) << (totalFinishProf.bvhBuildMs * finPct)         << "%) | Avg: " << (totalFinishProf.bvhBuildMs / float(NUM_STROKES)) << " ms\n";
+        std::cout << "  6. cleanup & build TopologyUndo:     " << std::setw(8) << totalFinishProf.cleanupMs          << " ms (" << std::setw(5) << (totalFinishProf.cleanupMs * finPct)          << "%) | Avg: " << (totalFinishProf.cleanupMs / float(NUM_STROKES)) << " ms\n";
+
+        // Test Undo/Redo Latency
+        constexpr int UNDO_TEST_COUNT = 10;
+        double totalUndoMs = 0.0;
+        for (int u = 0; u < UNDO_TEST_COUNT; ++u) {
+            auto tU0 = std::chrono::high_resolution_clock::now();
+            g_undoManager.undo(scene);
+            totalUndoMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tU0).count();
+        }
+        double totalRedoMs = 0.0;
+        for (int r = 0; r < UNDO_TEST_COUNT; ++r) {
+            auto tR0 = std::chrono::high_resolution_clock::now();
+            g_undoManager.redo(scene);
+            totalRedoMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tR0).count();
+        }
+        std::cout << "\n--- UNDO / REDO LATENCY (10 Undos + 10 Redos at " << meshRaw->nbVerts << " verts) ---\n";
+        std::cout << "  Avg Undo Time: " << (totalUndoMs / UNDO_TEST_COUNT) << " ms (Total 10x: " << totalUndoMs << " ms)\n";
+        std::cout << "  Avg Redo Time: " << (totalRedoMs / UNDO_TEST_COUNT) << " ms (Total 10x: " << totalRedoMs << " ms)\n\n";
+
+        // PART B: Quad Mesh Audit
+        std::cout << "--- PART B: Quad Preservation Audit with Dynamic Topology Tool at 0.2 (R=35.0 Quad Sphere) ---\n";
+        auto quadMeshPtr = createQuadSphere(35.0f, 32, 64);
+        Mesh* quadMesh = quadMeshPtr.release();
+        quadMesh->initFaceGroups();
+        quadMesh->postInit(true);
+
+        Scene sceneQuad;
+        sceneQuad.addMesh(quadMesh);
+        sceneQuad.selectMesh(quadMesh);
+
+        Camera& camQuad = sceneQuad.getCamera();
+        camQuad.onResize(1920, 1080);
+        camQuad.resetViewToMesh(quadMesh, false);
+        camQuad.update(0.016f);
+
+        SculptManager sculptQuad;
+        sculptQuad.setBrush(BRUSH_DYNAMIC_TOPOLOGY);
+        auto& qSettings = sculptQuad.getSettings(BRUSH_DYNAMIC_TOPOLOGY);
+        qSettings.radius = 120.0f;
+        qSettings.spacing = 0.15f;
+        qSettings.topologyEdgeSize = 0.2f;
+
+        const int initialQuads = quadMesh->getNbQuads();
+        std::cout << "Initial Quad Sphere: " << quadMesh->nbVerts << " verts, " << quadMesh->nbFaces
+                  << " faces (" << initialQuads << " quads, " << (quadMesh->nbFaces - initialQuads) << " tris)\n";
+
+        for (int s = 0; s < 5; ++s) {
+            float startX = 960.0f + 50.0f * float(s - 2);
+            float startY = 540.0f;
+
+            SDL_Event evDown;
+            std::memset(&evDown, 0, sizeof(evDown));
+            evDown.type = SDL_MOUSEBUTTONDOWN;
+            evDown.button.button = SDL_BUTTON_LEFT;
+            evDown.button.x = (int)std::round(startX);
+            evDown.button.y = (int)std::round(startY);
+            sculptQuad.handleEvent(evDown, sceneQuad);
+
+            for (int step = 1; step <= 3; ++step) {
+                SDL_Event evMove;
+                std::memset(&evMove, 0, sizeof(evMove));
+                evMove.type = SDL_MOUSEMOTION;
+                evMove.motion.state = SDL_BUTTON_LMASK;
+                evMove.motion.x = (int)std::round(startX);
+                evMove.motion.y = (int)std::round(startY + float(step) * 25.0f);
+                sculptQuad.handleEvent(evMove, sceneQuad);
+            }
+
+            SDL_Event evUp;
+            std::memset(&evUp, 0, sizeof(evUp));
+            evUp.type = SDL_MOUSEBUTTONUP;
+            evUp.button.button = SDL_BUTTON_LEFT;
+            evUp.button.x = (int)std::round(startX);
+            evUp.button.y = (int)std::round(startY + 75.0f);
+            sculptQuad.handleEvent(evUp, sceneQuad);
+
+            std::vector<uint32_t> wireIdx;
+            auto tW = std::chrono::high_resolution_clock::now();
+            AngleRenderer::generateWireframeIndices(quadMesh, wireIdx);
+            double wMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tW).count();
+
+            std::cout << "  [Quad Stroke " << (s + 1) << "/5] V=" << quadMesh->nbVerts << " F=" << quadMesh->nbFaces
+                      << " (Quads=" << quadMesh->getNbQuads() << ", Tris=" << (quadMesh->nbFaces - quadMesh->getNbQuads())
+                      << ") | Untouched Quads Preserved: " << quadMesh->getNbQuads() << "/" << initialQuads
+                      << " | WireEBO=" << wMs << "ms\n";
+        }
+
+        std::cout << "================================================================================\n\n";
         return true;
     }
 

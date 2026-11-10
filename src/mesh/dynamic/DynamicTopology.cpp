@@ -1769,8 +1769,10 @@ bool DynamicTopology::remesh(Mesh& mesh, BVH& bvh, const glm::vec3& center, floa
     }
     changedT_.clear();
 
+    tStage = std::chrono::steady_clock::now();
     // Keep dynamic CSR in sync so that any sculpting brush or test accessing vrf/vrv never hits OOB
     syncDynamicCSR(mesh);
+    lastRemeshProfile.syncCsrMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tStage).count();
 
     if (ops_ > 0) {
         if (!mesh.edgeIsCage.empty()) mesh.edgeIsCage.clear();
