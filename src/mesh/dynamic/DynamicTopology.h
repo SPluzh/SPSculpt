@@ -127,7 +127,7 @@ public:
     ~DynamicTopology() = default;
 
     bool remesh(Mesh& mesh, BVH& bvh, const glm::vec3& center, float radius, float edgeLength,
-                std::span<const SymCopy> mirrors);
+                std::span<const SymCopy> mirrors = {}, bool needCsrSync = true);
 
     std::span<const std::pair<uint32_t, uint32_t>> movedVertices() const { return moved_; }
     std::span<const uint32_t> recordedVertices() const { return recordedNow_; }

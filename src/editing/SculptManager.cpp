@@ -2603,10 +2603,11 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             if (!m_dyntopo) {
                 m_dyntopo = std::make_unique<dynamic::DynamicTopology>();
             }
-            topoChanged = m_dyntopo->remesh(*mesh, mesh->bvh, m_currentIntersection, localRadius, targetLength, mirrors);
+            bool needCsr = !isDyntopoBrush;
+            topoChanged = m_dyntopo->remesh(*mesh, mesh->bvh, m_currentIntersection, localRadius, targetLength, mirrors, needCsr);
             if (topoChanged) {
                 mesh->isDirty = true;
-                mesh->isTopologyDirty = false;
+                mesh->isTopologyDirty = !needCsr;
                 mesh->isVertexDirty = true;
                 mesh->dirtyVertMin = 0;
                 mesh->dirtyVertMax = mesh->nbVerts > 0 ? (uint32_t)mesh->nbVerts - 1 : 0;
@@ -5647,7 +5648,9 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 effectiveSpacing = std::max(effectiveSpacing, 0.15f);
             }
             float minSpacing = effectiveSpacing * activeSettings.radius;
-            if (isDyntopoActive) {
+            if (activeBrush == BRUSH_DYNAMIC_TOPOLOGY && activeSettings.topologyEdgeSize <= 0.25f) {
+                minSpacing = std::max(minSpacing, 18.0f);
+            } else if (isDyntopoActive) {
                 minSpacing = std::max(minSpacing, 12.0f);
             }
 
@@ -5666,7 +5669,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             } else if (dist > minSpacing) {
                 auto tMot0 = std::chrono::high_resolution_clock::now();
                 float numStepsF = std::floor(dist / minSpacing);
-                int maxSubSteps = isDyntopoActive ? 2 : 16;
+                int maxSubSteps = (activeBrush == BRUSH_DYNAMIC_TOPOLOGY && activeSettings.topologyEdgeSize <= 0.25f) ? 1 : (isDyntopoActive ? 2 : 16);
                 if (numStepsF > (float)maxSubSteps) numStepsF = (float)maxSubSteps;
                 if (numStepsF < 1.0f) numStepsF = 1.0f;
                 float step = 1.0f / numStepsF;

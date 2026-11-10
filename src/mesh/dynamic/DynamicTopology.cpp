@@ -697,7 +697,11 @@ void DynamicTopology::queryRegion() {
     processQuadsInList(regionTris_);
 
     auto addSlivers = [&](const std::vector<uint32_t>& tris) {
-        for (uint32_t t : tris) {
+        if (tris.empty()) return;
+        const size_t maxCheck = 2048;
+        const size_t stride = tris.size() > maxCheck ? (tris.size() / maxCheck) : 1;
+        for (size_t i = 0; i < tris.size(); i += stride) {
+            uint32_t t = tris[i];
             if (t >= (uint32_t)mesh_->nbFaces || deadT_[t]) continue;
             glm::uvec3 tri = getTri(t);
             if (quality(getPos(tri.x), getPos(tri.y), getPos(tri.z)) < 0.05f) {
@@ -880,6 +884,19 @@ void DynamicTopology::setMirror(size_t k, uint32_t v, uint32_t w) {
 }
 
 void DynamicTopology::matchMirrors(const std::vector<uint32_t>& verts) {
+    if (mirrorSigns_.empty() || verts.empty()) return;
+
+    bool anyUnmapped = false;
+    for (size_t k = 0; k < mirrorSigns_.size() && !anyUnmapped; ++k) {
+        for (uint32_t v : verts) {
+            if (mirrorOf(k, v) == kNone) {
+                anyUnmapped = true;
+                break;
+            }
+        }
+    }
+    if (!anyUnmapped) return;
+
     const float cell = std::max(eps_ * 2.0f, 1e-12f);
     auto cellOf = [cell](const glm::vec3& p) { return glm::ivec3(glm::floor(p / cell)); };
     auto keyOf = [](const glm::ivec3& q) {
@@ -1130,29 +1147,37 @@ void DynamicTopology::splitOrbit(uint32_t a, uint32_t b, int depth) {
 
 void DynamicTopology::splitPass() {
     heap_.clear();
-    uint32_t tris[4];
     for (uint32_t t : regionTris_) {
         glm::uvec3 tri = getTri(t);
         for (int c = 0; c < 3; ++c) {
             const uint32_t a = tri[c], b = tri[(c + 1) % 3];
-            if (a > b && edgeTriangles(a, b, tris) != 1) continue;
-            const float l = len2(a, b);
-            if (l > splitLen2_ && inside(a, b)) heap_.push_back({l, std::min(a, b), std::max(a, b)});
+            const uint32_t u = std::min(a, b), v = std::max(a, b);
+            const float l = len2(u, v);
+            if (l > splitLen2_ && inside(u, v)) heap_.push_back({l, u, v});
         }
     }
     for (uint32_t t : mirrorTris_) {
         glm::uvec3 tri = getTri(t);
         for (int c = 0; c < 3; ++c) {
             const uint32_t a = tri[c], b = tri[(c + 1) % 3];
-            if (a > b && edgeTriangles(a, b, tris) != 1) continue;
-            const float l = len2(a, b);
-            if (l > splitLen2_ && !inside(a, b) && candidate(a, b)) heap_.push_back({l, std::min(a, b), std::max(a, b)});
+            const uint32_t u = std::min(a, b), v = std::max(a, b);
+            const float l = len2(u, v);
+            if (l > splitLen2_ && !inside(u, v) && candidate(u, v)) heap_.push_back({l, u, v});
         }
+    }
+    if (!heap_.empty()) {
+        std::sort(heap_.begin(), heap_.end(), [](const Edge& x, const Edge& y) {
+            return x.a != y.a ? x.a < y.a : (x.b != y.b ? x.b < y.b : x.len2 > y.len2);
+        });
+        heap_.erase(std::unique(heap_.begin(), heap_.end(), [](const Edge& x, const Edge& y) {
+            return x.a == y.a && x.b == y.b;
+        }), heap_.end());
     }
     auto less = [](const Edge& x, const Edge& y) {
         return x.len2 != y.len2 ? x.len2 < y.len2 : x.a != y.a ? x.a > y.a : x.b > y.b;
     };
     std::make_heap(heap_.begin(), heap_.end(), less);
+    uint32_t tris[4];
     while (!heap_.empty() && ops_ < maxOps_) {
         std::pop_heap(heap_.begin(), heap_.end(), less);
         const Edge e = heap_.back();
@@ -1299,15 +1324,14 @@ void DynamicTopology::collapse(uint32_t keep, uint32_t drop, const glm::vec3& p)
 
 void DynamicTopology::collapsePass() {
     heap_.clear();
-    uint32_t tris[4];
     for (uint32_t t : regionTris_) {
         if (t >= (uint32_t)mesh_->nbFaces || deadT_[t]) continue;
         glm::uvec3 tri = getTri(t);
         for (int c = 0; c < 3; ++c) {
             const uint32_t a = tri[c], b = tri[(c + 1) % 3];
-            if (a > b && edgeTriangles(a, b, tris) != 1) continue;
-            const float l = len2(a, b);
-            if (l < collapseLen2_ && inside(a, b)) heap_.push_back({-l, std::min(a, b), std::max(a, b)});
+            const uint32_t u = std::min(a, b), v = std::max(a, b);
+            const float l = len2(u, v);
+            if (l < collapseLen2_ && inside(u, v)) heap_.push_back({-l, u, v});
         }
     }
     for (uint32_t t : mirrorTris_) {
@@ -1315,9 +1339,9 @@ void DynamicTopology::collapsePass() {
         glm::uvec3 tri = getTri(t);
         for (int c = 0; c < 3; ++c) {
             const uint32_t a = tri[c], b = tri[(c + 1) % 3];
-            if (a > b && edgeTriangles(a, b, tris) != 1) continue;
-            const float l = len2(a, b);
-            if (l < collapseLen2_ && !inside(a, b) && candidate(a, b)) heap_.push_back({-l, std::min(a, b), std::max(a, b)});
+            const uint32_t u = std::min(a, b), v = std::max(a, b);
+            const float l = len2(u, v);
+            if (l < collapseLen2_ && !inside(u, v) && candidate(u, v)) heap_.push_back({-l, u, v});
         }
     }
     for (uint32_t t : slivers_) {
@@ -1325,14 +1349,24 @@ void DynamicTopology::collapsePass() {
         glm::uvec3 tri = getTri(t);
         for (int c = 0; c < 3; ++c) {
             const uint32_t a = tri[c], b = tri[(c + 1) % 3];
-            const float l = len2(a, b);
-            if (l < collapseLen2_ && inside(a, b, true)) heap_.push_back({-l, std::min(a, b), std::max(a, b)});
+            const uint32_t u = std::min(a, b), v = std::max(a, b);
+            const float l = len2(u, v);
+            if (l < collapseLen2_ && inside(u, v, true)) heap_.push_back({-l, u, v});
         }
+    }
+    if (!heap_.empty()) {
+        std::sort(heap_.begin(), heap_.end(), [](const Edge& x, const Edge& y) {
+            return x.a != y.a ? x.a < y.a : (x.b != y.b ? x.b < y.b : x.len2 > y.len2);
+        });
+        heap_.erase(std::unique(heap_.begin(), heap_.end(), [](const Edge& x, const Edge& y) {
+            return x.a == y.a && x.b == y.b;
+        }), heap_.end());
     }
     auto less = [](const Edge& x, const Edge& y) {
         return x.len2 != y.len2 ? x.len2 < y.len2 : x.a != y.a ? x.a > y.a : x.b > y.b;
     };
     std::make_heap(heap_.begin(), heap_.end(), less);
+    uint32_t tris[4];
     std::vector<std::pair<uint32_t, uint32_t>> edges;
     struct Plan {
         uint32_t keep, drop;
@@ -1549,6 +1583,21 @@ void DynamicTopology::gatherRegion() {
     queryRegion();
     if (mirrorSigns_.empty()) return;
 
+    // Fast check: if all vertices in regionTris_ already have symmetry partners,
+    // skip the heavy BVH reach queries, corner gathering, and matchMirrors.
+    bool anyUnmapped = false;
+    for (size_t k = 0; k < mirrorSigns_.size() && !anyUnmapped; ++k) {
+        for (uint32_t t : regionTris_) {
+            if (t >= (uint32_t)mesh_->nbFaces || deadT_[t]) continue;
+            glm::uvec3 tri = getTri(t);
+            if (mirrorOf(k, tri.x) == kNone || mirrorOf(k, tri.y) == kNone || mirrorOf(k, tri.z) == kNone) {
+                anyUnmapped = true;
+                break;
+            }
+        }
+    }
+    if (!anyUnmapped) return;
+
     std::vector<uint32_t>& verts = regionVerts_;
     std::vector<uint32_t> tris;
     verts.clear();
@@ -1589,7 +1638,7 @@ void DynamicTopology::gatherRegion() {
 }
 
 bool DynamicTopology::remesh(Mesh& mesh, BVH& bvh, const glm::vec3& center, float radius, float edgeLength,
-                             std::span<const SymCopy> mirrors) {
+                             std::span<const SymCopy> mirrors, bool needCsrSync) {
     const auto clock = std::chrono::steady_clock::now();
     lastRemeshProfile = DyntopoRemeshProfile{};
     const size_t splitsBefore = stats.splits;
@@ -1665,7 +1714,7 @@ bool DynamicTopology::remesh(Mesh& mesh, BVH& bvh, const glm::vec3& center, floa
     lastRemeshProfile.gatherRegionMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tStage).count();
     lastRemeshProfile.regionTris = regionTris_.size();
     if (regionTris_.empty()) {
-        if (mesh.vrfStartCount.size() < (size_t)mesh.nbVerts * 2 || mesh.vrvStartCount.size() < (size_t)mesh.nbVerts * 2) {
+        if (needCsrSync && (mesh.vrfStartCount.size() < (size_t)mesh.nbVerts * 2 || mesh.vrvStartCount.size() < (size_t)mesh.nbVerts * 2)) {
             syncDynamicCSR(mesh);
         }
         lastMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - clock).count();
@@ -1769,10 +1818,15 @@ bool DynamicTopology::remesh(Mesh& mesh, BVH& bvh, const glm::vec3& center, floa
     }
     changedT_.clear();
 
-    tStage = std::chrono::steady_clock::now();
-    // Keep dynamic CSR in sync so that any sculpting brush or test accessing vrf/vrv never hits OOB
-    syncDynamicCSR(mesh);
-    lastRemeshProfile.syncCsrMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tStage).count();
+    if (needCsrSync) {
+        tStage = std::chrono::steady_clock::now();
+        // Keep dynamic CSR in sync so that any sculpting brush or test accessing vrf/vrv never hits OOB
+        syncDynamicCSR(mesh);
+        lastRemeshProfile.syncCsrMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tStage).count();
+    } else {
+        lastRemeshProfile.syncCsrMs = 0.0;
+        mesh.isTopologyDirty = true;
+    }
 
     if (ops_ > 0) {
         if (!mesh.edgeIsCage.empty()) mesh.edgeIsCage.clear();
