@@ -752,8 +752,9 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
     m_splitMode = (scene.getSplitMode() != Scene::SplitMode::OFF);
     m_cameraRight = scene.getCameraRight();
 
-    // Reset per-frame render stats
+    // Reset per-frame render stats & upload telemetry
     m_lastRenderStats = {};
+    m_lastUploadTiming = {};
 
     // 0. Ensure all mesh dirty buffers are uploaded first (must run on the active GL thread/context)
     bool anyMeshUploaded = false;
@@ -2515,25 +2516,29 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
     glUniform1i(glGetUniformLocation(program, "uShowPolyGroups"), m_showPolyGroups ? 1 : 0);
 
     if (program == m_polygroupProgram) {
-        Mesh* renderMesh = mesh->getRenderMesh();
-        if (bufs->polygroupVao == 0 || bufs->polygroupDirty) {
-            buildPolyGroupBuffers(renderMesh, bufs.get());
-            bufs->polygroupDirty = false;
-        }
-        if (bufs->polygroupVao != 0 && bufs->polygroupVertCount > 0) {
-            glBindVertexArray(bufs->polygroupVao);
-            glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(bufs->polygroupVertCount));
-            glBindVertexArray(0);
-            m_lastRenderStats.meshDrawCalls++;
+        if (OptFlags::get().indexedPolygroup && bufs->indexedPolygroupBuilt) {
             m_lastRenderStats.polygroupDraws++;
-            m_lastRenderStats.trisSubmitted += (uint64_t)(bufs->polygroupVertCount / 3);
-            if (useCull) m_lastRenderStats.cullEnabledDraws++;
-            else m_lastRenderStats.cullDisabledDraws++;
+        } else {
+            Mesh* renderMesh = mesh->getRenderMesh();
+            if (bufs->polygroupVao == 0 || bufs->polygroupDirty) {
+                buildPolyGroupBuffers(renderMesh, bufs.get());
+                bufs->polygroupDirty = false;
+            }
+            if (bufs->polygroupVao != 0 && bufs->polygroupVertCount > 0) {
+                glBindVertexArray(bufs->polygroupVao);
+                glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(bufs->polygroupVertCount));
+                glBindVertexArray(0);
+                m_lastRenderStats.meshDrawCalls++;
+                m_lastRenderStats.polygroupDraws++;
+                m_lastRenderStats.trisSubmitted += (uint64_t)(bufs->polygroupVertCount / 3);
+                if (useCull) m_lastRenderStats.cullEnabledDraws++;
+                else m_lastRenderStats.cullDisabledDraws++;
+            }
+            if (useCull && !isXRay) {
+                glDisable(GL_CULL_FACE);
+            }
+            return;
         }
-        if (useCull && !isXRay) {
-            glDisable(GL_CULL_FACE);
-        }
-        return;
     }
 
     if (program == m_pbrProgram || program == m_matcapProgram) {
@@ -3956,6 +3961,584 @@ void AngleRenderer::buildPolyGroupBuffers(const Mesh* mesh, MeshRenderBuffers* b
     m_lastRenderStats.polygroupRebuilds++;
 }
 
+void AngleRenderer::releasePolygroupBuffers(MeshRenderBuffers* bufs) {
+    if (!bufs) return;
+    if (bufs->polygroupVao) {
+        glDeleteVertexArrays(1, &bufs->polygroupVao);
+        bufs->polygroupVao = 0;
+    }
+    if (bufs->polygroupVboVerts) {
+        glDeleteBuffers(1, &bufs->polygroupVboVerts);
+        bufs->polygroupVboVerts = 0;
+    }
+    if (bufs->polygroupVboNormals) {
+        glDeleteBuffers(1, &bufs->polygroupVboNormals);
+        bufs->polygroupVboNormals = 0;
+    }
+    if (bufs->polygroupVboMaterials) {
+        glDeleteBuffers(1, &bufs->polygroupVboMaterials);
+        bufs->polygroupVboMaterials = 0;
+    }
+    if (bufs->polygroupVboGroups) {
+        glDeleteBuffers(1, &bufs->polygroupVboGroups);
+        bufs->polygroupVboGroups = 0;
+    }
+    bufs->polygroupVertCount = 0;
+    bufs->gpuPolygroupBytes = 0;
+    bufs->polygroupDirty = false;
+}
+
+void AngleRenderer::buildIndexedPolygroupLayout(
+    const Mesh* mesh,
+    MeshRenderBuffers* bufs,
+    std::vector<uint32_t>& outVertGroups,
+    std::vector<uint32_t>& outTriIndices)
+{
+    outVertGroups.clear();
+    outTriIndices.clear();
+    if (!mesh || !bufs) return;
+
+    const size_t baseVerts = (mesh->nbVerts > 0) ? static_cast<size_t>(mesh->nbVerts) : 0;
+    const uint32_t baseVertsU = static_cast<uint32_t>(baseVerts);
+    const int nbF = mesh->nbFaces;
+
+    bufs->baseVertCount = baseVerts;
+    bufs->seamSrcVerts.clear();
+    bufs->seamSortedBySrc.clear();
+
+    outVertGroups.assign(baseVerts, 0);
+    if (nbF <= 0 || baseVerts == 0) {
+        bufs->indexedPolygroupBuilt = true;
+        return;
+    }
+
+    const auto& fVisible = mesh->faceVisible;
+    const auto& visible = mesh->vertVisible;
+    const bool hasFaceVis = (fVisible.size() == static_cast<size_t>(nbF));
+    const bool hasVertVis = !visible.empty();
+    const bool hasGroups = (mesh->faceGroups.size() == static_cast<size_t>(nbF));
+
+    const auto& faceArray = (!mesh->facesTexCoord.empty() && mesh->facesTexCoord.size() == static_cast<size_t>(nbF) * 4)
+                           ? mesh->facesTexCoord
+                           : mesh->faces;
+
+    outTriIndices.reserve(static_cast<size_t>(nbF) * 6);
+    outVertGroups.reserve(baseVerts + std::max<size_t>(256, baseVerts / 32));
+
+    std::vector<uint8_t> vertClaimed(baseVerts, 0);
+    struct SeamNode {
+        uint32_t gid;
+        uint32_t dupIdx;
+        int32_t next;
+    };
+    std::vector<int32_t> seamHead(baseVerts, -1);
+    std::vector<SeamNode> seamNodes;
+    seamNodes.reserve(std::max<size_t>(256, baseVerts / 32));
+
+    auto emitTri = [&](uint32_t c0, uint32_t c1, uint32_t c2, uint32_t gid) {
+        if (c0 >= baseVertsU || c1 >= baseVertsU || c2 >= baseVertsU) {
+            outTriIndices.push_back(c0);
+            outTriIndices.push_back(c1);
+            outTriIndices.push_back(c2);
+            return;
+        }
+
+        // OpenGL ES 3.0 provoking vertex for GL_TRIANGLES is always the 3rd (last) vertex.
+        // Pass 1: Reuse already-claimed corner matching gid via cyclic rotation.
+        if (vertClaimed[c2] && outVertGroups[c2] == gid) {
+            outTriIndices.push_back(c0); outTriIndices.push_back(c1); outTriIndices.push_back(c2);
+            return;
+        }
+        if (vertClaimed[c0] && outVertGroups[c0] == gid) {
+            outTriIndices.push_back(c1); outTriIndices.push_back(c2); outTriIndices.push_back(c0);
+            return;
+        }
+        if (vertClaimed[c1] && outVertGroups[c1] == gid) {
+            outTriIndices.push_back(c2); outTriIndices.push_back(c0); outTriIndices.push_back(c1);
+            return;
+        }
+
+        // Pass 2: Claim an unclaimed corner, preserving cyclic winding order.
+        if (!vertClaimed[c2]) {
+            vertClaimed[c2] = 1; outVertGroups[c2] = gid;
+            outTriIndices.push_back(c0); outTriIndices.push_back(c1); outTriIndices.push_back(c2);
+            return;
+        }
+        if (!vertClaimed[c0]) {
+            vertClaimed[c0] = 1; outVertGroups[c0] = gid;
+            outTriIndices.push_back(c1); outTriIndices.push_back(c2); outTriIndices.push_back(c0);
+            return;
+        }
+        if (!vertClaimed[c1]) {
+            vertClaimed[c1] = 1; outVertGroups[c1] = gid;
+            outTriIndices.push_back(c2); outTriIndices.push_back(c0); outTriIndices.push_back(c1);
+            return;
+        }
+
+        // Pass 3: Reuse an existing seam-tail duplicate with matching gid on any corner.
+        for (int32_t h = seamHead[c2]; h != -1; h = seamNodes[h].next) {
+            if (seamNodes[h].gid == gid) {
+                outTriIndices.push_back(c0); outTriIndices.push_back(c1); outTriIndices.push_back(seamNodes[h].dupIdx);
+                return;
+            }
+        }
+        for (int32_t h = seamHead[c0]; h != -1; h = seamNodes[h].next) {
+            if (seamNodes[h].gid == gid) {
+                outTriIndices.push_back(c1); outTriIndices.push_back(c2); outTriIndices.push_back(seamNodes[h].dupIdx);
+                return;
+            }
+        }
+        for (int32_t h = seamHead[c1]; h != -1; h = seamNodes[h].next) {
+            if (seamNodes[h].gid == gid) {
+                outTriIndices.push_back(c2); outTriIndices.push_back(c0); outTriIndices.push_back(seamNodes[h].dupIdx);
+                return;
+            }
+        }
+
+        // Pass 4: Append one seam duplicate vertex for c2 in the tail [baseVerts .. baseVerts + seamCount).
+        uint32_t dupIdx = static_cast<uint32_t>(baseVerts + bufs->seamSrcVerts.size());
+        bufs->seamSrcVerts.push_back(c2);
+        outVertGroups.push_back(gid);
+        seamNodes.push_back({ gid, dupIdx, seamHead[c2] });
+        seamHead[c2] = static_cast<int32_t>(seamNodes.size() - 1);
+        outTriIndices.push_back(c0); outTriIndices.push_back(c1); outTriIndices.push_back(dupIdx);
+    };
+
+    for (int f = 0; f < nbF; ++f) {
+        if (hasFaceVis) {
+            if (!fVisible[f]) continue;
+        } else if (hasVertVis) {
+            uint32_t v0 = faceArray[f * 4];
+            uint32_t v1 = faceArray[f * 4 + 1];
+            uint32_t v2 = faceArray[f * 4 + 2];
+            uint32_t v3 = faceArray[f * 4 + 3];
+            if (v0 >= visible.size() || !visible[v0]) continue;
+            if (v1 >= visible.size() || !visible[v1]) continue;
+            if (v2 >= visible.size() || !visible[v2]) continue;
+            if (v3 != 0xffffffff && (v3 >= visible.size() || !visible[v3])) continue;
+        }
+
+        uint32_t iv0 = faceArray[f * 4];
+        uint32_t iv1 = faceArray[f * 4 + 1];
+        uint32_t iv2 = faceArray[f * 4 + 2];
+        uint32_t iv3 = faceArray[f * 4 + 3];
+        uint32_t gid = hasGroups ? mesh->faceGroups[f] : 0;
+
+        emitTri(iv0, iv1, iv2, gid);
+        if (iv3 != 0xffffffff) {
+            emitTri(iv0, iv2, iv3, gid);
+        }
+    }
+
+    const size_t seamCount = bufs->seamSrcVerts.size();
+    bufs->seamSortedBySrc.resize(seamCount);
+    for (size_t k = 0; k < seamCount; ++k) {
+        bufs->seamSortedBySrc[k] = { bufs->seamSrcVerts[k], static_cast<uint32_t>(k) };
+    }
+    std::sort(bufs->seamSortedBySrc.begin(), bufs->seamSortedBySrc.end(),
+        [](const MeshRenderBuffers::SeamSlotRef& a, const MeshRenderBuffers::SeamSlotRef& b) {
+            if (a.srcVert != b.srcVert) return a.srcVert < b.srcVert;
+            return a.slotIdx < b.slotIdx;
+        });
+
+    bufs->indexedPolygroupBuilt = true;
+}
+
+void AngleRenderer::populateSeamTailFromMesh(const Mesh* mesh, MeshRenderBuffers* bufs) {
+    if (!mesh || !bufs) return;
+    const size_t seamCount = bufs->seamSrcVerts.size();
+    bufs->seamTailVerts.resize(seamCount * 3);
+    bufs->seamTailNormals.resize(seamCount * 3);
+    bufs->seamTailColors.resize(seamCount * 3);
+    bufs->seamTailMaterials.resize(seamCount * 3);
+
+    const size_t vLimit = mesh->verts.size();
+    const size_t nLimit = mesh->normals.size();
+    const size_t cLimit = mesh->colors.size();
+    const size_t mLimit = mesh->materials.size();
+
+    for (size_t k = 0; k < seamCount; ++k) {
+        const size_t src3 = static_cast<size_t>(bufs->seamSrcVerts[k]) * 3;
+        const size_t dst3 = k * 3;
+        if (src3 + 2 < vLimit) {
+            bufs->seamTailVerts[dst3 + 0] = mesh->verts[src3 + 0];
+            bufs->seamTailVerts[dst3 + 1] = mesh->verts[src3 + 1];
+            bufs->seamTailVerts[dst3 + 2] = mesh->verts[src3 + 2];
+        } else {
+            bufs->seamTailVerts[dst3 + 0] = bufs->seamTailVerts[dst3 + 1] = bufs->seamTailVerts[dst3 + 2] = 0.0f;
+        }
+        if (src3 + 2 < nLimit) {
+            bufs->seamTailNormals[dst3 + 0] = mesh->normals[src3 + 0];
+            bufs->seamTailNormals[dst3 + 1] = mesh->normals[src3 + 1];
+            bufs->seamTailNormals[dst3 + 2] = mesh->normals[src3 + 2];
+        } else {
+            bufs->seamTailNormals[dst3 + 0] = 0.0f; bufs->seamTailNormals[dst3 + 1] = 1.0f; bufs->seamTailNormals[dst3 + 2] = 0.0f;
+        }
+        if (src3 + 2 < cLimit) {
+            bufs->seamTailColors[dst3 + 0] = mesh->colors[src3 + 0];
+            bufs->seamTailColors[dst3 + 1] = mesh->colors[src3 + 1];
+            bufs->seamTailColors[dst3 + 2] = mesh->colors[src3 + 2];
+        } else {
+            bufs->seamTailColors[dst3 + 0] = bufs->seamTailColors[dst3 + 1] = bufs->seamTailColors[dst3 + 2] = 1.0f;
+        }
+        if (src3 + 2 < mLimit) {
+            bufs->seamTailMaterials[dst3 + 0] = mesh->materials[src3 + 0];
+            bufs->seamTailMaterials[dst3 + 1] = mesh->materials[src3 + 1];
+            bufs->seamTailMaterials[dst3 + 2] = mesh->materials[src3 + 2];
+        } else {
+            bufs->seamTailMaterials[dst3 + 0] = 0.5f; bufs->seamTailMaterials[dst3 + 1] = 0.0f; bufs->seamTailMaterials[dst3 + 2] = 1.0f;
+        }
+    }
+}
+
+void AngleRenderer::uploadVertexBuffersWithSeamTail(
+    const Mesh* uploadMesh,
+    MeshRenderBuffers* bufs,
+    const std::vector<uint32_t>& vertGroups,
+    bool fullRealloc,
+    bool bindVaoAttribs,
+    size_t& outVboBytes)
+{
+    outVboBytes = 0;
+    if (!uploadMesh || !bufs) return;
+
+    const size_t baseVerts = bufs->baseVertCount;
+    const size_t seamCount = bufs->seamSrcVerts.size();
+    const size_t totalVerts = baseVerts + seamCount;
+
+    populateSeamTailFromMesh(uploadMesh, bufs);
+
+    auto uploadFloat3Channel = [&](GLuint vbo, int attribIdx, const std::vector<float>& baseVec,
+                                   const std::vector<float>& tailVec, size_t& gpuBytesTracked) {
+        const size_t baseBytes = std::min(baseVec.size() * sizeof(float), baseVerts * 3 * sizeof(float));
+        const size_t tailBytes = seamCount * 3 * sizeof(float);
+        const size_t neededBytes = totalVerts * 3 * sizeof(float);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        if (fullRealloc || neededBytes > gpuBytesTracked) {
+            if (seamCount == 0) {
+                glBufferData(GL_ARRAY_BUFFER, baseBytes, baseVec.data(), GL_DYNAMIC_DRAW);
+                gpuBytesTracked = baseBytes;
+                outVboBytes += baseBytes;
+            } else {
+                glBufferData(GL_ARRAY_BUFFER, neededBytes, nullptr, GL_DYNAMIC_DRAW);
+                if (baseBytes > 0) {
+                    glBufferSubData(GL_ARRAY_BUFFER, 0, baseBytes, baseVec.data());
+                }
+                if (tailBytes > 0) {
+                    glBufferSubData(GL_ARRAY_BUFFER, baseVerts * 3 * sizeof(float), tailBytes, tailVec.data());
+                }
+                gpuBytesTracked = neededBytes;
+                outVboBytes += baseBytes + tailBytes;
+            }
+            if (bindVaoAttribs) {
+                glVertexAttribPointer(attribIdx, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+                glEnableVertexAttribArray(attribIdx);
+            }
+        } else if (tailBytes > 0) {
+            glBufferSubData(GL_ARRAY_BUFFER, baseVerts * 3 * sizeof(float), tailBytes, tailVec.data());
+            outVboBytes += tailBytes;
+        }
+    };
+
+    uploadFloat3Channel(bufs->vboVertices,  0, uploadMesh->verts,     bufs->seamTailVerts,     bufs->gpuVertsBytes);
+    uploadFloat3Channel(bufs->vboNormals,   1, uploadMesh->normals,   bufs->seamTailNormals,   bufs->gpuNormalsBytes);
+    uploadFloat3Channel(bufs->vboColors,    2, uploadMesh->colors,    bufs->seamTailColors,    bufs->gpuColorsBytes);
+    uploadFloat3Channel(bufs->vboMaterials, 3, uploadMesh->materials, bufs->seamTailMaterials, bufs->gpuMaterialsBytes);
+
+    const size_t fgBytes = vertGroups.size() * sizeof(uint32_t);
+    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboFaceGroups);
+    if (fullRealloc || fgBytes > bufs->gpuFaceGroupsBytes) {
+        glBufferData(GL_ARRAY_BUFFER, fgBytes, vertGroups.data(), GL_DYNAMIC_DRAW);
+        bufs->gpuFaceGroupsBytes = fgBytes;
+        if (bindVaoAttribs) {
+            glVertexAttribIPointer(5, 1, GL_UNSIGNED_INT, sizeof(uint32_t), (void*)0);
+            glEnableVertexAttribArray(5);
+        }
+    } else if (fgBytes > 0) {
+        glBufferSubData(GL_ARRAY_BUFFER, 0, fgBytes, vertGroups.data());
+    }
+    outVboBytes += fgBytes;
+
+    if (!uploadMesh->uvFlat.empty()) {
+        if (!bufs->vboTexCoords) glGenBuffers(1, &bufs->vboTexCoords);
+        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboTexCoords);
+        const size_t baseUvBytes = std::min(uploadMesh->uvFlat.size() * sizeof(float), baseVerts * 2 * sizeof(float));
+        const size_t neededUvBytes = totalVerts * 2 * sizeof(float);
+        std::vector<float> tailUvs;
+        if (seamCount > 0) {
+            tailUvs.resize(seamCount * 2, 0.0f);
+            for (size_t k = 0; k < seamCount; ++k) {
+                size_t src2 = static_cast<size_t>(bufs->seamSrcVerts[k]) * 2;
+                if (src2 + 1 < uploadMesh->uvFlat.size()) {
+                    tailUvs[k * 2 + 0] = uploadMesh->uvFlat[src2 + 0];
+                    tailUvs[k * 2 + 1] = uploadMesh->uvFlat[src2 + 1];
+                }
+            }
+        }
+        if (fullRealloc || neededUvBytes > bufs->gpuTexCoordsBytes) {
+            if (seamCount == 0) {
+                glBufferData(GL_ARRAY_BUFFER, baseUvBytes, uploadMesh->uvFlat.data(), GL_DYNAMIC_DRAW);
+                bufs->gpuTexCoordsBytes = baseUvBytes;
+                outVboBytes += baseUvBytes;
+            } else {
+                glBufferData(GL_ARRAY_BUFFER, neededUvBytes, nullptr, GL_DYNAMIC_DRAW);
+                if (baseUvBytes > 0) {
+                    glBufferSubData(GL_ARRAY_BUFFER, 0, baseUvBytes, uploadMesh->uvFlat.data());
+                }
+                glBufferSubData(GL_ARRAY_BUFFER, baseVerts * 2 * sizeof(float), tailUvs.size() * sizeof(float), tailUvs.data());
+                bufs->gpuTexCoordsBytes = neededUvBytes;
+                outVboBytes += baseUvBytes + tailUvs.size() * sizeof(float);
+            }
+            if (bindVaoAttribs) {
+                glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+                glEnableVertexAttribArray(4);
+            }
+        } else if (!tailUvs.empty()) {
+            glBufferSubData(GL_ARRAY_BUFFER, baseVerts * 2 * sizeof(float), tailUvs.size() * sizeof(float), tailUvs.data());
+            outVboBytes += tailUvs.size() * sizeof(float);
+        }
+    }
+
+    if (!uploadMesh->tangents.empty()) {
+        if (!bufs->vboTangents) glGenBuffers(1, &bufs->vboTangents);
+        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboTangents);
+        const size_t baseTanBytes = std::min(uploadMesh->tangents.size() * sizeof(float), baseVerts * 4 * sizeof(float));
+        const size_t neededTanBytes = totalVerts * 4 * sizeof(float);
+        std::vector<float> tailTan;
+        if (seamCount > 0) {
+            tailTan.resize(seamCount * 4, 0.0f);
+            for (size_t k = 0; k < seamCount; ++k) {
+                size_t src4 = static_cast<size_t>(bufs->seamSrcVerts[k]) * 4;
+                if (src4 + 3 < uploadMesh->tangents.size()) {
+                    tailTan[k * 4 + 0] = uploadMesh->tangents[src4 + 0];
+                    tailTan[k * 4 + 1] = uploadMesh->tangents[src4 + 1];
+                    tailTan[k * 4 + 2] = uploadMesh->tangents[src4 + 2];
+                    tailTan[k * 4 + 3] = uploadMesh->tangents[src4 + 3];
+                }
+            }
+        }
+        if (fullRealloc || neededTanBytes > bufs->gpuTangentsBytes) {
+            if (seamCount == 0) {
+                glBufferData(GL_ARRAY_BUFFER, baseTanBytes, uploadMesh->tangents.data(), GL_DYNAMIC_DRAW);
+                bufs->gpuTangentsBytes = baseTanBytes;
+                outVboBytes += baseTanBytes;
+            } else {
+                glBufferData(GL_ARRAY_BUFFER, neededTanBytes, nullptr, GL_DYNAMIC_DRAW);
+                if (baseTanBytes > 0) {
+                    glBufferSubData(GL_ARRAY_BUFFER, 0, baseTanBytes, uploadMesh->tangents.data());
+                }
+                glBufferSubData(GL_ARRAY_BUFFER, baseVerts * 4 * sizeof(float), tailTan.size() * sizeof(float), tailTan.data());
+                bufs->gpuTangentsBytes = neededTanBytes;
+                outVboBytes += baseTanBytes + tailTan.size() * sizeof(float);
+            }
+            if (bindVaoAttribs) {
+                glVertexAttribPointer(6, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+                glEnableVertexAttribArray(6);
+            }
+        } else if (!tailTan.empty()) {
+            glBufferSubData(GL_ARRAY_BUFFER, baseVerts * 4 * sizeof(float), tailTan.size() * sizeof(float), tailTan.data());
+            outVboBytes += tailTan.size() * sizeof(float);
+        }
+    }
+}
+
+void AngleRenderer::buildDirtyRuns(
+    int nbVerts,
+    const std::vector<uint8_t>& blocks,
+    bool hasBlockMask,
+    std::vector<std::pair<uint32_t, uint32_t>>& outRuns,
+    uint32_t& outUploadedVerts,
+    bool& outUsedFallback)
+{
+    outRuns.clear();
+    outUploadedVerts = 0;
+    outUsedFallback = false;
+    if (nbVerts <= 0) return;
+
+    const uint32_t nbVertsU = static_cast<uint32_t>(nbVerts);
+    const size_t expectedBlocks = Mesh::getDirtyBlockCount(nbVerts);
+    if (!hasBlockMask || blocks.size() < expectedBlocks) {
+        outRuns.emplace_back(0u, nbVertsU);
+        outUploadedVerts = nbVertsU;
+        outUsedFallback = true;
+        return;
+    }
+
+    size_t totalDirty = 0;
+    size_t b = 0;
+    while (b < expectedBlocks) {
+        if (!blocks[b]) {
+            ++b;
+            continue;
+        }
+        size_t bStart = b;
+        while (b < expectedBlocks && blocks[b]) {
+            ++b;
+        }
+        uint32_t vStart = static_cast<uint32_t>(bStart << Mesh::kDirtyBlockShift);
+        uint32_t vEnd = static_cast<uint32_t>(std::min<size_t>(nbVertsU, b << Mesh::kDirtyBlockShift));
+        if (vStart < vEnd) {
+            outRuns.emplace_back(vStart, vEnd);
+            totalDirty += static_cast<size_t>(vEnd - vStart);
+        }
+    }
+
+    if (totalDirty == 0) {
+        return;
+    }
+
+    if (totalDirty * 100ULL > static_cast<size_t>(nbVertsU) * 60ULL) {
+        outRuns.clear();
+        outRuns.emplace_back(0u, nbVertsU);
+        outUploadedVerts = nbVertsU;
+        outUsedFallback = true;
+        return;
+    }
+
+    outUploadedVerts = static_cast<uint32_t>(totalDirty);
+}
+
+size_t AngleRenderer::uploadDirtyFloat3Runs(
+    GLuint vbo,
+    const std::vector<float>& src,
+    int nbVerts,
+    const std::vector<std::pair<uint32_t, uint32_t>>& runs)
+{
+    if (vbo == 0 || runs.empty() || nbVerts <= 0) return 0;
+    const size_t maxVerts = std::min<size_t>(static_cast<size_t>(nbVerts), src.size() / 3);
+    if (maxVerts == 0) return 0;
+
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    size_t totalBytes = 0;
+    for (const auto& r : runs) {
+        uint32_t v0 = r.first;
+        uint32_t v1 = static_cast<uint32_t>(std::min<size_t>(r.second, maxVerts));
+        if (v0 >= v1) continue;
+        size_t offset = static_cast<size_t>(v0) * 3 * sizeof(float);
+        size_t bytes = static_cast<size_t>(v1 - v0) * 3 * sizeof(float);
+        glBufferSubData(GL_ARRAY_BUFFER, offset, bytes, src.data() + static_cast<size_t>(v0) * 3);
+        totalBytes += bytes;
+    }
+    return totalBytes;
+}
+
+void AngleRenderer::syncDirtySeamTail(
+    MeshRenderBuffers* bufs,
+    const Mesh* srcMesh,
+    const std::vector<std::pair<uint32_t, uint32_t>>& runs,
+    bool doVerts,
+    bool doColors,
+    bool doMaterials,
+    size_t& outBytes)
+{
+    if (!bufs || !srcMesh || runs.empty() || bufs->seamSortedBySrc.empty()) return;
+    if (!doVerts && !doColors && !doMaterials) return;
+
+    const size_t seamCount = bufs->seamSrcVerts.size();
+    const size_t baseVerts = bufs->baseVertCount;
+    if (seamCount == 0 || bufs->seamTailVerts.size() != seamCount * 3) return;
+
+    const bool fullRange = (runs.size() == 1 && runs[0].first == 0 && runs[0].second >= static_cast<uint32_t>(srcMesh->nbVerts));
+
+    auto updateSlotRange = [&](size_t s0, size_t s1) {
+        size_t count3 = (s1 - s0) * 3;
+        size_t tailOff3 = s0 * 3;
+        size_t gpuOffset = (baseVerts + s0) * 3 * sizeof(float);
+        size_t gpuBytes = count3 * sizeof(float);
+
+        if (doVerts) {
+            glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
+            glBufferSubData(GL_ARRAY_BUFFER, gpuOffset, gpuBytes, bufs->seamTailVerts.data() + tailOff3);
+            glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
+            glBufferSubData(GL_ARRAY_BUFFER, gpuOffset, gpuBytes, bufs->seamTailNormals.data() + tailOff3);
+            outBytes += gpuBytes * 2;
+        }
+        if (doColors) {
+            glBindBuffer(GL_ARRAY_BUFFER, bufs->vboColors);
+            glBufferSubData(GL_ARRAY_BUFFER, gpuOffset, gpuBytes, bufs->seamTailColors.data() + tailOff3);
+            outBytes += gpuBytes;
+        }
+        if (doMaterials) {
+            glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
+            glBufferSubData(GL_ARRAY_BUFFER, gpuOffset, gpuBytes, bufs->seamTailMaterials.data() + tailOff3);
+            outBytes += gpuBytes;
+        }
+    };
+
+    const size_t vLim = srcMesh->verts.size();
+    const size_t nLim = srcMesh->normals.size();
+    const size_t cLim = srcMesh->colors.size();
+    const size_t mLim = srcMesh->materials.size();
+
+    auto copySlotData = [&](uint32_t slot) {
+        size_t src3 = static_cast<size_t>(bufs->seamSrcVerts[slot]) * 3;
+        size_t dst3 = static_cast<size_t>(slot) * 3;
+        if (doVerts) {
+            if (src3 + 2 < vLim) {
+                bufs->seamTailVerts[dst3 + 0] = srcMesh->verts[src3 + 0];
+                bufs->seamTailVerts[dst3 + 1] = srcMesh->verts[src3 + 1];
+                bufs->seamTailVerts[dst3 + 2] = srcMesh->verts[src3 + 2];
+            }
+            if (src3 + 2 < nLim) {
+                bufs->seamTailNormals[dst3 + 0] = srcMesh->normals[src3 + 0];
+                bufs->seamTailNormals[dst3 + 1] = srcMesh->normals[src3 + 1];
+                bufs->seamTailNormals[dst3 + 2] = srcMesh->normals[src3 + 2];
+            }
+        }
+        if (doColors && src3 + 2 < cLim) {
+            bufs->seamTailColors[dst3 + 0] = srcMesh->colors[src3 + 0];
+            bufs->seamTailColors[dst3 + 1] = srcMesh->colors[src3 + 1];
+            bufs->seamTailColors[dst3 + 2] = srcMesh->colors[src3 + 2];
+        }
+        if (doMaterials && src3 + 2 < mLim) {
+            bufs->seamTailMaterials[dst3 + 0] = srcMesh->materials[src3 + 0];
+            bufs->seamTailMaterials[dst3 + 1] = srcMesh->materials[src3 + 1];
+            bufs->seamTailMaterials[dst3 + 2] = srcMesh->materials[src3 + 2];
+        }
+    };
+
+    if (fullRange) {
+        for (uint32_t slot = 0; slot < static_cast<uint32_t>(seamCount); ++slot) {
+            copySlotData(slot);
+        }
+        updateSlotRange(0, seamCount);
+        return;
+    }
+
+    std::vector<uint32_t> touchedSlots;
+    const auto& sorted = bufs->seamSortedBySrc;
+    for (const auto& r : runs) {
+        auto it = std::lower_bound(sorted.begin(), sorted.end(), r.first,
+            [](const MeshRenderBuffers::SeamSlotRef& ref, uint32_t key) {
+                return ref.srcVert < key;
+            });
+        for (; it != sorted.end() && it->srcVert < r.second; ++it) {
+            touchedSlots.push_back(it->slotIdx);
+        }
+    }
+    if (touchedSlots.empty()) return;
+
+    std::sort(touchedSlots.begin(), touchedSlots.end());
+    touchedSlots.erase(std::unique(touchedSlots.begin(), touchedSlots.end()), touchedSlots.end());
+
+    for (uint32_t slot : touchedSlots) {
+        copySlotData(slot);
+    }
+
+    constexpr uint32_t kGapMerge = 64;
+    size_t i = 0;
+    while (i < touchedSlots.size()) {
+        uint32_t s0 = touchedSlots[i];
+        uint32_t s1 = s0 + 1;
+        ++i;
+        while (i < touchedSlots.size() && touchedSlots[i] <= s1 + kGapMerge) {
+            s1 = touchedSlots[i] + 1;
+            ++i;
+        }
+        updateSlotRange(s0, s1);
+    }
+}
+
 void AngleRenderer::releaseMeshBuffers(const Mesh* mesh) {
     if (!mesh) return;
     if (mesh->dynamicCacheMesh) {
@@ -3974,11 +4557,22 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
     if (!mesh) return false;
     bool uploaded = false;
 
+    const bool useDirtyBlocks = OptFlags::get().dirtyBlocks;
+    const bool useIndexedPg = OptFlags::get().indexedPolygroup;
+
     // Check dynamic subdivision
     bool isDynamic = mesh->dynamicSettings.enabled;
-    const bool wasDynamicRebuild = isDynamic && (mesh->isDynamicDirty || mesh->isTopologyDirty || !mesh->dynamicCacheMesh);
+    const bool wasDynamicRebuild = isDynamic && (mesh->isDynamicDirty || mesh->isTopologyDirty ||
+                                                 ((useDirtyBlocks || useIndexedPg) && (mesh->isFaceGroupDirty || !mesh->isDynamicTopologyBuilt)) ||
+                                                 !mesh->dynamicCacheMesh);
     if (isDynamic) {
-        if (mesh->isDirty || mesh->isVertexDirty || mesh->isTopologyDirty || mesh->isDynamicDirty || !mesh->dynamicCacheMesh) {
+        bool needDynUpdate = mesh->isDirty || mesh->isVertexDirty || mesh->isTopologyDirty || mesh->isDynamicDirty || !mesh->dynamicCacheMesh;
+        if (useDirtyBlocks) {
+            needDynUpdate = needDynUpdate || mesh->isColorDirty || mesh->isMaterialDirty || mesh->isFaceGroupDirty;
+        } else if (useIndexedPg) {
+            needDynUpdate = needDynUpdate || mesh->isFaceGroupDirty;
+        }
+        if (needDynUpdate) {
             mesh->updateDynamicMesh();
         }
     }
@@ -4037,84 +4631,123 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
 
     auto tUploadStart = std::chrono::high_resolution_clock::now();
     bool isFullUpload = (mesh->isDirty || (uploadMesh && uploadMesh->isDirty) || mesh->isDynamicDirty || mesh->isTopologyDirty ||
-                         bufs->vertCount != (size_t)uploadMesh->nbVerts || bufs->triIndexCount == 0 || mesh->isFaceGroupDirty);
+                         bufs->vertCount != (size_t)uploadMesh->nbVerts || bufs->triIndexCount == 0 ||
+                         (useIndexedPg ? !bufs->indexedPolygroupBuilt : (mesh->isFaceGroupDirty || bufs->indexedPolygroupBuilt)));
 
     if (isFullUpload) {
         uploaded = true;
         auto tVboStart = std::chrono::high_resolution_clock::now();
         glBindVertexArray(bufs->vao);
-        
-        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
-        glBufferData(GL_ARRAY_BUFFER, uploadMesh->verts.size() * sizeof(float), uploadMesh->verts.data(), GL_DYNAMIC_DRAW);
-        bufs->gpuVertsBytes = uploadMesh->verts.size() * sizeof(float);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(0);
-        
-        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
-        glBufferData(GL_ARRAY_BUFFER, uploadMesh->normals.size() * sizeof(float), uploadMesh->normals.data(), GL_DYNAMIC_DRAW);
-        bufs->gpuNormalsBytes = uploadMesh->normals.size() * sizeof(float);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(1);
-        
-        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboColors);
-        glBufferData(GL_ARRAY_BUFFER, uploadMesh->colors.size() * sizeof(float), uploadMesh->colors.data(), GL_DYNAMIC_DRAW);
-        bufs->gpuColorsBytes = uploadMesh->colors.size() * sizeof(float);
-        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(2);
-        
-        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
-        glBufferData(GL_ARRAY_BUFFER, uploadMesh->materials.size() * sizeof(float), uploadMesh->materials.data(), GL_DYNAMIC_DRAW);
-        bufs->gpuMaterialsBytes = uploadMesh->materials.size() * sizeof(float);
-        glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(3);
 
-        std::vector<uint32_t> vertGroups(uploadMesh->nbVerts, 0);
-        if (uploadMesh->faceGroups.size() == (size_t)uploadMesh->nbFaces) {
-            bool hasFaceVis = (uploadMesh->faceVisible.size() == (size_t)uploadMesh->nbFaces);
-            for (int f = 0; f < uploadMesh->nbFaces; ++f) {
-                if (hasFaceVis && !uploadMesh->faceVisible[f]) continue;
-                uint32_t gid = uploadMesh->faceGroups[f];
-                for (int k = 0; k < 4; ++k) {
-                    uint32_t vid = uploadMesh->faces[f * 4 + k];
-                    if (vid != 0xffffffff && vid < (uint32_t)uploadMesh->nbVerts) {
-                        vertGroups[vid] = gid;
+        std::vector<uint32_t> triIndices;
+        size_t fullVboBytes = 0;
+        std::chrono::high_resolution_clock::time_point tVboEnd;
+        std::chrono::high_resolution_clock::time_point tEboStart;
+        double pgBefore = m_lastUploadTiming.msPolygroupRebuild;
+
+        if (useIndexedPg) {
+            std::vector<uint32_t> vertGroups;
+            buildIndexedPolygroupLayout(uploadMesh, bufs.get(), vertGroups, triIndices);
+            releasePolygroupBuffers(bufs.get());
+            uploadVertexBuffersWithSeamTail(uploadMesh, bufs.get(), vertGroups, true, true, fullVboBytes);
+            tVboEnd = std::chrono::high_resolution_clock::now();
+            tEboStart = tVboEnd;
+            pgBefore = m_lastUploadTiming.msPolygroupRebuild;
+
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, triIndices.size() * sizeof(uint32_t), triIndices.data(), GL_DYNAMIC_DRAW);
+            bufs->triIndexCount = triIndices.size();
+            bufs->gpuEboTriBytes = triIndices.size() * sizeof(uint32_t);
+            glBindVertexArray(0);
+        } else {
+            bufs->indexedPolygroupBuilt = false;
+            bufs->baseVertCount = 0;
+            bufs->seamSrcVerts.clear();
+            bufs->seamSortedBySrc.clear();
+            bufs->seamTailVerts.clear();
+            bufs->seamTailNormals.clear();
+            bufs->seamTailColors.clear();
+            bufs->seamTailMaterials.clear();
+
+            glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
+            glBufferData(GL_ARRAY_BUFFER, uploadMesh->verts.size() * sizeof(float), uploadMesh->verts.data(), GL_DYNAMIC_DRAW);
+            bufs->gpuVertsBytes = uploadMesh->verts.size() * sizeof(float);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+            glEnableVertexAttribArray(0);
+
+            glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
+            glBufferData(GL_ARRAY_BUFFER, uploadMesh->normals.size() * sizeof(float), uploadMesh->normals.data(), GL_DYNAMIC_DRAW);
+            bufs->gpuNormalsBytes = uploadMesh->normals.size() * sizeof(float);
+            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+            glEnableVertexAttribArray(1);
+
+            glBindBuffer(GL_ARRAY_BUFFER, bufs->vboColors);
+            glBufferData(GL_ARRAY_BUFFER, uploadMesh->colors.size() * sizeof(float), uploadMesh->colors.data(), GL_DYNAMIC_DRAW);
+            bufs->gpuColorsBytes = uploadMesh->colors.size() * sizeof(float);
+            glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+            glEnableVertexAttribArray(2);
+
+            glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
+            glBufferData(GL_ARRAY_BUFFER, uploadMesh->materials.size() * sizeof(float), uploadMesh->materials.data(), GL_DYNAMIC_DRAW);
+            bufs->gpuMaterialsBytes = uploadMesh->materials.size() * sizeof(float);
+            glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+            glEnableVertexAttribArray(3);
+
+            std::vector<uint32_t> vertGroups(uploadMesh->nbVerts, 0);
+            if (uploadMesh->faceGroups.size() == (size_t)uploadMesh->nbFaces) {
+                bool hasFaceVis = (uploadMesh->faceVisible.size() == (size_t)uploadMesh->nbFaces);
+                for (int f = 0; f < uploadMesh->nbFaces; ++f) {
+                    if (hasFaceVis && !uploadMesh->faceVisible[f]) continue;
+                    uint32_t gid = uploadMesh->faceGroups[f];
+                    for (int k = 0; k < 4; ++k) {
+                        uint32_t vid = uploadMesh->faces[f * 4 + k];
+                        if (vid != 0xffffffff && vid < (uint32_t)uploadMesh->nbVerts) {
+                            vertGroups[vid] = gid;
+                        }
                     }
                 }
             }
-        }
-        glBindBuffer(GL_ARRAY_BUFFER, bufs->vboFaceGroups);
-        glBufferData(GL_ARRAY_BUFFER, vertGroups.size() * sizeof(uint32_t), vertGroups.data(), GL_DYNAMIC_DRAW);
-        bufs->gpuFaceGroupsBytes = vertGroups.size() * sizeof(uint32_t);
-        glVertexAttribIPointer(5, 1, GL_UNSIGNED_INT, sizeof(uint32_t), (void*)0);
-        glEnableVertexAttribArray(5);
+            glBindBuffer(GL_ARRAY_BUFFER, bufs->vboFaceGroups);
+            glBufferData(GL_ARRAY_BUFFER, vertGroups.size() * sizeof(uint32_t), vertGroups.data(), GL_DYNAMIC_DRAW);
+            bufs->gpuFaceGroupsBytes = vertGroups.size() * sizeof(uint32_t);
+            glVertexAttribIPointer(5, 1, GL_UNSIGNED_INT, sizeof(uint32_t), (void*)0);
+            glEnableVertexAttribArray(5);
 
-        if (!uploadMesh->uvFlat.empty()) {
-            if (!bufs->vboTexCoords) glGenBuffers(1, &bufs->vboTexCoords);
-            glBindBuffer(GL_ARRAY_BUFFER, bufs->vboTexCoords);
-            glBufferData(GL_ARRAY_BUFFER, uploadMesh->uvFlat.size() * sizeof(float), uploadMesh->uvFlat.data(), GL_DYNAMIC_DRAW);
-            bufs->gpuTexCoordsBytes = uploadMesh->uvFlat.size() * sizeof(float);
-            glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
-            glEnableVertexAttribArray(4);
+            if (!uploadMesh->uvFlat.empty()) {
+                if (!bufs->vboTexCoords) glGenBuffers(1, &bufs->vboTexCoords);
+                glBindBuffer(GL_ARRAY_BUFFER, bufs->vboTexCoords);
+                glBufferData(GL_ARRAY_BUFFER, uploadMesh->uvFlat.size() * sizeof(float), uploadMesh->uvFlat.data(), GL_DYNAMIC_DRAW);
+                bufs->gpuTexCoordsBytes = uploadMesh->uvFlat.size() * sizeof(float);
+                glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+                glEnableVertexAttribArray(4);
+            }
+            if (!uploadMesh->tangents.empty()) {
+                if (!bufs->vboTangents) glGenBuffers(1, &bufs->vboTangents);
+                glBindBuffer(GL_ARRAY_BUFFER, bufs->vboTangents);
+                glBufferData(GL_ARRAY_BUFFER, uploadMesh->tangents.size() * sizeof(float), uploadMesh->tangents.data(), GL_DYNAMIC_DRAW);
+                bufs->gpuTangentsBytes = uploadMesh->tangents.size() * sizeof(float);
+                glVertexAttribPointer(6, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+                glEnableVertexAttribArray(6);
+            }
+            tVboEnd = std::chrono::high_resolution_clock::now();
+            tEboStart = std::chrono::high_resolution_clock::now();
+            pgBefore = m_lastUploadTiming.msPolygroupRebuild;
+
+            generateTriangleIndices(uploadMesh, triIndices);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, triIndices.size() * sizeof(uint32_t), triIndices.data(), GL_DYNAMIC_DRAW);
+            bufs->triIndexCount = triIndices.size();
+            bufs->gpuEboTriBytes = triIndices.size() * sizeof(uint32_t);
+            glBindVertexArray(0);
+
+            fullVboBytes = uploadMesh->verts.size() * sizeof(float)
+                         + uploadMesh->normals.size() * sizeof(float)
+                         + uploadMesh->colors.size() * sizeof(float)
+                         + uploadMesh->materials.size() * sizeof(float)
+                         + vertGroups.size() * sizeof(uint32_t)
+                         + (!uploadMesh->uvFlat.empty() ? uploadMesh->uvFlat.size() * sizeof(float) : 0)
+                         + (!uploadMesh->tangents.empty() ? uploadMesh->tangents.size() * sizeof(float) : 0);
         }
-        if (!uploadMesh->tangents.empty()) {
-            if (!bufs->vboTangents) glGenBuffers(1, &bufs->vboTangents);
-            glBindBuffer(GL_ARRAY_BUFFER, bufs->vboTangents);
-            glBufferData(GL_ARRAY_BUFFER, uploadMesh->tangents.size() * sizeof(float), uploadMesh->tangents.data(), GL_DYNAMIC_DRAW);
-            bufs->gpuTangentsBytes = uploadMesh->tangents.size() * sizeof(float);
-            glVertexAttribPointer(6, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
-            glEnableVertexAttribArray(6);
-        }
-        auto tVboEnd = std::chrono::high_resolution_clock::now();
-        auto tEboStart = std::chrono::high_resolution_clock::now();
-        double pgBefore = m_lastUploadTiming.msPolygroupRebuild;
-        
-        std::vector<uint32_t> triIndices;
-        generateTriangleIndices(uploadMesh, triIndices);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, triIndices.size() * sizeof(uint32_t), triIndices.data(), GL_DYNAMIC_DRAW);
-        bufs->triIndexCount = triIndices.size();
-        bufs->gpuEboTriBytes = triIndices.size() * sizeof(uint32_t);
-        glBindVertexArray(0);
         
         bool needWireframe = m_showWireframe || (m_activeBrush == BRUSH_POLYGROUP) || (m_shaderType == 5);
         if (needWireframe) {
@@ -4144,10 +4777,14 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
         
         bufs->vertCount = uploadMesh->nbVerts;
 
-        bufs->polygroupDirty = true;
-        if (m_showPolyGroups || m_activeBrush == BRUSH_POLYGROUP || m_shaderType == 5) {
-            buildPolyGroupBuffers(uploadMesh, bufs.get());
+        if (useIndexedPg) {
             bufs->polygroupDirty = false;
+        } else {
+            bufs->polygroupDirty = true;
+            if (m_showPolyGroups || m_activeBrush == BRUSH_POLYGROUP || m_shaderType == 5) {
+                buildPolyGroupBuffers(uploadMesh, bufs.get());
+                bufs->polygroupDirty = false;
+            }
         }
         mesh->isFaceGroupDirty = false;
 
@@ -4174,6 +4811,7 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
             bufs->gpuCageEboBytes = cageWireIndices.size() * sizeof(uint32_t);
 
             glBindVertexArray(0);
+            fullVboBytes += mesh->verts.size() * sizeof(float);
         } else {
             bufs->cageWireIndexCount = 0;
         }
@@ -4222,14 +4860,6 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
         }
         auto tEboEnd = std::chrono::high_resolution_clock::now();
 
-        size_t fullVboBytes = uploadMesh->verts.size() * sizeof(float)
-                            + uploadMesh->normals.size() * sizeof(float)
-                            + uploadMesh->colors.size() * sizeof(float)
-                            + uploadMesh->materials.size() * sizeof(float)
-                            + vertGroups.size() * sizeof(uint32_t)
-                            + (!uploadMesh->uvFlat.empty() ? uploadMesh->uvFlat.size() * sizeof(float) : 0)
-                            + (!uploadMesh->tangents.empty() ? uploadMesh->tangents.size() * sizeof(float) : 0)
-                            + ((isDynamic && mesh->dynamicSettings.showCage) ? mesh->verts.size() * sizeof(float) : 0);
         size_t fullEboBytes = triIndices.size() * sizeof(uint32_t)
                             + (needWireframe ? (bufs->wireIndexCount + bufs->subdivWireIndexCount) * sizeof(uint32_t) : 0)
                             + ((isDynamic && mesh->dynamicSettings.showCage) ? bufs->cageWireIndexCount * sizeof(uint32_t) : 0)
@@ -4248,11 +4878,16 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
         m_lastUploadTiming.wasFullUpload = true;
         m_lastUploadTiming.dirtyVertSpan = std::max(m_lastUploadTiming.dirtyVertSpan, (uint32_t)uploadMesh->nbVerts);
         m_lastUploadTiming.dirtyMeshVerts = std::max(m_lastUploadTiming.dirtyMeshVerts, (uint32_t)uploadMesh->nbVerts);
-        
+        m_lastUploadTiming.dirtyVertUploaded = std::max(m_lastUploadTiming.dirtyVertUploaded, (uint32_t)uploadMesh->nbVerts);
+
         mesh->isDirty = false;
         if (uploadMesh) {
             uploadMesh->isDirty = false;
             uploadMesh->isFaceGroupDirty = false;
+            uploadMesh->isVertexDirty = false;
+            uploadMesh->isColorDirty = false;
+            uploadMesh->isMaterialDirty = false;
+            uploadMesh->clearDirtyBlockMasks(true, true, true);
         }
         mesh->isFaceGroupDirty = false;
         mesh->isVertexDirty = false;
@@ -4260,85 +4895,273 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
         mesh->isMaterialDirty = false;
         mesh->isTopologyDirty = false;
         mesh->isDynamicDirty = false;
+        mesh->clearDirtyBlockMasks(true, true, true);
     } else {
         glBindVertexArray(0);
-        if (mesh->isFaceGroupDirty) {
+        if (mesh->isFaceGroupDirty || (uploadMesh && uploadMesh->isFaceGroupDirty)) {
             uploaded = true;
             auto tFgStart = std::chrono::high_resolution_clock::now();
             double pgBeforeFg = m_lastUploadTiming.msPolygroupRebuild;
-            std::vector<uint32_t> vertGroups(uploadMesh->nbVerts, 0);
-            if (uploadMesh->faceGroups.size() == (size_t)uploadMesh->nbFaces) {
-                bool hasFaceVis = (uploadMesh->faceVisible.size() == (size_t)uploadMesh->nbFaces);
-                for (int f = 0; f < uploadMesh->nbFaces; ++f) {
-                    if (hasFaceVis && !uploadMesh->faceVisible[f]) continue;
-                    uint32_t gid = uploadMesh->faceGroups[f];
-                    for (int k = 0; k < 4; ++k) {
-                        uint32_t vid = uploadMesh->faces[f * 4 + k];
-                        if (vid != 0xffffffff && vid < (uint32_t)uploadMesh->nbVerts) {
-                            vertGroups[vid] = gid;
+
+            if (useIndexedPg) {
+                std::vector<uint32_t> vertGroups;
+                std::vector<uint32_t> triIndices;
+                size_t fgVboBytes = 0;
+                buildIndexedPolygroupLayout(uploadMesh, bufs.get(), vertGroups, triIndices);
+                releasePolygroupBuffers(bufs.get());
+                uploadVertexBuffersWithSeamTail(uploadMesh, bufs.get(), vertGroups, false, false, fgVboBytes);
+                auto tFgVboEnd = std::chrono::high_resolution_clock::now();
+
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
+                glBufferData(GL_ELEMENT_ARRAY_BUFFER, triIndices.size() * sizeof(uint32_t), triIndices.data(), GL_DYNAMIC_DRAW);
+                bufs->triIndexCount = triIndices.size();
+                bufs->gpuEboTriBytes = triIndices.size() * sizeof(uint32_t);
+                bufs->polygroupDirty = false;
+                mesh->isFaceGroupDirty = false;
+                if (uploadMesh) uploadMesh->isFaceGroupDirty = false;
+
+                auto tFgEnd = std::chrono::high_resolution_clock::now();
+                double fgVboMs = std::chrono::duration<double, std::milli>(tFgVboEnd - tFgStart).count();
+                double fgEboMs = std::chrono::duration<double, std::milli>(tFgEnd - tFgVboEnd).count();
+                size_t fgEboBytes = triIndices.size() * sizeof(uint32_t);
+
+                m_lastUploadTiming.msVbo += fgVboMs;
+                m_lastUploadTiming.msEbo += fgEboMs;
+                m_lastUploadTiming.msTotal += fgVboMs + fgEboMs;
+                m_lastUploadTiming.bytesVbo += fgVboBytes;
+                m_lastUploadTiming.bytesEbo += fgEboBytes;
+                m_lastUploadTiming.dirtyMeshVerts = std::max(m_lastUploadTiming.dirtyMeshVerts, (uint32_t)uploadMesh->nbVerts);
+            } else {
+                std::vector<uint32_t> vertGroups(uploadMesh->nbVerts, 0);
+                if (uploadMesh->faceGroups.size() == (size_t)uploadMesh->nbFaces) {
+                    bool hasFaceVis = (uploadMesh->faceVisible.size() == (size_t)uploadMesh->nbFaces);
+                    for (int f = 0; f < uploadMesh->nbFaces; ++f) {
+                        if (hasFaceVis && !uploadMesh->faceVisible[f]) continue;
+                        uint32_t gid = uploadMesh->faceGroups[f];
+                        for (int k = 0; k < 4; ++k) {
+                            uint32_t vid = uploadMesh->faces[f * 4 + k];
+                            if (vid != 0xffffffff && vid < (uint32_t)uploadMesh->nbVerts) {
+                                vertGroups[vid] = gid;
+                            }
                         }
                     }
                 }
-            }
-            glBindBuffer(GL_ARRAY_BUFFER, bufs->vboFaceGroups);
-            glBufferData(GL_ARRAY_BUFFER, vertGroups.size() * sizeof(uint32_t), vertGroups.data(), GL_DYNAMIC_DRAW);
-            bufs->gpuFaceGroupsBytes = vertGroups.size() * sizeof(uint32_t);
+                glBindBuffer(GL_ARRAY_BUFFER, bufs->vboFaceGroups);
+                glBufferData(GL_ARRAY_BUFFER, vertGroups.size() * sizeof(uint32_t), vertGroups.data(), GL_DYNAMIC_DRAW);
+                bufs->gpuFaceGroupsBytes = vertGroups.size() * sizeof(uint32_t);
 
-            std::vector<uint32_t> triIndices;
-            generateTriangleIndices(uploadMesh, triIndices);
-            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
-            glBufferData(GL_ELEMENT_ARRAY_BUFFER, triIndices.size() * sizeof(uint32_t), triIndices.data(), GL_DYNAMIC_DRAW);
-            bufs->triIndexCount = triIndices.size();
-            bufs->gpuEboTriBytes = triIndices.size() * sizeof(uint32_t);
+                std::vector<uint32_t> triIndices;
+                generateTriangleIndices(uploadMesh, triIndices);
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
+                glBufferData(GL_ELEMENT_ARRAY_BUFFER, triIndices.size() * sizeof(uint32_t), triIndices.data(), GL_DYNAMIC_DRAW);
+                bufs->triIndexCount = triIndices.size();
+                bufs->gpuEboTriBytes = triIndices.size() * sizeof(uint32_t);
 
-            bool needWireframe = m_showWireframe || (m_activeBrush == BRUSH_POLYGROUP) || (m_shaderType == 5);
-            if (needWireframe) {
-                std::vector<uint32_t> cageWireIndices;
-                std::vector<uint32_t> subdivWireIndices;
-                generateWireframeIndices(uploadMesh, cageWireIndices, subdivWireIndices);
-                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboWireframe);
-                glBufferData(GL_ELEMENT_ARRAY_BUFFER, cageWireIndices.size() * sizeof(uint32_t), cageWireIndices.data(), GL_DYNAMIC_DRAW);
-                bufs->wireIndexCount = cageWireIndices.size();
-                bufs->gpuEboWireBytes = cageWireIndices.size() * sizeof(uint32_t);
+                bool needWireframe = m_showWireframe || (m_activeBrush == BRUSH_POLYGROUP) || (m_shaderType == 5);
+                if (needWireframe) {
+                    std::vector<uint32_t> cageWireIndices;
+                    std::vector<uint32_t> subdivWireIndices;
+                    generateWireframeIndices(uploadMesh, cageWireIndices, subdivWireIndices);
+                    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboWireframe);
+                    glBufferData(GL_ELEMENT_ARRAY_BUFFER, cageWireIndices.size() * sizeof(uint32_t), cageWireIndices.data(), GL_DYNAMIC_DRAW);
+                    bufs->wireIndexCount = cageWireIndices.size();
+                    bufs->gpuEboWireBytes = cageWireIndices.size() * sizeof(uint32_t);
 
-                if (!subdivWireIndices.empty()) {
-                    if (!bufs->eboSubdivWire) glGenBuffers(1, &bufs->eboSubdivWire);
-                    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboSubdivWire);
-                    glBufferData(GL_ELEMENT_ARRAY_BUFFER, subdivWireIndices.size() * sizeof(uint32_t), subdivWireIndices.data(), GL_DYNAMIC_DRAW);
-                    bufs->subdivWireIndexCount = subdivWireIndices.size();
-                    bufs->gpuEboSubdivWireBytes = subdivWireIndices.size() * sizeof(uint32_t);
+                    if (!subdivWireIndices.empty()) {
+                        if (!bufs->eboSubdivWire) glGenBuffers(1, &bufs->eboSubdivWire);
+                        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboSubdivWire);
+                        glBufferData(GL_ELEMENT_ARRAY_BUFFER, subdivWireIndices.size() * sizeof(uint32_t), subdivWireIndices.data(), GL_DYNAMIC_DRAW);
+                        bufs->subdivWireIndexCount = subdivWireIndices.size();
+                        bufs->gpuEboSubdivWireBytes = subdivWireIndices.size() * sizeof(uint32_t);
+                    } else {
+                        bufs->subdivWireIndexCount = 0;
+                    }
+                    bufs->wireDirty = false;
                 } else {
+                    bufs->wireIndexCount = 0;
                     bufs->subdivWireIndexCount = 0;
+                    bufs->wireDirty = true;
                 }
-                bufs->wireDirty = false;
-            } else {
-                bufs->wireIndexCount = 0;
-                bufs->subdivWireIndexCount = 0;
-                bufs->wireDirty = true;
-            }
 
-            bufs->polygroupDirty = true;
-            if (m_showPolyGroups || m_activeBrush == BRUSH_POLYGROUP || m_shaderType == 5) {
-                buildPolyGroupBuffers(uploadMesh, bufs.get());
-                bufs->polygroupDirty = false;
-            }
-            mesh->isFaceGroupDirty = false;
+                bufs->polygroupDirty = true;
+                if (m_showPolyGroups || m_activeBrush == BRUSH_POLYGROUP || m_shaderType == 5) {
+                    buildPolyGroupBuffers(uploadMesh, bufs.get());
+                    bufs->polygroupDirty = false;
+                }
+                mesh->isFaceGroupDirty = false;
 
-            double fgSpanMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tFgStart).count();
-            double pgDeltaFg = m_lastUploadTiming.msPolygroupRebuild - pgBeforeFg;
-            double fgOnlyMs = std::max(0.0, fgSpanMs - pgDeltaFg);
-            size_t fgVboBytes = vertGroups.size() * sizeof(uint32_t);
-            size_t fgEboBytes = triIndices.size() * sizeof(uint32_t)
-                              + (needWireframe ? (bufs->wireIndexCount + bufs->subdivWireIndexCount) * sizeof(uint32_t) : 0);
-            m_lastUploadTiming.msEbo += fgOnlyMs;
-            m_lastUploadTiming.msTotal += fgOnlyMs;
-            m_lastUploadTiming.bytesVbo += fgVboBytes;
-            m_lastUploadTiming.bytesEbo += fgEboBytes;
-            m_lastUploadTiming.dirtyVertSpan = std::max(m_lastUploadTiming.dirtyVertSpan, (uint32_t)uploadMesh->nbVerts);
-            m_lastUploadTiming.dirtyMeshVerts = std::max(m_lastUploadTiming.dirtyMeshVerts, (uint32_t)uploadMesh->nbVerts);
+                double fgSpanMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tFgStart).count();
+                double pgDeltaFg = m_lastUploadTiming.msPolygroupRebuild - pgBeforeFg;
+                double fgOnlyMs = std::max(0.0, fgSpanMs - pgDeltaFg);
+                size_t fgVboBytes = vertGroups.size() * sizeof(uint32_t);
+                size_t fgEboBytes = triIndices.size() * sizeof(uint32_t)
+                                  + (needWireframe ? (bufs->wireIndexCount + bufs->subdivWireIndexCount) * sizeof(uint32_t) : 0);
+                m_lastUploadTiming.msEbo += fgOnlyMs;
+                m_lastUploadTiming.msTotal += fgOnlyMs;
+                m_lastUploadTiming.bytesVbo += fgVboBytes;
+                m_lastUploadTiming.bytesEbo += fgEboBytes;
+                m_lastUploadTiming.dirtyVertSpan = std::max(m_lastUploadTiming.dirtyVertSpan, (uint32_t)uploadMesh->nbVerts);
+                m_lastUploadTiming.dirtyMeshVerts = std::max(m_lastUploadTiming.dirtyMeshVerts, (uint32_t)uploadMesh->nbVerts);
+            }
         }
 
-        if (isDynamic) {
+        if (useDirtyBlocks) {
+            auto tIncStart = std::chrono::high_resolution_clock::now();
+            double pgBeforeInc = m_lastUploadTiming.msPolygroupRebuild;
+            size_t incrementalBytes = 0;
+            size_t incrementalEboBytes = 0;
+            uint32_t maxUploadedVerts = 0;
+            uint32_t runCount = 0;
+            bool usedFallback = false;
+
+            const bool doV = mesh->isVertexDirty || (uploadMesh && uploadMesh->isVertexDirty);
+            const bool doC = mesh->isColorDirty || (uploadMesh && uploadMesh->isColorDirty);
+            const bool doM = mesh->isMaterialDirty || (uploadMesh && uploadMesh->isMaterialDirty);
+
+            if (doV) {
+                std::vector<std::pair<uint32_t, uint32_t>> runsV;
+                uint32_t upV = 0;
+                bool fbV = false;
+                buildDirtyRuns(uploadMesh->nbVerts, uploadMesh->dirtyVertBlocks, uploadMesh->hasDirtyVertBlockMask,
+                               runsV, upV, fbV);
+                incrementalBytes += uploadDirtyFloat3Runs(bufs->vboVertices, uploadMesh->verts, uploadMesh->nbVerts, runsV);
+                incrementalBytes += uploadDirtyFloat3Runs(bufs->vboNormals, uploadMesh->normals, uploadMesh->nbVerts, runsV);
+
+                if (useIndexedPg && bufs->indexedPolygroupBuilt) {
+                    syncDirtySeamTail(bufs.get(), uploadMesh, runsV, true, false, false, incrementalBytes);
+                } else if (!useIndexedPg) {
+                    bufs->polygroupDirty = true;
+                    if (m_showPolyGroups || m_activeBrush == BRUSH_POLYGROUP || m_shaderType == 5) {
+                        buildPolyGroupBuffers(uploadMesh, bufs.get());
+                        bufs->polygroupDirty = false;
+                    }
+                }
+
+                if (isDynamic && mesh->dynamicSettings.showCage && bufs->cageVboVerts != 0 && mesh->isVertexDirty) {
+                    std::vector<std::pair<uint32_t, uint32_t>> cageRuns;
+                    uint32_t cageUp = 0;
+                    bool cageFb = false;
+                    buildDirtyRuns(mesh->nbVerts, mesh->dirtyVertBlocks, mesh->hasDirtyVertBlockMask,
+                                   cageRuns, cageUp, cageFb);
+                    incrementalBytes += uploadDirtyFloat3Runs(bufs->cageVboVerts, mesh->verts, mesh->nbVerts, cageRuns);
+                }
+
+                maxUploadedVerts = std::max(maxUploadedVerts, upV);
+                runCount += static_cast<uint32_t>(runsV.size());
+                usedFallback = usedFallback || fbV;
+
+                mesh->isVertexDirty = false;
+                mesh->clearDirtyBlockMasks(true, false, false);
+                if (uploadMesh) {
+                    uploadMesh->isVertexDirty = false;
+                    uploadMesh->clearDirtyBlockMasks(true, false, false);
+                }
+            }
+
+            if (doC) {
+                std::vector<std::pair<uint32_t, uint32_t>> runsC;
+                uint32_t upC = 0;
+                bool fbC = false;
+                buildDirtyRuns(uploadMesh->nbVerts, uploadMesh->dirtyColorBlocks, uploadMesh->hasDirtyColorBlockMask,
+                               runsC, upC, fbC);
+                incrementalBytes += uploadDirtyFloat3Runs(bufs->vboColors, uploadMesh->colors, uploadMesh->nbVerts, runsC);
+
+                if (useIndexedPg && bufs->indexedPolygroupBuilt) {
+                    syncDirtySeamTail(bufs.get(), uploadMesh, runsC, false, true, false, incrementalBytes);
+                }
+
+                maxUploadedVerts = std::max(maxUploadedVerts, upC);
+                runCount += static_cast<uint32_t>(runsC.size());
+                usedFallback = usedFallback || fbC;
+
+                mesh->isColorDirty = false;
+                mesh->clearDirtyBlockMasks(false, true, false);
+                if (uploadMesh) {
+                    uploadMesh->isColorDirty = false;
+                    uploadMesh->clearDirtyBlockMasks(false, true, false);
+                }
+            }
+
+            if (doM) {
+                std::vector<std::pair<uint32_t, uint32_t>> runsM;
+                uint32_t upM = 0;
+                bool fbM = false;
+                buildDirtyRuns(uploadMesh->nbVerts, uploadMesh->dirtyMaterialBlocks, uploadMesh->hasDirtyMaterialBlockMask,
+                               runsM, upM, fbM);
+                incrementalBytes += uploadDirtyFloat3Runs(bufs->vboMaterials, uploadMesh->materials, uploadMesh->nbVerts, runsM);
+
+                if (useIndexedPg && bufs->indexedPolygroupBuilt) {
+                    syncDirtySeamTail(bufs.get(), uploadMesh, runsM, false, false, true, incrementalBytes);
+                }
+
+                maxUploadedVerts = std::max(maxUploadedVerts, upM);
+                runCount += static_cast<uint32_t>(runsM.size());
+                usedFallback = usedFallback || fbM;
+
+                mesh->isMaterialDirty = false;
+                mesh->clearDirtyBlockMasks(false, false, true);
+                if (uploadMesh) {
+                    uploadMesh->isMaterialDirty = false;
+                    uploadMesh->clearDirtyBlockMasks(false, false, true);
+                }
+            }
+
+            if (!isDynamic && mesh->isTopologyDirty) {
+                std::vector<uint32_t> triIndices;
+                if (useIndexedPg) {
+                    std::vector<uint32_t> vertGroups;
+                    buildIndexedPolygroupLayout(uploadMesh, bufs.get(), vertGroups, triIndices);
+                    releasePolygroupBuffers(bufs.get());
+                    size_t pgVbo = 0;
+                    uploadVertexBuffersWithSeamTail(uploadMesh, bufs.get(), vertGroups, false, false, pgVbo);
+                    incrementalBytes += pgVbo;
+                } else {
+                    generateTriangleIndices(mesh, triIndices);
+                }
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
+                glBufferData(GL_ELEMENT_ARRAY_BUFFER, triIndices.size() * sizeof(uint32_t), triIndices.data(), GL_STATIC_DRAW);
+                bufs->triIndexCount = triIndices.size();
+                bufs->gpuEboTriBytes = triIndices.size() * sizeof(uint32_t);
+                incrementalEboBytes += triIndices.size() * sizeof(uint32_t);
+
+                bool needWireframe = m_showWireframe || (m_activeBrush == BRUSH_POLYGROUP) || (m_shaderType == 5);
+                if (needWireframe) {
+                    std::vector<uint32_t> wireIndices;
+                    generateWireframeIndices(mesh, wireIndices);
+                    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboWireframe);
+                    glBufferData(GL_ELEMENT_ARRAY_BUFFER, wireIndices.size() * sizeof(uint32_t), wireIndices.data(), GL_STATIC_DRAW);
+                    bufs->wireIndexCount = wireIndices.size();
+                    bufs->gpuEboWireBytes = wireIndices.size() * sizeof(uint32_t);
+                    incrementalEboBytes += wireIndices.size() * sizeof(uint32_t);
+                    bufs->wireDirty = false;
+                } else {
+                    bufs->wireIndexCount = 0;
+                    bufs->subdivWireIndexCount = 0;
+                    bufs->wireDirty = true;
+                }
+                mesh->isTopologyDirty = false;
+            }
+
+            if (incrementalBytes > 0 || incrementalEboBytes > 0) {
+                uploaded = true;
+                double incSpanMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tIncStart).count();
+                double pgDeltaInc = m_lastUploadTiming.msPolygroupRebuild - pgBeforeInc;
+                double incOnlyMs = std::max(0.0, incSpanMs - pgDeltaInc);
+                if (incrementalBytes > 0) {
+                    m_lastUploadTiming.msVbo += incOnlyMs;
+                } else {
+                    m_lastUploadTiming.msEbo += incOnlyMs;
+                }
+                m_lastUploadTiming.msTotal += incOnlyMs;
+                m_lastUploadTiming.bytesVbo += incrementalBytes;
+                m_lastUploadTiming.bytesEbo += incrementalEboBytes;
+                m_lastUploadTiming.dirtyVertUploaded = std::max(m_lastUploadTiming.dirtyVertUploaded, maxUploadedVerts);
+                m_lastUploadTiming.dirtyRunCount += runCount;
+                m_lastUploadTiming.usedWholeBufferFallback = m_lastUploadTiming.usedWholeBufferFallback || usedFallback;
+                m_lastUploadTiming.dirtyVertSpan = std::max(m_lastUploadTiming.dirtyVertSpan, maxUploadedVerts);
+                m_lastUploadTiming.dirtyMeshVerts = std::max(m_lastUploadTiming.dirtyMeshVerts, (uint32_t)uploadMesh->nbVerts);
+            }
+        } else if (isDynamic) {
             auto tDynStart = std::chrono::high_resolution_clock::now();
             double pgBeforeDyn = m_lastUploadTiming.msPolygroupRebuild;
             size_t dynBytes = 0;
@@ -4361,10 +5184,14 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
                     dynBytes += mesh->verts.size() * sizeof(float);
                 }
 
-                bufs->polygroupDirty = true;
-                if (m_showPolyGroups || m_activeBrush == BRUSH_POLYGROUP || m_shaderType == 5) {
-                    buildPolyGroupBuffers(uploadMesh, bufs.get());
-                    bufs->polygroupDirty = false;
+                if (useIndexedPg && bufs->indexedPolygroupBuilt) {
+                    syncDirtySeamTail(bufs.get(), uploadMesh, {{0u, (uint32_t)uploadMesh->nbVerts}}, true, false, false, dynBytes);
+                } else {
+                    bufs->polygroupDirty = true;
+                    if (m_showPolyGroups || m_activeBrush == BRUSH_POLYGROUP || m_shaderType == 5) {
+                        buildPolyGroupBuffers(uploadMesh, bufs.get());
+                        bufs->polygroupDirty = false;
+                    }
                 }
 
                 mesh->isVertexDirty = false;
@@ -4376,6 +5203,9 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
                 glBufferSubData(GL_ARRAY_BUFFER, 0, uploadMesh->colors.size() * sizeof(float),
                                 uploadMesh->colors.data());
                 dynBytes += uploadMesh->colors.size() * sizeof(float);
+                if (useIndexedPg && bufs->indexedPolygroupBuilt) {
+                    syncDirtySeamTail(bufs.get(), uploadMesh, {{0u, (uint32_t)uploadMesh->nbVerts}}, false, true, false, dynBytes);
+                }
                 mesh->isColorDirty = false;
             }
 
@@ -4385,6 +5215,9 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
                 glBufferSubData(GL_ARRAY_BUFFER, 0, uploadMesh->materials.size() * sizeof(float),
                                 uploadMesh->materials.data());
                 dynBytes += uploadMesh->materials.size() * sizeof(float);
+                if (useIndexedPg && bufs->indexedPolygroupBuilt) {
+                    syncDirtySeamTail(bufs.get(), uploadMesh, {{0u, (uint32_t)uploadMesh->nbVerts}}, false, false, true, dynBytes);
+                }
                 mesh->isMaterialDirty = false;
             }
             if (dynBytes > 0) {
@@ -4416,10 +5249,14 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
                 glBufferSubData(GL_ARRAY_BUFFER, offset, size,
                                 mesh->normals.data() + (size_t)mesh->dirtyVertMin * 3);
 
-                bufs->polygroupDirty = true;
-                if (m_showPolyGroups || m_activeBrush == BRUSH_POLYGROUP || m_shaderType == 5) {
-                    buildPolyGroupBuffers(mesh->getRenderMesh(), bufs.get());
-                    bufs->polygroupDirty = false;
+                if (useIndexedPg && bufs->indexedPolygroupBuilt) {
+                    syncDirtySeamTail(bufs.get(), uploadMesh, {{mesh->dirtyVertMin, mesh->dirtyVertMax + 1}}, true, false, false, incrementalBytes);
+                } else {
+                    bufs->polygroupDirty = true;
+                    if (m_showPolyGroups || m_activeBrush == BRUSH_POLYGROUP || m_shaderType == 5) {
+                        buildPolyGroupBuffers(mesh->getRenderMesh(), bufs.get());
+                        bufs->polygroupDirty = false;
+                    }
                 }
                 
                 mesh->isVertexDirty = false;
@@ -4435,6 +5272,10 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
                 glBufferSubData(GL_ARRAY_BUFFER, offset, size,
                                 mesh->colors.data() + (size_t)mesh->dirtyVertMin * 3);
 
+                if (useIndexedPg && bufs->indexedPolygroupBuilt) {
+                    syncDirtySeamTail(bufs.get(), uploadMesh, {{mesh->dirtyVertMin, mesh->dirtyVertMax + 1}}, false, true, false, incrementalBytes);
+                }
+
                 mesh->isColorDirty = false;
             }
 
@@ -4448,13 +5289,26 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
                 glBufferSubData(GL_ARRAY_BUFFER, offset, size,
                                 mesh->materials.data() + (size_t)mesh->dirtyVertMin * 3);
 
+                if (useIndexedPg && bufs->indexedPolygroupBuilt) {
+                    syncDirtySeamTail(bufs.get(), uploadMesh, {{mesh->dirtyVertMin, mesh->dirtyVertMax + 1}}, false, false, true, incrementalBytes);
+                }
+
                 mesh->isMaterialDirty = false;
             }
             
             if (mesh->isTopologyDirty) {
                 uploaded = true;
                 std::vector<uint32_t> triIndices;
-                generateTriangleIndices(mesh, triIndices);
+                if (useIndexedPg) {
+                    std::vector<uint32_t> vertGroups;
+                    buildIndexedPolygroupLayout(uploadMesh, bufs.get(), vertGroups, triIndices);
+                    releasePolygroupBuffers(bufs.get());
+                    size_t pgVbo = 0;
+                    uploadVertexBuffersWithSeamTail(uploadMesh, bufs.get(), vertGroups, false, false, pgVbo);
+                    incrementalBytes += pgVbo;
+                } else {
+                    generateTriangleIndices(mesh, triIndices);
+                }
                 glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
                 glBufferData(GL_ELEMENT_ARRAY_BUFFER, triIndices.size() * sizeof(uint32_t), triIndices.data(), GL_STATIC_DRAW);
                 bufs->triIndexCount = triIndices.size();
@@ -4515,12 +5369,22 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
     if (uploaded) {
         double uploadMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tUploadStart).count();
         if (uploadMs > 0.5) {
-            uint32_t spanVerts = (mesh->dirtyVertMax >= mesh->dirtyVertMin) ? (mesh->dirtyVertMax - mesh->dirtyVertMin + 1) : 0;
-            double spanPct = (mesh->nbVerts > 0) ? (100.0 * (double)spanVerts / (double)mesh->nbVerts) : 0.0;
-            double approxMB = (double)spanVerts * 24.0 / (1024.0 * 1024.0);
-            sculpt_log("[GPU UPLOAD] %s Upload: %.2fms | Mesh ID: %u | Verts range: %u..%u (Span: %u / %d = %.1f%%, ~%.1f MB V+N)\n",
-                       isFullUpload ? "FULL" : "Incremental", uploadMs, mesh->getID(),
-                       mesh->dirtyVertMin, mesh->dirtyVertMax, spanVerts, mesh->nbVerts, spanPct, approxMB);
+            if (useDirtyBlocks) {
+                uint32_t upVerts = m_lastUploadTiming.dirtyVertUploaded;
+                double upPct = (uploadMesh->nbVerts > 0) ? (100.0 * (double)upVerts / (double)uploadMesh->nbVerts) : 0.0;
+                double upMB = (double)m_lastUploadTiming.bytesVbo / (1024.0 * 1024.0);
+                sculpt_log("[GPU UPLOAD] %s Upload: %.2fms | Mesh ID: %u | Blocks: runs=%u, uploaded=%u / %d (%.1f%%), %.2f MB%s\n",
+                           isFullUpload ? "FULL" : "Incremental", uploadMs, mesh->getID(),
+                           m_lastUploadTiming.dirtyRunCount, upVerts, uploadMesh->nbVerts, upPct, upMB,
+                           m_lastUploadTiming.usedWholeBufferFallback ? " [fallback]" : "");
+            } else {
+                uint32_t spanVerts = (mesh->dirtyVertMax >= mesh->dirtyVertMin) ? (mesh->dirtyVertMax - mesh->dirtyVertMin + 1) : 0;
+                double spanPct = (mesh->nbVerts > 0) ? (100.0 * (double)spanVerts / (double)mesh->nbVerts) : 0.0;
+                double approxMB = (double)spanVerts * 24.0 / (1024.0 * 1024.0);
+                sculpt_log("[GPU UPLOAD] %s Upload: %.2fms | Mesh ID: %u | Verts range: %u..%u (Span: %u / %d = %.1f%%, ~%.1f MB V+N)\n",
+                           isFullUpload ? "FULL" : "Incremental", uploadMs, mesh->getID(),
+                           mesh->dirtyVertMin, mesh->dirtyVertMax, spanVerts, mesh->nbVerts, spanPct, approxMB);
+            }
         }
     }
     return uploaded;

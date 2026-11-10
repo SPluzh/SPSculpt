@@ -122,6 +122,41 @@ public:
     uint32_t dirtyVertMin = 0;
     uint32_t dirtyVertMax = 0;
 
+    // Stage 2: Block-based GPU dirty tracking (1 byte per 2048 vertices per channel)
+    static constexpr uint32_t kDirtyBlockShift = 11;
+    static constexpr uint32_t kDirtyBlockSize  = 1u << kDirtyBlockShift;
+    static constexpr size_t   kMaxDirtySeeds   = 8192;
+    std::vector<uint8_t> dirtyVertBlocks;
+    std::vector<uint8_t> dirtyColorBlocks;
+    std::vector<uint8_t> dirtyMaterialBlocks;
+    bool hasDirtyVertBlockMask = false;
+    bool hasDirtyColorBlockMask = false;
+    bool hasDirtyMaterialBlockMask = false;
+
+    // Fine-grained dirty vertex seeds used when DynamicSubdiv is active (avoids coarse 2048-vert block inflation on small cages)
+    std::vector<uint32_t> dirtyVertSeeds;
+    std::vector<uint32_t> dirtyColorSeeds;
+    std::vector<uint32_t> dirtyMaterialSeeds;
+    bool dirtyVertSeedsOverflowed = false;
+    bool dirtyColorSeedsOverflowed = false;
+    bool dirtyMaterialSeedsOverflowed = false;
+
+    static size_t getDirtyBlockCount(int vertCount) {
+        return vertCount > 0 ? ((static_cast<size_t>(vertCount) + kDirtyBlockSize - 1) >> kDirtyBlockShift) : 0;
+    }
+    size_t getDirtyBlockCount() const {
+        return getDirtyBlockCount(nbVerts);
+    }
+    void ensureDirtyBlockArrays();
+    void markDirtyVert(uint32_t v);
+    void markDirtyVerts(const uint32_t* ids, size_t count);
+    void markDirtyColors(const uint32_t* ids, size_t count);
+    void markDirtyMaterials(const uint32_t* ids, size_t count);
+    void markDirtyVertRange(uint32_t begin, uint32_t end);
+    void markDirtyColorRange(uint32_t begin, uint32_t end);
+    void markDirtyMaterialRange(uint32_t begin, uint32_t end);
+    void clearDirtyBlockMasks(bool clearVert = true, bool clearColor = true, bool clearMat = true);
+
     void initFaceGroups(uint32_t defaultGid = 0);
     uint32_t getNextFreeGroupID() const;
     void setFaceGroup(uint32_t faceIdx, uint32_t gid);
@@ -258,6 +293,12 @@ public:
         isTopologyDirty = other.isTopologyDirty;
         dirtyVertMin = other.dirtyVertMin;
         dirtyVertMax = other.dirtyVertMax;
+        dirtyVertBlocks.clear();
+        dirtyColorBlocks.clear();
+        dirtyMaterialBlocks.clear();
+        hasDirtyVertBlockMask = false;
+        hasDirtyColorBlockMask = false;
+        hasDirtyMaterialBlockMask = false;
         visibleV1 = other.visibleV1;
         visibleV2 = other.visibleV2;
         symEnabled = other.symEnabled;

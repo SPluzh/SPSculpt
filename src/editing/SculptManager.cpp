@@ -18,6 +18,7 @@
 #include "editing/SplitTool.h"
 #include "editing/undo/UndoManager.h"
 #include "common/Logger.h"
+#include "common/OptFlags.h"
 #include "common/CrashReporter.h"
 #include "common/ErrorReporter.h"
 #include <glm/gtc/matrix_transform.hpp>
@@ -2923,11 +2924,6 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         m_lastFrameProfile.symPickUsedMT = ps1.usedMT;
         m_lastFrameProfile.symPickThreads = ps1.numThreads;
     }
-    const uint32_t* primaryVerts = (isGrabBrush && !m_firstStrokeFrame) ? m_grabbedVertices.data() : pickedVertices.data();
-    const size_t primaryVertCount = (isGrabBrush && !m_firstStrokeFrame) ? m_grabbedVertices.size() : pickedVertices.size();
-    m_lastFrameProfile.pickedVertCount = (int)primaryVertCount;
-    CrashReporter::updateStrokeCounts((uint32_t)primaryVertCount, 0u);
-
     // --- Stage 3: Culling & PolyGroup Filtering ---
     tStage = std::chrono::high_resolution_clock::now();
     if (!culledAndFiltered && (!isGrabBrush || m_firstStrokeFrame)) {
@@ -2942,6 +2938,11 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         }
     }
     m_lastFrameProfile.cullingMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
+
+    const uint32_t* primaryVerts = (isGrabBrush && !m_firstStrokeFrame) ? m_grabbedVertices.data() : pickedVertices.data();
+    const size_t primaryVertCount = (isGrabBrush && !m_firstStrokeFrame) ? m_grabbedVertices.size() : pickedVertices.size();
+    m_lastFrameProfile.pickedVertCount = (int)primaryVertCount;
+    CrashReporter::updateStrokeCounts((uint32_t)primaryVertCount, 0u);
 
     std::vector<uint32_t> allAffectedVerts;
     if (primaryVertCount > 0) {
@@ -3497,19 +3498,36 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         }
 
         const auto& settings = getCurrentSettings();
-        if (activeBrush == BRUSH_PAINT) {
-            if (settings.writeAlbedo) {
-                mesh->isColorDirty = true;
+        if (OptFlags::get().dirtyBlocks) {
+            if (activeBrush == BRUSH_PAINT) {
+                if (settings.writeAlbedo) {
+                    mesh->markDirtyColors(pAff, numAff);
+                }
+                if (settings.writeRoughness || settings.writeMetalness) {
+                    mesh->markDirtyMaterials(pAff, numAff);
+                }
+            } else if (activeBrush == BRUSH_MASK || activeBrush == BRUSH_MASK_GRADIENT_BLUR) {
+                mesh->markDirtyMaterials(pAff, numAff);
+            } else if (activeBrush == BRUSH_POLYGROUP) {
+                mesh->isFaceGroupDirty = true;
+            } else {
+                mesh->markDirtyVerts(pAff, numAff);
             }
-            if (settings.writeRoughness || settings.writeMetalness) {
-                mesh->isMaterialDirty = true;
-            }
-        } else if (activeBrush == BRUSH_MASK || activeBrush == BRUSH_MASK_GRADIENT_BLUR) {
-            mesh->isMaterialDirty = true;
-        } else if (activeBrush == BRUSH_POLYGROUP) {
-            mesh->isFaceGroupDirty = true;
         } else {
-            mesh->isVertexDirty = true;
+            if (activeBrush == BRUSH_PAINT) {
+                if (settings.writeAlbedo) {
+                    mesh->isColorDirty = true;
+                }
+                if (settings.writeRoughness || settings.writeMetalness) {
+                    mesh->isMaterialDirty = true;
+                }
+            } else if (activeBrush == BRUSH_MASK || activeBrush == BRUSH_MASK_GRADIENT_BLUR) {
+                mesh->isMaterialDirty = true;
+            } else if (activeBrush == BRUSH_POLYGROUP) {
+                mesh->isFaceGroupDirty = true;
+            } else {
+                mesh->isVertexDirty = true;
+            }
         }
 
         auto tProxySync0 = std::chrono::high_resolution_clock::now();
@@ -4784,10 +4802,18 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                         mesh->nbVerts
                     );
 
-                    mesh->isVertexDirty = true;
-                    mesh->dirtyVertMin = 0;
-                    mesh->dirtyVertMax = mesh->nbVerts - 1;
-                    mesh->isDirty = true;
+                    if (OptFlags::get().dirtyBlocks) {
+                        if (getCurrentSettings().blurMaskedOnly) {
+                            mesh->markDirtyMaterials(m_gradActiveVerts.data(), m_gradActiveVerts.size());
+                        } else {
+                            mesh->markDirtyMaterialRange(0, (uint32_t)mesh->nbVerts);
+                        }
+                    } else {
+                        mesh->isVertexDirty = true;
+                        mesh->dirtyVertMin = 0;
+                        mesh->dirtyVertMax = mesh->nbVerts - 1;
+                        mesh->isDirty = true;
+                    }
                 }
                 m_gradIsDrawing = false;
                 m_gradActivePoint = '\0';
@@ -4834,10 +4860,14 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                             uint32_t vid = selectedVertices[i];
                             materials[vid * 3 + 2] = maskVal;
                         }
-                        mesh->isMaterialDirty = true;
-                        mesh->dirtyVertMin = 0;
-                        mesh->dirtyVertMax = mesh->nbVerts - 1;
-                        mesh->isDirty = true;
+                        if (OptFlags::get().dirtyBlocks) {
+                            mesh->markDirtyMaterials(selectedVertices.data(), selectedVertices.size());
+                        } else {
+                            mesh->isMaterialDirty = true;
+                            mesh->dirtyVertMin = 0;
+                            mesh->dirtyVertMax = mesh->nbVerts - 1;
+                            mesh->isDirty = true;
+                        }
 
                         g_undoManager.endSculptStroke(scene);
 
@@ -5713,10 +5743,18 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 mesh->nbVerts
             );
 
-            mesh->isVertexDirty = true;
-            mesh->dirtyVertMin = 0;
-            mesh->dirtyVertMax = mesh->nbVerts - 1;
-            mesh->isDirty = true;
+            if (OptFlags::get().dirtyBlocks) {
+                if (getCurrentSettings().blurMaskedOnly) {
+                    mesh->markDirtyMaterials(m_gradActiveVerts.data(), m_gradActiveVerts.size());
+                } else {
+                    mesh->markDirtyMaterialRange(0, (uint32_t)mesh->nbVerts);
+                }
+            } else {
+                mesh->isVertexDirty = true;
+                mesh->dirtyVertMin = 0;
+                mesh->dirtyVertMax = mesh->nbVerts - 1;
+                mesh->isDirty = true;
+            }
             return;
         }
 
@@ -6720,9 +6758,13 @@ void SculptManager::clearMask(Mesh* mesh, Scene* scene) {
     for (int i = 0; i < nbVerts; ++i) {
         materials[i * 3 + 2] = 1.0f;
     }
-    mesh->isMaterialDirty = true;
-    mesh->dirtyVertMin = 0;
-    mesh->dirtyVertMax = nbVerts - 1;
+    if (OptFlags::get().dirtyBlocks) {
+        mesh->markDirtyMaterialRange(0, static_cast<uint32_t>(nbVerts));
+    } else {
+        mesh->isMaterialDirty = true;
+        mesh->dirtyVertMin = 0;
+        mesh->dirtyVertMax = nbVerts - 1;
+    }
 
     auto t1 = std::chrono::high_resolution_clock::now();
     double totalMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
@@ -6741,9 +6783,13 @@ void SculptManager::invertMask(Mesh* mesh) {
     for (int i = 0; i < nbVerts; ++i) {
         materials[i * 3 + 2] = 1.0f - materials[i * 3 + 2];
     }
-    mesh->isMaterialDirty = true;
-    mesh->dirtyVertMin = 0;
-    mesh->dirtyVertMax = nbVerts - 1;
+    if (OptFlags::get().dirtyBlocks) {
+        mesh->markDirtyMaterialRange(0, static_cast<uint32_t>(nbVerts));
+    } else {
+        mesh->isMaterialDirty = true;
+        mesh->dirtyVertMin = 0;
+        mesh->dirtyVertMax = nbVerts - 1;
+    }
 
     auto t1 = std::chrono::high_resolution_clock::now();
     double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
@@ -6829,9 +6875,13 @@ void SculptManager::blurMask(Mesh* mesh, int iterations) {
     );
     std::cout << "[MaskBlur] ::blurMask finished. Processed: " << processed << " vertices." << std::endl;
 
-    mesh->isMaterialDirty = true;
-    mesh->dirtyVertMin = 0;
-    mesh->dirtyVertMax = nbVerts - 1;
+    if (OptFlags::get().dirtyBlocks) {
+        mesh->markDirtyMaterials(iVerts.data(), iVerts.size());
+    } else {
+        mesh->isMaterialDirty = true;
+        mesh->dirtyVertMin = 0;
+        mesh->dirtyVertMax = nbVerts - 1;
+    }
 }
 
 void SculptManager::sharpenMask(Mesh* mesh, int iterations) {
@@ -6915,9 +6965,13 @@ void SculptManager::sharpenMask(Mesh* mesh, int iterations) {
         mAr[idm] = val;
     }
 
-    mesh->isMaterialDirty = true;
-    mesh->dirtyVertMin = 0;
-    mesh->dirtyVertMax = nbVerts - 1;
+    if (OptFlags::get().dirtyBlocks) {
+        mesh->markDirtyMaterials(iVerts.data(), iVerts.size());
+    } else {
+        mesh->isMaterialDirty = true;
+        mesh->dirtyVertMin = 0;
+        mesh->dirtyVertMax = nbVerts - 1;
+    }
 }
 
 void SculptManager::applyPreset(const BrushPreset& preset) {
@@ -7126,10 +7180,19 @@ void SculptManager::paintAll(Scene& scene, Mesh* mesh) {
         settings.writeAlbedo, settings.writeRoughness, settings.writeMetalness
     );
 
-    mesh->isColorDirty = true;
-    mesh->isMaterialDirty = true;
-    mesh->dirtyVertMin = 0;
-    mesh->dirtyVertMax = nbVerts - 1;
+    if (OptFlags::get().dirtyBlocks) {
+        if (settings.writeAlbedo) {
+            mesh->markDirtyColors(iVerts.data(), iVerts.size());
+        }
+        if (settings.writeRoughness || settings.writeMetalness) {
+            mesh->markDirtyMaterials(iVerts.data(), iVerts.size());
+        }
+    } else {
+        mesh->isColorDirty = true;
+        mesh->isMaterialDirty = true;
+        mesh->dirtyVertMin = 0;
+        mesh->dirtyVertMax = nbVerts - 1;
+    }
 }
 
 void SculptManager::filterPolyGroupVertices(std::vector<uint32_t>& pickedVertices, const Mesh* mesh, uint32_t targetGroupId) {

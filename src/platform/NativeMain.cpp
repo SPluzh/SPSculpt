@@ -313,6 +313,7 @@ int main(int argc, char* argv[]) {
     bool runGozProfile = false;
     bool runRenderBench = false;
     bool runStage1Test = false;
+    bool runStage2Test = false;
     bool runBVHTest = false;
     bool runDyntopoTest = false;
     bool runDyntopoBench = false;
@@ -405,6 +406,9 @@ int main(int argc, char* argv[]) {
             } else if (arg == "--test-stage1" || arg == "--stage1-test") {
                 runStage1Test = true;
                 showConsole = true;
+            } else if (arg == "--test-stage2" || arg == "--stage2-test") {
+                runStage2Test = true;
+                showConsole = true;
             } else if ((arg == "--bench-render-faces" || arg == "--bench-faces" || arg == "-bf") && i + 1 < numArgs) {
                 showConsole = true;
                 benchFaces = std::atoi(wideToUtf8(szArgList[++i]).c_str());
@@ -489,6 +493,9 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--test-stage1" || arg == "--stage1-test") {
             runStage1Test = true;
             showConsole = true;
+        } else if (arg == "--test-stage2" || arg == "--stage2-test") {
+            runStage2Test = true;
+            showConsole = true;
         } else if ((arg == "--bench-render-faces" || arg == "--bench-faces" || arg == "-bf") && i + 1 < argc) {
             showConsole = true;
             benchFaces = std::atoi(argv[++i]);
@@ -535,7 +542,7 @@ int main(int argc, char* argv[]) {
                                runDyntopoBench1000 || runClayBench1000 || runClayDyntopoBench1000 ||
                                runBVHTest || runBridgeBench || runGozBench || runVoxelBench ||
                                runTrimClipBench || runBench || runGozProfile || runRenderBench ||
-                               runStage1Test || runCrashReporterTest;
+                               runStage1Test || runStage2Test || runCrashReporterTest;
 
     CrashReporter::init(isHeadlessRun);
     sculpt_log_init(isHeadlessRun);
@@ -837,7 +844,7 @@ int main(int argc, char* argv[]) {
         renderer.releaseMeshBuffers(m);
     });
     scene.getCamera().onResize(width, height);
-    if (fileToOpen.empty() && !runRenderBench && !runStage1Test && !runGozProfile) {
+    if (fileToOpen.empty() && !runRenderBench && !runStage1Test && !runStage2Test && !runGozProfile) {
         if (gui.getCreateDefaultSphereOnStartup()) {
             scene.loadDefaultSphere();
         }
@@ -893,6 +900,26 @@ int main(int argc, char* argv[]) {
         g_undoManager.setSculptManager(&sculpt);
         sculpt.setRenderer(&renderer);
         bool ok = RenderBenchmark::runStage1Tests(scene, sculpt, renderer, window);
+        scene.setSculptManager(nullptr);
+        fflush(stdout);
+        fflush(stderr);
+        SDL_GL_DeleteContext(glContext);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+#ifdef _WIN32
+        ExitProcess(ok ? 0 : 1);
+#else
+        _exit(ok ? 0 : 1);
+#endif
+    }
+
+    if (runStage2Test) {
+        BrushPresetManager::instance().loadDefaults();
+        SculptManager sculpt;
+        scene.setSculptManager(&sculpt);
+        g_undoManager.setSculptManager(&sculpt);
+        sculpt.setRenderer(&renderer);
+        bool ok = RenderBenchmark::runStage2Tests(scene, sculpt, renderer, window);
         scene.setSculptManager(nullptr);
         fflush(stdout);
         fflush(stderr);

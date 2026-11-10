@@ -6,6 +6,7 @@
 #include "sculpt/SculptEngine.h"
 #include "editing/SculptManager.h"
 #include "common/Logger.h"
+#include "common/OptFlags.h"
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -545,8 +546,12 @@ bool ClipCurveTool::execute(
         mesh->dirtyVertMax = maxV;
     }
 
-    mesh->isDirty = true;
-    mesh->isVertexDirty = true;
+    if (OptFlags::get().dirtyBlocks) {
+        mesh->markDirtyVerts(affectedVerts.data(), affectedVerts.size());
+    } else {
+        mesh->isDirty = true;
+        mesh->isVertexDirty = true;
+    }
     mesh->vertProxy = mesh->verts;
     mesh->invalidateLocalRadius();
     mesh->bumpVertsGeneration();

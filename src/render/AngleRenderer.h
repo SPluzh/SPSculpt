@@ -117,6 +117,20 @@ struct MeshRenderBuffers {
     bool wireDirty = true;
     bool creaseDirty = true;
 
+    // Stage 2 Indexed PolyGroup cache (cyclic provoking rotation + seam duplicate tail)
+    struct SeamSlotRef {
+        uint32_t srcVert = 0;
+        uint32_t slotIdx = 0;
+    };
+    bool indexedPolygroupBuilt = false;
+    size_t baseVertCount = 0;
+    std::vector<uint32_t> seamSrcVerts;
+    std::vector<SeamSlotRef> seamSortedBySrc;
+    std::vector<float> seamTailVerts;
+    std::vector<float> seamTailNormals;
+    std::vector<float> seamTailColors;
+    std::vector<float> seamTailMaterials;
+
     // Tracked GPU allocation sizes (bytes)
     size_t gpuVertsBytes = 0;
     size_t gpuNormalsBytes = 0;
@@ -211,6 +225,9 @@ public:
         size_t bytesPolygroup = 0;
         uint32_t dirtyVertSpan = 0;
         uint32_t dirtyMeshVerts = 0;
+        uint32_t dirtyVertUploaded = 0;
+        uint32_t dirtyRunCount = 0;
+        bool usedWholeBufferFallback = false;
         bool wasFullUpload = false;
     };
     struct GpuRenderStats {
@@ -602,6 +619,10 @@ public:
     // Mesh buffer uploads
     bool uploadIfDirty(Mesh* mesh);
     void releaseMeshBuffers(const Mesh* mesh);
+    const MeshRenderBuffers* getMeshRenderBuffers(const Mesh* mesh) const {
+        auto it = m_meshBuffers.find(mesh);
+        return (it != m_meshBuffers.end()) ? it->second.get() : nullptr;
+    }
     void notifyMeshReplaced(const Mesh* oldMesh, const Mesh* newMesh) {
         if (m_lastSelectedMesh == oldMesh) {
             m_lastSelectedMesh = newMesh;
@@ -614,6 +635,35 @@ public:
 
 private:
     void buildPolyGroupBuffers(const Mesh* mesh, MeshRenderBuffers* bufs);
+    void releasePolygroupBuffers(MeshRenderBuffers* bufs);
+    void buildIndexedPolygroupLayout(const Mesh* mesh,
+                                     MeshRenderBuffers* bufs,
+                                     std::vector<uint32_t>& outVertGroups,
+                                     std::vector<uint32_t>& outTriIndices);
+    void populateSeamTailFromMesh(const Mesh* mesh, MeshRenderBuffers* bufs);
+    void uploadVertexBuffersWithSeamTail(const Mesh* uploadMesh,
+                                         MeshRenderBuffers* bufs,
+                                         const std::vector<uint32_t>& vertGroups,
+                                         bool fullRealloc,
+                                         bool bindVaoAttribs,
+                                         size_t& outVboBytes);
+    static void buildDirtyRuns(int nbVerts,
+                               const std::vector<uint8_t>& blocks,
+                               bool hasBlockMask,
+                               std::vector<std::pair<uint32_t, uint32_t>>& outRuns,
+                               uint32_t& outUploadedVerts,
+                               bool& outUsedFallback);
+    static size_t uploadDirtyFloat3Runs(GLuint vbo,
+                                        const std::vector<float>& src,
+                                        int nbVerts,
+                                        const std::vector<std::pair<uint32_t, uint32_t>>& runs);
+    void syncDirtySeamTail(MeshRenderBuffers* bufs,
+                           const Mesh* srcMesh,
+                           const std::vector<std::pair<uint32_t, uint32_t>>& runs,
+                           bool doVerts,
+                           bool doColors,
+                           bool doMaterials,
+                           size_t& outBytes);
 
     void drawBackground(const Scene& scene, const Camera& camera);
     void updateBackgroundGeometry();

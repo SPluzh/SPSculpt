@@ -18,6 +18,7 @@
 #include "common/Enums.h"
 #include "common/OptFlags.h"
 #include "common/SystemStats.h"
+#include "editing/PrimitiveTool.h"
 #include "editing/SculptManager.h"
 #include "editing/undo/UndoManager.h"
 #include "mesh/Mesh.h"
@@ -377,7 +378,7 @@ inline bool run(int targetFaces, Scene& scene, SculptManager& sculpt, AngleRende
         const float startY = centerY;
         const float stepDx = 9.0f * scalePx; // > minSpacing (~6.7 * scalePx)
 
-        std::vector<double> vSculptCpu, vProcMs, vVboMs, vVboMB, vSpanPct, vRenderCpu, vGpuFin, vTotal;
+        std::vector<double> vSculptCpu, vProcMs, vVboMs, vVboMB, vSpanPct, vRuns, vRenderCpu, vGpuFin, vTotal;
         int minPicked = 1 << 30;
         int maxPicked = 0;
 
@@ -427,6 +428,7 @@ inline bool run(int targetFaces, Scene& scene, SculptManager& sculpt, AngleRende
             vVboMs.push_back(ut.msVbo);
             vVboMB.push_back(mb);
             vSpanPct.push_back(spanPct);
+            vRuns.push_back((double)ut.dirtyRunCount);
             vRenderCpu.push_back(rCpu);
             vGpuFin.push_back(gFin);
             vTotal.push_back(sCpu + pMs + rCpu + gFin + sSwap);
@@ -490,11 +492,11 @@ inline bool run(int targetFaces, Scene& scene, SculptManager& sculpt, AngleRende
         std::cout << std::setprecision(2);
         std::cout << "      Step0:       SculptCPU=" << vSculptCpu[0]
                   << " ms | ProcessFrame=" << vProcMs[0]
-                  << " ms | VboUpload=" << vVboMB[0] << " MB (" << vVboMs[0] << " ms, span=" << vSpanPct[0] << "%)"
+                  << " ms | VboUpload=" << vVboMB[0] << " MB (" << vVboMs[0] << " ms, span=" << vSpanPct[0] << "%, runs=" << vRuns[0] << ")"
                   << " | FrameTotal=" << vTotal[0] << " ms\n";
         std::cout << "      All12Avg:    SculptCPU=" << meanOf(vSculptCpu)
                   << " ms | ProcessFrame=" << meanOf(vProcMs)
-                  << " ms | VboUpload=" << meanOf(vVboMB) << " MB (" << meanOf(vVboMs) << " ms, span=" << meanOf(vSpanPct) << "%)\n";
+                  << " ms | VboUpload=" << meanOf(vVboMB) << " MB (" << meanOf(vVboMs) << " ms, span=" << meanOf(vSpanPct) << "%, runs=" << meanOf(vRuns) << ")\n";
         std::cout << "      Render/Max:  AvgRenderCPU=" << meanOf(vRenderCpu)
                   << " ms | AvgFinish=" << meanOf(vGpuFin)
                   << " ms | AvgFrame=" << meanOf(vTotal)
@@ -663,8 +665,9 @@ inline bool run(int targetFaces, Scene& scene, SculptManager& sculpt, AngleRende
         const float startY = centerY + 30.0f * scalePx;
         const float stepDx = 9.0f * scalePx;
 
-        std::vector<double> vSculptCpu, vPgMs, vPgMB, vRenderCpu, vGpuFin, vTotal;
+        std::vector<double> vSculptCpu, vPgMs, vPgMB, vVboMB, vRenderCpu, vGpuFin, vTotal;
         uint32_t totalRebuilds = 0;
+        uint32_t totalPgDraws = 0;
 
         for (int i = 0; i < PG_STEPS; ++i) {
             SDL_PumpEvents();
@@ -699,11 +702,14 @@ inline bool run(int targetFaces, Scene& scene, SculptManager& sculpt, AngleRende
             const auto& ut = renderer.getLastUploadTiming();
             const auto& rs = renderer.getLastRenderStats();
             double pgMB = (double)ut.bytesPolygroup / (1024.0 * 1024.0);
+            double vboMB = (double)ut.bytesVbo / (1024.0 * 1024.0);
             totalRebuilds += rs.polygroupRebuilds;
+            totalPgDraws += rs.polygroupDraws;
 
             vSculptCpu.push_back(sCpu);
             vPgMs.push_back(ut.msPolygroupRebuild);
             vPgMB.push_back(pgMB);
+            vVboMB.push_back(vboMB);
             vRenderCpu.push_back(rCpu);
             vGpuFin.push_back(gFin);
             vTotal.push_back(sCpu + rCpu + gFin + sSwap);
@@ -727,10 +733,12 @@ inline bool run(int targetFaces, Scene& scene, SculptManager& sculpt, AngleRende
         std::cout << "      AvgPerStep:  SculptCPU=" << meanOf(vSculptCpu)
                   << " ms | PGRebuild=" << meanOf(vPgMs)
                   << " ms | PGUpload=" << meanOf(vPgMB) << " MB"
+                  << " | VboUpload=" << meanOf(vVboMB) << " MB"
                   << " | RenderCPU=" << meanOf(vRenderCpu)
                   << " ms | Finish=" << meanOf(vGpuFin)
                   << " ms | TotalFrame=" << meanOf(vTotal) << " ms"
-                  << " | Rebuilds=" << totalRebuilds << "\n\n";
+                  << " | Rebuilds=" << totalRebuilds
+                  << " | PGDraws=" << totalPgDraws << "\n\n";
     }
 
     g_undoManager.clear();
@@ -1097,6 +1105,994 @@ inline bool runStage1Tests(Scene& scene, SculptManager& sculpt, AngleRenderer& r
 
     std::cout << "================================================================================\n";
     std::cout << "  Stage 1 Tests Complete: " << (allOk ? "ALL PASSED" : "FAILED") << "\n";
+    std::cout << "================================================================================\n\n";
+    return allOk;
+}
+
+inline bool runStage2Tests(Scene& scene, SculptManager& sculpt, AngleRenderer& renderer, SDL_Window* window) {
+    int winW = 1920, winH = 1080;
+    if (window) {
+        SDL_GetWindowSize(window, &winW, &winH);
+    }
+    if (winW <= 0) winW = 1920;
+    if (winH <= 0) winH = 1080;
+
+    int drawW = winW, drawH = winH;
+    if (window) {
+        SDL_GL_GetDrawableSize(window, &drawW, &drawH);
+    }
+    if (drawW <= 0) drawW = winW;
+    if (drawH <= 0) drawH = winH;
+
+    const OptFlags::Config savedFlags = OptFlags::get();
+    OptFlags::get().idleSleep = true;
+    OptFlags::get().cullFace = true;
+    OptFlags::get().vaoCache = true;
+    OptFlags::get().orbitScale = false;
+    OptFlags::get().dirtyBlocks = true;
+    OptFlags::get().indexedPolygroup = true;
+
+    const float scalePx = std::max(0.5f, (float)std::min(winW, winH) / 1080.0f);
+    const float centerX = (float)winW * 0.5f;
+    const float centerY = (float)winH * 0.5f;
+
+    std::cout << "\n================================================================================\n";
+    std::cout << "  Stage 2 Invariant Verification (--test-stage2)\n";
+    std::cout << "================================================================================\n";
+
+    bool allOk = true;
+    auto drainGlErrors = []() {
+        while (glGetError() != GL_NO_ERROR) {}
+    };
+    auto checkNoGlError = [&](const char* label) -> bool {
+        GLenum err = GL_NO_ERROR;
+        bool clean = true;
+        while ((err = glGetError()) != GL_NO_ERROR) {
+            std::cerr << "  [FAIL] " << label << ": GL error 0x" << std::hex << err << std::dec << "\n";
+            clean = false;
+        }
+        return clean;
+    };
+    auto checkCond = [&](bool cond, const char* msg) {
+        if (!cond) {
+            std::cerr << "  [FAIL] " << msg << "\n";
+            allOk = false;
+        } else {
+            std::cout << "  [PASS] " << msg << "\n";
+        }
+    };
+    auto resetRendererClean = [&]() {
+        renderer.setRenderMode(RenderMode::PBR);
+        int fvIdx = renderer.findMatcapIndexByName("Matcap FV");
+        renderer.setMatcap(fvIdx >= 0 ? fvIdx : 3);
+        renderer.setShaderType(1);
+        renderer.setTextureId(0);
+        renderer.setAlpha(1.0f);
+        renderer.setUseShadows(false);
+        renderer.setUseSsao(false);
+        renderer.setUseSsr(false);
+        renderer.setUseTaa(false);
+        renderer.setUseFxaa(false);
+        renderer.setBevelEnabled(false);
+        renderer.setShowContour(false);
+        renderer.setShowWireframe(false);
+        renderer.setShowCreaseLines(false);
+        renderer.setShowPolyGroups(false);
+        renderer.setEnableSelectionFlash(false);
+        renderer.setShowSymmetryLine(false);
+        renderer.setShowInvertedNormals(false);
+        renderer.setXrayEnabled(false);
+        renderer.setShowGrid(false);
+        renderer.setFlatShading(false);
+        renderer.setOrbitInteractionHint(false, false);
+        renderer.setActiveBrush(BRUSH_CLAYBUILDUP);
+        renderer.setCursorParameters(false, false, {}, {}, {}, {}, {1.0f, 1.0f, 1.0f});
+    };
+
+    auto doStrokeStep = [&](float x, float y, bool isDown, BrushType brush) {
+        SDL_PumpEvents();
+        SDL_Event ev;
+        std::memset(&ev, 0, sizeof(ev));
+        if (isDown) {
+            ev.type = SDL_MOUSEBUTTONDOWN;
+            ev.button.button = SDL_BUTTON_LEFT;
+            ev.button.x = (int)std::round(x);
+            ev.button.y = (int)std::round(y);
+        } else {
+            ev.type = SDL_MOUSEMOTION;
+            ev.motion.state = SDL_BUTTON_LMASK;
+            ev.motion.x = (int)std::round(x);
+            ev.motion.y = (int)std::round(y);
+        }
+        sculpt.handleEvent(ev, scene);
+        sculpt.setRawMousePos((int)std::round(x), (int)std::round(y));
+        sculpt.processFrame(scene);
+        renderer.setActiveBrush(brush);
+    };
+
+    auto releaseStroke = [&](float x, float y) {
+        SDL_Event evUp;
+        std::memset(&evUp, 0, sizeof(evUp));
+        evUp.type = SDL_MOUSEBUTTONUP;
+        evUp.button.button = SDL_BUTTON_LEFT;
+        evUp.button.x = (int)std::round(x);
+        evUp.button.y = (int)std::round(y);
+        sculpt.handleEvent(evUp, scene);
+    };
+
+    drainGlErrors();
+
+    // -------------------------------------------------------------------------
+    // Test 1: Disjoint Dirty Blocks (Symmetry Y on ~260k-vert UV sphere)
+    // -------------------------------------------------------------------------
+    {
+        scene.clear();
+        g_undoManager.clear();
+        scene.setSplitMode(Scene::SplitMode::OFF);
+        resetRendererClean();
+
+        Mesh* sphere = createSphereMeshWithPolygroups(360, 720).release();
+        sphere->postInit(true);
+        scene.addMesh(sphere);
+        scene.selectMesh(sphere);
+
+        Camera& cam = scene.getCamera();
+        cam.onResize(winW, winH);
+        cam.resetViewToMesh(sphere, false);
+        cam.update(0.016f);
+
+        sculpt.setUseSym(true);
+        sculpt.setSymX(false);
+        sculpt.setSymY(true);
+        sculpt.setSymZ(false);
+        sculpt.saveSymmetryToMesh(sphere);
+        sculpt.warmupMeshCaches(sphere);
+        sculpt.registerKnownMesh(sphere);
+        sculpt.setBrush(BRUSH_CLAYBUILDUP);
+
+        renderer.resetLastUploadTiming();
+        renderer.render(scene);
+        glFinish();
+        auto utInit = renderer.getLastUploadTiming();
+        checkCond(utInit.wasFullUpload, "Test 1 setup: Initial UV sphere upload completed");
+
+        auto& claySet = sculpt.getSettings(BRUSH_CLAYBUILDUP);
+        claySet.radius = 45.0f * scalePx;
+        claySet.intensity = 1.0f;
+        claySet.focalShift = 0.0f;
+        claySet.accumulate = false;
+        claySet.culling = false;
+
+        const float hitX = centerX;
+        const float hitY = centerY - 120.0f * scalePx;
+        doStrokeStep(hitX, hitY, true, BRUSH_CLAYBUILDUP);
+        int picked = sculpt.getLastFrameProfile().pickedVertCount;
+
+        renderer.resetLastUploadTiming();
+        renderer.render(scene);
+        glFinish();
+        auto ut1 = renderer.getLastUploadTiming();
+        releaseStroke(hitX, hitY);
+
+        const uint32_t maxQuarter = (uint32_t)std::max(1, sphere->nbVerts / 4);
+        std::cout << "  [Info] Test 1 SymY: picked=" << picked
+                  << ", runs=" << ut1.dirtyRunCount
+                  << ", uploaded=" << ut1.dirtyVertUploaded << "/" << sphere->nbVerts
+                  << " (" << std::fixed << std::setprecision(2)
+                  << (sphere->nbVerts > 0 ? 100.0 * (double)ut1.dirtyVertUploaded / (double)sphere->nbVerts : 0.0)
+                  << "%), vboBytes=" << ut1.bytesVbo << "\n";
+
+        checkCond(picked > 0 && !ut1.wasFullUpload && !ut1.usedWholeBufferFallback &&
+                  ut1.dirtyRunCount >= 2 && ut1.dirtyVertUploaded > 0 && ut1.dirtyVertUploaded < maxQuarter,
+                  "Test 1: Symmetry Y uploads >=2 disjoint dirty runs covering <25% of mesh vertices");
+
+        g_undoManager.undo(scene);
+        g_undoManager.clear();
+        allOk = checkNoGlError("Test 1") && allOk;
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 2: Color-only, Material-only, >60% threshold & unmasked fallback
+    // -------------------------------------------------------------------------
+    {
+        scene.clear();
+        g_undoManager.clear();
+        scene.setSplitMode(Scene::SplitMode::OFF);
+        resetRendererClean();
+
+        Mesh* sphere = createSphereMeshWithPolygroups(360, 720).release();
+        sphere->postInit(true);
+        scene.addMesh(sphere);
+        scene.selectMesh(sphere);
+
+        Camera& cam = scene.getCamera();
+        cam.onResize(winW, winH);
+        cam.resetViewToMesh(sphere, false);
+        cam.update(0.016f);
+
+        sculpt.setUseSym(false);
+        sculpt.saveSymmetryToMesh(sphere);
+        sculpt.warmupMeshCaches(sphere);
+        sculpt.registerKnownMesh(sphere);
+
+        renderer.render(scene);
+        glFinish();
+
+        // 2a: Color-only (BRUSH_PAINT with writeAlbedo only)
+        sculpt.setBrush(BRUSH_PAINT);
+        auto& paintSet = sculpt.getSettings(BRUSH_PAINT);
+        paintSet.radius = 60.0f * scalePx;
+        paintSet.intensity = 1.0f;
+        paintSet.writeAlbedo = true;
+        paintSet.writeRoughness = false;
+        paintSet.writeMetalness = false;
+        paintSet.paintColor = glm::vec3(0.2f, 0.85f, 0.35f);
+
+        doStrokeStep(centerX, centerY, true, BRUSH_PAINT);
+        const bool dirtyFlags2a = (!sphere->isVertexDirty && sphere->isColorDirty && !sphere->isMaterialDirty);
+        renderer.resetLastUploadTiming();
+        renderer.render(scene);
+        glFinish();
+        auto ut2a = renderer.getLastUploadTiming();
+        releaseStroke(centerX, centerY);
+
+        std::cout << "  [Info] Test 2a Paint: flagsOk=" << dirtyFlags2a
+                  << ", runs=" << ut2a.dirtyRunCount
+                  << ", uploaded=" << ut2a.dirtyVertUploaded << "/" << sphere->nbVerts
+                  << ", vboBytes=" << ut2a.bytesVbo << "\n";
+        checkCond(dirtyFlags2a && !ut2a.wasFullUpload && !ut2a.usedWholeBufferFallback &&
+                  ut2a.dirtyRunCount >= 1 && ut2a.dirtyVertUploaded > 0 &&
+                  ut2a.bytesVbo > 0 && ut2a.bytesVbo < (size_t)sphere->nbVerts * 6,
+                  "Test 2a: BRUSH_PAINT (albedo only) uploads only dirty color blocks");
+
+        // 2b: Material-only (BRUSH_MASK)
+        sculpt.setBrush(BRUSH_MASK);
+        auto& maskSet = sculpt.getSettings(BRUSH_MASK);
+        maskSet.radius = 60.0f * scalePx;
+        maskSet.intensity = 1.0f;
+
+        doStrokeStep(centerX, centerY, true, BRUSH_MASK);
+        doStrokeStep(centerX + 24.0f, centerY, false, BRUSH_MASK);
+        const bool dirtyFlags2b = (!sphere->isVertexDirty && !sphere->isColorDirty && sphere->isMaterialDirty);
+        renderer.resetLastUploadTiming();
+        renderer.render(scene);
+        glFinish();
+        auto ut2b = renderer.getLastUploadTiming();
+        releaseStroke(centerX + 24.0f, centerY);
+
+        std::cout << "  [Info] Test 2b Mask: flagsOk=" << dirtyFlags2b
+                  << ", runs=" << ut2b.dirtyRunCount
+                  << ", uploaded=" << ut2b.dirtyVertUploaded << "/" << sphere->nbVerts
+                  << ", vboBytes=" << ut2b.bytesVbo << "\n";
+        checkCond(dirtyFlags2b && !ut2b.wasFullUpload && !ut2b.usedWholeBufferFallback &&
+                  ut2b.dirtyRunCount >= 1 && ut2b.dirtyVertUploaded > 0 &&
+                  ut2b.bytesVbo > 0 && ut2b.bytesVbo < (size_t)sphere->nbVerts * 6,
+                  "Test 2b: BRUSH_MASK uploads only dirty material blocks");
+
+        // 2c: >60% whole-buffer fallback
+        sphere->markDirtyVertRange(0u, (uint32_t)(sphere->nbVerts * 65 / 100));
+        renderer.resetLastUploadTiming();
+        renderer.render(scene);
+        glFinish();
+        auto ut2c = renderer.getLastUploadTiming();
+        checkCond(!ut2c.wasFullUpload && ut2c.usedWholeBufferFallback &&
+                  ut2c.dirtyRunCount == 1 && ut2c.dirtyVertUploaded == (uint32_t)sphere->nbVerts,
+                  "Test 2c: >60% dirty vertices triggers whole-buffer subdata fallback (1 run)");
+
+        // 2d: Unmasked dirty range (hasDirtyVertBlockMask = false) fallback
+        sphere->dirtyVertMin = 0;
+        sphere->dirtyVertMax = (uint32_t)(sphere->nbVerts - 1);
+        sphere->hasDirtyVertBlockMask = false;
+        sphere->isVertexDirty = true;
+        renderer.resetLastUploadTiming();
+        renderer.render(scene);
+        glFinish();
+        auto ut2d = renderer.getLastUploadTiming();
+        checkCond(!ut2d.wasFullUpload && ut2d.usedWholeBufferFallback &&
+                  ut2d.dirtyRunCount == 1 && ut2d.dirtyVertUploaded == (uint32_t)sphere->nbVerts,
+                  "Test 2d: Unmasked dirty range falls back safely to whole-buffer subdata (1 run)");
+
+        g_undoManager.clear();
+        allOk = checkNoGlError("Test 2") && allOk;
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 3: Sparse Undo / Redo parity & incremental GPU upload under dirtyBlocks
+    // -------------------------------------------------------------------------
+    {
+        scene.clear();
+        g_undoManager.clear();
+        scene.setSplitMode(Scene::SplitMode::OFF);
+        resetRendererClean();
+
+        Mesh* sphere = createSphereMeshWithPolygroups(240, 480).release();
+        sphere->postInit(true);
+        scene.addMesh(sphere);
+        scene.selectMesh(sphere);
+
+        Camera& cam = scene.getCamera();
+        cam.onResize(winW, winH);
+        cam.resetViewToMesh(sphere, false);
+        cam.update(0.016f);
+
+        sculpt.setUseSym(true);
+        sculpt.setSymX(false);
+        sculpt.setSymY(true);
+        sculpt.setSymZ(false);
+        sculpt.saveSymmetryToMesh(sphere);
+        sculpt.warmupMeshCaches(sphere);
+        sculpt.registerKnownMesh(sphere);
+        renderer.render(scene);
+        glFinish();
+
+        // Position stroke undo/redo
+        sculpt.setBrush(BRUSH_CLAYBUILDUP);
+        auto& claySet = sculpt.getSettings(BRUSH_CLAYBUILDUP);
+        claySet.radius = 45.0f * scalePx;
+        claySet.intensity = 1.0f;
+        claySet.culling = false;
+        claySet.accumulate = false;
+
+        for (int s = 0; s < 3; ++s) {
+            doStrokeStep(centerX + (float)s * 10.0f * scalePx, centerY - 130.0f * scalePx, s == 0, BRUSH_CLAYBUILDUP);
+            renderer.render(scene);
+            glFinish();
+        }
+        releaseStroke(centerX + 20.0f * scalePx, centerY - 130.0f * scalePx);
+
+        g_undoManager.undo(scene);
+        float maxVertUndoDiff = 0.0f;
+        auto* redoEntry = !g_undoManager.getRedoStack().empty()
+            ? dynamic_cast<SculptUndoEntry*>(g_undoManager.getRedoStack().back().get())
+            : nullptr;
+        if (redoEntry && !redoEntry->deltas.empty()) {
+            const auto& d = redoEntry->deltas[0];
+            for (size_t i = 0; i < d.indices.size(); ++i) {
+                uint32_t vid = d.indices[i];
+                maxVertUndoDiff = std::max({maxVertUndoDiff,
+                    std::abs(sphere->verts[vid * 3 + 0] - d.prevVerts[i * 3 + 0]),
+                    std::abs(sphere->verts[vid * 3 + 1] - d.prevVerts[i * 3 + 1]),
+                    std::abs(sphere->verts[vid * 3 + 2] - d.prevVerts[i * 3 + 2])});
+            }
+        }
+        renderer.resetLastUploadTiming();
+        renderer.render(scene);
+        glFinish();
+        auto utVertUndo = renderer.getLastUploadTiming();
+
+        g_undoManager.redo(scene);
+        float maxVertRedoDiff = 0.0f;
+        auto* undoEntry = !g_undoManager.getUndoStack().empty()
+            ? dynamic_cast<SculptUndoEntry*>(g_undoManager.getUndoStack().back().get())
+            : nullptr;
+        if (undoEntry && !undoEntry->deltas.empty()) {
+            const auto& d = undoEntry->deltas[0];
+            for (size_t i = 0; i < d.indices.size(); ++i) {
+                uint32_t vid = d.indices[i];
+                maxVertRedoDiff = std::max({maxVertRedoDiff,
+                    std::abs(sphere->verts[vid * 3 + 0] - d.nextVerts[i * 3 + 0]),
+                    std::abs(sphere->verts[vid * 3 + 1] - d.nextVerts[i * 3 + 1]),
+                    std::abs(sphere->verts[vid * 3 + 2] - d.nextVerts[i * 3 + 2])});
+            }
+        }
+        renderer.resetLastUploadTiming();
+        renderer.render(scene);
+        glFinish();
+        auto utVertRedo = renderer.getLastUploadTiming();
+
+        std::cout << "  [Info] Test 3a Undo/Redo: undoDiff=" << maxVertUndoDiff
+                  << ", redoDiff=" << maxVertRedoDiff
+                  << ", undoRuns=" << utVertUndo.dirtyRunCount << " (up=" << utVertUndo.dirtyVertUploaded << ")"
+                  << ", redoRuns=" << utVertRedo.dirtyRunCount << " (up=" << utVertRedo.dirtyVertUploaded << ")\n";
+        checkCond(redoEntry != nullptr && undoEntry != nullptr &&
+                  maxVertUndoDiff == 0.0f && maxVertRedoDiff == 0.0f &&
+                  !utVertUndo.wasFullUpload && utVertUndo.dirtyRunCount >= 2 &&
+                  !utVertRedo.wasFullUpload && utVertRedo.dirtyRunCount >= 2,
+                  "Test 3a: Position Undo/Redo matches 0.000000 eps & uses incremental block upload");
+
+        // Color stroke undo/redo
+        sculpt.setUseSym(false);
+        sculpt.saveSymmetryToMesh(sphere);
+        sculpt.setBrush(BRUSH_PAINT);
+        auto& paintSet = sculpt.getSettings(BRUSH_PAINT);
+        paintSet.radius = 55.0f * scalePx;
+        paintSet.intensity = 1.0f;
+        paintSet.writeAlbedo = true;
+        paintSet.writeRoughness = false;
+        paintSet.writeMetalness = false;
+        paintSet.paintColor = glm::vec3(0.9f, 0.25f, 0.2f);
+
+        for (int s = 0; s < 2; ++s) {
+            doStrokeStep(centerX + (float)s * 10.0f * scalePx, centerY, s == 0, BRUSH_PAINT);
+            renderer.render(scene);
+            glFinish();
+        }
+        releaseStroke(centerX + 10.0f * scalePx, centerY);
+
+        g_undoManager.undo(scene);
+        float maxColUndoDiff = 0.0f;
+        auto* redoCol = !g_undoManager.getRedoStack().empty()
+            ? dynamic_cast<SculptUndoEntry*>(g_undoManager.getRedoStack().back().get())
+            : nullptr;
+        if (redoCol && !redoCol->deltas.empty() && redoCol->deltas[0].hasColors) {
+            const auto& d = redoCol->deltas[0];
+            for (size_t i = 0; i < d.indices.size(); ++i) {
+                uint32_t vid = d.indices[i];
+                maxColUndoDiff = std::max({maxColUndoDiff,
+                    std::abs(sphere->colors[vid * 3 + 0] - d.prevColors[i * 3 + 0]),
+                    std::abs(sphere->colors[vid * 3 + 1] - d.prevColors[i * 3 + 1]),
+                    std::abs(sphere->colors[vid * 3 + 2] - d.prevColors[i * 3 + 2])});
+            }
+        }
+        renderer.resetLastUploadTiming();
+        renderer.render(scene);
+        glFinish();
+        auto utColUndo = renderer.getLastUploadTiming();
+
+        g_undoManager.redo(scene);
+        float maxColRedoDiff = 0.0f;
+        auto* undoCol = !g_undoManager.getUndoStack().empty()
+            ? dynamic_cast<SculptUndoEntry*>(g_undoManager.getUndoStack().back().get())
+            : nullptr;
+        if (undoCol && !undoCol->deltas.empty() && undoCol->deltas[0].hasColors) {
+            const auto& d = undoCol->deltas[0];
+            for (size_t i = 0; i < d.indices.size(); ++i) {
+                uint32_t vid = d.indices[i];
+                maxColRedoDiff = std::max({maxColRedoDiff,
+                    std::abs(sphere->colors[vid * 3 + 0] - d.nextColors[i * 3 + 0]),
+                    std::abs(sphere->colors[vid * 3 + 1] - d.nextColors[i * 3 + 1]),
+                    std::abs(sphere->colors[vid * 3 + 2] - d.nextColors[i * 3 + 2])});
+            }
+        }
+        renderer.resetLastUploadTiming();
+        renderer.render(scene);
+        glFinish();
+        auto utColRedo = renderer.getLastUploadTiming();
+
+        checkCond(redoCol != nullptr && undoCol != nullptr &&
+                  maxColUndoDiff == 0.0f && maxColRedoDiff == 0.0f &&
+                  !utColUndo.wasFullUpload && !utColUndo.usedWholeBufferFallback && utColUndo.dirtyRunCount >= 1 &&
+                  !utColRedo.wasFullUpload && !utColRedo.usedWholeBufferFallback && utColRedo.dirtyRunCount >= 1,
+                  "Test 3b: Paint Undo/Redo matches 0.000000 eps & uses incremental color block upload");
+
+        g_undoManager.clear();
+        allOk = checkNoGlError("Test 3") && allOk;
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 4a: Indexed PolyGroup Pixel Readback (Seams & Isolated Islands)
+    // -------------------------------------------------------------------------
+    {
+        scene.clear();
+        g_undoManager.clear();
+        scene.setSplitMode(Scene::SplitMode::OFF);
+        resetRendererClean();
+
+        auto gridPtr = std::make_unique<Mesh>();
+        Mesh* grid = gridPtr.release();
+        grid->verts.reserve(25 * 3);
+        for (int r = 0; r <= 4; ++r) {
+            float y = -1.5f + 0.75f * (float)r;
+            for (int c = 0; c <= 4; ++c) {
+                float x = -1.5f + 0.75f * (float)c;
+                grid->verts.push_back(x);
+                grid->verts.push_back(y);
+                grid->verts.push_back(0.0f);
+                grid->nbVerts++;
+            }
+        }
+        grid->faces.reserve(16 * 4);
+        grid->faceGroups.reserve(16);
+        for (int r = 0; r < 4; ++r) {
+            for (int c = 0; c < 4; ++c) {
+                uint32_t v00 = (uint32_t)(r * 5 + c);
+                uint32_t v10 = (uint32_t)(r * 5 + c + 1);
+                uint32_t v11 = (uint32_t)((r + 1) * 5 + c + 1);
+                uint32_t v01 = (uint32_t)((r + 1) * 5 + c);
+                grid->faces.push_back(v00);
+                grid->faces.push_back(v10);
+                grid->faces.push_back(v11);
+                grid->faces.push_back(v01);
+                uint32_t gid = (c < 2) ? 1u : 2u;
+                if (r == 1 && c == 1) gid = 3u;
+                if (r == 2 && c == 2) gid = 4u;
+                grid->faceGroups.push_back(gid);
+                grid->nbFaces++;
+            }
+        }
+        grid->vertVisible.assign(grid->nbVerts, 1);
+        grid->faceVisible.assign(grid->nbFaces, 1);
+        grid->postInit(true);
+        grid->isFaceGroupDirty = true;
+
+        scene.addMesh(grid);
+        scene.selectMesh(grid);
+
+        Camera& cam = scene.getCamera();
+        cam.onResize(winW, winH);
+        cam.setOrbitAngles(0.0f, 0.0f);
+        cam.resetViewToMesh(grid, false);
+        cam.update(0.016f);
+
+        renderer.setShowPolyGroups(true);
+        renderer.setFlatShading(true);
+        renderer.setActiveBrush(BRUSH_CLAYBUILDUP);
+        renderer.setCursorParameters(false, false, {}, {}, {}, {}, {1.0f, 1.0f, 1.0f});
+
+        renderer.resetLastRenderStats();
+        renderer.render(scene);
+        glFinish();
+        auto rs4a = renderer.getLastRenderStats();
+
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+        auto sampleWorldRgb = [&](const glm::vec3& wp, uint8_t rgb[3]) {
+            glm::vec3 proj = cam.project(wp);
+            int glX = std::clamp((int)std::lround(proj.x * (float)drawW / (float)winW), 0, drawW - 1);
+            int glY = std::clamp((int)std::lround(((float)winH - proj.y) * (float)drawH / (float)winH), 0, drawH - 1);
+            uint8_t px[4] = {0, 0, 0, 0};
+            glReadPixels(glX, glY, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+            rgb[0] = px[0];
+            rgb[1] = px[1];
+            rgb[2] = px[2];
+        };
+        auto rgbDiff = [](const uint8_t a[3], const uint8_t b[3]) -> int {
+            int d0 = std::abs((int)a[0] - (int)b[0]);
+            int d1 = std::abs((int)a[1] - (int)b[1]);
+            int d2 = std::abs((int)a[2] - (int)b[2]);
+            return std::max({d0, d1, d2});
+        };
+
+        uint8_t tri0Rgb[16][3]{};
+        uint8_t tri1Rgb[16][3]{};
+        int maxIntraQuadDiff = 0;
+        for (int r = 0; r < 4; ++r) {
+            float y0 = -1.5f + 0.75f * (float)r;
+            float y1 = y0 + 0.75f;
+            for (int c = 0; c < 4; ++c) {
+                float x0 = -1.5f + 0.75f * (float)c;
+                float x1 = x0 + 0.75f;
+                glm::vec3 p0(x0, y0, 0.0f);
+                glm::vec3 p1(x1, y0, 0.0f);
+                glm::vec3 p2(x1, y1, 0.0f);
+                glm::vec3 p3(x0, y1, 0.0f);
+                glm::vec3 cTri0 = 0.60f * p0 + 0.25f * p1 + 0.15f * p2;
+                glm::vec3 cTri1 = 0.15f * p0 + 0.25f * p2 + 0.60f * p3;
+                int qIdx = r * 4 + c;
+                sampleWorldRgb(cTri0, tri0Rgb[qIdx]);
+                sampleWorldRgb(cTri1, tri1Rgb[qIdx]);
+                maxIntraQuadDiff = std::max(maxIntraQuadDiff, rgbDiff(tri0Rgb[qIdx], tri1Rgb[qIdx]));
+            }
+        }
+
+        const int seamDiff01_02 = rgbDiff(tri0Rgb[0 * 4 + 1], tri0Rgb[0 * 4 + 2]);
+        const int isl11_up      = rgbDiff(tri0Rgb[1 * 4 + 1], tri0Rgb[2 * 4 + 1]);
+        const int isl11_down    = rgbDiff(tri0Rgb[1 * 4 + 1], tri0Rgb[0 * 4 + 1]);
+        const int isl11_left    = rgbDiff(tri0Rgb[1 * 4 + 1], tri0Rgb[1 * 4 + 0]);
+        const int isl11_right   = rgbDiff(tri0Rgb[1 * 4 + 1], tri0Rgb[1 * 4 + 2]);
+        const int isl22_up      = rgbDiff(tri0Rgb[2 * 4 + 2], tri0Rgb[3 * 4 + 2]);
+        const int isl22_down    = rgbDiff(tri0Rgb[2 * 4 + 2], tri0Rgb[1 * 4 + 2]);
+        const int isl22_left    = rgbDiff(tri0Rgb[2 * 4 + 2], tri0Rgb[2 * 4 + 1]);
+        const int isl22_right   = rgbDiff(tri0Rgb[2 * 4 + 2], tri0Rgb[2 * 4 + 3]);
+        const int minInterDiff  = std::min({
+            seamDiff01_02, isl11_up, isl11_down, isl11_left, isl11_right,
+            isl22_up, isl22_down, isl22_left, isl22_right
+        });
+
+        std::cout << "  [Info] Test 4a PixelReadback: maxIntraQuadDiff=" << maxIntraQuadDiff
+                  << ", minInterGroupDiff=" << minInterDiff
+                  << ", rebuilds=" << rs4a.polygroupRebuilds
+                  << ", pgDraws=" << rs4a.polygroupDraws << "\n";
+
+        checkCond(rs4a.polygroupRebuilds == 0 && rs4a.polygroupDraws >= 1 &&
+                  maxIntraQuadDiff <= 25 && minInterDiff >= 60,
+                  "Test 4a: Indexed PolyGroup renders exact flat groups across seams & 1-quad islands (pixel verified)");
+
+        if (window) SDL_GL_SwapWindow(window);
+        renderer.setShowPolyGroups(false);
+        renderer.setFlatShading(false);
+        allOk = checkNoGlError("Test 4a") && allOk;
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 4b: Full Feature Parity (UVs+SeamSplit, Tangents, Creases, PaintPG, Hide, Split, XRay, Toggles)
+    // -------------------------------------------------------------------------
+    {
+        scene.clear();
+        g_undoManager.clear();
+        scene.setSplitMode(Scene::SplitMode::OFF);
+        resetRendererClean();
+
+        Mesh* sphere = createSphereMeshWithPolygroups(32, 64).release();
+        sphere->normals.assign((size_t)sphere->nbVerts * 3, 0.0f);
+        sphere->colors.assign((size_t)sphere->nbVerts * 3, 1.0f);
+        sphere->materials.resize((size_t)sphere->nbVerts * 3);
+        for (int i = 0; i < sphere->nbVerts; ++i) {
+            sphere->materials[i * 3 + 0] = 0.5f;
+            sphere->materials[i * 3 + 1] = 0.0f;
+            sphere->materials[i * 3 + 2] = 1.0f;
+        }
+        std::vector<float> uvAr = { 0.0f, 0.0f,  1.0f, 0.0f,  1.0f, 1.0f,  0.0f, 1.0f };
+        std::vector<uint32_t> uvfAr((size_t)sphere->nbFaces * 4, 0u);
+        for (int f = 0; f < sphere->nbFaces; ++f) {
+            for (int k = 0; k < 4; ++k) {
+                uvfAr[(size_t)f * 4 + k] = (uint32_t)((f & 1) ? k : ((k + 1) & 3));
+            }
+        }
+        const int origNbVerts = sphere->nbVerts;
+        sphere->initTexCoordsDataFromOBJData(uvAr, uvfAr);
+        sphere->postInit(true);
+        sphere->tangents.resize((size_t)sphere->nbVerts * 4, 0.0f);
+        for (int i = 0; i < sphere->nbVerts; ++i) {
+            sphere->tangents[i * 4 + 0] = 1.0f;
+            sphere->tangents[i * 4 + 3] = 1.0f;
+        }
+        sphere->initCreases();
+        if (sphere->nbEdges > 12) {
+            sphere->creaseEdge(0, true);
+            sphere->creaseEdge(4, true);
+            sphere->creaseEdge(8, true);
+            sphere->creaseEdge(12, true);
+        }
+        scene.addMesh(sphere);
+        scene.selectMesh(sphere);
+
+        Camera& cam = scene.getCamera();
+        cam.onResize(winW, winH);
+        cam.resetViewToMesh(sphere, false);
+        cam.update(0.016f);
+
+        sculpt.setUseSym(false);
+        sculpt.saveSymmetryToMesh(sphere);
+        sculpt.warmupMeshCaches(sphere);
+        sculpt.registerKnownMesh(sphere);
+
+        renderer.setShowPolyGroups(true);
+        renderer.setShowWireframe(true);
+        renderer.setShowCreaseLines(true);
+        renderer.resetLastUploadTiming();
+        renderer.resetLastRenderStats();
+        renderer.render(scene);
+        glFinish();
+        auto utInit4b = renderer.getLastUploadTiming();
+        auto rsInit4b = renderer.getLastRenderStats();
+        checkCond(sphere->nbVerts > origNbVerts && !sphere->uvFlat.empty() && !sphere->tangents.empty() &&
+                  utInit4b.wasFullUpload && rsInit4b.polygroupRebuilds == 0 && rsInit4b.polygroupDraws >= 1,
+                  "Test 4b-1: UV-split mesh + tangents + creases uploads indexed polygroups with 0 rebuilds");
+
+        // 3 ClayBuildup steps while PolyGroup + Wireframe + Creases active
+        sculpt.setBrush(BRUSH_CLAYBUILDUP);
+        auto& claySet = sculpt.getSettings(BRUSH_CLAYBUILDUP);
+        claySet.radius = 45.0f * scalePx;
+        claySet.intensity = 1.0f;
+        claySet.culling = false;
+        claySet.accumulate = false;
+        bool stepsOk = true;
+        for (int s = 0; s < 3; ++s) {
+            doStrokeStep(centerX + (float)s * 8.0f * scalePx, centerY, s == 0, BRUSH_CLAYBUILDUP);
+            renderer.resetLastUploadTiming();
+            renderer.resetLastRenderStats();
+            renderer.render(scene);
+            glFinish();
+            const auto& ut = renderer.getLastUploadTiming();
+            const auto& rs = renderer.getLastRenderStats();
+            if (ut.wasFullUpload || rs.polygroupRebuilds != 0 || rs.polygroupDraws < 1) {
+                stepsOk = false;
+            }
+        }
+        releaseStroke(centerX + 16.0f * scalePx, centerY);
+        checkCond(stepsOk, "Test 4b-2: Sculpting in PolyGroup+Wire+Crease mode stays incremental with 0 rebuilds");
+
+        // BRUSH_POLYGROUP stroke + assignGroupToFace + clearAllGroups + hide/unhide
+        sculpt.setBrush(BRUSH_POLYGROUP);
+        sculpt.setActiveGroupID(42);
+        auto& pgSet = sculpt.getSettings(BRUSH_POLYGROUP);
+        pgSet.radius = 40.0f * scalePx;
+        doStrokeStep(centerX, centerY, true, BRUSH_POLYGROUP);
+        renderer.resetLastRenderStats();
+        renderer.render(scene);
+        glFinish();
+        auto rsPgStroke = renderer.getLastRenderStats();
+        releaseStroke(centerX, centerY);
+
+        sculpt.getPolyGroupTool().assignGroupToFace(sphere, 0, 99);
+        renderer.resetLastUploadTiming();
+        renderer.resetLastRenderStats();
+        renderer.render(scene);
+        glFinish();
+        auto utAssign = renderer.getLastUploadTiming();
+        auto rsAssign = renderer.getLastRenderStats();
+
+        sculpt.getPolyGroupTool().clearAllGroups(sphere);
+        renderer.resetLastUploadTiming();
+        renderer.resetLastRenderStats();
+        renderer.render(scene);
+        glFinish();
+        auto utClear = renderer.getLastUploadTiming();
+        auto rsClear = renderer.getLastRenderStats();
+
+        sculpt.getPolyGroupTool().assignGroupToFace(sphere, 0, 7);
+        sculpt.getPolyGroupTool().assignGroupToFace(sphere, 1, 13);
+        sphere->faceVisible[0] = 0;
+        sphere->isTopologyDirty = true;
+        renderer.resetLastRenderStats();
+        renderer.render(scene);
+        glFinish();
+        auto rsHide = renderer.getLastRenderStats();
+        sphere->faceVisible[0] = 1;
+        sphere->isTopologyDirty = true;
+
+        checkCond(rsPgStroke.polygroupRebuilds == 0 && rsPgStroke.polygroupDraws >= 1 &&
+                  !utAssign.wasFullUpload && rsAssign.polygroupRebuilds == 0 &&
+                  !utClear.wasFullUpload && rsClear.polygroupRebuilds == 0 &&
+                  rsHide.polygroupRebuilds == 0 && rsHide.polygroupDraws >= 1,
+                  "Test 4b-3: BRUSH_POLYGROUP, assign/clear/hide execute with 0 polygroupRebuilds");
+
+        // SplitMode (MIRROR & INDEPENDENT) + X-Ray + shaderType==5 + vaoCache toggle + runtime indexedPolygroup toggle
+        renderer.setShaderType(5);
+        scene.setSplitMode(Scene::SplitMode::MIRROR);
+        renderer.render(scene);
+        glFinish();
+        scene.setSplitMode(Scene::SplitMode::INDEPENDENT);
+        renderer.render(scene);
+        glFinish();
+        scene.setSplitMode(Scene::SplitMode::OFF);
+
+        renderer.setXrayEnabled(true);
+        renderer.setXrayTarget(2);
+        renderer.render(scene);
+        glFinish();
+        renderer.setXrayEnabled(false);
+
+        OptFlags::get().vaoCache = false;
+        renderer.resetLastRenderStats();
+        renderer.render(scene);
+        glFinish();
+        auto rsNoVao = renderer.getLastRenderStats();
+
+        OptFlags::get().vaoCache = true;
+        OptFlags::get().indexedPolygroup = false;
+        renderer.resetLastRenderStats();
+        renderer.render(scene);
+        glFinish();
+        auto rsLegacy = renderer.getLastRenderStats();
+
+        OptFlags::get().indexedPolygroup = true;
+        renderer.resetLastRenderStats();
+        renderer.render(scene);
+        glFinish();
+        auto rsRestored = renderer.getLastRenderStats();
+
+        checkCond(rsNoVao.polygroupRebuilds == 0 && rsLegacy.polygroupRebuilds >= 1 &&
+                  rsRestored.polygroupRebuilds == 0 && checkNoGlError("Test 4b"),
+                  "Test 4b-4: Split/XRay/shaderType=5, vaoCache toggle & indexedPolygroup runtime toggle produce 0 GL errors");
+
+        g_undoManager.clear();
+        resetRendererClean();
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 5: DynamicSubdiv + Thickness + ShowCage Incremental Upload & Zero PG Rebuilds
+    // -------------------------------------------------------------------------
+    {
+        // 5a: Closed Sphere (40x80), preSubdiv (smoothLevel=2) + Thickness + ShowCage
+        scene.clear();
+        g_undoManager.clear();
+        scene.setSplitMode(Scene::SplitMode::OFF);
+        resetRendererClean();
+        renderer.setShowPolyGroups(true);
+
+        Mesh* dynSphere = createSphereMeshWithPolygroups(40, 80).release();
+        dynSphere->postInit(true);
+        dynSphere->dynamicSettings.enabled = true;
+        dynSphere->dynamicSettings.enableSubdiv = true;
+        dynSphere->dynamicSettings.smoothLevel = 2;
+        dynSphere->dynamicSettings.enableThickness = true;
+        dynSphere->dynamicSettings.thickness = 0.08f;
+        dynSphere->dynamicSettings.postSubdiv = false;
+        dynSphere->dynamicSettings.showCage = true;
+        dynSphere->isDynamicDirty = true;
+        dynSphere->isDirty = true;
+
+        scene.addMesh(dynSphere);
+        scene.selectMesh(dynSphere);
+
+        Camera& cam = scene.getCamera();
+        cam.onResize(winW, winH);
+        cam.setOrbitAngles(0.0f, 0.0f);
+        cam.resetViewToMesh(dynSphere, false);
+        cam.update(0.016f);
+
+        sculpt.setUseSym(false);
+        sculpt.saveSymmetryToMesh(dynSphere);
+        sculpt.warmupMeshCaches(dynSphere);
+        sculpt.registerKnownMesh(dynSphere);
+
+        renderer.resetLastRenderStats();
+        renderer.render(scene);
+        glFinish();
+        auto rsDynInit = renderer.getLastRenderStats();
+        const int dynVerts5a = dynSphere->dynamicCacheMesh ? dynSphere->dynamicCacheMesh->nbVerts : 0;
+
+        // 5a ClayBuildup
+        sculpt.setBrush(BRUSH_CLAYBUILDUP);
+        auto& claySet = sculpt.getSettings(BRUSH_CLAYBUILDUP);
+        claySet.radius = 25.0f * scalePx;
+        claySet.intensity = 1.0f;
+        claySet.accumulate = false;
+        claySet.culling = false;
+        doStrokeStep(centerX, centerY, true, BRUSH_CLAYBUILDUP);
+        int picked5aClay = sculpt.getLastFrameProfile().pickedVertCount;
+        renderer.resetLastUploadTiming();
+        renderer.resetLastRenderStats();
+        renderer.render(scene);
+        glFinish();
+        auto ut5aClay = renderer.getLastUploadTiming();
+        auto rs5aClay = renderer.getLastRenderStats();
+        releaseStroke(centerX, centerY);
+
+        // 5a Paint
+        sculpt.setBrush(BRUSH_PAINT);
+        auto& paintSet = sculpt.getSettings(BRUSH_PAINT);
+        paintSet.radius = 25.0f * scalePx;
+        paintSet.intensity = 1.0f;
+        paintSet.writeAlbedo = true;
+        paintSet.writeRoughness = false;
+        paintSet.writeMetalness = false;
+        paintSet.paintColor = glm::vec3(0.2f, 0.6f, 0.9f);
+        doStrokeStep(centerX, centerY, true, BRUSH_PAINT);
+        renderer.resetLastUploadTiming();
+        renderer.resetLastRenderStats();
+        renderer.render(scene);
+        glFinish();
+        auto ut5aPaint = renderer.getLastUploadTiming();
+        auto rs5aPaint = renderer.getLastRenderStats();
+        releaseStroke(centerX, centerY);
+
+        // 5a Mask
+        sculpt.setBrush(BRUSH_MASK);
+        auto& maskSet = sculpt.getSettings(BRUSH_MASK);
+        maskSet.radius = 25.0f * scalePx;
+        maskSet.intensity = 1.0f;
+        doStrokeStep(centerX, centerY, true, BRUSH_MASK);
+        doStrokeStep(centerX + 24.0f, centerY, false, BRUSH_MASK);
+        renderer.resetLastUploadTiming();
+        renderer.resetLastRenderStats();
+        renderer.render(scene);
+        glFinish();
+        auto ut5aMask = renderer.getLastUploadTiming();
+        auto rs5aMask = renderer.getLastRenderStats();
+        releaseStroke(centerX + 24.0f, centerY);
+
+        // 5a PolyGroup stroke
+        sculpt.setBrush(BRUSH_POLYGROUP);
+        sculpt.setActiveGroupID(15);
+        auto& pgSet = sculpt.getSettings(BRUSH_POLYGROUP);
+        pgSet.radius = 25.0f * scalePx;
+        doStrokeStep(centerX, centerY, true, BRUSH_POLYGROUP);
+        renderer.resetLastRenderStats();
+        renderer.render(scene);
+        glFinish();
+        auto rs5aPg = renderer.getLastRenderStats();
+        releaseStroke(centerX, centerY);
+
+        std::cout << "  [Info] Test 5a DynSphere (dynVerts=" << dynVerts5a << "): "
+                  << "Clay=" << ut5aClay.dirtyVertUploaded << " (runs=" << ut5aClay.dirtyRunCount << ", rb=" << rs5aClay.polygroupRebuilds << ")"
+                  << ", Paint=" << ut5aPaint.dirtyVertUploaded << " (runs=" << ut5aPaint.dirtyRunCount << ", rb=" << rs5aPaint.polygroupRebuilds << ")"
+                  << ", Mask=" << ut5aMask.dirtyVertUploaded << " (runs=" << ut5aMask.dirtyRunCount << ", rb=" << rs5aMask.polygroupRebuilds << ")"
+                  << ", PG rb=" << rs5aPg.polygroupRebuilds << "\n";
+
+        const uint32_t maxHalf5a = (uint32_t)std::max(1, dynVerts5a / 2);
+        checkCond(dynVerts5a > 10000 && rsDynInit.polygroupRebuilds == 0 && picked5aClay > 0 &&
+                  !ut5aClay.wasFullUpload && !ut5aClay.usedWholeBufferFallback && ut5aClay.dirtyRunCount >= 1 &&
+                  ut5aClay.dirtyVertUploaded > 0 && ut5aClay.dirtyVertUploaded < maxHalf5a && rs5aClay.polygroupRebuilds == 0 &&
+                  !ut5aPaint.wasFullUpload && !ut5aPaint.usedWholeBufferFallback && ut5aPaint.dirtyRunCount >= 1 &&
+                  ut5aPaint.dirtyVertUploaded > 0 && ut5aPaint.dirtyVertUploaded < maxHalf5a && rs5aPaint.polygroupRebuilds == 0 &&
+                  !ut5aMask.wasFullUpload && !ut5aMask.usedWholeBufferFallback && ut5aMask.dirtyRunCount >= 1 &&
+                  ut5aMask.dirtyVertUploaded > 0 && ut5aMask.dirtyVertUploaded < maxHalf5a && rs5aMask.polygroupRebuilds == 0 &&
+                  rs5aPg.polygroupRebuilds == 0 && rs5aPg.polygroupDraws >= 1,
+                  "Test 5a: DynamicSubdiv sphere (Thickness+Subdiv+Cage) uses <50% incremental block upload & 0 PG rebuilds");
+
+        // 5b: Open Plane + postSubdiv (smoothLevel=1) + Thickness + ShowCage
+        scene.clear();
+        g_undoManager.clear();
+        resetRendererClean();
+        renderer.setShowPolyGroups(true);
+
+        scene.addPlane();
+        Mesh* plane = scene.getSelected();
+        if (plane && sculpt.getPrimitiveTool()) {
+            plane = sculpt.getPrimitiveTool()->bakeToMesh(scene, plane);
+            g_undoManager.clear();
+        }
+        checkCond(plane != nullptr, "Test 5b setup: Scene::addPlane created Plane primitive");
+        if (plane) {
+            plane->dynamicSettings.enabled = true;
+            plane->dynamicSettings.enableSubdiv = true;
+            plane->dynamicSettings.smoothLevel = 1;
+            plane->dynamicSettings.enableThickness = true;
+            plane->dynamicSettings.thickness = 0.1f;
+            plane->dynamicSettings.postSubdiv = true;
+            plane->dynamicSettings.showCage = true;
+            plane->isDynamicDirty = true;
+            plane->isDirty = true;
+
+            cam.onResize(winW, winH);
+            cam.setOrbitAngles(0.8f, 0.0f);
+            cam.resetViewToMesh(plane, false);
+            cam.update(0.016f);
+
+            sculpt.setUseSym(false);
+            sculpt.saveSymmetryToMesh(plane);
+            sculpt.warmupMeshCaches(plane);
+            sculpt.registerKnownMesh(plane);
+
+            renderer.resetLastRenderStats();
+            renderer.render(scene);
+            glFinish();
+            auto rsPlaneInit = renderer.getLastRenderStats();
+            const int dynVerts5b = plane->dynamicCacheMesh ? plane->dynamicCacheMesh->nbVerts : 0;
+
+            sculpt.setBrush(BRUSH_CLAYBUILDUP);
+            claySet.radius = 40.0f * scalePx;
+            claySet.intensity = 1.0f;
+            claySet.accumulate = false;
+            claySet.culling = false;
+            doStrokeStep(centerX, centerY, true, BRUSH_CLAYBUILDUP);
+            int picked5bClay = sculpt.getLastFrameProfile().pickedVertCount;
+            renderer.resetLastUploadTiming();
+            renderer.resetLastRenderStats();
+            renderer.render(scene);
+            glFinish();
+            auto ut5bClay = renderer.getLastUploadTiming();
+            auto rs5bClay = renderer.getLastRenderStats();
+            releaseStroke(centerX, centerY);
+
+            sculpt.setBrush(BRUSH_PAINT);
+            paintSet.radius = 40.0f * scalePx;
+            doStrokeStep(centerX, centerY, true, BRUSH_PAINT);
+            renderer.resetLastUploadTiming();
+            renderer.resetLastRenderStats();
+            renderer.render(scene);
+            glFinish();
+            auto ut5bPaint = renderer.getLastUploadTiming();
+            auto rs5bPaint = renderer.getLastRenderStats();
+            releaseStroke(centerX, centerY);
+
+            sculpt.setBrush(BRUSH_MASK);
+            maskSet.radius = 40.0f * scalePx;
+            doStrokeStep(centerX, centerY, true, BRUSH_MASK);
+            doStrokeStep(centerX + 24.0f, centerY, false, BRUSH_MASK);
+            renderer.resetLastUploadTiming();
+            renderer.resetLastRenderStats();
+            renderer.render(scene);
+            glFinish();
+            auto ut5bMask = renderer.getLastUploadTiming();
+            auto rs5bMask = renderer.getLastRenderStats();
+            releaseStroke(centerX + 24.0f, centerY);
+
+            std::cout << "  [Info] Test 5b DynPlane (dynVerts=" << dynVerts5b << "): "
+                      << "Clay=" << ut5bClay.dirtyVertUploaded << " (runs=" << ut5bClay.dirtyRunCount << ", fb=" << ut5bClay.usedWholeBufferFallback << ", rb=" << rs5bClay.polygroupRebuilds << ")"
+                      << ", Paint=" << ut5bPaint.dirtyVertUploaded << " (runs=" << ut5bPaint.dirtyRunCount << ", rb=" << rs5bPaint.polygroupRebuilds << ")"
+                      << ", Mask=" << ut5bMask.dirtyVertUploaded << " (runs=" << ut5bMask.dirtyRunCount << ", rb=" << rs5bMask.polygroupRebuilds << ")\n";
+
+            checkCond(dynVerts5b > 0 && rsPlaneInit.polygroupRebuilds == 0 && picked5bClay > 0 &&
+                      !ut5bClay.wasFullUpload && ut5bClay.dirtyRunCount >= 1 && rs5bClay.polygroupRebuilds == 0 &&
+                      !ut5bPaint.wasFullUpload && ut5bPaint.dirtyRunCount >= 1 && rs5bPaint.polygroupRebuilds == 0 &&
+                      !ut5bMask.wasFullUpload && ut5bMask.dirtyRunCount >= 1 && rs5bMask.polygroupRebuilds == 0,
+                      "Test 5b: DynamicSubdiv Plane (postSubdiv+Thickness+Cage) stays incremental with 0 PG rebuilds");
+        }
+
+        g_undoManager.clear();
+        allOk = checkNoGlError("Test 5") && allOk;
+    }
+
+    SystemStats::shutdownGpuMonitor();
+    g_undoManager.clear();
+    scene.clear();
+    OptFlags::get() = savedFlags;
+
+    std::cout << "================================================================================\n";
+    std::cout << "  Stage 2 Tests Complete: " << (allOk ? "ALL PASSED" : "FAILED") << "\n";
     std::cout << "================================================================================\n\n";
     return allOk;
 }

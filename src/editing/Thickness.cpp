@@ -532,7 +532,10 @@ void evaluateThicknessGeometry(
     const Mesh& baseMesh,
     Mesh& outMesh,
     const ThicknessParams& params,
-    ThicknessCache& cache
+    ThicknessCache& cache,
+    bool updateVerts,
+    bool updateColors,
+    bool updateMaterials
 ) {
     int N_v = baseMesh.nbVerts;
     if (!cache.isValid || cache.baseNbVerts != N_v || cache.outNbVerts != outMesh.nbVerts) {
@@ -541,55 +544,97 @@ void evaluateThicknessGeometry(
         return;
     }
 
-    // Recompute miter normals for changed vertex positions
-    computeMiterNormals(baseMesh, params, cache.miterNormals);
-
-    float dFront = params.thickness * (1.0f + params.offset) * 0.5f;
-    float dBack  = params.thickness * (1.0f - params.offset) * 0.5f;
+    const bool hasColors = updateColors && (baseMesh.colors.size() >= (size_t)N_v * 3) && (outMesh.colors.size() >= (size_t)outMesh.nbVerts * 3);
+    const bool hasMats   = updateMaterials && (baseMesh.materials.size() >= (size_t)N_v * 3) && (outMesh.materials.size() >= (size_t)outMesh.nbVerts * 3);
 
     const float* bVerts = baseMesh.verts.data();
+    const float* bCols  = baseMesh.colors.data();
+    const float* bMats  = baseMesh.materials.data();
     float* outV = outMesh.verts.data();
+    float* outC = outMesh.colors.data();
+    float* outM = outMesh.materials.data();
+
+    if (updateVerts) {
+        // Recompute miter normals for changed vertex positions
+        computeMiterNormals(baseMesh, params, cache.miterNormals);
+    }
+
+    const float dFront = params.thickness * (1.0f + params.offset) * 0.5f;
+    const float dBack  = params.thickness * (1.0f - params.offset) * 0.5f;
     const glm::vec3* mNormals = cache.miterNormals.data();
 
-    // Fast parallel update of front and back vertices
-    #pragma omp parallel for schedule(static)
-    for (int i = 0; i < N_v; ++i) {
-        glm::vec3 pBase(bVerts[i * 3], bVerts[i * 3 + 1], bVerts[i * 3 + 2]);
-        glm::vec3 m = mNormals[i];
+    if (updateVerts || hasColors || hasMats) {
+        #pragma omp parallel for schedule(static) if(N_v > 1000)
+        for (int i = 0; i < N_v; ++i) {
+            int backIdx = N_v + i;
+            if (updateVerts) {
+                glm::vec3 pBase(bVerts[i * 3], bVerts[i * 3 + 1], bVerts[i * 3 + 2]);
+                glm::vec3 m = mNormals[i];
 
-        glm::vec3 pFront = pBase + m * dFront;
-        glm::vec3 pBack  = pBase - m * dBack;
+                glm::vec3 pFront = pBase + m * dFront;
+                glm::vec3 pBack  = pBase - m * dBack;
 
-        outV[i * 3 + 0] = pFront.x;
-        outV[i * 3 + 1] = pFront.y;
-        outV[i * 3 + 2] = pFront.z;
+                outV[i * 3 + 0] = pFront.x;
+                outV[i * 3 + 1] = pFront.y;
+                outV[i * 3 + 2] = pFront.z;
 
-        int backIdx = N_v + i;
-        outV[backIdx * 3 + 0] = pBack.x;
-        outV[backIdx * 3 + 1] = pBack.y;
-        outV[backIdx * 3 + 2] = pBack.z;
+                outV[backIdx * 3 + 0] = pBack.x;
+                outV[backIdx * 3 + 1] = pBack.y;
+                outV[backIdx * 3 + 2] = pBack.z;
+            }
+            if (hasColors) {
+                outC[i * 3 + 0] = bCols[i * 3 + 0];
+                outC[i * 3 + 1] = bCols[i * 3 + 1];
+                outC[i * 3 + 2] = bCols[i * 3 + 2];
+                outC[backIdx * 3 + 0] = bCols[i * 3 + 0];
+                outC[backIdx * 3 + 1] = bCols[i * 3 + 1];
+                outC[backIdx * 3 + 2] = bCols[i * 3 + 2];
+            }
+            if (hasMats) {
+                outM[i * 3 + 0] = bMats[i * 3 + 0];
+                outM[i * 3 + 1] = bMats[i * 3 + 1];
+                outM[i * 3 + 2] = bMats[i * 3 + 2];
+                outM[backIdx * 3 + 0] = bMats[i * 3 + 0];
+                outM[backIdx * 3 + 1] = bMats[i * 3 + 1];
+                outM[backIdx * 3 + 2] = bMats[i * 3 + 2];
+            }
+        }
     }
 
     // Intermediate rim vertices
     int S = cache.rimSegments;
-    if (!cache.isClosedMesh && S > 1) {
+    if (!cache.isClosedMesh && S > 1 && (updateVerts || hasColors || hasMats)) {
         int nbBv = (int)cache.boundaryBaseVerts.size();
         const uint32_t* bVertsList = cache.boundaryBaseVerts.data();
 
-        #pragma omp parallel for schedule(static)
+        #pragma omp parallel for schedule(static) if(nbBv > 500)
         for (int bIdx = 0; bIdx < nbBv; ++bIdx) {
             uint32_t vBase = bVertsList[bIdx];
-            glm::vec3 pFront(outV[vBase * 3], outV[vBase * 3 + 1], outV[vBase * 3 + 2]);
-            glm::vec3 pBack(outV[(N_v + vBase) * 3], outV[(N_v + vBase) * 3 + 1], outV[(N_v + vBase) * 3 + 2]);
+            glm::vec3 pFront(0.0f), pBack(0.0f);
+            if (updateVerts) {
+                pFront = glm::vec3(outV[vBase * 3], outV[vBase * 3 + 1], outV[vBase * 3 + 2]);
+                pBack  = glm::vec3(outV[(N_v + vBase) * 3], outV[(N_v + vBase) * 3 + 1], outV[(N_v + vBase) * 3 + 2]);
+            }
 
             for (int s = 1; s < S; ++s) {
-                float t = (float)s / (float)S;
-                glm::vec3 pRim = glm::mix(pFront, pBack, t);
                 int rimVIdx = 2 * N_v + bIdx * (S - 1) + (s - 1);
-
-                outV[rimVIdx * 3 + 0] = pRim.x;
-                outV[rimVIdx * 3 + 1] = pRim.y;
-                outV[rimVIdx * 3 + 2] = pRim.z;
+                if (updateVerts) {
+                    float t = (float)s / (float)S;
+                    glm::vec3 pRim = glm::mix(pFront, pBack, t);
+                    outV[rimVIdx * 3 + 0] = pRim.x;
+                    outV[rimVIdx * 3 + 1] = pRim.y;
+                    outV[rimVIdx * 3 + 2] = pRim.z;
+                }
+                if (hasColors) {
+                    outC[rimVIdx * 3 + 0] = bCols[vBase * 3 + 0];
+                    outC[rimVIdx * 3 + 1] = bCols[vBase * 3 + 1];
+                    outC[rimVIdx * 3 + 2] = bCols[vBase * 3 + 2];
+                }
+                if (hasMats) {
+                    outM[rimVIdx * 3 + 0] = bMats[vBase * 3 + 0];
+                    outM[rimVIdx * 3 + 1] = bMats[vBase * 3 + 1];
+                    outM[rimVIdx * 3 + 2] = bMats[vBase * 3 + 2];
+                }
             }
         }
     }

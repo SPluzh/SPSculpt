@@ -12,6 +12,7 @@
 #include "mesh/Topology.h"
 #include "common/Constants.h"
 #include "common/Logger.h"
+#include "common/OptFlags.h"
 
 void Mesh::initFaceGroups(uint32_t defaultGid) {
     faceGroups.assign(nbFaces, defaultGid);
@@ -33,6 +34,236 @@ void Mesh::setFaceGroup(uint32_t faceIdx, uint32_t gid) {
         }
         faceGroups[faceIdx] = gid;
         isFaceGroupDirty = true;
+    }
+}
+
+void Mesh::ensureDirtyBlockArrays() {
+    size_t needed = getDirtyBlockCount();
+    if (dirtyVertBlocks.size() < needed) dirtyVertBlocks.resize(needed, 0);
+    if (dirtyColorBlocks.size() < needed) dirtyColorBlocks.resize(needed, 0);
+    if (dirtyMaterialBlocks.size() < needed) dirtyMaterialBlocks.resize(needed, 0);
+}
+
+namespace {
+inline void recordDynamicSeed(bool isDynamic, std::vector<uint32_t>& seeds, bool& overflowed, uint32_t v, size_t maxSeeds) {
+    if (!isDynamic || overflowed) return;
+    if (seeds.size() + 1 > maxSeeds) {
+        seeds.clear();
+        overflowed = true;
+        return;
+    }
+    seeds.push_back(v);
+}
+
+inline void recordDynamicSeeds(bool isDynamic, std::vector<uint32_t>& seeds, bool& overflowed,
+                               const uint32_t* ids, size_t count, uint32_t maxNb, size_t maxSeeds) {
+    if (!isDynamic || overflowed || !ids || count == 0) return;
+    if (seeds.size() + count > maxSeeds) {
+        seeds.clear();
+        overflowed = true;
+        return;
+    }
+    seeds.reserve(seeds.size() + count);
+    for (size_t i = 0; i < count; ++i) {
+        uint32_t v = ids[i];
+        if (v < maxNb) seeds.push_back(v);
+    }
+}
+
+inline void recordDynamicSeedRange(bool isDynamic, std::vector<uint32_t>& seeds, bool& overflowed,
+                                   uint32_t begin, uint32_t end, size_t maxSeeds) {
+    if (!isDynamic || overflowed || begin >= end) return;
+    size_t span = static_cast<size_t>(end - begin);
+    if (seeds.size() + span > maxSeeds) {
+        seeds.clear();
+        overflowed = true;
+        return;
+    }
+    seeds.reserve(seeds.size() + span);
+    for (uint32_t v = begin; v < end; ++v) {
+        seeds.push_back(v);
+    }
+}
+} // namespace
+
+void Mesh::markDirtyVert(uint32_t v) {
+    if (nbVerts <= 0 || v >= (uint32_t)nbVerts) return;
+    ensureDirtyBlockArrays();
+    dirtyVertBlocks[v >> kDirtyBlockShift] = 1;
+    recordDynamicSeed(dynamicSettings.enabled, dirtyVertSeeds, dirtyVertSeedsOverflowed, v, kMaxDirtySeeds);
+    if (isVertexDirty || isColorDirty || isMaterialDirty) {
+        dirtyVertMin = std::min(dirtyVertMin, v);
+        dirtyVertMax = std::max(dirtyVertMax, v);
+    } else {
+        dirtyVertMin = v;
+        dirtyVertMax = v;
+    }
+    hasDirtyVertBlockMask = true;
+    isVertexDirty = true;
+}
+
+void Mesh::markDirtyVerts(const uint32_t* ids, size_t count) {
+    if (!ids || count == 0 || nbVerts <= 0) return;
+    ensureDirtyBlockArrays();
+    uint32_t minV = 0xFFFFFFFFu;
+    uint32_t maxV = 0;
+    const uint32_t maxNb = (uint32_t)nbVerts;
+    uint8_t* blocks = dirtyVertBlocks.data();
+    for (size_t i = 0; i < count; ++i) {
+        uint32_t v = ids[i];
+        if (v < maxNb) {
+            blocks[v >> kDirtyBlockShift] = 1;
+            if (v < minV) minV = v;
+            if (v > maxV) maxV = v;
+        }
+    }
+    if (minV > maxV) return;
+    recordDynamicSeeds(dynamicSettings.enabled, dirtyVertSeeds, dirtyVertSeedsOverflowed, ids, count, maxNb, kMaxDirtySeeds);
+    if (isVertexDirty || isColorDirty || isMaterialDirty) {
+        dirtyVertMin = std::min(dirtyVertMin, minV);
+        dirtyVertMax = std::max(dirtyVertMax, maxV);
+    } else {
+        dirtyVertMin = minV;
+        dirtyVertMax = maxV;
+    }
+    hasDirtyVertBlockMask = true;
+    isVertexDirty = true;
+}
+
+void Mesh::markDirtyColors(const uint32_t* ids, size_t count) {
+    if (!ids || count == 0 || nbVerts <= 0) return;
+    ensureDirtyBlockArrays();
+    uint32_t minV = 0xFFFFFFFFu;
+    uint32_t maxV = 0;
+    const uint32_t maxNb = (uint32_t)nbVerts;
+    uint8_t* blocks = dirtyColorBlocks.data();
+    for (size_t i = 0; i < count; ++i) {
+        uint32_t v = ids[i];
+        if (v < maxNb) {
+            blocks[v >> kDirtyBlockShift] = 1;
+            if (v < minV) minV = v;
+            if (v > maxV) maxV = v;
+        }
+    }
+    if (minV > maxV) return;
+    recordDynamicSeeds(dynamicSettings.enabled, dirtyColorSeeds, dirtyColorSeedsOverflowed, ids, count, maxNb, kMaxDirtySeeds);
+    if (isVertexDirty || isColorDirty || isMaterialDirty) {
+        dirtyVertMin = std::min(dirtyVertMin, minV);
+        dirtyVertMax = std::max(dirtyVertMax, maxV);
+    } else {
+        dirtyVertMin = minV;
+        dirtyVertMax = maxV;
+    }
+    hasDirtyColorBlockMask = true;
+    isColorDirty = true;
+}
+
+void Mesh::markDirtyMaterials(const uint32_t* ids, size_t count) {
+    if (!ids || count == 0 || nbVerts <= 0) return;
+    ensureDirtyBlockArrays();
+    uint32_t minV = 0xFFFFFFFFu;
+    uint32_t maxV = 0;
+    const uint32_t maxNb = (uint32_t)nbVerts;
+    uint8_t* blocks = dirtyMaterialBlocks.data();
+    for (size_t i = 0; i < count; ++i) {
+        uint32_t v = ids[i];
+        if (v < maxNb) {
+            blocks[v >> kDirtyBlockShift] = 1;
+            if (v < minV) minV = v;
+            if (v > maxV) maxV = v;
+        }
+    }
+    if (minV > maxV) return;
+    recordDynamicSeeds(dynamicSettings.enabled, dirtyMaterialSeeds, dirtyMaterialSeedsOverflowed, ids, count, maxNb, kMaxDirtySeeds);
+    if (isVertexDirty || isColorDirty || isMaterialDirty) {
+        dirtyVertMin = std::min(dirtyVertMin, minV);
+        dirtyVertMax = std::max(dirtyVertMax, maxV);
+    } else {
+        dirtyVertMin = minV;
+        dirtyVertMax = maxV;
+    }
+    hasDirtyMaterialBlockMask = true;
+    isMaterialDirty = true;
+}
+
+void Mesh::markDirtyVertRange(uint32_t begin, uint32_t end) {
+    if (nbVerts <= 0 || begin >= end) return;
+    uint32_t clampedEnd = std::min(end, (uint32_t)nbVerts);
+    if (begin >= clampedEnd) return;
+    ensureDirtyBlockArrays();
+    uint32_t b0 = begin >> kDirtyBlockShift;
+    uint32_t b1 = (clampedEnd - 1) >> kDirtyBlockShift;
+    std::fill(dirtyVertBlocks.begin() + b0, dirtyVertBlocks.begin() + b1 + 1, uint8_t(1));
+    recordDynamicSeedRange(dynamicSettings.enabled, dirtyVertSeeds, dirtyVertSeedsOverflowed, begin, clampedEnd, kMaxDirtySeeds);
+    if (isVertexDirty || isColorDirty || isMaterialDirty) {
+        dirtyVertMin = std::min(dirtyVertMin, begin);
+        dirtyVertMax = std::max(dirtyVertMax, clampedEnd - 1);
+    } else {
+        dirtyVertMin = begin;
+        dirtyVertMax = clampedEnd - 1;
+    }
+    hasDirtyVertBlockMask = true;
+    isVertexDirty = true;
+}
+
+void Mesh::markDirtyColorRange(uint32_t begin, uint32_t end) {
+    if (nbVerts <= 0 || begin >= end) return;
+    uint32_t clampedEnd = std::min(end, (uint32_t)nbVerts);
+    if (begin >= clampedEnd) return;
+    ensureDirtyBlockArrays();
+    uint32_t b0 = begin >> kDirtyBlockShift;
+    uint32_t b1 = (clampedEnd - 1) >> kDirtyBlockShift;
+    std::fill(dirtyColorBlocks.begin() + b0, dirtyColorBlocks.begin() + b1 + 1, uint8_t(1));
+    recordDynamicSeedRange(dynamicSettings.enabled, dirtyColorSeeds, dirtyColorSeedsOverflowed, begin, clampedEnd, kMaxDirtySeeds);
+    if (isVertexDirty || isColorDirty || isMaterialDirty) {
+        dirtyVertMin = std::min(dirtyVertMin, begin);
+        dirtyVertMax = std::max(dirtyVertMax, clampedEnd - 1);
+    } else {
+        dirtyVertMin = begin;
+        dirtyVertMax = clampedEnd - 1;
+    }
+    hasDirtyColorBlockMask = true;
+    isColorDirty = true;
+}
+
+void Mesh::markDirtyMaterialRange(uint32_t begin, uint32_t end) {
+    if (nbVerts <= 0 || begin >= end) return;
+    uint32_t clampedEnd = std::min(end, (uint32_t)nbVerts);
+    if (begin >= clampedEnd) return;
+    ensureDirtyBlockArrays();
+    uint32_t b0 = begin >> kDirtyBlockShift;
+    uint32_t b1 = (clampedEnd - 1) >> kDirtyBlockShift;
+    std::fill(dirtyMaterialBlocks.begin() + b0, dirtyMaterialBlocks.begin() + b1 + 1, uint8_t(1));
+    recordDynamicSeedRange(dynamicSettings.enabled, dirtyMaterialSeeds, dirtyMaterialSeedsOverflowed, begin, clampedEnd, kMaxDirtySeeds);
+    if (isVertexDirty || isColorDirty || isMaterialDirty) {
+        dirtyVertMin = std::min(dirtyVertMin, begin);
+        dirtyVertMax = std::max(dirtyVertMax, clampedEnd - 1);
+    } else {
+        dirtyVertMin = begin;
+        dirtyVertMax = clampedEnd - 1;
+    }
+    hasDirtyMaterialBlockMask = true;
+    isMaterialDirty = true;
+}
+
+void Mesh::clearDirtyBlockMasks(bool clearVert, bool clearColor, bool clearMat) {
+    if (clearVert) {
+        std::fill(dirtyVertBlocks.begin(), dirtyVertBlocks.end(), uint8_t(0));
+        hasDirtyVertBlockMask = false;
+        dirtyVertSeeds.clear();
+        dirtyVertSeedsOverflowed = false;
+    }
+    if (clearColor) {
+        std::fill(dirtyColorBlocks.begin(), dirtyColorBlocks.end(), uint8_t(0));
+        hasDirtyColorBlockMask = false;
+        dirtyColorSeeds.clear();
+        dirtyColorSeedsOverflowed = false;
+    }
+    if (clearMat) {
+        std::fill(dirtyMaterialBlocks.begin(), dirtyMaterialBlocks.end(), uint8_t(0));
+        hasDirtyMaterialBlockMask = false;
+        dirtyMaterialSeeds.clear();
+        dirtyMaterialSeedsOverflowed = false;
     }
 }
 
@@ -92,6 +323,7 @@ void Mesh::triangulateQuads() {
     bvh.build(*this);
     isTopologyDirty = true;
     isDirty = true;
+    clearDirtyBlockMasks(true, true, true);
 }
 
 int Mesh::getNbQuads() const {
@@ -280,6 +512,7 @@ void Mesh::allocate(int nbV, int nbF, int nbRF, int nbRV) {
     faceNormals.resize(nbFaces * 3, 0.0f);
     faceBoxes.resize(nbFaces * 6, 0.0f);
     faceCenters.resize(nbFaces * 3, 0.0f);
+    clearDirtyBlockMasks(true, true, true);
 }
 
 void Mesh::ensureTopologyBuilt() {
@@ -477,6 +710,7 @@ void Mesh::updateAfterLayerBake() {
     vertProxy = verts;
     isDirty = true;
     isVertexDirty = true;
+    clearDirtyBlockMasks(true, true, true);
     if (nbVerts > 0) {
         dirtyVertMin = 0;
         dirtyVertMax = static_cast<uint32_t>(nbVerts - 1);
@@ -1625,6 +1859,7 @@ void Mesh::rebuildDynamicTopology() {
 
     dynamicCacheMesh->isFaceGroupDirty = true;
     dynamicCacheMesh->isDirty = true;
+    dynamicCacheMesh->clearDirtyBlockMasks(true, true, true);
     this->isFaceGroupDirty = true;
 
     isDynamicTopologyBuilt = true;
@@ -1641,8 +1876,21 @@ void Mesh::updateDynamicGeometryOnly() {
         return;
     }
 
-    bool hasThickness = (dynamicSettings.enableThickness && dynamicSettings.thickness > 1e-5f);
-    int totalSubdivSteps = dynamicSettings.enableSubdiv ? (dynamicSettings.flatLevel + dynamicSettings.smoothLevel) : 0;
+    const bool hasThickness = (dynamicSettings.enableThickness && dynamicSettings.thickness > 1e-5f);
+    const int totalSubdivSteps = dynamicSettings.enableSubdiv ? (dynamicSettings.flatLevel + dynamicSettings.smoothLevel) : 0;
+
+    const bool useDirtyBlocks = OptFlags::get().dirtyBlocks;
+    bool needV = this->isDirty || this->isVertexDirty || this->isDynamicDirty || !useDirtyBlocks;
+    bool needC = this->isDirty || this->isColorDirty || this->isDynamicDirty || !useDirtyBlocks;
+    bool needM = this->isDirty || this->isMaterialDirty || this->isDynamicDirty || !useDirtyBlocks;
+    if (!needV && !needC && !needM) {
+        needV = true;
+    }
+
+    const bool canPropagateBlocks = useDirtyBlocks && !this->isDirty && !this->isDynamicDirty && !this->isTopologyDirty;
+    const bool propV = canPropagateBlocks && needV && this->hasDirtyVertBlockMask;
+    const bool propC = canPropagateBlocks && needC && this->hasDirtyColorBlockMask;
+    const bool propM = canPropagateBlocks && needM && this->hasDirtyMaterialBlockMask;
 
     Thickness::ThicknessParams thickParams;
     thickParams.thickness = dynamicSettings.thickness;
@@ -1654,15 +1902,50 @@ void Mesh::updateDynamicGeometryOnly() {
 
     auto tGeomStart = std::chrono::high_resolution_clock::now();
 
-    if (!hasThickness) {
-        if (totalSubdivSteps <= 0) {
+    if (!hasThickness && totalSubdivSteps <= 0) {
+        if (needV) {
             dynamicCacheMesh->verts = this->verts;
             dynamicCacheMesh->normals = this->normals;
-            dynamicCacheMesh->colors = this->colors;
-            dynamicCacheMesh->materials = this->materials;
-            return;
+            dynamicCacheMesh->isVertexDirty = true;
+            if (propV) {
+                dynamicCacheMesh->dirtyVertBlocks = this->dirtyVertBlocks;
+                dynamicCacheMesh->hasDirtyVertBlockMask = true;
+                dynamicCacheMesh->dirtyVertMin = this->dirtyVertMin;
+                dynamicCacheMesh->dirtyVertMax = this->dirtyVertMax;
+            } else {
+                dynamicCacheMesh->hasDirtyVertBlockMask = false;
+            }
         }
+        if (needC) {
+            dynamicCacheMesh->colors = this->colors;
+            dynamicCacheMesh->isColorDirty = true;
+            if (propC) {
+                dynamicCacheMesh->dirtyColorBlocks = this->dirtyColorBlocks;
+                dynamicCacheMesh->hasDirtyColorBlockMask = true;
+            } else {
+                dynamicCacheMesh->hasDirtyColorBlockMask = false;
+            }
+        }
+        if (needM) {
+            dynamicCacheMesh->materials = this->materials;
+            dynamicCacheMesh->isMaterialDirty = true;
+            if (propM) {
+                dynamicCacheMesh->dirtyMaterialBlocks = this->dirtyMaterialBlocks;
+                dynamicCacheMesh->hasDirtyMaterialBlockMask = true;
+            } else {
+                dynamicCacheMesh->hasDirtyMaterialBlockMask = false;
+            }
+        }
+        dynamicCacheMesh->matrix = this->matrix;
+        dynamicCacheMesh->editMatrix = this->editMatrix;
+        dynamicCacheMesh->center = this->center;
+        dynamicCacheMesh->scale = this->scale;
+        dynamicCacheMesh->isFaceGroupDirty = false;
+        dynamicCacheMesh->isDirty = false;
+        return;
+    }
 
+    if (!hasThickness) {
         size_t expectedIntermediates = (totalSubdivSteps > 1) ? (totalSubdivSteps - 1) : 0;
         if (dynamicLevels.size() != expectedIntermediates || dynamicCaches.size() != (size_t)totalSubdivSteps) {
             rebuildDynamicTopology();
@@ -1694,13 +1977,19 @@ void Mesh::updateDynamicGeometryOnly() {
         }
     } else if (!dynamicSettings.postSubdiv) {
         if (totalSubdivSteps <= 0) {
-            Thickness::evaluateThicknessGeometry(*this, *dynamicCacheMesh, thickParams, dynamicThickCache);
+            Thickness::evaluateThicknessGeometry(
+                *this, *dynamicCacheMesh, thickParams, dynamicThickCache,
+                needV, useDirtyBlocks && needC, useDirtyBlocks && needM
+            );
         } else {
             if (!dynamicThickMesh || !dynamicThickCache.isValid) {
                 rebuildDynamicTopology();
                 return;
             }
-            Thickness::evaluateThicknessGeometry(*this, *dynamicThickMesh, thickParams, dynamicThickCache);
+            Thickness::evaluateThicknessGeometry(
+                *this, *dynamicThickMesh, thickParams, dynamicThickCache,
+                needV, useDirtyBlocks && needC, useDirtyBlocks && needM
+            );
 
             size_t expectedIntermediates = (totalSubdivSteps > 1) ? (totalSubdivSteps - 1) : 0;
             if (dynamicLevels.size() != expectedIntermediates || dynamicCaches.size() != (size_t)totalSubdivSteps) {
@@ -1735,7 +2024,10 @@ void Mesh::updateDynamicGeometryOnly() {
     } else {
         // Post-Subdiv
         if (totalSubdivSteps <= 0) {
-            Thickness::evaluateThicknessGeometry(*this, *dynamicCacheMesh, thickParams, dynamicThickCache);
+            Thickness::evaluateThicknessGeometry(
+                *this, *dynamicCacheMesh, thickParams, dynamicThickCache,
+                needV, useDirtyBlocks && needC, useDirtyBlocks && needM
+            );
         } else {
             if (!dynamicThickMesh) {
                 rebuildDynamicTopology();
@@ -1772,24 +2064,315 @@ void Mesh::updateDynamicGeometryOnly() {
                 prevLevel = curLevel;
             }
 
-            Thickness::evaluateThicknessGeometry(*dynamicThickMesh, *dynamicCacheMesh, thickParams, dynamicThickCache);
+            Thickness::evaluateThicknessGeometry(
+                *dynamicThickMesh, *dynamicCacheMesh, thickParams, dynamicThickCache,
+                needV, useDirtyBlocks && needC, useDirtyBlocks && needM
+            );
         }
     }
 
-    // Compute face normals only on the final render mesh (bypassing unused faceBoxes & faceCenters)
-    updateFaceNormalsOnly(
-        dynamicCacheMesh->verts.data(), dynamicCacheMesh->nbVerts,
-        dynamicCacheMesh->faces.data(), dynamicCacheMesh->nbFaces,
-        dynamicCacheMesh->faceNormals.data()
-    );
+    // Stage 2: Propagate dirty block masks through DynamicSubdiv/Thickness topology graph
+    std::vector<uint32_t> dynDirtyVertIdsV;
+    if (useDirtyBlocks) {
+        dynamicCacheMesh->clearDirtyBlockMasks(true, true, true);
 
-    updateVertexNormals(
-        nullptr, -1, dynamicCacheMesh->nbVerts,
-        dynamicCacheMesh->vrfStartCount.data(),
-        dynamicCacheMesh->vertRingFace.data(),
-        dynamicCacheMesh->faceNormals.data(),
-        dynamicCacheMesh->normals.data()
-    );
+        auto expandOneRing = [](const Mesh& m, const std::vector<uint8_t>& inMask, std::vector<uint8_t>& outMask) -> bool {
+            const int n = m.nbVerts;
+            const int nf = m.nbFaces;
+            if (n <= 0) return false;
+            outMask = inMask;
+            if (nf <= 0 || m.faces.size() < static_cast<size_t>(nf) * 4) return true;
+            const uint32_t* facesPtr = m.faces.data();
+            if (m.vrfStartCount.size() >= static_cast<size_t>(n) * 2 && !m.vertRingFace.empty()) {
+                const uint32_t* vrf = m.vrfStartCount.data();
+                const uint32_t* ring = m.vertRingFace.data();
+                const size_t ringSz = m.vertRingFace.size();
+                for (int i = 0; i < n; ++i) {
+                    if (!inMask[i]) continue;
+                    uint32_t st = vrf[i * 2];
+                    uint32_t cnt = vrf[i * 2 + 1];
+                    if (static_cast<size_t>(st) + cnt > ringSz) continue;
+                    for (uint32_t j = 0; j < cnt; ++j) {
+                        uint32_t fid = ring[st + j];
+                        if (fid >= static_cast<uint32_t>(nf)) continue;
+                        const uint32_t* fv = facesPtr + static_cast<size_t>(fid) * 4;
+                        for (int k = 0; k < 4; ++k) {
+                            uint32_t nb = fv[k];
+                            if (nb != TRI_INDEX && nb < static_cast<uint32_t>(n)) outMask[nb] = 1;
+                        }
+                    }
+                }
+                return true;
+            }
+            for (int fi = 0; fi < nf; ++fi) {
+                const uint32_t* fv = facesPtr + static_cast<size_t>(fi) * 4;
+                bool hit = false;
+                for (int k = 0; k < 4; ++k) {
+                    uint32_t v = fv[k];
+                    if (v != TRI_INDEX && v < static_cast<uint32_t>(n) && inMask[v]) {
+                        hit = true;
+                        break;
+                    }
+                }
+                if (!hit) continue;
+                for (int k = 0; k < 4; ++k) {
+                    uint32_t v = fv[k];
+                    if (v != TRI_INDEX && v < static_cast<uint32_t>(n)) outMask[v] = 1;
+                }
+            }
+            return true;
+        };
+
+        auto propagateThicknessMask = [&](const Mesh& srcM, int dstNbV, const Thickness::ThicknessCache& tc,
+                                          const std::vector<uint8_t>& inMask, bool forGeometry,
+                                          std::vector<uint8_t>& outMask) -> bool {
+            if (!tc.isValid || tc.baseNbVerts != srcM.nbVerts || tc.outNbVerts != dstNbV || dstNbV <= 0) {
+                return false;
+            }
+            std::vector<uint8_t> expanded;
+            const std::vector<uint8_t>* pSrc = &inMask;
+            if (forGeometry) {
+                if (!expandOneRing(srcM, inMask, expanded)) return false;
+                pSrc = &expanded;
+            }
+            const int N_v = tc.baseNbVerts;
+            outMask.assign(dstNbV, 0);
+            for (int i = 0; i < N_v; ++i) {
+                if ((*pSrc)[i]) {
+                    outMask[i] = 1;
+                    if (N_v + i < dstNbV) outMask[N_v + i] = 1;
+                }
+            }
+            const int S = tc.rimSegments;
+            if (!tc.isClosedMesh && S > 1) {
+                const int nbBv = (int)tc.boundaryBaseVerts.size();
+                for (int bIdx = 0; bIdx < nbBv; ++bIdx) {
+                    uint32_t vBase = tc.boundaryBaseVerts[bIdx];
+                    if (vBase < (uint32_t)N_v && (*pSrc)[vBase]) {
+                        for (int s = 1; s < S; ++s) {
+                            int rimIdx = 2 * N_v + bIdx * (S - 1) + (s - 1);
+                            if (rimIdx >= 0 && rimIdx < dstNbV) {
+                                outMask[rimIdx] = 1;
+                            }
+                        }
+                    }
+                }
+            }
+            return true;
+        };
+
+        auto propagateSubdivMask = [&](const Mesh& srcM, int dstNbV, const Subdivision::SubdivLevelCache& sc,
+                                       bool isLinearStep, const std::vector<uint8_t>& inMask, bool forGeometry,
+                                       std::vector<uint8_t>& outMask) -> bool {
+            if (srcM.nbVerts <= 0 || dstNbV <= 0) return false;
+            std::vector<uint8_t> expandedEven;
+            const std::vector<uint8_t>* pEvenSrc = &inMask;
+            if (forGeometry && !(Subdivision::LINEAR || isLinearStep)) {
+                if (!expandOneRing(srcM, inMask, expandedEven)) return false;
+                pEvenSrc = &expandedEven;
+            }
+            outMask.assign(dstNbV, 0);
+            const int copyN = std::min(srcM.nbVerts, dstNbV);
+            for (int i = 0; i < copyN; ++i) {
+                outMask[i] = (*pEvenSrc)[i];
+            }
+            for (const auto& ed : sc.edges) {
+                bool dirty = (ed.v1 < (uint32_t)inMask.size() && inMask[ed.v1]) ||
+                             (ed.v2 < (uint32_t)inMask.size() && inMask[ed.v2]);
+                if (!dirty) {
+                    for (int k = 0; k < ed.numOpp; ++k) {
+                        uint32_t ov = ed.opp[k];
+                        if (ov < (uint32_t)inMask.size() && inMask[ov]) {
+                            dirty = true;
+                            break;
+                        }
+                    }
+                }
+                if (dirty && ed.midVert < (uint32_t)dstNbV) {
+                    outMask[ed.midVert] = 1;
+                }
+            }
+            for (const auto& qd : sc.quads) {
+                if ((qd.v1 < (uint32_t)inMask.size() && inMask[qd.v1]) ||
+                    (qd.v2 < (uint32_t)inMask.size() && inMask[qd.v2]) ||
+                    (qd.v3 < (uint32_t)inMask.size() && inMask[qd.v3]) ||
+                    (qd.v4 < (uint32_t)inMask.size() && inMask[qd.v4])) {
+                    if (qd.cenVert < (uint32_t)dstNbV) {
+                        outMask[qd.cenVert] = 1;
+                    }
+                }
+            }
+            return true;
+        };
+
+        auto propagateChannelMask = [&](const std::vector<uint8_t>& baseBlocks,
+                                        const std::vector<uint32_t>& baseSeeds,
+                                        bool seedsOverflowed,
+                                        bool forGeometry,
+                                        std::vector<uint8_t>& finalMask) -> bool {
+            if (this->nbVerts <= 0) return false;
+            std::vector<uint8_t> cur(this->nbVerts, 0);
+            bool seededExact = false;
+            if (!seedsOverflowed && !baseSeeds.empty()) {
+                for (uint32_t vid : baseSeeds) {
+                    if (vid < static_cast<uint32_t>(this->nbVerts)) {
+                        cur[vid] = 1;
+                        seededExact = true;
+                    }
+                }
+            }
+            if (!seededExact) {
+                for (size_t b = 0; b < baseBlocks.size(); ++b) {
+                    if (!baseBlocks[b]) continue;
+                    uint32_t v0 = (uint32_t)(b << kDirtyBlockShift);
+                    uint32_t v1 = std::min((uint32_t)this->nbVerts, (uint32_t)((b + 1) << kDirtyBlockShift));
+                    if (v0 < v1) std::fill(cur.begin() + v0, cur.begin() + v1, uint8_t(1));
+                }
+            }
+            std::vector<uint8_t> next;
+            if (!hasThickness) {
+                const Mesh* prev = this;
+                for (int step = 1; step <= totalSubdivSteps; ++step) {
+                    Mesh* curLevel = (step == totalSubdivSteps) ? dynamicCacheMesh.get() : dynamicLevels[step - 1].get();
+                    bool isLin = (step <= dynamicSettings.flatLevel);
+                    if (!propagateSubdivMask(*prev, curLevel->nbVerts, dynamicCaches[step - 1], isLin, cur, forGeometry, next)) {
+                        return false;
+                    }
+                    cur.swap(next);
+                    prev = curLevel;
+                }
+            } else if (!dynamicSettings.postSubdiv) {
+                if (totalSubdivSteps <= 0) {
+                    if (!propagateThicknessMask(*this, dynamicCacheMesh->nbVerts, dynamicThickCache, cur, forGeometry, next)) {
+                        return false;
+                    }
+                    cur.swap(next);
+                } else {
+                    if (!propagateThicknessMask(*this, dynamicThickMesh->nbVerts, dynamicThickCache, cur, forGeometry, next)) {
+                        return false;
+                    }
+                    cur.swap(next);
+                    const Mesh* prev = dynamicThickMesh.get();
+                    for (int step = 1; step <= totalSubdivSteps; ++step) {
+                        Mesh* curLevel = (step == totalSubdivSteps) ? dynamicCacheMesh.get() : dynamicLevels[step - 1].get();
+                        bool isLin = (step <= dynamicSettings.flatLevel);
+                        if (!propagateSubdivMask(*prev, curLevel->nbVerts, dynamicCaches[step - 1], isLin, cur, forGeometry, next)) {
+                            return false;
+                        }
+                        cur.swap(next);
+                        prev = curLevel;
+                    }
+                }
+            } else {
+                if (totalSubdivSteps <= 0) {
+                    if (!propagateThicknessMask(*this, dynamicCacheMesh->nbVerts, dynamicThickCache, cur, forGeometry, next)) {
+                        return false;
+                    }
+                    cur.swap(next);
+                } else {
+                    const Mesh* prev = this;
+                    for (int step = 1; step <= totalSubdivSteps; ++step) {
+                        Mesh* curLevel = (step == totalSubdivSteps) ? dynamicThickMesh.get() : dynamicLevels[step - 1].get();
+                        bool isLin = (step <= dynamicSettings.flatLevel);
+                        if (!propagateSubdivMask(*prev, curLevel->nbVerts, dynamicCaches[step - 1], isLin, cur, forGeometry, next)) {
+                            return false;
+                        }
+                        cur.swap(next);
+                        prev = curLevel;
+                    }
+                    if (!propagateThicknessMask(*dynamicThickMesh, dynamicCacheMesh->nbVerts, dynamicThickCache, cur, forGeometry, next)) {
+                        return false;
+                    }
+                    cur.swap(next);
+                }
+            }
+            if (forGeometry) {
+                std::vector<uint8_t> finalExpanded;
+                if (!expandOneRing(*dynamicCacheMesh, cur, finalExpanded)) return false;
+                finalMask.swap(finalExpanded);
+            } else {
+                finalMask.swap(cur);
+            }
+            return true;
+        };
+
+        if (needV) {
+            std::vector<uint8_t> finalMaskV;
+            if (propV && propagateChannelMask(this->dirtyVertBlocks, this->dirtyVertSeeds, this->dirtyVertSeedsOverflowed, true, finalMaskV) &&
+                finalMaskV.size() == (size_t)dynamicCacheMesh->nbVerts) {
+                dynDirtyVertIdsV.reserve(dynamicCacheMesh->nbVerts / 8);
+                for (int i = 0; i < dynamicCacheMesh->nbVerts; ++i) {
+                    if (finalMaskV[i]) dynDirtyVertIdsV.push_back((uint32_t)i);
+                }
+                dynamicCacheMesh->markDirtyVerts(dynDirtyVertIdsV.data(), dynDirtyVertIdsV.size());
+                dynamicCacheMesh->isVertexDirty = true;
+            } else {
+                dynamicCacheMesh->hasDirtyVertBlockMask = false;
+                dynamicCacheMesh->isVertexDirty = true;
+            }
+        }
+        if (needC) {
+            std::vector<uint8_t> finalMaskC;
+            if (propC && propagateChannelMask(this->dirtyColorBlocks, this->dirtyColorSeeds, this->dirtyColorSeedsOverflowed, false, finalMaskC) &&
+                finalMaskC.size() == (size_t)dynamicCacheMesh->nbVerts) {
+                dynamicCacheMesh->ensureDirtyBlockArrays();
+                uint8_t* dstB = dynamicCacheMesh->dirtyColorBlocks.data();
+                for (int i = 0; i < dynamicCacheMesh->nbVerts; ++i) {
+                    if (finalMaskC[i]) dstB[i >> kDirtyBlockShift] = 1;
+                }
+                dynamicCacheMesh->hasDirtyColorBlockMask = true;
+                dynamicCacheMesh->isColorDirty = true;
+            } else {
+                dynamicCacheMesh->hasDirtyColorBlockMask = false;
+                dynamicCacheMesh->isColorDirty = true;
+            }
+        }
+        if (needM) {
+            std::vector<uint8_t> finalMaskM;
+            if (propM && propagateChannelMask(this->dirtyMaterialBlocks, this->dirtyMaterialSeeds, this->dirtyMaterialSeedsOverflowed, false, finalMaskM) &&
+                finalMaskM.size() == (size_t)dynamicCacheMesh->nbVerts) {
+                dynamicCacheMesh->ensureDirtyBlockArrays();
+                uint8_t* dstB = dynamicCacheMesh->dirtyMaterialBlocks.data();
+                for (int i = 0; i < dynamicCacheMesh->nbVerts; ++i) {
+                    if (finalMaskM[i]) dstB[i >> kDirtyBlockShift] = 1;
+                }
+                dynamicCacheMesh->hasDirtyMaterialBlockMask = true;
+                dynamicCacheMesh->isMaterialDirty = true;
+            } else {
+                dynamicCacheMesh->hasDirtyMaterialBlockMask = false;
+                dynamicCacheMesh->isMaterialDirty = true;
+            }
+        }
+    }
+
+    // Compute face & vertex normals only when vertex positions moved
+    if (needV) {
+        updateFaceNormalsOnly(
+            dynamicCacheMesh->verts.data(), dynamicCacheMesh->nbVerts,
+            dynamicCacheMesh->faces.data(), dynamicCacheMesh->nbFaces,
+            dynamicCacheMesh->faceNormals.data()
+        );
+
+        if (!dynDirtyVertIdsV.empty() &&
+            !dynamicCacheMesh->vrfStartCount.empty() &&
+            !dynamicCacheMesh->vertRingFace.empty()) {
+            updateVertexNormals(
+                dynDirtyVertIdsV.data(), (int)dynDirtyVertIdsV.size(), dynamicCacheMesh->nbVerts,
+                dynamicCacheMesh->vrfStartCount.data(),
+                dynamicCacheMesh->vertRingFace.data(),
+                dynamicCacheMesh->faceNormals.data(),
+                dynamicCacheMesh->normals.data()
+            );
+        } else {
+            updateVertexNormals(
+                nullptr, -1, dynamicCacheMesh->nbVerts,
+                dynamicCacheMesh->vrfStartCount.data(),
+                dynamicCacheMesh->vertRingFace.data(),
+                dynamicCacheMesh->faceNormals.data(),
+                dynamicCacheMesh->normals.data()
+            );
+        }
+    }
 
     dynamicCacheMesh->matrix = this->matrix;
     dynamicCacheMesh->editMatrix = this->editMatrix;

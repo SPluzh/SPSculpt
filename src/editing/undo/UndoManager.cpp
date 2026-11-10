@@ -3,6 +3,7 @@
 #include "mesh/Mesh.h"
 #include "mesh/NormalCalc.h"
 #include "common/Logger.h"
+#include "common/OptFlags.h"
 #include "editing/SculptManager.h"
 #include "sculpt/SculptEngine.h"
 
@@ -747,10 +748,22 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
                     mesh->dirtyVertMin = *minIt;
                     mesh->dirtyVertMax = *maxIt;
                 }
-                if (vertsMoved) mesh->isVertexDirty = true;
-                if (delta.hasColors) mesh->isColorDirty = true;
-                if (delta.hasMaterials) mesh->isMaterialDirty = true;
-                mesh->isDirty = true;
+                if (OptFlags::get().dirtyBlocks) {
+                    if (vertsMoved) {
+                        mesh->markDirtyVerts(delta.indices.data(), delta.indices.size());
+                    }
+                    if (delta.hasColors) {
+                        mesh->markDirtyColors(delta.indices.data(), delta.indices.size());
+                    }
+                    if (delta.hasMaterials) {
+                        mesh->markDirtyMaterials(delta.indices.data(), delta.indices.size());
+                    }
+                } else {
+                    if (vertsMoved) mesh->isVertexDirty = true;
+                    if (delta.hasColors) mesh->isColorDirty = true;
+                    if (delta.hasMaterials) mesh->isMaterialDirty = true;
+                    mesh->isDirty = true;
+                }
 
                 if (!vertsMoved) {
                     auto tDone = std::chrono::high_resolution_clock::now();
@@ -1001,11 +1014,15 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
                             auto tOct1 = std::chrono::high_resolution_clock::now();
                             msBVH = std::chrono::duration<double, std::milli>(tOct1 - tOct0).count();
                         }
-                        if (!item.sparseVertIndices.empty()) {
-                            mesh->dirtyVertMin = item.sparseVertIndices.front();
-                            mesh->dirtyVertMax = item.sparseVertIndices.back();
+                        if (OptFlags::get().dirtyBlocks) {
+                            mesh->markDirtyVerts(item.sparseVertIndices.data(), item.sparseVertIndices.size());
+                        } else {
+                            if (!item.sparseVertIndices.empty()) {
+                                mesh->dirtyVertMin = item.sparseVertIndices.front();
+                                mesh->dirtyVertMax = item.sparseVertIndices.back();
+                            }
+                            mesh->isVertexDirty = true;
                         }
-                        mesh->isVertexDirty = true;
                     } else {
                         mesh->verts = isUndo ? item.beforeVerts : item.afterVerts;
                         if (!item.beforeNormals.empty() && !item.afterNormals.empty()) {

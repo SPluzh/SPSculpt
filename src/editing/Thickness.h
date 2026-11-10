@@ -55,12 +55,15 @@ namespace Thickness {
         ThicknessCache* cache = nullptr
     );
 
-    // Fast geometry update (zero topology reallocation) when baseMesh verts move during sculpting
+    // Fast geometry update (zero topology reallocation) when baseMesh verts/colors/materials change
     void evaluateThicknessGeometry(
         const Mesh& baseMesh,
         Mesh& outMesh,
         const ThicknessParams& params,
-        ThicknessCache& cache
+        ThicknessCache& cache,
+        bool updateVerts = true,
+        bool updateColors = false,
+        bool updateMaterials = false
     );
 
     // Computes miter-compensated extrusion normals for vertices
