@@ -1777,7 +1777,7 @@ bool DynamicTopology::remesh(Mesh& mesh, BVH& bvh, const glm::vec3& center, floa
     changedVFlag_.resize(nv, 0);
 
     for (uint32_t v : verts) {
-        if (v < nv) {
+        if (v < nv && v < m_vertTris.size()) {
             glm::vec3 n = faceNormalAt(v);
             setNormal(v, n);
             for (uint32_t t : m_vertTris[v]) {

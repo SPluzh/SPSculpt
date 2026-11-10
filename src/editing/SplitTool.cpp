@@ -9,9 +9,13 @@
 #include "gui/GuiManager.h"
 #include "common/Logger.h"
 #include "common/Constants.h"
+#include "common/CrashReporter.h"
+#include "common/ErrorReporter.h"
 
 #include <chrono>
 #include <algorithm>
+#include <exception>
+#include <memory>
 #include <glm/gtc/matrix_transform.hpp>
 
 namespace sculpt {
@@ -77,117 +81,136 @@ bool SplitTool::sliceByLine(
     if (!mesh || mesh->nbVerts == 0) return false;
     if (glm::distance(lineStart, lineEnd) < 5.0f) return false;
 
-    auto tStart = std::chrono::high_resolution_clock::now();
-    sculpt_log("[SPLIT CSG] Starting Slice By Line on '%s' (%d verts, %d faces)...\n",
-               mesh->outlinerName.c_str(), mesh->nbVerts, mesh->nbFaces);
+    CrashReporter::ScopedStage splitStage("CSG::SplitSlice");
+    CrashReporter::recordBreadcrumb("CSG", "SplitSlice verts=%d faces=%d", mesh->nbVerts, mesh->nbFaces);
+    HistoryState rollbackState = scene.saveCurrentState(true);
 
-    // 1. Compute 3D cutting plane from screen line
-    Ray rStart = camera.getRay(lineStart.x, lineStart.y);
-    Ray rEnd   = camera.getRay(lineEnd.x, lineEnd.y);
+    try {
+        auto tStart = std::chrono::high_resolution_clock::now();
+        sculpt_log("[SPLIT CSG] Starting Slice By Line on '%s' (%d verts, %d faces)...\n",
+                   mesh->outlinerName.c_str(), mesh->nbVerts, mesh->nbFaces);
 
-    glm::vec3 vA = rStart.origin + rStart.dir * 100.0f;
-    glm::vec3 vB = rEnd.origin + rEnd.dir * 100.0f;
-    glm::vec3 vC = rStart.origin;
+        // 1. Compute 3D cutting plane from screen line
+        Ray rStart = camera.getRay(lineStart.x, lineStart.y);
+        Ray rEnd   = camera.getRay(lineEnd.x, lineEnd.y);
 
-    glm::vec3 nWorld = glm::cross(vB - vA, vC - vA);
-    float len = glm::length(nWorld);
-    if (len < 1e-6f) return false;
-    nWorld /= len;
+        glm::vec3 vA = rStart.origin + rStart.dir * 100.0f;
+        glm::vec3 vB = rEnd.origin + rEnd.dir * 100.0f;
+        glm::vec3 vC = rStart.origin;
 
-    // 2. Transform plane into mesh local space
-    glm::mat4 invMeshMatrix = glm::inverse(mesh->matrix);
-    glm::vec3 pLocal = glm::vec3(invMeshMatrix * glm::vec4(vA, 1.0f));
-    glm::vec3 nLocal = glm::vec3(glm::transpose(mesh->matrix) * glm::vec4(nWorld, 0.0f));
-    float nLocalLen = glm::length(nLocal);
-    if (nLocalLen < 1e-6f) return false;
-    nLocal /= nLocalLen;
+        glm::vec3 nWorld = glm::cross(vB - vA, vC - vA);
+        float len = glm::length(nWorld);
+        if (len < 1e-6f) return false;
+        nWorld /= len;
 
-    float originOffset = glm::dot(pLocal, nLocal);
+        // 2. Transform plane into mesh local space
+        glm::mat4 invMeshMatrix = glm::inverse(mesh->matrix);
+        glm::vec3 pLocal = glm::vec3(invMeshMatrix * glm::vec4(vA, 1.0f));
+        glm::vec3 nLocal = glm::vec3(glm::transpose(mesh->matrix) * glm::vec4(nWorld, 0.0f));
+        float nLocalLen = glm::length(nLocal);
+        if (nLocalLen < 1e-6f) return false;
+        nLocal /= nLocalLen;
 
-    // 3. Convert target mesh to Manifold
-    manifold::Manifold target = ManifoldBridge::fromMesh(*mesh);
-    if (target.IsEmpty() || target.Status() != manifold::Manifold::Error::NoError) {
-        sculpt_log("[SPLIT CSG] Failed to convert mesh to valid Manifold. Status: %d\n", (int)target.Status());
+        float originOffset = glm::dot(pLocal, nLocal);
+
+        // 3. Convert target mesh to Manifold
+        manifold::Manifold target = ManifoldBridge::fromMesh(*mesh);
+        if (target.IsEmpty() || target.Status() != manifold::Manifold::Error::NoError) {
+            sculpt_log("[SPLIT CSG] Failed to convert mesh to valid Manifold. Status: %d\n", (int)target.Status());
+            ErrorReporter::instance().reportError("Split Failed", "Source mesh is not a valid 2-manifold for Slice.",
+                                                  "Manifold status: " + std::to_string((int)target.Status()), false);
+            return false;
+        }
+
+        float targetEdgeLen = computeAverageEdgeLength(mesh);
+
+        // 4. Split By Half-space Cutter marked with AsOriginal()
+        manifold::Box bBox = target.BoundingBox();
+        glm::vec3 n = glm::normalize(nLocal);
+        manifold::Manifold cutter =
+            manifold::Manifold::Cube(glm::vec3(2.0f), true).Translate({1.0f, 0.0f, 0.0f});
+        float size = glm::length(bBox.Center() - n * originOffset) +
+                     0.5f * glm::length(bBox.Size());
+        cutter = cutter.Scale(glm::vec3(size)).Translate({originOffset, 0.0f, 0.0f});
+        float yDeg = glm::degrees(-glm::asin(n.z));
+        float zDeg = glm::degrees(glm::atan(n.y, n.x));
+        cutter = cutter.Rotate(0.0f, yDeg, zDeg);
+
+        if (useSym && !symScales.empty()) {
+            std::vector<manifold::Manifold> symCutters;
+            symCutters.push_back(cutter);
+            for (const auto& s : symScales) {
+                if (s.x < 0.0f) symCutters.push_back(cutter.Mirror(glm::vec3(1.0f, 0.0f, 0.0f)));
+                if (s.y < 0.0f) symCutters.push_back(cutter.Mirror(glm::vec3(0.0f, 1.0f, 0.0f)));
+                if (s.z < 0.0f) symCutters.push_back(cutter.Mirror(glm::vec3(0.0f, 0.0f, 1.0f)));
+            }
+            if (symCutters.size() > 1) {
+                cutter = manifold::Manifold::BatchBoolean(symCutters, manifold::OpType::Add);
+            }
+        }
+
+        cutter = cutter.AsOriginal();
+        int cutterOrigID = cutter.OriginalID();
+
+        auto [part1, part2] = target.Split(cutter);
+        if (part1.IsEmpty() || part2.IsEmpty() ||
+            part1.Status() != manifold::Manifold::Error::NoError ||
+            part2.Status() != manifold::Manifold::Error::NoError) {
+            sculpt_log("[SPLIT CSG] Split missed geometry or invalid result. Part1 empty: %d, Part2 empty: %d\n",
+                       part1.IsEmpty() ? 1 : 0, part2.IsEmpty() ? 1 : 0);
+            GuiManager::showToast("[Split] Slice plane did not divide the mesh", 2.5f);
+            return false;
+        }
+
+        uint32_t gid1 = scene.getNextFreePolyGroupID();
+        uint32_t gid2 = gid1 + 1;
+
+        // 5. Update original mesh with Part 1 (runPostInit=false, QuadCap will postInit)
+        mesh->hasCustomNormals = false;
+        ManifoldBridge::toMesh(part1, *mesh, false, cutterOrigID, gid1);
+        QuadCapGenerator::generateQuadCap(*mesh, gid1, targetEdgeLen);
+        mesh->isTube = false;
+        mesh->tubeData = nullptr;
+        mesh->isPrimitive = false;
+        mesh->primitiveData = nullptr;
+
+        // 6. Create second subtool with Part 2 (runPostInit=false, QuadCap will postInit)
+        auto cutMeshOwned = std::make_unique<Mesh>();
+        Mesh* cutMesh = cutMeshOwned.get();
+        copyMeshMetadata(mesh, cutMesh, "_Cut");
+        ManifoldBridge::toMesh(part2, *cutMesh, false, cutterOrigID, gid2);
+        QuadCapGenerator::generateQuadCap(*cutMesh, gid2, targetEdgeLen);
+        cutMesh->isTube = false;
+        cutMesh->tubeData = nullptr;
+        cutMesh->isPrimitive = false;
+        cutMesh->primitiveData = nullptr;
+
+        scene.addMesh(cutMeshOwned.release());
+        scene.setModified(true);
+
+        auto tEnd = std::chrono::high_resolution_clock::now();
+        double totalMs = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
+
+        sculpt_log("[SPLIT CSG] Slice completed in %.2f ms. Part 1 (%d verts, %d faces), Part 2 (%d verts, %d faces)\n",
+                   totalMs, mesh->nbVerts, mesh->nbFaces, cutMesh->nbVerts, cutMesh->nbFaces);
+
+        char toastBuf[160];
+        snprintf(toastBuf, sizeof(toastBuf), "[Split] Created '%s' in %.0fms (%d & %d faces)",
+                 cutMesh->outlinerName.c_str(), totalMs, mesh->nbFaces, cutMesh->nbFaces);
+        GuiManager::showToast(toastBuf, 3.0f);
+        GuiManager::invalidateThumbnail(mesh->getID());
+        GuiManager::invalidateThumbnail(cutMesh->getID());
+
+        return true;
+    } catch (const std::exception& e) {
+        scene.restoreState(rollbackState);
+        ErrorReporter::instance().reportError("Split Failed", "Slice operation failed; scene restored.", e.what(), true);
+        return false;
+    } catch (...) {
+        scene.restoreState(rollbackState);
+        ErrorReporter::instance().reportError("Split Failed", "Unknown error during Slice operation; scene restored.", "", true);
         return false;
     }
-
-    float targetEdgeLen = computeAverageEdgeLength(mesh);
-
-    // 4. Split By Half-space Cutter marked with AsOriginal()
-    manifold::Box bBox = target.BoundingBox();
-    glm::vec3 n = glm::normalize(nLocal);
-    manifold::Manifold cutter =
-        manifold::Manifold::Cube(glm::vec3(2.0f), true).Translate({1.0f, 0.0f, 0.0f});
-    float size = glm::length(bBox.Center() - n * originOffset) +
-                 0.5f * glm::length(bBox.Size());
-    cutter = cutter.Scale(glm::vec3(size)).Translate({originOffset, 0.0f, 0.0f});
-    float yDeg = glm::degrees(-glm::asin(n.z));
-    float zDeg = glm::degrees(glm::atan(n.y, n.x));
-    cutter = cutter.Rotate(0.0f, yDeg, zDeg);
-
-    if (useSym && !symScales.empty()) {
-        std::vector<manifold::Manifold> symCutters;
-        symCutters.push_back(cutter);
-        for (const auto& s : symScales) {
-            if (s.x < 0.0f) symCutters.push_back(cutter.Mirror(glm::vec3(1.0f, 0.0f, 0.0f)));
-            if (s.y < 0.0f) symCutters.push_back(cutter.Mirror(glm::vec3(0.0f, 1.0f, 0.0f)));
-            if (s.z < 0.0f) symCutters.push_back(cutter.Mirror(glm::vec3(0.0f, 0.0f, 1.0f)));
-        }
-        if (symCutters.size() > 1) {
-            cutter = manifold::Manifold::BatchBoolean(symCutters, manifold::OpType::Add);
-        }
-    }
-
-    cutter = cutter.AsOriginal();
-    int cutterOrigID = cutter.OriginalID();
-
-    auto [part1, part2] = target.Split(cutter);
-    if (part1.IsEmpty() || part2.IsEmpty()) {
-        sculpt_log("[SPLIT CSG] Split missed geometry. Part1 empty: %d, Part2 empty: %d\n",
-                   part1.IsEmpty() ? 1 : 0, part2.IsEmpty() ? 1 : 0);
-        GuiManager::showToast("[Split] Slice plane did not divide the mesh", 2.5f);
-        return false;
-    }
-
-    uint32_t gid1 = scene.getNextFreePolyGroupID();
-    uint32_t gid2 = gid1 + 1;
-
-    // 5. Update original mesh with Part 1 (runPostInit=false, QuadCap will postInit)
-    mesh->hasCustomNormals = false;
-    ManifoldBridge::toMesh(part1, *mesh, false, cutterOrigID, gid1);
-    QuadCapGenerator::generateQuadCap(*mesh, gid1, targetEdgeLen);
-    mesh->isTube = false;
-    mesh->tubeData = nullptr;
-    mesh->isPrimitive = false;
-    mesh->primitiveData = nullptr;
-
-    // 6. Create second subtool with Part 2 (runPostInit=false, QuadCap will postInit)
-    Mesh* cutMesh = new Mesh();
-    copyMeshMetadata(mesh, cutMesh, "_Cut");
-    ManifoldBridge::toMesh(part2, *cutMesh, false, cutterOrigID, gid2);
-    QuadCapGenerator::generateQuadCap(*cutMesh, gid2, targetEdgeLen);
-    cutMesh->isTube = false;
-    cutMesh->tubeData = nullptr;
-    cutMesh->isPrimitive = false;
-    cutMesh->primitiveData = nullptr;
-
-    scene.addMesh(cutMesh);
-    scene.setModified(true);
-
-    auto tEnd = std::chrono::high_resolution_clock::now();
-    double totalMs = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
-
-    sculpt_log("[SPLIT CSG] Slice completed in %.2f ms. Part 1 (%d verts, %d faces), Part 2 (%d verts, %d faces)\n",
-               totalMs, mesh->nbVerts, mesh->nbFaces, cutMesh->nbVerts, cutMesh->nbFaces);
-
-    char toastBuf[160];
-    snprintf(toastBuf, sizeof(toastBuf), "[Split] Created '%s' in %.0fms (%d & %d faces)",
-             cutMesh->outlinerName.c_str(), totalMs, mesh->nbFaces, cutMesh->nbFaces);
-    GuiManager::showToast(toastBuf, 3.0f);
-    GuiManager::invalidateThumbnail(mesh->getID());
-    GuiManager::invalidateThumbnail(cutMesh->getID());
-
-    return true;
 }
 
 bool SplitTool::splitByLasso(
@@ -202,118 +225,139 @@ bool SplitTool::splitByLasso(
 ) {
     if (!mesh || mesh->nbVerts == 0 || lassoPoints.size() < 3) return false;
 
-    auto tStart = std::chrono::high_resolution_clock::now();
-    sculpt_log("[SPLIT CSG] Starting Split By Lasso on '%s' (%d verts, %d faces, alt=%d, sym=%d)...\n",
-               mesh->outlinerName.c_str(), mesh->nbVerts, mesh->nbFaces, isAlt ? 1 : 0, useSym ? 1 : 0);
+    CrashReporter::ScopedStage splitStage("CSG::SplitLasso");
+    CrashReporter::recordBreadcrumb("CSG", "SplitLasso verts=%d faces=%d pts=%zu", mesh->nbVerts, mesh->nbFaces, lassoPoints.size());
+    HistoryState rollbackState = scene.saveCurrentState(true);
 
-    float bbox[6] = {0};
-    mesh->computeBbox(bbox);
-    glm::vec3 bMin(bbox[0], bbox[1], bbox[2]);
-    glm::vec3 bMax(bbox[3], bbox[4], bbox[5]);
+    try {
+        auto tStart = std::chrono::high_resolution_clock::now();
+        sculpt_log("[SPLIT CSG] Starting Split By Lasso on '%s' (%d verts, %d faces, alt=%d, sym=%d)...\n",
+                   mesh->outlinerName.c_str(), mesh->nbVerts, mesh->nbFaces, isAlt ? 1 : 0, useSym ? 1 : 0);
 
-    float targetEdgeLen = computeAverageEdgeLength(mesh);
-    sculpt_log("[SPLIT CSG] Mesh BBox: [%.2f, %.2f, %.2f] to [%.2f, %.2f, %.2f], targetEdgeLen: %.3f mm\n",
-               bMin.x, bMin.y, bMin.z, bMax.x, bMax.y, bMax.z, targetEdgeLen);
+        float bbox[6] = {0};
+        mesh->computeBbox(bbox);
+        glm::vec3 bMin(bbox[0], bbox[1], bbox[2]);
+        glm::vec3 bMax(bbox[3], bbox[4], bbox[5]);
 
-    glm::mat4 invMeshMatrix = glm::inverse(mesh->matrix);
-    manifold::Manifold cutter = LassoCutter::build3DCutterPrism(
-        lassoPoints,
-        camera,
-        invMeshMatrix,
-        0,
-        bMin,
-        bMax,
-        targetEdgeLen
-    );
-    if (cutter.IsEmpty() || cutter.Status() != manifold::Manifold::Error::NoError) {
-        sculpt_log("[SPLIT CSG] Failed to build valid cutter prism. Status: %d\n", (int)cutter.Status());
-        return false;
-    }
+        float targetEdgeLen = computeAverageEdgeLength(mesh);
+        sculpt_log("[SPLIT CSG] Mesh BBox: [%.2f, %.2f, %.2f] to [%.2f, %.2f, %.2f], targetEdgeLen: %.3f mm\n",
+                   bMin.x, bMin.y, bMin.z, bMax.x, bMax.y, bMax.z, targetEdgeLen);
 
-    // Mirror cutter prism across symmetry axes if symmetry is enabled
-    if (useSym && !symScales.empty()) {
-        std::vector<manifold::Manifold> symCutters;
-        symCutters.push_back(cutter);
+        glm::mat4 invMeshMatrix = glm::inverse(mesh->matrix);
+        manifold::Manifold cutter = LassoCutter::build3DCutterPrism(
+            lassoPoints,
+            camera,
+            invMeshMatrix,
+            0,
+            bMin,
+            bMax,
+            targetEdgeLen
+        );
+        if (cutter.IsEmpty() || cutter.Status() != manifold::Manifold::Error::NoError) {
+            sculpt_log("[SPLIT CSG] Failed to build valid cutter prism. Status: %d\n", (int)cutter.Status());
+            ErrorReporter::instance().reportWarning("Split Tool", "Failed to build valid lasso cutter prism.",
+                                                    "Manifold status: " + std::to_string((int)cutter.Status()), false);
+            return false;
+        }
 
-        for (const auto& s : symScales) {
-            if (s.x < 0.0f) {
-                symCutters.push_back(cutter.Mirror(glm::vec3(1.0f, 0.0f, 0.0f)));
+        // Mirror cutter prism across symmetry axes if symmetry is enabled
+        if (useSym && !symScales.empty()) {
+            std::vector<manifold::Manifold> symCutters;
+            symCutters.push_back(cutter);
+
+            for (const auto& s : symScales) {
+                if (s.x < 0.0f) {
+                    symCutters.push_back(cutter.Mirror(glm::vec3(1.0f, 0.0f, 0.0f)));
+                }
+                if (s.y < 0.0f) {
+                    symCutters.push_back(cutter.Mirror(glm::vec3(0.0f, 1.0f, 0.0f)));
+                }
+                if (s.z < 0.0f) {
+                    symCutters.push_back(cutter.Mirror(glm::vec3(0.0f, 0.0f, 1.0f)));
+                }
             }
-            if (s.y < 0.0f) {
-                symCutters.push_back(cutter.Mirror(glm::vec3(0.0f, 1.0f, 0.0f)));
-            }
-            if (s.z < 0.0f) {
-                symCutters.push_back(cutter.Mirror(glm::vec3(0.0f, 0.0f, 1.0f)));
+
+            if (symCutters.size() > 1) {
+                cutter = manifold::Manifold::BatchBoolean(symCutters, manifold::OpType::Add);
+                sculpt_log("[SPLIT CSG] Applied symmetry: combined %zu cutter prisms.\n", symCutters.size());
             }
         }
 
-        if (symCutters.size() > 1) {
-            cutter = manifold::Manifold::BatchBoolean(symCutters, manifold::OpType::Add);
-            sculpt_log("[SPLIT CSG] Applied symmetry: combined %zu cutter prisms.\n", symCutters.size());
+        cutter = cutter.AsOriginal();
+        int cutterOrigID = cutter.OriginalID();
+
+        manifold::Manifold target = ManifoldBridge::fromMesh(*mesh);
+        if (target.IsEmpty() || target.Status() != manifold::Manifold::Error::NoError) {
+            sculpt_log("[SPLIT CSG] Failed to convert mesh to valid Manifold. Status: %d\n", (int)target.Status());
+            ErrorReporter::instance().reportError("Split Failed", "Source mesh is not a valid 2-manifold for Split.",
+                                                  "Manifold status: " + std::to_string((int)target.Status()), false);
+            return false;
         }
-    }
 
-    cutter = cutter.AsOriginal();
-    int cutterOrigID = cutter.OriginalID();
+        auto [inside, outside] = target.Split(cutter);
+        if (inside.IsEmpty() || outside.IsEmpty() ||
+            inside.Status() != manifold::Manifold::Error::NoError ||
+            outside.Status() != manifold::Manifold::Error::NoError) {
+            sculpt_log("[SPLIT CSG] Split missed geometry or invalid result. Inside empty: %d, Outside empty: %d\n",
+                       inside.IsEmpty() ? 1 : 0, outside.IsEmpty() ? 1 : 0);
+            GuiManager::showToast("[Split] Lasso did not divide the mesh (missed or enclosed all)", 2.5f);
+            return false;
+        }
 
-    manifold::Manifold target = ManifoldBridge::fromMesh(*mesh);
-    if (target.IsEmpty() || target.Status() != manifold::Manifold::Error::NoError) {
-        sculpt_log("[SPLIT CSG] Failed to convert mesh to valid Manifold. Status: %d\n", (int)target.Status());
+        // When isAlt is true: original mesh keeps inside, outside goes to new subtool.
+        // Default (!isAlt): original mesh keeps outside (cut out hole), inside goes to new subtool.
+        manifold::Manifold keepPart = isAlt ? inside : outside;
+        manifold::Manifold cutPart  = isAlt ? outside : inside;
+
+        uint32_t gid1 = scene.getNextFreePolyGroupID();
+        uint32_t gid2 = gid1 + 1;
+
+        // 1. Update original mesh with keepPart (runPostInit=false, QuadCap will postInit)
+        mesh->hasCustomNormals = false;
+        ManifoldBridge::toMesh(keepPart, *mesh, false, cutterOrigID, gid1);
+        QuadCapGenerator::generateQuadCap(*mesh, gid1, targetEdgeLen);
+        mesh->isTube = false;
+        mesh->tubeData = nullptr;
+        mesh->isPrimitive = false;
+        mesh->primitiveData = nullptr;
+
+        // 2. Create new subtool with cutPart (runPostInit=false, QuadCap will postInit)
+        auto cutMeshOwned = std::make_unique<Mesh>();
+        Mesh* cutMesh = cutMeshOwned.get();
+        copyMeshMetadata(mesh, cutMesh, "_Cut");
+        ManifoldBridge::toMesh(cutPart, *cutMesh, false, cutterOrigID, gid2);
+        QuadCapGenerator::generateQuadCap(*cutMesh, gid2, targetEdgeLen);
+        cutMesh->isTube = false;
+        cutMesh->tubeData = nullptr;
+        cutMesh->isPrimitive = false;
+        cutMesh->primitiveData = nullptr;
+
+        scene.addMesh(cutMeshOwned.release());
+        scene.setModified(true);
+
+        auto tEnd = std::chrono::high_resolution_clock::now();
+        double totalMs = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
+
+        sculpt_log("[SPLIT CSG] Lasso Split completed in %.2f ms. Mesh (%d verts, %d faces), Cut (%d verts, %d faces)\n",
+                   totalMs, mesh->nbVerts, mesh->nbFaces, cutMesh->nbVerts, cutMesh->nbFaces);
+
+        char toastBuf[160];
+        snprintf(toastBuf, sizeof(toastBuf), "[Split] Created '%s' in %.0fms (%d & %d faces)",
+                 cutMesh->outlinerName.c_str(), totalMs, mesh->nbFaces, cutMesh->nbFaces);
+        GuiManager::showToast(toastBuf, 3.0f);
+        GuiManager::invalidateThumbnail(mesh->getID());
+        GuiManager::invalidateThumbnail(cutMesh->getID());
+
+        return true;
+    } catch (const std::exception& e) {
+        scene.restoreState(rollbackState);
+        ErrorReporter::instance().reportError("Split Failed", "Lasso Split operation failed; scene restored.", e.what(), true);
+        return false;
+    } catch (...) {
+        scene.restoreState(rollbackState);
+        ErrorReporter::instance().reportError("Split Failed", "Unknown error during Lasso Split; scene restored.", "", true);
         return false;
     }
-
-    auto [inside, outside] = target.Split(cutter);
-    if (inside.IsEmpty() || outside.IsEmpty()) {
-        sculpt_log("[SPLIT CSG] Split missed geometry. Inside empty: %d, Outside empty: %d\n",
-                   inside.IsEmpty() ? 1 : 0, outside.IsEmpty() ? 1 : 0);
-        GuiManager::showToast("[Split] Lasso did not divide the mesh (missed or enclosed all)", 2.5f);
-        return false;
-    }
-
-    // When isAlt is true: original mesh keeps inside, outside goes to new subtool.
-    // Default (!isAlt): original mesh keeps outside (cut out hole), inside goes to new subtool.
-    manifold::Manifold keepPart = isAlt ? inside : outside;
-    manifold::Manifold cutPart  = isAlt ? outside : inside;
-
-    uint32_t gid1 = scene.getNextFreePolyGroupID();
-    uint32_t gid2 = gid1 + 1;
-
-    // 1. Update original mesh with keepPart (runPostInit=false, QuadCap will postInit)
-    mesh->hasCustomNormals = false;
-    ManifoldBridge::toMesh(keepPart, *mesh, false, cutterOrigID, gid1);
-    QuadCapGenerator::generateQuadCap(*mesh, gid1, targetEdgeLen);
-    mesh->isTube = false;
-    mesh->tubeData = nullptr;
-    mesh->isPrimitive = false;
-    mesh->primitiveData = nullptr;
-
-    // 2. Create new subtool with cutPart (runPostInit=false, QuadCap will postInit)
-    Mesh* cutMesh = new Mesh();
-    copyMeshMetadata(mesh, cutMesh, "_Cut");
-    ManifoldBridge::toMesh(cutPart, *cutMesh, false, cutterOrigID, gid2);
-    QuadCapGenerator::generateQuadCap(*cutMesh, gid2, targetEdgeLen);
-    cutMesh->isTube = false;
-    cutMesh->tubeData = nullptr;
-    cutMesh->isPrimitive = false;
-    cutMesh->primitiveData = nullptr;
-
-    scene.addMesh(cutMesh);
-    scene.setModified(true);
-
-    auto tEnd = std::chrono::high_resolution_clock::now();
-    double totalMs = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
-
-    sculpt_log("[SPLIT CSG] Lasso Split completed in %.2f ms. Mesh (%d verts, %d faces), Cut (%d verts, %d faces)\n",
-               totalMs, mesh->nbVerts, mesh->nbFaces, cutMesh->nbVerts, cutMesh->nbFaces);
-
-    char toastBuf[160];
-    snprintf(toastBuf, sizeof(toastBuf), "[Split] Created '%s' in %.0fms (%d & %d faces)",
-             cutMesh->outlinerName.c_str(), totalMs, mesh->nbFaces, cutMesh->nbFaces);
-    GuiManager::showToast(toastBuf, 3.0f);
-    GuiManager::invalidateThumbnail(mesh->getID());
-    GuiManager::invalidateThumbnail(cutMesh->getID());
-
-    return true;
 }
 
 } // namespace sculpt

@@ -1,5 +1,7 @@
 #pragma once
+#include <cstddef>
 #include <cstdint>
+#include <vector>
 
 int strokeFlatten(
     float* verts,
@@ -41,6 +43,20 @@ uint32_t getFacesFromVerticesFast(
     const uint32_t* vrfStartCount,
     const uint32_t* vertRingFace,
     uint32_t* outIFaces,
+    uint8_t* tagFlags,
+    uint8_t* tagEpoch,
+    uint32_t nbFaces,
+    uint32_t nbVerts = 0,
+    uint32_t outCapacity = 0,
+    size_t vertRingFaceSize = 0
+);
+
+uint32_t getFacesFromVerticesFast(
+    const uint32_t* iVerts, uint32_t nbIVerts,
+    const uint32_t* vrfStartCount,
+    const uint32_t* vertRingFace,
+    size_t vertRingFaceSize,
+    std::vector<uint32_t>& outIFaces,
     uint8_t* tagFlags,
     uint8_t* tagEpoch,
     uint32_t nbFaces,

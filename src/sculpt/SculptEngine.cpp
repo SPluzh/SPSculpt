@@ -59,21 +59,41 @@ static void radixSort(uint32_t* arr, uint32_t n) {
 }
 
 namespace {
-inline int mergeCompactedThreadBuffers(std::vector<std::vector<uint32_t>>& threadBufs, int numThreads, uint32_t* outIVerts) {
-    size_t offsets[129] = {0};
-    int nThreads = std::min(numThreads, 128);
+inline int mergeCompactedThreadBuffers(std::vector<std::vector<uint32_t>>& threadBufs, int numThreads, uint32_t* outIVerts, int maxOutCapacity) {
+    if (!outIVerts || maxOutCapacity == 0) {
+        for (auto& b : threadBufs) b.clear();
+        return 0;
+    }
+    int nThreads = std::min(numThreads, (int)threadBufs.size());
+    size_t stackOffsets[129];
+    std::vector<size_t> heapOffsets;
+    size_t* offsets = stackOffsets;
+    if (nThreads > 128) {
+        heapOffsets.resize(nThreads + 1, 0);
+        offsets = heapOffsets.data();
+    } else {
+        offsets[0] = 0;
+    }
     for (int t = 0; t < nThreads; ++t) {
         offsets[t + 1] = offsets[t] + threadBufs[t].size();
     }
-    int totalCount = (int)offsets[nThreads];
+    size_t totalCount = offsets[nThreads];
+    if (maxOutCapacity > 0 && totalCount > (size_t)maxOutCapacity) {
+        totalCount = (size_t)maxOutCapacity;
+    }
     #pragma omp parallel for schedule(static) if(totalCount > 4000)
     for (int t = 0; t < nThreads; ++t) {
         size_t sz = threadBufs[t].size();
-        if (sz > 0) {
-            std::memcpy(outIVerts + offsets[t], threadBufs[t].data(), sz * sizeof(uint32_t));
+        if (sz > 0 && offsets[t] < totalCount) {
+            size_t toCopy = std::min(sz, totalCount - offsets[t]);
+            std::memcpy(outIVerts + offsets[t], threadBufs[t].data(), toCopy * sizeof(uint32_t));
         }
+        threadBufs[t].clear();
     }
-    return totalCount;
+    for (size_t t = (size_t)nThreads; t < threadBufs.size(); ++t) {
+        threadBufs[t].clear();
+    }
+    return (int)totalCount;
 }
 }
 
@@ -93,6 +113,10 @@ int strokeFlatten(
     float alphaRatioX, float alphaRatioY, float alphaSide,
     const float* alphaLookAt, bool alphaXSym
 ) {
+    if (nbIVerts <= 0 || !verts || !vertProxy || !materials || !iVerts ||
+        !std::isfinite(radius) || radius <= 1e-7f || !std::isfinite(intensity)) {
+        return 0;
+    }
 
     float comp = negative ? -1.0f : 1.0f;
     float p = (1.0f - focalShift) / 2.0f;
@@ -143,7 +167,8 @@ int strokeFlatten(
 
         // Alpha map value
         float alphaVal = 1.0f;
-        if (hasAlpha && alphaTex && alphaLookAt) {
+        if (hasAlpha && alphaTex && alphaLookAt && alphaWidth > 0 && alphaHeight > 0 &&
+            std::isfinite(alphaSide) && std::abs(alphaSide) > 1e-12f) {
             float xn = alphaRatioY * (alphaLookAt[0] * vx + alphaLookAt[4] * vy + alphaLookAt[8] * vz + alphaLookAt[12]) / (alphaXSym ? -alphaSide : alphaSide);
             float yn = alphaRatioX * (alphaLookAt[1] * vx + alphaLookAt[5] * vy + alphaLookAt[9] * vz + alphaLookAt[13]) / alphaSide;
 
@@ -193,6 +218,9 @@ static void laplacianSmooth(
     const uint32_t* __restrict iVerts, int nbIVerts,
     float* __restrict outSmoothVerts
 ) {
+    if (!verts || !vrvStartCount || !vertRingVert || !vertOnEdge || !iVerts || !outSmoothVerts || nbIVerts <= 0) {
+        return;
+    }
     #pragma omp parallel for schedule(static) if(nbIVerts > 1000)
     for (int i = 0; i < nbIVerts; ++i) {
         uint32_t id = iVerts[i];
@@ -280,7 +308,9 @@ int strokeSmooth(
     const float* alphaLookAt, bool alphaXSym
 ) {
 
-    if (nbIVerts <= 0 || intensity <= 0.0f) return 0;
+    if (nbIVerts <= 0 || intensity <= 0.0f || !std::isfinite(intensity) ||
+        !verts || !normals || !materials || !vrvStartCount || !vertRingVert || !vertOnEdge || !iVerts ||
+        !std::isfinite(radius) || radius < 0.0f) return 0;
 
     static std::vector<float> smoothVerts;
     if (smoothVerts.size() < static_cast<size_t>(nbIVerts * 3)) {
@@ -341,7 +371,8 @@ int strokeSmooth(
 
                 // Alpha map value
                 float alphaVal = 1.0f;
-                if (hasAlpha && alphaTex && alphaLookAt) {
+                if (hasAlpha && alphaTex && alphaLookAt && alphaWidth > 0 && alphaHeight > 0 &&
+                    std::isfinite(alphaSide) && std::abs(alphaSide) > 1e-12f) {
                     float xn = alphaRatioY * (alphaLookAt[0] * vx + alphaLookAt[4] * vy + alphaLookAt[8] * vz + alphaLookAt[12]) / (alphaXSym ? -alphaSide : alphaSide);
                     float yn = alphaRatioX * (alphaLookAt[1] * vx + alphaLookAt[5] * vy + alphaLookAt[9] * vz + alphaLookAt[13]) / alphaSide;
 
@@ -469,7 +500,8 @@ int strokeSmooth(
 
                     // Alpha map value
                     float alphaVal = 1.0f;
-                    if (hasAlpha && alphaTex && alphaLookAt) {
+                    if (hasAlpha && alphaTex && alphaLookAt && alphaWidth > 0 && alphaHeight > 0 &&
+                        std::isfinite(alphaSide) && std::abs(alphaSide) > 1e-12f) {
                         float xn = alphaRatioY * (alphaLookAt[0] * vx + alphaLookAt[4] * vy + alphaLookAt[8] * vz + alphaLookAt[12]) / (alphaXSym ? -alphaSide : alphaSide);
                         float yn = alphaRatioX * (alphaLookAt[1] * vx + alphaLookAt[5] * vy + alphaLookAt[9] * vz + alphaLookAt[13]) / alphaSide;
 
@@ -545,7 +577,7 @@ int strokeSmooth(
                     localVerts.push_back(id);
                 }
             }
-            writeIdx = mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
+            writeIdx = mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts, nbIVerts);
         }
         nbIVerts = writeIdx;
     }
@@ -560,9 +592,11 @@ uint32_t getFacesFromVerticesFast(
     uint8_t* tagFlags,
     uint8_t* tagEpoch,
     uint32_t nbFaces,
-    uint32_t nbVerts
+    uint32_t nbVerts,
+    uint32_t outCapacity,
+    size_t vertRingFaceSize
 ) {
-    if (!tagEpoch || !tagFlags || !iVerts || !vrfStartCount || !vertRingFace || !outIFaces) {
+    if (!tagEpoch || !tagFlags || !iVerts || !vrfStartCount || !vertRingFace || !outIFaces || nbIVerts == 0 || nbFaces == 0) {
         return 0;
     }
 
@@ -584,21 +618,30 @@ uint32_t getFacesFromVerticesFast(
         for (uint32_t i = 0; i < nbIVerts; ++i) {
             if (i + 4 < nbIVerts) {
                 uint32_t nextId = iVerts[i + 4];
-                __builtin_prefetch(&vrfStartCount[nextId * 2], 0, 2);
+                if (nbVerts == 0 || nextId < nbVerts) {
+                    __builtin_prefetch(&vrfStartCount[nextId * 2], 0, 2);
+                }
             }
 
             uint32_t idVert = iVerts[i];
             if (nbVerts > 0 && idVert >= nbVerts) continue;
             uint32_t start = vrfStartCount[idVert * 2];
             uint32_t count = vrfStartCount[idVert * 2 + 1];
+            if (vertRingFaceSize > 0 && static_cast<uint64_t>(start) + count > vertRingFaceSize) continue;
 
             for (uint32_t j = start; j < start + count; ++j) {
                 if (j + 4 < start + count) {
-                    __builtin_prefetch(&tagFlags[vertRingFace[j + 4]], 1, 2);
+                    uint32_t nextFace = vertRingFace[j + 4];
+                    if (nextFace < nbFaces) {
+                        __builtin_prefetch(&tagFlags[nextFace], 1, 2);
+                    }
                 }
                 uint32_t iFace = vertRingFace[j];
                 if (iFace < nbFaces && tagFlags[iFace] != epoch) {
                     tagFlags[iFace] = epoch;
+                    if (outCapacity > 0 && acc >= outCapacity) {
+                        return acc;
+                    }
                     outIFaces[acc++] = iFace;
                 }
             }
@@ -625,17 +668,23 @@ uint32_t getFacesFromVerticesFast(
         for (int64_t i = 0; i < (int64_t)nbIVerts; ++i) {
             if (i + 4 < (int64_t)nbIVerts) {
                 uint32_t nextId = iVerts[i + 4];
-                __builtin_prefetch(&vrfStartCount[nextId * 2], 0, 2);
+                if (nbVerts == 0 || nextId < nbVerts) {
+                    __builtin_prefetch(&vrfStartCount[nextId * 2], 0, 2);
+                }
             }
 
             uint32_t idVert = iVerts[i];
             if (nbVerts > 0 && idVert >= nbVerts) continue;
             uint32_t start = vrfStartCount[idVert * 2];
             uint32_t count = vrfStartCount[idVert * 2 + 1];
+            if (vertRingFaceSize > 0 && static_cast<uint64_t>(start) + count > vertRingFaceSize) continue;
 
             for (uint32_t j = start; j < start + count; ++j) {
                 if (j + 4 < start + count) {
-                    __builtin_prefetch(&tagFlags[vertRingFace[j + 4]], 1, 2);
+                    uint32_t nextFace = vertRingFace[j + 4];
+                    if (nextFace < nbFaces) {
+                        __builtin_prefetch(&tagFlags[nextFace], 1, 2);
+                    }
                 }
                 uint32_t iFace = vertRingFace[j];
                 if (iFace < nbFaces && tagFlags[iFace] != epoch) {
@@ -648,20 +697,186 @@ uint32_t getFacesFromVerticesFast(
         }
     }
 
-    size_t offsets[129] = {0};
-    int numMergeThreads = std::min(maxThreads, 128);
+    size_t stackOffsets[129];
+    std::vector<size_t> heapOffsets;
+    int numMergeThreads = std::min(maxThreads, (int)s_threadFaces.size());
+    size_t* offsets = stackOffsets;
+    if (numMergeThreads > 128) {
+        heapOffsets.resize(numMergeThreads + 1, 0);
+        offsets = heapOffsets.data();
+    } else {
+        offsets[0] = 0;
+    }
     for (int t = 0; t < numMergeThreads; ++t) {
         offsets[t + 1] = offsets[t] + s_threadFaces[t].size();
     }
-    uint32_t totalFaces = (uint32_t)offsets[numMergeThreads];
+    size_t totalFaces = offsets[numMergeThreads];
+    if (outCapacity > 0 && totalFaces > (size_t)outCapacity) {
+        totalFaces = (size_t)outCapacity;
+    }
     #pragma omp parallel for schedule(static) if(totalFaces > 8192)
     for (int t = 0; t < numMergeThreads; ++t) {
         size_t sz = s_threadFaces[t].size();
-        if (sz > 0) {
-            std::memcpy(outIFaces + offsets[t], s_threadFaces[t].data(), sz * sizeof(uint32_t));
+        if (sz > 0 && offsets[t] < totalFaces) {
+            size_t toCopy = std::min(sz, totalFaces - offsets[t]);
+            std::memcpy(outIFaces + offsets[t], s_threadFaces[t].data(), toCopy * sizeof(uint32_t));
+        }
+        s_threadFaces[t].clear();
+    }
+    for (size_t t = (size_t)numMergeThreads; t < s_threadFaces.size(); ++t) {
+        s_threadFaces[t].clear();
+    }
+    return static_cast<uint32_t>(totalFaces);
+}
+
+uint32_t getFacesFromVerticesFast(
+    const uint32_t* iVerts, uint32_t nbIVerts,
+    const uint32_t* vrfStartCount,
+    const uint32_t* vertRingFace,
+    size_t vertRingFaceSize,
+    std::vector<uint32_t>& outIFaces,
+    uint8_t* tagFlags,
+    uint8_t* tagEpoch,
+    uint32_t nbFaces,
+    uint32_t nbVerts
+) {
+    if (!tagEpoch || !tagFlags || !iVerts || !vrfStartCount || !vertRingFace || nbIVerts == 0 || nbFaces == 0) {
+        return 0;
+    }
+
+    uint8_t epoch = *tagEpoch + 1;
+    if (epoch == 0) {
+        #pragma omp parallel for schedule(static) if(nbFaces > 65536)
+        for (int64_t i = 0; i < (int64_t)nbFaces; ++i) {
+            tagFlags[i] = 0;
+        }
+        epoch = 1;
+    }
+    *tagEpoch = epoch;
+
+    const int maxThreads = omp_get_max_threads();
+    const bool inParallel = omp_in_parallel();
+
+    if (nbIVerts < 2048 || inParallel || maxThreads <= 1) {
+        size_t minCap = std::min<size_t>(nbFaces, (size_t)nbIVerts * 8 + 1024);
+        if (outIFaces.size() < minCap) {
+            outIFaces.resize(minCap);
+        }
+        uint32_t acc = 0;
+        for (uint32_t i = 0; i < nbIVerts; ++i) {
+            if (i + 4 < nbIVerts) {
+                uint32_t nextId = iVerts[i + 4];
+                if (nbVerts == 0 || nextId < nbVerts) {
+                    __builtin_prefetch(&vrfStartCount[nextId * 2], 0, 2);
+                }
+            }
+
+            uint32_t idVert = iVerts[i];
+            if (nbVerts > 0 && idVert >= nbVerts) continue;
+            uint32_t start = vrfStartCount[idVert * 2];
+            uint32_t count = vrfStartCount[idVert * 2 + 1];
+            if (vertRingFaceSize > 0 && static_cast<uint64_t>(start) + count > vertRingFaceSize) continue;
+
+            for (uint32_t j = start; j < start + count; ++j) {
+                if (j + 4 < start + count) {
+                    uint32_t nextFace = vertRingFace[j + 4];
+                    if (nextFace < nbFaces) {
+                        __builtin_prefetch(&tagFlags[nextFace], 1, 2);
+                    }
+                }
+                uint32_t iFace = vertRingFace[j];
+                if (iFace < nbFaces && tagFlags[iFace] != epoch) {
+                    tagFlags[iFace] = epoch;
+                    if (acc >= outIFaces.size()) {
+                        size_t nextSize = std::min<size_t>(nbFaces, std::max<size_t>(outIFaces.size() * 2, (size_t)acc + 256));
+                        if (nextSize <= outIFaces.size()) return acc;
+                        outIFaces.resize(nextSize);
+                    }
+                    outIFaces[acc++] = iFace;
+                }
+            }
+        }
+        return acc;
+    }
+
+    static std::vector<std::vector<uint32_t>> s_threadFacesVec;
+    if ((int)s_threadFacesVec.size() < maxThreads) {
+        s_threadFacesVec.resize(maxThreads);
+    }
+
+    #pragma omp parallel
+    {
+        int tid = omp_get_thread_num();
+        auto& localFaces = s_threadFacesVec[tid];
+        localFaces.clear();
+        size_t estCount = (nbIVerts * 6 / maxThreads) + 128;
+        if (localFaces.capacity() < estCount) {
+            localFaces.reserve(estCount);
+        }
+
+        #pragma omp for schedule(static)
+        for (int64_t i = 0; i < (int64_t)nbIVerts; ++i) {
+            if (i + 4 < (int64_t)nbIVerts) {
+                uint32_t nextId = iVerts[i + 4];
+                if (nbVerts == 0 || nextId < nbVerts) {
+                    __builtin_prefetch(&vrfStartCount[nextId * 2], 0, 2);
+                }
+            }
+
+            uint32_t idVert = iVerts[i];
+            if (nbVerts > 0 && idVert >= nbVerts) continue;
+            uint32_t start = vrfStartCount[idVert * 2];
+            uint32_t count = vrfStartCount[idVert * 2 + 1];
+            if (vertRingFaceSize > 0 && static_cast<uint64_t>(start) + count > vertRingFaceSize) continue;
+
+            for (uint32_t j = start; j < start + count; ++j) {
+                if (j + 4 < start + count) {
+                    uint32_t nextFace = vertRingFace[j + 4];
+                    if (nextFace < nbFaces) {
+                        __builtin_prefetch(&tagFlags[nextFace], 1, 2);
+                    }
+                }
+                uint32_t iFace = vertRingFace[j];
+                if (iFace < nbFaces && tagFlags[iFace] != epoch) {
+                    std::atomic_ref<uint8_t> ref(tagFlags[iFace]);
+                    if (ref.exchange(epoch, std::memory_order_relaxed) != epoch) {
+                        localFaces.push_back(iFace);
+                    }
+                }
+            }
         }
     }
-    return totalFaces;
+
+    size_t stackOffsets[129];
+    std::vector<size_t> heapOffsets;
+    int numMergeThreads = std::min(maxThreads, (int)s_threadFacesVec.size());
+    size_t* offsets = stackOffsets;
+    if (numMergeThreads > 128) {
+        heapOffsets.resize(numMergeThreads + 1, 0);
+        offsets = heapOffsets.data();
+    } else {
+        offsets[0] = 0;
+    }
+    for (int t = 0; t < numMergeThreads; ++t) {
+        offsets[t + 1] = offsets[t] + s_threadFacesVec[t].size();
+    }
+    size_t totalFaces = offsets[numMergeThreads];
+    if (outIFaces.size() < totalFaces) {
+        outIFaces.resize(totalFaces);
+    }
+    uint32_t* dstPtr = outIFaces.data();
+    #pragma omp parallel for schedule(static) if(totalFaces > 8192)
+    for (int t = 0; t < numMergeThreads; ++t) {
+        size_t sz = s_threadFacesVec[t].size();
+        if (sz > 0) {
+            std::memcpy(dstPtr + offsets[t], s_threadFacesVec[t].data(), sz * sizeof(uint32_t));
+        }
+        s_threadFacesVec[t].clear();
+    }
+    for (size_t t = (size_t)numMergeThreads; t < s_threadFacesVec.size(); ++t) {
+        s_threadFacesVec[t].clear();
+    }
+    return static_cast<uint32_t>(totalFaces);
 }
 
 bool computeAreaNormalAndCenter(
@@ -761,7 +976,10 @@ inline float getAlphaVal(
     const float* alphaLookAt, bool alphaXSym,
     float focalShift, bool focalShiftFalloff
 ) {
-    if (!hasAlpha || !tex || !alphaLookAt) return 1.0f;
+    if (!hasAlpha || !tex || !alphaLookAt || alphaWidth <= 0 || alphaHeight <= 0 ||
+        !std::isfinite(alphaSide) || std::abs(alphaSide) <= 1e-12f) {
+        return 1.0f;
+    }
     float xn = alphaRatioY * (alphaLookAt[0] * vx + alphaLookAt[4] * vy + alphaLookAt[8] * vz + alphaLookAt[12]) / (alphaXSym ? -alphaSide : alphaSide);
     float yn = alphaRatioX * (alphaLookAt[1] * vx + alphaLookAt[5] * vy + alphaLookAt[9] * vz + alphaLookAt[13]) / alphaSide;
 
@@ -841,6 +1059,10 @@ int strokeInflate(
     const float* alphaLookAt, bool alphaXSym,
     bool useAccuCurve, const float* accuCurveLut
 ) {
+    if (nbIVerts <= 0 || !verts || !vertProxy || !materials || !normals || !iVerts ||
+        !std::isfinite(radius) || radius <= 1e-7f || !std::isfinite(intensity)) {
+        return 0;
+    }
 
     float deformIntensity = intensity * radius * 0.1f;
     if (negative) {
@@ -997,7 +1219,7 @@ int strokeInflate(
             localVerts.push_back(id);
         }
     }
-    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
+    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts, nbIVerts);
 }
 
 int strokePinch(
@@ -1013,6 +1235,10 @@ int strokePinch(
     const float* alphaLookAt, bool alphaXSym,
     bool useAccuCurve, const float* accuCurveLut
 ) {
+    if (nbIVerts <= 0 || !verts || !materials || !iVerts ||
+        !std::isfinite(radius) || radius <= 1e-7f || !std::isfinite(intensity)) {
+        return 0;
+    }
 
     float deformIntensity = intensity * 0.05f;
     if (negative) {
@@ -1141,7 +1367,7 @@ int strokePinch(
             localVerts.push_back(id);
         }
     }
-    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
+    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts, nbIVerts);
 }
 
 int strokeCrease(
@@ -1159,6 +1385,10 @@ int strokeCrease(
     const float* alphaLookAt, bool alphaXSym,
     bool useAccuCurve, const float* accuCurveLut
 ) {
+    if (nbIVerts <= 0 || !verts || !vertProxy || !materials || !iVerts ||
+        !std::isfinite(radius) || radius <= 1e-7f || !std::isfinite(intensity)) {
+        return 0;
+    }
 
     float deformIntensity = intensity * 0.07f;
     float brushFactor = deformIntensity * radius;
@@ -1296,7 +1526,7 @@ int strokeCrease(
             localVerts.push_back(id);
         }
     }
-    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
+    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts, nbIVerts);
 }
 
 int strokeVTool(
@@ -1315,7 +1545,10 @@ int strokeVTool(
     const float* alphaLookAt, bool alphaXSym,
     bool useAccuCurve, const float* accuCurveLut
 ) {
-    if (radius <= 0.0f) return 0;
+    if (nbIVerts <= 0 || !verts || !vertProxy || !materials || !iVerts ||
+        !std::isfinite(radius) || radius <= 1e-7f || !std::isfinite(intensity)) {
+        return 0;
+    }
     const float radiusSq = radius * radius;
     float comp = negative ? -1.0f : 1.0f;
     float maxDepth = radius * intensity * 2.2f;
@@ -1500,7 +1733,7 @@ int strokeVTool(
             localVerts.push_back(id);
         }
     }
-    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
+    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts, nbIVerts);
 }
 
 int strokeMove(
@@ -1517,6 +1750,10 @@ int strokeMove(
     const float* alphaLookAt, bool alphaXSym,
     bool useAccuCurve, const float* accuCurveLut
 ) {
+    if (nbIVerts <= 0 || !verts || !vertProxy || !materials || !iVerts ||
+        !std::isfinite(radius) || radius <= 1e-7f) {
+        return 0;
+    }
     const float radiusSq = radius * radius;
     float moveFalloffLut[256];
     bool canUseLut = !useAccuCurve && !hasAlpha;
@@ -1602,6 +1839,10 @@ int strokeDrag(
     const float* alphaLookAt, bool alphaXSym,
     bool useAccuCurve, const float* accuCurveLut
 ) {
+    if (nbIVerts <= 0 || !verts || !materials || !iVerts ||
+        !std::isfinite(radius) || radius <= 1e-7f) {
+        return 0;
+    }
     const float radiusSq = radius * radius;
     #pragma omp parallel for schedule(static) if(nbIVerts > 1000)
     for (int i = 0; i < nbIVerts; ++i) {
@@ -1663,7 +1904,7 @@ int strokeElastic(
     bool useAccuCurve, const float* accuCurveLut
 ) {
 
-    if (radius <= 1e-7f || nbIVerts <= 0 || !verts || !vertProxy || !materials || !iVerts) {
+    if (!std::isfinite(radius) || radius <= 1e-7f || nbIVerts <= 0 || !verts || !vertProxy || !materials || !iVerts) {
         return 0;
     }
 
@@ -1751,7 +1992,8 @@ int strokeSnakeHook(
     bool negative,
     bool useAccuCurve, const float* accuCurveLut
 ) {
-    if (radius <= 1e-7f || nbIVerts <= 0 || !verts || !materials || !iVerts) {
+    if (!std::isfinite(radius) || radius <= 1e-7f || nbIVerts <= 0 || !verts || !materials || !iVerts ||
+        !std::isfinite(intensity)) {
         return 0;
     }
 
@@ -1854,6 +2096,10 @@ int strokeMask(
     float alphaRatioX, float alphaRatioY, float alphaSide,
     const float* alphaLookAt, bool alphaXSym
 ) {
+    if (nbIVerts <= 0 || !verts || !materials || !iVerts ||
+        !std::isfinite(radius) || radius <= 1e-7f || !std::isfinite(intensity)) {
+        return 0;
+    }
 
     float softness = 2.0f * (1.0f - hardness);
     float maskIntensity = negative ? intensity : -intensity;
@@ -1964,7 +2210,7 @@ int strokeMask(
             localVerts.push_back(id);
         }
     }
-    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
+    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts, nbIVerts);
 }
 
 int strokePaint(
@@ -1982,6 +2228,10 @@ int strokePaint(
     float alphaRatioX, float alphaRatioY, float alphaSide,
     const float* alphaLookAt, bool alphaXSym
 ) {
+    if (nbIVerts <= 0 || !verts || !colors || !materials || !iVerts ||
+        !std::isfinite(radius) || radius <= 1e-7f || !std::isfinite(intensity)) {
+        return 0;
+    }
 
     float softness = 2.0f * (1.0f - hardness);
     const float radiusSq = radius * radius;
@@ -2113,7 +2363,7 @@ int strokePaint(
             localVerts.push_back(id);
         }
     }
-    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
+    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts, nbIVerts);
 }
 
 int strokePaintAll(
@@ -2124,6 +2374,9 @@ int strokePaintAll(
     float roughness, float metallic,
     bool writeAlbedo, bool writeRoughness, bool writeMetalness
 ) {
+    if (nbIVerts <= 0 || !colors || !materials || !iVerts) {
+        return 0;
+    }
     const int maxThreads = omp_get_max_threads();
     const bool inParallel = omp_in_parallel();
 
@@ -2207,7 +2460,7 @@ int strokePaintAll(
             localVerts.push_back(id);
         }
     }
-    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
+    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts, nbIVerts);
 }
 
 inline void rotateVectorQuat(float& vx, float& vy, float& vz, float qx, float qy, float qz, float qw) {
@@ -2238,7 +2491,8 @@ int strokeLocalScale(
 
     float deltaScale = intensity * 0.01f;
     const float radiusSq = radius * radius;
-    if (radius <= 0.0f) return 0;
+    if (nbIVerts <= 0 || !verts || !materials || !iVerts ||
+        !std::isfinite(radius) || radius <= 1e-7f || !std::isfinite(intensity)) return 0;
 
     const int maxThreads = omp_get_max_threads();
     const bool inParallel = omp_in_parallel();
@@ -2353,7 +2607,7 @@ int strokeLocalScale(
             localVerts.push_back(id);
         }
     }
-    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
+    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts, nbIVerts);
 }
 
 int strokeTwist(
@@ -2370,7 +2624,8 @@ int strokeTwist(
 ) {
 
     const float radiusSq = radius * radius;
-    if (radius <= 0.0f) return 0;
+    if (nbIVerts <= 0 || !verts || !materials || !iVerts ||
+        !std::isfinite(radius) || radius <= 1e-7f || !std::isfinite(angle)) return 0;
     const float invRadius = 1.0f / radius;
 
     const int maxThreads = omp_get_max_threads();
@@ -2520,7 +2775,7 @@ int strokeTwist(
             localVerts.push_back(id);
         }
     }
-    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
+    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts, nbIVerts);
 }
 
 int blurMask(
@@ -2624,6 +2879,9 @@ int applyGradientMask(
     bool blurMaskedOnly,
     int totalNbVerts
 ) {
+    if (!verts || !materials || !localToScreen) return 0;
+    if (blurMaskedOnly && (!activeVerts || !origMasks || !blurredMasks || nbActiveVerts <= 0)) return 0;
+    if (!blurMaskedOnly && totalNbVerts <= 0) return 0;
     const float* m = localToScreen;
 
     float m0 = m[0], m4 = m[4], m8 = m[8], m12 = m[12];
@@ -2719,7 +2977,10 @@ int strokeDamStandard(
     const float* alphaLookAt, bool alphaXSym,
     bool useAccuCurve, const float* accuCurveLut
 ) {
-    if (radius <= 0.0f) return 0;
+    if (nbIVerts <= 0 || !verts || !vertProxy || !materials || !iVerts ||
+        !std::isfinite(radius) || radius <= 1e-7f || !std::isfinite(intensity)) {
+        return 0;
+    }
     const float radiusSq = radius * radius;
     float comp = negative ? -1.0f : 1.0f;
     float maxDepth = radius * intensity * 0.8f;
@@ -2921,7 +3182,7 @@ int strokeDamStandard(
             localVerts.push_back(id);
         }
     }
-    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
+    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts, nbIVerts);
 }
 
 int strokeSquareBrush(
@@ -2937,18 +3198,77 @@ int strokeSquareBrush(
     float alphaRatioX, float alphaRatioY, float alphaSide,
     const float* alphaLookAt, bool alphaXSym
 ) {
+    if (nbIVerts <= 0 || !verts || !materials || !iVerts || !alphaLookAt ||
+        !std::isfinite(radius) || radius <= 1e-7f ||
+        !std::isfinite(intensity) ||
+        !std::isfinite(alphaSide) || std::abs(alphaSide) <= 1e-12f ||
+        !std::isfinite(ax) || !std::isfinite(ay) || !std::isfinite(az) ||
+        !std::isfinite(anx) || !std::isfinite(any) || !std::isfinite(anz)) {
+        return 0;
+    }
+
     float comp = negative ? -1.0f : 1.0f;
     float fs = focalShiftFalloff ? focalShift : 0.0f;
     float invAlphaSideX = 1.0f / (alphaXSym ? -alphaSide : alphaSide);
     float invAlphaSideY = 1.0f / alphaSide;
 
     const int maxThreads = omp_get_max_threads();
+    const bool inParallel = omp_in_parallel();
+
+    if (nbIVerts < 500 || inParallel || maxThreads <= 1) {
+        int writeIdx = 0;
+        for (int i = 0; i < nbIVerts; ++i) {
+            if (i + 8 < nbIVerts) {
+                uint32_t nextId = iVerts[i + 8];
+                __builtin_prefetch(&verts[nextId * 3], 1, 1);
+                __builtin_prefetch(&materials[nextId * 3], 0, 1);
+            }
+
+            uint32_t id = iVerts[i];
+            int ind = id * 3;
+
+            float matVal = materials[ind + 2];
+            if (matVal <= 0.0f || !std::isfinite(matVal)) continue;
+
+            float vx = verts[ind];
+            float vy = verts[ind + 1];
+            float vz = verts[ind + 2];
+            if (!std::isfinite(vx) || !std::isfinite(vy) || !std::isfinite(vz)) continue;
+
+            float distToPlane = (vx - ax) * anx + (vy - ay) * any + (vz - az) * anz;
+            if (!std::isfinite(distToPlane) || distToPlane * comp > 0.0f) {
+                continue;
+            }
+
+            float xn = alphaRatioY * (alphaLookAt[0] * vx + alphaLookAt[4] * vy + alphaLookAt[8] * vz + alphaLookAt[12]) * invAlphaSideX;
+            float yn = alphaRatioX * (alphaLookAt[1] * vx + alphaLookAt[5] * vy + alphaLookAt[9] * vz + alphaLookAt[13]) * invAlphaSideY;
+
+            if (!std::isfinite(xn) || !std::isfinite(yn)) continue;
+            float dist = std::max(std::abs(xn), std::abs(yn));
+            if (!(dist < 1.0f)) {
+                continue;
+            }
+
+            float fallOff = getFallOff(dist, fs, false, nullptr);
+            fallOff *= distToPlane * intensity * matVal;
+
+            if (fallOff == 0.0f || !std::isfinite(fallOff)) continue;
+
+            verts[ind] -= anx * fallOff;
+            verts[ind + 1] -= any * fallOff;
+            verts[ind + 2] -= anz * fallOff;
+
+            iVerts[writeIdx++] = id;
+        }
+        return writeIdx;
+    }
+
     static std::vector<std::vector<uint32_t>> s_threadIVerts;
     if ((int)s_threadIVerts.size() < maxThreads) {
         s_threadIVerts.resize(maxThreads);
     }
 
-    #pragma omp parallel if(nbIVerts > 500)
+    #pragma omp parallel
     {
         int tid = omp_get_thread_num();
         auto& localVerts = s_threadIVerts[tid];
@@ -2970,22 +3290,24 @@ int strokeSquareBrush(
             int ind = id * 3;
 
             float matVal = materials[ind + 2];
-            if (matVal <= 0.0f) continue;
+            if (matVal <= 0.0f || !std::isfinite(matVal)) continue;
 
             float vx = verts[ind];
             float vy = verts[ind + 1];
             float vz = verts[ind + 2];
+            if (!std::isfinite(vx) || !std::isfinite(vy) || !std::isfinite(vz)) continue;
 
             float distToPlane = (vx - ax) * anx + (vy - ay) * any + (vz - az) * anz;
-            if (std::isnan(distToPlane) || distToPlane * comp > 0.0f) {
+            if (!std::isfinite(distToPlane) || distToPlane * comp > 0.0f) {
                 continue;
             }
 
             float xn = alphaRatioY * (alphaLookAt[0] * vx + alphaLookAt[4] * vy + alphaLookAt[8] * vz + alphaLookAt[12]) * invAlphaSideX;
             float yn = alphaRatioX * (alphaLookAt[1] * vx + alphaLookAt[5] * vy + alphaLookAt[9] * vz + alphaLookAt[13]) * invAlphaSideY;
 
+            if (!std::isfinite(xn) || !std::isfinite(yn)) continue;
             float dist = std::max(std::abs(xn), std::abs(yn));
-            if (std::isnan(xn) || std::isnan(yn) || !(dist < 1.0f)) {
+            if (!(dist < 1.0f)) {
                 continue;
             }
 
@@ -3001,7 +3323,7 @@ int strokeSquareBrush(
             localVerts.push_back(id);
         }
     }
-    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
+    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts, nbIVerts);
 }
 
 int strokeBrush(
@@ -3018,7 +3340,8 @@ int strokeBrush(
     int stampType, int stampSides, float stampInnerRatio, float stampAngle, float stampBlur,
     const float* alphaLookAt, bool alphaXSym
 ) {
-    if (radius <= 0.0f) return 0;
+    if (nbIVerts <= 0 || !verts || !materials || !iVerts || !alphaLookAt ||
+        !std::isfinite(radius) || radius <= 1e-7f || !std::isfinite(intensity)) return 0;
 
     float angleRad = stampAngle * (3.1415926535f / 180.0f);
     float cosA = std::cos(angleRad);
@@ -3027,12 +3350,13 @@ int strokeBrush(
     float invRadiusY = 1.0f / radius;
 
     const int maxThreads = omp_get_max_threads();
+    const bool inParallel = omp_in_parallel();
     static std::vector<std::vector<uint32_t>> s_threadIVerts;
     if ((int)s_threadIVerts.size() < maxThreads) {
         s_threadIVerts.resize(maxThreads);
     }
 
-    #pragma omp parallel if(nbIVerts > 500)
+    #pragma omp parallel if(nbIVerts > 500 && !inParallel && maxThreads > 1)
     {
         int tid = omp_get_thread_num();
         auto& localVerts = s_threadIVerts[tid];
@@ -3173,7 +3497,7 @@ int strokeBrush(
             localVerts.push_back(id);
         }
     }
-    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
+    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts, nbIVerts);
 }
 
 int strokeRake(
@@ -3195,7 +3519,8 @@ int strokeRake(
     bool rakeRidgesOnly,
     const float* alphaLookAt, bool alphaXSym
 ) {
-    if (radius <= 0.0f || nbIVerts <= 0) return 0;
+    if (nbIVerts <= 0 || !verts || !materials || !iVerts || !alphaLookAt ||
+        !std::isfinite(radius) || radius <= 1e-7f || !std::isfinite(intensity)) return 0;
 
     float comp = negative ? -1.0f : 1.0f;
     float invRadiusX = 1.0f / (alphaXSym ? -radius : radius);
@@ -3205,12 +3530,13 @@ int strokeRake(
     float teeth = static_cast<float>(std::max(1, rakeTeethCount));
 
     const int maxThreads = omp_get_max_threads();
+    const bool inParallel = omp_in_parallel();
     static std::vector<std::vector<uint32_t>> s_threadIVerts;
     if ((int)s_threadIVerts.size() < maxThreads) {
         s_threadIVerts.resize(maxThreads);
     }
 
-    #pragma omp parallel if(nbIVerts > 500)
+    #pragma omp parallel if(nbIVerts > 500 && !inParallel && maxThreads > 1)
     {
         int tid = omp_get_thread_num();
         auto& localVerts = s_threadIVerts[tid];
@@ -3351,7 +3677,7 @@ int strokeRake(
             localVerts.push_back(id);
         }
     }
-    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
+    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts, nbIVerts);
 }
 
 int strokeDeleteLayer(
@@ -3368,16 +3694,18 @@ int strokeDeleteLayer(
     float alphaRatioX, float alphaRatioY, float alphaSide,
     const float* alphaLookAt, bool alphaXSym
 ) {
-    if (nbIVerts <= 0 || !baseVerts || !layerDeltaVerts || !finalVerts || !iVerts) return 0;
+    if (nbIVerts <= 0 || !baseVerts || !layerDeltaVerts || !finalVerts || !iVerts ||
+        !std::isfinite(radius) || radius <= 1e-7f || !std::isfinite(intensity)) return 0;
     const float radiusSq = radius * radius;
 
     const int maxThreads = omp_get_max_threads();
+    const bool inParallel = omp_in_parallel();
     static std::vector<std::vector<uint32_t>> s_threadIVerts;
     if ((int)s_threadIVerts.size() < maxThreads) {
         s_threadIVerts.resize(maxThreads);
     }
 
-    #pragma omp parallel if(nbIVerts > 500)
+    #pragma omp parallel if(nbIVerts > 500 && !inParallel && maxThreads > 1)
     {
         int tid = omp_get_thread_num();
         auto& localVerts = s_threadIVerts[tid];
@@ -3445,7 +3773,7 @@ int strokeDeleteLayer(
             localVerts.push_back(id);
         }
     }
-    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts);
+    return mergeCompactedThreadBuffers(s_threadIVerts, maxThreads, iVerts, nbIVerts);
 }
 
 

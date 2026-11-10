@@ -1,9 +1,12 @@
 #include "ZBrushWatcher.h"
 #include <SDL2/SDL.h>
 #include "ZBrushBridgeConfig.h"
+#include "common/CrashReporter.h"
+#include "common/ErrorReporter.h"
 
 #include <chrono>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -222,6 +225,8 @@ bool ZBrushWatcher::isFileReady(const std::string& filePath, int maxRetries, int
 }
 
 void ZBrushWatcher::watchThreadFunc() {
+    CrashReporter::registerCurrentThread("ZBrushWatcherThread");
+    try {
 #ifdef _WIN32
     std::string currentDir = getWatchDirectory();
     for (char& c : currentDir) {
@@ -244,6 +249,10 @@ void ZBrushWatcher::watchThreadFunc() {
 
     if (hDir == INVALID_HANDLE_VALUE) {
         m_state.store(WatcherState::Error);
+        ErrorReporter::instance().reportWarning("ZBrush Watcher",
+                                                "Failed to monitor ZBrush bridge directory: " + currentDir,
+                                                "Win32 CreateFileW error: " + std::to_string((unsigned long)GetLastError()),
+                                                false);
         while (!m_stopRequested.load()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
         }
@@ -411,7 +420,15 @@ void ZBrushWatcher::watchThreadFunc() {
                                     ev.user.code = 0x676F73; // 'gos'
                                     SDL_PushEvent(&ev);
 
-                                } catch (...) {}
+                                } catch (const std::exception& e) {
+                                    ErrorReporter::instance().reportWarning("ZBrush Sync",
+                                                                            "Failed to read ZBrush scene manifest.",
+                                                                            e.what(), false);
+                                } catch (...) {
+                                    ErrorReporter::instance().reportWarning("ZBrush Sync",
+                                                                            "Unknown error reading ZBrush scene manifest.",
+                                                                            "", false);
+                                }
                             }
                         }
                     }
@@ -504,7 +521,7 @@ void ZBrushWatcher::watchThreadFunc() {
         }
     }
 
-    CloseHandle(ov.hEvent);
+    if (ov.hEvent) CloseHandle(ov.hEvent);
     CloseHandle(hDir);
 #else
     // Non-Windows polling fallback
@@ -512,18 +529,19 @@ void ZBrushWatcher::watchThreadFunc() {
     fs::file_time_type lastManifestTime{};
     while (!m_stopRequested.load()) {
         std::string manifestPath = getWatchDirectory() + "scene_manifest.json";
-        if (fs::exists(manifestPath)) {
-            auto curTime = fs::last_write_time(manifestPath);
-            if (curTime != lastManifestTime) {
+        std::error_code ec;
+        if (fs::exists(manifestPath, ec)) {
+            auto curTime = fs::last_write_time(manifestPath, ec);
+            if (!ec && curTime != lastManifestTime) {
                 lastManifestTime = curTime;
                 forceReloadScene();
             }
         }
 
         std::string meshPath = getWatchDirectory() + "mesh.GoZ";
-        if (fs::exists(meshPath)) {
-            auto curTime = fs::last_write_time(meshPath);
-            if (curTime != lastMeshTime) {
+        if (fs::exists(meshPath, ec)) {
+            auto curTime = fs::last_write_time(meshPath, ec);
+            if (!ec && curTime != lastMeshTime) {
                 lastMeshTime = curTime;
                 forceReloadMesh();
             }
@@ -531,6 +549,25 @@ void ZBrushWatcher::watchThreadFunc() {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 #endif
+    } catch (const std::exception& e) {
+        m_state.store(WatcherState::Error);
+        m_running.store(false);
+        ErrorReporter::instance().reportError(
+            "ZBrush Watcher Error",
+            "ZBrush background watcher stopped after an unexpected error.",
+            e.what(),
+            false
+        );
+    } catch (...) {
+        m_state.store(WatcherState::Error);
+        m_running.store(false);
+        ErrorReporter::instance().reportError(
+            "ZBrush Watcher Error",
+            "ZBrush background watcher stopped with an unknown exception.",
+            "",
+            false
+        );
+    }
 }
 
 bool ZBrushWatcher::forceReloadMesh() {

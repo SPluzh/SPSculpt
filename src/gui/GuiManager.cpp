@@ -8,6 +8,8 @@
 #include "common/Constants.h"
 #include "common/Version.h"
 #include "common/Logger.h"
+#include "common/CrashReporter.h"
+#include "common/ErrorReporter.h"
 #include "common/FormatConstants.h"
 #include "common/StringUtils.h"
 #include "render/AngleRenderer.h"
@@ -51,7 +53,6 @@
 #include "mesh/Topology.h"
 #include "sculpt/Remesh.h"
 #include "files/MeshUtils.h"
-#include "common/Logger.h"
 #define STBI_WINDOWS_UTF8
 #include "../third_party/stb_image.h"
 #include <filesystem>
@@ -360,73 +361,130 @@ GLuint GuiManager::getXrayIconTexture() {
 
 bool GuiManager::openSceneFromPath(const std::string& path, Scene& scene, SculptManager* sculpt, AngleRenderer* renderer) {
     if (path.empty()) return false;
-    auto tStart = std::chrono::high_resolution_clock::now();
-    AngleRenderer* r = renderer ? renderer : m_renderer;
-    snprintf(m_importPath, sizeof(m_importPath), "%s", path.c_str());
-    scene.clear();
-    uint64_t loadedWorkTime = 0;
-    auto newMeshes = FileManager::importFiles(path, &scene, r, sculpt, &loadedWorkTime);
-    auto tImportEnd = std::chrono::high_resolution_clock::now();
 
-    for (auto* mesh : newMeshes) {
-        scene.addMesh(mesh);
+    CrashReporter::ScopedStage openStage("FileIO::OpenScene");
+    CrashReporter::recordBreadcrumb("FILE", "OpenScene %s", path.c_str());
+
+    std::error_code existEc;
+#ifdef _WIN32
+    std::filesystem::path fsPath(utf8ToWide(path));
+#else
+    std::filesystem::path fsPath(path);
+#endif
+    if (!std::filesystem::exists(fsPath, existEc)) {
+        ErrorReporter::instance().reportError(
+            "Open Scene Failed",
+            "File not found: " + path,
+            existEc ? existEc.message() : "",
+            true
+        );
+        return false;
     }
 
-    if (r) {
-        int w = r->getWidth();
-        int h = r->getHeight();
-        float dpi = r->getDpiScale();
-        if (w > 0 && h > 0) {
-            if (scene.getSplitMode() != Scene::SplitMode::OFF) {
-                int halfW = static_cast<int>((w / 2) / dpi);
-                int logicalH = static_cast<int>(h / dpi);
-                scene.getCamera().onResize(halfW, logicalH);
-                if (scene.getCameraRight()) {
-                    scene.getCameraRight()->onResize(static_cast<int>((w - w / 2) / dpi), logicalH);
-                }
-            } else {
-                int logicalW = static_cast<int>(w / dpi);
-                int logicalH = static_cast<int>(h / dpi);
-                scene.getCamera().onResize(logicalW, logicalH);
-            }
-        }
-    }
+    HistoryState rollbackState = scene.saveCurrentState(true);
+    std::string prevScenePath = m_currentScenePath;
 
-    auto tHistStart = std::chrono::high_resolution_clock::now();
-    if (!newMeshes.empty()) {
-        scene.selectMesh(newMeshes.front());
+    try {
+        auto tStart = std::chrono::high_resolution_clock::now();
+        AngleRenderer* r = renderer ? renderer : m_renderer;
+        snprintf(m_importPath, sizeof(m_importPath), "%s", path.c_str());
+        scene.clear();
+        uint64_t loadedWorkTime = 0;
+        auto newMeshes = FileManager::importFiles(path, &scene, r, sculpt, &loadedWorkTime);
+        auto tImportEnd = std::chrono::high_resolution_clock::now();
+
         bool isProject = (FileManager::getExtension(path) == Format::PROJECT_EXT || FileManager::getExtension(path) == Format::LEGACY_EXT);
-        if (!isProject) {
-            scene.getCamera().resetViewToMeshes(newMeshes, false);
-            if (scene.getCameraRight()) {
-                scene.getCameraRight()->resetViewToMeshes(newMeshes, false);
+        if (!isProject && newMeshes.empty()) {
+            scene.restoreState(rollbackState);
+            m_currentScenePath = prevScenePath;
+            ErrorReporter::instance().reportError(
+                "Open Scene Failed",
+                "Failed to load any geometry from '" + path + "'. Previous scene restored.",
+                "",
+                true
+            );
+            return false;
+        }
+
+        for (auto* mesh : newMeshes) {
+            scene.addMesh(mesh);
+        }
+
+        if (r) {
+            int w = r->getWidth();
+            int h = r->getHeight();
+            float dpi = r->getDpiScale();
+            if (w > 0 && h > 0) {
+                if (scene.getSplitMode() != Scene::SplitMode::OFF) {
+                    int halfW = static_cast<int>((w / 2) / dpi);
+                    int logicalH = static_cast<int>(h / dpi);
+                    scene.getCamera().onResize(halfW, logicalH);
+                    if (scene.getCameraRight()) {
+                        scene.getCameraRight()->onResize(static_cast<int>((w - w / 2) / dpi), logicalH);
+                    }
+                } else {
+                    int logicalW = static_cast<int>(w / dpi);
+                    int logicalH = static_cast<int>(h / dpi);
+                    scene.getCamera().onResize(logicalW, logicalH);
+                }
             }
         }
-        scene.pushHistoryState();
-    }
-    auto tHistEnd = std::chrono::high_resolution_clock::now();
 
-    if (FileManager::getExtension(path) == Format::PROJECT_EXT || FileManager::getExtension(path) == Format::LEGACY_EXT) {
-        m_currentScenePath = path;
-        m_workTimer.reset();
-        m_workTimer.setTotalSeconds(loadedWorkTime);
-        m_workTimer.startSession();
-    } else {
-        m_currentScenePath.clear();
-    }
-    scene.setModified(false);
+        auto tHistStart = std::chrono::high_resolution_clock::now();
+        if (!newMeshes.empty()) {
+            scene.selectMesh(newMeshes.front());
+            if (!isProject) {
+                scene.getCamera().resetViewToMeshes(newMeshes, false);
+                if (scene.getCameraRight()) {
+                    scene.getCameraRight()->resetViewToMeshes(newMeshes, false);
+                }
+            }
+            scene.pushHistoryState();
+        }
+        auto tHistEnd = std::chrono::high_resolution_clock::now();
 
-    double msImport = std::chrono::duration<double, std::milli>(tImportEnd - tStart).count();
-    double msHist = std::chrono::duration<double, std::milli>(tHistEnd - tHistStart).count();
-    double msTotal = std::chrono::duration<double, std::milli>(tHistEnd - tStart).count();
-    sculpt_log("[Scene Import] openSceneFromPath('%s') completed in %.2f ms (ImportFiles: %.2fms, HistoryPush: %.2fms, WorkTime: %llu s)\n",
-              path.c_str(), msTotal, msImport, msHist, static_cast<unsigned long long>(loadedWorkTime));
+        if (isProject) {
+            m_currentScenePath = path;
+            m_workTimer.reset();
+            m_workTimer.setTotalSeconds(loadedWorkTime);
+            m_workTimer.startSession();
+        } else {
+            m_currentScenePath.clear();
+        }
+        scene.setModified(false);
 
-    bool loaded = !newMeshes.empty() || FileManager::getExtension(path) == Format::PROJECT_EXT || FileManager::getExtension(path) == Format::LEGACY_EXT;
-    if (loaded && m_recentFiles && (FileManager::getExtension(path) == Format::PROJECT_EXT || FileManager::getExtension(path) == Format::LEGACY_EXT)) {
-        m_recentFiles->addFile(path);
+        double msImport = std::chrono::duration<double, std::milli>(tImportEnd - tStart).count();
+        double msHist = std::chrono::duration<double, std::milli>(tHistEnd - tHistStart).count();
+        double msTotal = std::chrono::duration<double, std::milli>(tHistEnd - tStart).count();
+        sculpt_log("[Scene Import] openSceneFromPath('%s') completed in %.2f ms (ImportFiles: %.2fms, HistoryPush: %.2fms, WorkTime: %llu s)\n",
+                  path.c_str(), msTotal, msImport, msHist, static_cast<unsigned long long>(loadedWorkTime));
+
+        bool loaded = !newMeshes.empty() || isProject;
+        if (loaded && m_recentFiles && isProject) {
+            m_recentFiles->addFile(path);
+        }
+        return loaded;
+    } catch (const std::exception& e) {
+        scene.restoreState(rollbackState);
+        m_currentScenePath = prevScenePath;
+        ErrorReporter::instance().reportError(
+            "Open Scene Failed",
+            "Exception while loading '" + path + "'. Previous scene restored.",
+            e.what(),
+            true
+        );
+        return false;
+    } catch (...) {
+        scene.restoreState(rollbackState);
+        m_currentScenePath = prevScenePath;
+        ErrorReporter::instance().reportError(
+            "Open Scene Failed",
+            "Unknown error while loading '" + path + "'. Previous scene restored.",
+            "",
+            true
+        );
+        return false;
     }
-    return loaded;
 }
 
 static std::string getThumbCacheDir() {
@@ -499,9 +557,15 @@ void GuiManager::openScene(Scene& scene, SculptManager* sculpt) {
 void GuiManager::saveScene(Scene& scene, SculptManager* sculpt) {
     if (m_currentScenePath.empty()) {
         saveSceneAs(scene, sculpt);
-    } else {
+        return;
+    }
+
+    CrashReporter::ScopedStage saveStage("FileIO::SaveScene");
+    CrashReporter::recordBreadcrumb("FILE", "SaveScene %s", m_currentScenePath.c_str());
+
+    try {
         sculpt_log("[Save Scene] Saving scene to '%s'...\n", m_currentScenePath.c_str());
-        std::vector<uint8_t> thumb = renderSceneThumbnailPng(scene, *m_renderer, 0, 0);
+        std::vector<uint8_t> thumb = m_renderer ? renderSceneThumbnailPng(scene, *m_renderer, 0, 0) : std::vector<uint8_t>{};
         sculpt_log("[Save Scene] Generated thumbnail size: %zu bytes\n", thumb.size());
         uint64_t totalTime = m_workTimer.getTotalSeconds();
         if (FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer, sculpt, thumb, m_savePngNextToProject, totalTime)) {
@@ -522,8 +586,27 @@ void GuiManager::saveScene(Scene& scene, SculptManager* sculpt) {
             }
             sculpt_log("[Save Scene] Successfully saved project to '%s' with work time %llu s\n", m_currentScenePath.c_str(), static_cast<unsigned long long>(totalTime));
         } else {
-            sculpt_log("[Save Scene ERROR] Failed to save project to '%s'\n", m_currentScenePath.c_str());
+            ErrorReporter::instance().reportError(
+                "Save Failed",
+                "Failed to save project to '" + m_currentScenePath + "'.",
+                "",
+                true
+            );
         }
+    } catch (const std::exception& e) {
+        ErrorReporter::instance().reportError(
+            "Save Failed",
+            "Exception while saving project to '" + m_currentScenePath + "'.",
+            e.what(),
+            true
+        );
+    } catch (...) {
+        ErrorReporter::instance().reportError(
+            "Save Failed",
+            "Unknown error while saving project to '" + m_currentScenePath + "'.",
+            "",
+            true
+        );
     }
 }
 
@@ -534,11 +617,17 @@ void GuiManager::saveSceneAs(Scene& scene, SculptManager* sculpt) {
         { "All Files (*.*)", "*.*" }
     };
     std::string path = FileDialog::saveFile(spFilters, Format::PROJECT_EXT, "Save Scene As");
-    if (!path.empty()) {
+    if (path.empty()) return;
+
+    CrashReporter::ScopedStage saveStage("FileIO::SaveSceneAs");
+    CrashReporter::recordBreadcrumb("FILE", "SaveSceneAs %s", path.c_str());
+
+    std::string prevScenePath = m_currentScenePath;
+    try {
         m_currentScenePath = path;
         snprintf(m_exportPath, sizeof(m_exportPath), "%s", path.c_str());
         sculpt_log("[Save Scene As] Saving scene to '%s'...\n", m_currentScenePath.c_str());
-        std::vector<uint8_t> thumb = renderSceneThumbnailPng(scene, *m_renderer, 0, 0);
+        std::vector<uint8_t> thumb = m_renderer ? renderSceneThumbnailPng(scene, *m_renderer, 0, 0) : std::vector<uint8_t>{};
         sculpt_log("[Save Scene As] Generated thumbnail size: %zu bytes\n", thumb.size());
         uint64_t totalTime = m_workTimer.getTotalSeconds();
         if (FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer, sculpt, thumb, m_savePngNextToProject, totalTime)) {
@@ -559,8 +648,30 @@ void GuiManager::saveSceneAs(Scene& scene, SculptManager* sculpt) {
             }
             sculpt_log("[Save Scene As] Successfully saved project to '%s' with work time %llu s\n", m_currentScenePath.c_str(), static_cast<unsigned long long>(totalTime));
         } else {
-            sculpt_log("[Save Scene As ERROR] Failed to save project to '%s'\n", m_currentScenePath.c_str());
+            m_currentScenePath = prevScenePath;
+            ErrorReporter::instance().reportError(
+                "Save As Failed",
+                "Failed to save project to '" + path + "'.",
+                "",
+                true
+            );
         }
+    } catch (const std::exception& e) {
+        m_currentScenePath = prevScenePath;
+        ErrorReporter::instance().reportError(
+            "Save As Failed",
+            "Exception while saving project to '" + path + "'.",
+            e.what(),
+            true
+        );
+    } catch (...) {
+        m_currentScenePath = prevScenePath;
+        ErrorReporter::instance().reportError(
+            "Save As Failed",
+            "Unknown error while saving project to '" + path + "'.",
+            "",
+            true
+        );
     }
 }
 
@@ -623,24 +734,54 @@ void GuiManager::drawUnsavedChangesModal(Scene& scene, bool& quitApp) {
 
 void GuiManager::importFile(Scene& scene, SculptManager* sculpt) {
     std::string path = FileDialog::openFile(FileDialog::getImportFilters(), "Import File");
-    if (!path.empty()) {
+    if (path.empty()) return;
+
+    CrashReporter::ScopedStage importStage("FileIO::Import");
+    CrashReporter::recordBreadcrumb("FILE", "Import %s", path.c_str());
+
+    std::error_code existEc;
+#ifdef _WIN32
+    std::filesystem::path fsPath(utf8ToWide(path));
+#else
+    std::filesystem::path fsPath(path);
+#endif
+    if (!std::filesystem::exists(fsPath, existEc)) {
+        ErrorReporter::instance().reportError(
+            "Import Failed",
+            "File not found: " + path,
+            existEc ? existEc.message() : "",
+            true
+        );
+        return;
+    }
+
+    HistoryState rollbackState = scene.saveCurrentState(false);
+    try {
         auto tStart = std::chrono::high_resolution_clock::now();
         snprintf(m_importPath, sizeof(m_importPath), "%s", path.c_str());
         auto newMeshes = FileManager::importFiles(path, &scene, m_renderer, sculpt);
         auto tImportEnd = std::chrono::high_resolution_clock::now();
 
+        if (newMeshes.empty()) {
+            ErrorReporter::instance().reportWarning(
+                "Import File",
+                "No meshes found or failed to import '" + path + "'.",
+                "",
+                false
+            );
+            return;
+        }
+
         for (auto* mesh : newMeshes) {
             scene.addMesh(mesh);
         }
         auto tHistStart = std::chrono::high_resolution_clock::now();
-        if (!newMeshes.empty()) {
-            scene.selectMesh(newMeshes.front());
-            scene.getCamera().resetViewToMeshes(newMeshes, false);
-            if (scene.getCameraRight()) {
-                scene.getCameraRight()->resetViewToMeshes(newMeshes, false);
-            }
-            scene.pushHistoryState();
+        scene.selectMesh(newMeshes.front());
+        scene.getCamera().resetViewToMeshes(newMeshes, false);
+        if (scene.getCameraRight()) {
+            scene.getCameraRight()->resetViewToMeshes(newMeshes, false);
         }
+        scene.pushHistoryState();
         auto tHistEnd = std::chrono::high_resolution_clock::now();
 
         double msImport = std::chrono::duration<double, std::milli>(tImportEnd - tStart).count();
@@ -648,19 +789,61 @@ void GuiManager::importFile(Scene& scene, SculptManager* sculpt) {
         double msTotal = std::chrono::duration<double, std::milli>(tHistEnd - tStart).count();
         sculpt_log("[Scene Import] importFile('%s') completed in %.2f ms (ImportFiles: %.2fms, HistoryPush: %.2fms)\n",
                   path.c_str(), msTotal, msImport, msHist);
+    } catch (const std::exception& e) {
+        scene.restoreState(rollbackState);
+        ErrorReporter::instance().reportError(
+            "Import Failed",
+            "Exception while importing '" + path + "'.",
+            e.what(),
+            true
+        );
+    } catch (...) {
+        scene.restoreState(rollbackState);
+        ErrorReporter::instance().reportError(
+            "Import Failed",
+            "Unknown error while importing '" + path + "'.",
+            "",
+            true
+        );
     }
 }
 
 void GuiManager::exportFile(Scene& scene, SculptManager* sculpt) {
     std::string path = FileDialog::saveFile(FileDialog::getExportFilters(), Format::PROJECT_EXT, "Export File");
-    if (!path.empty()) {
+    if (path.empty()) return;
+
+    CrashReporter::ScopedStage exportStage("FileIO::Export");
+    CrashReporter::recordBreadcrumb("FILE", "Export %s", path.c_str());
+
+    try {
         snprintf(m_exportPath, sizeof(m_exportPath), "%s", path.c_str());
         std::string ext = FileManager::getExtension(path);
         std::vector<uint8_t> thumb;
-        if (ext == Format::PROJECT_EXT || ext == Format::LEGACY_EXT) {
+        if ((ext == Format::PROJECT_EXT || ext == Format::LEGACY_EXT) && m_renderer) {
             thumb = renderSceneThumbnailPng(scene, *m_renderer, 0, 0);
         }
-        FileManager::exportMeshes(path, scene.getMeshes(), &scene, m_renderer, sculpt, thumb, m_savePngNextToProject);
+        if (!FileManager::exportMeshes(path, scene.getMeshes(), &scene, m_renderer, sculpt, thumb, m_savePngNextToProject)) {
+            ErrorReporter::instance().reportError(
+                "Export Failed",
+                "Failed to export scene to '" + path + "'.",
+                "",
+                true
+            );
+        }
+    } catch (const std::exception& e) {
+        ErrorReporter::instance().reportError(
+            "Export Failed",
+            "Exception while exporting to '" + path + "'.",
+            e.what(),
+            true
+        );
+    } catch (...) {
+        ErrorReporter::instance().reportError(
+            "Export Failed",
+            "Unknown error while exporting to '" + path + "'.",
+            "",
+            true
+        );
     }
 }
 
@@ -1154,28 +1337,87 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     }
 
     if (m_remeshAsync.state == RemeshState::Done) {
-        applyRemeshResult(scene, m_remeshAsync.result);
+        try {
+            applyRemeshResult(scene, m_remeshAsync.result);
+        } catch (const std::exception& e) {
+            scene.restoreState(m_remeshBeforeState);
+            ErrorReporter::instance().reportError("Voxel Remesh Failed", "Failed to apply remesh result; mesh restored.", e.what(), true);
+        } catch (...) {
+            scene.restoreState(m_remeshBeforeState);
+            ErrorReporter::instance().reportError("Voxel Remesh Failed", "Unknown error applying remesh result; mesh restored.", "", true);
+        }
         sculpt.cancelStroke();
         SDL_SetModState(KMOD_NONE);
         m_remeshAsync.result = RemeshResult(); // Free memory
         m_remeshAsync.state = RemeshState::Idle;
     } else if (m_remeshAsync.state == RemeshState::Error) {
+        std::string errMsg;
+        {
+            std::lock_guard<std::mutex> lock(m_remeshAsync.errMutex);
+            errMsg = m_remeshAsync.errorMessage;
+        }
+        ErrorReporter::instance().reportError(
+            "Voxel Remesh Failed",
+            errMsg.empty() ? "Voxel remesh failed or produced an invalid mesh." : errMsg,
+            "",
+            true
+        );
         m_remeshAsync.state = RemeshState::Idle;
     }
 
     if (m_decimAsync.state == RemeshState::Done) {
-        applyDecimationResult(scene);
+        try {
+            applyDecimationResult(scene);
+        } catch (const std::exception& e) {
+            scene.restoreState(m_decimBeforeState);
+            ErrorReporter::instance().reportError("Decimation Failed", "Failed to apply decimation result; mesh restored.", e.what(), true);
+        } catch (...) {
+            scene.restoreState(m_decimBeforeState);
+            ErrorReporter::instance().reportError("Decimation Failed", "Unknown error applying decimation result; mesh restored.", "", true);
+        }
         sculpt.cancelStroke();
         SDL_SetModState(KMOD_NONE);
         m_decimAsync.state = RemeshState::Idle;
     } else if (m_decimAsync.state == RemeshState::Error) {
+        std::string errMsg;
+        {
+            std::lock_guard<std::mutex> lock(m_decimAsync.errMutex);
+            errMsg = m_decimAsync.errorMessage;
+        }
+        ErrorReporter::instance().reportError(
+            "Decimation Failed",
+            errMsg.empty() ? "Decimation failed or produced invalid mesh." : errMsg,
+            "",
+            true
+        );
         m_decimAsync.state = RemeshState::Idle;
-        showToast("Decimation failed or produced invalid mesh");
     }
 
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
+
+    {
+        auto newErrors = ErrorReporter::instance().pollNewErrors();
+        for (const auto& ev : newErrors) {
+            if (ev.level == LogLevel::Error) {
+                ++m_unreadErrorCount;
+                std::string toastMsg = ev.title.empty() ? ev.message : (ev.title + ": " + ev.message);
+                showErrorToast(toastMsg, 5.5f);
+                if (ev.showBanner) {
+                    m_activeBannerError = ev;
+                    m_hasBannerError = true;
+                }
+            } else if (ev.level == LogLevel::Warning) {
+                std::string toastMsg = ev.title.empty() ? ev.message : (ev.title + ": " + ev.message);
+                showToast(toastMsg, 3.5f);
+                if (ev.showBanner) {
+                    m_activeBannerError = ev;
+                    m_hasBannerError = true;
+                }
+            }
+        }
+    }
 
     if (m_timelapsePlayer.isOpen()) {
         m_timelapsePlayer.update(ImGui::GetIO().DeltaTime, scene);
@@ -7732,10 +7974,12 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             (uint32_t)meshUndoState.sparseVertIndices.size(),
                             selectedMesh->vrfStartCount.data(),
                             selectedMesh->vertRingFace.data(),
-                            s_transformTempFaces.data(),
+                            selectedMesh->vertRingFace.size(),
+                            s_transformTempFaces,
                             s_transformTagFlags.data(),
                             &s_transformTagEpoch,
-                            selectedMesh->nbFaces
+                            (uint32_t)selectedMesh->nbFaces,
+                            (uint32_t)selectedMesh->nbVerts
                         );
                         meshUndoState.affectedFaces.assign(s_transformTempFaces.begin(), s_transformTempFaces.begin() + numIFaces);
                     }
@@ -8270,6 +8514,8 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     drawCameraBookmarksPanel(scene, renderer);
     drawHotkeyHUD();
     drawToastHUD();
+    drawErrorBanner(sculpt, scene);
+    drawPreviousCrashModal();
     if (m_showRecentFilesWindow && m_recentFiles) {
         drawRecentFilesWindow(scene, &sculpt, *m_recentFiles);
     }
@@ -8294,115 +8540,143 @@ void GuiManager::performRemesh(Scene& scene) {
         return;
     }
 
-    selectedMesh->bakeScale();
+    CrashReporter::recordBreadcrumb("REMESH", "Start res=%d verts=%d faces=%d", m_remeshResolution, selectedMesh->nbVerts, selectedMesh->nbFaces);
 
-    m_remeshBeforeState = scene.saveCurrentState();
+    try {
+        selectedMesh->bakeScale();
 
-    // Snapshot mesh data for worker thread
-    auto verts = selectedMesh->verts;
-    auto faces = MeshUtils::triangulate(*selectedMesh);
-    auto colors = selectedMesh->colors;
-    auto materials = selectedMesh->materials;
+        m_remeshBeforeState = scene.saveCurrentState();
 
-    bool keepGroups = m_remeshKeepPolyGroups && !selectedMesh->faceGroups.empty();
-    std::vector<uint32_t> triFaceGroups;
-    if (keepGroups) {
-        triFaceGroups.reserve(selectedMesh->nbFaces * 2);
-        for (int i = 0; i < selectedMesh->nbFaces; ++i) {
-            uint32_t fg = i < (int)selectedMesh->faceGroups.size() ? selectedMesh->faceGroups[i] : 0;
-            triFaceGroups.push_back(fg);
-            uint32_t v3 = selectedMesh->faces[i * 4 + 3];
-            if (v3 != TRI_INDEX) {
+        // Snapshot mesh data for worker thread
+        auto verts = selectedMesh->verts;
+        auto faces = MeshUtils::triangulate(*selectedMesh);
+        auto colors = selectedMesh->colors;
+        auto materials = selectedMesh->materials;
+
+        bool keepGroups = m_remeshKeepPolyGroups && !selectedMesh->faceGroups.empty();
+        std::vector<uint32_t> triFaceGroups;
+        if (keepGroups) {
+            triFaceGroups.reserve(selectedMesh->nbFaces * 2);
+            for (int i = 0; i < selectedMesh->nbFaces; ++i) {
+                uint32_t fg = i < (int)selectedMesh->faceGroups.size() ? selectedMesh->faceGroups[i] : 0;
                 triFaceGroups.push_back(fg);
+                uint32_t v3 = selectedMesh->faces[i * 4 + 3];
+                if (v3 != TRI_INDEX) {
+                    triFaceGroups.push_back(fg);
+                }
             }
         }
-    }
 
-    int nbVerts = selectedMesh->nbVerts;
-    float bbox[6];
-    selectedMesh->computeBbox(bbox);
-    float resolution = (float)m_remeshResolution;
-    
-    float scaleX = glm::length(glm::vec3(selectedMesh->matrix[0]));
-    float scaleY = glm::length(glm::vec3(selectedMesh->matrix[1]));
-    float scaleZ = glm::length(glm::vec3(selectedMesh->matrix[2]));
-    if (scaleX <= 1e-5f) scaleX = 1.0f;
-    if (scaleY <= 1e-5f) scaleY = 1.0f;
-    if (scaleZ <= 1e-5f) scaleZ = 1.0f;
-    
-    float uniformColor[3] = { 0.72f, 0.52f, 0.45f };
-    float uniformMaterial[3] = { 0.5f, 0.0f, 1.0f };
-    if (m_renderer) {
-        uniformColor[0] = m_renderer->getAlbedo()[0];
-        uniformColor[1] = m_renderer->getAlbedo()[1];
-        uniformColor[2] = m_renderer->getAlbedo()[2];
-        uniformMaterial[0] = m_renderer->getRoughness();
-        uniformMaterial[1] = m_renderer->getMetallic();
-    }
+        int nbVerts = selectedMesh->nbVerts;
+        float bbox[6];
+        selectedMesh->computeBbox(bbox);
+        float resolution = (float)m_remeshResolution;
 
-    m_remeshAsync.state = RemeshState::Running;
-    m_remeshAsync.stage = 0;
-    m_remeshAsync.progress = 0;
+        float scaleX = glm::length(glm::vec3(selectedMesh->matrix[0]));
+        float scaleY = glm::length(glm::vec3(selectedMesh->matrix[1]));
+        float scaleZ = glm::length(glm::vec3(selectedMesh->matrix[2]));
+        if (scaleX <= 1e-5f) scaleX = 1.0f;
+        if (scaleY <= 1e-5f) scaleY = 1.0f;
+        if (scaleZ <= 1e-5f) scaleZ = 1.0f;
 
-    std::thread([this,
-        verts = std::move(verts),
-        faces = std::move(faces),
-        colors = std::move(colors),
-        materials = std::move(materials),
-        triFaceGroups = std::move(triFaceGroups),
-        keepGroups,
-        alignSymmetry = m_remeshAlignSymmetry,
-        regularizeQuads = m_remeshRegularizeQuads,
-        keepSharpEdges = m_remeshKeepSharpEdges,
-        keepMasked = m_remeshKeepMasked,
-        nbVerts,
-        bboxArr = std::array<float,6>{bbox[0],bbox[1],bbox[2],bbox[3],bbox[4],bbox[5]},
-        resolution,
-        scaleX,
-        scaleY,
-        scaleZ,
-        uniColorArr = std::array<float,3>{uniformColor[0], uniformColor[1], uniformColor[2]},
-        uniMatArr = std::array<float,3>{uniformMaterial[0], uniformMaterial[1], uniformMaterial[2]}
-    ]() mutable
-    {
-        try {
-            bool hasColors = !colors.empty();
-            bool hasMaterials = !materials.empty();
-            auto result = doRemesh(
-                verts.data(), nbVerts,
-                faces.data(), faces.size() / 3,
-                hasColors ? colors.data() : nullptr,
-                hasMaterials ? materials.data() : nullptr,
-                keepGroups ? triFaceGroups.data() : nullptr,
-                bboxArr.data(),
-                resolution,
-                false, // block
-                false, // smooth
-                false, // manifold (Marching Cubes) -> false uses Surface Nets (quads)
-                uniColorArr.data(),
-                uniMatArr.data(),
-                hasColors,
-                hasMaterials,
-                keepGroups,
-                alignSymmetry,
-                [this](int stage, int pct) {
-                    m_remeshAsync.stage = stage;
-                    m_remeshAsync.progress = pct;
-                },
-                scaleX,
-                scaleY,
-                scaleZ,
-                regularizeQuads,
-                keepSharpEdges,
-                keepMasked,
-                false // useSparseGrid (auto BlockSparseGrid when resolution >= 600)
-            );
-            m_remeshAsync.result = std::move(result);
-            m_remeshAsync.state = RemeshState::Done;
-        } catch (...) {
-            m_remeshAsync.state = RemeshState::Error;
+        float uniformColor[3] = { 0.72f, 0.52f, 0.45f };
+        float uniformMaterial[3] = { 0.5f, 0.0f, 1.0f };
+        if (m_renderer) {
+            uniformColor[0] = m_renderer->getAlbedo()[0];
+            uniformColor[1] = m_renderer->getAlbedo()[1];
+            uniformColor[2] = m_renderer->getAlbedo()[2];
+            uniformMaterial[0] = m_renderer->getRoughness();
+            uniformMaterial[1] = m_renderer->getMetallic();
         }
-    }).detach();
+
+        {
+            std::lock_guard<std::mutex> lock(m_remeshAsync.errMutex);
+            m_remeshAsync.errorMessage.clear();
+        }
+        m_remeshAsync.state = RemeshState::Running;
+        m_remeshAsync.stage = 0;
+        m_remeshAsync.progress = 0;
+
+        std::thread([this,
+            verts = std::move(verts),
+            faces = std::move(faces),
+            colors = std::move(colors),
+            materials = std::move(materials),
+            triFaceGroups = std::move(triFaceGroups),
+            keepGroups,
+            alignSymmetry = m_remeshAlignSymmetry,
+            regularizeQuads = m_remeshRegularizeQuads,
+            keepSharpEdges = m_remeshKeepSharpEdges,
+            keepMasked = m_remeshKeepMasked,
+            nbVerts,
+            bboxArr = std::array<float,6>{bbox[0],bbox[1],bbox[2],bbox[3],bbox[4],bbox[5]},
+            resolution,
+            scaleX,
+            scaleY,
+            scaleZ,
+            uniColorArr = std::array<float,3>{uniformColor[0], uniformColor[1], uniformColor[2]},
+            uniMatArr = std::array<float,3>{uniformMaterial[0], uniformMaterial[1], uniformMaterial[2]}
+        ]() mutable
+        {
+            CrashReporter::registerCurrentThread("RemeshWorker");
+            CrashReporter::ScopedStage workerStage("Worker::Remesh");
+            try {
+                bool hasColors = !colors.empty();
+                bool hasMaterials = !materials.empty();
+                auto result = doRemesh(
+                    verts.data(), nbVerts,
+                    faces.data(), faces.size() / 3,
+                    hasColors ? colors.data() : nullptr,
+                    hasMaterials ? materials.data() : nullptr,
+                    keepGroups ? triFaceGroups.data() : nullptr,
+                    bboxArr.data(),
+                    resolution,
+                    false, // block
+                    false, // smooth
+                    false, // manifold (Marching Cubes) -> false uses Surface Nets (quads)
+                    uniColorArr.data(),
+                    uniMatArr.data(),
+                    hasColors,
+                    hasMaterials,
+                    keepGroups,
+                    alignSymmetry,
+                    [this](int stage, int pct) {
+                        m_remeshAsync.stage = stage;
+                        m_remeshAsync.progress = pct;
+                    },
+                    scaleX,
+                    scaleY,
+                    scaleZ,
+                    regularizeQuads,
+                    keepSharpEdges,
+                    keepMasked,
+                    false // useSparseGrid (auto BlockSparseGrid when resolution >= 600)
+                );
+                if (result.vertices.empty() || result.faces.empty()) {
+                    std::lock_guard<std::mutex> lock(m_remeshAsync.errMutex);
+                    m_remeshAsync.errorMessage = "Voxel remesh produced an empty mesh.";
+                    m_remeshAsync.state = RemeshState::Error;
+                } else {
+                    m_remeshAsync.result = std::move(result);
+                    m_remeshAsync.state = RemeshState::Done;
+                }
+            } catch (const std::exception& e) {
+                std::lock_guard<std::mutex> lock(m_remeshAsync.errMutex);
+                m_remeshAsync.errorMessage = e.what();
+                m_remeshAsync.state = RemeshState::Error;
+            } catch (...) {
+                std::lock_guard<std::mutex> lock(m_remeshAsync.errMutex);
+                m_remeshAsync.errorMessage = "Unknown error in voxel remesh worker.";
+                m_remeshAsync.state = RemeshState::Error;
+            }
+        }).detach();
+    } catch (const std::exception& e) {
+        m_remeshAsync.state = RemeshState::Idle;
+        ErrorReporter::instance().reportError("Voxel Remesh Failed", "Failed to start voxel remesh.", e.what(), true);
+    } catch (...) {
+        m_remeshAsync.state = RemeshState::Idle;
+        ErrorReporter::instance().reportError("Voxel Remesh Failed", "Unknown error starting voxel remesh.", "", true);
+    }
 }
 
 void GuiManager::applyRemeshResult(Scene& scene, const RemeshResult& r) {
@@ -8571,35 +8845,63 @@ void GuiManager::performDecimation(Scene& scene) {
         return;
     }
 
-    selectedMesh->bakeScale();
-    m_decimBeforeState = scene.saveCurrentState();
+    CrashReporter::recordBreadcrumb("DECIMATE", "Start verts=%d faces=%d", selectedMesh->nbVerts, selectedMesh->nbFaces);
 
-    m_decimAsync.state = RemeshState::Running;
-    m_decimAsync.progress = 0;
+    try {
+        selectedMesh->bakeScale();
+        m_decimBeforeState = scene.saveCurrentState();
 
-    auto meshCopy = std::make_unique<Mesh>(*selectedMesh);
-
-    DecimationOptions opts;
-    opts.targetFaces = (m_decimMode == 1) ? m_decimTargetFaces : -1;
-    opts.targetRatio = (m_decimMode == 0) ? m_decimRatio : 0.5f;
-    opts.volumeWeight = m_decimVolumeWeight;
-    opts.preservePolyGroups = m_decimPreservePolyGroups;
-    opts.preserveBoundary = m_decimPreserveBoundary;
-    opts.lockSymmetryPlane = m_decimLockSymmetry;
-    opts.onProgress = [this](int pct) {
-        m_decimAsync.progress = pct;
-    };
-
-    std::thread([this, mesh = std::move(meshCopy), opts]() mutable {
-        try {
-            DecimationResult res = MeshDecimator::simplify(*mesh, opts);
-            m_decimAsync.resultInfo = res;
-            m_decimAsync.resultMesh = std::move(mesh);
-            m_decimAsync.state = res.success ? RemeshState::Done : RemeshState::Error;
-        } catch (...) {
-            m_decimAsync.state = RemeshState::Error;
+        {
+            std::lock_guard<std::mutex> lock(m_decimAsync.errMutex);
+            m_decimAsync.errorMessage.clear();
         }
-    }).detach();
+        m_decimAsync.state = RemeshState::Running;
+        m_decimAsync.progress = 0;
+
+        auto meshCopy = std::make_unique<Mesh>(*selectedMesh);
+
+        DecimationOptions opts;
+        opts.targetFaces = (m_decimMode == 1) ? m_decimTargetFaces : -1;
+        opts.targetRatio = (m_decimMode == 0) ? m_decimRatio : 0.5f;
+        opts.volumeWeight = m_decimVolumeWeight;
+        opts.preservePolyGroups = m_decimPreservePolyGroups;
+        opts.preserveBoundary = m_decimPreserveBoundary;
+        opts.lockSymmetryPlane = m_decimLockSymmetry;
+        opts.onProgress = [this](int pct) {
+            m_decimAsync.progress = pct;
+        };
+
+        std::thread([this, mesh = std::move(meshCopy), opts]() mutable {
+            CrashReporter::registerCurrentThread("DecimationWorker");
+            CrashReporter::ScopedStage workerStage("Worker::Decimation");
+            try {
+                DecimationResult res = MeshDecimator::simplify(*mesh, opts);
+                m_decimAsync.resultInfo = res;
+                m_decimAsync.resultMesh = std::move(mesh);
+                if (!res.success) {
+                    std::lock_guard<std::mutex> lock(m_decimAsync.errMutex);
+                    m_decimAsync.errorMessage = "Mesh decimation failed or produced an invalid mesh.";
+                    m_decimAsync.state = RemeshState::Error;
+                } else {
+                    m_decimAsync.state = RemeshState::Done;
+                }
+            } catch (const std::exception& e) {
+                std::lock_guard<std::mutex> lock(m_decimAsync.errMutex);
+                m_decimAsync.errorMessage = e.what();
+                m_decimAsync.state = RemeshState::Error;
+            } catch (...) {
+                std::lock_guard<std::mutex> lock(m_decimAsync.errMutex);
+                m_decimAsync.errorMessage = "Unknown error in decimation worker thread.";
+                m_decimAsync.state = RemeshState::Error;
+            }
+        }).detach();
+    } catch (const std::exception& e) {
+        m_decimAsync.state = RemeshState::Idle;
+        ErrorReporter::instance().reportError("Decimation Failed", "Failed to start decimation.", e.what(), true);
+    } catch (...) {
+        m_decimAsync.state = RemeshState::Idle;
+        ErrorReporter::instance().reportError("Decimation Failed", "Unknown error starting decimation.", "", true);
+    }
 }
 
 void GuiManager::applyDecimationResult(Scene& scene) {
@@ -12444,8 +12746,10 @@ void GuiManager::drawModelSnapshotWindow(const Scene& scene, AngleRenderer& rend
 void GuiManager::drawDebugLogPanel() {
     if (!m_showDebugLogPanel) return;
 
+    m_unreadErrorCount = 0;
+
     float scale = getUiScale();
-    ImGui::SetNextWindowSize(ImVec2(550.0f * scale, 320.0f * scale), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(640.0f * scale, 360.0f * scale), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Debug Log", &m_showDebugLogPanel)) {
         ImGui::End();
         return;
@@ -12455,13 +12759,26 @@ void GuiManager::drawDebugLogPanel() {
         Logger::instance().clear();
     }
     ImGui::SameLine();
+    if (ImGui::Button(ICON_LC_FOLDER " Open logs/")) {
+        CrashReporter::openLogsDirectory();
+    }
+    ImGui::SameLine();
     static bool autoScroll = true;
     ImGui::Checkbox("Auto-scroll", &autoScroll);
+    ImGui::SameLine();
+    ImGui::TextDisabled("| Errors: %zu  Warnings: %zu",
+                        Logger::instance().getErrorCount(),
+                        Logger::instance().getWarningCount());
+
+    const std::string sessionPath = Logger::instance().getSessionLogPath();
+    if (!sessionPath.empty()) {
+        ImGui::TextDisabled("Session log: %s", sessionPath.c_str());
+    }
 
     ImGui::Separator();
 
     if (ImGui::BeginChild("LogRegion", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar)) {
-        const auto& entries = Logger::instance().getEntries();
+        const auto entries = Logger::instance().getEntriesSnapshot();
         for (const auto& entry : entries) {
             ImVec4 color;
             switch (entry.level) {
@@ -12471,7 +12788,8 @@ void GuiManager::drawDebugLogPanel() {
                 case LogLevel::Error:   color = ImVec4(1.0f, 0.35f, 0.35f, 1.0f); break;
             }
             ImGui::PushStyleColor(ImGuiCol_Text, color);
-            ImGui::Text("[%s] %s", entry.timestamp.c_str(), entry.message.c_str());
+            std::string line = "[" + entry.timestamp + "] " + entry.message;
+            ImGui::TextUnformatted(line.c_str());
             ImGui::PopStyleColor();
         }
 
@@ -13993,18 +14311,32 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
 
             // 6. Debug Log Tab
             case PrefTab_DebugLog: {
+                m_unreadErrorCount = 0;
                 ImGui::Spacing();
                 if (ImGui::Button(ICON_LC_TRASH_2 " Clear Log")) {
                     Logger::instance().clear();
                 }
                 ImGui::SameLine();
+                if (ImGui::Button(ICON_LC_FOLDER " Open logs/")) {
+                    CrashReporter::openLogsDirectory();
+                }
+                ImGui::SameLine();
                 static bool autoScroll = true;
                 ImGui::Checkbox("Auto-scroll", &autoScroll);
+                ImGui::SameLine();
+                ImGui::TextDisabled("| Errors: %zu  Warnings: %zu",
+                                    Logger::instance().getErrorCount(),
+                                    Logger::instance().getWarningCount());
+
+                const std::string sessionPath = Logger::instance().getSessionLogPath();
+                if (!sessionPath.empty()) {
+                    ImGui::TextDisabled("Session log: %s", sessionPath.c_str());
+                }
 
                 ImGui::Separator();
 
                 if (ImGui::BeginChild("LogRegionInPrefs", ImVec2(0, 300.0f * scale), true, ImGuiWindowFlags_HorizontalScrollbar)) {
-                    const auto& entries = Logger::instance().getEntries();
+                    const auto entries = Logger::instance().getEntriesSnapshot();
                     for (const auto& entry : entries) {
                         ImVec4 color;
                         switch (entry.level) {
@@ -14014,7 +14346,8 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                             case LogLevel::Error:   color = ImVec4(1.0f, 0.35f, 0.35f, 1.0f); break;
                         }
                         ImGui::PushStyleColor(ImGuiCol_Text, color);
-                        ImGui::Text("[%s] %s", entry.timestamp.c_str(), entry.message.c_str());
+                        std::string line = "[" + entry.timestamp + "] " + entry.message;
+                        ImGui::TextUnformatted(line.c_str());
                         ImGui::PopStyleColor();
                     }
 
@@ -15591,47 +15924,72 @@ struct ToastItem {
     std::string message;
     float remainingTime;
     float totalDuration;
+    bool isError = false;
 };
 static std::vector<ToastItem> s_toasts;
 static std::mutex s_toastMutex;
 
 void GuiManager::showToast(const std::string& message, float duration) {
     std::lock_guard<std::mutex> lock(s_toastMutex);
-    s_toasts.push_back({ message, duration, duration });
+    s_toasts.push_back({ message, duration, duration, false });
     if (s_toasts.size() > 5) {
         s_toasts.erase(s_toasts.begin());
     }
 }
 
-void GuiManager::drawToastHUD() {
+void GuiManager::showErrorToast(const std::string& message, float duration) {
     std::lock_guard<std::mutex> lock(s_toastMutex);
-    if (s_toasts.empty()) return;
-
-    float dt = ImGui::GetIO().DeltaTime;
-    for (auto it = s_toasts.begin(); it != s_toasts.end(); ) {
-        it->remainingTime -= dt;
-        if (it->remainingTime <= 0.0f) {
-            it = s_toasts.erase(it);
-        } else {
-            ++it;
-        }
+    s_toasts.push_back({ message, duration, duration, true });
+    if (s_toasts.size() > 6) {
+        s_toasts.erase(s_toasts.begin());
     }
-    if (s_toasts.empty()) return;
+}
+
+void GuiManager::drawToastHUD() {
+    std::vector<ToastItem> toastsCopy;
+    {
+        std::lock_guard<std::mutex> lock(s_toastMutex);
+        if (s_toasts.empty()) return;
+
+        float dt = ImGui::GetIO().DeltaTime;
+        for (auto it = s_toasts.begin(); it != s_toasts.end(); ) {
+            it->remainingTime -= dt;
+            if (it->remainingTime <= 0.0f) {
+                it = s_toasts.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        if (s_toasts.empty()) return;
+        toastsCopy = s_toasts;
+    }
 
     float scale = getUiScale();
     ImGuiViewport* viewport = ImGui::GetMainViewport();
 
     float yOffset = 40.0f * scale;
-    for (size_t i = 0; i < s_toasts.size(); ++i) {
-        const auto& toast = s_toasts[i];
-        float alpha = std::clamp(toast.remainingTime / std::min(0.5f, toast.totalDuration), 0.0f, 1.0f);
+    const float maxToastWidth = std::min(520.0f * scale, std::max(260.0f * scale, viewport->Size.x * 0.45f));
+    for (size_t i = 0; i < toastsCopy.size(); ++i) {
+        const auto& toast = toastsCopy[i];
+        float alpha = std::clamp(toast.remainingTime / std::min(0.5f, std::max(0.01f, toast.totalDuration)), 0.0f, 1.0f);
 
         ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + 20.0f * scale, viewport->Pos.y + viewport->Size.y - yOffset), ImGuiCond_Always, ImVec2(0.0f, 1.0f));
-        ImGui::SetNextWindowBgAlpha(0.85f * alpha);
+        ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f), ImVec2(maxToastWidth, 240.0f * scale));
+        ImGui::SetNextWindowBgAlpha((toast.isError ? 0.94f : 0.85f) * alpha);
 
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.10f, 0.12f, 0.85f * alpha));
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.01f, 0.52f, 0.45f, 0.70f * alpha)); // Teal Accent
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, alpha));
+        ImVec4 bgColor = toast.isError
+            ? ImVec4(0.24f, 0.06f, 0.07f, 0.94f * alpha)
+            : ImVec4(0.08f, 0.10f, 0.12f, 0.85f * alpha);
+        ImVec4 borderColor = toast.isError
+            ? ImVec4(0.92f, 0.25f, 0.25f, 0.90f * alpha)
+            : ImVec4(0.01f, 0.52f, 0.45f, 0.70f * alpha);
+        ImVec4 textColor = toast.isError
+            ? ImVec4(1.0f, 0.90f, 0.90f, alpha)
+            : ImVec4(1.0f, 1.0f, 1.0f, alpha);
+
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, bgColor);
+        ImGui::PushStyleColor(ImGuiCol_Border, borderColor);
+        ImGui::PushStyleColor(ImGuiCol_Text, textColor);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f * scale);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f * scale, 8.0f * scale));
 
@@ -15648,13 +16006,175 @@ void GuiManager::drawToastHUD() {
         char winId[32];
         snprintf(winId, sizeof(winId), "##ToastHUD_%zu", i);
         if (ImGui::Begin(winId, nullptr, flags)) {
+            if (toast.isError) {
+                ImGui::TextColored(ImVec4(1.0f, 0.38f, 0.38f, alpha), "%s", ICON_LC_ALERT_TRIANGLE);
+                ImGui::SameLine(0.0f, 6.0f * scale);
+            }
+            ImGui::PushTextWrapPos(maxToastWidth - 28.0f * scale);
             ImGui::TextUnformatted(toast.message.c_str());
+            ImGui::PopTextWrapPos();
             yOffset += (ImGui::GetWindowHeight() + 6.0f * scale);
         }
         ImGui::End();
 
         ImGui::PopStyleVar(2);
         ImGui::PopStyleColor(3);
+    }
+}
+
+static bool openFileOrPathShell(const std::string& path) {
+    if (path.empty()) return false;
+#ifdef _WIN32
+    HINSTANCE res = ShellExecuteW(nullptr, L"open", utf8ToWide(path).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    return reinterpret_cast<uintptr_t>(res) > 32;
+#else
+    std::string cmd = "xdg-open \"" + path + "\" >/dev/null 2>&1 &";
+    return std::system(cmd.c_str()) == 0;
+#endif
+}
+
+void GuiManager::drawErrorBanner(SculptManager& sculpt, Scene& scene) {
+    (void)sculpt;
+    (void)scene;
+    if (!m_hasBannerError) return;
+
+    float scale = getUiScale();
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+
+    const bool isWarning = (m_activeBannerError.level == LogLevel::Warning);
+    const float maxWidth = std::min(760.0f * scale, std::max(360.0f * scale, viewport->Size.x * 0.62f));
+    const float topY = m_showFloatingIsland ? (viewport->Pos.y + 8.0f * scale) : (viewport->Pos.y + 30.0f * scale);
+
+    ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f, topY), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(320.0f * scale, 0.0f), ImVec2(maxWidth, 220.0f * scale));
+    ImGui::SetNextWindowBgAlpha(0.95f);
+
+    ImVec4 bgColor = isWarning
+        ? ImVec4(0.24f, 0.17f, 0.05f, 0.95f)
+        : ImVec4(0.23f, 0.06f, 0.07f, 0.95f);
+    ImVec4 borderColor = isWarning
+        ? ImVec4(0.92f, 0.68f, 0.20f, 0.90f)
+        : ImVec4(0.90f, 0.26f, 0.26f, 0.90f);
+    ImVec4 accentColor = isWarning
+        ? ImVec4(1.0f, 0.80f, 0.30f, 1.0f)
+        : ImVec4(1.0f, 0.42f, 0.42f, 1.0f);
+
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, bgColor);
+    ImGui::PushStyleColor(ImGuiCol_Border, borderColor);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f * scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f * scale, 8.0f * scale));
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar |
+                             ImGuiWindowFlags_NoResize |
+                             ImGuiWindowFlags_NoScrollbar |
+                             ImGuiWindowFlags_NoSavedSettings |
+                             ImGuiWindowFlags_AlwaysAutoResize |
+                             ImGuiWindowFlags_NoFocusOnAppearing |
+                             ImGuiWindowFlags_NoMove;
+
+    if (ImGui::Begin("##GlobalErrorBanner", nullptr, flags)) {
+        ImGui::TextColored(accentColor, "%s", ICON_LC_ALERT_TRIANGLE);
+        ImGui::SameLine(0.0f, 6.0f * scale);
+        std::string header = m_activeBannerError.title.empty()
+            ? (isWarning ? "Warning" : "Operation Failed")
+            : m_activeBannerError.title;
+        if (m_unreadErrorCount > 1) {
+            header += " (" + std::to_string(m_unreadErrorCount) + " new)";
+        }
+        ImGui::TextColored(accentColor, "%s", header.c_str());
+
+        if (!m_activeBannerError.message.empty()) {
+            ImGui::PushTextWrapPos(maxWidth - 28.0f * scale);
+            ImGui::TextUnformatted(m_activeBannerError.message.c_str());
+            if (!m_activeBannerError.detail.empty()) {
+                ImGui::TextDisabled("%s", m_activeBannerError.detail.c_str());
+            }
+            ImGui::PopTextWrapPos();
+        }
+
+        ImGui::Spacing();
+        if (ImGui::Button("Debug Log")) {
+            m_showPreferencesPanel = true;
+            m_preferencesSelectedTab = PrefTab_DebugLog;
+            m_preferencesActiveTab = -1;
+            m_unreadErrorCount = 0;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_LC_FOLDER " Open logs/")) {
+            CrashReporter::openLogsDirectory();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Dismiss")) {
+            m_hasBannerError = false;
+            m_unreadErrorCount = 0;
+        }
+    }
+    ImGui::End();
+
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(2);
+}
+
+void GuiManager::drawPreviousCrashModal() {
+    if (!m_prevCrashInfo.found) return;
+
+    const char* popupId = "Previous Session Crash Detected##PrevCrashModal";
+    if (m_showCrashModal) {
+        ImGui::OpenPopup(popupId);
+        m_showCrashModal = false;
+    }
+
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    float scale = getUiScale();
+    ImGui::SetNextWindowSizeConstraints(ImVec2(460.0f * scale, 0.0f), ImVec2(760.0f * scale, 600.0f * scale));
+
+    if (ImGui::BeginPopupModal(popupId, nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
+        ImGui::TextColored(ImVec4(1.0f, 0.42f, 0.42f, 1.0f), "%s Previous session terminated unexpectedly", ICON_LC_ALERT_TRIANGLE);
+        ImGui::Spacing();
+        ImGui::TextWrapped("A crash report and diagnostic dump were automatically saved so you can inspect the cause.");
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (!m_prevCrashInfo.timestamp.empty()) {
+            ImGui::Text("Time:   %s", m_prevCrashInfo.timestamp.c_str());
+        }
+        if (!m_prevCrashInfo.summary.empty()) {
+            ImGui::TextWrapped("Reason: %s", m_prevCrashInfo.summary.c_str());
+        }
+        if (!m_prevCrashInfo.stage.empty()) {
+            ImGui::Text("Stage:  %s", m_prevCrashInfo.stage.c_str());
+        }
+        if (!m_prevCrashInfo.brushName.empty()) {
+            ImGui::Text("Brush:  %s", m_prevCrashInfo.brushName.c_str());
+        }
+        if (!m_prevCrashInfo.reportPath.empty()) {
+            ImGui::TextDisabled("Report: %s", m_prevCrashInfo.reportPath.c_str());
+        }
+        if (!m_prevCrashInfo.dumpPath.empty()) {
+            ImGui::TextDisabled("Dump:   %s", m_prevCrashInfo.dumpPath.c_str());
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (ImGui::Button(ICON_LC_FOLDER " Open logs/")) {
+            CrashReporter::openLogsDirectory();
+        }
+        if (!m_prevCrashInfo.reportPath.empty()) {
+            ImGui::SameLine();
+            if (ImGui::Button(ICON_LC_FILE_TEXT " Open Report (.txt)")) {
+                openFileOrPathShell(m_prevCrashInfo.reportPath);
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Close", ImVec2(100.0f * scale, 0.0f))) {
+            m_prevCrashInfo.found = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
     }
 }
 
@@ -15973,17 +16493,25 @@ void GuiManager::pollRecentLoadTasks() {
         if (task.future.valid() &&
             task.future.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
         {
-            auto meta = task.future.get();
-            std::error_code ec;
-            auto currentFtime = std::filesystem::last_write_time(task.path, ec);
-            if (!ec) m_recentThumbTimestamps[task.path] = currentFtime;
+            try {
+                auto meta = task.future.get();
+                std::error_code ec;
+                auto currentFtime = std::filesystem::last_write_time(task.path, ec);
+                if (!ec) m_recentThumbTimestamps[task.path] = currentFtime;
 
-            if (!meta.thumbnailPng.empty()) {
-                uploadRecentThumbnailToGPU(task.path, meta.thumbnailPng);
-            } else {
+                if (!meta.thumbnailPng.empty()) {
+                    uploadRecentThumbnailToGPU(task.path, meta.thumbnailPng);
+                } else {
+                    m_recentThumbCache[task.path] = 0;
+                }
+                m_recentFileWorkTimes[task.path] = meta.workTime;
+            } catch (const std::exception& e) {
+                sculpt_log_warn("[RecentFiles] Failed to load metadata/thumbnail for '%s': %s", task.path.c_str(), e.what());
+                m_recentThumbCache[task.path] = 0;
+            } catch (...) {
+                sculpt_log_warn("[RecentFiles] Failed to load metadata/thumbnail for '%s': unknown error", task.path.c_str());
                 m_recentThumbCache[task.path] = 0;
             }
-            m_recentFileWorkTimes[task.path] = meta.workTime;
             it = m_recentLoadTasks.erase(it);
         } else {
             ++it;

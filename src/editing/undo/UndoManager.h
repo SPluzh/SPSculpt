@@ -48,6 +48,7 @@ public:
 
     void endSculptStroke(Scene& scene);
     void cancelSculptStroke();
+    bool rollbackActiveSculptStroke(Scene& scene);
     bool hasActiveSculptStroke() const { return m_activeSculptEntry != nullptr; }
 
     // Helper for direct/atomic sculpt operations

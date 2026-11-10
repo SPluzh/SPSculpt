@@ -489,7 +489,7 @@ bool ClipCurveTool::execute(
     }
 
     // Recalculate face and vertex normals & update BVH
-    std::vector<uint32_t> iFaces(mesh->nbFaces);
+    std::vector<uint32_t> iFaces;
     std::vector<uint8_t> tagFlags(mesh->nbFaces, 0);
     uint8_t tagEpoch = 1;
 
@@ -498,10 +498,12 @@ bool ClipCurveTool::execute(
         (uint32_t)affectedVerts.size(),
         mesh->vrfStartCount.data(),
         mesh->vertRingFace.data(),
-        iFaces.data(),
+        mesh->vertRingFace.size(),
+        iFaces,
         tagFlags.data(),
         &tagEpoch,
-        mesh->nbFaces
+        (uint32_t)mesh->nbFaces,
+        (uint32_t)mesh->nbVerts
     );
 
     sculpt_log("[ClipCurveTool] Normals & BVH update. Affected faces: %u / %d\n", numIFaces, mesh->nbFaces);

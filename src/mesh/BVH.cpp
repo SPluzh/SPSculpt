@@ -903,8 +903,11 @@ void BVH::collectIntersectRay(const glm::vec3& origin, const glm::vec3& dir, std
         }
 
         if (node.isLeaf()) {
-            for (uint32_t i = 0; i < node.count; ++i) {
-                outFaces.push_back(m_primitiveIndices[node.firstIndex + i]);
+            if (node.firstIndex != 0xFFFFFFFF &&
+                (uint64_t)node.firstIndex + node.count <= m_primitiveIndices.size()) {
+                for (uint32_t i = 0; i < node.count; ++i) {
+                    outFaces.push_back(m_primitiveIndices[node.firstIndex + i]);
+                }
             }
         } else if (node.isInner()) {
             if (node.firstIndex + 1 >= (uint32_t)m_nodes.size() || stackPtr >= 126) {
@@ -926,7 +929,9 @@ void BVH::pickVerticesInSphere(
     outVertices.clear();
     BVHPickStats stats;
 
-    if (m_nodes.empty() || mesh.nbVerts <= 0 || mesh.nbFaces <= 0) {
+    if (m_nodes.empty() || mesh.nbVerts <= 0 || mesh.nbFaces <= 0 ||
+        !std::isfinite(center.x) || !std::isfinite(center.y) || !std::isfinite(center.z) ||
+        !std::isfinite(radiusSquared) || radiusSquared < 0.0f) {
         m_lastPickStats[sIdx] = stats;
         if (sIdx == 0) {
             lastCollectCellsMs = lastCandidateVertsMs = lastFilterVertsMs = 0.0;
@@ -950,6 +955,7 @@ void BVH::pickVerticesInSphere(
     while (stackPtr > 0) {
         StackEntry entry = stack[--stackPtr];
         uint32_t nodeIdx = entry.nodeIdx;
+        if (nodeIdx >= (uint32_t)m_nodes.size()) continue;
         bool fullyIn = entry.fullyIn;
         const BVHNode& node = m_nodes[nodeIdx];
         if (!fullyIn) {
@@ -959,8 +965,12 @@ void BVH::pickVerticesInSphere(
             fullyIn = boxFullyInSphere(node.aabbMin, node.aabbMax, center, radiusSquared);
         }
         if (node.isLeaf()) {
-            sc.candidateLeaves.push_back(fullyIn ? (nodeIdx | 0x80000000u) : nodeIdx);
-            totalCandidateFaces += node.count;
+            if (node.firstIndex != 0xFFFFFFFF &&
+                node.count > 0 &&
+                (uint64_t)node.firstIndex + node.count <= m_primitiveIndices.size()) {
+                sc.candidateLeaves.push_back(fullyIn ? (nodeIdx | 0x80000000u) : nodeIdx);
+                totalCandidateFaces += node.count;
+            }
         } else if (node.isInner()) {
             if (node.firstIndex + 1 >= (uint32_t)m_nodes.size() || stackPtr >= 126) {
                 continue;
@@ -985,8 +995,15 @@ void BVH::pickVerticesInSphere(
         return;
     }
 
-    if (sc.visitedFlags.size() < (size_t)mesh.nbVerts) {
-        sc.visitedFlags.assign(mesh.nbVerts, uint8_t(0));
+    const uint32_t limitVerts = (uint32_t)std::min<size_t>((size_t)mesh.nbVerts, mesh.verts.size() / 3);
+    const uint32_t limitFaces = (uint32_t)std::min<size_t>((size_t)mesh.nbFaces, mesh.faces.size() / 4);
+    if (limitVerts == 0 || limitFaces == 0) {
+        m_lastPickStats[sIdx] = stats;
+        return;
+    }
+
+    if (sc.visitedFlags.size() < (size_t)limitVerts) {
+        sc.visitedFlags.assign(limitVerts, uint8_t(0));
         sc.visitedEpoch = 0;
     }
     sc.visitedEpoch++;
@@ -999,7 +1016,6 @@ void BVH::pickVerticesInSphere(
 
     const uint8_t curEpoch = sc.visitedEpoch;
     uint8_t* const vFlags = sc.visitedFlags.data();
-    const uint32_t limitVerts = (uint32_t)mesh.nbVerts;
     const float* const verts = mesh.verts.data();
     const uint32_t* const faces = mesh.faces.data();
     const uint32_t* const primIndices = m_primitiveIndices.data();
@@ -1010,7 +1026,7 @@ void BVH::pickVerticesInSphere(
     if (totalCandidateFaces < 16384 || inParallel || maxThreads <= 1) {
         stats.usedMT = false;
         stats.numThreads = 1;
-        size_t estCount = std::min((size_t)mesh.nbVerts, (size_t)totalCandidateFaces * 2);
+        size_t estCount = std::min((size_t)limitVerts, (size_t)totalCandidateFaces * 2);
         if (outVertices.capacity() < estCount) {
             outVertices.reserve(estCount);
         }
@@ -1023,7 +1039,8 @@ void BVH::pickVerticesInSphere(
 
             for (uint32_t i = 0; i < count; ++i) {
                 uint32_t faceId = leafPrims[i];
-                const uint32_t* const fv = faces + faceId * 4;
+                if (faceId >= limitFaces) continue;
+                const uint32_t* const fv = faces + (size_t)faceId * 4;
                 for (int k = 0; k < 4; ++k) {
                     uint32_t v = fv[k];
                     if (v >= limitVerts || v == 0xFFFFFFFF) continue;
@@ -1034,7 +1051,7 @@ void BVH::pickVerticesInSphere(
                         if (vertVisible && vertVisible[v] == 0) continue;
                         outVertices.push_back(v);
                     } else {
-                        const float* const vp = verts + v * 3;
+                        const float* const vp = verts + (size_t)v * 3;
                         float dx = center.x - vp[0];
                         float dx2 = dx * dx;
                         if (dx2 > radiusSquared) continue;
@@ -1064,10 +1081,11 @@ void BVH::pickVerticesInSphere(
 
         static_assert(std::atomic_ref<uint8_t>::is_always_lock_free, "std::atomic_ref<uint8_t> must be lock-free");
 
-        #pragma omp parallel
+        #pragma omp parallel num_threads(maxThreads)
         {
             int tid = omp_get_thread_num();
-            auto& localPicked = sc.threadPicked[tid];
+            std::vector<uint32_t> fallbackPicked;
+            auto& localPicked = (tid >= 0 && tid < maxThreads) ? sc.threadPicked[tid] : fallbackPicked;
             localPicked.clear();
             size_t estCount = (totalCandidateFaces * 2 / maxThreads) + 64;
             if (localPicked.capacity() < estCount) {
@@ -1085,14 +1103,15 @@ void BVH::pickVerticesInSphere(
 
                 for (uint32_t i = 0; i < count; ++i) {
                     uint32_t faceId = leafPrims[i];
-                    const uint32_t* const fv = faces + faceId * 4;
+                    if (faceId >= limitFaces) continue;
+                    const uint32_t* const fv = faces + (size_t)faceId * 4;
                     for (int k = 0; k < 4; ++k) {
                         uint32_t v = fv[k];
                         if (v >= limitVerts || v == 0xFFFFFFFF) continue;
                         if (vFlags[v] == curEpoch) continue;
 
                         if (!fullyIn) {
-                            const float* const vp = verts + v * 3;
+                            const float* const vp = verts + (size_t)v * 3;
                             float dx = center.x - vp[0];
                             float dx2 = dx * dx;
                             if (dx2 > radiusSquared) continue;
@@ -1126,6 +1145,7 @@ void BVH::pickVerticesInSphere(
             if (count > 0) {
                 std::memcpy(outVertices.data() + offset, sc.threadPicked[t].data(), count * sizeof(uint32_t));
                 offset += count;
+                sc.threadPicked[t].clear();
             }
         }
         auto tMergeEnd = std::chrono::high_resolution_clock::now();
@@ -1319,9 +1339,14 @@ void BVH::refit(const Mesh& mesh, const uint32_t* modifiedFaces, size_t count, b
     }
 
     for (uint32_t leafIdx : m_dirtyLeaves) {
+        if (leafIdx >= (uint32_t)m_nodes.size() || leafIdx >= (uint32_t)m_parents.size()) continue;
         uint32_t curr = leafIdx;
-        while (curr != 0) {
+        uint32_t steps = 0;
+        const uint32_t maxSteps = (uint32_t)m_nodes.size();
+        while (curr != 0 && steps++ < maxSteps) {
+            if (curr >= (uint32_t)m_parents.size()) break;
             uint32_t parent = m_parents[curr];
+            if (parent >= (uint32_t)m_nodes.size() || parent == curr) break;
             if (m_nodeVisitedFlags[parent] == m_nodeVisitedEpoch) {
                 break;
             }
@@ -1337,11 +1362,14 @@ void BVH::refit(const Mesh& mesh, const uint32_t* modifiedFaces, size_t count, b
     stats.parentGatherMs = std::chrono::duration<double, std::milli>(t3 - t2).count();
 
     for (uint32_t nodeIdx : m_dirtyInnerNodes) {
+        if (nodeIdx >= (uint32_t)m_nodes.size()) continue;
         BVHNode& node = m_nodes[nodeIdx];
         uint32_t left = node.firstIndex;
         uint32_t right = left + 1;
-        node.aabbMin = glm::min(m_nodes[left].aabbMin, m_nodes[right].aabbMin);
-        node.aabbMax = glm::max(m_nodes[left].aabbMax, m_nodes[right].aabbMax);
+        if (right < (uint32_t)m_nodes.size()) {
+            node.aabbMin = glm::min(m_nodes[left].aabbMin, m_nodes[right].aabbMin);
+            node.aabbMax = glm::max(m_nodes[left].aabbMax, m_nodes[right].aabbMax);
+        }
     }
     auto t4 = std::chrono::high_resolution_clock::now();
     stats.innerUpdateMs = std::chrono::duration<double, std::milli>(t4 - t3).count();
@@ -1527,16 +1555,20 @@ void BVH::touchTriangle(uint32_t t) {
 }
 
 void BVH::splitLeaf(const Mesh& mesh, uint32_t leaf) {
+    if (leaf >= (uint32_t)m_nodes.size() || !m_nodes[leaf].isLeaf()) return;
     const uint32_t first = m_nodes[leaf].firstIndex;
     const uint32_t count = m_nodes[leaf].count;
-    if (count <= 1) return;
+    if (first == 0xFFFFFFFF || count <= 1 || (size_t)first + count > m_primitiveIndices.size()) return;
     const float* const verts = mesh.verts.data();
     const uint32_t* const faces = mesh.faces.data();
     auto centroid = [&](uint32_t t) -> glm::vec3 {
-        if (t >= (uint32_t)mesh.nbFaces || t * 4 + 2 >= mesh.faces.size()) return glm::vec3(0.0f);
+        if (t >= (uint32_t)mesh.nbFaces || (size_t)t * 4 + 2 >= mesh.faces.size()) return glm::vec3(0.0f);
         uint32_t idx = t * 4;
         uint32_t v0 = faces[idx], v1 = faces[idx + 1], v2 = faces[idx + 2];
-        if (v0 >= (uint32_t)mesh.nbVerts || v1 >= (uint32_t)mesh.nbVerts || v2 >= (uint32_t)mesh.nbVerts) return glm::vec3(0.0f);
+        if (v0 >= (uint32_t)mesh.nbVerts || v1 >= (uint32_t)mesh.nbVerts || v2 >= (uint32_t)mesh.nbVerts ||
+            (size_t)v0 * 3 + 2 >= mesh.verts.size() || (size_t)v1 * 3 + 2 >= mesh.verts.size() || (size_t)v2 * 3 + 2 >= mesh.verts.size()) {
+            return glm::vec3(0.0f);
+        }
         return (glm::vec3(verts[v0*3], verts[v0*3+1], verts[v0*3+2]) +
                 glm::vec3(verts[v1*3], verts[v1*3+1], verts[v1*3+2]) +
                 glm::vec3(verts[v2*3], verts[v2*3+1], verts[v2*3+2])) * (1.0f / 3.0f);
@@ -1604,11 +1636,17 @@ void BVH::splitLeaf(const Mesh& mesh, uint32_t leaf) {
     }
 
     for (uint32_t cIdx : {left, left + 1}) {
+        if (cIdx >= (uint32_t)m_nodes.size()) continue;
         computeLeafAABB(mesh, m_nodes[cIdx], cIdx, false, true);
         glm::vec3 bmin = m_nodes[cIdx].aabbMin;
         glm::vec3 bmax = m_nodes[cIdx].aabbMax;
-        for (uint32_t ni = cIdx; ni != 0;) {
-            ni = m_parents[ni];
+        uint32_t steps = 0;
+        const uint32_t maxSteps = (uint32_t)m_nodes.size();
+        for (uint32_t ni = cIdx; ni != 0 && steps++ < maxSteps;) {
+            if (ni >= (uint32_t)m_parents.size()) break;
+            uint32_t parent = m_parents[ni];
+            if (parent >= (uint32_t)m_nodes.size() || parent == ni) break;
+            ni = parent;
             m_nodes[ni].aabbMin = glm::min(m_nodes[ni].aabbMin, bmin);
             m_nodes[ni].aabbMax = glm::max(m_nodes[ni].aabbMax, bmax);
             bmin = m_nodes[ni].aabbMin;
@@ -1635,14 +1673,18 @@ void BVH::refitChanged(const Mesh& mesh) {
         }
     }
     // Propagate up ancestors
+    const uint32_t maxSteps = (uint32_t)m_nodes.size();
     for (uint32_t leaf : leaves) {
         if (leaf >= m_nodes.size()) continue;
-        for (uint32_t ni = leaf; ni != 0;) {
-            ni = m_parents[ni];
-            if (ni >= m_nodes.size()) break;
+        uint32_t steps = 0;
+        for (uint32_t ni = leaf; ni != 0 && steps++ < maxSteps;) {
+            if (ni >= (uint32_t)m_parents.size()) break;
+            uint32_t parent = m_parents[ni];
+            if (parent >= (uint32_t)m_nodes.size() || parent == ni) break;
+            ni = parent;
             uint32_t left = m_nodes[ni].firstIndex;
             uint32_t right = left + 1;
-            if (right < m_nodes.size()) {
+            if (right < (uint32_t)m_nodes.size()) {
                 m_nodes[ni].aabbMin = glm::min(m_nodes[left].aabbMin, m_nodes[right].aabbMin);
                 m_nodes[ni].aabbMax = glm::max(m_nodes[left].aabbMax, m_nodes[right].aabbMax);
             }
@@ -1657,12 +1699,13 @@ void BVH::refitChanged(const Mesh& mesh) {
 
 void BVH::queryTriangles(const Mesh& mesh, const glm::vec3& center, float radius, std::vector<uint32_t>& out) const {
     out.clear();
-    if (m_nodes.empty()) return;
+    if (m_nodes.empty() || mesh.nbVerts <= 0 || mesh.nbFaces <= 0) return;
     const float r2 = radius * radius;
     const float* const verts = mesh.verts.data();
     const uint32_t* const faces = mesh.faces.data();
     const uint32_t* const primIndices = m_primitiveIndices.data();
-    const size_t nbFaces = (size_t)mesh.nbFaces;
+    const size_t nbFaces = std::min<size_t>((size_t)mesh.nbFaces, mesh.faces.size() / 4);
+    const size_t nbVerts = std::min<size_t>((size_t)mesh.nbVerts, mesh.verts.size() / 3);
 
     thread_local std::vector<uint32_t> stack;
     stack.clear();
@@ -1674,25 +1717,27 @@ void BVH::queryTriangles(const Mesh& mesh, const glm::vec3& center, float radius
         const BVHNode& n = m_nodes[ni];
         if (!sphereBoxIntersect(n.aabbMin, n.aabbMax, center, r2)) continue;
         if (n.isLeaf()) {
-            for (uint32_t i = n.firstIndex; i < n.firstIndex + n.count; ++i) {
-                uint32_t t = primIndices[i];
-                if (t >= nbFaces) continue;
-                uint32_t idx = t * 4;
-                uint32_t v0 = faces[idx], v1 = faces[idx + 1], v2 = faces[idx + 2];
-                if (v0 >= (uint32_t)mesh.nbVerts || v1 >= (uint32_t)mesh.nbVerts || v2 >= (uint32_t)mesh.nbVerts) continue;
-                glm::vec3 p0(verts[v0*3], verts[v0*3+1], verts[v0*3+2]);
-                glm::vec3 p1(verts[v1*3], verts[v1*3+1], verts[v1*3+2]);
-                glm::vec3 p2(verts[v2*3], verts[v2*3+1], verts[v2*3+2]);
-                glm::vec3 tbmin = glm::min(p0, glm::min(p1, p2));
-                glm::vec3 tbmax = glm::max(p0, glm::max(p1, p2));
-                uint32_t v3 = faces[idx + 3];
-                if (v3 != 0xFFFFFFFF && v3 < (uint32_t)mesh.nbVerts) {
-                    glm::vec3 p3(verts[v3*3], verts[v3*3+1], verts[v3*3+2]);
-                    tbmin = glm::min(tbmin, p3);
-                    tbmax = glm::max(tbmax, p3);
-                }
-                if (sphereBoxIntersect(tbmin, tbmax, center, r2)) {
-                    out.push_back(t);
+            if (n.firstIndex != 0xFFFFFFFF && (size_t)n.firstIndex + n.count <= m_primitiveIndices.size()) {
+                for (uint32_t i = n.firstIndex; i < n.firstIndex + n.count; ++i) {
+                    uint32_t t = primIndices[i];
+                    if (t >= nbFaces) continue;
+                    size_t idx = (size_t)t * 4;
+                    uint32_t v0 = faces[idx], v1 = faces[idx + 1], v2 = faces[idx + 2];
+                    if (v0 >= nbVerts || v1 >= nbVerts || v2 >= nbVerts) continue;
+                    glm::vec3 p0(verts[v0*3], verts[v0*3+1], verts[v0*3+2]);
+                    glm::vec3 p1(verts[v1*3], verts[v1*3+1], verts[v1*3+2]);
+                    glm::vec3 p2(verts[v2*3], verts[v2*3+1], verts[v2*3+2]);
+                    glm::vec3 tbmin = glm::min(p0, glm::min(p1, p2));
+                    glm::vec3 tbmax = glm::max(p0, glm::max(p1, p2));
+                    uint32_t v3 = faces[idx + 3];
+                    if (v3 != 0xFFFFFFFF && v3 < nbVerts) {
+                        glm::vec3 p3(verts[v3*3], verts[v3*3+1], verts[v3*3+2]);
+                        tbmin = glm::min(tbmin, p3);
+                        tbmax = glm::max(tbmax, p3);
+                    }
+                    if (sphereBoxIntersect(tbmin, tbmax, center, r2)) {
+                        out.push_back(t);
+                    }
                 }
             }
         } else if (n.isInner()) {

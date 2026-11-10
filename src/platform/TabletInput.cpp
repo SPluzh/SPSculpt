@@ -1,9 +1,12 @@
 #include "TabletInput.h"
+#include "common/CrashReporter.h"
+#include "common/ErrorReporter.h"
 #include <thread>
 #include <chrono>
 #include <cstdio>
 #include <cmath>
 #include <algorithm>
+#include <exception>
 #include <sstream>
 
 #ifndef M_PI
@@ -231,6 +234,8 @@ void TabletInput::stopPolling() {
 }
 
 void TabletInput::pollLoop() {
+    CrashReporter::registerCurrentThread("TabletInputThread");
+    try {
 #ifdef _WIN32
     auto lastFpsTime = std::chrono::steady_clock::now();
     int localCounter = 0;
@@ -394,6 +399,23 @@ void TabletInput::pollLoop() {
         close(fd);
     }
 #endif
+    } catch (const std::exception& e) {
+        _running = false;
+        ErrorReporter::instance().reportError(
+            "Tablet Input Error",
+            "Tablet polling thread stopped due to an error; mouse input remains active.",
+            e.what(),
+            false
+        );
+    } catch (...) {
+        _running = false;
+        ErrorReporter::instance().reportError(
+            "Tablet Input Error",
+            "Tablet polling thread stopped due to an unknown error; mouse input remains active.",
+            "",
+            false
+        );
+    }
 }
 
 void TabletInput::setForcedMode(TabletMode mode) {

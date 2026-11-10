@@ -1220,7 +1220,9 @@ inline bool run(int targetFaces = 4000000) {
         // Incremental face lookup for affected faces
         if (totalDeformed <= (size_t)mesh.nbFaces * 0.35f && !mesh.vrfStartCount.empty() && !mesh.vertRingFace.empty() && mesh.nbFaces > 0) {
             size_t maxPossibleFaces = std::min((size_t)mesh.nbFaces, (size_t)totalDeformed * 6 + 1024);
-            meshUndoState.affectedFaces.resize(maxPossibleFaces);
+            if (meshUndoState.affectedFaces.capacity() < maxPossibleFaces) {
+                meshUndoState.affectedFaces.reserve(maxPossibleFaces);
+            }
             auto& tagFlags = sculpt.getTagFlags();
             auto& tagEpoch = sculpt.getTagEpoch();
             if (tagFlags.size() < (size_t)mesh.nbFaces) {
@@ -1232,10 +1234,12 @@ inline bool run(int targetFaces = 4000000) {
                 (uint32_t)meshUndoState.sparseVertIndices.size(),
                 mesh.vrfStartCount.data(),
                 mesh.vertRingFace.data(),
-                meshUndoState.affectedFaces.data(),
+                mesh.vertRingFace.size(),
+                meshUndoState.affectedFaces,
                 tagFlags.data(),
                 &tagEpoch,
-                mesh.nbFaces
+                (uint32_t)mesh.nbFaces,
+                (uint32_t)mesh.nbVerts
             );
             meshUndoState.affectedFaces.resize(numIFaces);
         }

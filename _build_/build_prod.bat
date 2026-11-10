@@ -18,13 +18,26 @@ if errorlevel 1 goto error
 cd ..
 
 echo.
-echo [1/3] Stripping debug symbols from executable...
-strip --strip-all build\SPSculpt.exe
+echo [1/3] Splitting debug symbols to SPSculpt.exe.debug and stripping executable...
+pushd build
+objcopy --only-keep-debug SPSculpt.exe SPSculpt.exe.debug
+if errorlevel 1 (
+    popd
+    goto error
+)
+strip --strip-debug --strip-unneeded SPSculpt.exe
+if errorlevel 1 (
+    popd
+    goto error
+)
+objcopy --add-gnu-debuglink=SPSculpt.exe.debug SPSculpt.exe
+popd
 
 if not exist dist mkdir dist
 
-echo [2/3] Copying executable and DLLs to dist...
+echo [2/3] Copying executable, debug symbols, and DLLs to dist...
 copy /Y build\SPSculpt.exe dist\ >nul
+copy /Y build\SPSculpt.exe.debug dist\ >nul
 copy /Y C:\msys64\ucrt64\bin\SDL2.dll dist\ >nul
 copy /Y C:\msys64\ucrt64\bin\libEGL.dll dist\ >nul
 copy /Y C:\msys64\ucrt64\bin\libGLESv2.dll dist\ >nul

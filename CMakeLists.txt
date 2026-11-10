@@ -125,6 +125,7 @@ include_directories(
 
 add_executable(SPSculpt
     # common
+    src/common/CrashReporter.cpp
     src/common/IniFile.cpp
     src/common/RecentFiles.cpp
     src/common/StringUtils.cpp
@@ -228,7 +229,7 @@ add_executable(SPSculpt
 if(WIN32)
     set_target_properties(SPSculpt PROPERTIES WIN32_EXECUTABLE TRUE OUTPUT_NAME "SPSculpt")
     target_sources(SPSculpt PRIVATE resources/app.rc)
-    target_link_libraries(SPSculpt PRIVATE comdlg32 psapi dbghelp)
+    target_link_libraries(SPSculpt PRIVATE comdlg32 psapi dbghelp shell32)
 endif()
 
 if(TARGET SDL2::SDL2)
@@ -239,7 +240,7 @@ else()
 endif()
 
 target_link_libraries(SPSculpt PRIVATE imgui ${EGL_LIBRARY} ${GLES_LIBRARY} glm::glm nlohmann_json::nlohmann_json ufbx manifold Clipper2 CDT lz4)
-target_compile_options(SPSculpt PRIVATE -O3)
+target_compile_options(SPSculpt PRIVATE -O3 -g)
 
 find_package(OpenMP)
 if(OpenMP_CXX_FOUND)

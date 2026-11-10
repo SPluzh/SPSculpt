@@ -19,6 +19,8 @@
 
 #include "common/RecentFiles.h"
 #include "common/WorkTimer.h"
+#include "common/CrashReporter.h"
+#include "common/ErrorReporter.h"
 #include "files/ImportSGL.h"
 #include "platform/HotkeyPreset.h"
 #include "files/GoZProfiler.h"
@@ -40,6 +42,8 @@ public:
         std::atomic<int>  stage     { 0 };   // 0=voxelize, 1=floodfill, 2=reconstruct
         std::atomic<int>  progress  { 0 };   // 0–100
         RemeshResult      result;            // written by worker, read by main after Done
+        std::mutex        errMutex;
+        std::string       errorMessage;
         std::thread       worker;
     };
 
@@ -48,6 +52,8 @@ public:
         std::atomic<int>  progress  { 0 };   // 0–100
         std::unique_ptr<Mesh> resultMesh;
         DecimationResult  resultInfo;
+        std::mutex        errMutex;
+        std::string       errorMessage;
         std::thread       worker;
     };
 
@@ -195,6 +201,13 @@ private:
     bool m_unsavedModalOpen = false;
     bool m_pendingQuit = false;
 
+    // Resilient error banner & previous crash report modal
+    AppErrorEvent m_activeBannerError;
+    bool m_hasBannerError = false;
+    size_t m_unreadErrorCount = 0;
+    CrashReporter::PreviousCrashInfo m_prevCrashInfo;
+    bool m_showCrashModal = false;
+
     void takeScreenshot(const Scene& scene, AngleRenderer& renderer);
     void drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer);
     void drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer);
@@ -203,6 +216,8 @@ private:
     void drawSafeFramesOverlay(const AngleRenderer& renderer, const Scene& scene);
     void updateWindowTitle(SDL_Window* window, bool isModified);
     void drawUnsavedChangesModal(Scene& scene, bool& quitApp);
+    void drawErrorBanner(SculptManager& sculpt, Scene& scene);
+    void drawPreviousCrashModal();
     void drawTimelapsePanel(Scene& scene, AngleRenderer& renderer);
     void drawPreferencesPanel(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer, SDL_Window* window = nullptr);
     void drawHotkeyHUD();
@@ -295,6 +310,11 @@ private:
 
 public:
     static void showToast(const std::string& message, float duration = 3.0f);
+    static void showErrorToast(const std::string& message, float duration = 5.0f);
+    void setPreviousCrashInfo(const CrashReporter::PreviousCrashInfo& info) {
+        m_prevCrashInfo = info;
+        m_showCrashModal = info.found;
+    }
     WorkTimer& getWorkTimer() { return m_workTimer; }
     const WorkTimer& getWorkTimer() const { return m_workTimer; }
     GuiManager();

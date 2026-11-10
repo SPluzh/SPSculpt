@@ -11,6 +11,8 @@
 #include "mesh/NormalCalc.h"
 #include "common/Constants.h"
 #include "common/Logger.h"
+#include "common/CrashReporter.h"
+#include "common/ErrorReporter.h"
 #include "gui/GuiManager.h"
 #include "editing/SculptManager.h"
 #include "editing/TubeTool.h"
@@ -628,7 +630,24 @@ void Scene::replaceMesh(Mesh* oldMesh, Mesh* newMesh) {
     notifyMeshWillBeDeleted(oldMesh);
     // Background mesh deallocation
     std::thread([oldMesh]() {
-        delete oldMesh;
+        CrashReporter::registerCurrentThread("MeshCleanupThread");
+        try {
+            delete oldMesh;
+        } catch (const std::exception& e) {
+            ErrorReporter::instance().reportError(
+                "Background Mesh Cleanup",
+                "Failed to cleanly free replaced mesh memory.",
+                e.what(),
+                false
+            );
+        } catch (...) {
+            ErrorReporter::instance().reportError(
+                "Background Mesh Cleanup",
+                "Unknown error while freeing replaced mesh memory.",
+                "",
+                false
+            );
+        }
     }).detach();
 }
 

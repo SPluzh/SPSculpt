@@ -18,6 +18,8 @@
 #include "editing/SplitTool.h"
 #include "editing/undo/UndoManager.h"
 #include "common/Logger.h"
+#include "common/CrashReporter.h"
+#include "common/ErrorReporter.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include "platform/TabletInput.h"
 #include "mesh/Topology.h"
@@ -271,8 +273,8 @@ void SculptManager::pickVerticesInSphereTopological(
         mesh->ensureTopologyBuilt();
     }
 
-    uint32_t nbVerts = (uint32_t)mesh->nbVerts;
-    if (nbVerts == 0) return;
+    uint32_t nbVerts = (uint32_t)std::min<size_t>((size_t)std::max(0, mesh->nbVerts), mesh->verts.size() / 3);
+    if (nbVerts == 0 || (size_t)startFaceId * 4 + 3 >= mesh->faces.size()) return;
 
     if (topoVisitedFlags.size() < (size_t)nbVerts) {
         topoVisitedFlags.assign(nbVerts, uint8_t(0));
@@ -286,14 +288,14 @@ void SculptManager::pickVerticesInSphereTopological(
     uint8_t* visited = topoVisitedFlags.data();
 
     const float* verts = mesh->verts.data();
-    const uint8_t* vertVisible = mesh->vertVisible.data();
+    const uint8_t* vertVisible = (mesh->vertVisible.size() >= (size_t)nbVerts) ? mesh->vertVisible.data() : nullptr;
 
     if (picked.capacity() < 65536) {
         picked.reserve(131072);
     }
 
     // 2. Queue initialization from startFaceId
-    const uint32_t* fv = mesh->faces.data() + (startFaceId << 2);
+    const uint32_t* fv = mesh->faces.data() + (size_t)(startFaceId << 2);
     int numFaceVerts = (fv[3] != TRI_INDEX) ? 4 : 3;
     float closestDist2 = 1e30f;
     uint32_t closestVid = 0xffffffff;
@@ -333,13 +335,16 @@ void SculptManager::pickVerticesInSphereTopological(
     if (hasVrv) {
         const uint32_t* vrvStartCount = mesh->vrvStartCount.data();
         const uint32_t* vertRingVert = mesh->vertRingVert.data();
+        const size_t vrvSize = mesh->vertRingVert.size();
 
         size_t head = 0;
         while (head < picked.size()) {
             uint32_t u = picked[head++];
+            if (u >= nbVerts) continue;
 
             uint32_t start = vrvStartCount[u * 2];
             uint32_t count = vrvStartCount[u * 2 + 1];
+            if ((size_t)start + (size_t)count > vrvSize) continue;
             for (uint32_t j = 0; j < count; ++j) {
                 uint32_t v = vertRingVert[start + j];
                 if (v >= nbVerts || visited[v] == curEpoch) continue;
@@ -349,10 +354,12 @@ void SculptManager::pickVerticesInSphereTopological(
 
                 if (j + 2 < count) {
                     uint32_t nextV = vertRingVert[start + j + 2];
-                    __builtin_prefetch(&verts[nextV * 3], 0, 1);
+                    if (nextV < nbVerts) {
+                        __builtin_prefetch(&verts[(size_t)nextV * 3], 0, 1);
+                    }
                 }
 
-                uint32_t v3 = v * 3;
+                size_t v3 = (size_t)v * 3;
                 float dx = verts[v3] - center.x;
                 float dx2 = dx * dx;
                 if (dx2 > radius2) continue;
@@ -369,19 +376,22 @@ void SculptManager::pickVerticesInSphereTopological(
         // Fallback traversal via incident faces (vrfStartCount + vertRingFace + faces)
         const uint32_t* vrfStartCount = mesh->vrfStartCount.data();
         const uint32_t* vertRingFace = mesh->vertRingFace.data();
+        const size_t vrfSize = mesh->vertRingFace.size();
         const uint32_t* faces = mesh->faces.data();
-        uint32_t nbFaces = (uint32_t)mesh->nbFaces;
+        uint32_t nbFaces = (uint32_t)std::min<size_t>((size_t)mesh->nbFaces, mesh->faces.size() / 4);
 
         size_t head = 0;
         while (head < picked.size()) {
             uint32_t u = picked[head++];
+            if (u >= nbVerts) continue;
             uint32_t fStart = vrfStartCount[u * 2];
             uint32_t fCount = vrfStartCount[u * 2 + 1];
+            if ((size_t)fStart + (size_t)fCount > vrfSize) continue;
 
             for (uint32_t j = 0; j < fCount; ++j) {
                 uint32_t fid = vertRingFace[fStart + j];
                 if (fid >= nbFaces) continue;
-                const uint32_t* faceVerts = faces + (fid << 2);
+                const uint32_t* faceVerts = faces + (size_t)(fid << 2);
                 int numV = (faceVerts[3] != TRI_INDEX) ? 4 : 3;
 
                 for (int k = 0; k < numV; ++k) {
@@ -391,7 +401,7 @@ void SculptManager::pickVerticesInSphereTopological(
 
                     if (vertVisible && !vertVisible[v]) continue;
 
-                    uint32_t v3 = v * 3;
+                    size_t v3 = (size_t)v * 3;
                     float dx = verts[v3] - center.x;
                     float dx2 = dx * dx;
                     if (dx2 > radius2) continue;
@@ -425,7 +435,9 @@ static void filterCullingVertices(
     std::vector<uint32_t>& pickedVertices, Mesh* mesh, const glm::vec3& eyeDirLocal
 ) {
     const size_t total = pickedVertices.size();
-    if (total == 0) return;
+    if (total == 0 || !mesh || mesh->normals.empty()) return;
+    const size_t maxNormVerts = std::min<size_t>((size_t)std::max(0, mesh->nbVerts), mesh->normals.size() / 3);
+    if (maxNormVerts == 0) return;
     const int maxThreads = omp_get_max_threads();
     const bool inParallel = omp_in_parallel();
     if (total < 4096 || inParallel || maxThreads <= 1) {
@@ -433,6 +445,7 @@ static void filterCullingVertices(
         front.reserve(total);
         const float* const norms = mesh->normals.data();
         for (uint32_t vid : pickedVertices) {
+            if (vid >= maxNormVerts) continue;
             float nx = norms[vid * 3];
             float ny = norms[vid * 3 + 1];
             float nz = norms[vid * 3 + 2];
@@ -445,31 +458,33 @@ static void filterCullingVertices(
     }
 
     std::vector<std::vector<uint32_t>> threadBuckets(maxThreads);
-    #pragma omp parallel
+    #pragma omp parallel num_threads(maxThreads)
     {
         int tid = omp_get_thread_num();
-        auto& local = threadBuckets[tid];
-        local.reserve((total / maxThreads) + 64);
-        const float* const norms = mesh->normals.data();
-        #pragma omp for schedule(static)
-        for (int64_t i = 0; i < (int64_t)total; ++i) {
-            uint32_t vid = pickedVertices[i];
-            float nx = norms[vid * 3];
-            float ny = norms[vid * 3 + 1];
-            float nz = norms[vid * 3 + 2];
-            if (nx * eyeDirLocal.x + ny * eyeDirLocal.y + nz * eyeDirLocal.z <= 0.0f) {
-                local.push_back(vid);
+        if (tid >= 0 && tid < maxThreads) {
+            auto& local = threadBuckets[tid];
+            local.reserve((total / (size_t)maxThreads) + 64);
+            const float* const norms = mesh->normals.data();
+            #pragma omp for schedule(static)
+            for (int64_t i = 0; i < (int64_t)total; ++i) {
+                uint32_t vid = pickedVertices[i];
+                if (vid >= maxNormVerts) continue;
+                float nx = norms[vid * 3];
+                float ny = norms[vid * 3 + 1];
+                float nz = norms[vid * 3 + 2];
+                if (nx * eyeDirLocal.x + ny * eyeDirLocal.y + nz * eyeDirLocal.z <= 0.0f) {
+                    local.push_back(vid);
+                }
             }
         }
     }
-    size_t offsets[129] = {0};
-    int numMergeThreads = std::min(maxThreads, 128);
-    for (int t = 0; t < numMergeThreads; ++t) {
+    std::vector<size_t> offsets(maxThreads + 1, 0);
+    for (int t = 0; t < maxThreads; ++t) {
         offsets[t + 1] = offsets[t] + threadBuckets[t].size();
     }
-    pickedVertices.resize(offsets[numMergeThreads]);
-    #pragma omp parallel for schedule(static) if(offsets[numMergeThreads] > 8192)
-    for (int t = 0; t < numMergeThreads; ++t) {
+    pickedVertices.resize(offsets[maxThreads]);
+    #pragma omp parallel for schedule(static) if(offsets[maxThreads] > 8192)
+    for (int t = 0; t < maxThreads; ++t) {
         size_t count = threadBuckets[t].size();
         if (count > 0) {
             std::memcpy(pickedVertices.data() + offsets[t], threadBuckets[t].data(), count * sizeof(uint32_t));
@@ -819,17 +834,26 @@ int SculptManager::doStrokePass(
     const glm::vec3& sScale,
     const std::vector<uint32_t>* pPickedVec
 ) {
+    if (!mesh || !pVerts || nbVerts == 0 ||
+        mesh->nbVerts <= 0 || mesh->verts.size() < (size_t)mesh->nbVerts * 3 ||
+        mesh->normals.size() < (size_t)mesh->nbVerts * 3 ||
+        mesh->materials.size() < (size_t)mesh->nbVerts * 3) {
+        return 0;
+    }
     uint32_t* pData = const_cast<uint32_t*>(pVerts);
     std::vector<float> preVerts;
-    bool isLayerDeform = mesh && mesh->isLayerRecording() && activeBrush != BRUSH_DELETE_LAYER &&
+    bool isLayerDeform = mesh->isLayerRecording() && activeBrush != BRUSH_DELETE_LAYER &&
                          activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_POLYGROUP;
     if (isLayerDeform && nbVerts > 0) {
-        preVerts.resize(nbVerts * 3);
+        preVerts.resize(nbVerts * 3, 0.0f);
+        const size_t maxV = (size_t)mesh->nbVerts;
         for (size_t i = 0; i < nbVerts; ++i) {
             uint32_t v = pVerts[i];
-            preVerts[i * 3 + 0] = mesh->verts[v * 3 + 0];
-            preVerts[i * 3 + 1] = mesh->verts[v * 3 + 1];
-            preVerts[i * 3 + 2] = mesh->verts[v * 3 + 2];
+            if ((size_t)v < maxV) {
+                preVerts[i * 3 + 0] = mesh->verts[(size_t)v * 3 + 0];
+                preVerts[i * 3 + 1] = mesh->verts[(size_t)v * 3 + 1];
+                preVerts[i * 3 + 2] = mesh->verts[(size_t)v * 3 + 2];
+            }
         }
     }
 
@@ -1651,55 +1675,90 @@ int SculptManager::doStrokePass(
                 }
             }
 
+            float anLen2 = glm::dot(areaNormal, areaNormal);
+            if (anLen2 > 1e-12f && std::isfinite(anLen2)) {
+                areaNormal /= std::sqrt(anLen2);
+            } else {
+                float cnLen2 = glm::dot(currentIntersectionNormal, currentIntersectionNormal);
+                areaNormal = (cnLen2 > 1e-12f && std::isfinite(cnLen2))
+                    ? (currentIntersectionNormal / std::sqrt(cnLen2))
+                    : glm::vec3(0.0f, 1.0f, 0.0f);
+            }
+
             if (getCurrentSettings().clay) {
                 float off = localRadius * 0.1f;
                 areaCenter += areaNormal * (negative ? -off : off);
             }
+
+            auto projectOntoTangent = [](const glm::vec3& v, const glm::vec3& n) -> glm::vec3 {
+                glm::vec3 proj = v - n * glm::dot(v, n);
+                float len2 = glm::dot(proj, proj);
+                return (len2 > 1e-8f && std::isfinite(len2)) ? (proj / std::sqrt(len2)) : glm::vec3(0.0f);
+            };
 
             glm::vec3 strokeDir(0.0f);
             bool hasStrokeDir = false;
 
             glm::vec3 passAlphaOrigin = isSymmetry ? reflectPointSymmetry(m_alphaOrigin, sScale, mesh, m_symmetryMode) : m_alphaOrigin;
 
-            if (getCurrentSettings().stampLockRotation) {
-                const glm::mat4& invMeshMatrix = m_cachedInvMatrix;
-                const glm::mat4& camWorld = m_cachedCamWorldMatrix;
-                glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
-                if (isSymmetry) camRightLocal = reflectVectorSymmetry(camRightLocal, sScale, mesh, m_symmetryMode);
-                strokeDir = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
-            }
-            else if (m_firstStrokeFrame || !m_hasAlphaOrigin) {
-                // Fallback to screen-space alignment
-                const glm::mat4& invMeshMatrix = m_cachedInvMatrix;
-                const glm::mat4& camWorld = m_cachedCamWorldMatrix;
-                glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
-                if (isSymmetry) camRightLocal = reflectVectorSymmetry(camRightLocal, sScale, mesh, m_symmetryMode);
-                strokeDir = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
-            } else {
+            if (!getCurrentSettings().stampLockRotation && !m_firstStrokeFrame && m_hasAlphaOrigin) {
                 glm::vec3 movement = currentIntersection - passAlphaOrigin;
-                float movementLen = glm::length(movement);
-                if (movementLen > 1e-7f) {
-                    glm::vec3 movementDir = movement / movementLen;
-                    strokeDir = movementDir - areaNormal * glm::dot(movementDir, areaNormal);
-                    float strokeDirLen = glm::length(strokeDir);
-                    if (strokeDirLen > 1e-7f) {
-                        strokeDir = strokeDir / strokeDirLen;
+                strokeDir = projectOntoTangent(movement, areaNormal);
+                if (glm::dot(strokeDir, strokeDir) > 1e-8f) {
+                    hasStrokeDir = true;
+                }
+            }
+
+            if (!hasStrokeDir) {
+                const glm::mat4& invMeshMatrix = m_cachedInvMatrix;
+                const glm::mat4& camWorld = m_cachedCamWorldMatrix;
+                glm::vec3 camRightLocal = glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f));
+                float crLen2 = glm::dot(camRightLocal, camRightLocal);
+                if (crLen2 > 1e-8f && std::isfinite(crLen2)) {
+                    camRightLocal /= std::sqrt(crLen2);
+                    if (isSymmetry) camRightLocal = reflectVectorSymmetry(camRightLocal, sScale, mesh, m_symmetryMode);
+                    strokeDir = projectOntoTangent(camRightLocal, areaNormal);
+                    if (glm::dot(strokeDir, strokeDir) > 1e-8f) {
                         hasStrokeDir = true;
                     }
                 }
+            }
 
-                if (!hasStrokeDir) {
-                    const glm::mat4& invMeshMatrix = m_cachedInvMatrix;
-                    const glm::mat4& camWorld = m_cachedCamWorldMatrix;
-                    glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
-                    if (isSymmetry) camRightLocal = reflectVectorSymmetry(camRightLocal, sScale, mesh, m_symmetryMode);
-                    strokeDir = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
+            if (!hasStrokeDir) {
+                const glm::mat4& invMeshMatrix = m_cachedInvMatrix;
+                const glm::mat4& camWorld = m_cachedCamWorldMatrix;
+                glm::vec3 camUpLocal = glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[1]), 0.0f));
+                float cuLen2 = glm::dot(camUpLocal, camUpLocal);
+                if (cuLen2 > 1e-8f && std::isfinite(cuLen2)) {
+                    camUpLocal /= std::sqrt(cuLen2);
+                    if (isSymmetry) camUpLocal = reflectVectorSymmetry(camUpLocal, sScale, mesh, m_symmetryMode);
+                    strokeDir = projectOntoTangent(camUpLocal, areaNormal);
+                    if (glm::dot(strokeDir, strokeDir) > 1e-8f) {
+                        hasStrokeDir = true;
+                    }
                 }
             }
 
-            glm::vec3 eye = currentIntersection;
-            glm::vec3 nor = currentIntersection + areaNormal * localRadius;
-            glm::mat4 lookAtMat = glm::lookAt(eye, nor, strokeDir);
+            if (!hasStrokeDir) {
+                glm::vec3 arbAxis = (std::abs(areaNormal.z) < 0.99f) ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
+                glm::vec3 c = glm::cross(areaNormal, arbAxis);
+                float cLen2 = glm::dot(c, c);
+                strokeDir = (cLen2 > 1e-8f && std::isfinite(cLen2)) ? (c / std::sqrt(cLen2)) : glm::vec3(1.0f, 0.0f, 0.0f);
+            }
+
+            glm::mat4 lookAtMat(1.0f);
+            if (localRadius > 1e-7f && std::isfinite(localRadius)) {
+                glm::vec3 eye = currentIntersection;
+                glm::vec3 nor = currentIntersection + areaNormal * localRadius;
+                lookAtMat = glm::lookAt(eye, nor, strokeDir);
+                const float* mPtr = &lookAtMat[0][0];
+                for (int mi = 0; mi < 16; ++mi) {
+                    if (!std::isfinite(mPtr[mi])) {
+                        lookAtMat = glm::mat4(1.0f);
+                        break;
+                    }
+                }
+            }
 
             float alphaLookAt[16];
             std::memcpy(alphaLookAt, &lookAtMat[0][0], 16 * sizeof(float));
@@ -1839,6 +1898,18 @@ int SculptManager::doStrokePass(
             glm::vec3 nor = currentIntersection + areaNormal * localRadius;
             glm::mat4 lookAtMat = glm::lookAt(eye, nor, strokeDir);
 
+            bool hasNanOrInf = false;
+            const float* mPtr = &lookAtMat[0][0];
+            for (int mi = 0; mi < 16; ++mi) {
+                if (!std::isfinite(mPtr[mi])) {
+                    hasNanOrInf = true;
+                    break;
+                }
+            }
+            if (hasNanOrInf) {
+                lookAtMat = glm::mat4(1.0f);
+            }
+
             float alphaLookAt[16];
             std::memcpy(alphaLookAt, &lookAtMat[0][0], 16 * sizeof(float));
 
@@ -1893,6 +1964,8 @@ int SculptManager::doStrokePass(
             break;
     }
 
+    deformedCount = std::clamp(deformedCount, 0, (int)nbVerts);
+
     if (isLayerDeform && deformedCount > 0 && mesh) {
         Layer* layer = mesh->layerStack.getActive();
         if (layer) {
@@ -1915,10 +1988,14 @@ int SculptManager::doStrokePass(
             float maxStep = std::max(1.0f, radius * 2.0f);
 
             bool isGrabBrush = (activeBrush == BRUSH_MOVE || activeBrush == BRUSH_DRAG || activeBrush == BRUSH_ELASTIC);
+            const size_t safeLoopMax = std::min((size_t)deformedCount, std::min(nbVerts, preVerts.size() / 3));
 
-            for (int i = 0; i < deformedCount; ++i) {
+            for (size_t i = 0; i < safeLoopMax; ++i) {
                 uint32_t v = pVerts[i];
-                if (v * 3 + 2 < mesh->verts.size() && v * 3 + 2 < layer->deltaVerts.size()) {
+                if ((size_t)v * 3 + 2 < mesh->verts.size() &&
+                    (size_t)v * 3 + 2 < mesh->vertProxy.size() &&
+                    (size_t)v * 3 + 2 < layer->deltaVerts.size() &&
+                    (!isGrabBrush || (size_t)v * 3 + 2 < m_strokeStartLayerDeltas.size())) {
                     bool isSnakeBrush = (activeBrush == BRUSH_SNAKEHOOK);
                     float dx = isSnakeBrush ? ((mesh->verts[v * 3 + 0] - preVerts[i * 3 + 0]) * invIntensity)
                                             : ((mesh->verts[v * 3 + 0] - mesh->vertProxy[v * 3 + 0]) * invIntensity);
@@ -2022,6 +2099,7 @@ void SculptManager::cancelStroke() {
         m_renderer->setShowWireframe(m_prevWireframeState);
         m_autoWireframeActive = false;
     }
+    CrashReporter::clearStrokeContext();
 }
 
 void SculptManager::warmupMeshCaches(const Mesh* mesh) {
@@ -2046,10 +2124,22 @@ void SculptManager::warmupMeshCaches(const Mesh* mesh) {
 
 void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, float mouseX, float mouseY, float currentPressure) {
     m_lastFrameProfile.reset();
-    
+    CrashReporter::ScopedStage strokeStage("Sculpt::executeStroke");
+
     auto tFrameStart = std::chrono::high_resolution_clock::now();
 
     if (mesh) {
+        if (mesh->nbVerts <= 0 || mesh->nbFaces <= 0 ||
+            mesh->verts.size() < (size_t)mesh->nbVerts * 3 ||
+            mesh->faces.size() < (size_t)mesh->nbFaces * 4) {
+            return;
+        }
+        if (mesh->normals.size() < (size_t)mesh->nbVerts * 3) {
+            mesh->normals.resize((size_t)mesh->nbVerts * 3, 0.0f);
+        }
+        if (mesh->materials.size() < (size_t)mesh->nbVerts * 3) {
+            mesh->materials.resize((size_t)mesh->nbVerts * 3, 0.0f);
+        }
         if (m_dyntopoSettings.enabled || m_currentBrush == BRUSH_DYNAMIC_TOPOLOGY) {
             if (mesh->vrfStartCount.size() < (size_t)mesh->nbVerts * 2 || mesh->vertRingFace.empty()) {
                 mesh->ensureTopologyBuilt();
@@ -2280,6 +2370,11 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     float scale = glm::length(col0);
     if (scale < 1e-12f) scale = 1.0f;
 
+    if (!std::isfinite(currentPressure)) {
+        currentPressure = 1.0f;
+    }
+    currentPressure = std::clamp(currentPressure, 0.0f, 1.0f);
+
     float sizeMultiplier = 1.0f;
     if (g_tablet.isPressureSizeEnabled() && g_tablet.isPressureEnabled()) {
         sizeMultiplier = currentPressure;
@@ -2289,7 +2384,28 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     if (g_tablet.isPressureEnabled() && activeBrush != BRUSH_MOVE && activeBrush != BRUSH_ELASTIC) {
         intensity *= currentPressure;
     }
+    if (!std::isfinite(localRadius) || localRadius <= 1e-7f || !std::isfinite(intensity)) {
+        return;
+    }
     float radius2 = localRadius * localRadius;
+
+    CrashReporter::updateStrokeContext(
+        (int)activeBrush,
+        getBrushNameStr(activeBrush),
+        m_strokeSeq,
+        ++m_strokePassIdx,
+        mesh ? (uint32_t)mesh->nbVerts : 0u,
+        mesh ? (uint32_t)mesh->nbFaces : 0u,
+        0u,
+        0u,
+        (m_dyntopo && m_dyntopo->active()) || m_dyntopoSettings.enabled,
+        m_useSym,
+        localRadius,
+        intensity,
+        m_currentIntersection.x,
+        m_currentIntersection.y,
+        m_currentIntersection.z
+    );
 
     if (m_isTubeMoveStroke && m_tubeTool) {
         if (m_lastTubeActiveBrush != activeBrush) {
@@ -2810,6 +2926,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     const uint32_t* primaryVerts = (isGrabBrush && !m_firstStrokeFrame) ? m_grabbedVertices.data() : pickedVertices.data();
     const size_t primaryVertCount = (isGrabBrush && !m_firstStrokeFrame) ? m_grabbedVertices.size() : pickedVertices.size();
     m_lastFrameProfile.pickedVertCount = (int)primaryVertCount;
+    CrashReporter::updateStrokeCounts((uint32_t)primaryVertCount, 0u);
 
     // --- Stage 3: Culling & PolyGroup Filtering ---
     tStage = std::chrono::high_resolution_clock::now();
@@ -2970,7 +3087,8 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         m_lastFrameProfile.primaryDeformMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
 
         if (primaryDeformed > 0 && (!isGrabBrush || m_firstStrokeFrame)) {
-            allAffectedVerts.insert(allAffectedVerts.end(), primaryVerts, primaryVerts + primaryDeformed);
+            const size_t safePrimary = std::min((size_t)primaryDeformed, primaryVertCount);
+            allAffectedVerts.insert(allAffectedVerts.end(), primaryVerts, primaryVerts + safePrimary);
         }
 
         // --- Stage 6: Symmetry Pass ---
@@ -3139,7 +3257,8 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                     m_lastFrameProfile.symDeformMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tSymDef0).count();
 
                     if (symDeformed > 0 && (!isGrabBrush || m_firstStrokeFrame)) {
-                        allAffectedVerts.insert(allAffectedVerts.end(), pSymData, pSymData + symDeformed);
+                        const size_t safeSym = std::min((size_t)symDeformed, numSymData);
+                        allAffectedVerts.insert(allAffectedVerts.end(), pSymData, pSymData + safeSym);
                     }
                 }
             }
@@ -3203,16 +3322,19 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             allAffectedVerts.resize(writeIdx);
         } else {
             static std::vector<std::vector<uint32_t>> s_threadVerts;
+            static std::vector<size_t> s_offsets;
             if ((int)s_threadVerts.size() < maxThreads) {
                 s_threadVerts.resize(maxThreads);
             }
+            s_offsets.assign((size_t)maxThreads + 1, 0);
             uint32_t globalMin = 0xFFFFFFFF;
             uint32_t globalMax = 0;
 
             #pragma omp parallel reduction(min:globalMin) reduction(max:globalMax)
             {
                 int tid = omp_get_thread_num();
-                auto& localVerts = s_threadVerts[tid];
+                std::vector<uint32_t> fallbackVerts;
+                auto& localVerts = (tid >= 0 && tid < (int)s_threadVerts.size()) ? s_threadVerts[tid] : fallbackVerts;
                 localVerts.clear();
                 size_t estCount = (total / maxThreads) + 64;
                 if (localVerts.capacity() < estCount) {
@@ -3233,12 +3355,11 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 }
             }
 
-            size_t offsets[129] = {0};
-            int numMergeThreads = std::min(maxThreads, 128);
+            const int numMergeThreads = maxThreads;
             for (int t = 0; t < numMergeThreads; ++t) {
-                offsets[t + 1] = offsets[t] + s_threadVerts[t].size();
+                s_offsets[t + 1] = s_offsets[t] + s_threadVerts[t].size();
             }
-            writeIdx = offsets[numMergeThreads];
+            writeIdx = s_offsets[numMergeThreads];
             allAffectedVerts.resize(writeIdx);
             pVerts = allAffectedVerts.data();
 
@@ -3246,7 +3367,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             for (int t = 0; t < numMergeThreads; ++t) {
                 size_t sz = s_threadVerts[t].size();
                 if (sz > 0) {
-                    std::memcpy(pVerts + offsets[t], s_threadVerts[t].data(), sz * sizeof(uint32_t));
+                    std::memcpy(pVerts + s_offsets[t], s_threadVerts[t].data(), sz * sizeof(uint32_t));
                 }
             }
             minV = globalMin;
@@ -3300,13 +3421,14 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 tStage = std::chrono::high_resolution_clock::now();
                 numIFaces = getFacesFromVerticesFast(
                     pAff,
-                    numAff,
+                    (uint32_t)numAff,
                     mesh->vrfStartCount.data(),
                     mesh->vertRingFace.data(),
-                    m_iFacesCache.data(),
+                    mesh->vertRingFace.size(),
+                    m_iFacesCache,
                     m_tagFlags.data(),
                     &m_tagEpoch,
-                    mesh->nbFaces,
+                    (uint32_t)mesh->nbFaces,
                     (uint32_t)mesh->nbVerts
                 );
                 m_lastFrameProfile.faceLookupMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
@@ -3315,6 +3437,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 }
             }
             m_lastFrameProfile.affectedFaceCount = (int)numIFaces;
+            CrashReporter::updateStrokeCounts((uint32_t)numAff, numIFaces);
 
             // --- Stage 8: Face Normals & Boxes ---
             tStage = std::chrono::high_resolution_clock::now();
@@ -4388,13 +4511,24 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     return;
                 }
 
-                if (!m_isTubeMoveStroke && m_currentBrush != BRUSH_DYNAMIC_TOPOLOGY && !m_dyntopoSettings.enabled) {
+                if (!m_isTubeMoveStroke && mesh && m_currentBrush != BRUSH_DYNAMIC_TOPOLOGY && !m_dyntopoSettings.enabled) {
                     bool strokeAffectsPositions = (m_currentBrush != BRUSH_PAINT && m_currentBrush != BRUSH_MASK && m_currentBrush != BRUSH_MASK_GRADIENT_BLUR);
                     bool strokeAffectsColors = (m_currentBrush == BRUSH_PAINT && getCurrentSettings().writeAlbedo);
                     bool strokeAffectsMaterials = (m_currentBrush == BRUSH_PAINT && (getCurrentSettings().writeRoughness || getCurrentSettings().writeMetalness)) ||
                                                    (m_currentBrush == BRUSH_MASK || m_currentBrush == BRUSH_MASK_GRADIENT_BLUR);
                     g_undoManager.beginSculptStroke(scene, mesh->m_id, {}, strokeAffectsPositions, strokeAffectsColors, strokeAffectsMaterials, "Sculpt Stroke");
                 }
+                ++m_strokeSeq;
+                m_strokePassIdx = 0;
+                CrashReporter::setStrokeActive(true);
+                CrashReporter::recordBreadcrumb(
+                    "STROKE",
+                    "Start seq=%llu brush=%s verts=%d faces=%d",
+                    (unsigned long long)m_strokeSeq,
+                    getBrushNameStr(activeBrush),
+                    mesh ? mesh->nbVerts : 0,
+                    mesh ? mesh->nbFaces : 0
+                );
                 m_isSculpting = true;
                 m_currentIntersectionValid = true;
                 m_firstStrokeFrame = true;
@@ -4963,21 +5097,31 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
             if (m_clipCurvePoints.size() >= 2 && mesh) {
                 HistoryState beforeState = scene.saveCurrentState(false);
-                std::vector<glm::vec3> symScales = getActiveSymmetryScales();
-                bool modified = ClipCurveTool::execute(
-                    mesh,
-                    scene.getCamera(),
-                    m_clipCurvePoints,
-                    m_clipCurveAlt,
-                    m_useSym,
-                    m_symmetryMode,
-                    symScales
-                );
-                sculpt_log("[SculptManager] ClipCurveTool::execute result = %s\n", modified ? "TRUE (modified)" : "FALSE (unmodified)");
-                if (modified) {
-                    HistoryState afterState = scene.saveCurrentState(false);
-                    g_undoManager.pushTopologyChange(scene, "Clip Curve", std::move(beforeState), std::move(afterState));
-                    scene.setModified(true);
+                try {
+                    CrashReporter::ScopedStage clipStage("CSG::ClipCurve");
+                    CrashReporter::recordBreadcrumb("CSG", "ClipCurve pts=%zu verts=%d", m_clipCurvePoints.size(), mesh->nbVerts);
+                    std::vector<glm::vec3> symScales = getActiveSymmetryScales();
+                    bool modified = ClipCurveTool::execute(
+                        mesh,
+                        scene.getCamera(),
+                        m_clipCurvePoints,
+                        m_clipCurveAlt,
+                        m_useSym,
+                        m_symmetryMode,
+                        symScales
+                    );
+                    sculpt_log("[SculptManager] ClipCurveTool::execute result = %s\n", modified ? "TRUE (modified)" : "FALSE (unmodified)");
+                    if (modified) {
+                        HistoryState afterState = scene.saveCurrentState(false);
+                        g_undoManager.pushTopologyChange(scene, "Clip Curve", std::move(beforeState), std::move(afterState));
+                        scene.setModified(true);
+                    }
+                } catch (const std::exception& e) {
+                    scene.restoreState(beforeState);
+                    ErrorReporter::instance().reportError("ClipCurve Failed", "An error occurred during ClipCurve; scene restored.", e.what(), true);
+                } catch (...) {
+                    scene.restoreState(beforeState);
+                    ErrorReporter::instance().reportError("ClipCurve Failed", "Unknown error during ClipCurve; scene restored.", "", true);
                 }
             } else {
                 sculpt_log("[SculptManager] ClipCurve skipped execution (points < 2 or mesh is null)\n");
@@ -5006,25 +5150,38 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                            m_trimLassoPoints.back().x, m_trimLassoPoints.back().y);
 
                 HistoryState beforeState = scene.saveCurrentState(true);
-                TrimConfig config;
-                bool modified = TrimTool::execute(
-                    mesh,
-                    camera,
-                    m_trimLassoPoints,
-                    m_trimLassoAlt,
-                    getUseSym(),
-                    m_symmetryMode,
-                    getActiveSymmetryScales(),
-                    config
-                );
+                const int origVerts = mesh->nbVerts;
+                const int origFaces = mesh->nbFaces;
+                try {
+                    TrimConfig config;
+                    bool modified = TrimTool::execute(
+                        mesh,
+                        camera,
+                        m_trimLassoPoints,
+                        m_trimLassoAlt,
+                        getUseSym(),
+                        m_symmetryMode,
+                        getActiveSymmetryScales(),
+                        config
+                    );
 
-                if (modified) {
-                    HistoryState afterState = scene.saveCurrentState(true);
-                    g_undoManager.pushTopologyChange(scene, "Trim", std::move(beforeState), std::move(afterState));
-                    scene.setModified(true);
-                    sculpt_log("[TrimLasso] TrimTool execution modified the mesh successfully.\n");
-                } else {
-                    sculpt_log("[TrimLasso] TrimTool execution returned false (unmodified).\n");
+                    if (modified) {
+                        HistoryState afterState = scene.saveCurrentState(true);
+                        g_undoManager.pushTopologyChange(scene, "Trim", std::move(beforeState), std::move(afterState));
+                        scene.setModified(true);
+                        sculpt_log("[TrimLasso] TrimTool execution modified the mesh successfully.\n");
+                    } else {
+                        if (mesh->nbVerts != origVerts || mesh->nbFaces != origFaces) {
+                            scene.restoreState(beforeState);
+                        }
+                        sculpt_log("[TrimLasso] TrimTool execution returned false (unmodified).\n");
+                    }
+                } catch (const std::exception& e) {
+                    scene.restoreState(beforeState);
+                    ErrorReporter::instance().reportError("Trim Failed", "Exception during Trim operation; scene restored.", e.what(), true);
+                } catch (...) {
+                    scene.restoreState(beforeState);
+                    ErrorReporter::instance().reportError("Trim Failed", "Unknown error during Trim operation; scene restored.", "", true);
                 }
             } else {
                 sculpt_log("[TrimLasso] Lasso too small (points=%zu) or no mesh. Skipping execution.\n",
@@ -5044,42 +5201,60 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
             if (mesh) {
                 if (splitMode == 1 && m_splitLassoPoints.size() >= 2) {
-                    scene.pushHistoryState();
-                    std::vector<glm::vec3> symScales = getActiveSymmetryScales();
-                    bool modified = sculpt::SplitTool::sliceByLine(
-                        scene,
-                        mesh,
-                        camera,
-                        m_splitLassoPoints.front(),
-                        m_splitLassoPoints.back(),
-                        getUseSym(),
-                        m_symmetryMode,
-                        symScales
-                    );
-                    if (modified) {
-                        scene.setModified(true);
-                        sculpt_log("[SplitTool] sliceByLine modified the scene successfully.\n");
-                    } else {
-                        sculpt_log("[SplitTool] sliceByLine returned false (unmodified).\n");
+                    HistoryState rollbackSnap = scene.saveCurrentState(true);
+                    try {
+                        scene.pushHistoryState();
+                        std::vector<glm::vec3> symScales = getActiveSymmetryScales();
+                        bool modified = sculpt::SplitTool::sliceByLine(
+                            scene,
+                            mesh,
+                            camera,
+                            m_splitLassoPoints.front(),
+                            m_splitLassoPoints.back(),
+                            getUseSym(),
+                            m_symmetryMode,
+                            symScales
+                        );
+                        if (modified) {
+                            scene.setModified(true);
+                            sculpt_log("[SplitTool] sliceByLine modified the scene successfully.\n");
+                        } else {
+                            sculpt_log("[SplitTool] sliceByLine returned false (unmodified).\n");
+                        }
+                    } catch (const std::exception& e) {
+                        scene.restoreState(rollbackSnap);
+                        ErrorReporter::instance().reportError("Split Failed", "Exception during Slice operation; scene restored.", e.what(), true);
+                    } catch (...) {
+                        scene.restoreState(rollbackSnap);
+                        ErrorReporter::instance().reportError("Split Failed", "Unknown error during Slice operation; scene restored.", "", true);
                     }
                 } else if (splitMode == 0 && m_splitLassoPoints.size() >= 3) {
-                    scene.pushHistoryState();
-                    std::vector<glm::vec3> symScales = getActiveSymmetryScales();
-                    bool modified = sculpt::SplitTool::splitByLasso(
-                        scene,
-                        mesh,
-                        camera,
-                        m_splitLassoPoints,
-                        m_splitLassoAlt,
-                        getUseSym(),
-                        m_symmetryMode,
-                        symScales
-                    );
-                    if (modified) {
-                        scene.setModified(true);
-                        sculpt_log("[SplitTool] splitByLasso modified the scene successfully.\n");
-                    } else {
-                        sculpt_log("[SplitTool] splitByLasso returned false (unmodified).\n");
+                    HistoryState rollbackSnap = scene.saveCurrentState(true);
+                    try {
+                        scene.pushHistoryState();
+                        std::vector<glm::vec3> symScales = getActiveSymmetryScales();
+                        bool modified = sculpt::SplitTool::splitByLasso(
+                            scene,
+                            mesh,
+                            camera,
+                            m_splitLassoPoints,
+                            m_splitLassoAlt,
+                            getUseSym(),
+                            m_symmetryMode,
+                            symScales
+                        );
+                        if (modified) {
+                            scene.setModified(true);
+                            sculpt_log("[SplitTool] splitByLasso modified the scene successfully.\n");
+                        } else {
+                            sculpt_log("[SplitTool] splitByLasso returned false (unmodified).\n");
+                        }
+                    } catch (const std::exception& e) {
+                        scene.restoreState(rollbackSnap);
+                        ErrorReporter::instance().reportError("Split Failed", "Exception during Split operation; scene restored.", e.what(), true);
+                    } catch (...) {
+                        scene.restoreState(rollbackSnap);
+                        ErrorReporter::instance().reportError("Split Failed", "Unknown error during Split operation; scene restored.", "", true);
                     }
                 } else {
                     sculpt_log("[SplitTool] Stroke too small (points=%zu). Skipping execution.\n",
@@ -5092,6 +5267,14 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
         }
 
         if (m_isSculpting) {
+            struct StrokeCrashGuard {
+                uint64_t seq;
+                ~StrokeCrashGuard() {
+                    CrashReporter::clearStrokeContext();
+                    CrashReporter::recordBreadcrumb("STROKE", "End seq=%llu", (unsigned long long)seq);
+                }
+            } strokeCrashGuard{m_strokeSeq};
+
             m_isSculpting = false;
             m_relaxEngine.endStroke();
             m_currentIntersectionValid = false;
@@ -6955,13 +7138,18 @@ void SculptManager::filterPolyGroupVertices(std::vector<uint32_t>& pickedVertice
 
     const size_t total = pickedVertices.size();
     if (total == 0) return;
-    const int maxThreads = omp_get_max_threads();
+    const int maxThreads = std::max(1, omp_get_max_threads());
     const bool inParallel = omp_in_parallel();
+    const size_t vrfSize = mesh->vrfStartCount.size();
+    const size_t ringSize = mesh->vertRingFace.size();
 
     auto isKeep = [&](uint32_t v) -> bool {
         if (v >= (uint32_t)mesh->nbVerts) return false;
-        uint32_t start = mesh->vrfStartCount[v * 2];
-        uint32_t count = mesh->vrfStartCount[v * 2 + 1];
+        const size_t v2 = static_cast<size_t>(v) * 2;
+        if (v2 + 1 >= vrfSize) return false;
+        uint32_t start = mesh->vrfStartCount[v2];
+        uint32_t count = mesh->vrfStartCount[v2 + 1];
+        if (static_cast<uint64_t>(start) + count > ringSize) return false;
         for (uint32_t i = 0; i < count; ++i) {
             uint32_t f = mesh->vertRingFace[start + i];
             if (f < (uint32_t)mesh->nbFaces && mesh->faceGroups[f] == targetGroupId) {
@@ -6985,7 +7173,8 @@ void SculptManager::filterPolyGroupVertices(std::vector<uint32_t>& pickedVertice
     #pragma omp parallel
     {
         int tid = omp_get_thread_num();
-        auto& local = threadBuckets[tid];
+        std::vector<uint32_t> fallback;
+        auto& local = (tid >= 0 && tid < (int)threadBuckets.size()) ? threadBuckets[tid] : fallback;
         local.reserve((total / maxThreads) + 64);
         #pragma omp for schedule(static)
         for (int64_t i = 0; i < (int64_t)total; ++i) {
@@ -6995,14 +7184,13 @@ void SculptManager::filterPolyGroupVertices(std::vector<uint32_t>& pickedVertice
             }
         }
     }
-    size_t offsets[129] = {0};
-    int numMergeThreads = std::min(maxThreads, 128);
-    for (int t = 0; t < numMergeThreads; ++t) {
+    std::vector<size_t> offsets((size_t)maxThreads + 1, 0);
+    for (int t = 0; t < maxThreads; ++t) {
         offsets[t + 1] = offsets[t] + threadBuckets[t].size();
     }
-    pickedVertices.resize(offsets[numMergeThreads]);
-    #pragma omp parallel for schedule(static) if(offsets[numMergeThreads] > 8192)
-    for (int t = 0; t < numMergeThreads; ++t) {
+    pickedVertices.resize(offsets[maxThreads]);
+    #pragma omp parallel for schedule(static) if(offsets[maxThreads] > 8192)
+    for (int t = 0; t < maxThreads; ++t) {
         size_t count = threadBuckets[t].size();
         if (count > 0) {
             std::memcpy(pickedVertices.data() + offsets[t], threadBuckets[t].data(), count * sizeof(uint32_t));
