@@ -160,10 +160,27 @@ public:
     struct GpuUploadTiming {
         double msVbo = 0.0;
         double msEbo = 0.0;
+        double msPolygroupRebuild = 0.0;
         double msTotal = 0.0;
+        size_t bytesVbo = 0;
+        size_t bytesEbo = 0;
+        size_t bytesPolygroup = 0;
+        uint32_t dirtyVertSpan = 0;
+        uint32_t dirtyMeshVerts = 0;
+        bool wasFullUpload = false;
+    };
+    struct GpuRenderStats {
+        uint32_t meshDrawCalls = 0;
+        uint64_t trisSubmitted = 0;
+        uint32_t cullEnabledDraws = 0;
+        uint32_t cullDisabledDraws = 0;
+        uint32_t polygroupDraws = 0;
+        uint32_t polygroupRebuilds = 0;
     };
     const GpuUploadTiming& getLastUploadTiming() const { return m_lastUploadTiming; }
     void resetLastUploadTiming() { m_lastUploadTiming = {}; }
+    const GpuRenderStats& getLastRenderStats() const { return m_lastRenderStats; }
+    void resetLastRenderStats() { m_lastRenderStats = {}; }
 
     // Core render loop called from JS requestAnimationFrame or SDL main loop
     void render(const Scene& scene, unsigned int targetFbo = 0);
@@ -854,6 +871,7 @@ private:
 
     std::unordered_map<const Mesh*, std::unique_ptr<MeshRenderBuffers>> m_meshBuffers;
     GpuUploadTiming m_lastUploadTiming;
+    GpuRenderStats m_lastRenderStats;
 
     // Model Snapshot storage
     ModelSnapshot m_snapshot;

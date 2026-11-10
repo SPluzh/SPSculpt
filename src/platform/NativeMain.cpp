@@ -23,6 +23,8 @@
 #include <ImGuizmo.h>
 
 #include "render/AngleRenderer.h"
+#include "render/RenderBenchmark.h"
+#include "common/OptFlags.h"
 #include "mesh/BVH.h"
 #include "mesh/BVHTest.h"
 #include "mesh/SculptBenchmark.h"
@@ -309,6 +311,7 @@ int main(int argc, char* argv[]) {
     bool runGozBench = false;
     bool runBridgeBench = false;
     bool runGozProfile = false;
+    bool runRenderBench = false;
     bool runBVHTest = false;
     bool runDyntopoTest = false;
     bool runDyntopoBench = false;
@@ -395,7 +398,10 @@ int main(int argc, char* argv[]) {
             } else if (arg == "--test-claybuildup-4m" || arg == "--bench-claybuildup" || arg == "--bench-multitool" || arg == "--benchmark") {
                 runBench = true;
                 showConsole = true;
-            } else if ((arg == "--bench-faces" || arg == "-bf") && i + 1 < numArgs) {
+            } else if (arg == "--bench-render" || arg == "--render-bench") {
+                runRenderBench = true;
+                showConsole = true;
+            } else if ((arg == "--bench-render-faces" || arg == "--bench-faces" || arg == "-bf") && i + 1 < numArgs) {
                 showConsole = true;
                 benchFaces = std::atoi(wideToUtf8(szArgList[++i]).c_str());
             } else if (fileToOpen.empty() && !arg.empty() && arg[0] != '-') {
@@ -473,7 +479,10 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--test-claybuildup-4m" || arg == "--bench-claybuildup" || arg == "--bench-multitool" || arg == "--benchmark") {
             runBench = true;
             showConsole = true;
-        } else if ((arg == "--bench-faces" || arg == "-bf") && i + 1 < argc) {
+        } else if (arg == "--bench-render" || arg == "--render-bench") {
+            runRenderBench = true;
+            showConsole = true;
+        } else if ((arg == "--bench-render-faces" || arg == "--bench-faces" || arg == "-bf") && i + 1 < argc) {
             showConsole = true;
             benchFaces = std::atoi(argv[++i]);
         } else if (fileToOpen.empty() && !arg.empty() && arg[0] != '-') {
@@ -518,7 +527,8 @@ int main(int argc, char* argv[]) {
     const bool isHeadlessRun = runDyntopoTest || runDyntopoBench || runDyntopoTool02Bench ||
                                runDyntopoBench1000 || runClayBench1000 || runClayDyntopoBench1000 ||
                                runBVHTest || runBridgeBench || runGozBench || runVoxelBench ||
-                               runTrimClipBench || runBench || runGozProfile || runCrashReporterTest;
+                               runTrimClipBench || runBench || runGozProfile || runRenderBench ||
+                               runCrashReporterTest;
 
     CrashReporter::init(isHeadlessRun);
     sculpt_log_init(isHeadlessRun);
@@ -820,7 +830,7 @@ int main(int argc, char* argv[]) {
         renderer.releaseMeshBuffers(m);
     });
     scene.getCamera().onResize(width, height);
-    if (fileToOpen.empty()) {
+    if (fileToOpen.empty() && !runRenderBench && !runGozProfile) {
         if (gui.getCreateDefaultSphereOnStartup()) {
             scene.loadDefaultSphere();
         }
@@ -846,6 +856,28 @@ int main(int argc, char* argv[]) {
     renderer.setMatcap(defaultFvIdx >= 0 ? defaultFvIdx : 3); // Default to "Matcap FV"
     renderer.setShaderType(1); // MATCAP
     renderer.setTextureId(0);
+
+    (void)OptFlags::get();
+
+    if (runRenderBench) {
+        BrushPresetManager::instance().loadDefaults();
+        SculptManager sculpt;
+        scene.setSculptManager(&sculpt);
+        g_undoManager.setSculptManager(&sculpt);
+        sculpt.setRenderer(&renderer);
+        bool ok = RenderBenchmark::run(benchFaces, scene, sculpt, renderer, window);
+        scene.setSculptManager(nullptr);
+        fflush(stdout);
+        fflush(stderr);
+        SDL_GL_DeleteContext(glContext);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+#ifdef _WIN32
+        ExitProcess(ok ? 0 : 1);
+#else
+        _exit(ok ? 0 : 1);
+#endif
+    }
 
     // Auto-load render and shading settings if they exist
     RenderSettings::load(appSettings, renderer, scene);

@@ -736,6 +736,9 @@ void AngleRenderer::render(const Scene& scene, unsigned int targetFbo) {
     m_splitMode = (scene.getSplitMode() != Scene::SplitMode::OFF);
     m_cameraRight = scene.getCameraRight();
 
+    // Reset per-frame render stats
+    m_lastRenderStats = {};
+
     // 0. Ensure all mesh dirty buffers are uploaded first (must run on the active GL thread/context)
     bool anyMeshUploaded = false;
     for (auto* mesh : scene.getMeshes()) {
@@ -1881,6 +1884,11 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
             glBindVertexArray(bufs->polygroupVao);
             glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(bufs->polygroupVertCount));
             glBindVertexArray(0);
+            m_lastRenderStats.meshDrawCalls++;
+            m_lastRenderStats.polygroupDraws++;
+            m_lastRenderStats.trisSubmitted += (uint64_t)(bufs->polygroupVertCount / 3);
+            if (isXRay) m_lastRenderStats.cullEnabledDraws++;
+            else m_lastRenderStats.cullDisabledDraws++;
         }
         return;
     }
@@ -1931,6 +1939,11 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
     glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
 
     glBindVertexArray(0);
+
+    m_lastRenderStats.meshDrawCalls++;
+    m_lastRenderStats.trisSubmitted += (uint64_t)(bufs->triIndexCount / 3);
+    if (isXRay) m_lastRenderStats.cullEnabledDraws++;
+    else m_lastRenderStats.cullDisabledDraws++;
 }
 
 void AngleRenderer::drawMeshPrepass(Mesh* mesh, const Scene& scene, const Camera& camera) {
@@ -1973,6 +1986,10 @@ void AngleRenderer::drawMeshPrepass(Mesh* mesh, const Scene& scene, const Camera
     glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
 
     glBindVertexArray(0);
+
+    m_lastRenderStats.meshDrawCalls++;
+    m_lastRenderStats.trisSubmitted += (uint64_t)(bufs->triIndexCount / 3);
+    m_lastRenderStats.cullDisabledDraws++;
 }
 
 void AngleRenderer::drawVoxelPreview(const Scene& scene, const Camera& camera, int viewportIdx) {
@@ -2080,6 +2097,10 @@ void AngleRenderer::drawMeshFlatColor(Mesh* mesh, const Scene& scene, const Came
     glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
 
     glBindVertexArray(0);
+
+    m_lastRenderStats.meshDrawCalls++;
+    m_lastRenderStats.trisSubmitted += (uint64_t)(bufs->triIndexCount / 3);
+    m_lastRenderStats.cullDisabledDraws++;
 }
 
 void AngleRenderer::drawWireframe(Mesh* mesh, const Scene& scene, const Camera& camera) {
@@ -3068,6 +3089,7 @@ void AngleRenderer::generateWireframeIndices(
 
 void AngleRenderer::buildPolyGroupBuffers(const Mesh* mesh, MeshRenderBuffers* bufs) {
     if (!mesh || !bufs) return;
+    auto tPgStart = std::chrono::high_resolution_clock::now();
 
     const auto& fVisible = mesh->faceVisible;
     bool hasFaceVis = (fVisible.size() == (size_t)mesh->nbFaces);
@@ -3189,6 +3211,16 @@ void AngleRenderer::buildPolyGroupBuffers(const Mesh* mesh, MeshRenderBuffers* b
     glEnableVertexAttribArray(5);
 
     glBindVertexArray(0);
+
+    double pgMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tPgStart).count();
+    size_t pgBytes = expandedVerts.size() * sizeof(float)
+                   + expandedNormals.size() * sizeof(float)
+                   + expandedMaterials.size() * sizeof(float)
+                   + expandedGroups.size() * sizeof(uint32_t);
+    m_lastUploadTiming.msPolygroupRebuild += pgMs;
+    m_lastUploadTiming.bytesPolygroup += pgBytes;
+    m_lastUploadTiming.msTotal += pgMs;
+    m_lastRenderStats.polygroupRebuilds++;
 }
 
 void AngleRenderer::releaseMeshBuffers(const Mesh* mesh) {
@@ -3326,6 +3358,7 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
         }
         auto tVboEnd = std::chrono::high_resolution_clock::now();
         auto tEboStart = std::chrono::high_resolution_clock::now();
+        double pgBefore = m_lastUploadTiming.msPolygroupRebuild;
         
         std::vector<uint32_t> triIndices;
         generateTriangleIndices(uploadMesh, triIndices);
@@ -3435,9 +3468,32 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
         }
         auto tEboEnd = std::chrono::high_resolution_clock::now();
 
-        m_lastUploadTiming.msVbo = std::chrono::duration<double, std::milli>(tVboEnd - tVboStart).count();
-        m_lastUploadTiming.msEbo = std::chrono::duration<double, std::milli>(tEboEnd - tEboStart).count();
-        m_lastUploadTiming.msTotal = m_lastUploadTiming.msVbo + m_lastUploadTiming.msEbo;
+        size_t fullVboBytes = uploadMesh->verts.size() * sizeof(float)
+                            + uploadMesh->normals.size() * sizeof(float)
+                            + uploadMesh->colors.size() * sizeof(float)
+                            + uploadMesh->materials.size() * sizeof(float)
+                            + vertGroups.size() * sizeof(uint32_t)
+                            + (!uploadMesh->uvFlat.empty() ? uploadMesh->uvFlat.size() * sizeof(float) : 0)
+                            + (!uploadMesh->tangents.empty() ? uploadMesh->tangents.size() * sizeof(float) : 0)
+                            + ((isDynamic && mesh->dynamicSettings.showCage) ? mesh->verts.size() * sizeof(float) : 0);
+        size_t fullEboBytes = triIndices.size() * sizeof(uint32_t)
+                            + (needWireframe ? (bufs->wireIndexCount + bufs->subdivWireIndexCount) * sizeof(uint32_t) : 0)
+                            + ((isDynamic && mesh->dynamicSettings.showCage) ? bufs->cageWireIndexCount * sizeof(uint32_t) : 0)
+                            + bufs->creaseWireIndexCount * sizeof(uint32_t);
+
+        double vboMs = std::chrono::duration<double, std::milli>(tVboEnd - tVboStart).count();
+        double eboSpanMs = std::chrono::duration<double, std::milli>(tEboEnd - tEboStart).count();
+        double pgDelta = m_lastUploadTiming.msPolygroupRebuild - pgBefore;
+        double eboMs = std::max(0.0, eboSpanMs - pgDelta);
+
+        m_lastUploadTiming.msVbo += vboMs;
+        m_lastUploadTiming.msEbo += eboMs;
+        m_lastUploadTiming.msTotal += vboMs + eboMs;
+        m_lastUploadTiming.bytesVbo += fullVboBytes;
+        m_lastUploadTiming.bytesEbo += fullEboBytes;
+        m_lastUploadTiming.wasFullUpload = true;
+        m_lastUploadTiming.dirtyVertSpan = std::max(m_lastUploadTiming.dirtyVertSpan, (uint32_t)uploadMesh->nbVerts);
+        m_lastUploadTiming.dirtyMeshVerts = std::max(m_lastUploadTiming.dirtyMeshVerts, (uint32_t)uploadMesh->nbVerts);
         
         mesh->isDirty = false;
         if (uploadMesh) {
@@ -3453,6 +3509,8 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
     } else {
         if (mesh->isFaceGroupDirty) {
             uploaded = true;
+            auto tFgStart = std::chrono::high_resolution_clock::now();
+            double pgBeforeFg = m_lastUploadTiming.msPolygroupRebuild;
             std::vector<uint32_t> vertGroups(uploadMesh->nbVerts, 0);
             if (uploadMesh->faceGroups.size() == (size_t)uploadMesh->nbFaces) {
                 bool hasFaceVis = (uploadMesh->faceVisible.size() == (size_t)uploadMesh->nbFaces);
@@ -3506,23 +3564,42 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
                 bufs->polygroupDirty = false;
             }
             mesh->isFaceGroupDirty = false;
+
+            double fgSpanMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tFgStart).count();
+            double pgDeltaFg = m_lastUploadTiming.msPolygroupRebuild - pgBeforeFg;
+            double fgOnlyMs = std::max(0.0, fgSpanMs - pgDeltaFg);
+            size_t fgVboBytes = vertGroups.size() * sizeof(uint32_t);
+            size_t fgEboBytes = triIndices.size() * sizeof(uint32_t)
+                              + (needWireframe ? (bufs->wireIndexCount + bufs->subdivWireIndexCount) * sizeof(uint32_t) : 0);
+            m_lastUploadTiming.msEbo += fgOnlyMs;
+            m_lastUploadTiming.msTotal += fgOnlyMs;
+            m_lastUploadTiming.bytesVbo += fgVboBytes;
+            m_lastUploadTiming.bytesEbo += fgEboBytes;
+            m_lastUploadTiming.dirtyVertSpan = std::max(m_lastUploadTiming.dirtyVertSpan, (uint32_t)uploadMesh->nbVerts);
+            m_lastUploadTiming.dirtyMeshVerts = std::max(m_lastUploadTiming.dirtyMeshVerts, (uint32_t)uploadMesh->nbVerts);
         }
 
         if (isDynamic) {
+            auto tDynStart = std::chrono::high_resolution_clock::now();
+            double pgBeforeDyn = m_lastUploadTiming.msPolygroupRebuild;
+            size_t dynBytes = 0;
             if (mesh->isVertexDirty) {
                 uploaded = true;
                 glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
                 glBufferSubData(GL_ARRAY_BUFFER, 0, uploadMesh->verts.size() * sizeof(float),
                                 uploadMesh->verts.data());
+                dynBytes += uploadMesh->verts.size() * sizeof(float);
 
                 glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
                 glBufferSubData(GL_ARRAY_BUFFER, 0, uploadMesh->normals.size() * sizeof(float),
                                 uploadMesh->normals.data());
+                dynBytes += uploadMesh->normals.size() * sizeof(float);
 
                 if (mesh->dynamicSettings.showCage && bufs->cageVboVerts != 0) {
                     glBindBuffer(GL_ARRAY_BUFFER, bufs->cageVboVerts);
                     glBufferSubData(GL_ARRAY_BUFFER, 0, mesh->verts.size() * sizeof(float),
                                     mesh->verts.data());
+                    dynBytes += mesh->verts.size() * sizeof(float);
                 }
 
                 bufs->polygroupDirty = true;
@@ -3539,6 +3616,7 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
                 glBindBuffer(GL_ARRAY_BUFFER, bufs->vboColors);
                 glBufferSubData(GL_ARRAY_BUFFER, 0, uploadMesh->colors.size() * sizeof(float),
                                 uploadMesh->colors.data());
+                dynBytes += uploadMesh->colors.size() * sizeof(float);
                 mesh->isColorDirty = false;
             }
 
@@ -3547,10 +3625,24 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
                 glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
                 glBufferSubData(GL_ARRAY_BUFFER, 0, uploadMesh->materials.size() * sizeof(float),
                                 uploadMesh->materials.data());
+                dynBytes += uploadMesh->materials.size() * sizeof(float);
                 mesh->isMaterialDirty = false;
             }
+            if (dynBytes > 0) {
+                double dynSpanMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tDynStart).count();
+                double pgDeltaDyn = m_lastUploadTiming.msPolygroupRebuild - pgBeforeDyn;
+                double dynOnlyMs = std::max(0.0, dynSpanMs - pgDeltaDyn);
+                m_lastUploadTiming.msVbo += dynOnlyMs;
+                m_lastUploadTiming.msTotal += dynOnlyMs;
+                m_lastUploadTiming.bytesVbo += dynBytes;
+                m_lastUploadTiming.dirtyVertSpan = std::max(m_lastUploadTiming.dirtyVertSpan, (uint32_t)uploadMesh->nbVerts);
+                m_lastUploadTiming.dirtyMeshVerts = std::max(m_lastUploadTiming.dirtyMeshVerts, (uint32_t)uploadMesh->nbVerts);
+            }
         } else {
+            auto tIncStart = std::chrono::high_resolution_clock::now();
+            double pgBeforeInc = m_lastUploadTiming.msPolygroupRebuild;
             size_t incrementalBytes = 0;
+            size_t incrementalEboBytes = 0;
             if (mesh->isVertexDirty && mesh->dirtyVertMin <= mesh->dirtyVertMax && mesh->dirtyVertMax < (uint32_t)mesh->nbVerts) {
                 uploaded = true;
                 size_t offset = (size_t)mesh->dirtyVertMin * 3 * sizeof(float);
@@ -3607,6 +3699,7 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
                 glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboTriangles);
                 glBufferData(GL_ELEMENT_ARRAY_BUFFER, triIndices.size() * sizeof(uint32_t), triIndices.data(), GL_STATIC_DRAW);
                 bufs->triIndexCount = triIndices.size();
+                incrementalEboBytes += triIndices.size() * sizeof(uint32_t);
                 
                 bool needWireframe = m_showWireframe || (m_activeBrush == BRUSH_POLYGROUP) || (m_shaderType == 5);
                 if (needWireframe) {
@@ -3615,6 +3708,7 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
                     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs->eboWireframe);
                     glBufferData(GL_ELEMENT_ARRAY_BUFFER, wireIndices.size() * sizeof(uint32_t), wireIndices.data(), GL_STATIC_DRAW);
                     bufs->wireIndexCount = wireIndices.size();
+                    incrementalEboBytes += wireIndices.size() * sizeof(uint32_t);
                     bufs->wireDirty = false;
                 } else {
                     bufs->wireIndexCount = 0;
@@ -3624,10 +3718,23 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
                 
                 mesh->isTopologyDirty = false;
             }
-            if (incrementalBytes > 0) {
-                double incUploadMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tUploadStart).count();
-                m_lastUploadTiming.msVbo += incUploadMs;
-                m_lastUploadTiming.msTotal += incUploadMs;
+            if (incrementalBytes > 0 || incrementalEboBytes > 0) {
+                double incSpanMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tIncStart).count();
+                double pgDeltaInc = m_lastUploadTiming.msPolygroupRebuild - pgBeforeInc;
+                double incOnlyMs = std::max(0.0, incSpanMs - pgDeltaInc);
+                if (incrementalBytes > 0) {
+                    m_lastUploadTiming.msVbo += incOnlyMs;
+                } else {
+                    m_lastUploadTiming.msEbo += incOnlyMs;
+                }
+                m_lastUploadTiming.msTotal += incOnlyMs;
+                m_lastUploadTiming.bytesVbo += incrementalBytes;
+                m_lastUploadTiming.bytesEbo += incrementalEboBytes;
+                if (mesh->dirtyVertMax >= mesh->dirtyVertMin && mesh->dirtyVertMax < (uint32_t)mesh->nbVerts) {
+                    uint32_t span = mesh->dirtyVertMax - mesh->dirtyVertMin + 1;
+                    m_lastUploadTiming.dirtyVertSpan = std::max(m_lastUploadTiming.dirtyVertSpan, span);
+                }
+                m_lastUploadTiming.dirtyMeshVerts = std::max(m_lastUploadTiming.dirtyMeshVerts, (uint32_t)mesh->nbVerts);
             }
         }
     }
@@ -4796,6 +4903,10 @@ void AngleRenderer::drawMeshNormals(Mesh* mesh, const Scene& scene, const Camera
     glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
 
     glBindVertexArray(0);
+
+    m_lastRenderStats.meshDrawCalls++;
+    m_lastRenderStats.trisSubmitted += (uint64_t)(bufs->triIndexCount / 3);
+    m_lastRenderStats.cullDisabledDraws++;
 }
 
 void AngleRenderer::drawMeshGBuffer(Mesh* mesh, const Scene& scene, const Camera& camera) {
@@ -4849,6 +4960,10 @@ void AngleRenderer::drawMeshGBuffer(Mesh* mesh, const Scene& scene, const Camera
     glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bufs->triIndexCount), GL_UNSIGNED_INT, nullptr);
 
     glBindVertexArray(0);
+
+    m_lastRenderStats.meshDrawCalls++;
+    m_lastRenderStats.trisSubmitted += (uint64_t)(bufs->triIndexCount / 3);
+    m_lastRenderStats.cullDisabledDraws++;
 }
 
 void AngleRenderer::createSnapshot(const Scene& scene) {
