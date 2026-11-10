@@ -1,10 +1,13 @@
 #include "mesh/dynamic/DynamicTopology.h"
 #include "mesh/NormalCalc.h"
+#include "mesh/Topology.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <limits>
+#include <omp.h>
 
 namespace dynamic {
 
@@ -1662,6 +1665,9 @@ bool DynamicTopology::remesh(Mesh& mesh, BVH& bvh, const glm::vec3& center, floa
     lastRemeshProfile.gatherRegionMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tStage).count();
     lastRemeshProfile.regionTris = regionTris_.size();
     if (regionTris_.empty()) {
+        if (mesh.vrfStartCount.size() < (size_t)mesh.nbVerts * 2 || mesh.vrvStartCount.size() < (size_t)mesh.nbVerts * 2) {
+            syncDynamicCSR(mesh);
+        }
         lastMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - clock).count();
         lastRemeshProfile.totalMs = lastMs;
         return false;
@@ -1764,28 +1770,7 @@ bool DynamicTopology::remesh(Mesh& mesh, BVH& bvh, const glm::vec3& center, floa
     changedT_.clear();
 
     // Keep dynamic CSR in sync so that any sculpting brush or test accessing vrf/vrv never hits OOB
-    {
-        const size_t numV = (size_t)mesh.nbVerts;
-        mesh.vrfStartCount.resize(numV * 2);
-        size_t totalTris = 0;
-        for (size_t v = 0; v < numV; ++v) {
-            totalTris += m_vertTris[v].size();
-        }
-        mesh.vertRingFace.resize(totalTris);
-        uint32_t off = 0;
-        for (size_t v = 0; v < numV; ++v) {
-            auto tris = m_vertTris[v];
-            uint32_t count = (uint32_t)tris.size();
-            mesh.vrfStartCount[v * 2 + 0] = off;
-            mesh.vrfStartCount[v * 2 + 1] = count;
-            if (count > 0) {
-                std::memcpy(mesh.vertRingFace.data() + off, tris.data(), count * sizeof(uint32_t));
-                off += count;
-            }
-        }
-        mesh.vrvStartCount.clear();
-        mesh.vertRingVert.clear();
-    }
+    syncDynamicCSR(mesh);
 
     if (ops_ > 0) {
         if (!mesh.edgeIsCage.empty()) mesh.edgeIsCage.clear();
@@ -1800,16 +1785,36 @@ bool DynamicTopology::remesh(Mesh& mesh, BVH& bvh, const glm::vec3& center, floa
     return changed;
 }
 
+void DynamicTopology::syncDynamicCSR(Mesh& mesh) {
+    if (mesh.nbVerts <= 0 || mesh.nbFaces <= 0) {
+        mesh.vrfStartCount.clear();
+        mesh.vertRingFace.clear();
+        mesh.vrvStartCount.clear();
+        mesh.vertRingVert.clear();
+        mesh.vertOnEdge.clear();
+        mesh.isTopologyDirty = false;
+        return;
+    }
+
+    computeTopology(
+        mesh.nbVerts, mesh.faces.data(), mesh.nbFaces,
+        mesh.vrfStartCount, mesh.vertRingFace,
+        mesh.vrvStartCount, mesh.vertRingVert,
+        mesh.vertOnEdge
+    );
+    mesh.isTopologyDirty = false;
+}
+
 std::unique_ptr<TopologyUndo> DynamicTopology::finish(Mesh& mesh, BVH& bvh) {
     if (!mesh_) return nullptr;
     const auto tFinish0 = std::chrono::steady_clock::now();
     lastFinishProfile = DyntopoFinishProfile{};
 
     auto tStage = std::chrono::steady_clock::now();
-    // Do not rebuild heavy static topology on each release; mark dirty and keep dynamic CSR up-to-date
-    mesh.vrvStartCount.clear();
-    mesh.vertRingVert.clear();
-    mesh.isTopologyDirty = true;
+    // Keep dynamic CSR up-to-date incrementally without heavy edge graph rebuild
+    syncDynamicCSR(mesh);
+    lastFinishProfile.initTopologyMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tStage).count();
+    mesh.isTopologyDirty = false;
     lastFinishProfile.initTopologyMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tStage).count();
 
     tStage = std::chrono::steady_clock::now();

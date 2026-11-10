@@ -454,6 +454,14 @@ void UndoManager::pushDynamicTopologyStroke(Scene& scene,
     sculpt_log_lvl(LogLevel::Info, "[Undo] Dynamic Topology stroke pushed: '%s' (size: %.2f MB)\n",
                    description.c_str(), entry->getMemoryUsage() / (1024.0f * 1024.0f));
     pushEntry(std::move(entry));
+
+    // Dynamic Topology memory budget eviction
+    while (getTotalMemoryUsage() > m_maxDyntopoMemory && !m_undoStack.empty()) {
+        sculpt_log_lvl(LogLevel::Warning, "[Undo] Evicting oldest undo entry to stay within Dyntopo budget (%.2f MB / %.2f MB)\n",
+                       getTotalMemoryUsage() / (1024.0f * 1024.0f), (double)m_maxDyntopoMemory / (1024.0 * 1024.0));
+        m_undoStack.pop_front();
+    }
+
     scene.setModified(true);
 }
 
@@ -718,7 +726,8 @@ void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
                         s_undoIFaces.data(),
                         s_undoTagFlags.data(),
                         &s_undoTagEpoch,
-                        mesh->nbFaces
+                        mesh->nbFaces,
+                        (uint32_t)mesh->nbVerts
                     );
                 }
                 auto tFaceLookupEnd = std::chrono::high_resolution_clock::now();

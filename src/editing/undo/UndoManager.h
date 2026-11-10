@@ -22,6 +22,7 @@ class SculptManager;
 class UndoManager {
 public:
     static constexpr size_t DEFAULT_MAX_MEMORY = 4ULL * 1024 * 1024 * 1024; // 4 GB
+    static constexpr size_t DEFAULT_MAX_DYNTOPO_MEMORY = 256ULL * 1024 * 1024; // 256 MB
     static constexpr size_t DEFAULT_MAX_ENTRIES = 0; // 0 = unlimited (limited only by memory)
 
     UndoManager();
@@ -126,17 +127,22 @@ public:
     void clear();
     void setMaxMemory(size_t bytes) { m_maxMemory = bytes; trimToMemoryLimit(); }
     void setMaxMemoryGB(double gb)  { setMaxMemory(static_cast<size_t>(gb * 1024.0 * 1024.0 * 1024.0)); }
+    void setMaxDyntopoMemory(size_t bytes) { m_maxDyntopoMemory = bytes; trimToMemoryLimit(); }
+    void setMaxDyntopoMemoryMB(double mb)  { setMaxDyntopoMemory(static_cast<size_t>(mb * 1024.0 * 1024.0)); }
     void setMaxEntries(size_t n)    { m_maxEntries = n; trimToMemoryLimit(); }
     size_t getMaxMemory() const { return m_maxMemory; }
     double getMaxMemoryGB() const { return static_cast<double>(m_maxMemory) / (1024.0 * 1024.0 * 1024.0); }
+    size_t getMaxDyntopoMemory() const { return m_maxDyntopoMemory; }
+    double getMaxDyntopoMemoryMB() const { return static_cast<double>(m_maxDyntopoMemory) / (1024.0 * 1024.0); }
     size_t getMaxEntries() const { return m_maxEntries; }
 
 private:
     std::deque<std::unique_ptr<UndoEntry>> m_undoStack;
     std::deque<std::unique_ptr<UndoEntry>> m_redoStack;
 
-    size_t m_maxMemory  = DEFAULT_MAX_MEMORY;
-    size_t m_maxEntries = DEFAULT_MAX_ENTRIES;
+    size_t m_maxMemory        = DEFAULT_MAX_MEMORY;
+    size_t m_maxDyntopoMemory = DEFAULT_MAX_DYNTOPO_MEMORY;
+    size_t m_maxEntries       = DEFAULT_MAX_ENTRIES;
 
     // Active sculpt stroke entry being constructed during brush strokes
     std::unique_ptr<SculptUndoEntry> m_activeSculptEntry;

@@ -141,6 +141,7 @@ public:
     }
 
     std::unique_ptr<TopologyUndo> finish(Mesh& mesh, BVH& bvh);
+    void syncDynamicCSR(Mesh& mesh);
     Mesh* strokeMesh() const { return mesh_; }
     BVH* strokeBvh() const { return bvh_; }
 

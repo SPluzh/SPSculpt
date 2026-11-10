@@ -43,7 +43,8 @@ uint32_t getFacesFromVerticesFast(
     uint32_t* outIFaces,
     uint8_t* tagFlags,
     uint8_t* tagEpoch,
-    uint32_t nbFaces
+    uint32_t nbFaces,
+    uint32_t nbVerts = 0
 );
 
 bool computeAreaNormalAndCenter(

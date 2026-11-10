@@ -559,7 +559,8 @@ uint32_t getFacesFromVerticesFast(
     uint32_t* outIFaces,
     uint8_t* tagFlags,
     uint8_t* tagEpoch,
-    uint32_t nbFaces
+    uint32_t nbFaces,
+    uint32_t nbVerts
 ) {
     if (!tagEpoch || !tagFlags || !iVerts || !vrfStartCount || !vertRingFace || !outIFaces) {
         return 0;
@@ -587,6 +588,7 @@ uint32_t getFacesFromVerticesFast(
             }
 
             uint32_t idVert = iVerts[i];
+            if (nbVerts > 0 && idVert >= nbVerts) continue;
             uint32_t start = vrfStartCount[idVert * 2];
             uint32_t count = vrfStartCount[idVert * 2 + 1];
 
@@ -595,7 +597,7 @@ uint32_t getFacesFromVerticesFast(
                     __builtin_prefetch(&tagFlags[vertRingFace[j + 4]], 1, 2);
                 }
                 uint32_t iFace = vertRingFace[j];
-                if (tagFlags[iFace] != epoch) {
+                if (iFace < nbFaces && tagFlags[iFace] != epoch) {
                     tagFlags[iFace] = epoch;
                     outIFaces[acc++] = iFace;
                 }
@@ -627,6 +629,7 @@ uint32_t getFacesFromVerticesFast(
             }
 
             uint32_t idVert = iVerts[i];
+            if (nbVerts > 0 && idVert >= nbVerts) continue;
             uint32_t start = vrfStartCount[idVert * 2];
             uint32_t count = vrfStartCount[idVert * 2 + 1];
 
@@ -635,7 +638,7 @@ uint32_t getFacesFromVerticesFast(
                     __builtin_prefetch(&tagFlags[vertRingFace[j + 4]], 1, 2);
                 }
                 uint32_t iFace = vertRingFace[j];
-                if (tagFlags[iFace] != epoch) {
+                if (iFace < nbFaces && tagFlags[iFace] != epoch) {
                     std::atomic_ref<uint8_t> ref(tagFlags[iFace]);
                     if (ref.exchange(epoch, std::memory_order_relaxed) != epoch) {
                         localFaces.push_back(iFace);
@@ -2888,7 +2891,7 @@ int strokeSquareBrush(
             float vz = verts[ind + 2];
 
             float distToPlane = (vx - ax) * anx + (vy - ay) * any + (vz - az) * anz;
-            if (distToPlane * comp > 0.0f) {
+            if (std::isnan(distToPlane) || distToPlane * comp > 0.0f) {
                 continue;
             }
 
@@ -2896,14 +2899,14 @@ int strokeSquareBrush(
             float yn = alphaRatioX * (alphaLookAt[1] * vx + alphaLookAt[5] * vy + alphaLookAt[9] * vz + alphaLookAt[13]) * invAlphaSideY;
 
             float dist = std::max(std::abs(xn), std::abs(yn));
-            if (dist >= 1.0f) {
+            if (std::isnan(xn) || std::isnan(yn) || !(dist < 1.0f)) {
                 continue;
             }
 
             float fallOff = getFallOff(dist, fs, false, nullptr);
             fallOff *= distToPlane * intensity * matVal;
 
-            if (fallOff == 0.0f) continue;
+            if (fallOff == 0.0f || !std::isfinite(fallOff)) continue;
 
             verts[ind] -= anx * fallOff;
             verts[ind + 1] -= any * fallOff;

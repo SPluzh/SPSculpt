@@ -1308,46 +1308,88 @@ int SculptManager::doStrokePass(
                 areaCenter = m_cachedAreaCenter;
             }
 
+            float anLen2 = glm::dot(areaNormal, areaNormal);
+            if (anLen2 > 1e-6f && std::isfinite(anLen2)) {
+                areaNormal /= std::sqrt(anLen2);
+            } else {
+                areaNormal = glm::vec3(0.0f, 1.0f, 0.0f);
+            }
+
             float off = localRadius * 0.1f;
             areaCenter += areaNormal * (negative ? -off : off);
+
+            auto projectOntoTangent = [](const glm::vec3& v, const glm::vec3& n) -> glm::vec3 {
+                glm::vec3 proj = v - n * glm::dot(v, n);
+                float len2 = glm::dot(proj, proj);
+                return (len2 > 1e-6f && std::isfinite(len2)) ? (proj / std::sqrt(len2)) : glm::vec3(0.0f);
+            };
 
             glm::vec3 strokeDir(0.0f);
             bool hasStrokeDir = false;
 
             glm::vec3 passAlphaOrigin = isSymmetry ? reflectPointSymmetry(m_alphaOrigin, sScale, mesh, m_symmetryMode) : m_alphaOrigin;
 
-            if (m_firstStrokeFrame || !m_hasAlphaOrigin) {
-                // Fallback to screen-space alignment
+            if (!m_firstStrokeFrame && m_hasAlphaOrigin) {
+                glm::vec3 movement = currentIntersection - passAlphaOrigin;
+                strokeDir = projectOntoTangent(movement, areaNormal);
+                if (glm::dot(strokeDir, strokeDir) > 1e-6f) {
+                    hasStrokeDir = true;
+                }
+            }
+
+            if (!hasStrokeDir) {
+                // Fallback 1: Project camRightLocal onto tangent plane
                 const glm::mat4& invMeshMatrix = m_cachedInvMatrix;
                 const glm::mat4& camWorld = m_cachedCamWorldMatrix;
-                glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
+                glm::vec3 camRight = glm::vec3(camWorld[0]);
+                glm::vec3 camRightLocal = glm::vec3(invMeshMatrix * glm::vec4(camRight, 0.0f));
+                float crLen2 = glm::dot(camRightLocal, camRightLocal);
+                if (crLen2 > 1e-6f && std::isfinite(crLen2)) camRightLocal /= std::sqrt(crLen2);
                 if (isSymmetry) camRightLocal = reflectVectorSymmetry(camRightLocal, sScale, mesh, m_symmetryMode);
-                strokeDir = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
-            } else {
-                glm::vec3 movement = currentIntersection - passAlphaOrigin;
-                float movementLen = glm::length(movement);
-                if (movementLen > 1e-7f) {
-                    glm::vec3 movementDir = movement / movementLen;
-                    strokeDir = movementDir - areaNormal * glm::dot(movementDir, areaNormal);
-                    float strokeDirLen = glm::length(strokeDir);
-                    if (strokeDirLen > 1e-7f) {
-                        strokeDir = strokeDir / strokeDirLen;
-                        hasStrokeDir = true;
-                    }
+                strokeDir = projectOntoTangent(camRightLocal, areaNormal);
+                if (glm::dot(strokeDir, strokeDir) > 1e-6f) {
+                    hasStrokeDir = true;
                 }
+            }
 
-                if (!hasStrokeDir) {
-                    const glm::mat4& invMeshMatrix = m_cachedInvMatrix;
-                    const glm::mat4& camWorld = m_cachedCamWorldMatrix;
-                    glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
-                    if (isSymmetry) camRightLocal = reflectVectorSymmetry(camRightLocal, sScale, mesh, m_symmetryMode);
-                    strokeDir = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
+            if (!hasStrokeDir) {
+                // Fallback 2: Project camUpLocal onto tangent plane
+                const glm::mat4& invMeshMatrix = m_cachedInvMatrix;
+                const glm::mat4& camWorld = m_cachedCamWorldMatrix;
+                glm::vec3 camUp = glm::vec3(camWorld[1]);
+                glm::vec3 camUpLocal = glm::vec3(invMeshMatrix * glm::vec4(camUp, 0.0f));
+                float cuLen2 = glm::dot(camUpLocal, camUpLocal);
+                if (cuLen2 > 1e-6f && std::isfinite(cuLen2)) camUpLocal /= std::sqrt(cuLen2);
+                if (isSymmetry) camUpLocal = reflectVectorSymmetry(camUpLocal, sScale, mesh, m_symmetryMode);
+                strokeDir = projectOntoTangent(camUpLocal, areaNormal);
+                if (glm::dot(strokeDir, strokeDir) > 1e-6f) {
+                    hasStrokeDir = true;
                 }
+            }
+
+            if (!hasStrokeDir) {
+                // Fallback 3: Robust Cartesian fallback
+                glm::vec3 arbAxis = (std::abs(areaNormal.z) < 0.99f) ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
+                glm::vec3 c = glm::cross(areaNormal, arbAxis);
+                float cLen2 = glm::dot(c, c);
+                strokeDir = (cLen2 > 1e-6f && std::isfinite(cLen2)) ? (c / std::sqrt(cLen2)) : glm::vec3(1.0f, 0.0f, 0.0f);
             }
 
             glm::vec3 eye = currentIntersection;
             glm::vec3 nor = currentIntersection + areaNormal * localRadius;
             glm::mat4 lookAtMat = glm::lookAt(eye, nor, strokeDir);
+
+            bool hasNanOrInf = false;
+            const float* mPtr = &lookAtMat[0][0];
+            for (int mi = 0; mi < 16; ++mi) {
+                if (!std::isfinite(mPtr[mi])) {
+                    hasNanOrInf = true;
+                    break;
+                }
+            }
+            if (hasNanOrInf) {
+                lookAtMat = glm::mat4(1.0f);
+            }
 
             float alphaLookAt[16];
             std::memcpy(alphaLookAt, &lookAtMat[0][0], 16 * sizeof(float));
@@ -1401,46 +1443,88 @@ int SculptManager::doStrokePass(
                 areaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
             }
 
+            float anLen2 = glm::dot(areaNormal, areaNormal);
+            if (anLen2 > 1e-6f && std::isfinite(anLen2)) {
+                areaNormal /= std::sqrt(anLen2);
+            } else {
+                areaNormal = glm::vec3(0.0f, 1.0f, 0.0f);
+            }
+
             float off = localRadius * 0.1f;
             areaCenter += areaNormal * (negative ? -off : off);
+
+            auto projectOntoTangent = [](const glm::vec3& v, const glm::vec3& n) -> glm::vec3 {
+                glm::vec3 proj = v - n * glm::dot(v, n);
+                float len2 = glm::dot(proj, proj);
+                return (len2 > 1e-6f && std::isfinite(len2)) ? (proj / std::sqrt(len2)) : glm::vec3(0.0f);
+            };
 
             glm::vec3 strokeDir(0.0f);
             bool hasStrokeDir = false;
 
             glm::vec3 passAlphaOrigin = isSymmetry ? reflectPointSymmetry(m_alphaOrigin, sScale, mesh, m_symmetryMode) : m_alphaOrigin;
 
-            if (m_firstStrokeFrame || !m_hasAlphaOrigin) {
-                // Fallback to screen-space alignment
+            if (!m_firstStrokeFrame && m_hasAlphaOrigin) {
+                glm::vec3 movement = currentIntersection - passAlphaOrigin;
+                strokeDir = projectOntoTangent(movement, areaNormal);
+                if (glm::dot(strokeDir, strokeDir) > 1e-6f) {
+                    hasStrokeDir = true;
+                }
+            }
+
+            if (!hasStrokeDir) {
+                // Fallback 1: Project camRightLocal onto tangent plane
                 const glm::mat4& invMeshMatrix = m_cachedInvMatrix;
                 const glm::mat4& camWorld = m_cachedCamWorldMatrix;
-                glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
+                glm::vec3 camRight = glm::vec3(camWorld[0]);
+                glm::vec3 camRightLocal = glm::vec3(invMeshMatrix * glm::vec4(camRight, 0.0f));
+                float crLen2 = glm::dot(camRightLocal, camRightLocal);
+                if (crLen2 > 1e-6f && std::isfinite(crLen2)) camRightLocal /= std::sqrt(crLen2);
                 if (isSymmetry) camRightLocal = reflectVectorSymmetry(camRightLocal, sScale, mesh, m_symmetryMode);
-                strokeDir = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
-            } else {
-                glm::vec3 movement = currentIntersection - passAlphaOrigin;
-                float movementLen = glm::length(movement);
-                if (movementLen > 1e-7f) {
-                    glm::vec3 movementDir = movement / movementLen;
-                    strokeDir = movementDir - areaNormal * glm::dot(movementDir, areaNormal);
-                    float strokeDirLen = glm::length(strokeDir);
-                    if (strokeDirLen > 1e-7f) {
-                        strokeDir = strokeDir / strokeDirLen;
-                        hasStrokeDir = true;
-                    }
+                strokeDir = projectOntoTangent(camRightLocal, areaNormal);
+                if (glm::dot(strokeDir, strokeDir) > 1e-6f) {
+                    hasStrokeDir = true;
                 }
+            }
 
-                if (!hasStrokeDir) {
-                    const glm::mat4& invMeshMatrix = m_cachedInvMatrix;
-                    const glm::mat4& camWorld = m_cachedCamWorldMatrix;
-                    glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
-                    if (isSymmetry) camRightLocal = reflectVectorSymmetry(camRightLocal, sScale, mesh, m_symmetryMode);
-                    strokeDir = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
+            if (!hasStrokeDir) {
+                // Fallback 2: Project camUpLocal onto tangent plane
+                const glm::mat4& invMeshMatrix = m_cachedInvMatrix;
+                const glm::mat4& camWorld = m_cachedCamWorldMatrix;
+                glm::vec3 camUp = glm::vec3(camWorld[1]);
+                glm::vec3 camUpLocal = glm::vec3(invMeshMatrix * glm::vec4(camUp, 0.0f));
+                float cuLen2 = glm::dot(camUpLocal, camUpLocal);
+                if (cuLen2 > 1e-6f && std::isfinite(cuLen2)) camUpLocal /= std::sqrt(cuLen2);
+                if (isSymmetry) camUpLocal = reflectVectorSymmetry(camUpLocal, sScale, mesh, m_symmetryMode);
+                strokeDir = projectOntoTangent(camUpLocal, areaNormal);
+                if (glm::dot(strokeDir, strokeDir) > 1e-6f) {
+                    hasStrokeDir = true;
                 }
+            }
+
+            if (!hasStrokeDir) {
+                // Fallback 3: Robust Cartesian fallback
+                glm::vec3 arbAxis = (std::abs(areaNormal.z) < 0.99f) ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
+                glm::vec3 c = glm::cross(areaNormal, arbAxis);
+                float cLen2 = glm::dot(c, c);
+                strokeDir = (cLen2 > 1e-6f && std::isfinite(cLen2)) ? (c / std::sqrt(cLen2)) : glm::vec3(1.0f, 0.0f, 0.0f);
             }
 
             glm::vec3 eye = currentIntersection;
             glm::vec3 nor = currentIntersection + areaNormal * localRadius;
             glm::mat4 lookAtMat = glm::lookAt(eye, nor, strokeDir);
+
+            bool hasNanOrInf = false;
+            const float* mPtr = &lookAtMat[0][0];
+            for (int mi = 0; mi < 16; ++mi) {
+                if (!std::isfinite(mPtr[mi])) {
+                    hasNanOrInf = true;
+                    break;
+                }
+            }
+            if (hasNanOrInf) {
+                lookAtMat = glm::mat4(1.0f);
+            }
 
             float alphaLookAt[16];
             std::memcpy(alphaLookAt, &lookAtMat[0][0], 16 * sizeof(float));
@@ -1878,7 +1962,13 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     auto tFrameStart = std::chrono::high_resolution_clock::now();
 
     if (mesh) {
-        mesh->ensureTopologyBuilt();
+        if (m_dyntopoSettings.enabled || m_currentBrush == BRUSH_DYNAMIC_TOPOLOGY) {
+            if (mesh->vrfStartCount.size() < (size_t)mesh->nbVerts * 2 || mesh->vertRingFace.empty()) {
+                mesh->ensureTopologyBuilt();
+            }
+        } else {
+            mesh->ensureTopologyBuilt();
+        }
         mesh->ensureBVHBuilt();
     }
 
@@ -2428,7 +2518,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             topoChanged = m_dyntopo->remesh(*mesh, mesh->bvh, m_currentIntersection, localRadius, targetLength, mirrors);
             if (topoChanged) {
                 mesh->isDirty = true;
-                mesh->isTopologyDirty = true;
+                mesh->isTopologyDirty = false;
                 mesh->isVertexDirty = true;
                 mesh->dirtyVertMin = 0;
                 mesh->dirtyVertMax = mesh->nbVerts > 0 ? (uint32_t)mesh->nbVerts - 1 : 0;
@@ -3115,6 +3205,9 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 numIFaces = m_grabbedNumIFaces;
                 m_lastFrameProfile.faceLookupMs = 0.0;
             } else {
+                if (mesh->vrfStartCount.size() < (size_t)mesh->nbVerts * 2) {
+                    mesh->ensureTopologyBuilt();
+                }
                 tStage = std::chrono::high_resolution_clock::now();
                 numIFaces = getFacesFromVerticesFast(
                     pAff,
@@ -3124,7 +3217,8 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                     m_iFacesCache.data(),
                     m_tagFlags.data(),
                     &m_tagEpoch,
-                    mesh->nbFaces
+                    mesh->nbFaces,
+                    (uint32_t)mesh->nbVerts
                 );
                 m_lastFrameProfile.faceLookupMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
                 if (isGrabBrush) {
@@ -5459,7 +5553,15 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 m_brushSettings[activeBrush].radius = m_brushSettings[m_currentBrush].radius;
             }
             const auto& activeSettings = getSettings(activeBrush);
-            float minSpacing = activeSettings.spacing * activeSettings.radius;
+            bool isDyntopoActive = (m_dyntopoSettings.enabled || activeBrush == BRUSH_DYNAMIC_TOPOLOGY);
+            float effectiveSpacing = activeSettings.spacing;
+            if (isDyntopoActive && activeBrush == BRUSH_CLAYBUILDUP) {
+                effectiveSpacing = std::max(effectiveSpacing, 0.15f);
+            }
+            float minSpacing = effectiveSpacing * activeSettings.radius;
+            if (isDyntopoActive) {
+                minSpacing = std::max(minSpacing, 12.0f);
+            }
 
             bool isGrabBrush = (activeBrush == BRUSH_MOVE || activeBrush == BRUSH_DRAG || activeBrush == BRUSH_ELASTIC || activeBrush == BRUSH_SNAKEHOOK || m_isTubeMoveStroke);
 
@@ -5476,8 +5578,9 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             } else if (dist > minSpacing) {
                 auto tMot0 = std::chrono::high_resolution_clock::now();
                 float numStepsF = std::floor(dist / minSpacing);
-                int maxSubSteps = (m_dyntopoSettings.enabled || activeBrush == BRUSH_DYNAMIC_TOPOLOGY) ? 4 : 16;
+                int maxSubSteps = isDyntopoActive ? 2 : 16;
                 if (numStepsF > (float)maxSubSteps) numStepsF = (float)maxSubSteps;
+                if (numStepsF < 1.0f) numStepsF = 1.0f;
                 float step = 1.0f / numStepsF;
                 float stepDx = strokeDx * step;
                 float stepDy = strokeDy * step;
