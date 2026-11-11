@@ -100,8 +100,19 @@ bool HotkeyDispatcher::processEvent(const SDL_Event& event, SculptManager& sculp
                         break;
                     }
                     case ModalMode::TOPOLOGY_DETAIL: {
-                        float d = gui.getDyntopoDetail() + deltaX * 0.5f;
-                        gui.setDyntopoDetail(std::max(1.0f, std::min(500.0f, d)));
+                        int deltaVal = deltaX;
+                        if (SDL_GetModState() & KMOD_SHIFT) deltaVal = (int)std::round(deltaX * 0.25f);
+                        float d = gui.getDyntopoDetail() + (float)deltaVal;
+                        d = std::max(10.0f, std::min(5000.0f, d));
+                        gui.setDyntopoDetail(d);
+
+                        auto& settings = sculpt.getSettings(BRUSH_DYNAMIC_TOPOLOGY);
+                        settings.topologyEdgeSize = 100.0f / d;
+
+                        Mesh* selected = scene.getSelected();
+                        if (selected) {
+                            scene.updateVoxelPreview(settings.topologyEdgeSize, {selected});
+                        }
                         break;
                     }
                     case ModalMode::CAMERA_FOV: {
@@ -391,6 +402,26 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
                 break;
             }
             case HKAction::RemeshResolution: {
+                if (sculpt.getBrush() == BRUSH_DYNAMIC_TOPOLOGY) {
+                    if (m_modalMode != ModalMode::TOPOLOGY_DETAIL) {
+                        m_modalMode = ModalMode::TOPOLOGY_DETAIL;
+                        int mx, my;
+                        SDL_GetMouseState(&mx, &my);
+                        auto& settings = sculpt.getSettings(BRUSH_DYNAMIC_TOPOLOGY);
+                        if (settings.topologyEdgeSize > 1e-6f) {
+                            gui.setDyntopoDetail(std::clamp(100.0f / settings.topologyEdgeSize, 10.0f, 5000.0f));
+                        }
+                        gui.setModalMode(m_modalMode, mx, my);
+
+                        Mesh* selected = scene.getSelected();
+                        if (selected) {
+                            float step = settings.topologyEdgeSize;
+                            if (step <= 1e-6f) step = 0.2f;
+                            scene.updateVoxelPreview(step, {selected});
+                        }
+                    }
+                    break;
+                }
                 if (m_modalMode != ModalMode::REMESH_RESOLUTION) {
                     m_modalMode = ModalMode::REMESH_RESOLUTION;
                     int mx, my;
@@ -410,7 +441,18 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
                     m_modalMode = ModalMode::TOPOLOGY_DETAIL;
                     int mx, my;
                     SDL_GetMouseState(&mx, &my);
+                    auto& settings = sculpt.getSettings(BRUSH_DYNAMIC_TOPOLOGY);
+                    if (settings.topologyEdgeSize > 1e-6f) {
+                        gui.setDyntopoDetail(std::clamp(100.0f / settings.topologyEdgeSize, 10.0f, 5000.0f));
+                    }
                     gui.setModalMode(m_modalMode, mx, my);
+
+                    Mesh* selected = scene.getSelected();
+                    if (selected) {
+                        float step = settings.topologyEdgeSize;
+                        if (step <= 1e-6f) step = 0.2f;
+                        scene.updateVoxelPreview(step, {selected});
+                    }
                 }
                 break;
             }
@@ -570,7 +612,7 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
                 }
                 break;
             case HKAction::RemeshResolution:
-                if (m_modalMode == ModalMode::REMESH_RESOLUTION) {
+                if (m_modalMode == ModalMode::REMESH_RESOLUTION || m_modalMode == ModalMode::TOPOLOGY_DETAIL) {
                     m_modalMode = ModalMode::NONE;
                     gui.setModalMode(m_modalMode, 0, 0);
                     scene.updateVoxelPreview(0.0f, {});
@@ -580,6 +622,7 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
                 if (m_modalMode == ModalMode::TOPOLOGY_DETAIL) {
                     m_modalMode = ModalMode::NONE;
                     gui.setModalMode(m_modalMode, 0, 0);
+                    scene.updateVoxelPreview(0.0f, {});
                 }
                 break;
             case HKAction::CameraFov:

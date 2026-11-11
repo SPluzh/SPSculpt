@@ -4218,10 +4218,23 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                 else if (brushType == BRUSH_DYNAMIC_TOPOLOGY) {
                     ImGui::TextColored(ImVec4(0.66f, 0.33f, 0.97f, 1.0f), "Dynamic Topology Tool:");
                     ImGui::TextDisabled("Pure local remeshing brush without surface displacement.");
+                    ImGui::TextDisabled("Tip: Hold 'X' and drag mouse to adjust grid size.");
                     ImGui::Separator();
 
-                    ImGui::SliderFloat("Target Edge Size", &settings.topologyEdgeSize, 0.001f, 0.2f, "%.4f", ImGuiSliderFlags_Logarithmic);
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Target edge length in world units (strictly independent of brush radius and zoom)");
+                    if (ImGui::SliderFloat("Target Edge Size", &settings.topologyEdgeSize, 0.001f, 2.0f, "%.4f", ImGuiSliderFlags_Logarithmic)) {
+                        if (settings.topologyEdgeSize > 1e-6f) {
+                            m_dyntopoDetail = std::clamp(100.0f / settings.topologyEdgeSize, 10.0f, 5000.0f);
+                        }
+                    }
+                    if (ImGui::IsItemActive()) {
+                        Mesh* selectedMesh = scene.getSelected();
+                        if (selectedMesh) {
+                            scene.updateVoxelPreview(settings.topologyEdgeSize, {selectedMesh});
+                        }
+                    } else if (ImGui::IsItemDeactivated()) {
+                        scene.updateVoxelPreview(0.0f, {});
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Target edge length in world units (strictly independent of brush radius and zoom).\nHold 'X' (or drag this slider) to preview future mesh density with checkerboard.");
 
                     bool picking = sculpt.isPickMeshSizeActive();
                     if (picking) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.66f, 0.33f, 0.97f, 1.0f));
@@ -6527,7 +6540,15 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGui::Text("Faces: %d", selectedMesh->nbFaces);
             ImGui::Separator();
 
-            ImGui::SliderFloat("Detail Factor", &m_dyntopoDetail, 10.0f, 500.0f, "%.1f");
+            if (ImGui::SliderFloat("Detail Factor", &m_dyntopoDetail, 10.0f, 3000.0f, "%.0f")) {
+                sculpt.getSettings(BRUSH_DYNAMIC_TOPOLOGY).topologyEdgeSize = 100.0f / m_dyntopoDetail;
+            }
+            if (ImGui::IsItemActive()) {
+                float step = 100.0f / m_dyntopoDetail;
+                scene.updateVoxelPreview(step, {selectedMesh});
+            } else if (ImGui::IsItemDeactivated()) {
+                scene.updateVoxelPreview(0.0f, {});
+            }
             ImGui::SliderInt("Remesh Resolution", &m_remeshResolution, 10, 3000);
             if (ImGui::IsItemActive()) {
                 float step = selectedMesh->computeWorldStep(m_remeshResolution);
@@ -9149,11 +9170,14 @@ void GuiManager::drawModalIndicatorHUD(SculptManager& sculpt, Scene& scene) {
             snprintf(valStr, sizeof(valStr), "%d", m_remeshResolution);
             fraction = (float)(m_remeshResolution - 10) / (3000 - 10);
             break;
-        case ModalMode::TOPOLOGY_DETAIL:
+        case ModalMode::TOPOLOGY_DETAIL: {
             label = "Topology Detail";
-            snprintf(valStr, sizeof(valStr), "%d", (int)m_dyntopoDetail);
-            fraction = (m_dyntopoDetail - 1.0f) / (500.0f - 1.0f);
+            float edgeSize = sculpt.getSettings(BRUSH_DYNAMIC_TOPOLOGY).topologyEdgeSize;
+            int res = (int)std::round(m_dyntopoDetail);
+            snprintf(valStr, sizeof(valStr), "%d (%.4f)", res, edgeSize);
+            fraction = std::clamp((m_dyntopoDetail - 10.0f) / (3000.0f - 10.0f), 0.0f, 1.0f);
             break;
+        }
         case ModalMode::CAMERA_FOV:
             label = "FOV";
             snprintf(valStr, sizeof(valStr), "%d mm", (int)scene.getCamera().getFov());
