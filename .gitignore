@@ -17,6 +17,7 @@ gemini.md
 todo.md
 implementation_plan.md
 walkthrough.md
+SCULPTFORGE_COMPARISON_AND_OPTIMIZATIONS.md
 # Configuration files
 *.cfg
 
