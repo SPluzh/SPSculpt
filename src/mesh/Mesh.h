@@ -221,7 +221,12 @@ public:
 
     float computeLocalRadius() const;
     float computeBBoxDiagonal() const { return computeLocalRadius() * 2.0f; }
-    void invalidateLocalRadius() const { m_localRadiusDirty = true; }
+    void invalidateLocalRadius() const { 
+        m_localRadiusDirty = true; 
+        m_surfaceAreaDirty = true;
+    }
+    float computeSurfaceArea() const;
+    void invalidateSurfaceArea() const { m_surfaceAreaDirty = true; }
     glm::vec3 getSymmetryOriginForAxis(int axisIndex, SymmetryMode mode) const;
     glm::vec3 getSymmetryNormalForAxis(int axisIndex, SymmetryMode mode) const;
     virtual void flip(int axisIndex);
@@ -230,6 +235,8 @@ public:
 private:
     mutable float m_cachedLocalRadius = -1.0f;
     mutable bool m_localRadiusDirty = true;
+    mutable float m_cachedSurfaceArea = -1.0f;
+    mutable bool m_surfaceAreaDirty = true;
 
 public:
 

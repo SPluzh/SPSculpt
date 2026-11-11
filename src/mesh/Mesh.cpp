@@ -483,6 +483,7 @@ void Mesh::initEdges() {
 
 void Mesh::allocate(int nbV, int nbF, int nbRF, int nbRV) {
     m_localRadiusDirty = true;
+    m_surfaceAreaDirty = true;
     nbVerts = nbV;
     nbFaces = nbF;
 
@@ -560,6 +561,7 @@ void Mesh::postInit(bool buildBVH, bool buildTopology) {
     auto tStart = std::chrono::high_resolution_clock::now();
 
     m_localRadiusDirty = true;
+    m_surfaceAreaDirty = true;
     if (buildTopology) {
         vertProxy = verts;
     }
@@ -922,6 +924,48 @@ float Mesh::computeLocalRadius() const {
     m_cachedLocalRadius = radius > 1e-6f ? radius : 1.0f;
     m_localRadiusDirty = false;
     return m_cachedLocalRadius;
+}
+
+float Mesh::computeSurfaceArea() const {
+    if (nbVerts == 0) return 0.0f;
+    if (!m_surfaceAreaDirty && m_cachedSurfaceArea >= 0.0f) {
+        return m_cachedSurfaceArea;
+    }
+    double totalArea = 0.0;
+    const auto& v = verts;
+    size_t nv = nbVerts;
+    if (nbFaces > 0 && faces.size() >= (size_t)nbFaces * 4) {
+        for (int f = 0; f < nbFaces; ++f) {
+            uint32_t i0 = faces[f * 4 + 0];
+            uint32_t i1 = faces[f * 4 + 1];
+            uint32_t i2 = faces[f * 4 + 2];
+            uint32_t i3 = faces[f * 4 + 3];
+            if (i0 >= nv || i1 >= nv || i2 >= nv) continue;
+
+            glm::vec3 p0(v[i0 * 3], v[i0 * 3 + 1], v[i0 * 3 + 2]);
+            glm::vec3 p1(v[i1 * 3], v[i1 * 3 + 1], v[i1 * 3 + 2]);
+            glm::vec3 p2(v[i2 * 3], v[i2 * 3 + 1], v[i2 * 3 + 2]);
+
+            totalArea += 0.5 * glm::length(glm::cross(p1 - p0, p2 - p0));
+
+            if (i3 != TRI_INDEX && i3 < nv) {
+                glm::vec3 p3(v[i3 * 3], v[i3 * 3 + 1], v[i3 * 3 + 2]);
+                totalArea += 0.5 * glm::length(glm::cross(p3 - p0, p2 - p3));
+            }
+        }
+    }
+    // Fallback: if no faces or degenerated, approximate from bounding box
+    if (totalArea <= 1e-6) {
+        float bbox[6];
+        computeBbox(bbox);
+        float dx = std::max(0.0f, bbox[3] - bbox[0]);
+        float dy = std::max(0.0f, bbox[4] - bbox[1]);
+        float dz = std::max(0.0f, bbox[5] - bbox[2]);
+        totalArea = 2.0 * ((double)dx * dy + (double)dy * dz + (double)dz * dx);
+    }
+    m_cachedSurfaceArea = static_cast<float>(totalArea);
+    m_surfaceAreaDirty = false;
+    return m_cachedSurfaceArea;
 }
 
 glm::vec3 Mesh::getSymmetryOriginForAxis(int axisIndex, SymmetryMode mode) const {
@@ -1449,6 +1493,7 @@ void Mesh::scaleFaceNormalsBoxesCentersAndBVH(float scaleX, float scaleY, float 
     if (scaleZ < 1e-5f) scaleZ = 1.0f;
 
     m_localRadiusDirty = true;
+    m_surfaceAreaDirty = true;
     vertProxy = verts;
 
     if (!faceNormals.empty() && !faceBoxes.empty() && !faceCenters.empty()) {

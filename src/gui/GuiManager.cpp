@@ -13,6 +13,7 @@
 #include "common/ErrorReporter.h"
 #include "common/FormatConstants.h"
 #include "common/StringUtils.h"
+#include "common/MemoryUtils.h"
 #include "render/AngleRenderer.h"
 #include "render/RenderSettings.h"
 #include "editing/BrushCursor.h"
@@ -74,6 +75,111 @@
 #include "zbrush_bridge/ZBrushWatcher.h"
 #include "zbrush_bridge/ZBrushSender.h"
 #include "files/GoZProfiler.h" 
+
+struct RemeshEstimation {
+    uint64_t estimatedPoints = 0;
+    uint64_t totalEstimatedMemBytes = 0;
+    size_t availMemBytes = 0;
+    bool memExceeded = false;
+};
+
+static std::string formatRemeshCount(uint64_t count) {
+    char buf[64];
+    if (count >= 1000000ULL) {
+        std::snprintf(buf, sizeof(buf), "%.2f M", (double)count / 1000000.0);
+    } else if (count >= 1000ULL) {
+        std::snprintf(buf, sizeof(buf), "%.1f K", (double)count / 1000.0);
+    } else {
+        std::snprintf(buf, sizeof(buf), "%llu", (unsigned long long)count);
+    }
+    return std::string(buf);
+}
+
+static std::string formatRemeshBytes(uint64_t bytes) {
+    char buf[64];
+    if (bytes >= 1024ULL * 1024ULL * 1024ULL) {
+        std::snprintf(buf, sizeof(buf), "%.2f GB", (double)bytes / (1024.0 * 1024.0 * 1024.0));
+    } else if (bytes >= 1024ULL * 1024ULL) {
+        std::snprintf(buf, sizeof(buf), "%.1f MB", (double)bytes / (1024.0 * 1024.0));
+    } else {
+        std::snprintf(buf, sizeof(buf), "%.1f KB", (double)bytes / 1024.0);
+    }
+    return std::string(buf);
+}
+
+static RemeshEstimation computeRemeshEstimation(const Mesh* selectedMesh, int resolution, bool keepSharpEdges) {
+    RemeshEstimation est;
+    if (!selectedMesh || selectedMesh->nbVerts == 0) {
+        return est;
+    }
+
+    float bbox[6];
+    selectedMesh->computeBbox(bbox);
+    const auto& mat = selectedMesh->matrix;
+    float scaleX = glm::length(glm::vec3(mat[0]));
+    float scaleY = glm::length(glm::vec3(mat[1]));
+    float scaleZ = glm::length(glm::vec3(mat[2]));
+    float mScaleX = (scaleX > 1e-5f) ? scaleX : 1.0f;
+    float mScaleY = (scaleY > 1e-5f) ? scaleY : 1.0f;
+    float mScaleZ = (scaleZ > 1e-5f) ? scaleZ : 1.0f;
+    float mScale = std::cbrt(mScaleX * mScaleY * mScaleZ);
+    float worldStep = 100.0f / (resolution > 0 ? (float)resolution : 1.0f);
+    float step = worldStep / mScale;
+
+    float boxWidth = bbox[3] - bbox[0];
+    float boxHeight = bbox[4] - bbox[1];
+    float boxDepth = bbox[5] - bbox[2];
+    float maxBoxDim = std::max({boxWidth, boxHeight, boxDepth});
+    if (step <= 0.0f) step = 0.001f;
+    float maxResClamp = 3200.0f;
+    if (maxBoxDim / step > maxResClamp) {
+        step = maxBoxDim / maxResClamp;
+    }
+
+    float stepMin = step * 1.51f;
+    float stepMax = step * 1.51f;
+    int rx = (int)std::ceil(((bbox[3] + stepMax) - (bbox[0] - stepMin)) / step);
+    int ry = (int)std::ceil(((bbox[4] + stepMax) - (bbox[1] - stepMin)) / step);
+    int rz = (int)std::ceil(((bbox[5] + stepMax) - (bbox[2] - stepMin)) / step);
+    uint64_t datalen = (uint64_t)std::max(1, rx) * (uint64_t)std::max(1, ry) * (uint64_t)std::max(1, rz);
+
+    float localArea = selectedMesh->computeSurfaceArea();
+    if (step > 1e-6f && localArea > 0.0f) {
+        double cellArea = (double)step * (double)step;
+        est.estimatedPoints = (uint64_t)std::max(4.0, std::round((double)localArea / cellArea));
+    } else {
+        est.estimatedPoints = 0;
+    }
+
+    bool isSparse = (!keepSharpEdges && (resolution >= 600 || rx >= 600 || ry >= 600 || rz >= 600));
+    uint64_t gridMemBytes = isSparse ? (uint64_t)(est.estimatedPoints * 45ULL) : (uint64_t)(datalen * 9ULL);
+    uint64_t meshMemBytes = (uint64_t)(est.estimatedPoints * 120ULL);
+    uint64_t workingCopyBytes = (uint64_t)(selectedMesh->nbVerts * 48ULL + selectedMesh->nbFaces * 16ULL) * 2ULL;
+    est.totalEstimatedMemBytes = gridMemBytes + meshMemBytes + workingCopyBytes;
+
+    est.availMemBytes = getAvailablePhysicalMemoryBytes();
+    est.memExceeded = (est.totalEstimatedMemBytes > est.availMemBytes);
+    return est;
+}
+
+static void renderRemeshEstimationUI(const Mesh* selectedMesh, int resolution, bool keepSharpEdges) {
+    if (!selectedMesh) return;
+    auto est = computeRemeshEstimation(selectedMesh, resolution, keepSharpEdges);
+    std::string ptsStr = formatRemeshCount(est.estimatedPoints);
+    std::string memStr = formatRemeshBytes(est.totalEstimatedMemBytes);
+    std::string availStr = formatRemeshBytes(est.availMemBytes);
+
+    if (est.memExceeded) {
+        ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "Est. Points: ~%s", ptsStr.c_str());
+        ImGui::TextColored(ImVec4(1.0f, 0.25f, 0.25f, 1.0f), ICON_LC_ALERT_TRIANGLE " Est. RAM: ~%s (Avail: %s)", memStr.c_str(), availStr.c_str());
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Estimated memory exceeds available physical RAM (%s)!\nRemeshing may cause severe slowdown or crash.", availStr.c_str());
+        }
+    } else {
+        ImGui::Text("Est. Points: ~%s", ptsStr.c_str());
+        ImGui::TextDisabled("Est. RAM: ~%s (Avail: %s)", memStr.c_str(), availStr.c_str());
+    }
+} 
 
 static FILE* openFileUtf8(const std::string& path, const char* mode) {
 #ifdef _WIN32
@@ -6570,6 +6676,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             } else if (ImGui::IsItemDeactivated()) {
                 scene.updateVoxelPreview(0.0f, {});
             }
+            renderRemeshEstimationUI(selectedMesh, m_remeshResolution, m_remeshKeepSharpEdges);
 
             ImGui::Checkbox("Keep PolyGroups", &m_remeshKeepPolyGroups);
             ImGui::Checkbox("Keep Masked", &m_remeshKeepMasked);
@@ -10932,6 +11039,7 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
                 scene.updateVoxelPreview(0.0f, {});
             }
             ImGui::PopItemWidth();
+            renderRemeshEstimationUI(scene.getSelected(), m_remeshResolution, m_remeshKeepSharpEdges);
             ImGui::Checkbox("Keep PolyGroups", &m_remeshKeepPolyGroups);
             ImGui::Checkbox("Keep Masked", &m_remeshKeepMasked);
             if (ImGui::IsItemHovered()) {
