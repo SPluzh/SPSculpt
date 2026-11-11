@@ -128,8 +128,8 @@ struct MeshRenderBuffers {
     std::vector<SeamSlotRef> seamSortedBySrc;
     std::vector<float> seamTailVerts;
     std::vector<float> seamTailNormals;
-    std::vector<float> seamTailColors;
-    std::vector<float> seamTailMaterials;
+    std::vector<uint8_t> seamTailColors;
+    std::vector<uint8_t> seamTailMaterials;
 
     // Tracked GPU allocation sizes (bytes)
     size_t gpuVertsBytes = 0;
@@ -657,6 +657,12 @@ private:
                                         const std::vector<float>& src,
                                         int nbVerts,
                                         const std::vector<std::pair<uint32_t, uint32_t>>& runs);
+    static void packFloat3ToUnorm8x4(const float* src, size_t vertCount, uint8_t* dst);
+    static size_t uploadDirtyUnorm8x4Runs(GLuint vbo,
+                                          const std::vector<float>& src,
+                                          int nbVerts,
+                                          const std::vector<std::pair<uint32_t, uint32_t>>& runs,
+                                          std::vector<uint8_t>& scratch);
     void syncDirtySeamTail(MeshRenderBuffers* bufs,
                            const Mesh* srcMesh,
                            const std::vector<std::pair<uint32_t, uint32_t>>& runs,
@@ -858,6 +864,7 @@ private:
     int m_anisotropyLevel = 4;
     bool m_useSubpixelCulling = false;
     float m_subpixelCullThreshold = 0.55f;
+    std::vector<uint8_t> m_packedAttribScratch;
 
     struct TaaState {
         int frameIndex = 0;
