@@ -2325,7 +2325,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         if (mesh->materials.size() < (size_t)mesh->nbVerts * 3) {
             mesh->materials.resize((size_t)mesh->nbVerts * 3, 0.0f);
         }
-        if (m_dyntopoSettings.enabled || m_currentBrush == BRUSH_DYNAMIC_TOPOLOGY) {
+        if (isDyntopoActiveForBrush(m_currentBrush)) {
             if (mesh->vrfStartCount.size() < (size_t)mesh->nbVerts * 2 || mesh->vertRingFace.empty()) {
                 mesh->ensureTopologyBuilt();
             }
@@ -2583,7 +2583,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         mesh ? (uint32_t)mesh->nbFaces : 0u,
         0u,
         0u,
-        (m_dyntopo && m_dyntopo->active()) || m_dyntopoSettings.enabled,
+        (m_dyntopo && m_dyntopo->active()) || isDyntopoActiveForBrush(activeBrush),
         m_useSym,
         localRadius,
         intensity,
@@ -2836,7 +2836,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     }
 
     bool isDyntopoBrush = (activeBrush == BRUSH_DYNAMIC_TOPOLOGY);
-    bool isDyntopoActive = mesh && (isDyntopoBrush || m_dyntopoSettings.enabled);
+    bool isDyntopoActive = mesh && isDyntopoActiveForBrush(activeBrush);
     if (isDyntopoActive) {
         std::string blocker = dynamic::dyntopoBlocker(*mesh);
         if (!blocker.empty()) {
@@ -2850,8 +2850,8 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     }
 
     if (m_firstStrokeFrame) {
-        bool autoWf = (isDyntopoBrush && getSettings(BRUSH_DYNAMIC_TOPOLOGY).autoWireframe) ||
-                      (m_dyntopoSettings.enabled && m_dyntopoSettings.autoWireframe);
+        bool autoWf = isDyntopoActive && ((isDyntopoBrush && getSettings(BRUSH_DYNAMIC_TOPOLOGY).autoWireframe) ||
+                                          (m_dyntopoSettings.enabled && m_dyntopoSettings.autoWireframe));
         if (autoWf && m_renderer) {
             if (!m_autoWireframeActive) {
                 m_prevWireframeState = m_renderer->getShowWireframe();
@@ -4886,11 +4886,12 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     return;
                 }
 
-                if (!m_isTubeMoveStroke && mesh && m_currentBrush != BRUSH_DYNAMIC_TOPOLOGY && !m_dyntopoSettings.enabled) {
-                    bool strokeAffectsPositions = (m_currentBrush != BRUSH_PAINT && m_currentBrush != BRUSH_MASK && m_currentBrush != BRUSH_MASK_GRADIENT_BLUR);
-                    bool strokeAffectsColors = (m_currentBrush == BRUSH_PAINT && getCurrentSettings().writeAlbedo);
-                    bool strokeAffectsMaterials = (m_currentBrush == BRUSH_PAINT && (getCurrentSettings().writeRoughness || getCurrentSettings().writeMetalness)) ||
-                                                   (m_currentBrush == BRUSH_MASK || m_currentBrush == BRUSH_MASK_GRADIENT_BLUR);
+                bool isDyntopoActive = isDyntopoActiveForBrush(activeBrush);
+                if (!m_isTubeMoveStroke && mesh && !isDyntopoActive) {
+                    bool strokeAffectsPositions = (activeBrush != BRUSH_PAINT && activeBrush != BRUSH_MASK && activeBrush != BRUSH_MASK_GRADIENT_BLUR);
+                    bool strokeAffectsColors = (activeBrush == BRUSH_PAINT && getSettings(activeBrush).writeAlbedo);
+                    bool strokeAffectsMaterials = (activeBrush == BRUSH_PAINT && (getSettings(activeBrush).writeRoughness || getSettings(activeBrush).writeMetalness)) ||
+                                                   (activeBrush == BRUSH_MASK || activeBrush == BRUSH_MASK_GRADIENT_BLUR);
                     g_undoManager.beginSculptStroke(scene, mesh->m_id, {}, strokeAffectsPositions, strokeAffectsColors, strokeAffectsMaterials, "Sculpt Stroke");
                 }
                 ++m_strokeSeq;
@@ -6233,7 +6234,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 m_brushSettings[activeBrush].radius = m_brushSettings[m_currentBrush].radius;
             }
             const auto& activeSettings = getSettings(activeBrush);
-            bool isDyntopoActive = (m_dyntopoSettings.enabled || activeBrush == BRUSH_DYNAMIC_TOPOLOGY);
+            bool isDyntopoActive = isDyntopoActiveForBrush(activeBrush);
             float effectiveSpacing = activeSettings.spacing;
             if (isDyntopoActive && (activeBrush == BRUSH_CLAYBUILDUP || activeBrush == BRUSH_DAMSTANDARD || activeBrush == BRUSH_VTOOL)) {
                 effectiveSpacing = std::max(effectiveSpacing, 0.15f);

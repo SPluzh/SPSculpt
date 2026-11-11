@@ -2993,6 +2993,20 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             ImGui::Checkbox("Lock Single PolyGroup", &settings.singlePolyGroup);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Limit brush deformation/painting to the PolyGroup under the cursor at stroke start");
 
+            if (brushType != BRUSH_DYNAMIC_TOPOLOGY && brushType != BRUSH_QUAD_DRAW &&
+                brushType != BRUSH_MEASURE && brushType != BRUSH_DIVIDER &&
+                brushType != BRUSH_TRANSFORM && brushType != BRUSH_ARMATURE_SPHERES &&
+                brushType != BRUSH_COMPONENT_SELECT && brushType != BRUSH_EDGE_CREASE) {
+                ImGui::Checkbox("Dynamic Topology", &settings.useDynamicTopology);
+                if (ImGui::IsItemHovered()) {
+                    if (sculpt.isDyntopoEnabled()) {
+                        ImGui::SetTooltip("Enable dynamic topology remeshing for this brush during strokes");
+                    } else {
+                        ImGui::SetTooltip("Enable dynamic topology remeshing for this brush.\n(Note: Global 'Dyn' in top bar must also be enabled)");
+                    }
+                }
+            }
+
             const char* hwCursorModes[] = {
                 "Software (Default)",
                 "Hardware Dot (0 ms)",
@@ -12322,6 +12336,19 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
 
             ImGui::Checkbox("Auto Wireframe", &dyntopo.autoWireframe);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Temporarily shows wireframe while sculpting");
+
+            BrushType curType = sculpt.getBrush();
+            if (curType != BRUSH_DYNAMIC_TOPOLOGY && curType != BRUSH_QUAD_DRAW &&
+                curType != BRUSH_MEASURE && curType != BRUSH_DIVIDER &&
+                curType != BRUSH_TRANSFORM && curType != BRUSH_ARMATURE_SPHERES &&
+                curType != BRUSH_COMPONENT_SELECT && curType != BRUSH_EDGE_CREASE) {
+                ImGui::Separator();
+                BrushSettings& curBrush = sculpt.getCurrentSettings();
+                ImGui::Checkbox("Enable for Active Brush", &curBrush.useDynamicTopology);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Toggle Dynamic Topology for current brush (%s)", getBrushNameLocal(curType));
+                }
+            }
 
             ImGui::EndPopup();
         }

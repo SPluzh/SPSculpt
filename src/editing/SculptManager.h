@@ -359,6 +359,9 @@ public:
     void setDyntopoEnabled(bool enabled) { m_dyntopoSettings.enabled = enabled; }
     bool isDyntopoEnabled() const { return m_dyntopoSettings.enabled; }
     void toggleDyntopo() { m_dyntopoSettings.enabled = !m_dyntopoSettings.enabled; }
+    bool isDyntopoActiveForBrush(BrushType brush) const {
+        return (brush == BRUSH_DYNAMIC_TOPOLOGY) || (m_dyntopoSettings.enabled && getSettings(brush).useDynamicTopology);
+    }
     bool pickMeshSize(Mesh* mesh, uint32_t faceId);
     void togglePickMeshSize() { m_pickMeshSizeActive = !m_pickMeshSizeActive; }
     bool isPickMeshSizeActive() const { return m_pickMeshSizeActive; }
