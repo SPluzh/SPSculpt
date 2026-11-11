@@ -1704,7 +1704,7 @@ void AngleRenderer::ensureMeshVaoConfigured(MeshRenderBuffers* bufs, const Mesh*
     glEnableVertexAttribArray(0);
 
     glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glVertexAttribPointer(1, 4, GL_SHORT, GL_TRUE, 4 * sizeof(int16_t), (void*)0);
     glEnableVertexAttribArray(1);
 
     glBindBuffer(GL_ARRAY_BUFFER, bufs->vboColors);
@@ -1762,7 +1762,7 @@ void AngleRenderer::ensureAuxWireVaoConfigured(GLuint& vao, bool& vaoReady, Mesh
     glEnableVertexAttribArray(0);
 
     glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glVertexAttribPointer(1, 4, GL_SHORT, GL_TRUE, 4 * sizeof(int16_t), (void*)0);
     glEnableVertexAttribArray(1);
 
     glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
@@ -2228,7 +2228,7 @@ void AngleRenderer::drawMeshForThumbnail(Mesh* mesh, const Camera& cam) {
         glEnableVertexAttribArray(0);
 
         glBindBuffer(GL_ARRAY_BUFFER, it->second->vboNormals);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glVertexAttribPointer(1, 4, GL_SHORT, GL_TRUE, 4 * sizeof(int16_t), (void*)0);
         glEnableVertexAttribArray(1);
 
         glBindBuffer(GL_ARRAY_BUFFER, it->second->vboColors);
@@ -2561,7 +2561,7 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
         glEnableVertexAttribArray(0);
 
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glVertexAttribPointer(1, 4, GL_SHORT, GL_TRUE, 4 * sizeof(int16_t), (void*)0);
         glEnableVertexAttribArray(1);
 
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboColors);
@@ -2648,7 +2648,7 @@ void AngleRenderer::drawMeshPrepass(Mesh* mesh, const Scene& scene, const Camera
         glEnableVertexAttribArray(0);
 
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glVertexAttribPointer(1, 4, GL_SHORT, GL_TRUE, 4 * sizeof(int16_t), (void*)0);
         glEnableVertexAttribArray(1);
 
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
@@ -2783,7 +2783,7 @@ void AngleRenderer::drawMeshFlatColor(Mesh* mesh, const Scene& scene, const Came
         glEnableVertexAttribArray(0);
 
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glVertexAttribPointer(1, 4, GL_SHORT, GL_TRUE, 4 * sizeof(int16_t), (void*)0);
         glEnableVertexAttribArray(1);
 
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboColors);
@@ -3838,13 +3838,13 @@ void AngleRenderer::buildPolyGroupBuffers(const Mesh* mesh, MeshRenderBuffers* b
     bool hasMaterials = (mesh->materials.size() >= (size_t)mesh->nbVerts * 3);
 
     std::vector<float> expandedVerts;
-    std::vector<float> expandedNormals;
+    std::vector<int16_t> expandedNormals;
     std::vector<uint8_t> expandedMaterials;
     std::vector<uint32_t> expandedGroups;
 
     size_t estimatedVerts = mesh->nbFaces * 6;
     expandedVerts.reserve(estimatedVerts * 3);
-    expandedNormals.reserve(estimatedVerts * 3);
+    expandedNormals.reserve(estimatedVerts * 4);
     expandedMaterials.reserve(estimatedVerts * 4);
     expandedGroups.reserve(estimatedVerts);
 
@@ -3876,13 +3876,11 @@ void AngleRenderer::buildPolyGroupBuffers(const Mesh* mesh, MeshRenderBuffers* b
                 expandedVerts.push_back(mesh->verts[vid * 3 + 2]);
 
                 if (hasNormals) {
-                    expandedNormals.push_back(mesh->normals[vid * 3]);
-                    expandedNormals.push_back(mesh->normals[vid * 3 + 1]);
-                    expandedNormals.push_back(mesh->normals[vid * 3 + 2]);
+                    int16_t packedNorm[4];
+                    packFloat3ToSnorm16x4(mesh->normals.data() + vid * 3, 1, packedNorm);
+                    expandedNormals.insert(expandedNormals.end(), packedNorm, packedNorm + 4);
                 } else {
-                    expandedNormals.push_back(0.0f);
-                    expandedNormals.push_back(1.0f);
-                    expandedNormals.push_back(0.0f);
+                    expandedNormals.insert(expandedNormals.end(), {0, 32767, 0, 0});
                 }
 
                 if (hasMaterials) {
@@ -3894,7 +3892,7 @@ void AngleRenderer::buildPolyGroupBuffers(const Mesh* mesh, MeshRenderBuffers* b
                 }
             } else {
                 expandedVerts.insert(expandedVerts.end(), {0.0f, 0.0f, 0.0f});
-                expandedNormals.insert(expandedNormals.end(), {0.0f, 1.0f, 0.0f});
+                expandedNormals.insert(expandedNormals.end(), {0, 32767, 0, 0});
                 expandedMaterials.insert(expandedMaterials.end(), {128, 0, 255, 255});
             }
             expandedGroups.push_back(gid);
@@ -3931,8 +3929,8 @@ void AngleRenderer::buildPolyGroupBuffers(const Mesh* mesh, MeshRenderBuffers* b
     glEnableVertexAttribArray(0);
 
     glBindBuffer(GL_ARRAY_BUFFER, bufs->polygroupVboNormals);
-    glBufferData(GL_ARRAY_BUFFER, expandedNormals.size() * sizeof(float), expandedNormals.data(), GL_DYNAMIC_DRAW);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glBufferData(GL_ARRAY_BUFFER, expandedNormals.size() * sizeof(int16_t), expandedNormals.data(), GL_DYNAMIC_DRAW);
+    glVertexAttribPointer(1, 4, GL_SHORT, GL_TRUE, 4 * sizeof(int16_t), (void*)0);
     glEnableVertexAttribArray(1);
 
     glBindBuffer(GL_ARRAY_BUFFER, bufs->polygroupVboMaterials);
@@ -3949,7 +3947,7 @@ void AngleRenderer::buildPolyGroupBuffers(const Mesh* mesh, MeshRenderBuffers* b
 
     double pgMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tPgStart).count();
     size_t pgBytes = expandedVerts.size() * sizeof(float)
-                   + expandedNormals.size() * sizeof(float)
+                   + expandedNormals.size() * sizeof(int16_t)
                    + expandedMaterials.size() * sizeof(uint8_t)
                    + expandedGroups.size() * sizeof(uint32_t);
     bufs->gpuPolygroupBytes = pgBytes;
@@ -4146,7 +4144,7 @@ void AngleRenderer::populateSeamTailFromMesh(const Mesh* mesh, MeshRenderBuffers
     if (!mesh || !bufs) return;
     const size_t seamCount = bufs->seamSrcVerts.size();
     bufs->seamTailVerts.resize(seamCount * 3);
-    bufs->seamTailNormals.resize(seamCount * 3);
+    bufs->seamTailNormals.resize(seamCount * 4);
     bufs->seamTailColors.resize(seamCount * 4);
     bufs->seamTailMaterials.resize(seamCount * 4);
 
@@ -4167,11 +4165,12 @@ void AngleRenderer::populateSeamTailFromMesh(const Mesh* mesh, MeshRenderBuffers
             bufs->seamTailVerts[dst3 + 0] = bufs->seamTailVerts[dst3 + 1] = bufs->seamTailVerts[dst3 + 2] = 0.0f;
         }
         if (src3 + 2 < nLimit) {
-            bufs->seamTailNormals[dst3 + 0] = mesh->normals[src3 + 0];
-            bufs->seamTailNormals[dst3 + 1] = mesh->normals[src3 + 1];
-            bufs->seamTailNormals[dst3 + 2] = mesh->normals[src3 + 2];
+            packFloat3ToSnorm16x4(mesh->normals.data() + src3, 1, bufs->seamTailNormals.data() + dst4);
         } else {
-            bufs->seamTailNormals[dst3 + 0] = 0.0f; bufs->seamTailNormals[dst3 + 1] = 1.0f; bufs->seamTailNormals[dst3 + 2] = 0.0f;
+            bufs->seamTailNormals[dst4 + 0] = 0;
+            bufs->seamTailNormals[dst4 + 1] = 32767;
+            bufs->seamTailNormals[dst4 + 2] = 0;
+            bufs->seamTailNormals[dst4 + 3] = 0;
         }
         if (src3 + 2 < cLimit) {
             packFloat3ToUnorm8x4(mesh->colors.data() + src3, 1, bufs->seamTailColors.data() + dst4);
@@ -4241,45 +4240,49 @@ void AngleRenderer::uploadVertexBuffersWithSeamTail(
         }
     };
 
-    auto uploadUnorm8x4Channel = [&](GLuint vbo, int attribIdx, const std::vector<float>& baseVec,
-                                     const std::vector<uint8_t>& tailVec, size_t& gpuBytesTracked) {
+    auto uploadPacked4Channel = [&](GLuint vbo, int attribIdx, GLenum glType,
+                                    const std::vector<float>& baseVec,
+                                    const auto& tailVec, auto& scratchVec,
+                                    auto packFn, size_t& gpuBytesTracked) {
+        using ElemT = typename std::decay_t<decltype(tailVec)>::value_type;
+        const size_t strideBytes = 4 * sizeof(ElemT);
         const size_t baseCount = std::min(baseVec.size() / 3, baseVerts);
-        const size_t baseBytes = baseCount * 4;
-        const size_t tailBytes = seamCount * 4;
-        const size_t neededBytes = totalVerts * 4;
+        const size_t baseBytes = baseCount * strideBytes;
+        const size_t tailBytes = seamCount * strideBytes;
+        const size_t neededBytes = totalVerts * strideBytes;
         glBindBuffer(GL_ARRAY_BUFFER, vbo);
         if (fullRealloc || neededBytes > gpuBytesTracked) {
-            m_packedAttribScratch.resize(baseBytes);
-            packFloat3ToUnorm8x4(baseVec.data(), baseCount, m_packedAttribScratch.data());
+            scratchVec.resize(baseCount * 4);
+            packFn(baseVec.data(), baseCount, scratchVec.data());
             if (seamCount == 0) {
-                glBufferData(GL_ARRAY_BUFFER, baseBytes, m_packedAttribScratch.data(), GL_DYNAMIC_DRAW);
+                glBufferData(GL_ARRAY_BUFFER, baseBytes, scratchVec.data(), GL_DYNAMIC_DRAW);
                 gpuBytesTracked = baseBytes;
                 outVboBytes += baseBytes;
             } else {
                 glBufferData(GL_ARRAY_BUFFER, neededBytes, nullptr, GL_DYNAMIC_DRAW);
                 if (baseBytes > 0) {
-                    glBufferSubData(GL_ARRAY_BUFFER, 0, baseBytes, m_packedAttribScratch.data());
+                    glBufferSubData(GL_ARRAY_BUFFER, 0, baseBytes, scratchVec.data());
                 }
                 if (tailBytes > 0) {
-                    glBufferSubData(GL_ARRAY_BUFFER, baseVerts * 4, tailBytes, tailVec.data());
+                    glBufferSubData(GL_ARRAY_BUFFER, baseVerts * strideBytes, tailBytes, tailVec.data());
                 }
                 gpuBytesTracked = neededBytes;
                 outVboBytes += baseBytes + tailBytes;
             }
             if (bindVaoAttribs) {
-                glVertexAttribPointer(attribIdx, 4, GL_UNSIGNED_BYTE, GL_TRUE, 4 * sizeof(uint8_t), (void*)0);
+                glVertexAttribPointer(attribIdx, 4, glType, GL_TRUE, static_cast<GLsizei>(strideBytes), (void*)0);
                 glEnableVertexAttribArray(attribIdx);
             }
         } else if (tailBytes > 0) {
-            glBufferSubData(GL_ARRAY_BUFFER, baseVerts * 4, tailBytes, tailVec.data());
+            glBufferSubData(GL_ARRAY_BUFFER, baseVerts * strideBytes, tailBytes, tailVec.data());
             outVboBytes += tailBytes;
         }
     };
 
     uploadFloat3Channel(bufs->vboVertices,    0, uploadMesh->verts,     bufs->seamTailVerts,     bufs->gpuVertsBytes);
-    uploadFloat3Channel(bufs->vboNormals,     1, uploadMesh->normals,   bufs->seamTailNormals,   bufs->gpuNormalsBytes);
-    uploadUnorm8x4Channel(bufs->vboColors,    2, uploadMesh->colors,    bufs->seamTailColors,    bufs->gpuColorsBytes);
-    uploadUnorm8x4Channel(bufs->vboMaterials, 3, uploadMesh->materials, bufs->seamTailMaterials, bufs->gpuMaterialsBytes);
+    uploadPacked4Channel(bufs->vboNormals,    1, GL_SHORT,         uploadMesh->normals,   bufs->seamTailNormals,   m_packedNormalScratch, packFloat3ToSnorm16x4, bufs->gpuNormalsBytes);
+    uploadPacked4Channel(bufs->vboColors,     2, GL_UNSIGNED_BYTE, uploadMesh->colors,    bufs->seamTailColors,    m_packedAttribScratch, packFloat3ToUnorm8x4,  bufs->gpuColorsBytes);
+    uploadPacked4Channel(bufs->vboMaterials,  3, GL_UNSIGNED_BYTE, uploadMesh->materials, bufs->seamTailMaterials, m_packedAttribScratch, packFloat3ToUnorm8x4,  bufs->gpuMaterialsBytes);
 
     const size_t fgBytes = vertGroups.size() * sizeof(uint32_t);
     glBindBuffer(GL_ARRAY_BUFFER, bufs->vboFaceGroups);
@@ -4516,6 +4519,65 @@ size_t AngleRenderer::uploadDirtyUnorm8x4Runs(
     return totalBytes;
 }
 
+static inline int16_t floatToSnorm16(float v) {
+    if (v <= -1.0f) return -32767;
+    if (v >= 1.0f) return 32767;
+    const float scaled = v * 32767.0f;
+    return static_cast<int16_t>(scaled >= 0.0f ? (scaled + 0.5f) : (scaled - 0.5f));
+}
+
+void AngleRenderer::packFloat3ToSnorm16x4(const float* src, size_t vertCount, int16_t* dst) {
+    if (!src || vertCount == 0 || !dst) return;
+    if (vertCount >= 65536) {
+        const ptrdiff_t n = static_cast<ptrdiff_t>(vertCount);
+        #pragma omp parallel for schedule(static)
+        for (ptrdiff_t i = 0; i < n; ++i) {
+            const float* s = src + i * 3;
+            int16_t* d = dst + i * 4;
+            d[0] = floatToSnorm16(s[0]);
+            d[1] = floatToSnorm16(s[1]);
+            d[2] = floatToSnorm16(s[2]);
+            d[3] = 0;
+        }
+    } else {
+        for (size_t i = 0; i < vertCount; ++i) {
+            const float* s = src + i * 3;
+            int16_t* d = dst + i * 4;
+            d[0] = floatToSnorm16(s[0]);
+            d[1] = floatToSnorm16(s[1]);
+            d[2] = floatToSnorm16(s[2]);
+            d[3] = 0;
+        }
+    }
+}
+
+size_t AngleRenderer::uploadDirtySnorm16x4Runs(
+    GLuint vbo,
+    const std::vector<float>& src,
+    int nbVerts,
+    const std::vector<std::pair<uint32_t, uint32_t>>& runs,
+    std::vector<int16_t>& scratch)
+{
+    if (vbo == 0 || runs.empty() || nbVerts <= 0) return 0;
+    const size_t maxVerts = std::min<size_t>(static_cast<size_t>(nbVerts), src.size() / 3);
+    if (maxVerts == 0) return 0;
+
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    size_t totalBytes = 0;
+    for (const auto& r : runs) {
+        uint32_t v0 = r.first;
+        uint32_t v1 = static_cast<uint32_t>(std::min<size_t>(r.second, maxVerts));
+        if (v0 >= v1) continue;
+        size_t count = static_cast<size_t>(v1 - v0);
+        size_t bytes = count * 4 * sizeof(int16_t);
+        scratch.resize(count * 4);
+        packFloat3ToSnorm16x4(src.data() + static_cast<size_t>(v0) * 3, count, scratch.data());
+        glBufferSubData(GL_ARRAY_BUFFER, static_cast<size_t>(v0) * 4 * sizeof(int16_t), bytes, scratch.data());
+        totalBytes += bytes;
+    }
+    return totalBytes;
+}
+
 void AngleRenderer::syncDirtySeamTail(
     MeshRenderBuffers* bufs,
     const Mesh* srcMesh,
@@ -4543,9 +4605,14 @@ void AngleRenderer::syncDirtySeamTail(
         if (doVerts) {
             glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
             glBufferSubData(GL_ARRAY_BUFFER, gpuOffset, gpuBytes, bufs->seamTailVerts.data() + tailOff3);
+            outBytes += gpuBytes;
+
+            size_t normTailOff4 = s0 * 4;
+            size_t normGpuOffset = (baseVerts + s0) * 4 * sizeof(int16_t);
+            size_t normGpuBytes = (s1 - s0) * 4 * sizeof(int16_t);
             glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
-            glBufferSubData(GL_ARRAY_BUFFER, gpuOffset, gpuBytes, bufs->seamTailNormals.data() + tailOff3);
-            outBytes += gpuBytes * 2;
+            glBufferSubData(GL_ARRAY_BUFFER, normGpuOffset, normGpuBytes, bufs->seamTailNormals.data() + normTailOff4);
+            outBytes += normGpuBytes;
         }
         if (doColors) {
             size_t tailOff4 = s0 * 4;
@@ -4579,10 +4646,8 @@ void AngleRenderer::syncDirtySeamTail(
                 bufs->seamTailVerts[dst3 + 1] = srcMesh->verts[src3 + 1];
                 bufs->seamTailVerts[dst3 + 2] = srcMesh->verts[src3 + 2];
             }
-            if (src3 + 2 < nLim) {
-                bufs->seamTailNormals[dst3 + 0] = srcMesh->normals[src3 + 0];
-                bufs->seamTailNormals[dst3 + 1] = srcMesh->normals[src3 + 1];
-                bufs->seamTailNormals[dst3 + 2] = srcMesh->normals[src3 + 2];
+            if (src3 + 2 < nLim && bufs->seamTailNormals.size() >= static_cast<size_t>(slot + 1) * 4) {
+                packFloat3ToSnorm16x4(srcMesh->normals.data() + src3, 1, bufs->seamTailNormals.data() + static_cast<size_t>(slot) * 4);
             }
         }
         if (doColors && src3 + 2 < cLim && bufs->seamTailColors.size() >= static_cast<size_t>(slot + 1) * 4) {
@@ -4772,9 +4837,15 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
             glEnableVertexAttribArray(0);
 
             glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
-            glBufferData(GL_ARRAY_BUFFER, uploadMesh->normals.size() * sizeof(float), uploadMesh->normals.data(), GL_DYNAMIC_DRAW);
-            bufs->gpuNormalsBytes = uploadMesh->normals.size() * sizeof(float);
-            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+            {
+                const size_t normVerts = std::min<size_t>(uploadMesh->nbVerts, uploadMesh->normals.size() / 3);
+                const size_t normBytes = normVerts * 4 * sizeof(int16_t);
+                m_packedNormalScratch.resize(normVerts * 4);
+                packFloat3ToSnorm16x4(uploadMesh->normals.data(), normVerts, m_packedNormalScratch.data());
+                glBufferData(GL_ARRAY_BUFFER, normBytes, m_packedNormalScratch.data(), GL_DYNAMIC_DRAW);
+                bufs->gpuNormalsBytes = normBytes;
+            }
+            glVertexAttribPointer(1, 4, GL_SHORT, GL_TRUE, 4 * sizeof(int16_t), (void*)0);
             glEnableVertexAttribArray(1);
 
             glBindBuffer(GL_ARRAY_BUFFER, bufs->vboColors);
@@ -4849,7 +4920,7 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
             glBindVertexArray(0);
 
             fullVboBytes = uploadMesh->verts.size() * sizeof(float)
-                         + uploadMesh->normals.size() * sizeof(float)
+                         + bufs->gpuNormalsBytes
                          + bufs->gpuColorsBytes
                          + bufs->gpuMaterialsBytes
                          + vertGroups.size() * sizeof(uint32_t)
@@ -5133,7 +5204,7 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
                 buildDirtyRuns(uploadMesh->nbVerts, uploadMesh->dirtyVertBlocks, uploadMesh->hasDirtyVertBlockMask,
                                runsV, upV, fbV);
                 incrementalBytes += uploadDirtyFloat3Runs(bufs->vboVertices, uploadMesh->verts, uploadMesh->nbVerts, runsV);
-                incrementalBytes += uploadDirtyFloat3Runs(bufs->vboNormals, uploadMesh->normals, uploadMesh->nbVerts, runsV);
+                incrementalBytes += uploadDirtySnorm16x4Runs(bufs->vboNormals, uploadMesh->normals, uploadMesh->nbVerts, runsV, m_packedNormalScratch);
 
                 if (useIndexedPg && bufs->indexedPolygroupBuilt) {
                     syncDirtySeamTail(bufs.get(), uploadMesh, runsV, true, false, false, incrementalBytes);
@@ -5281,9 +5352,14 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
                 dynBytes += uploadMesh->verts.size() * sizeof(float);
 
                 glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
-                glBufferSubData(GL_ARRAY_BUFFER, 0, uploadMesh->normals.size() * sizeof(float),
-                                uploadMesh->normals.data());
-                dynBytes += uploadMesh->normals.size() * sizeof(float);
+                {
+                    const size_t normVerts = std::min<size_t>(uploadMesh->nbVerts, uploadMesh->normals.size() / 3);
+                    const size_t normBytes = normVerts * 4 * sizeof(int16_t);
+                    m_packedNormalScratch.resize(normVerts * 4);
+                    packFloat3ToSnorm16x4(uploadMesh->normals.data(), normVerts, m_packedNormalScratch.data());
+                    glBufferSubData(GL_ARRAY_BUFFER, 0, normBytes, m_packedNormalScratch.data());
+                    dynBytes += normBytes;
+                }
 
                 if (mesh->dynamicSettings.showCage && bufs->cageVboVerts != 0) {
                     glBindBuffer(GL_ARRAY_BUFFER, bufs->cageVboVerts);
@@ -5351,17 +5427,24 @@ bool AngleRenderer::uploadIfDirty(Mesh* mesh) {
             size_t incrementalEboBytes = 0;
             if (mesh->isVertexDirty && mesh->dirtyVertMin <= mesh->dirtyVertMax && mesh->dirtyVertMax < (uint32_t)mesh->nbVerts) {
                 uploaded = true;
+                size_t count  = (size_t)(mesh->dirtyVertMax - mesh->dirtyVertMin + 1);
                 size_t offset = (size_t)mesh->dirtyVertMin * 3 * sizeof(float);
-                size_t size   = (size_t)(mesh->dirtyVertMax - mesh->dirtyVertMin + 1) * 3 * sizeof(float);
-                incrementalBytes += size * 2;
+                size_t size   = count * 3 * sizeof(float);
+                incrementalBytes += size;
                 
                 glBindBuffer(GL_ARRAY_BUFFER, bufs->vboVertices);
                 glBufferSubData(GL_ARRAY_BUFFER, offset, size,
                                 mesh->verts.data() + (size_t)mesh->dirtyVertMin * 3);
                 
-                glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
-                glBufferSubData(GL_ARRAY_BUFFER, offset, size,
-                                mesh->normals.data() + (size_t)mesh->dirtyVertMin * 3);
+                {
+                    size_t normOffset = (size_t)mesh->dirtyVertMin * 4 * sizeof(int16_t);
+                    size_t normSize   = count * 4 * sizeof(int16_t);
+                    m_packedNormalScratch.resize(count * 4);
+                    packFloat3ToSnorm16x4(mesh->normals.data() + (size_t)mesh->dirtyVertMin * 3, count, m_packedNormalScratch.data());
+                    glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
+                    glBufferSubData(GL_ARRAY_BUFFER, normOffset, normSize, m_packedNormalScratch.data());
+                    incrementalBytes += normSize;
+                }
 
                 if (useIndexedPg && bufs->indexedPolygroupBuilt) {
                     syncDirtySeamTail(bufs.get(), uploadMesh, {{mesh->dirtyVertMin, mesh->dirtyVertMax + 1}}, true, false, false, incrementalBytes);
@@ -6683,7 +6766,7 @@ void AngleRenderer::drawMeshNormals(Mesh* mesh, const Scene& scene, const Camera
         glEnableVertexAttribArray(0);
 
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glVertexAttribPointer(1, 4, GL_SHORT, GL_TRUE, 4 * sizeof(int16_t), (void*)0);
         glEnableVertexAttribArray(1);
 
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboMaterials);
@@ -6757,7 +6840,7 @@ void AngleRenderer::drawMeshGBuffer(Mesh* mesh, const Scene& scene, const Camera
         glEnableVertexAttribArray(0);
 
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboNormals);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glVertexAttribPointer(1, 4, GL_SHORT, GL_TRUE, 4 * sizeof(int16_t), (void*)0);
         glEnableVertexAttribArray(1);
 
         glBindBuffer(GL_ARRAY_BUFFER, bufs->vboColors);

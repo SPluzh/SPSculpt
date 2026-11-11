@@ -127,7 +127,7 @@ struct MeshRenderBuffers {
     std::vector<uint32_t> seamSrcVerts;
     std::vector<SeamSlotRef> seamSortedBySrc;
     std::vector<float> seamTailVerts;
-    std::vector<float> seamTailNormals;
+    std::vector<int16_t> seamTailNormals;
     std::vector<uint8_t> seamTailColors;
     std::vector<uint8_t> seamTailMaterials;
 
@@ -663,6 +663,12 @@ private:
                                           int nbVerts,
                                           const std::vector<std::pair<uint32_t, uint32_t>>& runs,
                                           std::vector<uint8_t>& scratch);
+    static void packFloat3ToSnorm16x4(const float* src, size_t vertCount, int16_t* dst);
+    static size_t uploadDirtySnorm16x4Runs(GLuint vbo,
+                                           const std::vector<float>& src,
+                                           int nbVerts,
+                                           const std::vector<std::pair<uint32_t, uint32_t>>& runs,
+                                           std::vector<int16_t>& scratch);
     void syncDirtySeamTail(MeshRenderBuffers* bufs,
                            const Mesh* srcMesh,
                            const std::vector<std::pair<uint32_t, uint32_t>>& runs,
@@ -865,6 +871,7 @@ private:
     bool m_useSubpixelCulling = false;
     float m_subpixelCullThreshold = 0.55f;
     std::vector<uint8_t> m_packedAttribScratch;
+    std::vector<int16_t> m_packedNormalScratch;
 
     struct TaaState {
         int frameIndex = 0;
