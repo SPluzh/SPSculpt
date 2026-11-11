@@ -34,25 +34,25 @@ inline bool readEnvBool(const char* name, bool fallback) {
 
 struct Config {
     // Stage 1: Idle, Culling, VAO/Uniform cache, Adaptive Orbit Resolution
-    bool idleSleep = false;
-    bool cullFace = false;
-    bool vaoCache = false;
-    bool orbitScale = false;
+    bool idleSleep = true;
+    bool cullFace = true;
+    bool vaoCache = true;
+    bool orbitScale = true;
 
     // Stage 2: Block GPU Upload & Indexed PolyGroup
-    bool dirtyBlocks = false;
-    bool indexedPolygroup = false;
+    bool dirtyBlocks = true;
+    bool indexedPolygroup = true;
 
     // Stage 3: CPU Quick Wins (No change to math)
     bool faceNormalsOnly = false;
-    bool cpuReuse = false;
-    bool moveOptim = false;
-    bool fastLog = false;
+    bool cpuReuse = true;
+    bool moveOptim = true;
+    bool fastLog = true;
 
     // Stage 4: Coalescing, Batching, Cursor Throttle, BVH Leaf Refit
-    bool coalesceGrab = false;
+    bool coalesceGrab = true;
     bool batchSubsteps = false;
-    bool cursorThrottle = false;
+    bool cursorThrottle = true;
     bool bvhRefitLeaves = false;
 
     // Stage 5: Morton Clusters & Cluster Culling
@@ -60,8 +60,8 @@ struct Config {
 
     static Config loadFromEnv() {
         Config c;
-        const bool st1 = readEnvBool("SP_OPT_STAGE1", false);
-        const bool st2 = readEnvBool("SP_OPT_STAGE2", false);
+        const bool st1 = readEnvBool("SP_OPT_STAGE1", true);
+        const bool st2 = readEnvBool("SP_OPT_STAGE2", true);
         const bool st3 = readEnvBool("SP_OPT_STAGE3", false);
         const bool st4 = readEnvBool("SP_OPT_STAGE4", false);
         const bool st5 = readEnvBool("SP_OPT_STAGE5", false);
@@ -75,13 +75,13 @@ struct Config {
         c.indexedPolygroup = readEnvBool("SP_OPT_INDEXED_POLYGROUP", st2);
 
         c.faceNormalsOnly = readEnvBool("SP_OPT_FACE_NORMALS_ONLY", st3);
-        c.cpuReuse = readEnvBool("SP_OPT_CPU_REUSE", st3);
-        c.moveOptim = readEnvBool("SP_OPT_MOVE_OPTIM", st3);
-        c.fastLog = readEnvBool("SP_OPT_FAST_LOG", st3);
+        c.cpuReuse = readEnvBool("SP_OPT_CPU_REUSE", true);
+        c.moveOptim = readEnvBool("SP_OPT_MOVE_OPTIM", true);
+        c.fastLog = readEnvBool("SP_OPT_FAST_LOG", true);
 
-        c.coalesceGrab = readEnvBool("SP_OPT_COALESCE_GRAB", st4);
+        c.coalesceGrab = readEnvBool("SP_OPT_COALESCE_GRAB", true);
         c.batchSubsteps = readEnvBool("SP_OPT_BATCH_SUBSTEPS", st4);
-        c.cursorThrottle = readEnvBool("SP_OPT_CURSOR_THROTTLE", st4);
+        c.cursorThrottle = readEnvBool("SP_OPT_CURSOR_THROTTLE", true);
         c.bvhRefitLeaves = readEnvBool("SP_OPT_BVH_REFIT_LEAVES", st4);
 
         c.mortonClusters = readEnvBool("SP_OPT_MORTON_CLUSTERS", st5);

@@ -936,10 +936,14 @@ bool computeAreaNormalAndCenter(
     float az = 0.0f;
     float acc = 0.0f;
 
-    #pragma omp parallel for reduction(+:anx,any,anz,ax,ay,az,acc) if(nbIVerts > 2000)
-    for (int i = 0; i < nbIVerts; ++i) {
-        if (i + 8 < nbIVerts) {
-            uint32_t nextId = iVerts[i + 8];
+    constexpr int kMaxAreaSamples = 32768;
+    const int stride = (nbIVerts > kMaxAreaSamples) ? (nbIVerts / kMaxAreaSamples) : 1;
+    const int sampleCount = nbIVerts / stride;
+
+    #pragma omp parallel for reduction(+:anx,any,anz,ax,ay,az,acc) if(sampleCount > 2000)
+    for (int i = 0; i < nbIVerts; i += stride) {
+        if (i + stride * 8 < nbIVerts) {
+            uint32_t nextId = iVerts[i + stride * 8];
             __builtin_prefetch(&normals[nextId * 3], 0, 1);
             __builtin_prefetch(&verts[nextId * 3], 0, 1);
             __builtin_prefetch(&materials[nextId * 3], 0, 1);
