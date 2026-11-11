@@ -1640,7 +1640,7 @@ inline bool runLargeBrush(int targetFaces = 10000000) {
     std::cout << "\n======================================================================\n";
     std::cout << " SPSculpt Stage 2.1 Large-Brush Benchmark (>=150k verts/dab)\n";
     std::cout << " Target Mesh: " << std::fixed << std::setprecision(1) << (targetFaces / 1000000.0) << "M Polygons"
-              << " | OptFlags: " << OptFlags::get().formatSummary() << "\n";
+              << " | OptFlags: " << OptFlags::formatSummary() << "\n";
     std::cout << "======================================================================\n\n";
 
     try {
@@ -1724,7 +1724,11 @@ inline bool runLargeBrush(int targetFaces = 10000000) {
             bs.intensity = (brush == BRUSH_MOVE) ? 1.0f : 0.8f;
             if (brush == BRUSH_MOVE) bs.topoCheck = true;
             if (brush == BRUSH_BRUSH) { bs.stampType = 0; bs.stampBlur = 0.0f; bs.clay = false; }
-            sculpt.setSymmetry(true, true, false, false, SymmetryMode::MIRROR);
+            sculpt.setUseSym(true);
+            sculpt.setSymX(true);
+            sculpt.setSymY(false);
+            sculpt.setSymZ(false);
+            sculpt.setSymmetryMode(SymmetryMode::Local);
             mesh.vertProxy = mesh.verts;
             sculpt.warmupMeshCaches(meshRaw);
 

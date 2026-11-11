@@ -25,6 +25,7 @@
 #include "files/ImportSGL.h"
 #include "platform/HotkeyPreset.h"
 #include "files/GoZProfiler.h"
+#include "gui/HudCustomization.h"
 
 namespace ZBrushBridge {
     class ZBrushWatcher;
@@ -214,6 +215,29 @@ private:
 
     void takeScreenshot(const Scene& scene, AngleRenderer& renderer);
     void drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer);
+    void initHudRegistry();
+    void drawHudIslandSlots(HudIslandId islandId, SculptManager& sculpt, Scene& scene, AngleRenderer& renderer, const HudRenderCtx& baseCtx, float maxRowWidth = -1.0f);
+    void drawHudCustomizeBanner();
+    void drawHudCustomizeCatalog(SculptManager& sculpt, Scene& scene);
+    void drawHudQuickAddPopup(HudIslandId islandId, float fontScale);
+    void applyPendingHudOps();
+    void enterHudCustomizeMode();
+    void exitHudCustomizeMode();
+
+    HudRegistry     m_hudRegistry;
+    HudLayoutConfig m_hudLayout;
+    bool            m_hudRegistryInitialized = false;
+    bool            m_customizeHudMode       = false;
+    bool            m_showHudCatalog         = false;
+    char            m_hudCatalogSearch[64]   = "";
+    int             m_hudCatalogCategory     = 0;
+    std::vector<PendingHudOp> m_pendingHudOps;
+    bool            m_hudDropHandledThisFrame = false;
+    bool            m_hudWasDragging          = false;
+    bool            m_hudDragCancelledByEsc   = false;
+    HudDragPayload  m_hudLastActiveDrag{};
+    bool            m_hudHasLastActiveDrag    = false;
+
     void drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer);
     void drawModelSnapshotWindow(const Scene& scene, AngleRenderer& renderer);
     void drawDebugLogPanel();
@@ -388,6 +412,13 @@ public:
     void toggleDebugLogPanel() { m_showPreferencesPanel = true; m_preferencesActiveTab = PrefTab_DebugLog; }
     void toggleTabletDiagPanel() { m_showPreferencesPanel = true; m_preferencesActiveTab = PrefTab_Tablet; }
     void toggleFloatingIsland() { m_showFloatingIsland = !m_showFloatingIsland; }
+    void toggleHudCustomizeMode() { if (m_customizeHudMode) exitHudCustomizeMode(); else enterHudCustomizeMode(); }
+    bool isHudCustomizeMode() const { return m_customizeHudMode; }
+
+    static const char* getBrushName(BrushType brush);
+    static const char* getBrushHotkeyStr(BrushType brush);
+    static const char* getBrushIconKeyStr(BrushType brush);
+    static void renderRemeshEstimationUI(const Mesh* selectedMesh, int resolution, bool keepSharpEdges);
     void toggleTimelapsePanel() { m_showTimelapsePanel = !m_showTimelapsePanel; }
     void togglePreferencesPanel() { m_showPreferencesPanel = !m_showPreferencesPanel; }
     void toggleZBrushBridgePanel() { m_showPreferencesPanel = true; m_preferencesActiveTab = PrefTab_ZBrushBridge; }
