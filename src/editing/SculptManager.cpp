@@ -2896,7 +2896,11 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 for (const auto& s : activeScales) {
                     dynamic::SymCopy sym;
                     sym.m = glm::mat3(glm::scale(glm::mat4(1.0f), s));
-                    sym.pivot = mesh->getSymmetryOriginForAxis(0, m_symmetryMode);
+                    int symAxis = 0;
+                    for (int a = 0; a < 3; ++a) {
+                        if (s[a] < 0.0f) { symAxis = a; break; }
+                    }
+                    sym.pivot = mesh->getSymmetryOriginForAxis(symAxis, m_symmetryMode);
                     mirrors.push_back(sym);
                 }
             }
@@ -3346,8 +3350,37 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                         if (sIdx >= m_snakeActiveVertsSyms.size()) m_snakeActiveVertsSyms.resize(sIdx + 1);
                         m_snakeActiveVertsSyms[sIdx] = fromPrePicked ? m_prePickedSymVerts[sIdx] : symVerts;
                     } else {
-                        if (sIdx < m_snakeActiveVertsSyms.size()) {
-                            symVerts = m_snakeActiveVertsSyms[sIdx];
+                        if (topoChanged) {
+                            mesh->bvh.pickVerticesInSphere(
+                                *mesh, symCenter,
+                                radius2, symVerts, mesh->vertVisible.data(), 1
+                            );
+                            const BVHPickStats& ps1 = mesh->bvh.getLastPickStats(1);
+                            m_lastFrameProfile.symPickCellsMs += ps1.collectCellsMs;
+                            m_lastFrameProfile.symPickVisitedInitMs += ps1.visitedInitMs;
+                            m_lastFrameProfile.symPickFilterMs += ps1.filterVertsMs;
+                            m_lastFrameProfile.symPickMergeMs += ps1.mergeMs;
+                            m_lastFrameProfile.symPickCandLeaves += ps1.candLeaves;
+                            m_lastFrameProfile.symPickCandFaces += ps1.candFaces;
+                            m_lastFrameProfile.symPickUsedMT = ps1.usedMT;
+                            m_lastFrameProfile.symPickThreads = ps1.numThreads;
+
+                            auto tSc0 = std::chrono::high_resolution_clock::now();
+                            if (getSettings(activeBrush).culling && !symVerts.empty()) {
+                                glm::vec3 symRayDir = reflectVectorSymmetry(localRayDir, sScale, mesh, m_symmetryMode);
+                                filterCullingVertices(symVerts, mesh, symRayDir);
+                            }
+                            if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty() && !symVerts.empty()) {
+                                filterPolyGroupVertices(symVerts, mesh, m_strokeTargetPolyGroup);
+                            }
+                            thisSymCullMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tSc0).count();
+
+                            if (sIdx >= m_snakeActiveVertsSyms.size()) m_snakeActiveVertsSyms.resize(sIdx + 1);
+                            m_snakeActiveVertsSyms[sIdx] = symVerts;
+                        } else {
+                            if (sIdx < m_snakeActiveVertsSyms.size()) {
+                                symVerts = m_snakeActiveVertsSyms[sIdx];
+                            }
                         }
                     }
                 } else if (isGrabBrush && !m_firstStrokeFrame) {
@@ -3427,6 +3460,12 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                         double uSymMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tUndoSym).count();
                         m_lastFrameProfile.undoRecordMs += uSymMs;
                         m_lastFrameProfile.symUndoMs += uSymMs;
+                    }
+
+                    if (m_dyntopo && m_dyntopo->active()) {
+                        for (size_t i = 0; i < numSymData; ++i) {
+                            m_dyntopo->recordStrokeStart(pSymData[i]);
+                        }
                     }
 
                     auto tSymDef0 = std::chrono::high_resolution_clock::now();

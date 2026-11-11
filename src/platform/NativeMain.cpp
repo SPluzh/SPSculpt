@@ -67,6 +67,7 @@
 #include "editing/PrimitiveTool.h"
 #include "mesh/dynamic/DynamicTopologyTest.h"
 #include "mesh/ClayBuildupBenchmark.h"
+#include "mesh/SnakeHookBenchmark.h"
 #include <cctype>
 #ifndef _WIN32
 #include <unistd.h>
@@ -323,6 +324,8 @@ int main(int argc, char* argv[]) {
     bool runDyntopoTool02Bench = false;
     bool runClayBench1000 = false;
     bool runClayDyntopoBench1000 = false;
+    bool runSnakeHookBench = false;
+    int snakeHookStrokes = 10;
     bool runCrashReporterTest = false;
     std::string gozBenchPath = "";
     std::string gozProfilePath = "";
@@ -356,6 +359,12 @@ int main(int argc, char* argv[]) {
             } else if (arg == "--bench-clay-dyntopo-1000" || arg == "--bench-claybuildup-dyntopo-1000") {
                 runClayDyntopoBench1000 = true;
                 showConsole = true;
+            } else if (arg == "--bench-snakehook" || arg == "--test-snakehook" || arg == "--bench-snakehook-dyntopo") {
+                runSnakeHookBench = true;
+                showConsole = true;
+                if (i + 1 < numArgs && szArgList[i + 1][0] != L'-') {
+                    snakeHookStrokes = std::clamp(std::stoi(wideToUtf8(szArgList[++i])), 1, 1000);
+                }
             } else if (arg == "--bench-dyntopo" || arg == "--bench-dynamic-topology") {
                 runDyntopoBench = true;
                 showConsole = true;
@@ -449,6 +458,12 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--bench-clay-dyntopo-1000" || arg == "--bench-claybuildup-dyntopo-1000") {
             runClayDyntopoBench1000 = true;
             showConsole = true;
+        } else if (arg == "--bench-snakehook" || arg == "--test-snakehook" || arg == "--bench-snakehook-dyntopo") {
+            runSnakeHookBench = true;
+            showConsole = true;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                snakeHookStrokes = std::clamp(std::stoi(argv[++i]), 1, 1000);
+            }
         } else if (arg == "--bench-dyntopo" || arg == "--bench-dynamic-topology") {
             runDyntopoBench = true;
             showConsole = true;
@@ -554,6 +569,7 @@ int main(int argc, char* argv[]) {
 
     const bool isHeadlessRun = runDyntopoTest || runDyntopoBench || runDyntopoTool02Bench ||
                                runDyntopoBench1000 || runClayBench1000 || runClayDyntopoBench1000 ||
+                               runSnakeHookBench ||
                                runBVHTest || runBridgeBench || runGozBench || runVoxelBench ||
                                runTrimClipBench || runBench || runGozProfile || runRenderBench ||
                                runStage1Test || runStage2Test || runCrashReporterTest;
@@ -663,6 +679,17 @@ int main(int argc, char* argv[]) {
 
     if (runClayDyntopoBench1000) {
         bool success = ClayBuildupBenchmark::run1000Strokes(true, 1000);
+        fflush(stdout);
+        fflush(stderr);
+#ifdef _WIN32
+        ExitProcess(success ? 0 : 1);
+#else
+        _exit(success ? 0 : 1);
+#endif
+    }
+
+    if (runSnakeHookBench) {
+        bool success = SnakeHookBenchmark::run(snakeHookStrokes, true, true);
         fflush(stdout);
         fflush(stderr);
 #ifdef _WIN32
