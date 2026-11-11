@@ -58,6 +58,9 @@ struct Config {
     // Stage 5: Morton Clusters & Cluster Culling
     bool mortonClusters = false;
 
+    // Stage 2.1 (SculptForge comparison): Analytic normals for >=100k verts + lazy catch-up
+    bool analyticNormals = true;
+
     static Config loadFromEnv() {
         Config c;
         const bool st1 = readEnvBool("SP_OPT_STAGE1", true);
@@ -85,6 +88,7 @@ struct Config {
         c.bvhRefitLeaves = readEnvBool("SP_OPT_BVH_REFIT_LEAVES", st4);
 
         c.mortonClusters = readEnvBool("SP_OPT_MORTON_CLUSTERS", st5);
+        c.analyticNormals = readEnvBool("SP_OPT_ANALYTIC_NORMALS", true);
         return c;
     }
 };
@@ -118,6 +122,7 @@ inline std::string formatSummary() {
     add("CURSOR_THROTTLE", c.cursorThrottle);
     add("BVH_REFIT_LEAVES", c.bvhRefitLeaves);
     add("MORTON_CLUSTERS", c.mortonClusters);
+    add("ANALYTIC_NORMALS", c.analyticNormals);
     std::string out = oss.str();
     return out.empty() ? std::string("NONE (Stage 0 Baseline)") : out;
 }

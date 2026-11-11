@@ -17,7 +17,8 @@ int strokeFlatten(
     // Alpha params
     bool hasAlpha, const uint8_t* alphaTex, int alphaWidth, int alphaHeight,
     float alphaRatioX, float alphaRatioY, float alphaSide,
-    const float* alphaLookAt, bool alphaXSym
+    const float* alphaLookAt, bool alphaXSym,
+    float* outNormals = nullptr
 );
 
 int strokeSmooth(
@@ -146,7 +147,8 @@ int strokeMove(
     bool hasAlpha, const uint8_t* alphaTex, int alphaWidth, int alphaHeight,
     float alphaRatioX, float alphaRatioY, float alphaSide,
     const float* alphaLookAt, bool alphaXSym,
-    bool useAccuCurve, const float* accuCurveLut
+    bool useAccuCurve, const float* accuCurveLut,
+    float* outNormals = nullptr
 );
 
 int strokeDrag(
@@ -282,7 +284,8 @@ int strokeSquareBrush(
     bool negative,
     float focalShift, bool focalShiftFalloff,
     float alphaRatioX, float alphaRatioY, float alphaSide,
-    const float* alphaLookAt, bool alphaXSym
+    const float* alphaLookAt, bool alphaXSym,
+    float* outNormals = nullptr
 );
 
 int strokeBrush(
@@ -297,7 +300,8 @@ int strokeBrush(
     bool negative, bool clay,
     float focalShift, bool focalShiftFalloff,
     int stampType, int stampSides, float stampInnerRatio, float stampAngle, float stampBlur,
-    const float* alphaLookAt, bool alphaXSym
+    const float* alphaLookAt, bool alphaXSym,
+    float* outNormals = nullptr
 );
 
 int strokeRake(

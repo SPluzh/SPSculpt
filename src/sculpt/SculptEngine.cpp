@@ -108,6 +108,76 @@ inline int mergeCompactedThreadBuffers(std::vector<std::vector<uint32_t>>& threa
 }
 }
 
+inline float getFallOffDeriv(float dist, float focalShift) {
+    if (dist >= 1.0f) return 0.0f;
+    float p = (1.0f - focalShift) * 0.5f;
+    if (dist < p || p >= 1.0f) return 0.0f;
+    float invOneMinusP = 1.0f / (1.0f - p);
+    float d = (dist - p) * invOneMinusP;
+    return -12.0f * d * d * (1.0f - d) * invOneMinusP;
+}
+
+// Cofactor-Jacobian analytic normal update for displacements x' = x + s(x) * u, where g = grad(s).
+inline void rotateNormalAnalytic(
+    float* __restrict normals,
+    int ind,
+    float ux, float uy, float uz,
+    float gx, float gy, float gz
+) {
+    const float nx = normals[ind];
+    const float ny = normals[ind + 1];
+    const float nz = normals[ind + 2];
+
+    const float gDotU = gx * ux + gy * uy + gz * uz;
+    const float uDotN = ux * nx + uy * ny + uz * nz;
+    const float s = 1.0f + gDotU;
+
+    const float mx = nx * s - uDotN * gx;
+    const float my = ny * s - uDotN * gy;
+    const float mz = nz * s - uDotN * gz;
+
+    const float len2 = mx * mx + my * my + mz * mz;
+    const float mDotN = mx * nx + my * ny + mz * nz;
+    if (len2 > 1e-20f && mDotN > 0.0f && std::isfinite(len2)) {
+        const float invLen = 1.0f / std::sqrt(len2);
+        normals[ind]     = mx * invLen;
+        normals[ind + 1] = my * invLen;
+        normals[ind + 2] = mz * invLen;
+    }
+}
+
+inline void applySquareBrushAnalyticNormal(
+    float* __restrict normals,
+    int ind,
+    float xn, float yn,
+    float dist, float fallOffVal, float distToPlane,
+    float intensity, float matVal, float fs,
+    float anx, float any, float anz,
+    float exx, float exy, float exz,
+    float eyx, float eyy, float eyz
+) {
+    const float dw = getFallOffDeriv(dist, fs);
+    float gradWx = 0.0f, gradWy = 0.0f, gradWz = 0.0f;
+    if (dw != 0.0f) {
+        if (std::abs(xn) >= std::abs(yn)) {
+            const float sgn = (xn >= 0.0f) ? dw : -dw;
+            gradWx = sgn * exx;
+            gradWy = sgn * exy;
+            gradWz = sgn * exz;
+        } else {
+            const float sgn = (yn >= 0.0f) ? dw : -dw;
+            gradWx = sgn * eyx;
+            gradWy = sgn * eyy;
+            gradWz = sgn * eyz;
+        }
+    }
+    const float k = -intensity * matVal;
+    const float gx = k * (distToPlane * gradWx + fallOffVal * anx);
+    const float gy = k * (distToPlane * gradWy + fallOffVal * any);
+    const float gz = k * (distToPlane * gradWz + fallOffVal * anz);
+    rotateNormalAnalytic(normals, ind, anx, any, anz, gx, gy, gz);
+}
+
 int strokeFlatten(
     float* verts,
     const float* vertProxy,
@@ -122,7 +192,8 @@ int strokeFlatten(
     // Alpha params
     bool hasAlpha, const uint8_t* alphaTex, int alphaWidth, int alphaHeight,
     float alphaRatioX, float alphaRatioY, float alphaSide,
-    const float* alphaLookAt, bool alphaXSym
+    const float* alphaLookAt, bool alphaXSym,
+    float* outNormals
 ) {
     if (nbIVerts <= 0 || !verts || !vertProxy || !materials || !iVerts ||
         !std::isfinite(radius) || radius <= 1e-7f || !std::isfinite(intensity)) {
@@ -133,6 +204,7 @@ int strokeFlatten(
     float p = (1.0f - focalShift) / 2.0f;
     const float pSq = p * p;
     const float radiusSq = radius * radius;
+    const bool analytic = (outNormals != nullptr) && !hasAlpha;
 
     const float* vProxy = (accumulate || lockPosition) ? verts : vertProxy;
 
@@ -164,13 +236,14 @@ int strokeFlatten(
         }
 
         // Falloff
+        float dist = 0.0f;
         float fallOff = 1.0f;
         if (distSq < pSq) {
             fallOff = 1.0f;
         } else if (p >= 1.0f) {
             fallOff = 0.0f;
         } else {
-            float dist = std::sqrt(distSq);
+            dist = std::sqrt(distSq);
             float d = (dist - p) / (1.0f - p);
             float d2 = d * d;
             fallOff = 3.0f * d2 * d2 - 4.0f * d2 * d + 1.0f;
@@ -209,9 +282,26 @@ int strokeFlatten(
             }
         }
 
+        float rawFallOff = fallOff;
         fallOff *= distToPlane * intensity * matVal * alphaVal;
         if (fallOff == 0.0f) {
             continue;
+        }
+
+        if (analytic) {
+            float gradWx = 0.0f, gradWy = 0.0f, gradWz = 0.0f;
+            if (dist > 1e-6f && distSq >= pSq && p < 1.0f) {
+                float dw = getFallOffDeriv(dist, focalShift);
+                float s = dw / (radiusSq * dist);
+                gradWx = s * dx;
+                gradWy = s * dy;
+                gradWz = s * dz;
+            }
+            float k = -intensity * matVal;
+            float gx = k * (distToPlane * gradWx + rawFallOff * anx);
+            float gy = k * (distToPlane * gradWy + rawFallOff * any);
+            float gz = k * (distToPlane * gradWz + rawFallOff * anz);
+            rotateNormalAnalytic(outNormals, ind, anx, any, anz, gx, gy, gz);
         }
 
         verts[ind] -= anx * fallOff;
@@ -1784,7 +1874,8 @@ int strokeMove(
     bool hasAlpha, const uint8_t* alphaTex, int alphaWidth, int alphaHeight,
     float alphaRatioX, float alphaRatioY, float alphaSide,
     const float* alphaLookAt, bool alphaXSym,
-    bool useAccuCurve, const float* accuCurveLut
+    bool useAccuCurve, const float* accuCurveLut,
+    float* outNormals
 ) {
     if (nbIVerts <= 0 || !verts || !vertProxy || !materials || !iVerts ||
         !std::isfinite(radius) || radius <= 1e-7f) {
@@ -1793,6 +1884,8 @@ int strokeMove(
     const float radiusSq = radius * radius;
     float moveFalloffLut[256];
     bool canUseLut = !useAccuCurve && !hasAlpha;
+    const bool analytic = (outNormals != nullptr) && canUseLut;
+    const float analyticScale = 510.0f / radiusSq;
     if (canUseLut) {
         float exponent = std::pow(2.0f, (focalShift - 0.6f) * 2.0f) * 3.0f;
         for (int i = 0; i < 256; ++i) {
@@ -1838,6 +1931,10 @@ int strokeMove(
             if (index > 254) index = 254;
             float fract = floatIndex - (float)index;
             fallOff = (moveFalloffLut[index] * (1.0f - fract) + moveFalloffLut[index + 1] * fract) * matVal;
+            if (analytic) {
+                float gradCoef = analyticScale * (moveFalloffLut[index + 1] - moveFalloffLut[index]) * matVal;
+                rotateNormalAnalytic(outNormals, ind, dirx, diry, dirz, gradCoef * dx, gradCoef * dy, gradCoef * dz);
+            }
         } else {
             float dist = std::sqrt(distSq);
             fallOff = getMoveFallOff(dist, focalShift, useAccuCurve, accuCurveLut);
@@ -3232,7 +3329,8 @@ int strokeSquareBrush(
     bool negative,
     float focalShift, bool focalShiftFalloff,
     float alphaRatioX, float alphaRatioY, float alphaSide,
-    const float* alphaLookAt, bool alphaXSym
+    const float* alphaLookAt, bool alphaXSym,
+    float* outNormals
 ) {
     if (nbIVerts <= 0 || !verts || !materials || !iVerts || !alphaLookAt ||
         !std::isfinite(radius) || radius <= 1e-7f ||
@@ -3247,6 +3345,10 @@ int strokeSquareBrush(
     float fs = focalShiftFalloff ? focalShift : 0.0f;
     float invAlphaSideX = 1.0f / (alphaXSym ? -alphaSide : alphaSide);
     float invAlphaSideY = 1.0f / alphaSide;
+    const float exScale = alphaRatioY * invAlphaSideX;
+    const float eyScale = alphaRatioX * invAlphaSideY;
+    const float exx = alphaLookAt[0] * exScale, exy = alphaLookAt[4] * exScale, exz = alphaLookAt[8]  * exScale;
+    const float eyx = alphaLookAt[1] * eyScale, eyy = alphaLookAt[5] * eyScale, eyz = alphaLookAt[9]  * eyScale;
 
     const int maxThreads = omp_get_max_threads();
     const bool inParallel = omp_in_parallel();
@@ -3285,10 +3387,18 @@ int strokeSquareBrush(
                 continue;
             }
 
-            float fallOff = getFallOff(dist, fs, false, nullptr);
-            fallOff *= distToPlane * intensity * matVal;
+            float rawFallOff = getFallOff(dist, fs, false, nullptr);
+            float fallOff = rawFallOff * distToPlane * intensity * matVal;
 
             if (fallOff == 0.0f || !std::isfinite(fallOff)) continue;
+
+            if (outNormals) {
+                applySquareBrushAnalyticNormal(
+                    outNormals, ind, xn, yn, dist, rawFallOff, distToPlane,
+                    intensity, matVal, fs, anx, any, anz,
+                    exx, exy, exz, eyx, eyy, eyz
+                );
+            }
 
             verts[ind] -= anx * fallOff;
             verts[ind + 1] -= any * fallOff;
@@ -3347,10 +3457,18 @@ int strokeSquareBrush(
                 continue;
             }
 
-            float fallOff = getFallOff(dist, fs, false, nullptr);
-            fallOff *= distToPlane * intensity * matVal;
+            float rawFallOff = getFallOff(dist, fs, false, nullptr);
+            float fallOff = rawFallOff * distToPlane * intensity * matVal;
 
             if (fallOff == 0.0f || !std::isfinite(fallOff)) continue;
+
+            if (outNormals) {
+                applySquareBrushAnalyticNormal(
+                    outNormals, ind, xn, yn, dist, rawFallOff, distToPlane,
+                    intensity, matVal, fs, anx, any, anz,
+                    exx, exy, exz, eyx, eyy, eyz
+                );
+            }
 
             verts[ind] -= anx * fallOff;
             verts[ind + 1] -= any * fallOff;
@@ -3374,7 +3492,8 @@ int strokeBrush(
     bool negative, bool clay,
     float focalShift, bool focalShiftFalloff,
     int stampType, int stampSides, float stampInnerRatio, float stampAngle, float stampBlur,
-    const float* alphaLookAt, bool alphaXSym
+    const float* alphaLookAt, bool alphaXSym,
+    float* outNormals
 ) {
     if (nbIVerts <= 0 || !verts || !materials || !iVerts || !alphaLookAt ||
         !std::isfinite(radius) || radius <= 1e-7f || !std::isfinite(intensity)) return 0;
@@ -3384,6 +3503,10 @@ int strokeBrush(
     float sinA = std::sin(angleRad);
     float invRadiusX = 1.0f / (alphaXSym ? -radius : radius);
     float invRadiusY = 1.0f / radius;
+    const bool analytic = (outNormals != nullptr) && (stampType == 0) && (stampBlur <= 0.001f);
+    const float fsEffective = focalShiftFalloff ? focalShift : 0.0f;
+    const float exx = alphaLookAt[0] * invRadiusX, exy = alphaLookAt[4] * invRadiusX, exz = alphaLookAt[8]  * invRadiusX;
+    const float eyx = alphaLookAt[1] * invRadiusY, eyy = alphaLookAt[5] * invRadiusY, eyz = alphaLookAt[9]  * invRadiusY;
 
     const int maxThreads = omp_get_max_threads();
     const bool inParallel = omp_in_parallel();
@@ -3525,6 +3648,29 @@ int strokeBrush(
             }
 
             if (deformVal == 0.0f) continue;
+
+            if (analytic) {
+                float gradWx = 0.0f, gradWy = 0.0f, gradWz = 0.0f;
+                if (dist > 1e-6f) {
+                    const float dw = getFallOffDeriv(dist, fsEffective);
+                    if (dw != 0.0f) {
+                        const float s = dw / dist;
+                        gradWx = s * (xn_proj * exx + yn_proj * eyx);
+                        gradWy = s * (xn_proj * exy + yn_proj * eyy);
+                        gradWz = s * (xn_proj * exz + yn_proj * eyz);
+                    }
+                }
+                if (clay) {
+                    const float k = -intensity * matVal;
+                    const float gx = k * (distToPlane * gradWx + fallOff * anx);
+                    const float gy = k * (distToPlane * gradWy + fallOff * any);
+                    const float gz = k * (distToPlane * gradWz + fallOff * anz);
+                    rotateNormalAnalytic(outNormals, ind, anx, any, anz, gx, gy, gz);
+                } else {
+                    const float c = (negative ? -intensity : intensity) * radius * 0.1f * matVal;
+                    rotateNormalAnalytic(outNormals, ind, anx, any, anz, c * gradWx, c * gradWy, c * gradWz);
+                }
+            }
 
             verts[ind] += anx * deformVal;
             verts[ind + 1] += any * deformVal;

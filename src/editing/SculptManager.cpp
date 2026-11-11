@@ -968,7 +968,8 @@ int SculptManager::doStrokePass(
     float mouseX,
     bool isSymmetry,
     const glm::vec3& sScale,
-    const std::vector<uint32_t>* pPickedVec
+    const std::vector<uint32_t>* pPickedVec,
+    float* outAnalyticNormals
 ) {
     if (!mesh || !pVerts || nbVerts == 0 ||
         mesh->nbVerts <= 0 || mesh->verts.size() < (size_t)mesh->nbVerts * 3 ||
@@ -1039,7 +1040,8 @@ int SculptManager::doStrokePass(
                 localRadius, intensity,
                 negative, getCurrentSettings().accumulate, getCurrentSettings().lockPosition,
                 getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
-                false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
+                false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false,
+                outAnalyticNormals
             );
             break;
         }
@@ -1227,7 +1229,8 @@ int SculptManager::doStrokePass(
                 localRadius,
                 getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
                 false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false,
-                false, nullptr
+                false, nullptr,
+                outAnalyticNormals
             );
             break;
         }
@@ -1479,7 +1482,8 @@ int SculptManager::doStrokePass(
                 localRadius, intensity,
                 negative, getCurrentSettings().accumulate, getCurrentSettings().lockPosition,
                 getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
-                false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
+                false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false,
+                outAnalyticNormals
             );
             break;
         }
@@ -1614,7 +1618,8 @@ int SculptManager::doStrokePass(
                 negative,
                 getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
                 1.0f, 1.0f, localRadius * 0.70710678f,
-                alphaLookAt, alphaXSym
+                alphaLookAt, alphaXSym,
+                outAnalyticNormals
             );
             break;
         }
@@ -1789,7 +1794,8 @@ int SculptManager::doStrokePass(
                 negative,
                 getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
                 1.0f, 1.0f, localRadius * 0.70710678f,
-                alphaLookAt, alphaXSym
+                alphaLookAt, alphaXSym,
+                outAnalyticNormals
             );
             break;
         }
@@ -1926,7 +1932,8 @@ int SculptManager::doStrokePass(
                 getCurrentSettings().stampInnerRatio,
                 finalAngle,
                 getCurrentSettings().stampBlur,
-                alphaLookAt, alphaXSym
+                alphaLookAt, alphaXSym,
+                outAnalyticNormals
             );
             break;
         }
@@ -2177,6 +2184,7 @@ int SculptManager::doStrokePass(
 }
 
 void SculptManager::cancelStroke() {
+    flushDirtyNormalVerts(m_dirtyNormalMesh, true);
     m_isSculpting = false;
     m_pendingBVHUpdate = false;
     m_pendingGrabMotion = false;
@@ -2295,6 +2303,12 @@ void SculptManager::warmupMeshCaches(const Mesh* mesh) {
             m_tagFlags.assign(mesh->nbFaces, 0);
             m_tagEpoch = 1;
         }
+        if (m_dirtyNormalFlags.size() < (size_t)mesh->nbVerts) {
+            m_dirtyNormalFlags.resize(mesh->nbVerts, uint8_t(0));
+        }
+        if (m_dirtyNormalList.capacity() < strokeVertsCap) {
+            m_dirtyNormalList.reserve(strokeVertsCap);
+        }
     }
     if (mesh->vertProxy.size() != mesh->verts.size()) {
         const_cast<Mesh*>(mesh)->vertProxy = mesh->verts;
@@ -2305,6 +2319,179 @@ void SculptManager::warmupMeshCaches(const Mesh* mesh) {
     const_cast<Mesh*>(mesh)->bvh.warmup(mesh->nbVerts);
     mesh->computeLocalRadius();
     g_undoManager.warmupForMesh(mesh->m_id, mesh->nbVerts, mesh->nbFaces);
+}
+
+void SculptManager::clearDirtyNormalVerts() {
+    const size_t flagSize = m_dirtyNormalFlags.size();
+    for (uint32_t v : m_dirtyNormalList) {
+        if (v < flagSize) {
+            m_dirtyNormalFlags[v] = 0;
+        }
+    }
+    m_dirtyNormalList.clear();
+    m_dirtyNormalHead = 0;
+    m_dirtyNormalMesh = nullptr;
+}
+
+void SculptManager::markDirtyNormalVerts(Mesh* mesh, const uint32_t* verts, size_t count, uint8_t tag) {
+    if (!mesh || !verts || count == 0 || mesh->nbVerts <= 0) return;
+    if (m_dirtyNormalMesh && m_dirtyNormalMesh != mesh) {
+        if (m_knownMeshes.count(m_dirtyNormalMesh) > 0) {
+            flushDirtyNormalVerts(m_dirtyNormalMesh, true);
+        } else {
+            clearDirtyNormalVerts();
+        }
+    }
+    m_dirtyNormalMesh = mesh;
+    if (m_dirtyNormalFlags.size() < (size_t)mesh->nbVerts) {
+        m_dirtyNormalFlags.resize((size_t)mesh->nbVerts, uint8_t(0));
+    }
+    const uint32_t maxV = (uint32_t)mesh->nbVerts;
+    for (size_t i = 0; i < count; ++i) {
+        const uint32_t v = verts[i];
+        if (v >= maxV) continue;
+        uint8_t& f = m_dirtyNormalFlags[v];
+        if (f == 0) {
+            m_dirtyNormalList.push_back(v);
+        }
+        if (f < tag) {
+            f = tag;
+        }
+    }
+}
+
+void SculptManager::demoteCurrentDirtyNormalTag() {
+    const size_t flagSize = m_dirtyNormalFlags.size();
+    for (size_t i = m_dirtyNormalHead; i < m_dirtyNormalList.size(); ++i) {
+        const uint32_t v = m_dirtyNormalList[i];
+        if (v < flagSize && m_dirtyNormalFlags[v] == 2) {
+            m_dirtyNormalFlags[v] = 1;
+        }
+    }
+}
+
+void SculptManager::processDirtyNormalChunk(Mesh* mesh, size_t maxVerts, bool includeCurrentDab, bool updateBVH) {
+    if (!mesh || m_dirtyNormalMesh != mesh || m_dirtyNormalHead >= m_dirtyNormalList.size()) {
+        return;
+    }
+    if (mesh->nbVerts <= 0 || mesh->nbFaces <= 0 || mesh->verts.empty() || mesh->faces.empty()) {
+        clearDirtyNormalVerts();
+        return;
+    }
+    if (mesh->vrfStartCount.size() < (size_t)mesh->nbVerts * 2) {
+        mesh->ensureTopologyBuilt();
+    }
+    const size_t flagSize = m_dirtyNormalFlags.size();
+    const uint32_t maxV = (uint32_t)mesh->nbVerts;
+
+    m_dirtyFlushVertsScratch.clear();
+    if (maxVerts < 262144 && m_dirtyFlushVertsScratch.capacity() < maxVerts) {
+        m_dirtyFlushVertsScratch.reserve(maxVerts);
+    }
+
+    while (m_dirtyNormalHead < m_dirtyNormalList.size() && m_dirtyFlushVertsScratch.size() < maxVerts) {
+        const uint32_t v = m_dirtyNormalList[m_dirtyNormalHead];
+        if (v >= maxV || v >= flagSize) {
+            ++m_dirtyNormalHead;
+            continue;
+        }
+        const uint8_t f = m_dirtyNormalFlags[v];
+        if (f == 0) {
+            ++m_dirtyNormalHead;
+            continue;
+        }
+        if (!includeCurrentDab && f == 2) {
+            break;
+        }
+        m_dirtyNormalFlags[v] = 0;
+        m_dirtyFlushVertsScratch.push_back(v);
+        ++m_dirtyNormalHead;
+    }
+
+    while (m_dirtyNormalHead < m_dirtyNormalList.size()) {
+        const uint32_t v = m_dirtyNormalList[m_dirtyNormalHead];
+        if (v >= maxV || v >= flagSize || m_dirtyNormalFlags[v] == 0) {
+            ++m_dirtyNormalHead;
+        } else {
+            break;
+        }
+    }
+
+    if (m_dirtyNormalHead >= m_dirtyNormalList.size()) {
+        m_dirtyNormalList.clear();
+        m_dirtyNormalHead = 0;
+        m_dirtyNormalMesh = nullptr;
+    }
+
+    if (m_dirtyFlushVertsScratch.empty()) {
+        return;
+    }
+
+    if (m_tagFlags.size() < (size_t)mesh->nbFaces) {
+        m_tagFlags.assign(mesh->nbFaces, 0);
+        m_tagEpoch = 1;
+    }
+    const size_t neededFaces = std::min((size_t)mesh->nbFaces, m_dirtyFlushVertsScratch.size() * 8 + 1024);
+    if (m_dirtyFlushFacesScratch.size() < neededFaces) {
+        m_dirtyFlushFacesScratch.resize(neededFaces);
+    }
+
+    const uint32_t numFaces = getFacesFromVerticesFast(
+        m_dirtyFlushVertsScratch.data(),
+        (uint32_t)m_dirtyFlushVertsScratch.size(),
+        mesh->vrfStartCount.data(),
+        mesh->vertRingFace.data(),
+        mesh->vertRingFace.size(),
+        m_dirtyFlushFacesScratch,
+        m_tagFlags.data(),
+        &m_tagEpoch,
+        (uint32_t)mesh->nbFaces,
+        (uint32_t)mesh->nbVerts
+    );
+
+    if (numFaces > 0) {
+        if (OptFlags::get().faceNormalsOnly) {
+            updateFaceNormalsOnly(
+                mesh->verts.data(), mesh->nbVerts,
+                mesh->faces.data(), mesh->nbFaces,
+                m_dirtyFlushFacesScratch.data(), (int)numFaces,
+                mesh->faceNormals.data()
+            );
+        } else {
+            updateFaceNormalsAndBoxes(
+                mesh->verts.data(), mesh->nbVerts,
+                mesh->faces.data(), mesh->nbFaces,
+                m_dirtyFlushFacesScratch.data(), (int)numFaces,
+                mesh->faceNormals.data(),
+                mesh->faceBoxes.data(),
+                mesh->faceCenters.data()
+            );
+        }
+    }
+
+    updateVertexNormals(
+        m_dirtyFlushVertsScratch.data(),
+        (int)m_dirtyFlushVertsScratch.size(),
+        mesh->nbVerts,
+        mesh->vrfStartCount.data(),
+        mesh->vertRingFace.data(),
+        mesh->faceNormals.data(),
+        mesh->normals.data()
+    );
+
+    mesh->markDirtyVerts(m_dirtyFlushVertsScratch.data(), m_dirtyFlushVertsScratch.size());
+
+    if (updateBVH && numFaces > 0) {
+        mesh->bvh.refit(*mesh, m_dirtyFlushFacesScratch.data(), numFaces, !OptFlags::get().faceNormalsOnly);
+    }
+}
+
+void SculptManager::flushDirtyNormalVerts(Mesh* mesh, bool updateBVH) {
+    if (!mesh || m_dirtyNormalMesh != mesh) return;
+    if (m_dirtyNormalHead < m_dirtyNormalList.size()) {
+        processDirtyNormalChunk(mesh, SIZE_MAX, true, updateBVH);
+    }
+    clearDirtyNormalVerts();
 }
 
 void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, float mouseX, float mouseY, float currentPressure, bool deferPostProcess, bool isSubstepBatch) {
@@ -3135,6 +3322,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     std::vector<uint32_t> localAffectedVerts;
     std::vector<uint32_t>& allAffectedVerts = OptFlags::get().cpuReuse ? m_allAffectedVerts : localAffectedVerts;
     allAffectedVerts.clear();
+    bool useAnalyticNormals = false;
     if (primaryVertCount > 0) {
         if (!isGrabBrush || m_firstStrokeFrame) {
             size_t needed = primaryVertCount * (m_useSym ? 2 : 1);
@@ -3147,6 +3335,34 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         bool isAlt = (SDL_GetModState() & KMOD_ALT) != 0;
         bool invertModifier = isMayaNav ? (isCtrl && isAlt) : isAlt;
         bool negative = getSettings(activeBrush).negative ^ invertModifier;
+
+        size_t estAnalyticVerts = primaryVertCount;
+        if (m_useSym) {
+            if (!m_prePickedSymVerts.empty()) {
+                for (const auto& sv : m_prePickedSymVerts) estAnalyticVerts += sv.size();
+            } else {
+                estAnalyticVerts *= (1 + symScales.size());
+            }
+        }
+
+        if (OptFlags::get().analyticNormals &&
+            !isGrabBrush &&
+            estAnalyticVerts >= 100000 &&
+            !(m_dyntopo && m_dyntopo->active()) &&
+            !mesh->isLayerRecording() &&
+            !deferPostProcess &&
+            m_batchedAffectedVerts.empty() &&
+            mesh->normals.size() >= (size_t)mesh->nbVerts * 3 &&
+            !mesh->bvh.getLastQueriedLeaves().empty()) {
+            const auto& brushCfg = getCurrentSettings();
+            if (activeBrush == BRUSH_CLAYBUILDUP || activeBrush == BRUSH_SQUAREBRUSH ||
+                activeBrush == BRUSH_CLAY || activeBrush == BRUSH_FLATTEN) {
+                useAnalyticNormals = true;
+            } else if (activeBrush == BRUSH_BRUSH) {
+                useAnalyticNormals = (brushCfg.stampType == 0 && brushCfg.stampBlur <= 0.001f);
+            }
+        }
+        float* analyticNormalsPtr = useAnalyticNormals ? mesh->normals.data() : nullptr;
 
         if (isGrabBrush) {
             if (m_firstStrokeFrame && OptFlags::get().cpuReuse) {
@@ -3279,7 +3495,8 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             mouseX,
             false,
             glm::vec3(1.0f),
-            (isGrabBrush && !m_firstStrokeFrame) ? nullptr : &pickedVertices
+            (isGrabBrush && !m_firstStrokeFrame) ? nullptr : &pickedVertices,
+            analyticNormalsPtr
         );
         m_lastFrameProfile.primaryDeformMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
 
@@ -3486,7 +3703,8 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                         mouseX,
                         true,
                         sScale,
-                        (isGrabBrush && !m_firstStrokeFrame) ? nullptr : (fromPrePicked ? &m_prePickedSymVerts[sIdx] : &symVerts)
+                        (isGrabBrush && !m_firstStrokeFrame) ? nullptr : (fromPrePicked ? &m_prePickedSymVerts[sIdx] : &symVerts),
+                        analyticNormalsPtr
                     );
                     m_lastFrameProfile.symDeformMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tSymDef0).count();
 
@@ -3715,98 +3933,136 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                                (glm::dot(stepDiff, stepDiff) < 1e-10f);
 
         if (isSculptDeform && !isIdleGrabStep0) {
-            auto tTagAlloc1 = std::chrono::high_resolution_clock::now();
-            if (m_tagFlags.size() < (size_t)mesh->nbFaces) {
-                m_tagFlags.assign(mesh->nbFaces, 0);
-            }
-            size_t neededFaces = std::min((size_t)mesh->nbFaces, numAff * 8 + 1024);
-            if (m_iFacesCache.size() < neededFaces) {
-                m_iFacesCache.resize(neededFaces);
-            }
-            tagAllocMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tTagAlloc1).count();
-
-            // --- Stage 7: Face Lookup ---
-            uint32_t numIFaces = 0;
-            if (isGrabBrush && !m_firstStrokeFrame && m_grabbedNumIFaces > 0) {
-                numIFaces = m_grabbedNumIFaces;
+            m_lastStrokeDeformTickMs = SDL_GetTicks64();
+            if (useAnalyticNormals) {
+                markDirtyNormalVerts(mesh, pAff, numAff, 2);
+                m_lastFrameProfile.affectedFaceCount = 0;
                 m_lastFrameProfile.faceLookupMs = 0.0;
-            } else {
-                if (mesh->vrfStartCount.size() < (size_t)mesh->nbVerts * 2) {
-                    mesh->ensureTopologyBuilt();
+                m_lastFrameProfile.faceNormalsMs = 0.0;
+                m_lastFrameProfile.vertNormalsMs = 0.0;
+
+                if (isGrabBrush) {
+                    m_pendingBVHUpdate = true;
+                    m_lastFrameProfile.bvhUpdateMs = 0.0;
+                } else {
+                    tStage = std::chrono::high_resolution_clock::now();
+                    mesh->bvh.refitLeaves(
+                        *mesh,
+                        mesh->bvh.getLastQueriedLeaves().data(),
+                        mesh->bvh.getLastQueriedLeaves().size(),
+                        false
+                    );
+                    m_lastFrameProfile.bvhUpdateMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
+                    const BVHRefitStats& rs = mesh->bvh.getLastRefitStats();
+                    m_lastFrameProfile.bvhLeafDedupMs = rs.leafDedupMs;
+                    m_lastFrameProfile.bvhLeafAABBMs = rs.leafAABBMs;
+                    m_lastFrameProfile.bvhParentSortMs = rs.parentGatherMs;
+                    m_lastFrameProfile.bvhInnerUpdMs = rs.innerUpdateMs;
+                    m_lastFrameProfile.bvhDirtyLeaves = rs.dirtyLeaves;
+                    m_lastFrameProfile.bvhDirtyInner = rs.dirtyInnerNodes;
+                    m_lastFrameProfile.bvhUsedPrecomputed = rs.usedPrecomputed;
+
+                    if (pendingDirtyNormalCount() > 262144) {
+                        processDirtyNormalChunk(mesh, 65536, false, false);
+                    }
                 }
+                demoteCurrentDirtyNormalTag();
+            } else {
+                markDirtyNormalVerts(mesh, pAff, numAff, 1);
+                auto tTagAlloc1 = std::chrono::high_resolution_clock::now();
+                if (m_tagFlags.size() < (size_t)mesh->nbFaces) {
+                    m_tagFlags.assign(mesh->nbFaces, 0);
+                }
+                size_t neededFaces = std::min((size_t)mesh->nbFaces, numAff * 8 + 1024);
+                if (m_iFacesCache.size() < neededFaces) {
+                    m_iFacesCache.resize(neededFaces);
+                }
+                tagAllocMs += std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tTagAlloc1).count();
+
+                // --- Stage 7: Face Lookup ---
+                uint32_t numIFaces = 0;
+                if (isGrabBrush && !m_firstStrokeFrame && m_grabbedNumIFaces > 0) {
+                    numIFaces = m_grabbedNumIFaces;
+                    m_lastFrameProfile.faceLookupMs = 0.0;
+                } else {
+                    if (mesh->vrfStartCount.size() < (size_t)mesh->nbVerts * 2) {
+                        mesh->ensureTopologyBuilt();
+                    }
+                    tStage = std::chrono::high_resolution_clock::now();
+                    numIFaces = getFacesFromVerticesFast(
+                        pAff,
+                        (uint32_t)numAff,
+                        mesh->vrfStartCount.data(),
+                        mesh->vertRingFace.data(),
+                        mesh->vertRingFace.size(),
+                        m_iFacesCache,
+                        m_tagFlags.data(),
+                        &m_tagEpoch,
+                        (uint32_t)mesh->nbFaces,
+                        (uint32_t)mesh->nbVerts
+                    );
+                    m_lastFrameProfile.faceLookupMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
+                    if (isGrabBrush) {
+                        m_grabbedNumIFaces = numIFaces;
+                    }
+                }
+                m_lastFrameProfile.affectedFaceCount = (int)numIFaces;
+                CrashReporter::updateStrokeCounts((uint32_t)numAff, numIFaces);
+
+                // --- Stage 8: Face Normals & Boxes ---
                 tStage = std::chrono::high_resolution_clock::now();
-                numIFaces = getFacesFromVerticesFast(
-                    pAff,
-                    (uint32_t)numAff,
+                if (OptFlags::get().faceNormalsOnly) {
+                    updateFaceNormalsOnly(
+                        mesh->verts.data(), mesh->nbVerts,
+                        mesh->faces.data(), mesh->nbFaces,
+                        m_iFacesCache.data(), numIFaces,
+                        mesh->faceNormals.data()
+                    );
+                } else {
+                    updateFaceNormalsAndBoxes(
+                        mesh->verts.data(), mesh->nbVerts,
+                        mesh->faces.data(), mesh->nbFaces,
+                        m_iFacesCache.data(), numIFaces,
+                        mesh->faceNormals.data(),
+                        mesh->faceBoxes.data(),
+                        mesh->faceCenters.data()
+                    );
+                }
+                m_lastFrameProfile.faceNormalsMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
+
+                // --- Stage 9: Vertex Normals ---
+                tStage = std::chrono::high_resolution_clock::now();
+                updateVertexNormals(
+                    pAff, numAff, mesh->nbVerts,
                     mesh->vrfStartCount.data(),
                     mesh->vertRingFace.data(),
-                    mesh->vertRingFace.size(),
-                    m_iFacesCache,
-                    m_tagFlags.data(),
-                    &m_tagEpoch,
-                    (uint32_t)mesh->nbFaces,
-                    (uint32_t)mesh->nbVerts
-                );
-                m_lastFrameProfile.faceLookupMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
-                if (isGrabBrush) {
-                    m_grabbedNumIFaces = numIFaces;
-                }
-            }
-            m_lastFrameProfile.affectedFaceCount = (int)numIFaces;
-            CrashReporter::updateStrokeCounts((uint32_t)numAff, numIFaces);
-
-            // --- Stage 8: Face Normals & Boxes ---
-            tStage = std::chrono::high_resolution_clock::now();
-            if (OptFlags::get().faceNormalsOnly) {
-                updateFaceNormalsOnly(
-                    mesh->verts.data(), mesh->nbVerts,
-                    mesh->faces.data(), mesh->nbFaces,
-                    m_iFacesCache.data(), numIFaces,
-                    mesh->faceNormals.data()
-                );
-            } else {
-                updateFaceNormalsAndBoxes(
-                    mesh->verts.data(), mesh->nbVerts,
-                    mesh->faces.data(), mesh->nbFaces,
-                    m_iFacesCache.data(), numIFaces,
                     mesh->faceNormals.data(),
-                    mesh->faceBoxes.data(),
-                    mesh->faceCenters.data()
+                    mesh->normals.data()
                 );
-            }
-            m_lastFrameProfile.faceNormalsMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
+                m_lastFrameProfile.vertNormalsMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
+                clearDirtyNormalVerts();
 
-            // --- Stage 9: Vertex Normals ---
-            tStage = std::chrono::high_resolution_clock::now();
-            updateVertexNormals(
-                pAff, numAff, mesh->nbVerts,
-                mesh->vrfStartCount.data(),
-                mesh->vertRingFace.data(),
-                mesh->faceNormals.data(),
-                mesh->normals.data()
-            );
-            m_lastFrameProfile.vertNormalsMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
-
-            // --- Stage 10: BVH Update ---
-            if (isGrabBrush) {
-                m_pendingBVHUpdate = true;
-                m_lastFrameProfile.bvhUpdateMs = 0.0;
-            } else {
-                tStage = std::chrono::high_resolution_clock::now();
-                if (OptFlags::get().bvhRefitLeaves && !mesh->bvh.getLastQueriedLeaves().empty()) {
-                    mesh->bvh.refitLeaves(*mesh, mesh->bvh.getLastQueriedLeaves().data(), mesh->bvh.getLastQueriedLeaves().size(), !OptFlags::get().faceNormalsOnly);
+                // --- Stage 10: BVH Update ---
+                if (isGrabBrush) {
+                    m_pendingBVHUpdate = true;
+                    m_lastFrameProfile.bvhUpdateMs = 0.0;
                 } else {
-                    mesh->bvh.refit(*mesh, m_iFacesCache.data(), numIFaces, !OptFlags::get().faceNormalsOnly);
+                    tStage = std::chrono::high_resolution_clock::now();
+                    if (OptFlags::get().bvhRefitLeaves && !mesh->bvh.getLastQueriedLeaves().empty()) {
+                        mesh->bvh.refitLeaves(*mesh, mesh->bvh.getLastQueriedLeaves().data(), mesh->bvh.getLastQueriedLeaves().size(), !OptFlags::get().faceNormalsOnly);
+                    } else {
+                        mesh->bvh.refit(*mesh, m_iFacesCache.data(), numIFaces, !OptFlags::get().faceNormalsOnly);
+                    }
+                    m_lastFrameProfile.bvhUpdateMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
+                    const BVHRefitStats& rs = mesh->bvh.getLastRefitStats();
+                    m_lastFrameProfile.bvhLeafDedupMs = rs.leafDedupMs;
+                    m_lastFrameProfile.bvhLeafAABBMs = rs.leafAABBMs;
+                    m_lastFrameProfile.bvhParentSortMs = rs.parentGatherMs;
+                    m_lastFrameProfile.bvhInnerUpdMs = rs.innerUpdateMs;
+                    m_lastFrameProfile.bvhDirtyLeaves = rs.dirtyLeaves;
+                    m_lastFrameProfile.bvhDirtyInner = rs.dirtyInnerNodes;
+                    m_lastFrameProfile.bvhUsedPrecomputed = rs.usedPrecomputed;
                 }
-                m_lastFrameProfile.bvhUpdateMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tStage).count();
-                const BVHRefitStats& rs = mesh->bvh.getLastRefitStats();
-                m_lastFrameProfile.bvhLeafDedupMs = rs.leafDedupMs;
-                m_lastFrameProfile.bvhLeafAABBMs = rs.leafAABBMs;
-                m_lastFrameProfile.bvhParentSortMs = rs.parentGatherMs;
-                m_lastFrameProfile.bvhInnerUpdMs = rs.innerUpdateMs;
-                m_lastFrameProfile.bvhDirtyLeaves = rs.dirtyLeaves;
-                m_lastFrameProfile.bvhDirtyInner = rs.dirtyInnerNodes;
-                m_lastFrameProfile.bvhUsedPrecomputed = rs.usedPrecomputed;
             }
         }
 
@@ -5729,6 +5985,7 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
             if (wasClick && isMaskAction && mesh) {
                 sculpt_log("[MaskClick] Ctrl+Click mask action detected. Canceling active click stroke...\n");
+                clearDirtyNormalVerts();
                 g_undoManager.cancelSculptStroke();
 
                 // Mesh pointer stays valid when using delta UndoManager, but re-get just in case
@@ -5809,6 +6066,17 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
             } else {
                 if (m_isSculpting && m_pendingGrabMotion) {
                     flushPendingGrabMotion(scene, camera);
+                }
+                if (mesh && m_dirtyNormalMesh == mesh && pendingDirtyNormalCount() > 0) {
+                    const bool refitFromFlush = m_pendingBVHUpdate && !OptFlags::get().bvhRefitLeaves && m_grabbedNumIFaces == 0;
+                    flushDirtyNormalVerts(mesh, refitFromFlush);
+                    if (refitFromFlush) {
+                        if (mesh->bvh.isDegraded()) {
+                            mesh->bvh.build(*mesh);
+                        }
+                        m_pendingBVHUpdate = false;
+                        m_grabbedNumIFaces = 0;
+                    }
                 }
                 auto tEndUndo0 = std::chrono::high_resolution_clock::now();
                 if (m_dyntopo && m_dyntopo->active() && mesh) {
@@ -6355,9 +6623,25 @@ void SculptManager::processFrame(Scene& scene) {
     // Prune deleted meshes from m_knownMeshes
     for (auto it = m_knownMeshes.begin(); it != m_knownMeshes.end(); ) {
         if (std::find(sceneMeshes.begin(), sceneMeshes.end(), *it) == sceneMeshes.end()) {
+            if (*it == m_dirtyNormalMesh) {
+                m_dirtyNormalMesh = nullptr;
+                m_dirtyNormalList.clear();
+                m_dirtyNormalHead = 0;
+                m_dirtyNormalFlags.clear();
+            }
             it = m_knownMeshes.erase(it);
         } else {
             ++it;
+        }
+    }
+
+    if (m_dirtyNormalMesh != nullptr && pendingDirtyNormalCount() > 0 &&
+        std::find(sceneMeshes.begin(), sceneMeshes.end(), m_dirtyNormalMesh) != sceneMeshes.end()) {
+        const uint64_t nowMs = SDL_GetTicks64();
+        const uint64_t pauseMs = m_isSculpting ? 45ULL : 0ULL;
+        if (nowMs >= m_lastStrokeDeformTickMs && (nowMs - m_lastStrokeDeformTickMs) >= pauseMs) {
+            const size_t chunkVerts = m_isSculpting ? 65536 : SIZE_MAX;
+            processDirtyNormalChunk(m_dirtyNormalMesh, chunkVerts, true, !m_isSculpting && !m_pendingBVHUpdate);
         }
     }
 

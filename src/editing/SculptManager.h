@@ -674,6 +674,12 @@ public:
         if (m_lastActiveMesh == mesh) {
             m_lastActiveMesh = nullptr;
         }
+        if (m_dirtyNormalMesh == mesh) {
+            m_dirtyNormalMesh = nullptr;
+            m_dirtyNormalList.clear();
+            m_dirtyNormalHead = 0;
+            m_dirtyNormalFlags.clear();
+        }
         m_knownMeshes.erase(mesh);
         if (m_curveFoldsTool) {
             notifyMeshDeletedTool(mesh);
@@ -775,6 +781,24 @@ private:
     size_t                m_coalescedGrabStrokeCount = 0;
     size_t                m_batchedSubstepsCount = 0;
 
+    // Stage 2.1: Dirty normal vertex tracking for analytic normals & deferred exact catch-up
+    Mesh*                 m_dirtyNormalMesh = nullptr;
+    std::vector<uint8_t>  m_dirtyNormalFlags; // 0 = clean, 1 = pending old dab, 2 = current dab
+    std::vector<uint32_t> m_dirtyNormalList;
+    size_t                m_dirtyNormalHead = 0;
+    std::vector<uint32_t> m_dirtyFlushVertsScratch;
+    std::vector<uint32_t> m_dirtyFlushFacesScratch;
+    uint64_t              m_lastStrokeDeformTickMs = 0;
+
+    void markDirtyNormalVerts(Mesh* mesh, const uint32_t* verts, size_t count, uint8_t tag = 2);
+    void clearDirtyNormalVerts();
+    size_t pendingDirtyNormalCount() const {
+        return (m_dirtyNormalHead < m_dirtyNormalList.size()) ? (m_dirtyNormalList.size() - m_dirtyNormalHead) : 0;
+    }
+    void demoteCurrentDirtyNormalTag();
+    void processDirtyNormalChunk(Mesh* mesh, size_t maxVerts, bool includeCurrentDab, bool updateBVH);
+    void flushDirtyNormalVerts(Mesh* mesh, bool updateBVH = true);
+
     // Measurement & Divider states
     std::vector<MeasurementSegment> m_measureSegments;
     std::vector<MeasurementSegment> m_dividerSegments;
@@ -835,7 +859,8 @@ private:
         float mouseX,
         bool isSymmetry = false,
         const glm::vec3& sScale = glm::vec3(1.0f),
-        const std::vector<uint32_t>* pPickedVec = nullptr
+        const std::vector<uint32_t>* pPickedVec = nullptr,
+        float* outAnalyticNormals = nullptr
     );
 
     int doStrokePass(
@@ -853,14 +878,15 @@ private:
         float intensity,
         float mouseX,
         bool isSymmetry = false,
-        const glm::vec3& sScale = glm::vec3(1.0f)
+        const glm::vec3& sScale = glm::vec3(1.0f),
+        float* outAnalyticNormals = nullptr
     ) {
         return doStrokePass(
             scene, mesh, activeBrush, negative,
             pickedVertices.data(), pickedVertices.size(),
             currentIntersection, currentIntersectionNormal,
             initialIntersection, cachedAreaNormal, cachedAreaCenter,
-            localRadius, intensity, mouseX, isSymmetry, sScale, &pickedVertices
+            localRadius, intensity, mouseX, isSymmetry, sScale, &pickedVertices, outAnalyticNormals
         );
     }
 };

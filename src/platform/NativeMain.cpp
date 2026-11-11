@@ -306,6 +306,7 @@ int main(int argc, char* argv[]) {
 
     bool showConsole = false;
     bool runBench = false;
+    bool runLargeBrushBench = false;
     bool runTrimClipBench = false;
     bool runVoxelBench = false;
     bool runVoxelMemBench = false;
@@ -330,6 +331,7 @@ int main(int argc, char* argv[]) {
     std::string gozBenchPath = "";
     std::string gozProfilePath = "";
     int benchFaces = 4000000;
+    bool benchFacesOverridden = false;
     int benchRemeshRes = 0;
     std::string fileToOpen = "";
 
@@ -411,6 +413,9 @@ int main(int argc, char* argv[]) {
             } else if (arg == "--test-claybuildup-4m" || arg == "--bench-claybuildup" || arg == "--bench-multitool" || arg == "--benchmark") {
                 runBench = true;
                 showConsole = true;
+            } else if (arg == "--bench-large-brush" || arg == "--bench-large") {
+                runLargeBrushBench = true;
+                showConsole = true;
             } else if (arg == "--bench-render" || arg == "--render-bench") {
                 runRenderBench = true;
                 showConsole = true;
@@ -429,6 +434,7 @@ int main(int argc, char* argv[]) {
             } else if ((arg == "--bench-render-faces" || arg == "--bench-faces" || arg == "-bf") && i + 1 < numArgs) {
                 showConsole = true;
                 benchFaces = std::atoi(wideToUtf8(szArgList[++i]).c_str());
+                benchFacesOverridden = true;
             } else if (fileToOpen.empty() && !arg.empty() && arg[0] != '-') {
                 fileToOpen = arg;
             }
@@ -510,6 +516,9 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--test-claybuildup-4m" || arg == "--bench-claybuildup" || arg == "--bench-multitool" || arg == "--benchmark") {
             runBench = true;
             showConsole = true;
+        } else if (arg == "--bench-large-brush" || arg == "--bench-large") {
+            runLargeBrushBench = true;
+            showConsole = true;
         } else if (arg == "--bench-render" || arg == "--render-bench") {
             runRenderBench = true;
             showConsole = true;
@@ -528,6 +537,7 @@ int main(int argc, char* argv[]) {
         } else if ((arg == "--bench-render-faces" || arg == "--bench-faces" || arg == "-bf") && i + 1 < argc) {
             showConsole = true;
             benchFaces = std::atoi(argv[++i]);
+            benchFacesOverridden = true;
         } else if (fileToOpen.empty() && !arg.empty() && arg[0] != '-') {
             fileToOpen = arg;
         }
@@ -757,8 +767,17 @@ int main(int argc, char* argv[]) {
 #endif
     }
 
-    if (runBench) {
-        bool success = SculptBenchmark::run(benchFaces);
+    if (runBench || runLargeBrushBench) {
+        if (runLargeBrushBench && !benchFacesOverridden) {
+            benchFaces = 10000000;
+        }
+        bool success = true;
+        if (runBench) {
+            success = SculptBenchmark::run(benchFaces) && success;
+        }
+        if (runLargeBrushBench) {
+            success = SculptBenchmark::runLargeBrush(benchFaces) && success;
+        }
         if (runTrimClipBench) {
             success = TrimClipBenchmark::run(benchFaces) && success;
         }

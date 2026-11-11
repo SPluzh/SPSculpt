@@ -1636,4 +1636,181 @@ inline bool run(int targetFaces = 4000000) {
     }
 }
 
+inline bool runLargeBrush(int targetFaces = 10000000) {
+    std::cout << "\n======================================================================\n";
+    std::cout << " SPSculpt Stage 2.1 Large-Brush Benchmark (>=150k verts/dab)\n";
+    std::cout << " Target Mesh: " << std::fixed << std::setprecision(1) << (targetFaces / 1000000.0) << "M Polygons"
+              << " | OptFlags: " << OptFlags::get().formatSummary() << "\n";
+    std::cout << "======================================================================\n\n";
+
+    try {
+        int rings = (int)std::sqrt(targetFaces);
+        int sectors = targetFaces / rings;
+        auto meshPtr = createSphereMesh(rings, sectors);
+        Mesh* meshRaw = meshPtr.release();
+        Mesh& mesh = *meshRaw;
+        mesh.postInit(true);
+
+        Scene scene;
+        scene.addMesh(meshRaw);
+        scene.selectMesh(meshRaw);
+
+        Camera& camera = scene.getCamera();
+        camera.onResize(1920, 1080);
+        camera.resetViewToMesh(meshRaw, false);
+        camera.update(0.016f);
+
+        SculptManager sculpt;
+        sculpt.setRenderer(nullptr);
+
+        auto verifyUndoRedo = [&](const char* label) -> std::tuple<double, double, float, float, bool> {
+            auto tU0 = std::chrono::high_resolution_clock::now();
+            g_undoManager.undo(scene);
+            double undoMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tU0).count();
+
+            float maxUndoDiff = 0.0f;
+            auto* redoEntry = !g_undoManager.getRedoStack().empty()
+                ? dynamic_cast<SculptUndoEntry*>(g_undoManager.getRedoStack().back().get())
+                : nullptr;
+            if (redoEntry && !redoEntry->deltas.empty()) {
+                const auto& d = redoEntry->deltas[0];
+                const size_t n = d.indices.size();
+                #pragma omp parallel for reduction(max:maxUndoDiff) schedule(static) if(n > 10000)
+                for (size_t i = 0; i < n; ++i) {
+                    uint32_t vid = d.indices[i];
+                    float d0 = std::abs(mesh.verts[vid * 3 + 0] - d.prevVerts[i * 3 + 0]);
+                    float d1 = std::abs(mesh.verts[vid * 3 + 1] - d.prevVerts[i * 3 + 1]);
+                    float d2 = std::abs(mesh.verts[vid * 3 + 2] - d.prevVerts[i * 3 + 2]);
+                    float m = std::max({d0, d1, d2});
+                    if (m > maxUndoDiff) maxUndoDiff = m;
+                }
+            }
+
+            auto tR0 = std::chrono::high_resolution_clock::now();
+            g_undoManager.redo(scene);
+            double redoMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tR0).count();
+
+            float maxRedoDiff = 0.0f;
+            auto* undoEntry = !g_undoManager.getUndoStack().empty()
+                ? dynamic_cast<SculptUndoEntry*>(g_undoManager.getUndoStack().back().get())
+                : nullptr;
+            if (undoEntry && !undoEntry->deltas.empty()) {
+                const auto& d = undoEntry->deltas[0];
+                const size_t n = d.indices.size();
+                #pragma omp parallel for reduction(max:maxRedoDiff) schedule(static) if(n > 10000)
+                for (size_t i = 0; i < n; ++i) {
+                    uint32_t vid = d.indices[i];
+                    float d0 = std::abs(mesh.verts[vid * 3 + 0] - d.nextVerts[i * 3 + 0]);
+                    float d1 = std::abs(mesh.verts[vid * 3 + 1] - d.nextVerts[i * 3 + 1]);
+                    float d2 = std::abs(mesh.verts[vid * 3 + 2] - d.nextVerts[i * 3 + 2]);
+                    float m = std::max({d0, d1, d2});
+                    if (m > maxRedoDiff) maxRedoDiff = m;
+                }
+            }
+
+            g_undoManager.undo(scene);
+            g_undoManager.clear();
+            bool ok = (maxUndoDiff == 0.0f && maxRedoDiff == 0.0f);
+            if (!ok) {
+                std::cout << "  [FAIL] " << label << " Undo/Redo diff: undo=" << maxUndoDiff << ", redo=" << maxRedoDiff << "\n";
+            }
+            return {undoMs, redoMs, maxUndoDiff, maxRedoDiff, ok};
+        };
+
+        auto runBrushCase = [&](const char* name, BrushType brush, float radius, int steps, float startX, float endX, bool testPauseCatchUp) -> bool {
+            sculpt.setBrush(brush);
+            auto& bs = sculpt.getSettings(brush);
+            bs.radius = radius;
+            bs.intensity = (brush == BRUSH_MOVE) ? 1.0f : 0.8f;
+            if (brush == BRUSH_MOVE) bs.topoCheck = true;
+            if (brush == BRUSH_BRUSH) { bs.stampType = 0; bs.stampBlur = 0.0f; bs.clay = false; }
+            sculpt.setSymmetry(true, true, false, false, SymmetryMode::MIRROR);
+            mesh.vertProxy = mesh.verts;
+            sculpt.warmupMeshCaches(meshRaw);
+
+            const float stepDx = (endX - startX) / (float)steps;
+            const float y = 540.0f;
+
+            SDL_Event evDown{};
+            evDown.type = SDL_MOUSEBUTTONDOWN;
+            evDown.button.button = SDL_BUTTON_LEFT;
+            evDown.button.x = (int)startX;
+            evDown.button.y = (int)y;
+            auto t0 = std::chrono::high_resolution_clock::now();
+            sculpt.handleEvent(evDown, scene);
+            double step0Ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - t0).count();
+
+            double sumDragMs = 0.0, sumFaceLookup = 0.0, sumFaceNorm = 0.0, sumVertNorm = 0.0;
+            uint64_t sumPicked = 0, sumAffected = 0;
+            double pauseCatchUpMs = 0.0;
+            int dragCount = 0;
+
+            for (int s = 1; s < steps; ++s) {
+                float cx = startX + s * stepDx;
+                auto ts0 = std::chrono::high_resolution_clock::now();
+                sculpt.executeStroke(scene, meshRaw, camera, cx, y, 1.0f);
+                double ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - ts0).count();
+                sumDragMs += ms;
+                ++dragCount;
+
+                const SculptFrameProfile& prof = sculpt.getLastFrameProfile();
+                sumFaceLookup += prof.faceLookupMs;
+                sumFaceNorm += prof.faceNormalsMs;
+                sumVertNorm += prof.vertNormalsMs;
+                sumPicked += prof.pickedVertCount;
+                sumAffected += prof.affectedVertCount;
+
+                if (testPauseCatchUp && s == steps / 2) {
+                    SDL_Delay(55);
+                    auto tc0 = std::chrono::high_resolution_clock::now();
+                    sculpt.processFrame(scene);
+                    pauseCatchUpMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tc0).count();
+                }
+            }
+
+            SDL_Event evUp{};
+            evUp.type = SDL_MOUSEBUTTONUP;
+            evUp.button.button = SDL_BUTTON_LEFT;
+            evUp.button.x = (int)endX;
+            evUp.button.y = (int)y;
+            auto tFin0 = std::chrono::high_resolution_clock::now();
+            sculpt.handleEvent(evUp, scene);
+            double finMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tFin0).count();
+
+            auto [undoMs, redoMs, uEps, rEps, ok] = verifyUndoRedo(name);
+            double dragAvg = (dragCount > 0) ? (sumDragMs / dragCount) : 0.0;
+            int avgPicked = (dragCount > 0) ? (int)(sumPicked / dragCount) : 0;
+            int avgAffected = (dragCount > 0) ? (int)(sumAffected / dragCount) : 0;
+
+            std::cout << std::left << std::setw(26) << name
+                      << " | Picked: " << std::setw(7) << avgPicked
+                      << " | Aff: " << std::setw(7) << avgAffected
+                      << " | Step0: " << std::fixed << std::setprecision(2) << std::setw(6) << step0Ms << " ms"
+                      << " | DragAvg: " << std::setw(6) << dragAvg << " ms"
+                      << " (FL " << std::setw(4) << (sumFaceLookup / std::max(1, dragCount))
+                      << " FN " << std::setw(4) << (sumFaceNorm / std::max(1, dragCount))
+                      << " VN " << std::setw(4) << (sumVertNorm / std::max(1, dragCount)) << ")"
+                      << " | PauseCU: " << std::setw(5) << pauseCatchUpMs << " ms"
+                      << " | Fin: " << std::setw(6) << finMs << " ms"
+                      << " | Undo/Redo: " << std::setprecision(6) << std::max(uEps, rEps)
+                      << " [" << (ok ? "PASS" : "FAIL") << "]\n";
+            return ok;
+        };
+
+        bool allOk = true;
+        allOk &= runBrushCase("ClayBuildup Large (r=210)", BRUSH_CLAYBUILDUP, 210.0f, 12, 920.0f, 1180.0f, true);
+        allOk &= runBrushCase("Brush Circle Large (r=200)", BRUSH_BRUSH,     200.0f, 12, 920.0f, 1180.0f, false);
+        allOk &= runBrushCase("Move Tool Large (r=320)",    BRUSH_MOVE,      320.0f, 12, 960.0f, 1100.0f, false);
+
+        scene.removeMesh(meshRaw);
+        g_undoManager.clear();
+        std::cout << "\n======================================================================\n\n";
+        std::cout.flush();
+        return allOk;
+    } catch (const std::exception& e) {
+        std::cerr << "[LargeBrush Bench Error] " << e.what() << "\n";
+        return false;
+    }
+}
+
 } // namespace SculptBenchmark
