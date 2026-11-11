@@ -186,7 +186,7 @@
 | Шаг | Где в sculptsp-native | Источник в SculptForge | Эффект на 20M | Риск поломки |
 | :--- | :--- | :--- | :--- | :--- |
 | **1. Включить безопасные `OptFlags` по умолчанию** | `src/common/OptFlags.h` | Постоянно активно | **2×–5×** (устраняет загрузку сотен МБ в `uploadIfDirty`) | Сделано |
-| **1.1. Исправить отключенные `OptFlags` (faceNormals, batch, cursor, refitLeaves)** | `src/common/OptFlags.h`, `SculptManager.cpp`, `BVH.h` | `SculptForge` / аудит | Устранение регрессий и разблокировка саб-степов | Средний |
+| **1.1. Доработка оставшихся отключенных `OptFlags` (`faceNormalsOnly`, `batchSubsteps`, `bvhRefitLeaves`)** | `src/common/OptFlags.h`, `SculptManager.cpp`, `BVH.h` | `SculptForge` / аудит | Устранение регрессий и разблокировка саб-степов | Средний |
 | **2. Выборка плоскости кисти с шагом `stride`** | `src/sculpt/SculptEngine.cpp` | `src/core/Sculpt.cpp` | **+15–25%** скорости кистей | Сделано |
 | **3. Полное вхождение `boxFullyInSphere` в BVH** | `src/mesh/BVH.cpp` | `src/core/BVH.cpp` | **+30–40%** скорости выборки вершин | Сделано |
 | **4. Аналитические нормали при мазке $\ge 100\text{k}$ + отложенный точный пересчёт** | `src/editing/SculptManager.cpp` | `src/core/Sculpt.cpp` | **2×–3×** отзывчивость кисти | Низкий |
