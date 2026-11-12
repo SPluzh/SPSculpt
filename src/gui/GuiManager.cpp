@@ -6895,7 +6895,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     // 5b. Deformation panel (Smooth, Relax, Inflate with live preview & release-to-apply)
     if (m_showDeformPanel) {
         ImGui::SetNextWindowPos({740.0f * scale, 360.0f * scale}, ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize({280.0f * scale, 180.0f * scale}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize({300.0f * scale, 220.0f * scale}, ImGuiCond_FirstUseEver);
         ImGui::Begin("Deformation", &m_showDeformPanel, ImGuiWindowFlags_AlwaysAutoResize);
 
         static bool s_deformPreserveVolume = true;
@@ -7013,8 +7013,10 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             };
 
             drawDeformSlider("Smooth##DeformSmooth", "Deform Smooth", MeshDeformOp::Smooth, 0.0f, 100.0f);
+            drawDeformSlider("Polish##DeformPolish", "Deform Polish", MeshDeformOp::Polish, 0.0f, 100.0f);
             drawDeformSlider("Relax##DeformRelax", "Deform Relax", MeshDeformOp::Relax, 0.0f, 100.0f);
             drawDeformSlider("Inflate##DeformInflate", "Deform Inflate", MeshDeformOp::Inflate, -100.0f, 100.0f);
+            drawDeformSlider("Balloon##DeformBalloon", "Deform Balloon", MeshDeformOp::Balloon, -100.0f, 100.0f);
         } else {
             if (s_deformSession.active) {
                 s_deformSession.reset();

@@ -1,5 +1,6 @@
 #include "sculpt/MeshDeform.h"
 
+#include "common/Constants.h"
 #include "editing/undo/TransformUndoEntry.h"
 #include "editing/undo/UndoManager.h"
 #include "mesh/Mesh.h"
@@ -274,9 +275,235 @@ bool deformMeshPositions(
                     Q[v3 + 2] = outVerts[v3 + 2] + vertNormals[v3 + 2] * stepPush;
                 }
                 outVerts.swap(Q);
+            }
+            break;
+        }
 
-                // Light Laplacian tension pass (Balloon-style) prevents sharp corners from self-intersecting
-                laplacianStep(mesh, k, outVerts, Q, 0.35f * each);
+        case MeshDeformOp::Balloon: {
+            int count = 0;
+            float each = 0.0f;
+            computePasses(options.amount, 10, count, each);
+            const float diagonal = computeBBoxDiagonal(baseVerts, nbVerts);
+            if (diagonal <= 1e-8f) {
+                break;
+            }
+            const float sign = options.amount < 0.0f ? -1.0f : 1.0f;
+            const float push = sign * 0.01f * diagonal * each;
+
+            std::vector<float> faceNormals(static_cast<size_t>(nbFaces) * 3, 0.0f);
+            std::vector<float> vertNormals(static_cast<size_t>(nbVerts) * 3, 0.0f);
+
+            for (int i = 0; i < count; ++i) {
+                updateFaceNormalsOnly(outVerts.data(), nbVerts, mesh.faces.data(), nbFaces, faceNormals.data());
+                computeNormalsDirect(outVerts.data(), nbVerts, mesh.faces.data(), nbFaces, faceNormals.data(), vertNormals.data());
+
+                Q.resize(outVerts.size());
+                #pragma omp parallel for schedule(static) if(nbVerts > 2048)
+                for (int v = 0; v < nbVerts; ++v) {
+                    const size_t v3 = static_cast<size_t>(v) * 3;
+                    const float kv = k[static_cast<size_t>(v)];
+                    if (kv <= 0.0f) {
+                        Q[v3 + 0] = outVerts[v3 + 0];
+                        Q[v3 + 1] = outVerts[v3 + 1];
+                        Q[v3 + 2] = outVerts[v3 + 2];
+                        continue;
+                    }
+                    const float stepPush = push * kv;
+                    Q[v3 + 0] = outVerts[v3 + 0] + vertNormals[v3 + 0] * stepPush;
+                    Q[v3 + 1] = outVerts[v3 + 1] + vertNormals[v3 + 1] * stepPush;
+                    Q[v3 + 2] = outVerts[v3 + 2] + vertNormals[v3 + 2] * stepPush;
+                }
+                outVerts.swap(Q);
+
+                // Laplacian tension pull (Balloon effect: bulges out and rounds up corners)
+                laplacianStep(mesh, k, outVerts, Q, 0.5f * each);
+            }
+            break;
+        }
+
+        case MeshDeformOp::Polish: {
+            int count = 0;
+            float each = 0.0f;
+            computePasses(options.amount, 6, count, each);
+
+            const uint32_t* faces = mesh.faces.data();
+            const uint32_t* vrfStartCount = mesh.vrfStartCount.data();
+            const uint32_t* vertRingFace = mesh.vertRingFace.data();
+
+            struct FaceData {
+                float nx = 0.0f, ny = 0.0f, nz = 0.0f;
+                float cx = 0.0f, cy = 0.0f, cz = 0.0f;
+                float area = 0.0f;
+            };
+            std::vector<FaceData> fd(static_cast<size_t>(nbFaces));
+            std::vector<float> fnX(static_cast<size_t>(nbFaces));
+            std::vector<float> fnY(static_cast<size_t>(nbFaces));
+            std::vector<float> fnZ(static_cast<size_t>(nbFaces));
+
+            auto evalFaceData = [&]() {
+                #pragma omp parallel for schedule(static) if(nbFaces > 2048)
+                for (int t = 0; t < nbFaces; ++t) {
+                    const size_t f4 = static_cast<size_t>(t) * 4;
+                    const uint32_t i0 = faces[f4 + 0];
+                    const uint32_t i1 = faces[f4 + 1];
+                    const uint32_t i2 = faces[f4 + 2];
+                    const uint32_t i3 = faces[f4 + 3];
+
+                    const size_t v0 = static_cast<size_t>(i0) * 3;
+                    const size_t v1 = static_cast<size_t>(i1) * 3;
+                    const size_t v2 = static_cast<size_t>(i2) * 3;
+
+                    const float ax = outVerts[v1 + 0] - outVerts[v0 + 0];
+                    const float ay = outVerts[v1 + 1] - outVerts[v0 + 1];
+                    const float az = outVerts[v1 + 2] - outVerts[v0 + 2];
+
+                    const float bx = outVerts[v2 + 0] - outVerts[v0 + 0];
+                    const float by = outVerts[v2 + 1] - outVerts[v0 + 1];
+                    const float bz = outVerts[v2 + 2] - outVerts[v0 + 2];
+
+                    float cx = ay * bz - az * by;
+                    float cy = az * bx - ax * bz;
+                    float cz = ax * by - ay * bx;
+                    const float len = std::sqrt(cx * cx + cy * cy + cz * cz);
+
+                    FaceData& d = fd[static_cast<size_t>(t)];
+                    d.area = 0.5f * len;
+                    if (len > 1e-12f) {
+                        d.nx = cx / len;
+                        d.ny = cy / len;
+                        d.nz = cz / len;
+                    } else {
+                        d.nx = d.ny = d.nz = 0.0f;
+                    }
+
+                    if (i3 != TRI_INDEX) {
+                        const size_t v3 = static_cast<size_t>(i3) * 3;
+                        d.cx = 0.25f * (outVerts[v0 + 0] + outVerts[v1 + 0] + outVerts[v2 + 0] + outVerts[v3 + 0]);
+                        d.cy = 0.25f * (outVerts[v0 + 1] + outVerts[v1 + 1] + outVerts[v2 + 1] + outVerts[v3 + 1]);
+                        d.cz = 0.25f * (outVerts[v0 + 2] + outVerts[v1 + 2] + outVerts[v2 + 2] + outVerts[v3 + 2]);
+                    } else {
+                        d.cx = (1.0f / 3.0f) * (outVerts[v0 + 0] + outVerts[v1 + 0] + outVerts[v2 + 0]);
+                        d.cy = (1.0f / 3.0f) * (outVerts[v0 + 1] + outVerts[v1 + 1] + outVerts[v2 + 1]);
+                        d.cz = (1.0f / 3.0f) * (outVerts[v0 + 2] + outVerts[v1 + 2] + outVerts[v2 + 2]);
+                    }
+                }
+            };
+
+            constexpr float kSigmaNormal = 0.35f; // ~20 deg tolerance, preserves 90 deg edges
+            constexpr float kInv2SigmaN2 = 1.0f / (2.0f * kSigmaNormal * kSigmaNormal);
+
+            for (int p = 0; p < count; ++p) {
+                evalFaceData();
+
+                #pragma omp parallel for schedule(static) if(nbFaces > 2048)
+                for (int t = 0; t < nbFaces; ++t) {
+                    const FaceData& curr = fd[static_cast<size_t>(t)];
+                    const size_t f4 = static_cast<size_t>(t) * 4;
+                    const int cornerCount = (faces[f4 + 3] != TRI_INDEX) ? 4 : 3;
+
+                    float spacing = 0.0f;
+                    for (int c = 0; c < cornerCount; ++c) {
+                        const size_t cv3 = static_cast<size_t>(faces[f4 + c]) * 3;
+                        const float dx = outVerts[cv3 + 0] - curr.cx;
+                        const float dy = outVerts[cv3 + 1] - curr.cy;
+                        const float dz = outVerts[cv3 + 2] - curr.cz;
+                        spacing += std::sqrt(dx * dx + dy * dy + dz * dz);
+                    }
+                    spacing = std::max(spacing / static_cast<float>(cornerCount) * 2.0f, 1e-10f);
+                    const float inv2Spacing2 = 1.0f / (2.0f * spacing * spacing);
+
+                    float sumX = 0.0f, sumY = 0.0f, sumZ = 0.0f;
+                    for (int c = 0; c < cornerCount; ++c) {
+                        const uint32_t vertId = faces[f4 + c];
+                        const uint32_t ringStart = vrfStartCount[static_cast<size_t>(vertId) * 2];
+                        const uint32_t ringCount = vrfStartCount[static_cast<size_t>(vertId) * 2 + 1];
+
+                        for (uint32_t r = 0; r < ringCount; ++r) {
+                            const uint32_t g = vertRingFace[ringStart + r];
+                            const FaceData& nbr = fd[static_cast<size_t>(g)];
+
+                            const float dnx = nbr.nx - curr.nx;
+                            const float dny = nbr.ny - curr.ny;
+                            const float dnz = nbr.nz - curr.nz;
+                            const float distNormSq = dnx * dnx + dny * dny + dnz * dnz;
+
+                            const float dcx = nbr.cx - curr.cx;
+                            const float dcy = nbr.cy - curr.cy;
+                            const float dcz = nbr.cz - curr.cz;
+                            const float distCentSq = dcx * dcx + dcy * dcy + dcz * dcz;
+
+                            const float w = nbr.area * std::exp(-distCentSq * inv2Spacing2) *
+                                                      std::exp(-distNormSq * kInv2SigmaN2);
+                            sumX += nbr.nx * w;
+                            sumY += nbr.ny * w;
+                            sumZ += nbr.nz * w;
+                        }
+                    }
+
+                    const float len = std::sqrt(sumX * sumX + sumY * sumY + sumZ * sumZ);
+                    if (len > 1e-12f) {
+                        fnX[static_cast<size_t>(t)] = sumX / len;
+                        fnY[static_cast<size_t>(t)] = sumY / len;
+                        fnZ[static_cast<size_t>(t)] = sumZ / len;
+                    } else {
+                        fnX[static_cast<size_t>(t)] = curr.nx;
+                        fnY[static_cast<size_t>(t)] = curr.ny;
+                        fnZ[static_cast<size_t>(t)] = curr.nz;
+                    }
+                }
+
+                // Fit vertices to filtered face normals (Sun et al. 2007)
+                for (int fit = 0; fit < 3; ++fit) {
+                    if (fit > 0) {
+                        evalFaceData();
+                    }
+                    Q.resize(outVerts.size());
+
+                    #pragma omp parallel for schedule(static) if(nbVerts > 2048)
+                    for (int v = 0; v < nbVerts; ++v) {
+                        const size_t v3 = static_cast<size_t>(v) * 3;
+                        const float kv = k[static_cast<size_t>(v)];
+                        if (kv <= 0.0f) {
+                            Q[v3 + 0] = outVerts[v3 + 0];
+                            Q[v3 + 1] = outVerts[v3 + 1];
+                            Q[v3 + 2] = outVerts[v3 + 2];
+                            continue;
+                        }
+
+                        const uint32_t ringStart = vrfStartCount[static_cast<size_t>(v) * 2];
+                        const uint32_t ringCount = vrfStartCount[static_cast<size_t>(v) * 2 + 1];
+                        if (ringCount == 0) {
+                            Q[v3 + 0] = outVerts[v3 + 0];
+                            Q[v3 + 1] = outVerts[v3 + 1];
+                            Q[v3 + 2] = outVerts[v3 + 2];
+                            continue;
+                        }
+
+                        float dx = 0.0f, dy = 0.0f, dz = 0.0f;
+                        const float px = outVerts[v3 + 0];
+                        const float py = outVerts[v3 + 1];
+                        const float pz = outVerts[v3 + 2];
+
+                        for (uint32_t r = 0; r < ringCount; ++r) {
+                            const uint32_t t = vertRingFace[ringStart + r];
+                            const float fx = fnX[static_cast<size_t>(t)];
+                            const float fy = fnY[static_cast<size_t>(t)];
+                            const float fz = fnZ[static_cast<size_t>(t)];
+                            const FaceData& d = fd[static_cast<size_t>(t)];
+
+                            const float dot = fx * (d.cx - px) + fy * (d.cy - py) + fz * (d.cz - pz);
+                            dx += fx * dot;
+                            dy += fy * dot;
+                            dz += fz * dot;
+                        }
+
+                        const float stepFactor = (each / static_cast<float>(ringCount)) * kv;
+                        Q[v3 + 0] = px + dx * stepFactor;
+                        Q[v3 + 1] = py + dy * stepFactor;
+                        Q[v3 + 2] = pz + dz * stepFactor;
+                    }
+                    outVerts.swap(Q);
+                }
             }
             break;
         }

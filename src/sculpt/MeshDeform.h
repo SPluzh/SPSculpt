@@ -9,11 +9,13 @@ class Scene;
 enum class MeshDeformOp {
     Smooth = 0,
     Relax = 1,
-    Inflate = 2
+    Inflate = 2,
+    Balloon = 3,
+    Polish = 4
 };
 
 struct MeshDeformOptions {
-    float amount = 0.0f;          // Smooth/Relax: 0..100, Inflate: -100..100
+    float amount = 0.0f;          // Smooth/Relax/Polish: 0..100, Inflate/Balloon: -100..100
     bool preserveVolume = true;   // Smooth: Taubin smoothing (avoids shrinkage)
     bool preserveBoundary = true; // Keep open boundary vertices (vertOnEdge == 1) fixed
     bool useMask = true;          // Respect painted mask (materials[v*3 + 2])
