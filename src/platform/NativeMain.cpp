@@ -1384,6 +1384,8 @@ int main(int argc, char* argv[]) {
 
         // Update cameras and controllers
         scene.getCamera().update(deltaTime);
+        sculpt.getCameraController().snapAnimate = gui.getAnimateShiftSnap();
+        sculpt.getCameraController().snapContinue = gui.getShiftSnapContinue();
         sculpt.getCameraController().update(deltaTime);
         if (scene.getSplitMode() != Scene::SplitMode::OFF) {
             auto camRight = scene.getCameraRight();

@@ -117,30 +117,43 @@ void Camera::setPivot(const glm::vec3& pivot) {
     }
 }
 
-void Camera::rotate(float mouseX, float mouseY, float speedRotate) {
-    cancelTransition();
+Camera::RawOrbitState Camera::getRawOrbitState() const {
+    RawOrbitState s;
+    s.quatRot = m_quatRot;
+    s.rotX = m_rotX;
+    s.rotY = m_rotY;
+    s.lastNormalizedMouseXY = m_lastNormalizedMouseXY;
+    s.virtualNormalizedMouseXY = m_virtualNormalizedMouseXY;
+    return s;
+}
+
+void Camera::rotateRaw(RawOrbitState& state, float mouseX, float mouseY, float speedRotate) const {
     glm::vec2 normalizedMouseXY = normalizedMouse(mouseX, mouseY, (float)m_width, (float)m_height);
     float speedFactor = speedRotate * m_speedRotate;
     float baseFactor = m_isSplitViewport ? (float)M_PI : (2.0f * (float)M_PI);
 
     if (m_mode == CameraEnums::CameraMode::ORBIT) {
-        glm::vec2 diff = normalizedMouseXY - m_lastNormalizedMouseXY;
+        glm::vec2 diff = normalizedMouseXY - state.lastNormalizedMouseXY;
         float factor = baseFactor * speedFactor;
-        setOrbit(m_rotX - diff.y * factor, m_rotY + diff.x * factor);
+        float radLimit = M_PI * 0.49f;
+        state.rotX = std::max(-radLimit, std::min(radLimit, state.rotX - diff.y * factor));
+        state.rotY = state.rotY + diff.x * factor;
+        state.quatRot = glm::angleAxis(state.rotX, glm::vec3(1.0f, 0.0f, 0.0f)) *
+                        glm::angleAxis(state.rotY, glm::vec3(0.0f, 1.0f, 0.0f));
     } else if (m_mode == CameraEnums::CameraMode::PLANE) {
-        glm::vec2 realDiff = normalizedMouseXY - m_lastNormalizedMouseXY;
+        glm::vec2 realDiff = normalizedMouseXY - state.lastNormalizedMouseXY;
         glm::vec2 scaledDiff = realDiff * (speedFactor * baseFactor);
         float length = glm::length(scaledDiff);
         if (length > 0.0f) {
             glm::vec3 axisRot(-scaledDiff.y, scaledDiff.x, 0.0f);
             axisRot = glm::normalize(axisRot);
             glm::quat q = glm::angleAxis(length, axisRot);
-            m_quatRot = q * m_quatRot;
+            state.quatRot = glm::normalize(q * state.quatRot);
         }
     } else if (m_mode == CameraEnums::CameraMode::SPHERICAL) {
-        glm::vec2 realDiff = normalizedMouseXY - m_lastNormalizedMouseXY;
+        glm::vec2 realDiff = normalizedMouseXY - state.lastNormalizedMouseXY;
         glm::vec2 scaledDiff = realDiff * (speedFactor * (baseFactor / (float)M_PI));
-        glm::vec2 nextVirtualMouseXY = m_virtualNormalizedMouseXY + scaledDiff;
+        glm::vec2 nextVirtualMouseXY = state.virtualNormalizedMouseXY + scaledDiff;
 
         auto mouseOnUnitSphere = [](const glm::vec2& mouse) -> glm::vec3 {
             float len2 = mouse.x * mouse.x + mouse.y * mouse.y;
@@ -151,19 +164,36 @@ void Camera::rotate(float mouseX, float mouseY, float speedRotate) {
             }
         };
 
-        glm::vec3 mouseOnSphereBefore = mouseOnUnitSphere(m_virtualNormalizedMouseXY);
+        glm::vec3 mouseOnSphereBefore = mouseOnUnitSphere(state.virtualNormalizedMouseXY);
         glm::vec3 mouseOnSphereAfter = mouseOnUnitSphere(nextVirtualMouseXY);
         float dot = glm::dot(mouseOnSphereBefore, mouseOnSphereAfter);
         float angle = std::acos(std::max(-1.0f, std::min(1.0f, dot)));
         if (angle > 1e-4f) {
             glm::vec3 axisRot = glm::normalize(glm::cross(mouseOnSphereBefore, mouseOnSphereAfter));
             glm::quat q = glm::angleAxis(angle * speedFactor * (baseFactor / (float)M_PI), axisRot);
-            m_quatRot = q * m_quatRot;
+            state.quatRot = glm::normalize(q * state.quatRot);
         }
-        m_virtualNormalizedMouseXY = nextVirtualMouseXY;
+        state.virtualNormalizedMouseXY = nextVirtualMouseXY;
     }
-    m_lastNormalizedMouseXY = normalizedMouseXY;
+    state.lastNormalizedMouseXY = normalizedMouseXY;
+}
+
+void Camera::applyRawOrbitState(const RawOrbitState& state) {
+    cancelTransition();
+    if (m_mode == CameraEnums::CameraMode::ORBIT) {
+        setOrbit(state.rotX, state.rotY);
+    } else {
+        m_quatRot = state.quatRot;
+    }
+    m_lastNormalizedMouseXY = state.lastNormalizedMouseXY;
+    m_virtualNormalizedMouseXY = state.virtualNormalizedMouseXY;
     updateView();
+}
+
+void Camera::rotate(float mouseX, float mouseY, float speedRotate) {
+    RawOrbitState state = getRawOrbitState();
+    rotateRaw(state, mouseX, mouseY, speedRotate);
+    applyRawOrbitState(state);
 }
 
 void Camera::roll(float angle) {
@@ -803,18 +833,27 @@ static const glm::quat QUAT_COMP[24] = {
     glm::quat(D, -D, D, D)
 };
 
-void Camera::snapClosestRotation(bool animate) {
+int Camera::nearestAxisView(const glm::quat& q) const {
+    float len2 = glm::dot(q, q);
+    glm::quat qn = (len2 > 1e-12f) ? (q * (1.0f / std::sqrt(len2))) : glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
     float minVal = 1e9f;
     int bestId = 0;
     for (int i = 0; i < 24; ++i) {
-        float dVal = glm::dot(m_quatRot, QUAT_COMP[i]);
+        float dVal = glm::dot(qn, QUAT_COMP[i]);
         float diff = 1.0f - dVal * dVal;
         if (diff < minVal) {
             minVal = diff;
             bestId = i;
         }
     }
-    glm::quat targetQuat = QUAT_COMP[bestId];
+    return bestId;
+}
+
+void Camera::snapToView(int viewId, bool animate) {
+    if (viewId < 0 || viewId >= 24) {
+        viewId = 0;
+    }
+    glm::quat targetQuat = QUAT_COMP[viewId];
     
     float targetRotX = m_rotX;
     float targetRotY = m_rotY;
@@ -849,11 +888,16 @@ void Camera::snapClosestRotation(bool animate) {
     targetState.ref2DMode = m_ref2DMode;
     targetState.refDrag = m_refDrag;
 
+    cancelTransition();
     if (animate) {
         startTransition(targetState, 0.2f);
     } else {
         applyState(targetState);
     }
+}
+
+void Camera::snapClosestRotation(bool animate) {
+    snapToView(nearestAxisView(m_quatRot), animate);
     pushState();
 }
 

@@ -126,6 +126,8 @@ private:
     bool m_remeshKeepSharpEdges = false;
     bool m_remeshKeepMasked = false;
     bool m_animateBookmarks = false;
+    bool m_animateShiftSnap = false;
+    bool m_shiftSnapContinue = true;
     bool m_savePngNextToProject = true;
     bool m_saveUndoHistoryInProject = false;
     bool m_createDefaultSphereOnStartup = true;
@@ -545,6 +547,12 @@ public:
 
     bool getAnimateBookmarks() const { return m_animateBookmarks; }
     void setAnimateBookmarks(bool val) { m_animateBookmarks = val; }
+
+    bool getAnimateShiftSnap() const { return m_animateShiftSnap; }
+    void setAnimateShiftSnap(bool val) { m_animateShiftSnap = val; }
+
+    bool getShiftSnapContinue() const { return m_shiftSnapContinue; }
+    void setShiftSnapContinue(bool val) { m_shiftSnapContinue = val; }
 
     bool getSavePngNextToProject() const { return m_savePngNextToProject; }
     void setSavePngNextToProject(bool val) { m_savePngNextToProject = val; }

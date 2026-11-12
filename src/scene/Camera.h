@@ -48,6 +48,14 @@ public:
         bool refDrag;
     };
 
+    struct RawOrbitState {
+        glm::quat quatRot{1.0f, 0.0f, 0.0f, 0.0f};
+        float rotX = 0.0f;
+        float rotY = 0.0f;
+        glm::vec2 lastNormalizedMouseXY{0.0f};
+        glm::vec2 virtualNormalizedMouseXY{0.0f};
+    };
+
     Camera();
 
     void setProjectionType(CameraEnums::Projection projType);
@@ -67,6 +75,10 @@ public:
 
     void start(float mouseX, float mouseY, bool cancelAnim = true);
     void rotate(float mouseX, float mouseY, float speedRotate = 1.0f);
+    RawOrbitState getRawOrbitState() const;
+    void rotateRaw(RawOrbitState& state, float mouseX, float mouseY, float speedRotate = 1.0f) const;
+    void applyRawOrbitState(const RawOrbitState& state);
+    const glm::quat& getQuatRot() const { return m_quatRot; }
     void translate(float dx, float dy);
     void zoom(float df, float mouseX = -1.0f, float mouseY = -1.0f);
 
@@ -101,6 +113,8 @@ public:
     void resetViewToMeshTight(const Mesh* mesh, float fillFactor = 0.92f);
     void resetViewToWorldPoints(const std::vector<glm::vec3>& worldPoints, bool animate = true);
     float computeFrustumFit() const;
+    int nearestAxisView(const glm::quat& q) const;
+    void snapToView(int viewId, bool animate = true);
     void snapClosestRotation(bool animate = true);
     void toggleViewFront();
     void toggleViewTop();

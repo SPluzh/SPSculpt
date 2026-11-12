@@ -37,6 +37,9 @@ public:
 
     void update(float deltaTime) {}
 
+    bool snapAnimate = false;
+    bool snapContinue = true;
+
 private:
     void handleEventZBrush(const SDL_Event& e, Camera& camera, const std::vector<Mesh*>& meshes, bool animate, Scene* scene, AngleRenderer* renderer);
     void handleEventMaya(const SDL_Event& e, Camera& camera, const std::vector<Mesh*>& meshes, bool animate, Scene* scene, AngleRenderer* renderer);
@@ -46,7 +49,9 @@ private:
     uint8_t m_dragButton = 0;
     int m_prevX = 0, m_prevY = 0;
     int m_startX = 0, m_startY = 0;
-    bool m_snapTriggered = false;
+    int m_snappedView = -1;
+    bool m_rawValid = false;
+    Camera::RawOrbitState m_rawOrbit;
     HotkeyManager* m_manager = nullptr;
 };
 

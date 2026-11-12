@@ -73,7 +73,8 @@ void CameraController::stopDrag(Camera* camera) {
         }
         m_drag = DragMode::None;
         m_dragButton = 0;
-        m_snapTriggered = false;
+        m_snappedView = -1;
+        m_rawValid = false;
     }
 }
 
@@ -87,7 +88,8 @@ void CameraController::startDrag(DragMode mode, int mouseX, int mouseY, Camera& 
     m_prevY = mouseY;
     m_startX = mouseX;
     m_startY = mouseY;
-    m_snapTriggered = false;
+    m_snappedView = -1;
+    m_rawValid = false;
     camera.start(static_cast<float>(mouseX), static_cast<float>(mouseY));
 
     if (mode == DragMode::Orbit || mode == DragMode::Roll || mode == DragMode::Zoom) {
@@ -407,13 +409,31 @@ void CameraController::handleEvent(const SDL_Event& e, Camera& camera, const std
             if (m_drag == DragMode::Orbit) {
                 bool shiftPressed = (SDL_GetModState() & KMOD_SHIFT) != 0;
                 if (shiftPressed) {
-                    if (!m_snapTriggered) {
-                        m_snapTriggered = true;
-                        camera.snapClosestRotation(animate);
+                    if (!snapContinue) {
+                        if (m_snappedView == -1) {
+                            int id = camera.nearestAxisView(camera.getQuatRot());
+                            camera.snapToView(id, snapAnimate);
+                            m_snappedView = id;
+                        }
+                        camera.start(static_cast<float>(mouseX), static_cast<float>(mouseY), false);
+                    } else {
+                        if (!m_rawValid) {
+                            m_rawOrbit = camera.getRawOrbitState();
+                            m_rawValid = true;
+                        }
+                        camera.rotateRaw(m_rawOrbit, static_cast<float>(mouseX), static_cast<float>(mouseY));
+                        int id = camera.nearestAxisView(m_rawOrbit.quatRot);
+                        if (id != m_snappedView) {
+                            camera.snapToView(id, snapAnimate);
+                            m_snappedView = id;
+                        }
                     }
-                    camera.start(static_cast<float>(mouseX), static_cast<float>(mouseY), false);
                 } else {
-                    m_snapTriggered = false;
+                    if (m_rawValid) {
+                        camera.applyRawOrbitState(m_rawOrbit);
+                        m_rawValid = false;
+                    }
+                    m_snappedView = -1;
                     camera.rotate(static_cast<float>(mouseX), static_cast<float>(mouseY));
                 }
             } else if (m_drag == DragMode::Pan) {

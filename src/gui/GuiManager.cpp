@@ -9672,6 +9672,8 @@ bool GuiManager::saveSettings(IniFile& ini) {
     ini.setBool(genSec, "fpsLimitEnabled", m_fpsLimitEnabled);
     ini.setInt(genSec, "fpsLimit", m_fpsLimit);
     ini.setBool(genSec, "animateBookmarks", m_animateBookmarks);
+    ini.setBool(genSec, "animateShiftSnap", m_animateShiftSnap);
+    ini.setBool(genSec, "shiftSnapContinue", m_shiftSnapContinue);
     ini.setBool(genSec, "savePngNextToProject", m_savePngNextToProject);
     ini.setBool(genSec, "saveUndoHistoryInProject", m_saveUndoHistoryInProject);
     ini.setBool(genSec, "createDefaultSphereOnStartup", m_createDefaultSphereOnStartup);
@@ -9771,6 +9773,8 @@ bool GuiManager::loadSettings(const IniFile& ini) {
             if (m_fpsLimit > 240) m_fpsLimit = 240;
         }
         if (ini.hasKey(genSec, "animateBookmarks")) m_animateBookmarks = ini.getBool(genSec, "animateBookmarks");
+        if (ini.hasKey(genSec, "animateShiftSnap")) m_animateShiftSnap = ini.getBool(genSec, "animateShiftSnap");
+        if (ini.hasKey(genSec, "shiftSnapContinue")) m_shiftSnapContinue = ini.getBool(genSec, "shiftSnapContinue");
         if (ini.hasKey(genSec, "savePngNextToProject")) m_savePngNextToProject = ini.getBool(genSec, "savePngNextToProject");
         if (ini.hasKey(genSec, "saveUndoHistoryInProject")) m_saveUndoHistoryInProject = ini.getBool(genSec, "saveUndoHistoryInProject");
         if (ini.hasKey(genSec, "createDefaultSphereOnStartup")) m_createDefaultSphereOnStartup = ini.getBool(genSec, "createDefaultSphereOnStartup");
@@ -11594,11 +11598,11 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                 }
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.75f, 0.8f, 1.0f));
                 if (camera.getNavigationStyle() == CameraEnums::NavigationStyle::ZBRUSH) {
-                    ImGui::TextWrapped("Controls: RMB = Orbit (Shift to snap), Alt+RMB / MMB = Pan, Ctrl+RMB / Wheel = Zoom, Shift+MMB = Rotate Light, Alt+LMB = Select SubTool.");
+                    ImGui::TextWrapped("Controls: RMB = Orbit (Shift to snap, keep dragging for next view), Alt+RMB / MMB = Pan, Ctrl+RMB / Wheel = Zoom, Shift+MMB = Rotate Light, Alt+LMB = Select SubTool.");
                 } else if (camera.getNavigationStyle() == CameraEnums::NavigationStyle::MAYA) {
-                    ImGui::TextWrapped("Controls: Alt+LMB = Orbit, Alt+MMB = Pan, Alt+RMB / Wheel = Zoom, Ctrl+Shift+MMB = Rotate Light, Ctrl+Alt+LMB = Invert Sculpt / Select SubTool.");
+                    ImGui::TextWrapped("Controls: Alt+LMB = Orbit (Shift to snap, keep dragging for next view), Alt+MMB = Pan, Alt+RMB / Wheel = Zoom, Ctrl+Shift+MMB = Rotate Light, Ctrl+Alt+LMB = Invert Sculpt / Select SubTool.");
                 } else if (camera.getNavigationStyle() == CameraEnums::NavigationStyle::BLENDER) {
-                    ImGui::TextWrapped("Controls: MMB = Orbit, Shift+MMB = Pan, Ctrl+MMB / Wheel = Zoom, Ctrl+Shift+MMB = Rotate Light, Alt+LMB = Select SubTool.");
+                    ImGui::TextWrapped("Controls: MMB = Orbit (Shift to snap, keep dragging for next view), Shift+MMB = Pan, Ctrl+MMB / Wheel = Zoom, Ctrl+Shift+MMB = Rotate Light, Alt+LMB = Select SubTool.");
                 }
                 ImGui::PopStyleColor();
 
@@ -11608,7 +11612,17 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                 ImGui::Spacing();
 
                 ImGui::Checkbox("Animate Camera Transitions", &m_animateBookmarks);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Enable smooth camera animation when framing (Hotkey F), switching bookmarks, or snapping views (Shift)");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Enable smooth camera animation when framing (Hotkey F) or switching bookmarks");
+
+                if (ImGui::Checkbox("Animate Shift View Snap", &m_animateShiftSnap)) {
+                    sculpt.getCameraController().snapAnimate = m_animateShiftSnap;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Enable smooth camera animation when snapping to an axis view with Shift");
+
+                if (ImGui::Checkbox("Continue Snap To Next View", &m_shiftSnapContinue)) {
+                    sculpt.getCameraController().snapContinue = m_shiftSnapContinue;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("While holding Shift and continuing to orbit, snap to the next closest axis view");
 
                 ImGui::Spacing();
                 ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Safe Frames Overlay");
