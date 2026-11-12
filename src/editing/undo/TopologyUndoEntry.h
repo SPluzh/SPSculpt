@@ -381,6 +381,13 @@ public:
         return m_afterCompressed.decompress();
     }
 
+    const CompressedHistoryState& getBeforeCompressed() const { return m_beforeCompressed; }
+    const CompressedHistoryState& getAfterCompressed() const { return m_afterCompressed; }
+    void setCompressedStates(CompressedHistoryState before, CompressedHistoryState after) {
+        m_beforeCompressed = std::move(before);
+        m_afterCompressed = std::move(after);
+    }
+
     size_t getMemoryUsage() const override {
         return sizeof(*this) + m_beforeCompressed.getMemoryUsage() + m_afterCompressed.getMemoryUsage();
     }

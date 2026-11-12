@@ -14,7 +14,8 @@ public:
                                           Scene* scene = nullptr,
                                           AngleRenderer* renderer = nullptr,
                                           SculptManager* sculpt = nullptr,
-                                          uint64_t* outWorkTime = nullptr);
+                                          uint64_t* outWorkTime = nullptr,
+                                          bool* outLoadedUndoHistory = nullptr);
 
     // Export: determines format by extension
     static bool exportMeshes(const std::string& path,
@@ -24,7 +25,8 @@ public:
                              const SculptManager* sculpt = nullptr,
                              const std::vector<uint8_t>& thumbnail = {},
                              bool savePngNextToProject = false,
-                             uint64_t workTimeSeconds = 0);
+                             uint64_t workTimeSeconds = 0,
+                             bool saveUndoHistory = false);
 
     static std::string getExtension(const std::string& path);
 };

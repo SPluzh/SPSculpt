@@ -3,6 +3,8 @@
 #include "common/FormatConstants.h"
 #include "common/StringUtils.h"
 #include "common/Logger.h"
+#include "editing/undo/UndoManager.h"
+#include "editing/undo/UndoSerializer.h"
 #include <cstring>
 #include <cmath>
 #include <algorithm>
@@ -75,9 +77,10 @@ public:
     }
 
     const std::vector<uint8_t>& getBuffer() const { return m_buffer; }
+    std::vector<uint8_t>& getMutableBuffer() { return m_buffer; }
 };
 
-std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& scene, const AngleRenderer& renderer, const SculptManager& sculpt, const std::vector<uint8_t>& thumbnail, uint64_t workTimeSeconds) {
+std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& scene, const AngleRenderer& renderer, const SculptManager& sculpt, const std::vector<uint8_t>& thumbnail, uint64_t workTimeSeconds, bool saveUndoHistory) {
     BinaryWriter writer;
     
     // Magic "SPSC" + Version 17
@@ -292,6 +295,9 @@ std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& sc
         writer.writeU32(mesh->symY ? 1 : 0);
         writer.writeU32(mesh->symZ ? 1 : 0);
         writer.writeU32(static_cast<uint32_t>(mesh->symMode));
+
+        // Mesh ID (Version >= 20)
+        writer.writeU32(mesh->getID());
     }
 
     auto writeAnchor = [&](const MeasurementAnchor& anchor) {
@@ -470,6 +476,18 @@ std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& sc
     writer.writeU32(workTimeHi);
     writer.writeU32(workTimeLo);
     sculpt_log("[SGL Export] Work time written to project buffer (%llu seconds)\n", static_cast<unsigned long long>(workTimeSeconds));
+
+    // Undo/Redo History (Version >= 20)
+    bool writeHistory = saveUndoHistory &&
+        (!g_undoManager.getUndoStack().empty() || !g_undoManager.getRedoStack().empty());
+    writer.writeU32(writeHistory ? 1 : 0);
+    if (writeHistory) {
+        UndoSerializer::serializeStacks(
+            g_undoManager.getUndoStack(),
+            g_undoManager.getRedoStack(),
+            writer.getMutableBuffer()
+        );
+    }
 
     sculpt_log("[SGL Export] Export completed | Total project binary size: %zu bytes\n", writer.getBuffer().size());
     return writer.getBuffer();

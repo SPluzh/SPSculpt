@@ -4,12 +4,15 @@
 #include "common/Logger.h"
 #include "common/StringUtils.h"
 #include "mesh/Topology.h"
+#include "editing/undo/UndoManager.h"
+#include "editing/undo/UndoSerializer.h"
 #include <cstring>
 #include <cmath>
 #include <fstream>
 #include <iostream>
 #include <algorithm>
 #include <future>
+#include <unordered_map>
 
 namespace ImportSGL {
 
@@ -67,7 +70,7 @@ public:
     bool hasData() const { return m_wordOffset * 4 < m_size; }
 };
 
-std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, AngleRenderer& renderer, SculptManager* sculpt, uint64_t* outWorkTime) {
+std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, AngleRenderer& renderer, SculptManager* sculpt, uint64_t* outWorkTime, bool* outLoadedUndoHistory) {
     if (buffer.size() < 4) return {};
 
     BinaryReader reader(buffer.data(), buffer.size());
@@ -406,6 +409,12 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
             mesh->symZ       = (reader.readU32() != 0);
             mesh->symMode    = static_cast<int>(reader.readU32());
         }
+        if (version >= 20) {
+            uint32_t savedId = reader.readU32();
+            if (savedId != 0) {
+                mesh->setID(savedId);
+            }
+        }
 
         sculpt_log("[SGL Import] Mesh %u loaded | Verts: %d, Faces: %d, VisibleV1: %d, VisibleV2: %d, Scale: %.4f, Center: (%.2f, %.2f, %.2f)\n",
                    i, mesh->nbVerts, mesh->nbFaces, mesh->isVisible(0), mesh->isVisible(1), scale, cx, cy, cz);
@@ -704,6 +713,32 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
         *outWorkTime = workTime;
     }
 
+    // Undo/Redo History (version >= 20)
+    bool loadedHistory = false;
+    if (version >= 20 && reader.hasData()) {
+        uint32_t hasHistory = reader.readU32();
+        if (hasHistory != 0 && reader.hasData()) {
+            std::unordered_map<uint32_t, Mesh*> meshIdMap;
+            meshIdMap.reserve(meshes.size());
+            for (Mesh* m : meshes) {
+                if (m) meshIdMap[m->getID()] = m;
+            }
+            size_t byteOffset = reader.getWordOffset() * 4;
+            std::deque<std::unique_ptr<UndoEntry>> undoStack;
+            std::deque<std::unique_ptr<UndoEntry>> redoStack;
+            if (UndoSerializer::deserializeStacks(buffer.data(), buffer.size(), byteOffset, undoStack, redoStack, meshIdMap)) {
+                g_undoManager.restoreUndoStack(std::move(undoStack));
+                g_undoManager.restoreRedoStack(std::move(redoStack));
+                loadedHistory = true;
+                sculpt_log("[SGL Import] Restored undo/redo history (%zu undo, %zu redo)\n",
+                           g_undoManager.getUndoCount(), g_undoManager.getRedoCount());
+            }
+        }
+    }
+    if (outLoadedUndoHistory) {
+        *outLoadedUndoHistory = loadedHistory;
+    }
+
     return meshes;
 }
 
@@ -808,6 +843,9 @@ ProjectMetadata extractProjectMetadata(const std::vector<uint8_t>& buffer) {
         // Per-mesh symmetry state (version >= 19)
         if (version >= 19) {
             reader.skipWords(5); // symEnabled, symX, symY, symZ, symMode
+        }
+        if (version >= 20) {
+            reader.skipWords(1); // meshId
         }
     }
 

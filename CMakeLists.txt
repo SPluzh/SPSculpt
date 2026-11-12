@@ -223,6 +223,7 @@ add_executable(SPSculpt
     src/editing/EdgeCreaseTool.cpp
     src/editing/ComponentOps.cpp
     src/editing/undo/UndoManager.cpp
+    src/editing/undo/UndoSerializer.cpp
     src/sculpt/ArmatureGraph.cpp
     src/sculpt/CurveSpline.cpp
     # retopo

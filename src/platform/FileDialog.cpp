@@ -109,12 +109,81 @@ std::string openFile(const std::vector<FilterSpec>& filters, const std::string& 
     return "";
 }
 
-std::string saveFile(const std::vector<FilterSpec>& filters, const std::string& defaultExt, const std::string& title) {
+std::string saveFile(const std::vector<FilterSpec>& filters, const std::string& defaultExt, const std::string& title, SaveFileOptions* options) {
 #ifdef _WIN32
+    std::vector<FilterSpec> effectiveFilters = filters.empty() ? getExportFilters() : filters;
+
+    if (options && options->showCheckbox) {
+        HRESULT hrCo = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+        IFileSaveDialog* pSaveDlg = nullptr;
+        HRESULT hr = CoCreateInstance(CLSID_FileSaveDialog, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pSaveDlg));
+        if (SUCCEEDED(hr) && pSaveDlg) {
+            std::vector<std::wstring> filterStrings;
+            filterStrings.reserve(effectiveFilters.size() * 2);
+            std::vector<COMDLG_FILTERSPEC> filterSpecs;
+            filterSpecs.reserve(effectiveFilters.size());
+            for (const auto& f : effectiveFilters) {
+                filterStrings.push_back(utf8ToWide(f.name));
+                filterStrings.push_back(utf8ToWide(f.pattern));
+                COMDLG_FILTERSPEC spec;
+                spec.pszName = filterStrings[filterStrings.size() - 2].c_str();
+                spec.pszSpec = filterStrings[filterStrings.size() - 1].c_str();
+                filterSpecs.push_back(spec);
+            }
+            if (!filterSpecs.empty()) {
+                pSaveDlg->SetFileTypes(static_cast<UINT>(filterSpecs.size()), filterSpecs.data());
+                pSaveDlg->SetFileTypeIndex(1);
+            }
+
+            DWORD dwOptions = 0;
+            if (SUCCEEDED(pSaveDlg->GetOptions(&dwOptions))) {
+                pSaveDlg->SetOptions(dwOptions | FOS_OVERWRITEPROMPT | FOS_PATHMUSTEXIST | FOS_NOCHANGEDIR | FOS_FORCEFILESYSTEM);
+            }
+
+            if (!title.empty()) {
+                pSaveDlg->SetTitle(utf8ToWide(title).c_str());
+            }
+            if (!defaultExt.empty()) {
+                std::string ext = defaultExt;
+                if (ext.front() == '.') ext.erase(ext.begin());
+                pSaveDlg->SetDefaultExtension(utf8ToWide(ext).c_str());
+            }
+
+            IFileDialogCustomize* pCustomize = nullptr;
+            constexpr DWORD kSaveHistoryCheckboxId = 1001;
+            if (SUCCEEDED(pSaveDlg->QueryInterface(IID_PPV_ARGS(&pCustomize))) && pCustomize) {
+                pCustomize->AddCheckButton(kSaveHistoryCheckboxId, utf8ToWide(options->checkboxLabel).c_str(), options->checked ? TRUE : FALSE);
+            }
+
+            std::string result;
+            if (SUCCEEDED(pSaveDlg->Show(GetActiveWindow()))) {
+                if (pCustomize) {
+                    BOOL isChecked = FALSE;
+                    if (SUCCEEDED(pCustomize->GetCheckButtonState(kSaveHistoryCheckboxId, &isChecked))) {
+                        options->checked = (isChecked != FALSE);
+                    }
+                }
+                IShellItem* pItem = nullptr;
+                if (SUCCEEDED(pSaveDlg->GetResult(&pItem)) && pItem) {
+                    PWSTR pszFilePath = nullptr;
+                    if (SUCCEEDED(pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath)) && pszFilePath) {
+                        result = wideToUtf8(pszFilePath);
+                        CoTaskMemFree(pszFilePath);
+                    }
+                    pItem->Release();
+                }
+            }
+
+            if (pCustomize) pCustomize->Release();
+            pSaveDlg->Release();
+            if (SUCCEEDED(hrCo)) CoUninitialize();
+            return result;
+        }
+        if (SUCCEEDED(hrCo)) CoUninitialize();
+    }
+
     OPENFILENAMEW ofn;
     wchar_t szFile[MAX_PATH] = { 0 };
-
-    std::vector<FilterSpec> effectiveFilters = filters.empty() ? getExportFilters() : filters;
 
     std::wstring wFilter;
     for (const auto& f : effectiveFilters) {

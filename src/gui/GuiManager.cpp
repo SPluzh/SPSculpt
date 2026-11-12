@@ -501,7 +501,8 @@ bool GuiManager::openSceneFromPath(const std::string& path, Scene& scene, Sculpt
         snprintf(m_importPath, sizeof(m_importPath), "%s", path.c_str());
         scene.clear();
         uint64_t loadedWorkTime = 0;
-        auto newMeshes = FileManager::importFiles(path, &scene, r, sculpt, &loadedWorkTime);
+        bool loadedUndoHistory = false;
+        auto newMeshes = FileManager::importFiles(path, &scene, r, sculpt, &loadedWorkTime, &loadedUndoHistory);
         auto tImportEnd = std::chrono::high_resolution_clock::now();
 
         bool isProject = (FileManager::getExtension(path) == Format::PROJECT_EXT || FileManager::getExtension(path) == Format::LEGACY_EXT);
@@ -550,7 +551,9 @@ bool GuiManager::openSceneFromPath(const std::string& path, Scene& scene, Sculpt
                     scene.getCameraRight()->resetViewToMeshes(newMeshes, false);
                 }
             }
-            scene.pushHistoryState();
+            if (!loadedUndoHistory) {
+                scene.pushHistoryState();
+            }
         }
         auto tHistEnd = std::chrono::high_resolution_clock::now();
 
@@ -679,7 +682,7 @@ void GuiManager::saveScene(Scene& scene, SculptManager* sculpt) {
         std::vector<uint8_t> thumb = m_renderer ? renderSceneThumbnailPng(scene, *m_renderer, 0, 0) : std::vector<uint8_t>{};
         sculpt_log("[Save Scene] Generated thumbnail size: %zu bytes\n", thumb.size());
         uint64_t totalTime = m_workTimer.getTotalSeconds();
-        if (FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer, sculpt, thumb, m_savePngNextToProject, totalTime)) {
+        if (FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer, sculpt, thumb, m_savePngNextToProject, totalTime, m_saveUndoHistoryInProject)) {
             scene.setModified(false);
             invalidateRecentFileThumbnail(m_currentScenePath);
             uint64_t currentMtime = getFileMtime(m_currentScenePath);
@@ -727,8 +730,13 @@ void GuiManager::saveSceneAs(Scene& scene, SculptManager* sculpt) {
         { "Legacy SculptGL Scene (*.sgl)", "*.sgl" },
         { "All Files (*.*)", "*.*" }
     };
-    std::string path = FileDialog::saveFile(spFilters, Format::PROJECT_EXT, "Save Scene As");
+    FileDialog::SaveFileOptions opts;
+    opts.showCheckbox = true;
+    opts.checkboxLabel = "Save Undo/Redo history in .spsculpt file";
+    opts.checked = m_saveUndoHistoryInProject;
+    std::string path = FileDialog::saveFile(spFilters, Format::PROJECT_EXT, "Save Scene As", &opts);
     if (path.empty()) return;
+    m_saveUndoHistoryInProject = opts.checked;
 
     CrashReporter::ScopedStage saveStage("FileIO::SaveSceneAs");
     CrashReporter::recordBreadcrumb("FILE", "SaveSceneAs %s", path.c_str());
@@ -741,7 +749,7 @@ void GuiManager::saveSceneAs(Scene& scene, SculptManager* sculpt) {
         std::vector<uint8_t> thumb = m_renderer ? renderSceneThumbnailPng(scene, *m_renderer, 0, 0) : std::vector<uint8_t>{};
         sculpt_log("[Save Scene As] Generated thumbnail size: %zu bytes\n", thumb.size());
         uint64_t totalTime = m_workTimer.getTotalSeconds();
-        if (FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer, sculpt, thumb, m_savePngNextToProject, totalTime)) {
+        if (FileManager::exportMeshes(m_currentScenePath, scene.getMeshes(), &scene, m_renderer, sculpt, thumb, m_savePngNextToProject, totalTime, m_saveUndoHistoryInProject)) {
             scene.setModified(false);
             invalidateRecentFileThumbnail(m_currentScenePath);
             uint64_t currentMtime = getFileMtime(m_currentScenePath);
@@ -920,8 +928,13 @@ void GuiManager::importFile(Scene& scene, SculptManager* sculpt) {
 }
 
 void GuiManager::exportFile(Scene& scene, SculptManager* sculpt) {
-    std::string path = FileDialog::saveFile(FileDialog::getExportFilters(), Format::PROJECT_EXT, "Export File");
+    FileDialog::SaveFileOptions opts;
+    opts.showCheckbox = true;
+    opts.checkboxLabel = "Save Undo/Redo history in .spsculpt file";
+    opts.checked = m_saveUndoHistoryInProject;
+    std::string path = FileDialog::saveFile(FileDialog::getExportFilters(), Format::PROJECT_EXT, "Export File", &opts);
     if (path.empty()) return;
+    m_saveUndoHistoryInProject = opts.checked;
 
     CrashReporter::ScopedStage exportStage("FileIO::Export");
     CrashReporter::recordBreadcrumb("FILE", "Export %s", path.c_str());
@@ -933,7 +946,7 @@ void GuiManager::exportFile(Scene& scene, SculptManager* sculpt) {
         if ((ext == Format::PROJECT_EXT || ext == Format::LEGACY_EXT) && m_renderer) {
             thumb = renderSceneThumbnailPng(scene, *m_renderer, 0, 0);
         }
-        if (!FileManager::exportMeshes(path, scene.getMeshes(), &scene, m_renderer, sculpt, thumb, m_savePngNextToProject)) {
+        if (!FileManager::exportMeshes(path, scene.getMeshes(), &scene, m_renderer, sculpt, thumb, m_savePngNextToProject, 0, m_saveUndoHistoryInProject)) {
             ErrorReporter::instance().reportError(
                 "Export Failed",
                 "Failed to export scene to '" + path + "'.",
@@ -9392,6 +9405,7 @@ bool GuiManager::saveSettings(IniFile& ini) {
     ini.setInt(genSec, "fpsLimit", m_fpsLimit);
     ini.setBool(genSec, "animateBookmarks", m_animateBookmarks);
     ini.setBool(genSec, "savePngNextToProject", m_savePngNextToProject);
+    ini.setBool(genSec, "saveUndoHistoryInProject", m_saveUndoHistoryInProject);
     ini.setBool(genSec, "createDefaultSphereOnStartup", m_createDefaultSphereOnStartup);
 
     std::string remeshSec = "Remesh";
@@ -9486,6 +9500,7 @@ bool GuiManager::loadSettings(const IniFile& ini) {
         }
         if (ini.hasKey(genSec, "animateBookmarks")) m_animateBookmarks = ini.getBool(genSec, "animateBookmarks");
         if (ini.hasKey(genSec, "savePngNextToProject")) m_savePngNextToProject = ini.getBool(genSec, "savePngNextToProject");
+        if (ini.hasKey(genSec, "saveUndoHistoryInProject")) m_saveUndoHistoryInProject = ini.getBool(genSec, "saveUndoHistoryInProject");
         if (ini.hasKey(genSec, "createDefaultSphereOnStartup")) m_createDefaultSphereOnStartup = ini.getBool(genSec, "createDefaultSphereOnStartup");
     }
 
@@ -11208,6 +11223,8 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
 
                 ImGui::Checkbox("Save PNG preview image alongside .spsculpt file", &m_savePngNextToProject);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("When saving a .spsculpt project, automatically write a PNG preview image file next to the project file");
+                ImGui::Checkbox("Save Undo/Redo history in .spsculpt file", &m_saveUndoHistoryInProject);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Embed compressed Undo/Redo history inside .spsculpt project files so actions can be undone after reopening (increases file size)");
 
                 ImGui::Spacing();
                 ImGui::Spacing();
@@ -12241,6 +12258,10 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                 if (ImGui::Button(ICON_LC_TRASH_2 " Clear History")) {
                     g_undoManager.clear();
                 }
+
+                ImGui::Spacing();
+                ImGui::Checkbox("Save Undo/Redo history in .spsculpt file", &m_saveUndoHistoryInProject);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Embed compressed Undo/Redo history inside .spsculpt project files so actions can be undone after reopening (increases file size)");
 
                 ImGui::Spacing();
                 ImGui::Spacing();

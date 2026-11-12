@@ -238,15 +238,22 @@ private:
     mutable float m_cachedSurfaceArea = -1.0f;
     mutable bool m_surfaceAreaDirty = true;
 
-public:
+private:
+    static inline uint32_t s_idCounter = 0;
 
+public:
     uint32_t m_id = 0;
     std::string outlinerName = "";
     uint32_t getID() const { return m_id; }
-    void setID(uint32_t id) { m_id = id; }
+    void setID(uint32_t id) {
+        m_id = id;
+        ensureIdCounterAtLeast(id);
+    }
+    static void ensureIdCounterAtLeast(uint32_t id) {
+        if (id > s_idCounter) s_idCounter = id;
+    }
 
     Mesh() {
-        static uint32_t s_idCounter = 0;
         m_id = ++s_idCounter;
         outlinerName = "Mesh " + std::to_string(m_id);
     }

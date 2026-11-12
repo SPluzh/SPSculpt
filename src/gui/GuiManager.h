@@ -125,6 +125,7 @@ private:
     bool m_remeshKeepMasked = false;
     bool m_animateBookmarks = false;
     bool m_savePngNextToProject = true;
+    bool m_saveUndoHistoryInProject = false;
     bool m_createDefaultSphereOnStartup = true;
     bool m_imguiInitialized = false;
     bool m_editPivot = false;
@@ -529,6 +530,9 @@ public:
 
     bool getSavePngNextToProject() const { return m_savePngNextToProject; }
     void setSavePngNextToProject(bool val) { m_savePngNextToProject = val; }
+
+    bool getSaveUndoHistoryInProject() const { return m_saveUndoHistoryInProject; }
+    void setSaveUndoHistoryInProject(bool val) { m_saveUndoHistoryInProject = val; }
 
     bool getCreateDefaultSphereOnStartup() const { return m_createDefaultSphereOnStartup; }
     void setCreateDefaultSphereOnStartup(bool val) { m_createDefaultSphereOnStartup = val; }

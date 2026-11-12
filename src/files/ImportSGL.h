@@ -14,7 +14,7 @@ struct ProjectMetadata {
     uint64_t             workTime = 0;
 };
 
-std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, AngleRenderer& renderer, SculptManager* sculpt = nullptr, uint64_t* outWorkTime = nullptr);
+std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, AngleRenderer& renderer, SculptManager* sculpt = nullptr, uint64_t* outWorkTime = nullptr, bool* outLoadedUndoHistory = nullptr);
 ProjectMetadata extractProjectMetadata(const std::vector<uint8_t>& buffer);
 ProjectMetadata extractProjectMetadata(const std::string& path);
 std::vector<uint8_t> extractThumbnail(const std::vector<uint8_t>& buffer);

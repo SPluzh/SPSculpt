@@ -123,6 +123,10 @@ public:
         m_redoStack.clear();
     }
 
+    void restoreRedoStack(std::deque<std::unique_ptr<UndoEntry>> stack) {
+        m_redoStack = std::move(stack);
+    }
+
     static void applyEntry(UndoEntry* entry, Scene& scene, bool isUndo);
 
     void clear();
