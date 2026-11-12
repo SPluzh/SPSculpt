@@ -4,6 +4,7 @@
 #include "mesh/Mesh.h"
 #include "mesh/NormalCalc.h"
 #include "editing/SculptManager.h"
+#include "common/Symmetry.h"
 #include "gui/GuiManager.h"
 #include "gui/IconsLucide.h"
 #include <imgui.h>
@@ -493,7 +494,7 @@ void CurveFoldsTool::applyDeformationInternal(Mesh* mesh) {
     };
 
     std::vector<PreparedCurve> prepCurves;
-    auto symScales = m_sculpt.getUseSym() ? m_sculpt.getActiveSymmetryScales() : std::vector<glm::vec3>();
+    std::vector<SymCopy> symCopies = m_sculpt.getActiveSymmetryCopies(mesh, false);
 
     for (const auto& curve : m_curves) {
         if (curve.spline.getPointCount() < 2) continue;
@@ -514,15 +515,20 @@ void CurveFoldsTool::applyDeformationInternal(Mesh* mesh) {
         }
 
         std::vector<std::vector<EvaluatedFrame>> chainVariants;
+        chainVariants.reserve(1 + symCopies.size());
         chainVariants.push_back(std::move(localFrames));
 
-        // Add symmetric mirrors if symmetry is enabled
-        for (const glm::vec3& sScale : symScales) {
+        // Add symmetric copies if symmetry is enabled
+        for (const SymCopy& copy : symCopies) {
             std::vector<EvaluatedFrame> symChain = chainVariants[0];
             for (auto& f : symChain) {
-                f.position *= sScale;
-                f.tangent = glm::normalize(f.tangent * sScale);
-                f.normal = glm::normalize(f.normal * sScale);
+                f.position = copy.point(f.position);
+                glm::vec3 tDir = copy.dir(f.tangent);
+                float tLen = glm::length(tDir);
+                f.tangent = (tLen > 1e-8f) ? (tDir / tLen) : f.tangent;
+                glm::vec3 nDir = copy.dir(f.normal);
+                float nLen = glm::length(nDir);
+                f.normal = (nLen > 1e-8f) ? (nDir / nLen) : f.normal;
                 f.binormal = glm::normalize(glm::cross(f.tangent, f.normal));
                 f.normal = glm::normalize(glm::cross(f.binormal, f.tangent));
             }

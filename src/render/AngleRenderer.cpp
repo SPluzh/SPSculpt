@@ -587,6 +587,10 @@ void AngleRenderer::setSymmetryPlanes(bool showSymmetryLine, const std::vector<S
     m_symmetryPlanes = planes;
 }
 
+void AngleRenderer::setRadialSymmetryGuide(const RadialSymmetryGuideData& guide) {
+    m_radialGuide = guide;
+}
+
 void AngleRenderer::setCursorParameters(
     bool showCursor,
     bool showCircle,
@@ -2192,6 +2196,7 @@ void AngleRenderer::drawMeshForThumbnail(Mesh* mesh, const Camera& cam) {
     glUniform1i(glGetUniformLocation(m_matcapProgram, "uDarken"), 0);
     glUniform1i(glGetUniformLocation(m_matcapProgram, "uSymCount"), 0);
     glUniform1i(glGetUniformLocation(m_matcapProgram, "uSym"), 0);
+    glUniform1i(glGetUniformLocation(m_matcapProgram, "uRadialCount"), 0);
     glUniform1f(glGetUniformLocation(m_matcapProgram, "uCurvature"), 0.0f);
     float thumbFov = cam.isOrthographic() ? -cam.getOrthoZoom() : cam.getFov();
     glUniform1f(glGetUniformLocation(m_matcapProgram, "uFov"), thumbFov);
@@ -2347,6 +2352,25 @@ void AngleRenderer::drawMeshSolid(Mesh* mesh, const Scene& scene, const Camera& 
         glUniform3fv(glGetUniformLocation(program, "uPlaneN"), symCount, nBuf);
         glUniform3fv(glGetUniformLocation(program, "uPlaneO"), symCount, oBuf);
         glUniform3fv(glGetUniformLocation(program, "uPlaneColor"), symCount, cBuf);
+    }
+
+    int radialCount = (isSymmetryLineVisible() && m_radialGuide.count >= 2 && (scene.getSelected() == mesh)) ? m_radialGuide.count : 0;
+    glUniform1i(glGetUniformLocation(program, "uRadialCount"), radialCount);
+    if (radialCount >= 2) {
+        glm::mat3 mv3(mesh->mvMatrix);
+        glm::vec3 rOrigView = glm::vec3(mesh->mvMatrix * glm::vec4(m_radialGuide.origin, 1.0f));
+        glm::vec3 rAxisRaw = mv3 * m_radialGuide.axis;
+        glm::vec3 rAxisView = (glm::length(rAxisRaw) > 1e-8f) ? glm::normalize(rAxisRaw) : glm::vec3(0.0f, 1.0f, 0.0f);
+        glm::vec3 rURaw = mv3 * m_radialGuide.uDir;
+        rURaw -= rAxisView * glm::dot(rURaw, rAxisView);
+        glm::vec3 rUView = (glm::length(rURaw) > 1e-8f) ? glm::normalize(rURaw) : glm::vec3(1.0f, 0.0f, 0.0f);
+        glm::vec3 rVView = glm::normalize(glm::cross(rAxisView, rUView));
+
+        glUniform3fv(glGetUniformLocation(program, "uRadialOrigin"), 1, glm::value_ptr(rOrigView));
+        glUniform3fv(glGetUniformLocation(program, "uRadialAxis"), 1, glm::value_ptr(rAxisView));
+        glUniform3fv(glGetUniformLocation(program, "uRadialU"), 1, glm::value_ptr(rUView));
+        glUniform3fv(glGetUniformLocation(program, "uRadialV"), 1, glm::value_ptr(rVView));
+        glUniform3fv(glGetUniformLocation(program, "uRadialColor"), 1, glm::value_ptr(m_radialGuide.color));
     }
     
     bool darken = false;
@@ -2754,7 +2778,9 @@ void AngleRenderer::drawMeshFlatColor(Mesh* mesh, const Scene& scene, const Came
     glUniform3fv(glGetUniformLocation(m_flatProgram, "uAlbedo"), 1, &albedo[0]);
     glUniform1i(glGetUniformLocation(m_flatProgram, "uFlat"), 1);
 
+    glUniform1i(glGetUniformLocation(m_flatProgram, "uSymCount"), 0);
     glUniform1i(glGetUniformLocation(m_flatProgram, "uSym"), 0);
+    glUniform1i(glGetUniformLocation(m_flatProgram, "uRadialCount"), 0);
     glUniform1i(glGetUniformLocation(m_flatProgram, "uDarken"), 0);
     glUniform1f(glGetUniformLocation(m_flatProgram, "uCurvature"), 0.0f);
     float flatFov = camera.isOrthographic() ? -camera.getOrthoZoom() : camera.getFov();

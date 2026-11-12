@@ -73,10 +73,7 @@ BrushCursor::BrushCursor() {
 void BrushCursor::update(int mouseX, int mouseY,
                           const Scene& scene,
                           float brushRadius,
-                          bool useSym,
-                          bool symX,
-                          bool symY,
-                          bool symZ,
+                          const std::vector<SymCopy>& symCopies,
                           bool isSculpting,
                           BrushType brushType,
                           bool hasActiveStrokeHit,
@@ -85,7 +82,6 @@ void BrushCursor::update(int mouseX, int mouseY,
                           float focalShift,
                           float hardness,
                           const glm::vec3& paintColor,
-                          SymmetryMode symMode,
                           ModalMode modalMode) {
     if (brushType == BRUSH_VISIBILITY || brushType == BRUSH_MASK_GRADIENT_BLUR ||
         brushType == BRUSH_MEASURE || brushType == BRUSH_DIVIDER || brushType == BRUSH_TRANSFORM ||
@@ -271,55 +267,49 @@ void BrushCursor::update(int mouseX, int mouseY,
         const bool mouseMovedSignificantly = (dxOcc * dxOcc + dyOcc * dyOcc) > 2.25f; // > 1.5 px
         const bool timeExpired = (nowTicks - m_lastOccTicks) > 40; // ~25 Hz
 
-        if (useSym && (symX || symY || symZ) && mesh) {
+        if (!symCopies.empty() && mesh) {
             glm::mat4 invMatrix = glm::inverse(mesh->matrix);
             glm::vec3 lPt = glm::vec3(invMatrix * glm::vec4(worldPt, 1.0f));
-            glm::vec3 lNormal = glm::normalize(glm::mat3(invMatrix) * worldNormal);
+            glm::vec3 invN = glm::mat3(invMatrix) * worldNormal;
+            float invNLen = glm::length(invN);
+            glm::vec3 lNormal = (invNLen > 1e-8f) ? (invN / invNLen) : glm::vec3(0.0f, 1.0f, 0.0f);
             glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(mesh->matrix)));
 
-            std::vector<float> xVals = { 1.0f };
-            std::vector<float> yVals = { 1.0f };
-            std::vector<float> zVals = { 1.0f };
-            if (symX) xVals.push_back(-1.0f);
-            if (symY) yVals.push_back(-1.0f);
-            if (symZ) zVals.push_back(-1.0f);
-
             std::vector<glm::vec3> worldSymPts;
-            worldSymPts.reserve(7);
+            worldSymPts.reserve(symCopies.size());
+            m_state.symMVPs.reserve(symCopies.size());
 
-            for (float sx : xVals) {
-                for (float sy : yVals) {
-                    for (float sz : zVals) {
-                        if (sx == 1.0f && sy == 1.0f && sz == 1.0f) continue;
+            for (const SymCopy& copy : symCopies) {
+                glm::vec3 localSymPt = copy.point(lPt);
+                glm::vec3 symDir = copy.dir(lNormal);
+                float symDirLen = glm::length(symDir);
+                glm::vec3 localSymNormal = (symDirLen > 1e-8f) ? (symDir / symDirLen) : lNormal;
 
-                        glm::vec3 sScale(sx, sy, sz);
-                        glm::vec3 localSymPt = reflectPointSymmetry(lPt, sScale, mesh, symMode);
-                        glm::vec3 localSymNormal = reflectVectorSymmetry(lNormal, sScale, mesh, symMode);
+                glm::vec3 worldSymPt = glm::vec3(mesh->matrix * glm::vec4(localSymPt, 1.0f));
+                glm::vec3 wSymN = normalMatrix * localSymNormal;
+                float wSymNLen = glm::length(wSymN);
+                glm::vec3 worldSymNormal = (wSymNLen > 1e-8f) ? (wSymN / wSymNLen) : worldNormal;
 
-                        glm::vec3 worldSymPt = glm::vec3(mesh->matrix * glm::vec4(localSymPt, 1.0f));
-                        glm::vec3 worldSymNormal = glm::normalize(normalMatrix * localSymNormal);
-
-                        glm::vec3 circleSymNormalLeft = worldSymNormal;
-                        if (isModal) {
-                            glm::vec3 camPos = cameraLeft.computePosition();
-                            glm::vec3 dir = camPos - worldSymPt;
-                            if (glm::length(dir) > 1e-6f) {
-                                circleSymNormalLeft = glm::normalize(dir);
-                            } else {
-                                circleSymNormalLeft = circleNormalLeft;
-                            }
-                        }
-
-                        glm::mat4 symMVP = buildCircleMVP(worldSymPt, circleSymNormalLeft, constRadiusLeft, cameraLeft, tiltX, tiltY);
-                        m_state.symMVPs.push_back(symMVP);
-                        worldSymPts.push_back(worldSymPt);
+                glm::vec3 circleSymNormalLeft = worldSymNormal;
+                if (isModal) {
+                    glm::vec3 camPos = cameraLeft.computePosition();
+                    glm::vec3 dir = camPos - worldSymPt;
+                    if (glm::length(dir) > 1e-6f) {
+                        circleSymNormalLeft = glm::normalize(dir);
+                    } else {
+                        circleSymNormalLeft = circleNormalLeft;
                     }
                 }
+
+                glm::mat4 symMVP = buildCircleMVP(worldSymPt, circleSymNormalLeft, constRadiusLeft, cameraLeft, tiltX, tiltY);
+                m_state.symMVPs.push_back(symMVP);
+                worldSymPts.push_back(worldSymPt);
             }
 
             bool recomputeOccLeft = !throttle || camChangedLeft || mouseMovedSignificantly || timeExpired ||
                                     (m_cachedSymOccluded.size() != m_state.symMVPs.size());
             if (recomputeOccLeft) {
+                mesh->ensureBVHBuilt();
                 m_state.symOccluded.clear();
                 m_state.symOccluded.reserve(worldSymPts.size());
                 for (const auto& wpt : worldSymPts) {
@@ -367,55 +357,49 @@ void BrushCursor::update(int mouseX, int mouseY,
             float constRadiusRight = 2.5f * (worldRadiusRight / brushRadius) * pressureDotFactor;
             m_state.dotMVPRight = buildCircleMVP(worldPt, circleNormalRight, constRadiusRight, *cameraRight, tiltX, tiltY);
 
-            if (useSym && (symX || symY || symZ) && mesh) {
+            if (!symCopies.empty() && mesh) {
                 glm::mat4 invMatrix = glm::inverse(mesh->matrix);
                 glm::vec3 lPt = glm::vec3(invMatrix * glm::vec4(worldPt, 1.0f));
-                glm::vec3 lNormal = glm::normalize(glm::mat3(invMatrix) * worldNormal);
+                glm::vec3 invN = glm::mat3(invMatrix) * worldNormal;
+                float invNLen = glm::length(invN);
+                glm::vec3 lNormal = (invNLen > 1e-8f) ? (invN / invNLen) : glm::vec3(0.0f, 1.0f, 0.0f);
                 glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(mesh->matrix)));
 
-                std::vector<float> xVals = { 1.0f };
-                std::vector<float> yVals = { 1.0f };
-                std::vector<float> zVals = { 1.0f };
-                if (symX) xVals.push_back(-1.0f);
-                if (symY) yVals.push_back(-1.0f);
-                if (symZ) zVals.push_back(-1.0f);
-
                 std::vector<glm::vec3> worldSymPtsRight;
-                worldSymPtsRight.reserve(7);
+                worldSymPtsRight.reserve(symCopies.size());
+                m_state.symMVPsRight.reserve(symCopies.size());
 
-                for (float sx : xVals) {
-                    for (float sy : yVals) {
-                        for (float sz : zVals) {
-                            if (sx == 1.0f && sy == 1.0f && sz == 1.0f) continue;
+                for (const SymCopy& copy : symCopies) {
+                    glm::vec3 localSymPt = copy.point(lPt);
+                    glm::vec3 symDir = copy.dir(lNormal);
+                    float symDirLen = glm::length(symDir);
+                    glm::vec3 localSymNormal = (symDirLen > 1e-8f) ? (symDir / symDirLen) : lNormal;
 
-                            glm::vec3 sScale(sx, sy, sz);
-                            glm::vec3 localSymPt = reflectPointSymmetry(lPt, sScale, mesh, symMode);
-                            glm::vec3 localSymNormal = reflectVectorSymmetry(lNormal, sScale, mesh, symMode);
+                    glm::vec3 worldSymPt = glm::vec3(mesh->matrix * glm::vec4(localSymPt, 1.0f));
+                    glm::vec3 wSymN = normalMatrix * localSymNormal;
+                    float wSymNLen = glm::length(wSymN);
+                    glm::vec3 worldSymNormal = (wSymNLen > 1e-8f) ? (wSymN / wSymNLen) : worldNormal;
 
-                            glm::vec3 worldSymPt = glm::vec3(mesh->matrix * glm::vec4(localSymPt, 1.0f));
-                            glm::vec3 worldSymNormal = glm::normalize(normalMatrix * localSymNormal);
-
-                            glm::vec3 circleSymNormalRight = worldSymNormal;
-                            if (isModal) {
-                                glm::vec3 camPosR = cameraRight->computePosition();
-                                glm::vec3 dirR = camPosR - worldSymPt;
-                                if (glm::length(dirR) > 1e-6f) {
-                                    circleSymNormalRight = glm::normalize(dirR);
-                                } else {
-                                    circleSymNormalRight = circleNormalRight;
-                                }
-                            }
-
-                            glm::mat4 symMVP = buildCircleMVP(worldSymPt, circleSymNormalRight, constRadiusRight, *cameraRight, tiltX, tiltY);
-                            m_state.symMVPsRight.push_back(symMVP);
-                            worldSymPtsRight.push_back(worldSymPt);
+                    glm::vec3 circleSymNormalRight = worldSymNormal;
+                    if (isModal) {
+                        glm::vec3 camPosR = cameraRight->computePosition();
+                        glm::vec3 dirR = camPosR - worldSymPt;
+                        if (glm::length(dirR) > 1e-6f) {
+                            circleSymNormalRight = glm::normalize(dirR);
+                        } else {
+                            circleSymNormalRight = circleNormalRight;
                         }
                     }
+
+                    glm::mat4 symMVP = buildCircleMVP(worldSymPt, circleSymNormalRight, constRadiusRight, *cameraRight, tiltX, tiltY);
+                    m_state.symMVPsRight.push_back(symMVP);
+                    worldSymPtsRight.push_back(worldSymPt);
                 }
 
                 bool recomputeOccRight = !throttle || camChangedRight || mouseMovedSignificantly || timeExpired ||
                                          (m_cachedSymOccludedRight.size() != m_state.symMVPsRight.size());
                 if (recomputeOccRight) {
+                    mesh->ensureBVHBuilt();
                     m_state.symOccludedRight.clear();
                     m_state.symOccludedRight.reserve(worldSymPtsRight.size());
                     for (const auto& wpt : worldSymPtsRight) {

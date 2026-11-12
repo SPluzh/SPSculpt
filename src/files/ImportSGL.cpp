@@ -415,6 +415,11 @@ std::vector<Mesh*> importSGL(const std::vector<uint8_t>& buffer, Scene& scene, A
                 mesh->setID(savedId);
             }
         }
+        if (version >= 21) {
+            mesh->symRadialEnabled = (reader.readU32() != 0);
+            mesh->symRadialCount   = std::clamp(static_cast<int>(reader.readU32()), 2, 64);
+            mesh->symRadialAxis    = std::clamp(static_cast<int>(reader.readU32()), 0, 2);
+        }
 
         sculpt_log("[SGL Import] Mesh %u loaded | Verts: %d, Faces: %d, VisibleV1: %d, VisibleV2: %d, Scale: %.4f, Center: (%.2f, %.2f, %.2f)\n",
                    i, mesh->nbVerts, mesh->nbFaces, mesh->isVisible(0), mesh->isVisible(1), scale, cx, cy, cz);
@@ -846,6 +851,9 @@ ProjectMetadata extractProjectMetadata(const std::vector<uint8_t>& buffer) {
         }
         if (version >= 20) {
             reader.skipWords(1); // meshId
+        }
+        if (version >= 21) {
+            reader.skipWords(3); // symRadialEnabled, symRadialCount, symRadialAxis
         }
     }
 

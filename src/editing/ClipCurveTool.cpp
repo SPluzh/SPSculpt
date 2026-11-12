@@ -189,8 +189,8 @@ static void constrainedLaplacianRelax(
     Mesh* mesh,
     const std::vector<int>& vertAffected,
     const std::vector<int>& vertBoundary,
-    const std::vector<glm::vec3>& vertSymScale,
-    SymmetryMode symMode,
+    const std::vector<int>& vertCopyIdx,
+    const std::vector<SymCopy>& symCopies,
     const std::vector<PolySegment2D>& segments,
     const Camera& camera,
     const glm::mat4& localToWorld,
@@ -268,10 +268,10 @@ static void constrainedLaplacianRelax(
             float bz = oz + (smoothPos[i3 + 2] - oz) * blendWeight;
 
             glm::vec3 bLocal(bx, by, bz);
-            const glm::vec3& sScale = vertSymScale[i];
-            bool isSymPass = (sScale != glm::vec3(1.0f));
+            int cIdx = vertCopyIdx[i];
+            bool isSymPass = (cIdx >= 0 && cIdx < (int)symCopies.size());
 
-            glm::vec3 bEvalLocal = isSymPass ? reflectPointSymmetry(bLocal, sScale, mesh, symMode) : bLocal;
+            glm::vec3 bEvalLocal = isSymPass ? symCopies[cIdx].inversePoint(bLocal) : bLocal;
             glm::vec3 bWorld = glm::vec3(localToWorld * glm::vec4(bEvalLocal, 1.0f));
             glm::vec4 scrB = camera.computeWorldToScreenMatrix() * glm::vec4(bWorld, 1.0f);
             if (scrB.w <= 0.001f) continue;
@@ -289,7 +289,7 @@ static void constrainedLaplacianRelax(
                     float safeZ = std::clamp(bProj.z, 0.0001f, 0.9999f);
                     glm::vec3 wCut = camera.unproject(targetScreen.x, targetScreen.y, safeZ);
                     glm::vec3 vCutLocal = glm::vec3(worldToLocal * glm::vec4(wCut, 1.0f));
-                    glm::vec3 finalLocal = isSymPass ? reflectPointSymmetry(vCutLocal, sScale, mesh, symMode) : vCutLocal;
+                    glm::vec3 finalLocal = isSymPass ? symCopies[cIdx].point(vCutLocal) : vCutLocal;
 
                     mesh->verts[i3]     = finalLocal.x;
                     mesh->verts[i3 + 1] = finalLocal.y;
@@ -305,12 +305,10 @@ bool ClipCurveTool::execute(
     const Camera& camera,
     const std::vector<glm::vec2>& curvePoints,
     bool altMode,
-    bool useSym,
-    SymmetryMode symMode,
-    const std::vector<glm::vec3>& symScales
+    const std::vector<SymCopy>& symCopies
 ) {
-    sculpt_log("[ClipCurveTool] execute enter. mesh=%p, nbVerts=%d, pointsCount=%zu, altMode=%d, useSym=%d\n",
-               (void*)mesh, mesh ? mesh->nbVerts : 0, curvePoints.size(), altMode ? 1 : 0, useSym ? 1 : 0);
+    sculpt_log("[ClipCurveTool] execute enter. mesh=%p, nbVerts=%d, pointsCount=%zu, altMode=%d, symCopies=%zu\n",
+               (void*)mesh, mesh ? mesh->nbVerts : 0, curvePoints.size(), altMode ? 1 : 0, symCopies.size());
 
     if (!mesh || mesh->nbVerts == 0 || curvePoints.size() < 2) {
         sculpt_log("[ClipCurveTool] Early return: invalid mesh or curvePoints < 2\n");
@@ -348,7 +346,7 @@ bool ClipCurveTool::execute(
     int nbVerts = mesh->nbVerts;
     std::vector<int> vertAffected(nbVerts, 0);
     std::vector<int> vertBoundary(nbVerts, 0); // Option 2: boundary vertices near cut line
-    std::vector<glm::vec3> vertSymScale(nbVerts, glm::vec3(1.0f));
+    std::vector<int> vertCopyIdx(nbVerts, -1);
 
     // Immutable snapshot of initial vertex positions before symmetry passes
     std::vector<glm::vec3> origVerts(nbVerts);
@@ -358,12 +356,12 @@ bool ClipCurveTool::execute(
 
     constexpr float BOUNDARY_THRESHOLD_PX = 10.0f; // boundary threshold in pixels
 
-    // Symmetry passes
-    std::vector<glm::vec3> passes = { glm::vec3(1.0f) };
-    if (useSym && !symScales.empty()) {
-        for (const auto& s : symScales) {
-            passes.push_back(s);
-        }
+    // Symmetry passes (-1 = primary identity, 0..N-1 = symCopies)
+    std::vector<int> passes;
+    passes.reserve(1 + symCopies.size());
+    passes.push_back(-1);
+    for (int cIdx = 0; cIdx < (int)symCopies.size(); ++cIdx) {
+        passes.push_back(cIdx);
     }
 
     int affectedCount = 0;
@@ -376,9 +374,8 @@ bool ClipCurveTool::execute(
     glm::mat4 w2s = camera.computeWorldToScreenMatrix();
 
     for (int projPass = 0; projPass < NUM_PROJECTION_PASSES; ++projPass) {
-        for (size_t passIdx = 0; passIdx < passes.size(); ++passIdx) {
-            const auto& sScale = passes[passIdx];
-            bool isSymPass = (sScale != glm::vec3(1.0f));
+        for (int cIdx : passes) {
+            bool isSymPass = (cIdx >= 0);
 
             #pragma omp parallel for schedule(dynamic, 1024) reduction(min:globalMinDist) reduction(max:globalMaxDist)
             for (int i = 0; i < nbVerts; ++i) {
@@ -388,7 +385,7 @@ bool ClipCurveTool::execute(
                 glm::vec3 vLocalCurrent = (projPass == 0) ? origVerts[i] : glm::vec3(mesh->verts[i * 3], mesh->verts[i * 3 + 1], mesh->verts[i * 3 + 2]);
                 if (projPass > 0 && !vertAffected[i]) continue;
 
-                glm::vec3 vLocal = isSymPass ? reflectPointSymmetry(vLocalCurrent, sScale, mesh, symMode) : vLocalCurrent;
+                glm::vec3 vLocal = isSymPass ? symCopies[cIdx].inversePoint(vLocalCurrent) : vLocalCurrent;
 
                 glm::vec3 vWorld = glm::vec3(localToWorld * glm::vec4(vLocal, 1.0f));
                 glm::vec4 scr = w2s * glm::vec4(vWorld, 1.0f);
@@ -410,14 +407,14 @@ bool ClipCurveTool::execute(
                         float safeZ = std::clamp(vProj.z, 0.0001f, 0.9999f);
                         glm::vec3 wCut = camera.unproject(targetScreen.x, targetScreen.y, safeZ);
                         glm::vec3 clippedLocal = glm::vec3(worldToLocal * glm::vec4(wCut, 1.0f));
-                        glm::vec3 finalLocal = isSymPass ? reflectPointSymmetry(clippedLocal, sScale, mesh, symMode) : clippedLocal;
+                        glm::vec3 finalLocal = isSymPass ? symCopies[cIdx].point(clippedLocal) : clippedLocal;
 
                         mesh->verts[i * 3]     = finalLocal.x;
                         mesh->verts[i * 3 + 1] = finalLocal.y;
                         mesh->verts[i * 3 + 2] = finalLocal.z;
 
                         vertAffected[i] = 1;
-                        vertSymScale[i] = sScale;
+                        vertCopyIdx[i] = cIdx;
 
                         if (signedDist > -BOUNDARY_THRESHOLD_PX) {
                             vertBoundary[i] = 1;
@@ -452,7 +449,7 @@ bool ClipCurveTool::execute(
     // Post-clip continuous relaxation pass (redistributes polygons around corners and interior)
     constexpr int RELAX_ITERATIONS = 8;
     sculpt_log("[ClipCurveTool] Running continuous Laplacian relaxation (%d iterations)...\n", RELAX_ITERATIONS);
-    constrainedLaplacianRelax(mesh, vertAffected, vertBoundary, vertSymScale, symMode, segments, camera, localToWorld, worldToLocal, RELAX_ITERATIONS);
+    constrainedLaplacianRelax(mesh, vertAffected, vertBoundary, vertCopyIdx, symCopies, segments, camera, localToWorld, worldToLocal, RELAX_ITERATIONS);
 
     // Final post-relaxation crisp boundary snap pass
     #pragma omp parallel for schedule(static)
@@ -462,11 +459,11 @@ bool ClipCurveTool::execute(
         if (!isBoundary) continue;
 
         int i3 = i * 3;
-        const glm::vec3& sScale = vertSymScale[i];
-        bool isSymPass = (sScale != glm::vec3(1.0f));
+        int cIdx = vertCopyIdx[i];
+        bool isSymPass = (cIdx >= 0 && cIdx < (int)symCopies.size());
 
         glm::vec3 vLocal(mesh->verts[i3], mesh->verts[i3 + 1], mesh->verts[i3 + 2]);
-        glm::vec3 vEvalLocal = isSymPass ? reflectPointSymmetry(vLocal, sScale, mesh, symMode) : vLocal;
+        glm::vec3 vEvalLocal = isSymPass ? symCopies[cIdx].inversePoint(vLocal) : vLocal;
         glm::vec3 vWorld = glm::vec3(localToWorld * glm::vec4(vEvalLocal, 1.0f));
         glm::vec4 scrSnap = w2s * glm::vec4(vWorld, 1.0f);
         if (scrSnap.w <= 0.001f) continue;
@@ -481,7 +478,7 @@ bool ClipCurveTool::execute(
             float safeZ = std::clamp(vProj.z, 0.0001f, 0.9999f);
             glm::vec3 wCut = camera.unproject(targetScreen.x, targetScreen.y, safeZ);
             glm::vec3 vCutLocal = glm::vec3(worldToLocal * glm::vec4(wCut, 1.0f));
-            glm::vec3 finalLocal = isSymPass ? reflectPointSymmetry(vCutLocal, sScale, mesh, symMode) : vCutLocal;
+            glm::vec3 finalLocal = isSymPass ? symCopies[cIdx].point(vCutLocal) : vCutLocal;
 
             mesh->verts[i3]     = finalLocal.x;
             mesh->verts[i3 + 1] = finalLocal.y;

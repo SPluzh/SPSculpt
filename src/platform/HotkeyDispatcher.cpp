@@ -371,7 +371,41 @@ bool HotkeyDispatcher::executeAction(HKAction action, bool isDown, SculptManager
             case HKAction::ToolVisibility: sculpt.setBrush(BRUSH_VISIBILITY); break;
             
             case HKAction::BrushNegative: sculpt.toggleNegative(); break;
-            case HKAction::ToggleSymmetry: sculpt.setUseSym(!sculpt.getUseSym()); break;
+            case HKAction::ToggleSymmetry: {
+                sculpt.setUseSym(!sculpt.getUseSym());
+                sculpt.saveSymmetryToMesh(scene.getSelected());
+                break;
+            }
+            case HKAction::ToggleRadialSymmetry: {
+                bool nextRad = !sculpt.getSymRadialEnabled();
+                sculpt.setSymRadialEnabled(nextRad);
+                if (nextRad && !sculpt.getUseSym()) {
+                    sculpt.setUseSym(true);
+                }
+                sculpt.saveSymmetryToMesh(scene.getSelected());
+                char msg[96];
+                snprintf(msg, sizeof(msg), "Radial Symmetry: %s (%d)", nextRad ? "ON" : "OFF", sculpt.getSymRadialCount());
+                GuiManager::showToast(msg, 1.5f);
+                break;
+            }
+            case HKAction::RadialCountInc: {
+                int nextCnt = std::min(64, sculpt.getSymRadialCount() + 1);
+                sculpt.setSymRadialCount(nextCnt);
+                sculpt.saveSymmetryToMesh(scene.getSelected());
+                char msg[64];
+                snprintf(msg, sizeof(msg), "Radial Count: %d", nextCnt);
+                GuiManager::showToast(msg, 1.2f);
+                break;
+            }
+            case HKAction::RadialCountDec: {
+                int nextCnt = std::max(2, sculpt.getSymRadialCount() - 1);
+                sculpt.setSymRadialCount(nextCnt);
+                sculpt.saveSymmetryToMesh(scene.getSelected());
+                char msg[64];
+                snprintf(msg, sizeof(msg), "Radial Count: %d", nextCnt);
+                GuiManager::showToast(msg, 1.2f);
+                break;
+            }
             case HKAction::BrushPicker: sculpt.getSettings(BRUSH_PAINT).pickColor = !sculpt.getSettings(BRUSH_PAINT).pickColor; break;
             
             case HKAction::BrushIntensity: {

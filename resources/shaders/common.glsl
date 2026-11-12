@@ -9,6 +9,12 @@ uniform int uSymCount;
 uniform int uSym;
 uniform float uSymLineWidth;
 uniform float uSymAlpha;
+uniform int uRadialCount;
+uniform vec3 uRadialOrigin;
+uniform vec3 uRadialAxis;
+uniform vec3 uRadialU;
+uniform vec3 uRadialV;
+uniform vec3 uRadialColor;
 uniform int uDarken;
 uniform float uCurvature;
 uniform float uFov;
@@ -150,6 +156,26 @@ vec4 encodeFragColor(const in vec3 frag, const in float alpha) {
             float factor = smoothstep(symWidth, innerWidth, dist) * symAlpha;
             vec3 vibrantColor = uPlaneColor[i] * 1.8;
             col = mix(col, vibrantColor, factor * 0.85) + uPlaneColor[i] * (factor * 0.4);
+        }
+    }
+    if (uRadialCount >= 2) {
+        vec3 rel = vVertex - uRadialOrigin;
+        vec3 perp = rel - uRadialAxis * dot(rel, uRadialAxis);
+        float rLen = length(perp);
+        float distRay = rLen;
+        if (rLen > 1e-4) {
+            float pu = dot(perp, uRadialU);
+            float pv = dot(perp, uRadialV);
+            float ang = atan(pv, pu);
+            float sector = PI_2 / float(uRadialCount);
+            float halfSec = sector * 0.5;
+            float dAng = abs(mod(ang + halfSec, sector) - halfSec);
+            distRay = rLen * sin(min(dAng, 1.5707963));
+        }
+        if (distRay < symWidth) {
+            float factor = smoothstep(symWidth, innerWidth, distRay) * symAlpha;
+            vec3 radialVibrant = uRadialColor * 1.8;
+            col = mix(col, radialVibrant, factor * 0.85) + uRadialColor * (factor * 0.4);
         }
     }
     return alpha != 1.0 ? vec4(col * alpha, alpha) : encodeRGBM(col);

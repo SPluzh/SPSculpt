@@ -928,6 +928,23 @@ void SculptManager::notifyMeshDeletedTool(Mesh* mesh) {
     }
 }
 
+SymmetryParams SculptManager::getSymmetryParams() const {
+    SymmetryParams sp;
+    sp.useSym = getUseSym();
+    sp.symX = m_symX;
+    sp.symY = m_symY;
+    sp.symZ = m_symZ;
+    sp.radialEnabled = m_symRadialEnabled;
+    sp.radialCount = std::clamp(m_symRadialCount, 2, 64);
+    sp.radialAxis = std::clamp(m_symRadialAxis, 0, 2);
+    sp.mode = m_symmetryMode;
+    return sp;
+}
+
+std::vector<SymCopy> SculptManager::getActiveSymmetryCopies(const Mesh* mesh, bool includeIdentity) const {
+    return buildSymmetryCopies(getSymmetryParams(), mesh, includeIdentity);
+}
+
 std::vector<glm::vec3> SculptManager::getActiveSymmetryScales() const {
     std::vector<glm::vec3> scales;
     if (!m_useSym || (!m_symX && !m_symY && !m_symZ)) return scales;
@@ -967,7 +984,7 @@ int SculptManager::doStrokePass(
     float intensity,
     float mouseX,
     bool isSymmetry,
-    const glm::vec3& sScale,
+    const SymCopy& symCopy,
     const std::vector<uint32_t>* pPickedVec,
     float* outAnalyticNormals
 ) {
@@ -995,14 +1012,14 @@ int SculptManager::doStrokePass(
     }
 
     int deformedCount = 0;
-    bool alphaXSym = isSymmetry && ((sScale.x * sScale.y * sScale.z) < 0.0f);
+    bool alphaXSym = isSymmetry && symCopy.isMirror();
 
     switch (activeBrush) {
         case BRUSH_FLATTEN: {
             glm::vec3 areaNormal = cachedAreaNormal;
             glm::vec3 areaCenter = cachedAreaCenter;
 
-            if (!m_firstStrokeFrame && (!getCurrentSettings().flattenLockNormal || !getCurrentSettings().flattenLockOrigin)) {
+            if (!isSymmetry && !m_firstStrokeFrame && (!getCurrentSettings().flattenLockNormal || !getCurrentSettings().flattenLockOrigin)) {
                 float areaResults[7] = {0.0f};
                 if (computeAreaNormalAndCenter(
                     mesh->verts.data(),
@@ -1013,19 +1030,21 @@ int SculptManager::doStrokePass(
                     areaResults
                 )) {
                     if (!getCurrentSettings().flattenLockNormal) {
-                        areaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
+                        m_cachedAreaNormal = glm::vec3(areaResults[0], areaResults[1], areaResults[2]);
                     }
                     if (!getCurrentSettings().flattenLockOrigin) {
-                        areaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
+                        m_cachedAreaCenter = glm::vec3(areaResults[3], areaResults[4], areaResults[5]);
                     }
                 } else {
                     if (!getCurrentSettings().flattenLockNormal) {
-                        areaNormal = currentIntersectionNormal;
+                        m_cachedAreaNormal = currentIntersectionNormal;
                     }
                     if (!getCurrentSettings().flattenLockOrigin) {
-                        areaCenter = currentIntersection;
+                        m_cachedAreaCenter = currentIntersection;
                     }
                 }
+                areaNormal = m_cachedAreaNormal;
+                areaCenter = m_cachedAreaCenter;
             }
 
             deformedCount = strokeFlatten(
@@ -1213,10 +1232,10 @@ int SculptManager::doStrokePass(
                 float localAmount = amount / scale;
 
                 glm::vec3 primaryDragDir = norm * (localAmount * intensity);
-                dragDirection = isSymmetry ? (primaryDragDir * sScale) : primaryDragDir;
+                dragDirection = isSymmetry ? symCopy.dir(primaryDragDir) : primaryDragDir;
             } else {
                 glm::vec3 primaryDragDir = (m_currentIntersection - m_initialIntersection) * intensity;
-                dragDirection = isSymmetry ? (primaryDragDir * sScale) : primaryDragDir;
+                dragDirection = isSymmetry ? symCopy.dir(primaryDragDir) : primaryDragDir;
             }
             deformedCount = strokeMove(
                 mesh->verts.data(),
@@ -1255,10 +1274,10 @@ int SculptManager::doStrokePass(
                 float localAmount = amount / scale;
 
                 glm::vec3 primaryDragDir = norm * (localAmount * intensity);
-                dragDirection = isSymmetry ? (primaryDragDir * sScale) : primaryDragDir;
+                dragDirection = isSymmetry ? symCopy.dir(primaryDragDir) : primaryDragDir;
             } else {
                 glm::vec3 primaryDragDir = (m_currentIntersection - m_initialIntersection) * intensity;
-                dragDirection = isSymmetry ? (primaryDragDir * sScale) : primaryDragDir;
+                dragDirection = isSymmetry ? symCopy.dir(primaryDragDir) : primaryDragDir;
             }
             deformedCount = strokeDrag(
                 mesh->verts.data(),
@@ -1295,10 +1314,10 @@ int SculptManager::doStrokePass(
                 float localAmount = amount / scale;
 
                 glm::vec3 primaryDragDir = norm * (localAmount * intensity);
-                dragDirection = isSymmetry ? (primaryDragDir * sScale) : primaryDragDir;
+                dragDirection = isSymmetry ? symCopy.dir(primaryDragDir) : primaryDragDir;
             } else {
                 glm::vec3 primaryDragDir = (m_currentIntersection - m_initialIntersection) * intensity;
-                dragDirection = isSymmetry ? (primaryDragDir * sScale) : primaryDragDir;
+                dragDirection = isSymmetry ? symCopy.dir(primaryDragDir) : primaryDragDir;
             }
             deformedCount = strokeElastic(
                 mesh->verts.data(),
@@ -1316,9 +1335,9 @@ int SculptManager::doStrokePass(
             break;
         }
         case BRUSH_SNAKEHOOK: {
-            glm::vec3 tipStart = isSymmetry ? reflectPointSymmetry(m_snakePrevTipPos, sScale, mesh, m_symmetryMode)
-                                            : m_snakePrevTipPos;
+            glm::vec3 tipStart = isSymmetry ? symCopy.point(m_snakePrevTipPos) : m_snakePrevTipPos;
             glm::vec3 tipEnd = currentIntersection;
+            float twist = getCurrentSettings().snakeTwist * (isSymmetry ? symCopy.handedness() : 1.0f);
 
             deformedCount = strokeSnakeHook(
                 mesh->verts.data(),
@@ -1330,7 +1349,7 @@ int SculptManager::doStrokePass(
                 localRadius, intensity,
                 getCurrentSettings().snakePinch,
                 getCurrentSettings().snakeMagnify,
-                getCurrentSettings().snakeTwist,
+                twist,
                 getCurrentSettings().focalShift,
                 getCurrentSettings().focalShiftFalloff,
                 negative,
@@ -1408,6 +1427,7 @@ int SculptManager::doStrokePass(
             break;
         }
         case BRUSH_TWIST: {
+            float twistAngle = intensity * 3.14159f * 0.5f * (isSymmetry ? symCopy.handedness() : 1.0f);
             deformedCount = strokeTwist(
                 mesh->verts.data(),
                 mesh->materials.data(),
@@ -1415,7 +1435,7 @@ int SculptManager::doStrokePass(
                 nbVerts,
                 currentIntersection.x, currentIntersection.y, currentIntersection.z,
                 currentIntersectionNormal.x, currentIntersectionNormal.y, currentIntersectionNormal.z,
-                localRadius, intensity * 3.14159f * 0.5f,
+                localRadius, twistAngle,
                 getCurrentSettings().focalShift, getCurrentSettings().focalShiftFalloff,
                 false, nullptr, 0, 0, 0.0f, 0.0f, 0.0f, nullptr, false
             );
@@ -1438,7 +1458,7 @@ int SculptManager::doStrokePass(
             glm::vec3 areaNormal = cachedAreaNormal;
             glm::vec3 areaCenter = cachedAreaCenter;
 
-            if (!m_firstStrokeFrame && (!getCurrentSettings().flattenLockNormal || !getCurrentSettings().flattenLockOrigin)) {
+            if (!isSymmetry && !m_firstStrokeFrame && (!getCurrentSettings().flattenLockNormal || !getCurrentSettings().flattenLockOrigin)) {
                 bool moved = glm::distance(currentIntersection, m_prevClayIntersection) > localRadius * 0.15f;
                 bool intervalElapsed = (m_strokeFrameCounter - m_clayAreaNormalFrame) >= 3;
                 if (moved || intervalElapsed) {
@@ -1539,7 +1559,7 @@ int SculptManager::doStrokePass(
             glm::vec3 strokeDir(0.0f);
             bool hasStrokeDir = false;
 
-            glm::vec3 passAlphaOrigin = isSymmetry ? reflectPointSymmetry(m_alphaOrigin, sScale, mesh, m_symmetryMode) : m_alphaOrigin;
+            glm::vec3 passAlphaOrigin = isSymmetry ? symCopy.point(m_alphaOrigin) : m_alphaOrigin;
 
             if (!m_firstStrokeFrame && m_hasAlphaOrigin) {
                 glm::vec3 movement = currentIntersection - passAlphaOrigin;
@@ -1555,9 +1575,9 @@ int SculptManager::doStrokePass(
                 const glm::mat4& camWorld = m_cachedCamWorldMatrix;
                 glm::vec3 camRight = glm::vec3(camWorld[0]);
                 glm::vec3 camRightLocal = glm::vec3(invMeshMatrix * glm::vec4(camRight, 0.0f));
+                if (isSymmetry) camRightLocal = symCopy.dir(camRightLocal);
                 float crLen2 = glm::dot(camRightLocal, camRightLocal);
                 if (crLen2 > 1e-6f && std::isfinite(crLen2)) camRightLocal /= std::sqrt(crLen2);
-                if (isSymmetry) camRightLocal = reflectVectorSymmetry(camRightLocal, sScale, mesh, m_symmetryMode);
                 strokeDir = projectOntoTangent(camRightLocal, areaNormal);
                 if (glm::dot(strokeDir, strokeDir) > 1e-6f) {
                     hasStrokeDir = true;
@@ -1570,9 +1590,9 @@ int SculptManager::doStrokePass(
                 const glm::mat4& camWorld = m_cachedCamWorldMatrix;
                 glm::vec3 camUp = glm::vec3(camWorld[1]);
                 glm::vec3 camUpLocal = glm::vec3(invMeshMatrix * glm::vec4(camUp, 0.0f));
+                if (isSymmetry) camUpLocal = symCopy.dir(camUpLocal);
                 float cuLen2 = glm::dot(camUpLocal, camUpLocal);
                 if (cuLen2 > 1e-6f && std::isfinite(cuLen2)) camUpLocal /= std::sqrt(cuLen2);
-                if (isSymmetry) camUpLocal = reflectVectorSymmetry(camUpLocal, sScale, mesh, m_symmetryMode);
                 strokeDir = projectOntoTangent(camUpLocal, areaNormal);
                 if (glm::dot(strokeDir, strokeDir) > 1e-6f) {
                     hasStrokeDir = true;
@@ -1715,7 +1735,7 @@ int SculptManager::doStrokePass(
             glm::vec3 strokeDir(0.0f);
             bool hasStrokeDir = false;
 
-            glm::vec3 passAlphaOrigin = isSymmetry ? reflectPointSymmetry(m_alphaOrigin, sScale, mesh, m_symmetryMode) : m_alphaOrigin;
+            glm::vec3 passAlphaOrigin = isSymmetry ? symCopy.point(m_alphaOrigin) : m_alphaOrigin;
 
             if (!m_firstStrokeFrame && m_hasAlphaOrigin) {
                 glm::vec3 movement = currentIntersection - passAlphaOrigin;
@@ -1731,9 +1751,9 @@ int SculptManager::doStrokePass(
                 const glm::mat4& camWorld = m_cachedCamWorldMatrix;
                 glm::vec3 camRight = glm::vec3(camWorld[0]);
                 glm::vec3 camRightLocal = glm::vec3(invMeshMatrix * glm::vec4(camRight, 0.0f));
+                if (isSymmetry) camRightLocal = symCopy.dir(camRightLocal);
                 float crLen2 = glm::dot(camRightLocal, camRightLocal);
                 if (crLen2 > 1e-6f && std::isfinite(crLen2)) camRightLocal /= std::sqrt(crLen2);
-                if (isSymmetry) camRightLocal = reflectVectorSymmetry(camRightLocal, sScale, mesh, m_symmetryMode);
                 strokeDir = projectOntoTangent(camRightLocal, areaNormal);
                 if (glm::dot(strokeDir, strokeDir) > 1e-6f) {
                     hasStrokeDir = true;
@@ -1746,9 +1766,9 @@ int SculptManager::doStrokePass(
                 const glm::mat4& camWorld = m_cachedCamWorldMatrix;
                 glm::vec3 camUp = glm::vec3(camWorld[1]);
                 glm::vec3 camUpLocal = glm::vec3(invMeshMatrix * glm::vec4(camUp, 0.0f));
+                if (isSymmetry) camUpLocal = symCopy.dir(camUpLocal);
                 float cuLen2 = glm::dot(camUpLocal, camUpLocal);
                 if (cuLen2 > 1e-6f && std::isfinite(cuLen2)) camUpLocal /= std::sqrt(cuLen2);
-                if (isSymmetry) camUpLocal = reflectVectorSymmetry(camUpLocal, sScale, mesh, m_symmetryMode);
                 strokeDir = projectOntoTangent(camUpLocal, areaNormal);
                 if (glm::dot(strokeDir, strokeDir) > 1e-6f) {
                     hasStrokeDir = true;
@@ -1841,7 +1861,7 @@ int SculptManager::doStrokePass(
             glm::vec3 strokeDir(0.0f);
             bool hasStrokeDir = false;
 
-            glm::vec3 passAlphaOrigin = isSymmetry ? reflectPointSymmetry(m_alphaOrigin, sScale, mesh, m_symmetryMode) : m_alphaOrigin;
+            glm::vec3 passAlphaOrigin = isSymmetry ? symCopy.point(m_alphaOrigin) : m_alphaOrigin;
 
             if (!getCurrentSettings().stampLockRotation && !m_firstStrokeFrame && m_hasAlphaOrigin) {
                 glm::vec3 movement = currentIntersection - passAlphaOrigin;
@@ -1855,10 +1875,10 @@ int SculptManager::doStrokePass(
                 const glm::mat4& invMeshMatrix = m_cachedInvMatrix;
                 const glm::mat4& camWorld = m_cachedCamWorldMatrix;
                 glm::vec3 camRightLocal = glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f));
+                if (isSymmetry) camRightLocal = symCopy.dir(camRightLocal);
                 float crLen2 = glm::dot(camRightLocal, camRightLocal);
                 if (crLen2 > 1e-8f && std::isfinite(crLen2)) {
                     camRightLocal /= std::sqrt(crLen2);
-                    if (isSymmetry) camRightLocal = reflectVectorSymmetry(camRightLocal, sScale, mesh, m_symmetryMode);
                     strokeDir = projectOntoTangent(camRightLocal, areaNormal);
                     if (glm::dot(strokeDir, strokeDir) > 1e-8f) {
                         hasStrokeDir = true;
@@ -1870,10 +1890,10 @@ int SculptManager::doStrokePass(
                 const glm::mat4& invMeshMatrix = m_cachedInvMatrix;
                 const glm::mat4& camWorld = m_cachedCamWorldMatrix;
                 glm::vec3 camUpLocal = glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[1]), 0.0f));
+                if (isSymmetry) camUpLocal = symCopy.dir(camUpLocal);
                 float cuLen2 = glm::dot(camUpLocal, camUpLocal);
                 if (cuLen2 > 1e-8f && std::isfinite(cuLen2)) {
                     camUpLocal /= std::sqrt(cuLen2);
-                    if (isSymmetry) camUpLocal = reflectVectorSymmetry(camUpLocal, sScale, mesh, m_symmetryMode);
                     strokeDir = projectOntoTangent(camUpLocal, areaNormal);
                     if (glm::dot(strokeDir, strokeDir) > 1e-8f) {
                         hasStrokeDir = true;
@@ -2006,17 +2026,19 @@ int SculptManager::doStrokePass(
                     strokeDir = m_rakeSmoothDir;
                 }
             } else {
-                // Symmetry pass: reflect the primary stroke direction
-                strokeDir = reflectVectorSymmetry(m_rakeSmoothDir, sScale, mesh, m_symmetryMode);
+                // Symmetry pass: transform primary stroke direction
+                strokeDir = symCopy.dir(m_rakeSmoothDir);
                 glm::vec3 proj = strokeDir - areaNormal * glm::dot(strokeDir, areaNormal);
                 if (glm::length(proj) > 1e-5f) {
                     strokeDir = glm::normalize(proj);
                 } else {
                     const glm::mat4& invMeshMatrix = m_cachedInvMatrix;
                     const glm::mat4& camWorld = m_cachedCamWorldMatrix;
-                    glm::vec3 camRightLocal = glm::normalize(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
-                    camRightLocal = reflectVectorSymmetry(camRightLocal, sScale, mesh, m_symmetryMode);
-                    strokeDir = glm::normalize(camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal));
+                    glm::vec3 camRightLocal = symCopy.dir(glm::vec3(invMeshMatrix * glm::vec4(glm::vec3(camWorld[0]), 0.0f)));
+                    float crLen = glm::length(camRightLocal);
+                    if (crLen > 1e-6f) camRightLocal /= crLen;
+                    glm::vec3 camProj = camRightLocal - areaNormal * glm::dot(camRightLocal, areaNormal);
+                    strokeDir = (glm::length(camProj) > 1e-5f) ? glm::normalize(camProj) : glm::vec3(1.0f, 0.0f, 0.0f);
                 }
             }
 
@@ -3077,19 +3099,8 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 
         if (targetLength > 1e-7f) {
             std::vector<dynamic::SymCopy> mirrors;
-            if (m_useSym) {
-                mirrors.push_back(dynamic::SymCopy{}); // Identity
-                std::vector<glm::vec3> activeScales = getActiveSymmetryScales();
-                for (const auto& s : activeScales) {
-                    dynamic::SymCopy sym;
-                    sym.m = glm::mat3(glm::scale(glm::mat4(1.0f), s));
-                    int symAxis = 0;
-                    for (int a = 0; a < 3; ++a) {
-                        if (s[a] < 0.0f) { symAxis = a; break; }
-                    }
-                    sym.pivot = mesh->getSymmetryOriginForAxis(symAxis, m_symmetryMode);
-                    mirrors.push_back(sym);
-                }
+            if (getUseSym()) {
+                mirrors = getActiveSymmetryCopies(mesh, true);
             }
 
             if (!m_dyntopo) {
@@ -3117,40 +3128,40 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     tStage = std::chrono::high_resolution_clock::now();
     m_pickedVerticesCache.clear();
     std::vector<uint32_t>& pickedVertices = m_pickedVerticesCache;
-    std::vector<glm::vec3> symScales;
-    if (m_useSym) {
-        symScales = getActiveSymmetryScales();
+    std::vector<SymCopy> symCopies;
+    if (getUseSym()) {
+        symCopies = getActiveSymmetryCopies(mesh, false);
         if (m_firstStrokeFrame) {
-            m_initialSymIntersections.resize(symScales.size());
-            for (size_t sIdx = 0; sIdx < symScales.size(); ++sIdx) {
-                m_initialSymIntersections[sIdx] = reflectPointSymmetry(m_initialIntersection, symScales[sIdx], mesh, m_symmetryMode);
+            m_initialSymIntersections.resize(symCopies.size());
+            for (size_t sIdx = 0; sIdx < symCopies.size(); ++sIdx) {
+                m_initialSymIntersections[sIdx] = symCopies[sIdx].point(m_initialIntersection);
             }
-            m_grabbedVerticesSyms.resize(symScales.size());
+            m_grabbedVerticesSyms.resize(symCopies.size());
             if (isSnakeBrush) {
-                m_snakeActiveVertsSyms.resize(symScales.size());
-                m_snakePrevTipPosSyms.resize(symScales.size());
-                for (size_t sIdx = 0; sIdx < symScales.size(); ++sIdx) {
+                m_snakeActiveVertsSyms.resize(symCopies.size());
+                m_snakePrevTipPosSyms.resize(symCopies.size());
+                for (size_t sIdx = 0; sIdx < symCopies.size(); ++sIdx) {
                     m_snakePrevTipPosSyms[sIdx] = m_initialSymIntersections[sIdx];
                 }
             }
         }
-        if (m_prePickedSymVerts.size() < symScales.size()) {
-            m_prePickedSymVerts.resize(symScales.size());
+        if (m_prePickedSymVerts.size() < symCopies.size()) {
+            m_prePickedSymVerts.resize(symCopies.size());
         }
-        for (size_t sIdx = 0; sIdx < symScales.size(); ++sIdx) {
+        for (size_t sIdx = 0; sIdx < symCopies.size(); ++sIdx) {
             m_prePickedSymVerts[sIdx].clear();
         }
     }
 
     bool culledAndFiltered = false;
-    bool canDualPick = m_useSym && (symScales.size() == 1) && (!isSnakeBrush || m_firstStrokeFrame) && (!isGrabBrush || m_firstStrokeFrame);
+    bool canDualPick = getUseSym() && (symCopies.size() == 1) && (!isSnakeBrush || m_firstStrokeFrame) && (!isGrabBrush || m_firstStrokeFrame);
     bool primaryUsedBVH = false;
     bool symUsedBVHInDual = false;
     bool primaryUsedTopo = false;
     double dualSec0Ms = 0.0, dualSec1Ms = 0.0, dualSec0CullMs = 0.0, dualSec1CullMs = 0.0;
 
     if (canDualPick) {
-        glm::vec3 symCenter0 = reflectPointSymmetry(m_currentIntersection, symScales[0], mesh, m_symmetryMode);
+        glm::vec3 symCenter0 = symCopies[0].point(m_currentIntersection);
         culledAndFiltered = true;
         m_lastFrameProfile.dualPickActive = true;
 
@@ -3195,7 +3206,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             );
             auto tc0 = std::chrono::high_resolution_clock::now();
             if (getSettings(activeBrush).culling && !m_prePickedSymVerts[0].empty()) {
-                glm::vec3 symRayDir = reflectVectorSymmetry(localRayDir, symScales[0], mesh, m_symmetryMode);
+                glm::vec3 symRayDir = glm::normalize(symCopies[0].dir(localRayDir));
                 filterCullingVertices(m_prePickedSymVerts[0], mesh, symRayDir);
             }
             if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty() && !m_prePickedSymVerts[0].empty()) {
@@ -3325,7 +3336,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
     bool useAnalyticNormals = false;
     if (primaryVertCount > 0) {
         if (!isGrabBrush || m_firstStrokeFrame) {
-            size_t needed = primaryVertCount * (m_useSym ? 2 : 1);
+            size_t needed = primaryVertCount * (1 + symCopies.size());
             if (allAffectedVerts.capacity() < needed) {
                 allAffectedVerts.reserve(needed);
             }
@@ -3337,11 +3348,13 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         bool negative = getSettings(activeBrush).negative ^ invertModifier;
 
         size_t estAnalyticVerts = primaryVertCount;
-        if (m_useSym) {
+        if (!symCopies.empty()) {
             if (!m_prePickedSymVerts.empty()) {
-                for (const auto& sv : m_prePickedSymVerts) estAnalyticVerts += sv.size();
+                for (size_t si = 0; si < symCopies.size() && si < m_prePickedSymVerts.size(); ++si) {
+                    estAnalyticVerts += m_prePickedSymVerts[si].size();
+                }
             } else {
-                estAnalyticVerts *= (1 + symScales.size());
+                estAnalyticVerts *= (1 + symCopies.size());
             }
         }
 
@@ -3451,10 +3464,10 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             } else {
                 g_undoManager.recordAffectedVertices(scene, mesh->m_id, pickedVertices, strokeAffectsPositions, strokeAffectsColors, strokeAffectsMaterials);
             }
-            if (m_useSym) {
-                for (const auto& symList : m_prePickedSymVerts) {
-                    if (!symList.empty()) {
-                        g_undoManager.recordAffectedVertices(scene, mesh->m_id, symList, strokeAffectsPositions, strokeAffectsColors, strokeAffectsMaterials);
+            if (getUseSym()) {
+                for (size_t sIdx = 0; sIdx < symCopies.size() && sIdx < m_prePickedSymVerts.size(); ++sIdx) {
+                    if (!m_prePickedSymVerts[sIdx].empty()) {
+                        g_undoManager.recordAffectedVertices(scene, mesh->m_id, m_prePickedSymVerts[sIdx], strokeAffectsPositions, strokeAffectsColors, strokeAffectsMaterials);
                     }
                 }
             }
@@ -3463,9 +3476,9 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 for (uint32_t v : recPrimary) {
                     m_dyntopo->recordStrokeStart(v);
                 }
-                if (m_useSym) {
-                    for (const auto& symList : m_prePickedSymVerts) {
-                        for (uint32_t v : symList) {
+                if (getUseSym()) {
+                    for (size_t sIdx = 0; sIdx < symCopies.size() && sIdx < m_prePickedSymVerts.size(); ++sIdx) {
+                        for (uint32_t v : m_prePickedSymVerts[sIdx]) {
                             m_dyntopo->recordStrokeStart(v);
                         }
                     }
@@ -3494,7 +3507,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
             intensity,
             mouseX,
             false,
-            glm::vec3(1.0f),
+            SymCopy{},
             (isGrabBrush && !m_firstStrokeFrame) ? nullptr : &pickedVertices,
             analyticNormalsPtr
         );
@@ -3507,24 +3520,24 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 
         // --- Stage 6: Symmetry Pass ---
         tStage = std::chrono::high_resolution_clock::now();
-        if (m_useSym) {
+        if (!symCopies.empty()) {
             if (m_firstStrokeFrame && m_initialSymIntersections.empty()) {
-                m_initialSymIntersections.resize(symScales.size());
-                for (size_t sIdx = 0; sIdx < symScales.size(); ++sIdx) {
-                    m_initialSymIntersections[sIdx] = reflectPointSymmetry(m_initialIntersection, symScales[sIdx], mesh, m_symmetryMode);
+                m_initialSymIntersections.resize(symCopies.size());
+                for (size_t sIdx = 0; sIdx < symCopies.size(); ++sIdx) {
+                    m_initialSymIntersections[sIdx] = symCopies[sIdx].point(m_initialIntersection);
                 }
-                m_grabbedVerticesSyms.resize(symScales.size());
+                m_grabbedVerticesSyms.resize(symCopies.size());
                 if (isSnakeBrush) {
-                    m_snakeActiveVertsSyms.resize(symScales.size());
-                    m_snakePrevTipPosSyms.resize(symScales.size());
-                    for (size_t sIdx = 0; sIdx < symScales.size(); ++sIdx) {
+                    m_snakeActiveVertsSyms.resize(symCopies.size());
+                    m_snakePrevTipPosSyms.resize(symCopies.size());
+                    for (size_t sIdx = 0; sIdx < symCopies.size(); ++sIdx) {
                         m_snakePrevTipPosSyms[sIdx] = m_initialSymIntersections[sIdx];
                     }
                 }
             }
 
-            for (size_t sIdx = 0; sIdx < symScales.size(); ++sIdx) {
-                glm::vec3 sScale = symScales[sIdx];
+            for (size_t sIdx = 0; sIdx < symCopies.size(); ++sIdx) {
+                const SymCopy& symCopy = symCopies[sIdx];
                 glm::vec3 symCenter;
                 std::vector<uint32_t> localSymVerts;
                 std::vector<uint32_t>& symVerts = OptFlags::get().cpuReuse ? m_symVerts : localSymVerts;
@@ -3535,7 +3548,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 double thisSymCullMs = 0.0;
 
                 if (isSnakeBrush) {
-                    symCenter = reflectPointSymmetry(m_currentIntersection, sScale, mesh, m_symmetryMode);
+                    symCenter = symCopy.point(m_currentIntersection);
                     if (m_firstStrokeFrame) {
                         if (sIdx < m_prePickedSymVerts.size() && !m_prePickedSymVerts[sIdx].empty()) {
                             fromPrePicked = true;
@@ -3556,7 +3569,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 
                             auto tSc0 = std::chrono::high_resolution_clock::now();
                             if (getSettings(activeBrush).culling && !symVerts.empty()) {
-                                glm::vec3 symRayDir = reflectVectorSymmetry(localRayDir, sScale, mesh, m_symmetryMode);
+                                glm::vec3 symRayDir = glm::normalize(symCopy.dir(localRayDir));
                                 filterCullingVertices(symVerts, mesh, symRayDir);
                             }
                             if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty() && !symVerts.empty()) {
@@ -3584,7 +3597,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 
                             auto tSc0 = std::chrono::high_resolution_clock::now();
                             if (getSettings(activeBrush).culling && !symVerts.empty()) {
-                                glm::vec3 symRayDir = reflectVectorSymmetry(localRayDir, sScale, mesh, m_symmetryMode);
+                                glm::vec3 symRayDir = glm::normalize(symCopy.dir(localRayDir));
                                 filterCullingVertices(symVerts, mesh, symRayDir);
                             }
                             if (getSettings(activeBrush).singlePolyGroup && !mesh->faceGroups.empty() && !symVerts.empty()) {
@@ -3601,11 +3614,11 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                         }
                     }
                 } else if (isGrabBrush && !m_firstStrokeFrame) {
-                    glm::vec3 symRayOrigin = reflectPointSymmetry(localRayOrigin, sScale, mesh, m_symmetryMode);
-                    glm::vec3 symRayDir = reflectVectorSymmetry(localRayDir, sScale, mesh, m_symmetryMode);
-                    const glm::vec3& initSymInter = (sIdx < m_initialSymIntersections.size()) ? m_initialSymIntersections[sIdx] : reflectPointSymmetry(m_initialIntersection, sScale, mesh, m_symmetryMode);
+                    glm::vec3 symRayOrigin = symCopy.point(localRayOrigin);
+                    glm::vec3 symRayDir = glm::normalize(symCopy.dir(localRayDir));
+                    const glm::vec3& initSymInter = (sIdx < m_initialSymIntersections.size()) ? m_initialSymIntersections[sIdx] : symCopy.point(m_initialIntersection);
                     glm::vec3 camFrontLocal = -glm::normalize(glm::vec3(m_cachedInvMatrix * glm::vec4(glm::vec3(m_cachedCamWorldMatrix[2]), 0.0f)));
-                    glm::vec3 symCamFrontLocal = reflectVectorSymmetry(camFrontLocal, sScale, mesh, m_symmetryMode);
+                    glm::vec3 symCamFrontLocal = glm::normalize(symCopy.dir(camFrontLocal));
                     float denom = glm::dot(symCamFrontLocal, symRayDir);
                     if (std::abs(denom) > 1e-12f) {
                         float t = glm::dot(symCamFrontLocal, initSymInter - symRayOrigin) / denom;
@@ -3614,7 +3627,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                         symCenter = initSymInter;
                     }
                 } else {
-                    symCenter = reflectPointSymmetry(m_currentIntersection, sScale, mesh, m_symmetryMode);
+                    symCenter = symCopy.point(m_currentIntersection);
                     if (sIdx < m_prePickedSymVerts.size() && !m_prePickedSymVerts[sIdx].empty()) {
                         fromPrePicked = true;
                     } else {
@@ -3634,7 +3647,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
 
                         auto tSc0 = std::chrono::high_resolution_clock::now();
                         if (getSettings(activeBrush).culling && !symVerts.empty()) {
-                            glm::vec3 symRayDir = reflectVectorSymmetry(localRayDir, sScale, mesh, m_symmetryMode);
+                            glm::vec3 symRayDir = glm::normalize(symCopy.dir(localRayDir));
                             filterCullingVertices(symVerts, mesh, symRayDir);
                         }
 
@@ -3660,10 +3673,10 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                 m_lastFrameProfile.symCullMs += thisSymCullMs;
 
                 if (numSymData > 0) {
-                    glm::vec3 symAreaNormal = reflectVectorSymmetry(m_cachedAreaNormal, sScale, mesh, m_symmetryMode);
-                    glm::vec3 symAreaCenter = reflectPointSymmetry(m_cachedAreaCenter, sScale, mesh, m_symmetryMode);
-                    glm::vec3 symIntersectionNormal = reflectVectorSymmetry(m_currentIntersectionNormal, sScale, mesh, m_symmetryMode);
-                    const glm::vec3& initSymInter = (sIdx < m_initialSymIntersections.size()) ? m_initialSymIntersections[sIdx] : reflectPointSymmetry(m_initialIntersection, sScale, mesh, m_symmetryMode);
+                    glm::vec3 symAreaNormal = glm::normalize(symCopy.dir(m_cachedAreaNormal));
+                    glm::vec3 symAreaCenter = symCopy.point(m_cachedAreaCenter);
+                    glm::vec3 symIntersectionNormal = glm::normalize(symCopy.dir(m_currentIntersectionNormal));
+                    const glm::vec3& initSymInter = (sIdx < m_initialSymIntersections.size()) ? m_initialSymIntersections[sIdx] : symCopy.point(m_initialIntersection);
 
                     if (!fromPrePicked && !skipGrabUndo) {
                         auto tUndoSym = std::chrono::high_resolution_clock::now();
@@ -3702,7 +3715,7 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
                         intensity,
                         mouseX,
                         true,
-                        sScale,
+                        symCopy,
                         (isGrabBrush && !m_firstStrokeFrame) ? nullptr : (fromPrePicked ? &m_prePickedSymVerts[sIdx] : &symVerts),
                         analyticNormalsPtr
                     );
@@ -3776,10 +3789,10 @@ void SculptManager::executeStroke(Scene& scene, Mesh* mesh, Camera& camera, floa
         } else {
             bool canSkipDedup = false;
             if (OptFlags::get().cpuReuse) {
-                if (!m_useSym) {
+                if (symCopies.empty()) {
                     canSkipDedup = true;
-                } else if (symScales.size() == 1) {
-                    glm::vec3 symCenter0 = reflectPointSymmetry(m_currentIntersection, symScales[0], mesh, m_symmetryMode);
+                } else if (symCopies.size() == 1) {
+                    glm::vec3 symCenter0 = symCopies[0].point(m_currentIntersection);
                     glm::vec3 diffCenter = m_currentIntersection - symCenter0;
                     float dist2 = glm::dot(diffCenter, diffCenter);
                     if (dist2 > 4.0001f * localRadius * localRadius) {
@@ -5193,10 +5206,10 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     m_strokeTargetPolyGroup = mesh->faceGroups[intersectFaceId];
                 }
 
-                std::vector<glm::vec3> symScales = getActiveSymmetryScales();
-                m_initialSymIntersections.resize(symScales.size());
-                for (size_t sIdx = 0; sIdx < symScales.size(); ++sIdx) {
-                    m_initialSymIntersections[sIdx] = reflectPointSymmetry(m_initialIntersection, symScales[sIdx], mesh, m_symmetryMode);
+                std::vector<SymCopy> symCopies = getActiveSymmetryCopies(mesh, false);
+                m_initialSymIntersections.resize(symCopies.size());
+                for (size_t sIdx = 0; sIdx < symCopies.size(); ++sIdx) {
+                    m_initialSymIntersections[sIdx] = symCopies[sIdx].point(m_initialIntersection);
                 }
 
                 m_lastStrokeX = mouseX;
@@ -5748,15 +5761,13 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 try {
                     CrashReporter::ScopedStage clipStage("CSG::ClipCurve");
                     CrashReporter::recordBreadcrumb("CSG", "ClipCurve pts=%zu verts=%d", m_clipCurvePoints.size(), mesh->nbVerts);
-                    std::vector<glm::vec3> symScales = getActiveSymmetryScales();
+                    std::vector<SymCopy> symCopies = getActiveSymmetryCopies(mesh, false);
                     bool modified = ClipCurveTool::execute(
                         mesh,
                         scene.getCamera(),
                         m_clipCurvePoints,
                         m_clipCurveAlt,
-                        m_useSym,
-                        m_symmetryMode,
-                        symScales
+                        symCopies
                     );
                     sculpt_log("[SculptManager] ClipCurveTool::execute result = %s\n", modified ? "TRUE (modified)" : "FALSE (unmodified)");
                     if (modified) {
@@ -5802,14 +5813,13 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                 const int origFaces = mesh->nbFaces;
                 try {
                     TrimConfig config;
+                    std::vector<SymCopy> symCopies = getActiveSymmetryCopies(mesh, false);
                     bool modified = TrimTool::execute(
                         mesh,
                         camera,
                         m_trimLassoPoints,
                         m_trimLassoAlt,
-                        getUseSym(),
-                        m_symmetryMode,
-                        getActiveSymmetryScales(),
+                        symCopies,
                         config
                     );
 
@@ -5852,16 +5862,14 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     HistoryState rollbackSnap = scene.saveCurrentState(true);
                     try {
                         scene.pushHistoryState();
-                        std::vector<glm::vec3> symScales = getActiveSymmetryScales();
+                        std::vector<SymCopy> symCopies = getActiveSymmetryCopies(mesh, false);
                         bool modified = sculpt::SplitTool::sliceByLine(
                             scene,
                             mesh,
                             camera,
                             m_splitLassoPoints.front(),
                             m_splitLassoPoints.back(),
-                            getUseSym(),
-                            m_symmetryMode,
-                            symScales
+                            symCopies
                         );
                         if (modified) {
                             scene.setModified(true);
@@ -5880,16 +5888,14 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
                     HistoryState rollbackSnap = scene.saveCurrentState(true);
                     try {
                         scene.pushHistoryState();
-                        std::vector<glm::vec3> symScales = getActiveSymmetryScales();
+                        std::vector<SymCopy> symCopies = getActiveSymmetryCopies(mesh, false);
                         bool modified = sculpt::SplitTool::splitByLasso(
                             scene,
                             mesh,
                             camera,
                             m_splitLassoPoints,
                             m_splitLassoAlt,
-                            getUseSym(),
-                            m_symmetryMode,
-                            symScales
+                            symCopies
                         );
                         if (modified) {
                             scene.setModified(true);
@@ -6593,20 +6599,26 @@ void SculptManager::handleEvent(const SDL_Event& event, Scene& scene) {
 
 void SculptManager::saveSymmetryToMesh(Mesh* mesh) {
     if (!mesh) return;
-    mesh->symEnabled = m_useSym;
-    mesh->symX       = m_symX;
-    mesh->symY       = m_symY;
-    mesh->symZ       = m_symZ;
-    mesh->symMode    = static_cast<int>(m_symmetryMode);
+    mesh->symEnabled       = m_useSym;
+    mesh->symX             = m_symX;
+    mesh->symY             = m_symY;
+    mesh->symZ             = m_symZ;
+    mesh->symMode          = static_cast<int>(m_symmetryMode);
+    mesh->symRadialEnabled = m_symRadialEnabled;
+    mesh->symRadialCount   = m_symRadialCount;
+    mesh->symRadialAxis    = m_symRadialAxis;
 }
 
 void SculptManager::loadSymmetryFromMesh(const Mesh* mesh) {
     if (!mesh) return;
-    m_useSym        = mesh->symEnabled;
-    m_symX          = mesh->symX;
-    m_symY          = mesh->symY;
-    m_symZ          = mesh->symZ;
-    m_symmetryMode  = static_cast<SymmetryMode>(mesh->symMode);
+    m_useSym           = mesh->symEnabled;
+    m_symX             = mesh->symX;
+    m_symY             = mesh->symY;
+    m_symZ             = mesh->symZ;
+    m_symmetryMode     = static_cast<SymmetryMode>(mesh->symMode);
+    m_symRadialEnabled = mesh->symRadialEnabled;
+    m_symRadialCount   = std::clamp(mesh->symRadialCount, 2, 64);
+    m_symRadialAxis    = std::clamp(mesh->symRadialAxis, 0, 2);
 }
 
 void SculptManager::processFrame(Scene& scene) {
@@ -6765,14 +6777,16 @@ void SculptManager::processFrame(Scene& scene) {
             worldNorm = glm::normalize(normalMatrix * localNorm);
         }
 
+        std::vector<SymCopy> symCopies;
+        if (activeMesh) {
+            symCopies = getActiveSymmetryCopies(activeMesh, false);
+        }
+
         m_cursor.update(
             m_rawMouseX, m_rawMouseY,
             scene,
             activeSettings.radius,
-            m_useSym,
-            m_symX,
-            m_symY,
-            m_symZ,
+            symCopies,
             m_isSculpting,
             activeBrush,
             hasIntersection,
@@ -6781,7 +6795,6 @@ void SculptManager::processFrame(Scene& scene) {
             activeSettings.focalShift,
             activeSettings.hardness,
             activeSettings.paintColor,
-            m_symmetryMode,
             m_modalMode
         );
     }
@@ -6870,42 +6883,11 @@ std::vector<uint32_t> SculptManager::getVerticesInLasso(Mesh* mesh, const Camera
         glm::mat4 symMvp;
     };
     std::vector<CachedSymMatrix> cachedSymMatrices;
-    if (m_useSym) {
-        std::vector<glm::vec3> symScales = getActiveSymmetryScales();
-        cachedSymMatrices.reserve(symScales.size());
-        for (const auto& sScale : symScales) {
-            std::vector<std::pair<glm::vec3, glm::vec3>> planes;
-            for (int axis = 0; axis < 3; ++axis) {
-                if (sScale[axis] < 0.0f) {
-                    planes.push_back({
-                        mesh->getSymmetryOriginForAxis(axis, m_symmetryMode),
-                        mesh->getSymmetryNormalForAxis(axis, m_symmetryMode)
-                    });
-                }
-            }
-            if (planes.empty()) continue;
-
-            auto reflectPoint = [&](const glm::vec3& p) {
-                glm::vec3 res = p;
-                for (const auto& plane : planes) {
-                    float dist = glm::dot(res - plane.first, plane.second);
-                    res -= 2.0f * dist * plane.second;
-                }
-                return res;
-            };
-
-            glm::vec3 b  = reflectPoint(glm::vec3(0.0f, 0.0f, 0.0f));
-            glm::vec3 c0 = reflectPoint(glm::vec3(1.0f, 0.0f, 0.0f)) - b;
-            glm::vec3 c1 = reflectPoint(glm::vec3(0.0f, 1.0f, 0.0f)) - b;
-            glm::vec3 c2 = reflectPoint(glm::vec3(0.0f, 0.0f, 1.0f)) - b;
-
-            glm::mat4 symMat(
-                glm::vec4(c0, 0.0f),
-                glm::vec4(c1, 0.0f),
-                glm::vec4(c2, 0.0f),
-                glm::vec4(b,  1.0f)
-            );
-            cachedSymMatrices.push_back({ mvp * symMat });
+    if (getUseSym()) {
+        std::vector<SymCopy> symCopies = getActiveSymmetryCopies(mesh, false);
+        cachedSymMatrices.reserve(symCopies.size());
+        for (const auto& c : symCopies) {
+            cachedSymMatrices.push_back({ mvp * c.toMat4() });
         }
     }
 
@@ -7313,6 +7295,9 @@ bool SculptManager::saveSettings(IniFile& ini) {
     ini.setBool(symSec, "symY", m_symY);
     ini.setBool(symSec, "symZ", m_symZ);
     ini.set(symSec, "symmetryMode", (m_symmetryMode == SymmetryMode::World ? "world" : "local"));
+    ini.setBool(symSec, "symRadialEnabled", m_symRadialEnabled);
+    ini.setInt(symSec, "symRadialCount", m_symRadialCount);
+    ini.setInt(symSec, "symRadialAxis", m_symRadialAxis);
 
     return true;
 }
@@ -7413,6 +7398,15 @@ bool SculptManager::loadSettings(const IniFile& ini) {
             } else {
                 m_symmetryMode = SymmetryMode::Local;
             }
+        }
+        if (ini.hasKey(symSec, "symRadialEnabled")) {
+            m_symRadialEnabled = ini.getBool(symSec, "symRadialEnabled");
+        }
+        if (ini.hasKey(symSec, "symRadialCount")) {
+            m_symRadialCount = std::clamp(ini.getInt(symSec, "symRadialCount", 8), 2, 64);
+        }
+        if (ini.hasKey(symSec, "symRadialAxis")) {
+            m_symRadialAxis = std::clamp(ini.getInt(symSec, "symRadialAxis", 1), 0, 2);
         }
     }
 

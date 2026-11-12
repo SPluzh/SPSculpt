@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 #include "common/Enums.h"
+#include "common/Symmetry.h"
 #include "editing/MeasurementTypes.h"
 
 class Scene;
@@ -78,7 +79,8 @@ private:
     std::vector<float> m_startVerts;
     std::vector<float> m_startNormals;
     std::vector<float> m_weights;
-    std::vector<float> m_weightsSym;
+    std::vector<std::vector<float>> m_weightsSym;
+    std::vector<SymCopy> m_cachedSymCopies;
 
     void prepareDeformation(Mesh* mesh);
     void applyDeformation(Mesh* mesh, const glm::mat4& deltaMatrixWorld, bool useSym);
@@ -96,6 +98,6 @@ private:
 
     glm::vec3 intersectRayViewPlane(const Camera& camera, float mouseX, float mouseY, const glm::vec3& planePoint) const;
     int hitTestHandles(const Camera& camera, float mouseX, float mouseY, float threshold = 20.0f) const;
-    int hitTestSymHandles(const Camera& camera, const Mesh* mesh, float mouseX, float mouseY, float threshold = 20.0f) const;
-    void mirrorLineAcrossSymmetry(Mesh* mesh);
+    int hitTestSymHandles(const Camera& camera, const Mesh* mesh, float mouseX, float mouseY, int& outCopyIdx, float threshold = 20.0f) const;
+    void mirrorLineAcrossSymmetry(Mesh* mesh, int copyIdx = 0);
 };

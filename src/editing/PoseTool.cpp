@@ -58,6 +58,7 @@ void PoseTool::clearLine() {
     m_line.isAltRepositioning = false;
     m_weights.clear();
     m_weightsSym.clear();
+    m_cachedSymCopies.clear();
     m_startVerts.clear();
     m_startNormals.clear();
     m_gizmoDeformedMesh = false;
@@ -126,63 +127,61 @@ int PoseTool::hitTestHandles(const Camera& camera, float mouseX, float mouseY, f
     return -1;
 }
 
-int PoseTool::hitTestSymHandles(const Camera& camera, const Mesh* mesh, float mouseX, float mouseY, float threshold) const {
-    if (!m_line.isValid || !mesh || !m_sculpt.getUseSym()) return -1;
+int PoseTool::hitTestSymHandles(const Camera& camera, const Mesh* mesh, float mouseX, float mouseY, int& outCopyIdx, float threshold) const {
+    outCopyIdx = -1;
+    if (!m_line.isValid || !mesh) return -1;
 
-    bool symX = m_sculpt.getSymX();
-    bool symY = m_sculpt.getSymY();
-    bool symZ = m_sculpt.getSymZ();
-    if (!symX && !symY && !symZ) return -1;
-
-    SymmetryMode symMode = m_sculpt.getSymmetryMode();
-    glm::vec3 sScale(symX ? -1.0f : 1.0f,
-                     symY ? -1.0f : 1.0f,
-                     symZ ? -1.0f : 1.0f);
+    std::vector<SymCopy> symCopies = m_sculpt.getActiveSymmetryCopies(mesh, false);
+    if (symCopies.empty()) return -1;
 
     glm::mat4 invMesh = glm::inverse(mesh->matrix);
     glm::vec3 startLocal = glm::vec3(invMesh * glm::vec4(m_line.startWorld, 1.0f));
     glm::vec3 endLocal = glm::vec3(invMesh * glm::vec4(m_line.endWorld, 1.0f));
 
-    glm::vec3 symStartLocal = reflectPointSymmetry(startLocal, sScale, mesh, symMode);
-    glm::vec3 symEndLocal = reflectPointSymmetry(endLocal, sScale, mesh, symMode);
-
-    glm::vec3 symStartWorld = glm::vec3(mesh->matrix * glm::vec4(symStartLocal, 1.0f));
-    glm::vec3 symEndWorld = glm::vec3(mesh->matrix * glm::vec4(symEndLocal, 1.0f));
-    glm::vec3 symCenterWorld = (symStartWorld + symEndWorld) * 0.5f;
-
     glm::vec2 mousePos(mouseX, mouseY);
 
-    glm::vec3 sStart = camera.project(symStartWorld);
-    if (glm::distance(mousePos, glm::vec2(sStart.x, sStart.y)) <= threshold) return 0;
+    for (int cIdx = 0; cIdx < (int)symCopies.size(); ++cIdx) {
+        glm::vec3 symStartLocal = symCopies[cIdx].point(startLocal);
+        glm::vec3 symEndLocal = symCopies[cIdx].point(endLocal);
 
-    glm::vec3 sEnd = camera.project(symEndWorld);
-    if (glm::distance(mousePos, glm::vec2(sEnd.x, sEnd.y)) <= threshold) return 2;
+        glm::vec3 symStartWorld = glm::vec3(mesh->matrix * glm::vec4(symStartLocal, 1.0f));
+        glm::vec3 symEndWorld = glm::vec3(mesh->matrix * glm::vec4(symEndLocal, 1.0f));
+        glm::vec3 symCenterWorld = (symStartWorld + symEndWorld) * 0.5f;
 
-    glm::vec3 sCenter = camera.project(symCenterWorld);
-    if (glm::distance(mousePos, glm::vec2(sCenter.x, sCenter.y)) <= threshold) return 1;
+        glm::vec3 sStart = camera.project(symStartWorld);
+        if (glm::distance(mousePos, glm::vec2(sStart.x, sStart.y)) <= threshold) {
+            outCopyIdx = cIdx;
+            return 0;
+        }
+
+        glm::vec3 sEnd = camera.project(symEndWorld);
+        if (glm::distance(mousePos, glm::vec2(sEnd.x, sEnd.y)) <= threshold) {
+            outCopyIdx = cIdx;
+            return 2;
+        }
+
+        glm::vec3 sCenter = camera.project(symCenterWorld);
+        if (glm::distance(mousePos, glm::vec2(sCenter.x, sCenter.y)) <= threshold) {
+            outCopyIdx = cIdx;
+            return 1;
+        }
+    }
 
     return -1;
 }
 
-void PoseTool::mirrorLineAcrossSymmetry(Mesh* mesh) {
+void PoseTool::mirrorLineAcrossSymmetry(Mesh* mesh, int copyIdx) {
     if (!mesh || !m_line.isValid) return;
 
-    bool symX = m_sculpt.getSymX();
-    bool symY = m_sculpt.getSymY();
-    bool symZ = m_sculpt.getSymZ();
-    if (!symX && !symY && !symZ) return;
-
-    SymmetryMode symMode = m_sculpt.getSymmetryMode();
-    glm::vec3 sScale(symX ? -1.0f : 1.0f,
-                     symY ? -1.0f : 1.0f,
-                     symZ ? -1.0f : 1.0f);
+    std::vector<SymCopy> symCopies = m_sculpt.getActiveSymmetryCopies(mesh, false);
+    if (copyIdx < 0 || copyIdx >= (int)symCopies.size()) return;
 
     glm::mat4 invMesh = glm::inverse(mesh->matrix);
     glm::vec3 startLocal = glm::vec3(invMesh * glm::vec4(m_line.startWorld, 1.0f));
     glm::vec3 endLocal = glm::vec3(invMesh * glm::vec4(m_line.endWorld, 1.0f));
 
-    glm::vec3 symStartLocal = reflectPointSymmetry(startLocal, sScale, mesh, symMode);
-    glm::vec3 symEndLocal = reflectPointSymmetry(endLocal, sScale, mesh, symMode);
+    glm::vec3 symStartLocal = symCopies[copyIdx].point(startLocal);
+    glm::vec3 symEndLocal = symCopies[copyIdx].point(endLocal);
 
     m_line.startWorld = glm::vec3(mesh->matrix * glm::vec4(symStartLocal, 1.0f));
     m_line.endWorld = glm::vec3(mesh->matrix * glm::vec4(symEndLocal, 1.0f));
@@ -201,9 +200,10 @@ bool PoseTool::handleMouseDown(Scene& scene, const Camera& camera, float mouseX,
     if (m_line.isValid) {
         int hit = hitTestHandles(camera, mouseX, mouseY, 20.0f);
         if (hit < 0 && m_sculpt.getUseSym()) {
-            int hitSym = hitTestSymHandles(camera, mesh, mouseX, mouseY, 20.0f);
-            if (hitSym >= 0) {
-                mirrorLineAcrossSymmetry(mesh);
+            int hitCopyIdx = -1;
+            int hitSym = hitTestSymHandles(camera, mesh, mouseX, mouseY, hitCopyIdx, 20.0f);
+            if (hitSym >= 0 && hitCopyIdx >= 0) {
+                mirrorLineAcrossSymmetry(mesh, hitCopyIdx);
                 hit = hitSym;
             }
         }
@@ -410,6 +410,7 @@ void PoseTool::computeWeights(Mesh* mesh) {
     if (!mesh || !m_line.isValid) {
         m_weights.clear();
         m_weightsSym.clear();
+        m_cachedSymCopies.clear();
         return;
     }
 
@@ -424,6 +425,7 @@ void PoseTool::computeWeights(Mesh* mesh) {
     if (lineLenSq < 1e-6f) {
         std::fill(m_weights.begin(), m_weights.end(), 1.0f);
         m_weightsSym.clear();
+        m_cachedSymCopies.clear();
         return;
     }
     float invLineLenSq = 1.0f / lineLenSq;
@@ -433,31 +435,21 @@ void PoseTool::computeWeights(Mesh* mesh) {
     float capsuleRadius = settings.poseCapsuleRadius;
     bool useMask = settings.poseUseMask && (mesh->materials.size() == (size_t)nbVerts * 3);
 
-    bool symX = m_sculpt.getSymX();
-    bool symY = m_sculpt.getSymY();
-    bool symZ = m_sculpt.getSymZ();
-    bool hasAnySymAxis = symX || symY || symZ;
-    bool useSym = m_sculpt.getUseSym() && hasAnySymAxis;
+    m_cachedSymCopies = m_sculpt.getActiveSymmetryCopies(mesh, false);
+    const size_t numSym = m_cachedSymCopies.size();
+    m_weightsSym.resize(numSym);
 
-    SymmetryMode symMode = m_sculpt.getSymmetryMode();
-    glm::vec3 sScale(symX ? -1.0f : 1.0f,
-                     symY ? -1.0f : 1.0f,
-                     symZ ? -1.0f : 1.0f);
+    std::vector<glm::vec3> symStarts(numSym);
+    std::vector<glm::vec3> symDirs(numSym);
+    std::vector<float> symInvLenSqs(numSym);
 
-    glm::vec3 symStartLocal = startLocal;
-    glm::vec3 symEndLocal = endLocal;
-    glm::vec3 symDirLocal = dirLocal;
-    float invSymLineLenSq = invLineLenSq;
-
-    if (useSym) {
-        m_weightsSym.resize(nbVerts);
-        symStartLocal = reflectPointSymmetry(startLocal, sScale, mesh, symMode);
-        symEndLocal = reflectPointSymmetry(endLocal, sScale, mesh, symMode);
-        symDirLocal = symEndLocal - symStartLocal;
-        float symLenSq = glm::dot(symDirLocal, symDirLocal);
-        invSymLineLenSq = (symLenSq > 1e-6f) ? (1.0f / symLenSq) : invLineLenSq;
-    } else {
-        m_weightsSym.clear();
+    for (size_t c = 0; c < numSym; ++c) {
+        m_weightsSym[c].resize(nbVerts);
+        symStarts[c] = m_cachedSymCopies[c].point(startLocal);
+        glm::vec3 sEnd = m_cachedSymCopies[c].point(endLocal);
+        symDirs[c] = sEnd - symStarts[c];
+        float sLenSq = glm::dot(symDirs[c], symDirs[c]);
+        symInvLenSqs[c] = (sLenSq > 1e-6f) ? (1.0f / sLenSq) : invLineLenSq;
     }
 
 #pragma omp parallel for schedule(static) if(nbVerts > 2000)
@@ -467,8 +459,8 @@ void PoseTool::computeWeights(Mesh* mesh) {
 
         m_weights[i] = evaluateBoneWeight(v, startLocal, dirLocal, invLineLenSq, falloffWidth, capsuleRadius, wMask);
 
-        if (useSym) {
-            m_weightsSym[i] = evaluateBoneWeight(v, symStartLocal, symDirLocal, invSymLineLenSq, falloffWidth, capsuleRadius, wMask);
+        for (size_t c = 0; c < numSym; ++c) {
+            m_weightsSym[c][i] = evaluateBoneWeight(v, symStarts[c], symDirs[c], symInvLenSqs[c], falloffWidth, capsuleRadius, wMask);
         }
     }
 }
@@ -489,11 +481,8 @@ void PoseTool::applyDeformation(Mesh* mesh, const glm::mat4& deltaMatrixWorld, b
         return;
     }
 
-    bool symX = m_sculpt.getSymX();
-    bool symY = m_sculpt.getSymY();
-    bool symZ = m_sculpt.getSymZ();
-    bool hasAnySymAxis = symX || symY || symZ;
-    bool useSymTransform = useSym && m_sculpt.getUseSym() && hasAnySymAxis;
+    std::vector<SymCopy> symCopies = useSym ? m_sculpt.getActiveSymmetryCopies(mesh, false) : std::vector<SymCopy>();
+    bool useSymTransform = useSym && !symCopies.empty();
 
     glm::mat4 invMesh = glm::inverse(mesh->matrix);
     glm::mat4 deltaLocal = invMesh * deltaMatrixWorld * mesh->matrix;
@@ -540,111 +529,156 @@ void PoseTool::applyDeformation(Mesh* mesh, const glm::mat4& deltaMatrixWorld, b
     }
 
     // --- Symmetry Mode Active ---
-    if (m_weightsSym.size() != (size_t)nbVerts) {
+    if (m_weightsSym.size() != symCopies.size() ||
+        (!m_weightsSym.empty() && m_weightsSym[0].size() != (size_t)nbVerts)) {
         computeWeights(mesh);
+        symCopies = m_cachedSymCopies;
     }
 
-    SymmetryMode symMode = m_sculpt.getSymmetryMode();
-    int axis = m_sculpt.getSymAxis();
-    glm::vec3 P_plane = mesh->getSymmetryOriginForAxis(axis, symMode);
-    glm::vec3 N_plane = mesh->getSymmetryNormalForAxis(axis, symMode);
+    const bool singleMirrorFastPath = (!m_sculpt.radialOn() && symCopies.size() == 1 && symCopies[0].isMirror() &&
+        ((m_sculpt.getSymX() ? 1 : 0) + (m_sculpt.getSymY() ? 1 : 0) + (m_sculpt.getSymZ() ? 1 : 0) == 1));
 
-    float bbox[6];
-    mesh->computeBbox(bbox);
-    float diagLen = std::sqrt(
-        (bbox[1] - bbox[0]) * (bbox[1] - bbox[0]) +
-        (bbox[3] - bbox[2]) * (bbox[3] - bbox[2]) +
-        (bbox[5] - bbox[4]) * (bbox[5] - bbox[4])
-    );
-    float blendEps = std::max(0.005f, 0.01f * diagLen);
+    if (singleMirrorFastPath) {
+        SymmetryMode symMode = m_sculpt.getSymmetryMode();
+        int axis = m_sculpt.getSymAxis();
+        glm::vec3 P_plane = mesh->getSymmetryOriginForAxis(axis, symMode);
+        glm::vec3 N_plane = mesh->getSymmetryNormalForAxis(axis, symMode);
 
-    // Construct M_sym: Exact reflection matrix across the symmetry plane in mesh local space
-    glm::mat4 M_sym(1.0f);
-    if (symMode == SymmetryMode::World) {
-        float worldRadius = mesh->computeLocalRadius() * mesh->scale;
-        glm::vec3 worldNormalVec(0.0f);
-        if (axis == 0) worldNormalVec.x = 1.0f;
-        else if (axis == 1) worldNormalVec.y = 1.0f;
-        else if (axis == 2) worldNormalVec.z = 1.0f;
-        glm::vec3 worldOrigin = worldNormalVec * (mesh->symmetryOffset * worldRadius);
+        float bbox[6];
+        mesh->computeBbox(bbox);
+        float diagLen = std::sqrt(
+            (bbox[1] - bbox[0]) * (bbox[1] - bbox[0]) +
+            (bbox[3] - bbox[2]) * (bbox[3] - bbox[2]) +
+            (bbox[5] - bbox[4]) * (bbox[5] - bbox[4])
+        );
+        float blendEps = std::max(0.005f, 0.01f * diagLen);
 
-        glm::mat4 S_axis(1.0f);
-        if (symX) S_axis[0][0] = -1.0f;
-        if (symY) S_axis[1][1] = -1.0f;
-        if (symZ) S_axis[2][2] = -1.0f;
+        glm::mat4 M_sym = symCopies[0].toMat4();
+        glm::mat4 M_sym_inv = symCopies[0].inverse().toMat4();
+        glm::mat4 deltaSym = M_sym * deltaLocal * M_sym_inv;
+        glm::mat3 normalMatrixSym = glm::transpose(glm::inverse(glm::mat3(deltaSym)));
 
-        glm::mat4 T_w = glm::translate(glm::mat4(1.0f), worldOrigin);
-        glm::mat4 T_w_inv = glm::translate(glm::mat4(1.0f), -worldOrigin);
-        glm::mat4 M_world = T_w * S_axis * T_w_inv;
-        M_sym = invMesh * M_world * mesh->matrix;
-    } else {
-        glm::mat4 S_axis(1.0f);
-        if (symX) S_axis[0][0] = -1.0f;
-        if (symY) S_axis[1][1] = -1.0f;
-        if (symZ) S_axis[2][2] = -1.0f;
-
-        glm::mat4 T_plane = glm::translate(glm::mat4(1.0f), P_plane);
-        glm::mat4 T_plane_inv = glm::translate(glm::mat4(1.0f), -P_plane);
-        M_sym = T_plane * S_axis * T_plane_inv;
-    }
-
-    glm::mat4 deltaSym = M_sym * deltaLocal * M_sym;
-    glm::mat3 normalMatrixSym = glm::transpose(glm::inverse(glm::mat3(deltaSym)));
-
-    glm::vec3 startLocal = glm::vec3(invMesh * glm::vec4(m_line.startWorld, 1.0f));
-    float d_pivot = glm::dot(startLocal - P_plane, N_plane);
-    float signPivot = (d_pivot >= 0.0f) ? 1.0f : -1.0f;
+        glm::vec3 startLocal = glm::vec3(invMesh * glm::vec4(m_line.startWorld, 1.0f));
+        float d_pivot = glm::dot(startLocal - P_plane, N_plane);
+        float signPivot = (d_pivot >= 0.0f) ? 1.0f : -1.0f;
 
 #pragma omp parallel for schedule(static) if(nbVerts > 2000)
-    for (int i = 0; i < nbVerts; ++i) {
-        float wP = (i < (int)m_weights.size()) ? m_weights[i] : 0.0f;
-        float wS = (i < (int)m_weightsSym.size()) ? m_weightsSym[i] : 0.0f;
+        for (int i = 0; i < nbVerts; ++i) {
+            float wP = (i < (int)m_weights.size()) ? m_weights[i] : 0.0f;
+            float wS = (i < (int)m_weightsSym[0].size()) ? m_weightsSym[0][i] : 0.0f;
 
-        if (wP <= 0.001f && wS <= 0.001f) {
-            mesh->verts[i * 3]     = m_startVerts[i * 3];
-            mesh->verts[i * 3 + 1] = m_startVerts[i * 3 + 1];
-            mesh->verts[i * 3 + 2] = m_startVerts[i * 3 + 2];
-            mesh->normals[i * 3]   = m_startNormals[i * 3];
-            mesh->normals[i * 3 + 1] = m_startNormals[i * 3 + 1];
-            mesh->normals[i * 3 + 2] = m_startNormals[i * 3 + 2];
-            continue;
+            if (wP <= 0.001f && wS <= 0.001f) {
+                mesh->verts[i * 3]     = m_startVerts[i * 3];
+                mesh->verts[i * 3 + 1] = m_startVerts[i * 3 + 1];
+                mesh->verts[i * 3 + 2] = m_startVerts[i * 3 + 2];
+                mesh->normals[i * 3]   = m_startNormals[i * 3];
+                mesh->normals[i * 3 + 1] = m_startNormals[i * 3 + 1];
+                mesh->normals[i * 3 + 2] = m_startNormals[i * 3 + 2];
+                continue;
+            }
+
+            glm::vec4 vStart(m_startVerts[i * 3], m_startVerts[i * 3 + 1], m_startVerts[i * 3 + 2], 1.0f);
+            glm::vec3 nStart(m_startNormals[i * 3], m_startNormals[i * 3 + 1], m_startNormals[i * 3 + 2]);
+
+            float d_v = glm::dot(glm::vec3(vStart) - P_plane, N_plane);
+            float signedDist = d_v * signPivot;
+
+            float weightP = 1.0f;
+            if (signedDist >= blendEps) {
+                weightP = 1.0f;
+            } else if (signedDist <= -blendEps) {
+                weightP = 0.0f;
+            } else {
+                float t = 0.5f + 0.5f * (signedDist / blendEps);
+                weightP = t * t * (3.0f - 2.0f * t);
+            }
+
+            glm::vec4 vP = deltaLocal * vStart;
+            glm::vec4 vS = deltaSym * vStart;
+            glm::vec3 nP = normalMatrixPrimary * nStart;
+            glm::vec3 nS = normalMatrixSym * nStart;
+
+            glm::vec4 vTransformed = glm::mix(vS, vP, weightP);
+            glm::vec3 nTransformed = glm::normalize(glm::mix(nS, nP, weightP));
+            float effectiveWeight = glm::mix(wS, wP, weightP);
+
+            glm::vec3 vNew = glm::mix(glm::vec3(vStart), glm::vec3(vTransformed), effectiveWeight);
+            glm::vec3 nNew = glm::normalize(glm::mix(nStart, nTransformed, effectiveWeight));
+
+            mesh->verts[i * 3]     = vNew.x;
+            mesh->verts[i * 3 + 1] = vNew.y;
+            mesh->verts[i * 3 + 2] = vNew.z;
+            mesh->normals[i * 3]   = nNew.x;
+            mesh->normals[i * 3 + 1] = nNew.y;
+            mesh->normals[i * 3 + 2] = nNew.z;
+        }
+    } else {
+        const size_t numSym = symCopies.size();
+        std::vector<glm::mat4> deltaSyms(numSym);
+        std::vector<glm::mat3> normSyms(numSym);
+        for (size_t c = 0; c < numSym; ++c) {
+            glm::mat4 M_c = symCopies[c].toMat4();
+            glm::mat4 M_c_inv = symCopies[c].inverse().toMat4();
+            deltaSyms[c] = M_c * deltaLocal * M_c_inv;
+            normSyms[c] = glm::transpose(glm::inverse(glm::mat3(deltaSyms[c])));
         }
 
-        glm::vec4 vStart(m_startVerts[i * 3], m_startVerts[i * 3 + 1], m_startVerts[i * 3 + 2], 1.0f);
-        glm::vec3 nStart(m_startNormals[i * 3], m_startNormals[i * 3 + 1], m_startNormals[i * 3 + 2]);
+#pragma omp parallel for schedule(static) if(nbVerts > 2000)
+        for (int i = 0; i < nbVerts; ++i) {
+            float w0 = (i < (int)m_weights.size()) ? m_weights[i] : 0.0f;
+            float maxW = w0;
+            float sumW = w0;
+            for (size_t c = 0; c < numSym; ++c) {
+                float wc = m_weightsSym[c][i];
+                if (wc > maxW) maxW = wc;
+                sumW += wc;
+            }
 
-        // Signed distance to symmetry plane along plane normal
-        float d_v = glm::dot(glm::vec3(vStart) - P_plane, N_plane);
-        float signedDist = d_v * signPivot; // > 0 for primary side, < 0 for sym side
+            if (sumW <= 1e-4f || maxW <= 0.001f) {
+                mesh->verts[i * 3]     = m_startVerts[i * 3];
+                mesh->verts[i * 3 + 1] = m_startVerts[i * 3 + 1];
+                mesh->verts[i * 3 + 2] = m_startVerts[i * 3 + 2];
+                mesh->normals[i * 3]   = m_startNormals[i * 3];
+                mesh->normals[i * 3 + 1] = m_startNormals[i * 3 + 1];
+                mesh->normals[i * 3 + 2] = m_startNormals[i * 3 + 2];
+                continue;
+            }
 
-        float weightP = 1.0f;
-        if (signedDist >= blendEps) {
-            weightP = 1.0f;
-        } else if (signedDist <= -blendEps) {
-            weightP = 0.0f;
-        } else {
-            float t = 0.5f + 0.5f * (signedDist / blendEps);
-            weightP = t * t * (3.0f - 2.0f * t);
+            glm::vec4 vStart(m_startVerts[i * 3], m_startVerts[i * 3 + 1], m_startVerts[i * 3 + 2], 1.0f);
+            glm::vec3 nStart(m_startNormals[i * 3], m_startNormals[i * 3 + 1], m_startNormals[i * 3 + 2]);
+
+            glm::vec3 vAccum(0.0f);
+            glm::vec3 nAccum(0.0f);
+
+            if (w0 > 1e-4f) {
+                vAccum += w0 * glm::vec3(deltaLocal * vStart);
+                nAccum += w0 * (normalMatrixPrimary * nStart);
+            }
+            for (size_t c = 0; c < numSym; ++c) {
+                float wc = m_weightsSym[c][i];
+                if (wc > 1e-4f) {
+                    vAccum += wc * glm::vec3(deltaSyms[c] * vStart);
+                    nAccum += wc * (normSyms[c] * nStart);
+                }
+            }
+
+            glm::vec3 vBlended = vAccum / sumW;
+            float nLen = glm::length(nAccum);
+            glm::vec3 nBlended = (nLen > 1e-8f) ? (nAccum / nLen) : nStart;
+
+            float effW = std::min(maxW, 1.0f);
+            glm::vec3 vNew = glm::mix(glm::vec3(vStart), vBlended, effW);
+            glm::vec3 nMixed = glm::mix(nStart, nBlended, effW);
+            float nNewLen = glm::length(nMixed);
+            glm::vec3 nNew = (nNewLen > 1e-8f) ? (nMixed / nNewLen) : nStart;
+
+            mesh->verts[i * 3]     = vNew.x;
+            mesh->verts[i * 3 + 1] = vNew.y;
+            mesh->verts[i * 3 + 2] = vNew.z;
+            mesh->normals[i * 3]   = nNew.x;
+            mesh->normals[i * 3 + 1] = nNew.y;
+            mesh->normals[i * 3 + 2] = nNew.z;
         }
-
-        glm::vec4 vP = deltaLocal * vStart;
-        glm::vec4 vS = deltaSym * vStart;
-        glm::vec3 nP = normalMatrixPrimary * nStart;
-        glm::vec3 nS = normalMatrixSym * nStart;
-
-        glm::vec4 vTransformed = glm::mix(vS, vP, weightP);
-        glm::vec3 nTransformed = glm::normalize(glm::mix(nS, nP, weightP));
-        float effectiveWeight = glm::mix(wS, wP, weightP);
-
-        glm::vec3 vNew = glm::mix(glm::vec3(vStart), glm::vec3(vTransformed), effectiveWeight);
-        glm::vec3 nNew = glm::normalize(glm::mix(nStart, nTransformed, effectiveWeight));
-
-        mesh->verts[i * 3]     = vNew.x;
-        mesh->verts[i * 3 + 1] = vNew.y;
-        mesh->verts[i * 3 + 2] = vNew.z;
-        mesh->normals[i * 3]   = nNew.x;
-        mesh->normals[i * 3 + 1] = nNew.y;
-        mesh->normals[i * 3 + 2] = nNew.z;
     }
 
     mesh->isVertexDirty = true;
@@ -727,47 +761,40 @@ void PoseTool::renderOverlay(Scene& scene, const Camera& camera, float viewportW
     // 4. Draw Symmetry preview if enabled
     if (m_sculpt.getUseSym() && scene.getSelected() && (m_line.isValid || m_line.isDrawing)) {
         Mesh* mesh = scene.getSelected();
-        bool symX = m_sculpt.getSymX();
-        bool symY = m_sculpt.getSymY();
-        bool symZ = m_sculpt.getSymZ();
-        if (symX || symY || symZ) {
-            SymmetryMode symMode = m_sculpt.getSymmetryMode();
-            glm::vec3 sScale(symX ? -1.0f : 1.0f,
-                             symY ? -1.0f : 1.0f,
-                             symZ ? -1.0f : 1.0f);
-
+        std::vector<SymCopy> symCopies = m_sculpt.getActiveSymmetryCopies(mesh, false);
+        if (!symCopies.empty()) {
             glm::mat4 invMesh = glm::inverse(mesh->matrix);
             glm::vec3 startLocal = glm::vec3(invMesh * glm::vec4(m_line.startWorld, 1.0f));
             glm::vec3 endLocal = glm::vec3(invMesh * glm::vec4(m_line.endWorld, 1.0f));
 
-            glm::vec3 symStartLocal = reflectPointSymmetry(startLocal, sScale, mesh, symMode);
-            glm::vec3 symEndLocal = reflectPointSymmetry(endLocal, sScale, mesh, symMode);
-
-            glm::vec3 symStartWorld = glm::vec3(mesh->matrix * glm::vec4(symStartLocal, 1.0f));
-            glm::vec3 symEndWorld = glm::vec3(mesh->matrix * glm::vec4(symEndLocal, 1.0f));
-            glm::vec3 symCenterWorld = (symStartWorld + symEndWorld) * 0.5f;
-
-            glm::vec3 sSymStart = camera.project(symStartWorld);
-            glm::vec3 sSymEnd = camera.project(symEndWorld);
-            glm::vec3 sSymCenter = camera.project(symCenterWorld);
-
             ImU32 colSymLine = IM_COL32(0, 210, 190, 160);
             ImU32 colSymShadow = IM_COL32(0, 0, 0, 120);
-
-            // Mirrored line
-            drawList->AddLine(ImVec2(sSymStart.x, sSymStart.y), ImVec2(sSymEnd.x, sSymEnd.y), colSymShadow, 4.0f);
-            drawList->AddLine(ImVec2(sSymStart.x, sSymStart.y), ImVec2(sSymEnd.x, sSymEnd.y), colSymLine, 2.0f);
-
-            // Mirrored Handles
             float rSym = 6.0f;
-            drawList->AddCircleFilled(ImVec2(sSymStart.x, sSymStart.y), rSym, IM_COL32(40, 220, 80, 200));
-            drawList->AddCircle(ImVec2(sSymStart.x, sSymStart.y), rSym, IM_COL32(255, 255, 255, 220), 0, 1.2f);
 
-            drawList->AddCircleFilled(ImVec2(sSymEnd.x, sSymEnd.y), rSym, IM_COL32(240, 60, 60, 200));
-            drawList->AddCircle(ImVec2(sSymEnd.x, sSymEnd.y), rSym, IM_COL32(255, 255, 255, 220), 0, 1.2f);
+            for (const SymCopy& copy : symCopies) {
+                glm::vec3 symStartLocal = copy.point(startLocal);
+                glm::vec3 symEndLocal = copy.point(endLocal);
 
-            drawList->AddCircleFilled(ImVec2(sSymCenter.x, sSymCenter.y), rSym * 0.8f, IM_COL32(240, 200, 40, 200));
-            drawList->AddCircle(ImVec2(sSymCenter.x, sSymCenter.y), rSym * 0.8f, IM_COL32(255, 255, 255, 220), 0, 1.2f);
+                glm::vec3 symStartWorld = glm::vec3(mesh->matrix * glm::vec4(symStartLocal, 1.0f));
+                glm::vec3 symEndWorld = glm::vec3(mesh->matrix * glm::vec4(symEndLocal, 1.0f));
+                glm::vec3 symCenterWorld = (symStartWorld + symEndWorld) * 0.5f;
+
+                glm::vec3 sSymStart = camera.project(symStartWorld);
+                glm::vec3 sSymEnd = camera.project(symEndWorld);
+                glm::vec3 sSymCenter = camera.project(symCenterWorld);
+
+                drawList->AddLine(ImVec2(sSymStart.x, sSymStart.y), ImVec2(sSymEnd.x, sSymEnd.y), colSymShadow, 4.0f);
+                drawList->AddLine(ImVec2(sSymStart.x, sSymStart.y), ImVec2(sSymEnd.x, sSymEnd.y), colSymLine, 2.0f);
+
+                drawList->AddCircleFilled(ImVec2(sSymStart.x, sSymStart.y), rSym, IM_COL32(40, 220, 80, 200));
+                drawList->AddCircle(ImVec2(sSymStart.x, sSymStart.y), rSym, IM_COL32(255, 255, 255, 220), 0, 1.2f);
+
+                drawList->AddCircleFilled(ImVec2(sSymEnd.x, sSymEnd.y), rSym, IM_COL32(240, 60, 60, 200));
+                drawList->AddCircle(ImVec2(sSymEnd.x, sSymEnd.y), rSym, IM_COL32(255, 255, 255, 220), 0, 1.2f);
+
+                drawList->AddCircleFilled(ImVec2(sSymCenter.x, sSymCenter.y), rSym * 0.8f, IM_COL32(240, 200, 40, 200));
+                drawList->AddCircle(ImVec2(sSymCenter.x, sSymCenter.y), rSym * 0.8f, IM_COL32(255, 255, 255, 220), 0, 1.2f);
+            }
         }
     }
 }

@@ -32,20 +32,6 @@ static float quality(const glm::vec3& a, const glm::vec3& b, const glm::vec3& c)
 
 } // namespace
 
-std::vector<size_t> symmetryInverses(std::span<const SymCopy> copies) {
-    std::vector<size_t> out(copies.size(), 0);
-    for (size_t i = 0; i < copies.size(); ++i) {
-        const glm::mat3 t = glm::transpose(copies[i].m);
-        for (size_t j = 0; j < copies.size(); ++j) {
-            if (copies[j].m == t && copies[j].pivot == copies[i].pivot) {
-                out[i] = j;
-                break;
-            }
-        }
-    }
-    return out;
-}
-
 void TopologyUndo::swapWith(Mesh& mesh) {
     const uint32_t nv = (uint32_t)mesh.nbVerts;
     const uint32_t nt = (uint32_t)mesh.nbFaces;

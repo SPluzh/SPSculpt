@@ -18,7 +18,7 @@ namespace UndoSerializer {
 namespace {
 
 constexpr char MAGIC[4] = {'U', 'N', 'D', 'O'};
-constexpr uint32_t FORMAT_VERSION = 1;
+constexpr uint32_t FORMAT_VERSION = 2;
 constexpr size_t LZ4_MIN_BYTES = 256;
 
 enum class EntryTag : uint8_t {
@@ -346,6 +346,10 @@ void writeMeshState(BufWriter& w, const MeshState& ms) {
     uint8_t symZ = ms.symZ ? 1 : 0;
     w.writePOD(symZ);
     w.writePOD(ms.symMode);
+    uint8_t symRadialEnabled = ms.symRadialEnabled ? 1 : 0;
+    w.writePOD(symRadialEnabled);
+    w.writePOD(ms.symRadialCount);
+    w.writePOD(ms.symRadialAxis);
 
     if (ms.isTube && ms.tubeData) writeTubeData(w, *ms.tubeData);
     if (ms.isPrimitive && ms.primitiveData) writePrimitiveData(w, *ms.primitiveData);
@@ -366,7 +370,7 @@ void writeMeshState(BufWriter& w, const MeshState& ms) {
     w.writeVector(ms.edgeCreases);
 }
 
-void readMeshState(BufReader& r, MeshState& ms) {
+void readMeshState(BufReader& r, MeshState& ms, uint32_t version) {
     r.readPOD(ms.id);
     r.readString(ms.outlinerName);
     r.readPOD(ms.nbVerts);
@@ -381,6 +385,21 @@ void readMeshState(BufReader& r, MeshState& ms) {
     r.readPOD(symZ);
     r.readPOD(ms.symMode);
     if (!r.ok) return;
+
+    if (version >= 2) {
+        uint8_t symRad = 0;
+        r.readPOD(symRad);
+        r.readPOD(ms.symRadialCount);
+        r.readPOD(ms.symRadialAxis);
+        if (!r.ok) return;
+        ms.symRadialEnabled = (symRad != 0);
+        ms.symRadialCount = std::clamp(ms.symRadialCount, 2, 64);
+        ms.symRadialAxis = std::clamp(ms.symRadialAxis, 0, 2);
+    } else {
+        ms.symRadialEnabled = false;
+        ms.symRadialCount = 8;
+        ms.symRadialAxis = 1;
+    }
 
     ms.visibleV1 = (flags & (1 << 0)) != 0;
     ms.visibleV2 = (flags & (1 << 1)) != 0;
@@ -429,7 +448,7 @@ void writeHistoryState(BufWriter& w, const HistoryState& hs) {
     }
 }
 
-void readHistoryState(BufReader& r, HistoryState& hs, const std::unordered_map<uint32_t, Mesh*>& meshIdMap) {
+void readHistoryState(BufReader& r, HistoryState& hs, const std::unordered_map<uint32_t, Mesh*>& meshIdMap, uint32_t version) {
     r.readPOD(hs.selectedMeshIdx);
     r.readVector(hs.selectedMeshIndices);
     readMeasurementSegments(r, hs.measureSegments, meshIdMap);
@@ -439,7 +458,7 @@ void readHistoryState(BufReader& r, HistoryState& hs, const std::unordered_map<u
     if (!r.ok) return;
     hs.meshes.resize(count);
     for (uint32_t i = 0; i < count; ++i) {
-        readMeshState(r, hs.meshes[i]);
+        readMeshState(r, hs.meshes[i], version);
         if (!r.ok) return;
     }
 }
@@ -473,6 +492,10 @@ void writeCompressedHistoryState(BufWriter& w, const TopologyUndoEntry::Compress
         uint8_t symZ = cm.symZ ? 1 : 0;
         w.writePOD(symZ);
         w.writePOD(cm.symMode);
+        uint8_t symRadialEnabled = cm.symRadialEnabled ? 1 : 0;
+        w.writePOD(symRadialEnabled);
+        w.writePOD(cm.symRadialCount);
+        w.writePOD(cm.symRadialAxis);
 
         if (cm.isTube && cm.tubeData) writeTubeData(w, *cm.tubeData);
         if (cm.isPrimitive && cm.primitiveData) writePrimitiveData(w, *cm.primitiveData);
@@ -497,7 +520,7 @@ void writeCompressedHistoryState(BufWriter& w, const TopologyUndoEntry::Compress
     }
 }
 
-void readCompressedHistoryState(BufReader& r, TopologyUndoEntry::CompressedHistoryState& chs, const std::unordered_map<uint32_t, Mesh*>& meshIdMap) {
+void readCompressedHistoryState(BufReader& r, TopologyUndoEntry::CompressedHistoryState& chs, const std::unordered_map<uint32_t, Mesh*>& meshIdMap, uint32_t version) {
     r.readPOD(chs.selectedMeshIdx);
     r.readVector(chs.selectedMeshIndices);
     readMeasurementSegments(r, chs.measureSegments, meshIdMap);
@@ -522,6 +545,21 @@ void readCompressedHistoryState(BufReader& r, TopologyUndoEntry::CompressedHisto
         r.readPOD(symZ);
         r.readPOD(cm.symMode);
         if (!r.ok) return;
+
+        if (version >= 2) {
+            uint8_t symRad = 0;
+            r.readPOD(symRad);
+            r.readPOD(cm.symRadialCount);
+            r.readPOD(cm.symRadialAxis);
+            if (!r.ok) return;
+            cm.symRadialEnabled = (symRad != 0);
+            cm.symRadialCount = std::clamp(cm.symRadialCount, 2, 64);
+            cm.symRadialAxis = std::clamp(cm.symRadialAxis, 0, 2);
+        } else {
+            cm.symRadialEnabled = false;
+            cm.symRadialCount = 8;
+            cm.symRadialAxis = 1;
+        }
 
         cm.visibleV1 = (flags & (1 << 0)) != 0;
         cm.visibleV2 = (flags & (1 << 1)) != 0;
@@ -735,7 +773,8 @@ std::unique_ptr<UndoEntry> deserializeSingleEntry(
     uint32_t rawSize,
     const uint8_t* payload,
     size_t payloadSize,
-    const std::unordered_map<uint32_t, Mesh*>& meshIdMap)
+    const std::unordered_map<uint32_t, Mesh*>& meshIdMap,
+    uint32_t version)
 {
     std::vector<uint8_t> decompressed;
     const uint8_t* rawPtr = payload;
@@ -803,8 +842,8 @@ std::unique_ptr<UndoEntry> deserializeSingleEntry(
             auto e = std::make_unique<TopologyUndoEntry>();
             r.readString(e->description);
             TopologyUndoEntry::CompressedHistoryState before, after;
-            readCompressedHistoryState(r, before, meshIdMap);
-            readCompressedHistoryState(r, after, meshIdMap);
+            readCompressedHistoryState(r, before, meshIdMap, version);
+            readCompressedHistoryState(r, after, meshIdMap, version);
             if (!r.ok) return nullptr;
             e->setCompressedStates(std::move(before), std::move(after));
             return e;
@@ -884,8 +923,8 @@ std::unique_ptr<UndoEntry> deserializeSingleEntry(
         case EntryTag::SceneMeta: {
             auto e = std::make_unique<SceneMetaUndoEntry>();
             r.readString(e->description);
-            readHistoryState(r, e->before, meshIdMap);
-            readHistoryState(r, e->after, meshIdMap);
+            readHistoryState(r, e->before, meshIdMap, version);
+            readHistoryState(r, e->after, meshIdMap, version);
             if (!r.ok) return nullptr;
             return e;
         }
@@ -1033,7 +1072,8 @@ bool deserializeStacks(
             re.rawSize,
             data + re.payloadOffset,
             re.payloadSize,
-            meshIdMap
+            meshIdMap,
+            version
         );
     }
 

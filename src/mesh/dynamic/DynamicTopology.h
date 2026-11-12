@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common/Symmetry.h"
 #include "mesh/Mesh.h"
 #include "mesh/BVH.h"
 #include "mesh/dynamic/DyntopoSettings.h"
@@ -17,18 +18,8 @@
 
 namespace dynamic {
 
-struct SymCopy {
-    glm::mat3 m{1.0f};
-    glm::vec3 pivot{0.0f};
-    glm::vec3 point(const glm::vec3& p) const { return pivot + m * (p - pivot); }
-    glm::vec3 dir(const glm::vec3& d) const { return m * d; }
-    glm::vec3 inversePoint(const glm::vec3& p) const { return pivot + glm::transpose(m) * (p - pivot); }
-    glm::vec3 inverseDir(const glm::vec3& d) const { return glm::transpose(m) * d; }
-    float handedness() const { return glm::determinant(m) < 0.0f ? -1.0f : 1.0f; }
-    bool identity() const { return m == glm::mat3(1.0f); }
-};
-
-std::vector<size_t> symmetryInverses(std::span<const SymCopy> copies);
+using ::SymCopy;
+using ::symmetryInverses;
 
 inline std::string dyntopoBlocker(const Mesh& mesh) {
     if (mesh.hasLayers())

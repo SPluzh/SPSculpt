@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.31]
+- **Radial Symmetry**:
+  - Added full 3D Radial Symmetry (`2..64` count, `X`/`Y`/`Z` axis) combinable with Mirror `X`/`Y`/`Z` and `Local`/`World` modes across sculpting brushes, Dynamic Topology, Transform Gizmo, Pose, Tube, Curve Folds, Trim, Split, and Clip Curve tools.
+
 ## [0.3.30]
 - **Whole-Mesh Deformation Panel**:
   - Added interactive Deformation panel with live preview for `Smooth`, `Relax`, `Inflate`, `Polish`, and `Balloon` operations.

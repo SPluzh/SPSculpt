@@ -399,8 +399,6 @@ inline bool run(int targetFaces = 100000) {
                 camera,
                 lasso,
                 isAlt,
-                false, // useSym = false
-                SymmetryMode::Local,
                 {},
                 config
             );
@@ -626,7 +624,7 @@ inline bool run(int targetFaces = 100000) {
             config1.outCapGid = &capGid1;
 
             auto tStart1 = std::chrono::high_resolution_clock::now();
-            bool mod1 = TrimTool::execute(curMesh, camera, lasso1, false, false, SymmetryMode::Local, {}, config1);
+            bool mod1 = TrimTool::execute(curMesh, camera, lasso1, false, {}, config1);
             auto tEnd1 = std::chrono::high_resolution_clock::now();
             double exec1Ms = std::chrono::duration<double, std::milli>(tEnd1 - tStart1).count();
 
@@ -650,7 +648,7 @@ inline bool run(int targetFaces = 100000) {
             config2.outCapGid = &capGid2;
 
             auto tStart2 = std::chrono::high_resolution_clock::now();
-            bool mod2 = TrimTool::execute(curMesh, camera, lasso2, false, false, SymmetryMode::Local, {}, config2);
+            bool mod2 = TrimTool::execute(curMesh, camera, lasso2, false, {}, config2);
             auto tEnd2 = std::chrono::high_resolution_clock::now();
             double exec2Ms = std::chrono::duration<double, std::milli>(tEnd2 - tStart2).count();
 
@@ -840,8 +838,6 @@ inline bool run(int targetFaces = 100000) {
                 camera,
                 clipLine,
                 false, // altMode
-                false, // useSym
-                SymmetryMode::Local,
                 {}
             );
             auto tEnd = std::chrono::high_resolution_clock::now();
@@ -939,8 +935,6 @@ inline bool run(int targetFaces = 100000) {
                 camera,
                 clipPoly,
                 false, // altMode
-                false, // useSym
-                SymmetryMode::Local,
                 {}
             );
             auto tEnd = std::chrono::high_resolution_clock::now();
@@ -1027,7 +1021,10 @@ inline bool run(int targetFaces = 100000) {
                 { 1300.0f, 400.0f }
             };
 
-            std::vector<glm::vec3> symScales = { { -1.0f, 1.0f, 1.0f } };
+            SymmetryParams spClip;
+            spClip.useSym = true;
+            spClip.symX = true;
+            auto symCopies = buildSymmetryCopies(spClip, curMesh, false);
 
             HistoryState beforeState = scene.saveCurrentState(false);
             const std::vector<float> preVerts = curMesh->verts;
@@ -1038,9 +1035,7 @@ inline bool run(int targetFaces = 100000) {
                 camera,
                 clipLine,
                 false, // altMode
-                true,  // useSym = true
-                SymmetryMode::Local,
-                symScales
+                symCopies
             );
             auto tEnd = std::chrono::high_resolution_clock::now();
             double execMs = std::chrono::duration<double, std::milli>(tEnd - tStart).count();

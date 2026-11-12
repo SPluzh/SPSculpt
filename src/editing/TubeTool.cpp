@@ -7,6 +7,7 @@
 #include "mesh/Mesh.h"
 #include "mesh/Topology.h"
 #include "common/Logger.h"
+#include "common/Symmetry.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -2218,23 +2219,30 @@ void TubeTool::rebuildTubeMesh(Scene& scene, Mesh* tubeMesh) {
     );
 
     // 2. If symmetry is enabled, build symmetric tube
-    std::vector<glm::vec3> symScales = m_sculpt.getActiveSymmetryScales();
-    if (!symScales.empty()) {
+    std::vector<SymCopy> symCopies = m_sculpt.getActiveSymmetryCopies(tubeMesh, false);
+    if (!symCopies.empty()) {
         size_t primNbVerts = verts.size() / 3;
         size_t primNbFaces = faces.size() / 4;
 
-        for (const glm::vec3& sScale : symScales) {
-            bool flipSym = (sScale.x * sScale.y * sScale.z < 0.0f);
+        for (const SymCopy& copy : symCopies) {
+            bool flipSym = copy.isMirror();
             uint32_t symVertOffset = static_cast<uint32_t>(verts.size() / 3);
 
             for (size_t i = 0; i < primNbVerts; ++i) {
-                verts.push_back(verts[i * 3 + 0] * sScale.x);
-                verts.push_back(verts[i * 3 + 1] * sScale.y);
-                verts.push_back(verts[i * 3 + 2] * sScale.z);
+                glm::vec3 p(verts[i * 3 + 0], verts[i * 3 + 1], verts[i * 3 + 2]);
+                glm::vec3 n(normals[i * 3 + 0], normals[i * 3 + 1], normals[i * 3 + 2]);
+                glm::vec3 sp = copy.point(p);
+                glm::vec3 sn = copy.dir(n);
+                float snLen = glm::length(sn);
+                if (snLen > 1e-8f) sn /= snLen;
 
-                normals.push_back(normals[i * 3 + 0] * sScale.x);
-                normals.push_back(normals[i * 3 + 1] * sScale.y);
-                normals.push_back(normals[i * 3 + 2] * sScale.z);
+                verts.push_back(sp.x);
+                verts.push_back(sp.y);
+                verts.push_back(sp.z);
+
+                normals.push_back(sn.x);
+                normals.push_back(sn.y);
+                normals.push_back(sn.z);
 
                 colors.push_back(colors[i * 3 + 0]);
                 colors.push_back(colors[i * 3 + 1]);

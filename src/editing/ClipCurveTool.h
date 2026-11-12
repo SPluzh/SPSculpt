@@ -2,6 +2,7 @@
 #include <vector>
 #include <glm/glm.hpp>
 #include "common/Enums.h"
+#include "common/Symmetry.h"
 
 class Mesh;
 class Camera;
@@ -13,8 +14,6 @@ public:
         const Camera& camera,
         const std::vector<glm::vec2>& curvePoints,
         bool altMode,
-        bool useSym = false,
-        SymmetryMode symMode = SymmetryMode::Local,
-        const std::vector<glm::vec3>& symScales = {}
+        const std::vector<SymCopy>& symCopies = {}
     );
 };

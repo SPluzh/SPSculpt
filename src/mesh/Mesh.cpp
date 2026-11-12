@@ -1001,6 +1001,28 @@ glm::vec3 Mesh::getSymmetryNormalForAxis(int axisIndex, SymmetryMode mode) const
     }
 }
 
+void Mesh::getRadialAxisOriginAndDir(SymmetryMode mode, glm::vec3& outOrigin, glm::vec3& outAxisDir) const {
+    getRadialAxisOriginAndDir(symRadialAxis, mode, outOrigin, outAxisDir);
+}
+
+void Mesh::getRadialAxisOriginAndDir(int axisIndex, SymmetryMode mode, glm::vec3& outOrigin, glm::vec3& outAxisDir) const {
+    int axis = std::clamp(axisIndex, 0, 2);
+    glm::vec3 axisVec(0.0f);
+    axisVec[axis] = 1.0f;
+
+    if (mode == SymmetryMode::World) {
+        glm::vec3 worldOrigin(0.0f);
+        glm::mat4 invM = glm::inverse(matrix);
+        outOrigin = glm::vec3(invM * glm::vec4(worldOrigin, 1.0f));
+        glm::vec3 localDir = glm::vec3(invM * glm::vec4(axisVec, 0.0f));
+        float len = glm::length(localDir);
+        outAxisDir = (len > 1e-5f) ? (localDir / len) : axisVec;
+    } else {
+        outOrigin = glm::vec3(0.0f);
+        outAxisDir = axisVec;
+    }
+}
+
 void Mesh::flip(int axisIndex) {
     if (nbVerts == 0 || nbFaces == 0) return;
     if (axisIndex < 0 || axisIndex > 2) return;

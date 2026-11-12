@@ -12,6 +12,7 @@
 #include "common/CrashReporter.h"
 #include "common/ErrorReporter.h"
 #include "common/FormatConstants.h"
+#include "common/Symmetry.h"
 #include "common/StringUtils.h"
 #include "common/MemoryUtils.h"
 #include "render/AngleRenderer.h"
@@ -3287,6 +3288,81 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
             bool useSym = sculpt.getUseSym();
             if (ImGui::Checkbox("Enable Symmetry", &useSym)) {
                 sculpt.setUseSym(useSym);
+                sculpt.saveSymmetryToMesh(scene.getSelected());
+            }
+
+            int modeIdx = (sculpt.getSymmetryMode() == SymmetryMode::World) ? 1 : 0;
+            if (ImGui::RadioButton("Local##symPanelMode", &modeIdx, 0)) {
+                sculpt.setSymmetryMode(SymmetryMode::Local);
+                sculpt.saveSymmetryToMesh(scene.getSelected());
+            }
+            ImGui::SameLine();
+            if (ImGui::RadioButton("World##symPanelMode", &modeIdx, 1)) {
+                sculpt.setSymmetryMode(SymmetryMode::World);
+                sculpt.saveSymmetryToMesh(scene.getSelected());
+            }
+
+            bool symX = sculpt.getSymX();
+            bool symY = sculpt.getSymY();
+            bool symZ = sculpt.getSymZ();
+            if (ImGui::Checkbox("X##symPanelX", &symX)) {
+                sculpt.setSymX(symX);
+                sculpt.saveSymmetryToMesh(scene.getSelected());
+            }
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Y##symPanelY", &symY)) {
+                sculpt.setSymY(symY);
+                sculpt.saveSymmetryToMesh(scene.getSelected());
+            }
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Z##symPanelZ", &symZ)) {
+                sculpt.setSymZ(symZ);
+                sculpt.saveSymmetryToMesh(scene.getSelected());
+            }
+
+            bool radOn = sculpt.getSymRadialEnabled();
+            if (ImGui::Checkbox("Radial Symmetry##symPanelRad", &radOn)) {
+                sculpt.setSymRadialEnabled(radOn);
+                if (radOn && !sculpt.getUseSym()) sculpt.setUseSym(true);
+                sculpt.saveSymmetryToMesh(scene.getSelected());
+            }
+            if (radOn || true) {
+                int rAxis = sculpt.getSymRadialAxis();
+                ImGui::TextUnformatted("Radial Axis:");
+                ImGui::SameLine();
+                if (ImGui::RadioButton("X##symPanelRadAx", &rAxis, 0)) {
+                    sculpt.setSymRadialAxis(0);
+                    sculpt.saveSymmetryToMesh(scene.getSelected());
+                }
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Y##symPanelRadAx", &rAxis, 1)) {
+                    sculpt.setSymRadialAxis(1);
+                    sculpt.saveSymmetryToMesh(scene.getSelected());
+                }
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Z##symPanelRadAx", &rAxis, 2)) {
+                    sculpt.setSymRadialAxis(2);
+                    sculpt.saveSymmetryToMesh(scene.getSelected());
+                }
+
+                int rCount = sculpt.getSymRadialCount();
+                if (ImGui::SliderInt("Radial Count##symPanelRadCnt", &rCount, 2, 64)) {
+                    sculpt.setSymRadialCount(rCount);
+                    sculpt.saveSymmetryToMesh(scene.getSelected());
+                }
+
+                const int kPanelPresets[] = { 4, 6, 8, 12, 16 };
+                for (int pIdx = 0; pIdx < 5; ++pIdx) {
+                    if (pIdx > 0) ImGui::SameLine();
+                    char pBuf[16];
+                    snprintf(pBuf, sizeof(pBuf), "%d##panRadP", kPanelPresets[pIdx]);
+                    if (ImGui::SmallButton(pBuf)) {
+                        sculpt.setSymRadialCount(kPanelPresets[pIdx]);
+                        if (!sculpt.getSymRadialEnabled()) sculpt.setSymRadialEnabled(true);
+                        if (!sculpt.getUseSym()) sculpt.setUseSym(true);
+                        sculpt.saveSymmetryToMesh(scene.getSelected());
+                    }
+                }
             }
         }
 
@@ -5526,7 +5602,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                     else ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
                     if (ImGui::Button(symOn ? ICON_LC_FLIP_HORIZONTAL " Sym" : ICON_LC_FLIP_HORIZONTAL " Sym", ImVec2(btnSz * 2.1f, btnSz))) {
                         mesh->symEnabled = !symOn;
-                        if (mesh->symEnabled && !mesh->symX && !mesh->symY && !mesh->symZ) {
+                        if (mesh->symEnabled && !mesh->symX && !mesh->symY && !mesh->symZ && !mesh->symRadialEnabled) {
                             mesh->symX = true;
                         }
                         if (mesh == scene.getSelected()) {
@@ -8073,7 +8149,10 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                   selectedMesh->outlinerName.c_str(), selectedMesh->nbVerts, frameMs);
                     }
                 } else {
-                    bool useSymTransform = sculpt.getUseSym() && transformHasMask && !selectedMesh->isPrimitive;
+                    std::vector<SymCopy> symCopies = (sculpt.getUseSym() && transformHasMask && !selectedMesh->isPrimitive)
+                        ? sculpt.getActiveSymmetryCopies(selectedMesh, false)
+                        : std::vector<SymCopy>();
+                    bool useSymTransform = !symCopies.empty();
                     if (transformHasMask && !transformStartVerts.empty() && transformStartVerts.size() == selectedMesh->verts.size()) {
                         auto tSetupStart = std::chrono::high_resolution_clock::now();
 
@@ -8106,38 +8185,63 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                         );
                         float blendEps = std::max(0.005f, 0.01f * diagLen);
 
-                        // Symmetry reflection matrix across active symmetry plane in transformStartVerts local space
                         SymmetryMode symMode = sculpt.getSymmetryMode();
+                        const bool useLegacyMirrorBlend = useSymTransform && !sculpt.radialOn() && symCopies.size() == 1;
+
                         glm::vec3 P_plane(meshCenterX, meshCenterY, meshCenterZ);
-                        if (symMode == SymmetryMode::Local && selectedMesh) {
-                            int axis = sculpt.getSymAxis();
-                            P_plane = selectedMesh->getSymmetryOriginForAxis(axis, SymmetryMode::Local);
-                        } else if (symMode == SymmetryMode::World && selectedMesh) {
-                            int axis = sculpt.getSymAxis();
-                            P_plane = selectedMesh->getSymmetryOriginForAxis(axis, SymmetryMode::World);
-                        }
+                        glm::mat4 deltaSym(1.0f);
+                        glm::mat3 normalMatrixSym(1.0f);
 
-                        glm::mat4 S_axis(1.0f);
-                        if (symX) S_axis[0][0] = -1.0f;
-                        if (symY) S_axis[1][1] = -1.0f;
-                        if (symZ) S_axis[2][2] = -1.0f;
+                        std::vector<glm::mat4> symDeltaMats;
+                        std::vector<glm::mat3> symNormMats;
+                        std::vector<glm::vec3> symAnchors;
+                        glm::vec3 primaryAnchor(0.0f);
 
-                        glm::mat4 deltaSym;
-                        if (symMode == SymmetryMode::World) {
-                            glm::mat4 invM0 = glm::inverse(pivotStartMatrix);
-                            glm::mat4 S_world(1.0f);
-                            if (symX) S_world[0][0] = -1.0f;
-                            if (symY) S_world[1][1] = -1.0f;
-                            if (symZ) S_world[2][2] = -1.0f;
-                            glm::mat4 S_local = invM0 * S_world * pivotStartMatrix;
-                            deltaSym = S_local * deltaLocal * S_local;
-                        } else {
-                            glm::mat4 T_plane = glm::translate(glm::mat4(1.0f), P_plane);
-                            glm::mat4 T_plane_inv = glm::translate(glm::mat4(1.0f), -P_plane);
-                            glm::mat4 M_sym = T_plane * S_axis * T_plane_inv;
-                            deltaSym = M_sym * deltaLocal * M_sym;
+                        if (useLegacyMirrorBlend) {
+                            if (selectedMesh) {
+                                int axis = sculpt.getSymAxis();
+                                P_plane = selectedMesh->getSymmetryOriginForAxis(axis, symMode);
+                            }
+                            glm::mat4 M_sym = symCopies[0].toMat4();
+                            glm::mat4 M_sym_inv = symCopies[0].inverse().toMat4();
+                            deltaSym = M_sym * deltaLocal * M_sym_inv;
+                            normalMatrixSym = glm::transpose(glm::inverse(glm::mat3(deltaSym)));
+                        } else if (useSymTransform) {
+                            const size_t numSym = symCopies.size();
+                            symDeltaMats.resize(numSym);
+                            symNormMats.resize(numSym);
+                            symAnchors.resize(numSym);
+
+                            glm::vec3 axisOrigin(0.0f), axisDir(0.0f, 1.0f, 0.0f);
+                            selectedMesh->getRadialAxisOriginAndDir(
+                                sculpt.radialOn() ? sculpt.getSymRadialAxis() : 1,
+                                symMode,
+                                axisOrigin,
+                                axisDir
+                            );
+                            glm::vec3 uDir(1.0f, 0.0f, 0.0f);
+                            if (std::abs(glm::dot(uDir, axisDir)) > 0.9f) uDir = glm::vec3(0.0f, 0.0f, 1.0f);
+                            uDir = glm::normalize(uDir - axisDir * glm::dot(uDir, axisDir));
+                            glm::vec3 vDir = glm::normalize(glm::cross(axisDir, uDir));
+
+                            glm::vec3 pivotRel = transformPivotStartLocal - axisOrigin;
+                            glm::vec3 pivotPerp = pivotRel - axisDir * glm::dot(pivotRel, axisDir);
+                            if (glm::length(pivotPerp) > std::max(1e-3f, 0.01f * diagLen)) {
+                                primaryAnchor = transformPivotStartLocal;
+                            } else {
+                                float theta0 = 3.14159265f / (float)(std::max(2, sculpt.getSymRadialCount()) * 4);
+                                float anchorScale = std::max(0.1f, 0.25f * diagLen);
+                                primaryAnchor = axisOrigin + (uDir * std::cos(theta0) + vDir * std::sin(theta0) + axisDir * 0.37f) * anchorScale;
+                            }
+
+                            for (size_t c = 0; c < numSym; ++c) {
+                                glm::mat4 M_c = symCopies[c].toMat4();
+                                glm::mat4 M_c_inv = symCopies[c].inverse().toMat4();
+                                symDeltaMats[c] = M_c * deltaLocal * M_c_inv;
+                                symNormMats[c] = glm::transpose(glm::inverse(glm::mat3(symDeltaMats[c])));
+                                symAnchors[c] = symCopies[c].point(primaryAnchor);
+                            }
                         }
-                        glm::mat3 normalMatrixSym = glm::transpose(glm::inverse(glm::mat3(deltaSym)));
 
                         double setupMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - tSetupStart).count();
 
@@ -8153,7 +8257,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                                       ? selectedMesh->materials[i * 3 + 2]
                                       : 1.0f;
 
-                            if (m <= 0.001f && !useSymTransform) {
+                            if (m <= 0.001f) {
                                 selectedMesh->verts[i * 3]     = transformStartVerts[i * 3];
                                 selectedMesh->verts[i * 3 + 1] = transformStartVerts[i * 3 + 1];
                                 selectedMesh->verts[i * 3 + 2] = transformStartVerts[i * 3 + 2];
@@ -8178,7 +8282,7 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
                             glm::vec4 vTransformed;
                             glm::vec3 nTransformed;
 
-                            if (useSymTransform) {
+                            if (useLegacyMirrorBlend) {
                                 // Compute distance from symmetry plane for each active axis
                                 float d_vx = vStart.x - P_plane.x;
                                 float d_vy = vStart.y - P_plane.y;
@@ -8223,13 +8327,45 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
 
                                 vTransformed = weightP * vP + (1.0f - weightP) * vS;
                                 nTransformed = glm::normalize(weightP * nP + (1.0f - weightP) * nS);
+                            } else if (useSymTransform) {
+                                glm::vec3 pStart(vStart);
+                                float dMin = glm::distance(pStart, primaryAnchor);
+                                for (size_t c = 0; c < symAnchors.size(); ++c) {
+                                    float dc = glm::distance(pStart, symAnchors[c]);
+                                    if (dc < dMin) dMin = dc;
+                                }
+
+                                float invBlendEps = 1.0f / std::max(blendEps, 1e-5f);
+                                float w0 = std::clamp(1.0f - (glm::distance(pStart, primaryAnchor) - dMin) * invBlendEps, 0.0f, 1.0f);
+                                w0 = w0 * w0 * (3.0f - 2.0f * w0);
+
+                                float sumW = w0;
+                                glm::vec4 vAccum = w0 * (deltaLocal * vStart);
+                                glm::vec3 nAccum = w0 * (normalMatrixPrimary * nStart);
+
+                                for (size_t c = 0; c < symAnchors.size(); ++c) {
+                                    float wc = std::clamp(1.0f - (glm::distance(pStart, symAnchors[c]) - dMin) * invBlendEps, 0.0f, 1.0f);
+                                    if (wc > 1e-4f) {
+                                        wc = wc * wc * (3.0f - 2.0f * wc);
+                                        sumW += wc;
+                                        vAccum += wc * (symDeltaMats[c] * vStart);
+                                        nAccum += wc * (symNormMats[c] * nStart);
+                                    }
+                                }
+
+                                float invSum = (sumW > 1e-6f) ? (1.0f / sumW) : 1.0f;
+                                vTransformed = vAccum * invSum;
+                                float nLen = glm::length(nAccum);
+                                nTransformed = (nLen > 1e-8f) ? (nAccum / nLen) : nStart;
                             } else {
                                 vTransformed = deltaLocal * vStart;
                                 nTransformed = normalMatrixPrimary * nStart;
                             }
 
                             glm::vec4 vNew = m * vTransformed + (1.0f - m) * vStart;
-                            glm::vec3 nNew = glm::normalize(m * nTransformed + (1.0f - m) * nStart);
+                            glm::vec3 nMixed = m * nTransformed + (1.0f - m) * nStart;
+                            float nNewLen = glm::length(nMixed);
+                            glm::vec3 nNew = (nNewLen > 1e-8f) ? (nMixed / nNewLen) : nStart;
 
                             selectedMesh->verts[i * 3]     = vNew.x;
                             selectedMesh->verts[i * 3 + 1] = vNew.y;

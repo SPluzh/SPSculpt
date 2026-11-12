@@ -1,5 +1,6 @@
 #pragma once
 #include "common/Enums.h"
+#include "common/Symmetry.h"
 #include <SDL2/SDL.h>
 #include <glm/glm.hpp>
 #include "scene/Scene.h"
@@ -306,6 +307,9 @@ private:
     bool m_symX = true;
     bool m_symY = false;
     bool m_symZ = false;
+    bool m_symRadialEnabled = false;
+    int  m_symRadialCount   = 8;
+    int  m_symRadialAxis    = 1;
     SymmetryMode m_symmetryMode = SymmetryMode::Local;
     ModalMode m_modalMode = ModalMode::NONE;
 
@@ -439,11 +443,13 @@ public:
         m_symmetryLineTriggered = true;
     }
 
-    bool getUseSym() const { return m_useSym && (m_symX || m_symY || m_symZ); }
+    bool radialOn() const { return m_symRadialEnabled && m_symRadialCount >= 2; }
+
+    bool getUseSym() const { return m_useSym && (m_symX || m_symY || m_symZ || radialOn()); }
     void setUseSym(bool val) {
         bool prev = getUseSym();
         m_useSym = val;
-        if (val && !m_symX && !m_symY && !m_symZ) {
+        if (val && !m_symX && !m_symY && !m_symZ && !radialOn()) {
             m_symX = true;
         }
         if (prev != getUseSym()) {
@@ -479,6 +485,42 @@ public:
         if (m_lastActiveMesh) saveSymmetryToMesh(m_lastActiveMesh);
     }
 
+    bool getSymRadialEnabled() const { return m_symRadialEnabled; }
+    void setSymRadialEnabled(bool val) {
+        bool prev = m_symRadialEnabled;
+        bool prevUse = getUseSym();
+        m_symRadialEnabled = val;
+        if (val) {
+            m_symRadialCount = std::clamp(m_symRadialCount, 2, 64);
+            m_symRadialAxis = std::clamp(m_symRadialAxis, 0, 2);
+            m_useSym = true;
+        }
+        if (prev != m_symRadialEnabled || prevUse != getUseSym()) {
+            m_symmetryLineTriggered = true;
+        }
+        if (m_lastActiveMesh) saveSymmetryToMesh(m_lastActiveMesh);
+    }
+
+    int getSymRadialCount() const { return m_symRadialCount; }
+    void setSymRadialCount(int count) {
+        int clamped = std::clamp(count, 2, 64);
+        if (m_symRadialCount != clamped) {
+            m_symRadialCount = clamped;
+            if (getUseSym() || radialOn()) m_symmetryLineTriggered = true;
+            if (m_lastActiveMesh) saveSymmetryToMesh(m_lastActiveMesh);
+        }
+    }
+
+    int getSymRadialAxis() const { return m_symRadialAxis; }
+    void setSymRadialAxis(int axis) {
+        int clamped = std::clamp(axis, 0, 2);
+        if (m_symRadialAxis != clamped) {
+            m_symRadialAxis = clamped;
+            if (getUseSym() || radialOn()) m_symmetryLineTriggered = true;
+            if (m_lastActiveMesh) saveSymmetryToMesh(m_lastActiveMesh);
+        }
+    }
+
     int getSymAxis() const {
         if (m_symX) return 0;
         if (m_symY) return 1;
@@ -508,6 +550,8 @@ public:
     void registerKnownMesh(const Mesh* mesh) { if (mesh) m_knownMeshes.insert(mesh); }
     void clearKnownMeshes() { m_knownMeshes.clear(); }
 
+    SymmetryParams getSymmetryParams() const;
+    std::vector<SymCopy> getActiveSymmetryCopies(const Mesh* mesh, bool includeIdentity = false) const;
     std::vector<glm::vec3> getActiveSymmetryScales() const;
 
     ModalMode getModalMode() const { return m_modalMode; }
@@ -858,7 +902,7 @@ private:
         float intensity,
         float mouseX,
         bool isSymmetry = false,
-        const glm::vec3& sScale = glm::vec3(1.0f),
+        const SymCopy& symCopy = SymCopy{},
         const std::vector<uint32_t>* pPickedVec = nullptr,
         float* outAnalyticNormals = nullptr
     );
@@ -878,7 +922,7 @@ private:
         float intensity,
         float mouseX,
         bool isSymmetry = false,
-        const glm::vec3& sScale = glm::vec3(1.0f),
+        const SymCopy& symCopy = SymCopy{},
         float* outAnalyticNormals = nullptr
     ) {
         return doStrokePass(
@@ -886,7 +930,7 @@ private:
             pickedVertices.data(), pickedVertices.size(),
             currentIntersection, currentIntersectionNormal,
             initialIntersection, cachedAreaNormal, cachedAreaCenter,
-            localRadius, intensity, mouseX, isSymmetry, sScale, &pickedVertices, outAnalyticNormals
+            localRadius, intensity, mouseX, isSymmetry, symCopy, &pickedVertices, outAnalyticNormals
         );
     }
 };

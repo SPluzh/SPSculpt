@@ -3,6 +3,7 @@
 #include <vector>
 #include <glm/glm.hpp>
 #include "common/Enums.h"
+#include "common/Symmetry.h"
 
 #include "editing/manifold/QuadCapGenerator.h"
 
@@ -25,9 +26,7 @@ public:
         const Camera& camera,
         const std::vector<glm::vec2>& lassoPoints,
         bool isAlt,
-        bool useSym,
-        SymmetryMode symMode,
-        const std::vector<glm::vec3>& symScales,
+        const std::vector<SymCopy>& symCopies = {},
         const TrimConfig& config = TrimConfig()
     );
 };

@@ -329,6 +329,11 @@ std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& sc
 
         // Mesh ID (Version >= 20)
         writer.writeU32(mesh->getID());
+
+        // Radial symmetry state (Version >= 21)
+        writer.writeU32(mesh->symRadialEnabled ? 1 : 0);
+        writer.writeU32(static_cast<uint32_t>(std::clamp(mesh->symRadialCount, 2, 64)));
+        writer.writeU32(static_cast<uint32_t>(std::clamp(mesh->symRadialAxis, 0, 2)));
     }
 
     auto writeAnchor = [&](const MeasurementAnchor& anchor) {

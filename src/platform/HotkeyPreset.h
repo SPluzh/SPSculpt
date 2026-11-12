@@ -42,6 +42,9 @@ enum class HKAction {
     BrushNegative,         // N (toggle)
     BrushPicker,           // I (toggle)
     ToggleSymmetry,        // Alt+X (toggle)
+    ToggleRadialSymmetry,  // Alt+R (toggle)
+    RadialCountInc,        // Alt+] (increment)
+    RadialCountDec,        // Alt+[ (decrement)
     RemeshResolution,      // X (modal)
     TopologyDetail,        // Z (modal)
     DeleteSelected,        // Del

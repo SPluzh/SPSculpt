@@ -1080,11 +1080,67 @@ void GuiManager::initHudRegistry() {
                 bool symXPop = sculpt.getSymX();
                 bool symYPop = sculpt.getSymY();
                 bool symZPop = sculpt.getSymZ();
-                if (ImGui::Checkbox("X", &symXPop)) sculpt.setSymX(symXPop);
+                if (ImGui::Checkbox("X", &symXPop)) {
+                    sculpt.setSymX(symXPop);
+                    sculpt.saveSymmetryToMesh(scene.getSelected());
+                }
                 ImGui::SameLine();
-                if (ImGui::Checkbox("Y", &symYPop)) sculpt.setSymY(symYPop);
+                if (ImGui::Checkbox("Y", &symYPop)) {
+                    sculpt.setSymY(symYPop);
+                    sculpt.saveSymmetryToMesh(scene.getSelected());
+                }
                 ImGui::SameLine();
-                if (ImGui::Checkbox("Z", &symZPop)) sculpt.setSymZ(symZPop);
+                if (ImGui::Checkbox("Z", &symZPop)) {
+                    sculpt.setSymZ(symZPop);
+                    sculpt.saveSymmetryToMesh(scene.getSelected());
+                }
+
+                ImGui::Separator();
+                ImGui::TextUnformatted("Radial Symmetry:");
+                bool radEnabledPop = sculpt.getSymRadialEnabled();
+                if (ImGui::Checkbox("Enable Radial", &radEnabledPop)) {
+                    sculpt.setSymRadialEnabled(radEnabledPop);
+                    if (radEnabledPop && !sculpt.getUseSym()) {
+                        sculpt.setUseSym(true);
+                    }
+                    sculpt.saveSymmetryToMesh(scene.getSelected());
+                }
+                int radAxisPop = sculpt.getSymRadialAxis();
+                ImGui::TextUnformatted("Axis:");
+                ImGui::SameLine();
+                if (ImGui::RadioButton("X##hudRadAxis", &radAxisPop, 0)) {
+                    sculpt.setSymRadialAxis(0);
+                    sculpt.saveSymmetryToMesh(scene.getSelected());
+                }
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Y##hudRadAxis", &radAxisPop, 1)) {
+                    sculpt.setSymRadialAxis(1);
+                    sculpt.saveSymmetryToMesh(scene.getSelected());
+                }
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Z##hudRadAxis", &radAxisPop, 2)) {
+                    sculpt.setSymRadialAxis(2);
+                    sculpt.saveSymmetryToMesh(scene.getSelected());
+                }
+                int radCountPop = sculpt.getSymRadialCount();
+                ImGui::PushItemWidth(160.0f * ctx.scale);
+                if (ImGui::SliderInt("Radial Count", &radCountPop, 2, 64)) {
+                    sculpt.setSymRadialCount(radCountPop);
+                    sculpt.saveSymmetryToMesh(scene.getSelected());
+                }
+                ImGui::PopItemWidth();
+                const int kRadPresets[] = { 4, 6, 8, 12, 16 };
+                for (int pIdx = 0; pIdx < 5; ++pIdx) {
+                    if (pIdx > 0) ImGui::SameLine();
+                    char pBuf[16];
+                    snprintf(pBuf, sizeof(pBuf), "%d##radP", kRadPresets[pIdx]);
+                    if (ImGui::SmallButton(pBuf)) {
+                        sculpt.setSymRadialCount(kRadPresets[pIdx]);
+                        if (!sculpt.getSymRadialEnabled()) sculpt.setSymRadialEnabled(true);
+                        if (!sculpt.getUseSym()) sculpt.setUseSym(true);
+                        sculpt.saveSymmetryToMesh(scene.getSelected());
+                    }
+                }
 
                 ImGui::Separator();
                 bool showSymLine = renderer.getShowSymmetryLine();
@@ -1155,9 +1211,9 @@ void GuiManager::initHudRegistry() {
     });
 
     m_hudRegistry.registerItem({
-        "symmetry_axes", "Symmetry Axes (W/L, X, Y, Z)", "Symmetry", "XYZ", "",
+        "symmetry_axes", "Symmetry Axes (W/L, X, Y, Z, R)", "Symmetry", "XYZ", "",
         true, true, false,
-        [](GuiManager&, SculptManager& sculpt, Scene&, AngleRenderer&, const HudRenderCtx& ctx) {
+        [](GuiManager&, SculptManager& sculpt, Scene& scene, AngleRenderer&, const HudRenderCtx& ctx) {
             ImVec2 halfSquareBtn(ctx.squareSize * 0.5f, ctx.squareSize);
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, ImGui::GetStyle().FramePadding.y));
 
@@ -1165,6 +1221,7 @@ void GuiManager::initHudRegistry() {
             bool isWorldSym = (sculpt.getSymmetryMode() == SymmetryMode::World);
             if (drawHudIconButton(0, isWorldSym ? "W##hudSymMode" : "L##hudSymMode", "", halfSquareBtn, ctx.scale, useSym)) {
                 sculpt.setSymmetryMode(isWorldSym ? SymmetryMode::Local : SymmetryMode::World);
+                sculpt.saveSymmetryToMesh(scene.getSelected());
             }
             if (!ctx.customizeMode && ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Symmetry Space: %s (Click to toggle)", isWorldSym ? "World" : "Local");
@@ -1174,6 +1231,7 @@ void GuiManager::initHudRegistry() {
             bool symX = sculpt.getSymX();
             if (drawHudIconButton(0, "X##hudSymX", "", halfSquareBtn, ctx.scale, symX)) {
                 sculpt.setSymX(!symX);
+                sculpt.saveSymmetryToMesh(scene.getSelected());
             }
             if (!ctx.customizeMode && ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle X Symmetry");
 
@@ -1181,6 +1239,7 @@ void GuiManager::initHudRegistry() {
             bool symY = sculpt.getSymY();
             if (drawHudIconButton(0, "Y##hudSymY", "", halfSquareBtn, ctx.scale, symY)) {
                 sculpt.setSymY(!symY);
+                sculpt.saveSymmetryToMesh(scene.getSelected());
             }
             if (!ctx.customizeMode && ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Y Symmetry");
 
@@ -1188,8 +1247,32 @@ void GuiManager::initHudRegistry() {
             bool symZ = sculpt.getSymZ();
             if (drawHudIconButton(0, "Z##hudSymZ", "", halfSquareBtn, ctx.scale, symZ)) {
                 sculpt.setSymZ(!symZ);
+                sculpt.saveSymmetryToMesh(scene.getSelected());
             }
             if (!ctx.customizeMode && ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Z Symmetry");
+
+            if (!ctx.isVertical) ImGui::SameLine();
+            bool radOn = sculpt.getSymRadialEnabled();
+            const char* radAxisNames[] = { "X", "Y", "Z" };
+            int rAx = std::clamp(sculpt.getSymRadialAxis(), 0, 2);
+            char radLbl[32];
+            if (radOn) {
+                snprintf(radLbl, sizeof(radLbl), "R%d%s##hudSymRad", sculpt.getSymRadialCount(), radAxisNames[rAx]);
+            } else {
+                snprintf(radLbl, sizeof(radLbl), "R##hudSymRad");
+            }
+            ImVec2 radBtnSz(radOn ? ctx.squareSize * 1.15f : halfSquareBtn.x, ctx.squareSize);
+            if (drawHudIconButton(0, radLbl, "", radBtnSz, ctx.scale, radOn)) {
+                sculpt.setSymRadialEnabled(!radOn);
+                if (!radOn && !sculpt.getUseSym()) {
+                    sculpt.setUseSym(true);
+                }
+                sculpt.saveSymmetryToMesh(scene.getSelected());
+            }
+            if (!ctx.customizeMode && ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Radial Symmetry: %s (Count %d, Axis %s, Alt+R)\nRight-click Symmetry button for settings",
+                                  radOn ? "On" : "Off", sculpt.getSymRadialCount(), radAxisNames[rAx]);
+            }
 
             ImGui::PopStyleVar(1);
         }

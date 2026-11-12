@@ -206,6 +206,9 @@ public:
     bool symY = false;
     bool symZ = false;
     int symMode = 0; // 0 = Local, 1 = World
+    bool symRadialEnabled = false;
+    int symRadialCount = 8; // 2..64 (preserved when toggled off)
+    int symRadialAxis = 1;  // 0=X, 1=Y, 2=Z
 
     glm::vec3 center{0.0f};
     float scale = 1.0f;
@@ -229,6 +232,8 @@ public:
     void invalidateSurfaceArea() const { m_surfaceAreaDirty = true; }
     glm::vec3 getSymmetryOriginForAxis(int axisIndex, SymmetryMode mode) const;
     glm::vec3 getSymmetryNormalForAxis(int axisIndex, SymmetryMode mode) const;
+    void getRadialAxisOriginAndDir(SymmetryMode mode, glm::vec3& outOrigin, glm::vec3& outAxisDir) const;
+    void getRadialAxisOriginAndDir(int axisIndex, SymmetryMode mode, glm::vec3& outOrigin, glm::vec3& outAxisDir) const;
     virtual void flip(int axisIndex);
     virtual void mirror(int axisIndex, bool positiveToNegative, SymmetryMode mode);
 
@@ -320,6 +325,10 @@ public:
         symY = other.symY;
         symZ = other.symZ;
         symMode = other.symMode;
+        symRadialEnabled = other.symRadialEnabled;
+        symRadialCount = other.symRadialCount;
+        symRadialAxis = other.symRadialAxis;
+        symmetryOffset = other.symmetryOffset;
         center = other.center;
         scale = other.scale;
         texCoords = other.texCoords;

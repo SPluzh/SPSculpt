@@ -21,9 +21,7 @@ bool TrimTool::execute(
     const Camera& camera,
     const std::vector<glm::vec2>& lassoPoints,
     bool isAlt,
-    bool useSym,
-    SymmetryMode symMode,
-    const std::vector<glm::vec3>& symScales,
+    const std::vector<SymCopy>& symCopies,
     const TrimConfig& config
 ) {
     if (!mesh || mesh->nbVerts == 0 || lassoPoints.size() < 3) {
@@ -40,8 +38,8 @@ bool TrimTool::execute(
     try {
         auto tTotalStart = std::chrono::high_resolution_clock::now();
 
-        sculpt_log("[MANIFOLD CSG] Start Operation: %s on Mesh (verts: %d, faces: %d, lasso: %zu pts, sym: %d)\n",
-                   isAlt ? "TRIM_KEEP_INSIDE" : "TRIM_CUT_OUT", inVerts, inFaces, lassoPoints.size(), useSym ? 1 : 0);
+        sculpt_log("[MANIFOLD CSG] Start Operation: %s on Mesh (verts: %d, faces: %d, lasso: %zu pts, symCopies: %zu)\n",
+                   isAlt ? "TRIM_KEEP_INSIDE" : "TRIM_CUT_OUT", inVerts, inFaces, lassoPoints.size(), symCopies.size());
 
         // 1. Compute local bounding box and average edge length for regular cutter grid
         float bbox[6] = {0};
@@ -65,11 +63,11 @@ bool TrimTool::execute(
             {bMax.x, bMax.y, bMax.z}, {bMin.x, bMax.y, bMax.z}
         };
 
-        std::vector<glm::vec3> scaleList = {{1.0f, 1.0f, 1.0f}};
-        if (useSym && !symScales.empty()) {
-            for (const auto& s : symScales) {
-                scaleList.push_back(s);
-            }
+        std::vector<glm::mat4> modelMats;
+        modelMats.reserve(1 + symCopies.size());
+        modelMats.push_back(mesh->matrix);
+        for (const auto& copy : symCopies) {
+            modelMats.push_back(mesh->matrix * copy.inverse().toMat4());
         }
 
         bool anyBehindCamera = false;
@@ -77,8 +75,7 @@ bool TrimTool::execute(
         glm::mat4 w2s = camera.computeWorldToScreenMatrix();
         float camH = (float)camera.getHeight();
 
-        for (const auto& s : scaleList) {
-            glm::mat4 modelMat = mesh->matrix * glm::scale(glm::mat4(1.0f), s);
+        for (const auto& modelMat : modelMats) {
             for (int k = 0; k < 8; ++k) {
                 glm::vec4 wPos = modelMat * glm::vec4(corners[k], 1.0f);
                 glm::vec4 scr = w2s * wPos;
@@ -159,21 +156,15 @@ bool TrimTool::execute(
             return false;
         }
 
-        // 4. Handle symmetry (mirror cutter prism across symmetry axes)
-        if (useSym && !symScales.empty()) {
+        // 4. Handle symmetry (transform cutter prism across all active symmetry copies)
+        if (!symCopies.empty()) {
             std::vector<manifold::Manifold> symCutters;
+            symCutters.reserve(1 + symCopies.size());
             symCutters.push_back(cutter);
 
-            for (const auto& s : symScales) {
-                if (s.x < 0.0f) {
-                    symCutters.push_back(cutter.Mirror(glm::vec3(1.0f, 0.0f, 0.0f)));
-                }
-                if (s.y < 0.0f) {
-                    symCutters.push_back(cutter.Mirror(glm::vec3(0.0f, 1.0f, 0.0f)));
-                }
-                if (s.z < 0.0f) {
-                    symCutters.push_back(cutter.Mirror(glm::vec3(0.0f, 0.0f, 1.0f)));
-                }
+            for (const auto& copy : symCopies) {
+                glm::mat4x3 m43(copy.m[0], copy.m[1], copy.m[2], copy.translation());
+                symCutters.push_back(cutter.Transform(m43));
             }
 
             if (symCutters.size() > 1) {

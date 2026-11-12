@@ -100,6 +100,9 @@ public:
         bool symY = false;
         bool symZ = false;
         int symMode = 0;
+        bool symRadialEnabled = false;
+        int symRadialCount = 8;
+        int symRadialAxis = 1;
         DynamicSubdivSettings dynamicSettings;
 
         size_t vertsCount = 0;
@@ -143,6 +146,9 @@ public:
             symY = o.symY;
             symZ = o.symZ;
             symMode = o.symMode;
+            symRadialEnabled = o.symRadialEnabled;
+            symRadialCount = o.symRadialCount;
+            symRadialAxis = o.symRadialAxis;
             dynamicSettings = o.dynamicSettings;
 
             vertsCount = o.vertsCount;
@@ -185,6 +191,9 @@ public:
             symY = ms.symY;
             symZ = ms.symZ;
             symMode = ms.symMode;
+            symRadialEnabled = ms.symRadialEnabled;
+            symRadialCount = ms.symRadialCount;
+            symRadialAxis = ms.symRadialAxis;
             dynamicSettings = ms.dynamicSettings;
 
             vertsCount = ms.verts.size();
@@ -257,6 +266,9 @@ public:
             ms.symY = symY;
             ms.symZ = symZ;
             ms.symMode = symMode;
+            ms.symRadialEnabled = symRadialEnabled;
+            ms.symRadialCount = symRadialCount;
+            ms.symRadialAxis = symRadialAxis;
             ms.dynamicSettings = dynamicSettings;
 
             ms.verts.resize(vertsCount);

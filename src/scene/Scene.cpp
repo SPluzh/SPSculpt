@@ -10,6 +10,7 @@
 #include "files/MeshUtils.h"
 #include "mesh/NormalCalc.h"
 #include "common/Constants.h"
+#include "common/Symmetry.h"
 #include "common/Logger.h"
 #include "common/CrashReporter.h"
 #include "common/ErrorReporter.h"
@@ -235,6 +236,9 @@ HistoryState Scene::saveCurrentState(bool includeTopology) const {
         ms.symY = m->symY;
         ms.symZ = m->symZ;
         ms.symMode = m->symMode;
+        ms.symRadialEnabled = m->symRadialEnabled;
+        ms.symRadialCount = m->symRadialCount;
+        ms.symRadialAxis = m->symRadialAxis;
         ms.edgeCreases = m->edgeCreases;
         ms.dynamicSettings = m->dynamicSettings;
         
@@ -339,6 +343,9 @@ void Scene::restoreState(const HistoryState& hs) {
         m->symY = ms.symY;
         m->symZ = ms.symZ;
         m->symMode = ms.symMode;
+        m->symRadialEnabled = ms.symRadialEnabled;
+        m->symRadialCount = ms.symRadialCount;
+        m->symRadialAxis = ms.symRadialAxis;
         m->edgeCreases = ms.edgeCreases;
         m->dynamicSettings = ms.dynamicSettings;
         m->invalidateDynamicSubdiv();
@@ -1512,21 +1519,31 @@ void Scene::addPrimitiveAtMask(const std::string& type, bool useSym, bool symX, 
         selectMesh(prim);
     }
 
-    if (useSym && (symX || symY || symZ)) {
-        std::vector<float> xVals = { 1.0f };
-        std::vector<float> yVals = { 1.0f };
-        std::vector<float> zVals = { 1.0f };
-        if (symX) xVals.push_back(-1.0f);
-        if (symY) yVals.push_back(-1.0f);
-        if (symZ) zVals.push_back(-1.0f);
+    if (useSym) {
+        if (m_sculptManager) {
+            std::vector<SymCopy> copies = m_sculptManager->getActiveSymmetryCopies(activeMesh, false);
+            for (const SymCopy& c : copies) {
+                glm::vec3 symCenter = c.point(localCenter);
+                if (glm::distance(symCenter, localCenter) > 0.001f) {
+                    spawnPrimitive(symCenter, std::to_string(m_meshes.size() + 1));
+                }
+            }
+        } else if (symX || symY || symZ) {
+            std::vector<float> xVals = { 1.0f };
+            std::vector<float> yVals = { 1.0f };
+            std::vector<float> zVals = { 1.0f };
+            if (symX) xVals.push_back(-1.0f);
+            if (symY) yVals.push_back(-1.0f);
+            if (symZ) zVals.push_back(-1.0f);
 
-        for (float sx : xVals) {
-            for (float sy : yVals) {
-                for (float sz : zVals) {
-                    if (sx == 1.0f && sy == 1.0f && sz == 1.0f) continue;
-                    glm::vec3 mirroredCenter(localCenter.x * sx, localCenter.y * sy, localCenter.z * sz);
-                    if (glm::distance(mirroredCenter, localCenter) > 0.001f) {
-                        spawnPrimitive(mirroredCenter, std::to_string(m_meshes.size() + 1));
+            for (float sx : xVals) {
+                for (float sy : yVals) {
+                    for (float sz : zVals) {
+                        if (sx == 1.0f && sy == 1.0f && sz == 1.0f) continue;
+                        glm::vec3 mirroredCenter(localCenter.x * sx, localCenter.y * sy, localCenter.z * sz);
+                        if (glm::distance(mirroredCenter, localCenter) > 0.001f) {
+                            spawnPrimitive(mirroredCenter, std::to_string(m_meshes.size() + 1));
+                        }
                     }
                 }
             }

@@ -48,6 +48,9 @@ struct MeshState {
     bool symY = false;
     bool symZ = false;
     int symMode = 0;
+    bool symRadialEnabled = false;
+    int symRadialCount = 8;
+    int symRadialAxis = 1;
 
     std::vector<uint8_t> edgeCreases;
     DynamicSubdivSettings dynamicSettings;
@@ -89,6 +92,9 @@ struct MeshState {
         symY = o.symY;
         symZ = o.symZ;
         symMode = o.symMode;
+        symRadialEnabled = o.symRadialEnabled;
+        symRadialCount = o.symRadialCount;
+        symRadialAxis = o.symRadialAxis;
         edgeCreases = o.edgeCreases;
         dynamicSettings = o.dynamicSettings;
     }
@@ -134,6 +140,9 @@ struct MeshState {
             symY = o.symY;
             symZ = o.symZ;
             symMode = o.symMode;
+            symRadialEnabled = o.symRadialEnabled;
+            symRadialCount = o.symRadialCount;
+            symRadialAxis = o.symRadialAxis;
             edgeCreases = o.edgeCreases;
             dynamicSettings = o.dynamicSettings;
         }

@@ -36,8 +36,11 @@ static const std::vector<HKActionInfo> s_actionInfoList = {
     { HKAction::BrushFocalShift,  "BrushFocalShift",  "Brush Focal Shift",    "FOC", "Parameters", true },
     { HKAction::BrushNegative,    "BrushNegative",    "Toggle Sub / Invert",  "NEG", "Parameters", false },
     { HKAction::BrushPicker,      "BrushPicker",      "Color / Depth Picker", "PCK", "Parameters", false },
-    { HKAction::ToggleSymmetry,   "ToggleSymmetry",   "Toggle Symmetry",      "SYM", "Parameters", false },
-    { HKAction::RemeshResolution, "RemeshResolution", "Remesh Resolution",   "REM", "Parameters", true },
+    { HKAction::ToggleSymmetry,       "ToggleSymmetry",       "Toggle Symmetry",        "SYM", "Parameters", false },
+    { HKAction::ToggleRadialSymmetry, "ToggleRadialSymmetry", "Toggle Radial Symmetry", "RSY", "Parameters", false },
+    { HKAction::RadialCountInc,       "RadialCountInc",       "Radial Count +1",        "R+",  "Parameters", false },
+    { HKAction::RadialCountDec,       "RadialCountDec",       "Radial Count -1",        "R-",  "Parameters", false },
+    { HKAction::RemeshResolution,     "RemeshResolution",     "Remesh Resolution",      "REM", "Parameters", true },
     { HKAction::TopologyDetail,   "TopologyDetail",   "Topology Detail",      "DET", "Parameters", true },
     { HKAction::DeleteSelected,   "DeleteSelected",   "Delete Selected Mesh", "DEL", "Parameters", false },
 
@@ -395,8 +398,11 @@ static void populateCommonKeyBindings(HotkeyPreset& p) {
     p.keyBindings[HKAction::BrushFocalShift]   = { SDLK_d };
     p.keyBindings[HKAction::BrushNegative]     = { SDLK_n };
     p.keyBindings[HKAction::BrushPicker]       = { SDLK_i };
-    p.keyBindings[HKAction::ToggleSymmetry]    = { SDLK_x, false, true, false }; // Alt+X
-    p.keyBindings[HKAction::RemeshResolution]  = { SDLK_x };
+    p.keyBindings[HKAction::ToggleSymmetry]       = { SDLK_x, false, true, false }; // Alt+X
+    p.keyBindings[HKAction::ToggleRadialSymmetry] = { SDLK_r, false, true, false }; // Alt+R
+    p.keyBindings[HKAction::RadialCountInc]       = { SDLK_RIGHTBRACKET, false, true, false }; // Alt+]
+    p.keyBindings[HKAction::RadialCountDec]       = { SDLK_LEFTBRACKET, false, true, false }; // Alt+[
+    p.keyBindings[HKAction::RemeshResolution]     = { SDLK_x };
     p.keyBindings[HKAction::ToggleRefEditMode] = { SDLK_z };
     p.keyBindings[HKAction::ToggleRefImagesVisible] = { SDLK_z, false, false, true }; // Shift+Z
     p.keyBindings[HKAction::DeleteSelected]    = { SDLK_DELETE };

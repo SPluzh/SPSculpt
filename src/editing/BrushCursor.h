@@ -2,6 +2,7 @@
 #include <glm/glm.hpp>
 #include <vector>
 #include "common/Enums.h"
+#include "common/Symmetry.h"
 
 class AngleRenderer;
 class Scene;
@@ -41,10 +42,7 @@ public:
     void update(int mouseX, int mouseY,
                 const Scene& scene,
                 float brushRadius,
-                bool useSym = false,
-                bool symX = true,
-                bool symY = false,
-                bool symZ = false,
+                const std::vector<SymCopy>& symCopies = {},
                 bool isSculpting = false,
                 BrushType brushType = BRUSH_FLATTEN,
                 bool hasActiveStrokeHit = false,
@@ -53,7 +51,6 @@ public:
                 float focalShift = 0.0f,
                 float hardness = 0.5f,
                 const glm::vec3& paintColor = glm::vec3(0.8f, 0.0f, 0.0f),
-                SymmetryMode symMode = SymmetryMode::Local,
                 ModalMode modalMode = ModalMode::NONE);
 
     void applyToRenderer(AngleRenderer& renderer) const;

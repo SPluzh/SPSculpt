@@ -4,6 +4,7 @@
 #include <string>
 #include <glm/glm.hpp>
 #include "common/Enums.h"
+#include "common/Symmetry.h"
 
 class Scene;
 class Mesh;
@@ -22,9 +23,7 @@ public:
         const Camera& camera,
         const glm::vec2& lineStart,
         const glm::vec2& lineEnd,
-        bool useSym = false,
-        SymmetryMode symMode = SymmetryMode::Local,
-        const std::vector<glm::vec3>& symScales = {}
+        const std::vector<SymCopy>& symCopies = {}
     );
 
     // Splits mesh by a 3D lasso cutter prism.
@@ -36,9 +35,7 @@ public:
         const Camera& camera,
         const std::vector<glm::vec2>& lassoPoints,
         bool isAlt = false,
-        bool useSym = false,
-        SymmetryMode symMode = SymmetryMode::Local,
-        const std::vector<glm::vec3>& symScales = {}
+        const std::vector<SymCopy>& symCopies = {}
     );
 };
 

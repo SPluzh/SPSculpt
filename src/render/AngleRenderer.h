@@ -25,6 +25,15 @@ struct SymmetryPlaneData {
     glm::vec3 color{1.0f, 0.25f, 0.25f};
 };
 
+struct RadialSymmetryGuideData {
+    int count = 0;
+    glm::vec3 origin{0.0f};
+    glm::vec3 axis{0.0f, 1.0f, 0.0f};
+    glm::vec3 uDir{1.0f, 0.0f, 0.0f};
+    glm::vec3 vDir{0.0f, 0.0f, 1.0f};
+    glm::vec3 color{0.18f, 0.85f, 0.92f};
+};
+
 struct ModelSnapshot {
     Camera frozenCamera;
     RenderTarget rt;
@@ -557,6 +566,8 @@ public:
     void setSymmetryParameters(bool showSymmetryLine, const std::vector<float>& planeOrigin, const std::vector<float>& planeNormal);
     void setSymmetryParametersFast(bool showSymmetryLine, uintptr_t planeOriginPtr, uintptr_t planeNormalPtr);
     void setSymmetryPlanes(bool showSymmetryLine, const std::vector<SymmetryPlaneData>& planes);
+    void setRadialSymmetryGuide(const RadialSymmetryGuideData& guide);
+    const RadialSymmetryGuideData& getRadialSymmetryGuide() const { return m_radialGuide; }
 
     // Selection cursor drawing parameters
     void setCursorParameters(
@@ -738,6 +749,7 @@ private:
     glm::vec3 m_planeNormal{0.0f, 0.0f, 1.0f};
     glm::vec3 m_planeColor{1.0f, 0.25f, 0.25f};
     std::vector<SymmetryPlaneData> m_symmetryPlanes;
+    RadialSymmetryGuideData m_radialGuide;
 
     // Selection parameters
     bool m_showCursor = false;

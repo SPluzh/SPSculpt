@@ -64,6 +64,10 @@ static void copyMeshMetadata(const Mesh* src, Mesh* dst, const std::string& suff
     dst->symY = src->symY;
     dst->symZ = src->symZ;
     dst->symMode = src->symMode;
+    dst->symRadialEnabled = src->symRadialEnabled;
+    dst->symRadialCount = src->symRadialCount;
+    dst->symRadialAxis = src->symRadialAxis;
+    dst->symmetryOffset = src->symmetryOffset;
     dst->hasCustomNormals = false;
     dst->outlinerName = src->outlinerName + suffix;
 }
@@ -74,9 +78,7 @@ bool SplitTool::sliceByLine(
     const Camera& camera,
     const glm::vec2& lineStart,
     const glm::vec2& lineEnd,
-    bool useSym,
-    SymmetryMode symMode,
-    const std::vector<glm::vec3>& symScales
+    const std::vector<SymCopy>& symCopies
 ) {
     if (!mesh || mesh->nbVerts == 0) return false;
     if (glm::distance(lineStart, lineEnd) < 5.0f) return false;
@@ -129,20 +131,19 @@ bool SplitTool::sliceByLine(
         glm::vec3 n = glm::normalize(nLocal);
         manifold::Manifold cutter =
             manifold::Manifold::Cube(glm::vec3(2.0f), true).Translate({1.0f, 0.0f, 0.0f});
-        float size = glm::length(bBox.Center() - n * originOffset) +
-                     0.5f * glm::length(bBox.Size());
+        float size = 2.0f * (glm::length(bBox.Center()) + glm::length(bBox.Size()) + std::abs(originOffset) + 1.0f);
         cutter = cutter.Scale(glm::vec3(size)).Translate({originOffset, 0.0f, 0.0f});
         float yDeg = glm::degrees(-glm::asin(n.z));
         float zDeg = glm::degrees(glm::atan(n.y, n.x));
         cutter = cutter.Rotate(0.0f, yDeg, zDeg);
 
-        if (useSym && !symScales.empty()) {
+        if (!symCopies.empty()) {
             std::vector<manifold::Manifold> symCutters;
+            symCutters.reserve(1 + symCopies.size());
             symCutters.push_back(cutter);
-            for (const auto& s : symScales) {
-                if (s.x < 0.0f) symCutters.push_back(cutter.Mirror(glm::vec3(1.0f, 0.0f, 0.0f)));
-                if (s.y < 0.0f) symCutters.push_back(cutter.Mirror(glm::vec3(0.0f, 1.0f, 0.0f)));
-                if (s.z < 0.0f) symCutters.push_back(cutter.Mirror(glm::vec3(0.0f, 0.0f, 1.0f)));
+            for (const auto& copy : symCopies) {
+                glm::mat4x3 m43(copy.m[0], copy.m[1], copy.m[2], copy.translation());
+                symCutters.push_back(cutter.Transform(m43));
             }
             if (symCutters.size() > 1) {
                 cutter = manifold::Manifold::BatchBoolean(symCutters, manifold::OpType::Add);
@@ -219,9 +220,7 @@ bool SplitTool::splitByLasso(
     const Camera& camera,
     const std::vector<glm::vec2>& lassoPoints,
     bool isAlt,
-    bool useSym,
-    SymmetryMode symMode,
-    const std::vector<glm::vec3>& symScales
+    const std::vector<SymCopy>& symCopies
 ) {
     if (!mesh || mesh->nbVerts == 0 || lassoPoints.size() < 3) return false;
 
@@ -231,8 +230,8 @@ bool SplitTool::splitByLasso(
 
     try {
         auto tStart = std::chrono::high_resolution_clock::now();
-        sculpt_log("[SPLIT CSG] Starting Split By Lasso on '%s' (%d verts, %d faces, alt=%d, sym=%d)...\n",
-                   mesh->outlinerName.c_str(), mesh->nbVerts, mesh->nbFaces, isAlt ? 1 : 0, useSym ? 1 : 0);
+        sculpt_log("[SPLIT CSG] Starting Split By Lasso on '%s' (%d verts, %d faces, alt=%d, symCopies=%zu)...\n",
+                   mesh->outlinerName.c_str(), mesh->nbVerts, mesh->nbFaces, isAlt ? 1 : 0, symCopies.size());
 
         float bbox[6] = {0};
         mesh->computeBbox(bbox);
@@ -260,21 +259,15 @@ bool SplitTool::splitByLasso(
             return false;
         }
 
-        // Mirror cutter prism across symmetry axes if symmetry is enabled
-        if (useSym && !symScales.empty()) {
+        // Transform cutter prism across all active symmetry copies if symmetry is enabled
+        if (!symCopies.empty()) {
             std::vector<manifold::Manifold> symCutters;
+            symCutters.reserve(1 + symCopies.size());
             symCutters.push_back(cutter);
 
-            for (const auto& s : symScales) {
-                if (s.x < 0.0f) {
-                    symCutters.push_back(cutter.Mirror(glm::vec3(1.0f, 0.0f, 0.0f)));
-                }
-                if (s.y < 0.0f) {
-                    symCutters.push_back(cutter.Mirror(glm::vec3(0.0f, 1.0f, 0.0f)));
-                }
-                if (s.z < 0.0f) {
-                    symCutters.push_back(cutter.Mirror(glm::vec3(0.0f, 0.0f, 1.0f)));
-                }
+            for (const auto& copy : symCopies) {
+                glm::mat4x3 m43(copy.m[0], copy.m[1], copy.m[2], copy.translation());
+                symCutters.push_back(cutter.Transform(m43));
             }
 
             if (symCutters.size() > 1) {
