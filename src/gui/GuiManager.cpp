@@ -11220,6 +11220,7 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
             { PrefTab_ToolOverlays, "Tool Overlays",       ICON_LC_PALETTE },
             { PrefTab_Performance,  "Performance",         ICON_LC_GAUGE },
             { PrefTab_Undo,         "Undo & System",       ICON_LC_UNDO_2 },
+            { PrefTab_Autosave,     "Autosave",            ICON_LC_CLOCK },
             { PrefTab_DebugLog,     "Debug Log",           ICON_LC_TERMINAL },
             { PrefTab_Tablet,       "Tablet & Stylus",     ICON_LC_TABLET },
             { PrefTab_Hotkeys,      "Hotkeys",             ICON_LC_KEYBOARD },
@@ -12412,88 +12413,6 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                 ImGui::Checkbox("Save Undo/Redo history in .spsculpt file", &m_saveUndoHistoryInProject);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Embed compressed Undo/Redo history inside .spsculpt project files so actions can be undone after reopening (increases file size)");
 
-                if (m_autosaveManager) {
-                    ImGui::Spacing();
-                    ImGui::Spacing();
-                    ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Autosave & Crash Recovery");
-                    ImGui::Separator();
-                    ImGui::Spacing();
-
-                    bool autosaveEnabled = m_autosaveManager->isEnabled();
-                    if (ImGui::Checkbox("Enable Autosave", &autosaveEnabled)) {
-                        m_autosaveManager->setEnabled(autosaveEnabled);
-                    }
-
-                    int intervalMin = m_autosaveManager->getIntervalMinutes();
-                    ImGui::SetNextItemWidth(180.0f * scale);
-                    if (ImGui::SliderInt("Interval (minutes)", &intervalMin, 1, 60, "%d min")) {
-                        m_autosaveManager->setIntervalMinutes(intervalMin);
-                    }
-
-                    int maxCopies = m_autosaveManager->getMaxCopies();
-                    ImGui::SetNextItemWidth(180.0f * scale);
-                    if (ImGui::SliderInt("Backup Copies", &maxCopies, 1, 10, "%d")) {
-                        m_autosaveManager->setMaxCopies(maxCopies);
-                    }
-
-                    bool autosaveUndo = m_autosaveManager->getSaveUndoHistory();
-                    if (ImGui::Checkbox("Include Undo/Redo history in autosave", &autosaveUndo)) {
-                        m_autosaveManager->setSaveUndoHistory(autosaveUndo);
-                    }
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("When enabled, Ctrl+Z history is included in autosave snapshots (increases file size and serialization time)");
-                    }
-
-                    ImGui::Spacing();
-                    std::string dirDisplay = m_autosaveManager->getEffectiveDirectory();
-                    char dirBuf[1024];
-                    snprintf(dirBuf, sizeof(dirBuf), "%s", dirDisplay.c_str());
-                    ImGui::Text("Autosave Directory:");
-                    ImGui::SetNextItemWidth(-1.0f);
-                    ImGui::InputText("##AutosaveDirDisplay", dirBuf, sizeof(dirBuf), ImGuiInputTextFlags_ReadOnly);
-
-                    if (ImGui::Button("Browse...##AutosaveDir")) {
-                        std::string picked = FileDialog::pickFolder("Select Autosave Directory");
-                        if (!picked.empty()) {
-                            m_autosaveManager->setCustomDirectory(picked);
-                        }
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Default##AutosaveDir")) {
-                        m_autosaveManager->resetToDefaultDirectory();
-                    }
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("Reset to default: %s", AutosaveManager::getDefaultDirectory().c_str());
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Open Folder##AutosaveDir")) {
-                        m_autosaveManager->openDirectoryInShell();
-                    }
-
-                    ImGui::Spacing();
-                    bool isBusy = sculpt.isSculpting() || g_undoManager.hasActiveSculptStroke() ||
-                                  isRemeshRunning() || isDecimationRunning() || m_autosaveManager->isWriting();
-                    if (isBusy) ImGui::BeginDisabled();
-                    if (ImGui::Button("Autosave Now")) {
-                        m_autosaveManager->triggerAutosaveNow(scene, renderer, sculpt, m_workTimer.getTotalSeconds(), m_currentScenePath);
-                    }
-                    if (isBusy) ImGui::EndDisabled();
-                    ImGui::SameLine();
-                    bool isWriting = m_autosaveManager->isWriting();
-                    if (isWriting) ImGui::BeginDisabled();
-                    if (ImGui::Button("Clear All Autosaves")) {
-                        int removed = m_autosaveManager->clearAllAutosaves();
-                        if (removed > 0) {
-                            showToast("All autosaves cleared", 2.0f);
-                        } else {
-                            showToast("No autosaves to clear", 2.0f);
-                        }
-                    }
-                    if (isWriting) ImGui::EndDisabled();
-                    ImGui::SameLine();
-                    ImGui::TextDisabled("%s", m_autosaveManager->getLastStatusMessage().c_str());
-                }
-
                 ImGui::Spacing();
                 ImGui::Spacing();
                 ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Memory & Limit Configuration");
@@ -13293,6 +13212,98 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                     }
                     ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No live sync captured yet during this session.");
                 }
+
+                break;
+            }
+
+            case PrefTab_Autosave: {
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Autosave & Crash Recovery");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                if (!m_autosaveManager) {
+                    ImGui::TextDisabled("Autosave manager is not initialized.");
+                    break;
+                }
+
+                bool autosaveEnabled = m_autosaveManager->isEnabled();
+                if (ImGui::Checkbox("Enable Autosave", &autosaveEnabled)) {
+                    m_autosaveManager->setEnabled(autosaveEnabled);
+                }
+
+                int intervalMin = m_autosaveManager->getIntervalMinutes();
+                ImGui::SetNextItemWidth(180.0f * scale);
+                if (ImGui::SliderInt("Interval (minutes)", &intervalMin, 1, 60, "%d min")) {
+                    m_autosaveManager->setIntervalMinutes(intervalMin);
+                }
+
+                int maxCopies = m_autosaveManager->getMaxCopies();
+                ImGui::SetNextItemWidth(180.0f * scale);
+                if (ImGui::SliderInt("Backup Copies", &maxCopies, 1, 10, "%d")) {
+                    m_autosaveManager->setMaxCopies(maxCopies);
+                }
+
+                bool autosaveUndo = m_autosaveManager->getSaveUndoHistory();
+                if (ImGui::Checkbox("Include Undo/Redo history in autosave", &autosaveUndo)) {
+                    m_autosaveManager->setSaveUndoHistory(autosaveUndo);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("When enabled, Ctrl+Z history is included in autosave snapshots (increases file size and serialization time)");
+                }
+
+                ImGui::Spacing();
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Storage & Actions");
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                std::string dirDisplay = m_autosaveManager->getEffectiveDirectory();
+                char dirBuf[1024];
+                snprintf(dirBuf, sizeof(dirBuf), "%s", dirDisplay.c_str());
+                ImGui::Text("Autosave Directory:");
+                ImGui::SetNextItemWidth(-1.0f);
+                ImGui::InputText("##AutosaveDirDisplay", dirBuf, sizeof(dirBuf), ImGuiInputTextFlags_ReadOnly);
+
+                if (ImGui::Button("Browse...##AutosaveDir")) {
+                    std::string picked = FileDialog::pickFolder("Select Autosave Directory");
+                    if (!picked.empty()) {
+                        m_autosaveManager->setCustomDirectory(picked);
+                    }
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Default##AutosaveDir")) {
+                    m_autosaveManager->resetToDefaultDirectory();
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Reset to default: %s", AutosaveManager::getDefaultDirectory().c_str());
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Open Folder##AutosaveDir")) {
+                    m_autosaveManager->openDirectoryInShell();
+                }
+
+                ImGui::Spacing();
+                bool isBusy = sculpt.isSculpting() || g_undoManager.hasActiveSculptStroke() ||
+                              isRemeshRunning() || isDecimationRunning() || m_autosaveManager->isWriting();
+                if (isBusy) ImGui::BeginDisabled();
+                if (ImGui::Button("Autosave Now")) {
+                    m_autosaveManager->triggerAutosaveNow(scene, renderer, sculpt, m_workTimer.getTotalSeconds(), m_currentScenePath);
+                }
+                if (isBusy) ImGui::EndDisabled();
+                ImGui::SameLine();
+                bool isWriting = m_autosaveManager->isWriting();
+                if (isWriting) ImGui::BeginDisabled();
+                if (ImGui::Button("Clear All Autosaves")) {
+                    int removed = m_autosaveManager->clearAllAutosaves();
+                    if (removed > 0) {
+                        showToast("All autosaves cleared", 2.0f);
+                    } else {
+                        showToast("No autosaves to clear", 2.0f);
+                    }
+                }
+                if (isWriting) ImGui::EndDisabled();
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", m_autosaveManager->getLastStatusMessage().c_str());
 
                 break;
             }

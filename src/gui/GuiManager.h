@@ -301,6 +301,7 @@ public:
         PrefTab_Tablet = 7,
         PrefTab_Hotkeys = 8,
         PrefTab_ZBrushBridge = 9,
+        PrefTab_Autosave = 10,
     };
 
 private:
