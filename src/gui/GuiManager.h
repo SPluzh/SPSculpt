@@ -67,6 +67,7 @@ private:
     bool m_showSculptingPanel = false;
     bool m_showScenePanel = true;
     bool m_showTopologyPanel = false;
+    bool m_showDeformPanel = false;
     bool m_showFilesPanel = true;
     bool m_showCameraPanel = false;
     bool m_showRenderingPanel = false;
@@ -426,6 +427,7 @@ public:
     bool isSculptingPanelVisible() const { return m_showSculptingPanel; }
     void toggleScenePanel() { m_showScenePanel = !m_showScenePanel; }
     void toggleTopologyPanel() { m_showTopologyPanel = !m_showTopologyPanel; }
+    void toggleDeformPanel() { m_showDeformPanel = !m_showDeformPanel; }
     void toggleCameraPanel() { m_showPreferencesPanel = true; m_preferencesActiveTab = PrefTab_Camera; }
     void toggleRenderingPanel() { m_showPreferencesPanel = true; m_preferencesActiveTab = PrefTab_Rendering; }
     void toggleMaskingPanel() { m_showMaskingPanel = !m_showMaskingPanel; }
@@ -503,6 +505,9 @@ public:
 
     bool getShowTopologyPanel() const { return m_showTopologyPanel; }
     void setShowTopologyPanel(bool show) { m_showTopologyPanel = show; }
+
+    bool getShowDeformPanel() const { return m_showDeformPanel; }
+    void setShowDeformPanel(bool show) { m_showDeformPanel = show; }
 
     bool getShowMultiresPanel() const { return m_showMultiresPanel; }
     void setShowMultiresPanel(bool show) { m_showMultiresPanel = show; }

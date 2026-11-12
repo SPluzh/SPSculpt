@@ -170,6 +170,7 @@ add_executable(SPSculpt
     src/sculpt/Remesh.cpp
     src/sculpt/KeepMasked.cpp
     src/sculpt/RelaxEngine.cpp
+    src/sculpt/MeshDeform.cpp
     src/sculpt/PrimitiveGenerator.cpp
     src/editing/Subdivision.cpp
     src/editing/Thickness.cpp

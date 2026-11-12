@@ -55,6 +55,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include "mesh/Topology.h"
 #include "sculpt/Remesh.h"
+#include "sculpt/MeshDeform.h"
 #include "files/MeshUtils.h"
 #define STBI_WINDOWS_UTF8
 #include "../third_party/stb_image.h"
@@ -6891,6 +6892,139 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
         ImGui::End();
     }
 
+    // 5b. Deformation panel (Smooth, Relax, Inflate with live preview & release-to-apply)
+    if (m_showDeformPanel) {
+        ImGui::SetNextWindowPos({740.0f * scale, 360.0f * scale}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize({280.0f * scale, 180.0f * scale}, ImGuiCond_FirstUseEver);
+        ImGui::Begin("Deformation", &m_showDeformPanel, ImGuiWindowFlags_AlwaysAutoResize);
+
+        static bool s_deformPreserveVolume = true;
+        static bool s_deformPreserveBoundary = true;
+        static bool s_deformUseMask = true;
+
+        struct DeformSliderSession {
+            bool active = false;
+            int activeOp = -1;
+            uint32_t meshId = 0;
+            float value = 0.0f;
+            float lastAppliedValue = 0.0f;
+            std::vector<float> baseVerts;
+            std::vector<float> baseNormals;
+            std::vector<float> scratchVerts;
+
+            void reset() {
+                active = false;
+                activeOp = -1;
+                meshId = 0;
+                value = 0.0f;
+                lastAppliedValue = 0.0f;
+                baseVerts.clear();
+                baseNormals.clear();
+                scratchVerts.clear();
+            }
+        };
+        static DeformSliderSession s_deformSession;
+
+        Mesh* selectedMesh = scene.getSelected();
+        if (selectedMesh && !selectedMesh->isArmature && !selectedMesh->isTube && !selectedMesh->isPrimitive &&
+            selectedMesh->nbVerts > 0 && selectedMesh->nbFaces > 0) {
+
+            if (s_deformSession.active && s_deformSession.meshId != selectedMesh->getID()) {
+                s_deformSession.reset();
+            }
+
+            ImGui::Checkbox("Preserve Volume", &s_deformPreserveVolume);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Smooth uses Taubin smoothing to avoid shrinking the volume.");
+            }
+            ImGui::Checkbox("Preserve Boundary", &s_deformPreserveBoundary);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Vertices on the boundary of the mesh will stay still.");
+            }
+            ImGui::Checkbox("Use Mask", &s_deformUseMask);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Masked areas stay fixed; partially masked areas move proportionally.");
+            }
+            ImGui::Separator();
+
+            auto drawDeformSlider = [&](const char* label, const char* undoDesc, MeshDeformOp op, float minVal, float maxVal) {
+                const int opIdx = static_cast<int>(op);
+                float sliderVal = (s_deformSession.active && s_deformSession.activeOp == opIdx) ? s_deformSession.value : 0.0f;
+
+                ImGui::SetNextItemWidth(180.0f * scale);
+                bool changed = ImGui::SliderFloat(label, &sliderVal, minVal, maxVal, "%.0f%%");
+
+                if (ImGui::IsItemActivated()) {
+                    if (selectedMesh->vrvStartCount.size() < static_cast<size_t>(selectedMesh->nbVerts) * 2) {
+                        selectedMesh->initTopology();
+                    }
+                    s_deformSession.active = true;
+                    s_deformSession.activeOp = opIdx;
+                    s_deformSession.meshId = selectedMesh->getID();
+                    s_deformSession.value = sliderVal;
+                    s_deformSession.lastAppliedValue = 0.0f;
+                    s_deformSession.baseVerts = selectedMesh->verts;
+                    s_deformSession.baseNormals = selectedMesh->normals;
+                }
+
+                if (s_deformSession.active && s_deformSession.activeOp == opIdx) {
+                    if (changed && std::abs(sliderVal - s_deformSession.lastAppliedValue) > 1e-3f) {
+                        s_deformSession.value = sliderVal;
+                        s_deformSession.lastAppliedValue = sliderVal;
+
+                        MeshDeformOptions opts;
+                        opts.amount = sliderVal;
+                        opts.preserveVolume = s_deformPreserveVolume;
+                        opts.preserveBoundary = s_deformPreserveBoundary;
+                        opts.useMask = s_deformUseMask;
+
+                        if (deformMeshPositions(*selectedMesh, s_deformSession.baseVerts, op, opts, s_deformSession.scratchVerts)) {
+                            applyDeformedPositionsToMesh(*selectedMesh, s_deformSession.scratchVerts, false);
+                        }
+                    }
+
+                    if (ImGui::IsItemDeactivatedAfterEdit()) {
+                        if (std::abs(s_deformSession.value) > 1e-4f) {
+                            MeshDeformOptions opts;
+                            opts.amount = s_deformSession.value;
+                            opts.preserveVolume = s_deformPreserveVolume;
+                            opts.preserveBoundary = s_deformPreserveBoundary;
+                            opts.useMask = s_deformUseMask;
+
+                            if (deformMeshPositions(*selectedMesh, s_deformSession.baseVerts, op, opts, s_deformSession.scratchVerts)) {
+                                applyDeformedPositionsToMesh(*selectedMesh, s_deformSession.scratchVerts, true);
+                                commitMeshDeformationUndo(
+                                    scene,
+                                    *selectedMesh,
+                                    std::move(s_deformSession.baseVerts),
+                                    std::move(s_deformSession.baseNormals),
+                                    undoDesc
+                                );
+                            }
+                        } else {
+                            applyDeformedPositionsToMesh(*selectedMesh, s_deformSession.baseVerts, false);
+                        }
+                        s_deformSession.reset();
+                    } else if (ImGui::IsItemDeactivated()) {
+                        applyDeformedPositionsToMesh(*selectedMesh, s_deformSession.baseVerts, false);
+                        s_deformSession.reset();
+                    }
+                }
+            };
+
+            drawDeformSlider("Smooth##DeformSmooth", "Deform Smooth", MeshDeformOp::Smooth, 0.0f, 100.0f);
+            drawDeformSlider("Relax##DeformRelax", "Deform Relax", MeshDeformOp::Relax, 0.0f, 100.0f);
+            drawDeformSlider("Inflate##DeformInflate", "Deform Inflate", MeshDeformOp::Inflate, -100.0f, 100.0f);
+        } else {
+            if (s_deformSession.active) {
+                s_deformSession.reset();
+            }
+            ImGui::TextDisabled("No editable mesh selected");
+        }
+
+        ImGui::End();
+    }
+
     // 8. Gizmo Cube Window
     if (m_showGizmoCube) {
         int wWidth, wHeight;
@@ -9509,6 +9643,7 @@ bool GuiManager::saveSettings(IniFile& ini) {
     ini.setBool(panelSec, "showSculptingPanel", m_showSculptingPanel);
     ini.setBool(panelSec, "showScenePanel", m_showScenePanel);
     ini.setBool(panelSec, "showTopologyPanel", m_showTopologyPanel);
+    ini.setBool(panelSec, "showDeformPanel", m_showDeformPanel);
     ini.setBool(panelSec, "showFilesPanel", m_showFilesPanel);
     ini.setBool(panelSec, "showCameraPanel", m_showCameraPanel);
     ini.setBool(panelSec, "showRenderingPanel", m_showRenderingPanel);
@@ -9588,6 +9723,7 @@ bool GuiManager::loadSettings(const IniFile& ini) {
         if (ini.hasKey(panelSec, "showSculptingPanel")) m_showSculptingPanel = ini.getBool(panelSec, "showSculptingPanel");
         if (ini.hasKey(panelSec, "showScenePanel")) m_showScenePanel = ini.getBool(panelSec, "showScenePanel");
         if (ini.hasKey(panelSec, "showTopologyPanel")) m_showTopologyPanel = ini.getBool(panelSec, "showTopologyPanel");
+        if (ini.hasKey(panelSec, "showDeformPanel")) m_showDeformPanel = ini.getBool(panelSec, "showDeformPanel");
         if (ini.hasKey(panelSec, "showFilesPanel")) m_showFilesPanel = ini.getBool(panelSec, "showFilesPanel");
         if (ini.hasKey(panelSec, "showCameraPanel")) m_showCameraPanel = ini.getBool(panelSec, "showCameraPanel");
         if (ini.hasKey(panelSec, "showRenderingPanel")) m_showRenderingPanel = ini.getBool(panelSec, "showRenderingPanel");
@@ -10794,6 +10930,7 @@ void GuiManager::drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRend
         ImGui::MenuItem("Sculpting Settings", nullptr, &m_showSculptingPanel);
         ImGui::MenuItem("Scene Outliner", "F1", &m_showScenePanel);
         ImGui::MenuItem("Topology & Remesh", nullptr, &m_showTopologyPanel);
+        ImGui::MenuItem("Deformation", nullptr, &m_showDeformPanel);
         ImGui::MenuItem("Component Tools", nullptr, &m_showComponentPanel);
         ImGui::MenuItem("Sculpt Layers", nullptr, &m_showLayersPanel);
         ImGui::MenuItem("Multiresolution & Dynamic Subdiv", nullptr, &m_showMultiresPanel);
