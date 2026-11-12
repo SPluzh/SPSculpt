@@ -2,6 +2,51 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.30]
+- **Whole-Mesh Deformation Panel**:
+  - Added interactive Deformation panel with live preview for `Smooth`, `Relax`, `Inflate`, `Polish`, and `Balloon` operations.
+- **Camera Navigation**:
+  - Added continuous `Shift`-snap camera orbiting to step between axis views while dragging, with snap animation and continuation preferences.
+
+## [0.3.29]
+- **Autosave & Crash Recovery**:
+  - Added background async autosave and automatic crash recovery with a dedicated Preferences tab.
+- **Persistent Undo History**:
+  - Save and restore LZ4-compressed Undo/Redo history directly inside `.spsculpt` project files (with automatic 256 MB undo memory budget management).
+
+## [0.3.28]
+- **Customizable HUD**:
+  - Added drag-and-drop customizable HUD islands (`Top-Left`, `Left`, `Top-Right`) with a button catalog and persistent layout saving.
+  - Added a hover popover with vertical `Intensity`, `Size`, and `Focal Shift` sliders to the HUD.
+- **Voxel Remesh**:
+  - Added estimated point count and RAM requirement indicators with an out-of-memory (OOM) warning before remeshing.
+
+## [0.3.27]
+- **GPU & CPU Pipeline Optimization**:
+  - Added dirty-block partial VBO uploads, packed vertex attributes (`snorm16` normals, `unorm8` colors/materials), and indexed PolyGroup rendering.
+  - Added analytic normals with deferred exact catch-up for large brushes (`>=100k` vertices), input motion coalescing, and substep batching.
+  - Added safe backface culling, VAO/uniform caching, adaptive orbit resolution scaling, and event-driven idle sleep.
+- **Telemetry HUD**:
+  - Added live `FPS`, `RAM`, and `VRAM` telemetry to the Mesh Statistics HUD and Preferences.
+
+## [0.3.26]
+- **Crash Reporter & Resilience**:
+  - Added built-in crash reporter (`.dmp` minidumps, stack traces, rotated session logs) and non-blocking error notifications with stroke rollback.
+- **Brush & Stability Fixes**:
+  - Standardized `DamStandard` and `V-Tool` carving depth across mesh densities with `Accumulate` toggle support.
+  - Fixed `ClayBuildup` bounds/NaN crashes and application shutdown teardown crashes.
+
+## [0.3.25]
+- **Dynamic Topology (Dyntopo)**:
+  - Real-time adaptive tessellation while sculpting with per-brush Dyntopo toggles and UI controls.
+  - Preserves untouched quads outside the active brush radius via local triangulation with bit-for-bit Undo/Redo restoration.
+  - Added contextual `X` hotkey detail sizing with live checkerboard density preview, plus symmetry-safe `SnakeHook`, `Move`, and `ClayBuildup` support.
+
+## [0.3.24]
+- **BVH Spatial Engine & 50M+ Sculpt Performance**:
+  - Migrated spatial acceleration index from Octree to Linear BVH with incremental refit and thread-safe symmetry buffers.
+  - Accelerated brush strokes, zero-copy `Move` dragging, `Mask Lasso` (BVH frustum culling), and `Transform` proxy sync for smooth 10M–50M+ polygon sculpting.
+
 ## [0.3.23]
 - **Rake Brush (ClayRake)**:
   - **Parallel Grooves**: ClayRake tool that carves or builds parallel ridges smoothly following the stroke path.
