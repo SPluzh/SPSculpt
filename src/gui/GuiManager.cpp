@@ -17,6 +17,7 @@
 #include "render/AngleRenderer.h"
 #include "render/RenderSettings.h"
 #include "editing/BrushCursor.h"
+#include "files/AutosaveManager.h"
 #include "files/FileManager.h"
 #include "files/ImportSGL.h"
 #include "platform/FileDialog.h"
@@ -577,6 +578,9 @@ bool GuiManager::openSceneFromPath(const std::string& path, Scene& scene, Sculpt
         if (loaded && m_recentFiles && isProject) {
             m_recentFiles->addFile(path);
         }
+        if (loaded && m_autosaveManager) {
+            m_autosaveManager->onSceneResetOrOpened();
+        }
         return loaded;
     } catch (const std::exception& e) {
         scene.restoreState(rollbackState);
@@ -594,6 +598,116 @@ bool GuiManager::openSceneFromPath(const std::string& path, Scene& scene, Sculpt
         ErrorReporter::instance().reportError(
             "Open Scene Failed",
             "Unknown error while loading '" + path + "'. Previous scene restored.",
+            "",
+            true
+        );
+        return false;
+    }
+}
+
+bool GuiManager::restoreAutosaveFromPath(const std::string& path,
+                                         Scene& scene,
+                                         SculptManager* sculpt,
+                                         AngleRenderer* renderer,
+                                         const std::string& originalScenePath,
+                                         bool wasUnsaved) {
+    if (path.empty()) return false;
+
+    std::error_code existEc;
+#ifdef _WIN32
+    std::filesystem::path fsPath(utf8ToWide(path));
+#else
+    std::filesystem::path fsPath(path);
+#endif
+    if (!std::filesystem::exists(fsPath, existEc)) {
+        ErrorReporter::instance().reportError(
+            "Autosave Restore Failed",
+            "Autosave file not found: " + path,
+            existEc ? existEc.message() : "",
+            true
+        );
+        return false;
+    }
+
+    if (m_autosaveManager) {
+        m_autosaveManager->markRestoreAttempt(path);
+    }
+
+    HistoryState rollbackState = scene.saveCurrentState(true);
+    std::string prevScenePath = m_currentScenePath;
+
+    try {
+        AngleRenderer* r = renderer ? renderer : m_renderer;
+        scene.clear();
+        uint64_t loadedWorkTime = 0;
+        bool loadedUndoHistory = false;
+        auto newMeshes = FileManager::importFiles(path, &scene, r, sculpt, &loadedWorkTime, &loadedUndoHistory);
+
+        for (auto* mesh : newMeshes) {
+            scene.addMesh(mesh);
+        }
+
+        if (r) {
+            int w = r->getWidth();
+            int h = r->getHeight();
+            float dpi = r->getDpiScale();
+            if (w > 0 && h > 0) {
+                if (scene.getSplitMode() != Scene::SplitMode::OFF) {
+                    int halfW = static_cast<int>((w / 2) / dpi);
+                    int logicalH = static_cast<int>(h / dpi);
+                    scene.getCamera().onResize(halfW, logicalH);
+                    if (scene.getCameraRight()) {
+                        scene.getCameraRight()->onResize(static_cast<int>((w - w / 2) / dpi), logicalH);
+                    }
+                } else {
+                    int logicalW = static_cast<int>(w / dpi);
+                    int logicalH = static_cast<int>(h / dpi);
+                    scene.getCamera().onResize(logicalW, logicalH);
+                }
+            }
+        }
+
+        if (!newMeshes.empty()) {
+            scene.selectMesh(newMeshes.front());
+            if (!loadedUndoHistory) {
+                scene.pushHistoryState();
+            }
+        }
+
+        if (wasUnsaved || originalScenePath.empty()) {
+            m_currentScenePath.clear();
+        } else {
+            m_currentScenePath = originalScenePath;
+        }
+
+        m_workTimer.reset();
+        m_workTimer.setTotalSeconds(loadedWorkTime);
+        m_workTimer.startSession();
+        scene.setModified(true);
+
+        if (m_autosaveManager) {
+            m_autosaveManager->markRestoreSuccess();
+        }
+
+        sculpt_log("[Autosave] Restored autosave from '%s' (original='%s', wasUnsaved=%d, undoHistory=%d)\n",
+                   path.c_str(), originalScenePath.c_str(), wasUnsaved ? 1 : 0, loadedUndoHistory ? 1 : 0);
+        return true;
+    } catch (const std::exception& e) {
+        scene.restoreState(rollbackState);
+        m_currentScenePath = prevScenePath;
+        ErrorReporter::instance().reportError(
+            "Autosave Restore Failed",
+            "Exception while restoring autosave '" + path + "'.",
+            e.what(),
+            true
+        );
+        return false;
+    } catch (...) {
+        scene.restoreState(rollbackState);
+        m_currentScenePath = prevScenePath;
+        ErrorReporter::instance().reportError(
+            "Autosave Restore Failed",
+            "Unknown error while restoring autosave '" + path + "'.",
             "",
             true
         );
@@ -698,6 +812,9 @@ void GuiManager::saveScene(Scene& scene, SculptManager* sculpt) {
             if (m_recentFiles) {
                 m_recentFiles->addFile(m_currentScenePath);
             }
+            if (m_autosaveManager) {
+                m_autosaveManager->onManualSave(m_currentScenePath);
+            }
             sculpt_log("[Save Scene] Successfully saved project to '%s' with work time %llu s\n", m_currentScenePath.c_str(), static_cast<unsigned long long>(totalTime));
         } else {
             ErrorReporter::instance().reportError(
@@ -764,6 +881,9 @@ void GuiManager::saveSceneAs(Scene& scene, SculptManager* sculpt) {
             m_recentFileWorkTimes[m_currentScenePath] = totalTime;
             if (m_recentFiles) {
                 m_recentFiles->addFile(m_currentScenePath);
+            }
+            if (m_autosaveManager) {
+                m_autosaveManager->onManualSave(m_currentScenePath);
             }
             sculpt_log("[Save Scene As] Successfully saved project to '%s' with work time %llu s\n", m_currentScenePath.c_str(), static_cast<unsigned long long>(totalTime));
         } else {
@@ -8800,9 +8920,20 @@ void GuiManager::render(SculptManager& sculpt, Scene& scene, AngleRenderer& rend
     drawReferenceImageManipulator(sculpt, scene, renderer);
     drawCameraBookmarksPanel(scene, renderer);
     drawHotkeyHUD();
+    if (m_autosaveManager) {
+        bool autosaveOk = false;
+        if (m_autosaveManager->consumeWriteCompleted(autosaveOk)) {
+            if (autosaveOk) {
+                showToast("Autosave saved", 2.5f);
+            } else {
+                showErrorToast("Autosave failed (see log)", 4.0f);
+            }
+        }
+    }
     drawToastHUD();
     drawErrorBanner(sculpt, scene);
     drawPreviousCrashModal();
+    drawAutosaveRestoreModal(scene, sculpt, renderer);
     if (m_showRecentFilesWindow && m_recentFiles) {
         drawRecentFilesWindow(scene, &sculpt, *m_recentFiles);
     }
@@ -9407,6 +9538,9 @@ bool GuiManager::saveSettings(IniFile& ini) {
     ini.setBool(genSec, "savePngNextToProject", m_savePngNextToProject);
     ini.setBool(genSec, "saveUndoHistoryInProject", m_saveUndoHistoryInProject);
     ini.setBool(genSec, "createDefaultSphereOnStartup", m_createDefaultSphereOnStartup);
+    if (m_autosaveManager) {
+        m_autosaveManager->saveSettings(ini);
+    }
 
     std::string remeshSec = "Remesh";
     ini.setInt(remeshSec, "resolution", m_remeshResolution);
@@ -9502,6 +9636,9 @@ bool GuiManager::loadSettings(const IniFile& ini) {
         if (ini.hasKey(genSec, "savePngNextToProject")) m_savePngNextToProject = ini.getBool(genSec, "savePngNextToProject");
         if (ini.hasKey(genSec, "saveUndoHistoryInProject")) m_saveUndoHistoryInProject = ini.getBool(genSec, "saveUndoHistoryInProject");
         if (ini.hasKey(genSec, "createDefaultSphereOnStartup")) m_createDefaultSphereOnStartup = ini.getBool(genSec, "createDefaultSphereOnStartup");
+    }
+    if (m_autosaveManager) {
+        m_autosaveManager->loadSettings(ini);
     }
 
     std::string remeshSec = "Remesh";
@@ -10563,6 +10700,15 @@ void GuiManager::drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRend
         if (ImGui::MenuItem("Open Recent...", "Ctrl+Shift+O")) {
             m_showRecentFilesWindow = true;
         }
+        {
+            std::string latestAutosave = m_autosaveManager ? m_autosaveManager->getLatestAutosavePath() : std::string();
+            bool hasAutosave = !latestAutosave.empty();
+            if (!hasAutosave) ImGui::BeginDisabled();
+            if (ImGui::MenuItem("Open Latest Autosave...")) {
+                restoreAutosaveFromPath(latestAutosave, scene, &sculpt, &renderer, "", true);
+            }
+            if (!hasAutosave) ImGui::EndDisabled();
+        }
         ImGui::Separator();
         if (ImGui::MenuItem("Import File...", "Ctrl+I")) {
             importFile(scene, &sculpt);
@@ -10575,6 +10721,9 @@ void GuiManager::drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRend
             scene.loadDefaultSphere();
             m_currentScenePath.clear();
             scene.setModified(false);
+            if (m_autosaveManager) {
+                m_autosaveManager->onSceneResetOrOpened();
+            }
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Save App Settings")) {
@@ -12262,6 +12411,88 @@ void GuiManager::drawPreferencesPanel(SculptManager& sculpt, Scene& scene, Angle
                 ImGui::Spacing();
                 ImGui::Checkbox("Save Undo/Redo history in .spsculpt file", &m_saveUndoHistoryInProject);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Embed compressed Undo/Redo history inside .spsculpt project files so actions can be undone after reopening (increases file size)");
+
+                if (m_autosaveManager) {
+                    ImGui::Spacing();
+                    ImGui::Spacing();
+                    ImGui::TextColored(ImVec4(0.0f, 0.9f, 1.0f, 1.0f), "Autosave & Crash Recovery");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    bool autosaveEnabled = m_autosaveManager->isEnabled();
+                    if (ImGui::Checkbox("Enable Autosave", &autosaveEnabled)) {
+                        m_autosaveManager->setEnabled(autosaveEnabled);
+                    }
+
+                    int intervalMin = m_autosaveManager->getIntervalMinutes();
+                    ImGui::SetNextItemWidth(180.0f * scale);
+                    if (ImGui::SliderInt("Interval (minutes)", &intervalMin, 1, 60, "%d min")) {
+                        m_autosaveManager->setIntervalMinutes(intervalMin);
+                    }
+
+                    int maxCopies = m_autosaveManager->getMaxCopies();
+                    ImGui::SetNextItemWidth(180.0f * scale);
+                    if (ImGui::SliderInt("Backup Copies", &maxCopies, 1, 10, "%d")) {
+                        m_autosaveManager->setMaxCopies(maxCopies);
+                    }
+
+                    bool autosaveUndo = m_autosaveManager->getSaveUndoHistory();
+                    if (ImGui::Checkbox("Include Undo/Redo history in autosave", &autosaveUndo)) {
+                        m_autosaveManager->setSaveUndoHistory(autosaveUndo);
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("When enabled, Ctrl+Z history is included in autosave snapshots (increases file size and serialization time)");
+                    }
+
+                    ImGui::Spacing();
+                    std::string dirDisplay = m_autosaveManager->getEffectiveDirectory();
+                    char dirBuf[1024];
+                    snprintf(dirBuf, sizeof(dirBuf), "%s", dirDisplay.c_str());
+                    ImGui::Text("Autosave Directory:");
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::InputText("##AutosaveDirDisplay", dirBuf, sizeof(dirBuf), ImGuiInputTextFlags_ReadOnly);
+
+                    if (ImGui::Button("Browse...##AutosaveDir")) {
+                        std::string picked = FileDialog::pickFolder("Select Autosave Directory");
+                        if (!picked.empty()) {
+                            m_autosaveManager->setCustomDirectory(picked);
+                        }
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Default##AutosaveDir")) {
+                        m_autosaveManager->resetToDefaultDirectory();
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Reset to default: %s", AutosaveManager::getDefaultDirectory().c_str());
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Open Folder##AutosaveDir")) {
+                        m_autosaveManager->openDirectoryInShell();
+                    }
+
+                    ImGui::Spacing();
+                    bool isBusy = sculpt.isSculpting() || g_undoManager.hasActiveSculptStroke() ||
+                                  isRemeshRunning() || isDecimationRunning() || m_autosaveManager->isWriting();
+                    if (isBusy) ImGui::BeginDisabled();
+                    if (ImGui::Button("Autosave Now")) {
+                        m_autosaveManager->triggerAutosaveNow(scene, renderer, sculpt, m_workTimer.getTotalSeconds(), m_currentScenePath);
+                    }
+                    if (isBusy) ImGui::EndDisabled();
+                    ImGui::SameLine();
+                    bool isWriting = m_autosaveManager->isWriting();
+                    if (isWriting) ImGui::BeginDisabled();
+                    if (ImGui::Button("Clear All Autosaves")) {
+                        int removed = m_autosaveManager->clearAllAutosaves();
+                        if (removed > 0) {
+                            showToast("All autosaves cleared", 2.0f);
+                        } else {
+                            showToast("No autosaves to clear", 2.0f);
+                        }
+                    }
+                    if (isWriting) ImGui::EndDisabled();
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("%s", m_autosaveManager->getLastStatusMessage().c_str());
+                }
 
                 ImGui::Spacing();
                 ImGui::Spacing();
@@ -14304,6 +14535,85 @@ void GuiManager::drawPreviousCrashModal() {
             m_prevCrashInfo.found = false;
             ImGui::CloseCurrentPopup();
         }
+        ImGui::EndPopup();
+    }
+}
+
+void GuiManager::drawAutosaveRestoreModal(Scene& scene, SculptManager& sculpt, AngleRenderer& renderer) {
+    if (!m_autosaveManager || !m_autosaveManager->hasPendingRestore()) {
+        m_autosaveRestoreModalOpened = false;
+        return;
+    }
+
+    // Coordinate with drawPreviousCrashModal: wait until crash modal is dismissed
+    if (m_prevCrashInfo.found || m_showCrashModal) {
+        return;
+    }
+
+    const char* popupId = "Recover Autosave##AutosaveRestoreModal";
+    if (!m_autosaveRestoreModalOpened && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) {
+        ImGui::OpenPopup(popupId);
+        m_autosaveRestoreModalOpened = true;
+    }
+
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    float scale = getUiScale();
+    ImGui::SetNextWindowSizeConstraints(ImVec2(460.0f * scale, 0.0f), ImVec2(720.0f * scale, 520.0f * scale));
+
+    if (ImGui::BeginPopupModal(popupId, nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
+        const auto& pending = m_autosaveManager->getPendingRestore();
+
+        ImGui::TextColored(ImVec4(0.3f, 0.85f, 1.0f, 1.0f), "%s Unsaved Autosave Recovery Available", ICON_LC_ROTATE_CCW);
+        ImGui::Spacing();
+        ImGui::TextWrapped("An autosave from a previous session that did not exit cleanly was found.");
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (!pending.savedTimeStr.empty()) {
+            ImGui::Text("Saved at: %s", pending.savedTimeStr.c_str());
+        }
+        if (pending.wasUnsaved || pending.originalScenePath.empty()) {
+            ImGui::Text("Scene:    (Unsaved scene)");
+        } else {
+            ImGui::TextWrapped("Project:  %s", pending.originalScenePath.c_str());
+        }
+        ImGui::Text("History:  %s", pending.hasUndoHistory ? "Included (Undo/Redo available)" : "Scene snapshot only");
+
+        if (pending.restoreAttempts > 0) {
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f),
+                               "Warning: Previous restore attempt (%d) did not complete cleanly.",
+                               pending.restoreAttempts);
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (ImGui::Button("Restore Autosave", ImVec2(150.0f * scale, 0.0f))) {
+            restoreAutosaveFromPath(pending.filePath, scene, &sculpt, &renderer,
+                                    pending.originalScenePath, pending.wasUnsaved);
+            m_autosaveRestoreModalOpened = false;
+            ImGui::CloseCurrentPopup();
+        }
+        if (pending.restoreAttempts > 0 && !pending.fallbackFilePath.empty()) {
+            ImGui::SameLine();
+            if (ImGui::Button("Restore Previous Copy", ImVec2(170.0f * scale, 0.0f))) {
+                restoreAutosaveFromPath(pending.fallbackFilePath, scene, &sculpt, &renderer,
+                                        pending.originalScenePath, pending.wasUnsaved);
+                m_autosaveRestoreModalOpened = false;
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Discard", ImVec2(110.0f * scale, 0.0f))) {
+            m_autosaveManager->discardPendingRestore();
+            m_autosaveRestoreModalOpened = false;
+            ImGui::CloseCurrentPopup();
+        }
+
         ImGui::EndPopup();
     }
 }

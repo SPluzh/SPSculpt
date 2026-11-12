@@ -19,7 +19,7 @@ struct ReferenceImage {
     bool   visibleV2 = true;
     bool   pinned2D = true; // true=overlay, false=3D plane
     bool   locked = false;  // lock transformation/editing
-    std::vector<uint8_t> embeddedData;
+    mutable std::vector<uint8_t> embeddedData;
 };
 
 GLuint loadTextureFromFile(const std::string& path, int* outWidth = nullptr, int* outHeight = nullptr);

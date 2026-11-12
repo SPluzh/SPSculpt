@@ -587,6 +587,7 @@ void UndoManager::pushLegacyState(Scene& scene, const std::string& description) 
 void UndoManager::pushEntry(std::unique_ptr<UndoEntry> entry) {
     m_redoStack.clear();
     m_undoStack.push_back(std::move(entry));
+    ++m_revision;
     trimToMemoryLimit();
     sculpt_log_lvl(LogLevel::Debug, "[Undo] Stack size: %zu undo, %zu redo (total mem: %.2f MB)\n",
                    m_undoStack.size(), m_redoStack.size(), getTotalMemoryUsage() / (1024.0f * 1024.0f));
@@ -633,6 +634,7 @@ void UndoManager::clear() {
     m_redoStack.clear();
     m_activeSculptEntry.reset();
     m_activeMeshDeltaMap.clear();
+    ++m_revision;
 }
 
 void UndoManager::applyEntry(UndoEntry* entry, Scene& scene, bool isUndo) {
@@ -1198,6 +1200,7 @@ void UndoManager::undo(Scene& scene) {
     applyEntry(entry.get(), scene, true);
 
     m_redoStack.push_back(std::move(entry));
+    ++m_revision;
     scene.setModified(true);
 
     auto tEnd = std::chrono::high_resolution_clock::now();
@@ -1233,6 +1236,7 @@ void UndoManager::redo(Scene& scene) {
     applyEntry(entry.get(), scene, false);
 
     m_undoStack.push_back(std::move(entry));
+    ++m_revision;
     scene.setModified(true);
 
     auto tEnd = std::chrono::high_resolution_clock::now();

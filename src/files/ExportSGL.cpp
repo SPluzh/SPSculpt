@@ -78,10 +78,41 @@ public:
 
     const std::vector<uint8_t>& getBuffer() const { return m_buffer; }
     std::vector<uint8_t>& getMutableBuffer() { return m_buffer; }
+    void reserve(size_t bytes) { m_buffer.reserve(bytes); }
 };
 
 std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& scene, const AngleRenderer& renderer, const SculptManager& sculpt, const std::vector<uint8_t>& thumbnail, uint64_t workTimeSeconds, bool saveUndoHistory) {
     BinaryWriter writer;
+    {
+        size_t estimatedBytes = 4096 + thumbnail.size();
+        for (const auto* mesh : meshes) {
+            if (!mesh) continue;
+            const size_t nv = mesh->nbVerts;
+            const size_t nf = mesh->nbFaces;
+            estimatedBytes += 256;
+            estimatedBytes += nv * 12; // verts
+            estimatedBytes += (nv + 3) & ~size_t(3); // vertVisible
+            if (mesh->colors.size() == nv * 3) estimatedBytes += nv * 12;
+            if (mesh->materials.size() == nv * 3) estimatedBytes += nv * 12;
+            estimatedBytes += nf * 16; // faces
+            if (mesh->hasUV && !mesh->texCoords.empty() && !mesh->facesTexCoord.empty()) {
+                estimatedBytes += static_cast<size_t>(mesh->getNbTexCoords()) * 8 + nf * 16;
+            }
+            for (int lIdx = 0; lIdx < mesh->layerStack.count(); ++lIdx) {
+                const auto& layer = mesh->layerStack.at(lIdx);
+                estimatedBytes += 32 + layer.name.size() + layer.deltaVerts.size() * 4;
+            }
+            estimatedBytes += mesh->vrfStartCount.size() * 4;
+            estimatedBytes += mesh->vertRingFace.size() * 4;
+            estimatedBytes += mesh->vrvStartCount.size() * 4;
+            estimatedBytes += mesh->vertRingVert.size() * 4;
+            estimatedBytes += mesh->vertOnEdge.size();
+        }
+        for (const auto& img : scene.getReferenceImages()) {
+            estimatedBytes += 64 + img.path.size() + img.embeddedData.size();
+        }
+        writer.reserve(estimatedBytes);
+    }
     
     // Magic "SPSC" + Version 17
     writer.writeBytes(reinterpret_cast<const uint8_t*>("SPSC"), 4);
@@ -447,15 +478,14 @@ std::vector<uint8_t> exportSGL(const std::vector<Mesh*>& meshes, const Scene& sc
         writer.writeF32(img.offsetY);
         writer.writeF32(img.rotation);
 
-        std::vector<uint8_t> embedData = img.embeddedData;
-        if (embedData.empty() && !img.path.empty()) {
-            embedData = readBinaryFileHelper(img.path);
+        if (img.embeddedData.empty() && !img.path.empty()) {
+            img.embeddedData = readBinaryFileHelper(img.path);
         }
 
-        uint32_t embedSize = static_cast<uint32_t>(embedData.size());
+        uint32_t embedSize = static_cast<uint32_t>(img.embeddedData.size());
         writer.writeU32(embedSize);
         if (embedSize > 0) {
-            writer.writeBytes(embedData.data(), embedSize);
+            writer.writeBytes(img.embeddedData.data(), embedSize);
         }
     }
 

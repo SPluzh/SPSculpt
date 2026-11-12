@@ -104,6 +104,7 @@ public:
     size_t getTotalMemoryUsage() const;
     size_t getUndoCount() const { return m_undoStack.size(); }
     size_t getRedoCount() const { return m_redoStack.size(); }
+    uint64_t getRevision() const { return m_revision; }
     std::string getUndoDescription() const;
     std::string getRedoDescription() const;
 
@@ -115,16 +116,19 @@ public:
         auto stack = std::move(m_undoStack);
         m_undoStack.clear();
         m_redoStack.clear();
+        ++m_revision;
         return stack;
     }
 
     void restoreUndoStack(std::deque<std::unique_ptr<UndoEntry>> stack) {
         m_undoStack = std::move(stack);
         m_redoStack.clear();
+        ++m_revision;
     }
 
     void restoreRedoStack(std::deque<std::unique_ptr<UndoEntry>> stack) {
         m_redoStack = std::move(stack);
+        ++m_revision;
     }
 
     static void applyEntry(UndoEntry* entry, Scene& scene, bool isUndo);
@@ -154,6 +158,7 @@ private:
     std::unordered_map<uint32_t, size_t> m_activeMeshDeltaMap;
 
     SculptManager* m_sculptManager = nullptr;
+    uint64_t m_revision = 0;
 
     void pushEntry(std::unique_ptr<UndoEntry> entry);
     void trimToMemoryLimit();

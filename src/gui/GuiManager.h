@@ -32,6 +32,7 @@ namespace ZBrushBridge {
 }
 
 class AngleRenderer;
+class AutosaveManager;
 class IniFile;
 class HotkeyManager;
 
@@ -213,6 +214,8 @@ private:
     size_t m_unreadErrorCount = 0;
     CrashReporter::PreviousCrashInfo m_prevCrashInfo;
     bool m_showCrashModal = false;
+    AutosaveManager* m_autosaveManager = nullptr;
+    bool m_autosaveRestoreModalOpened = false;
 
     void takeScreenshot(const Scene& scene, AngleRenderer& renderer);
     void drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer);
@@ -260,6 +263,7 @@ private:
     void drawUnsavedChangesModal(Scene& scene, bool& quitApp);
     void drawErrorBanner(SculptManager& sculpt, Scene& scene);
     void drawPreviousCrashModal();
+    void drawAutosaveRestoreModal(Scene& scene, SculptManager& sculpt, AngleRenderer& renderer);
     void drawTimelapsePanel(Scene& scene, AngleRenderer& renderer);
     void drawPreferencesPanel(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer, SDL_Window* window = nullptr);
     void drawHotkeyHUD();
@@ -376,6 +380,8 @@ public:
 
     void setHotkeyManager(HotkeyManager* hm) { m_hotkeyManager = hm; }
     HotkeyManager* getHotkeyManager() const { return m_hotkeyManager; }
+    void setAutosaveManager(AutosaveManager* am) { m_autosaveManager = am; }
+    AutosaveManager* getAutosaveManager() const { return m_autosaveManager; }
 
     bool isCapturingHotkey() const { return m_capturingAction != HKAction::None; }
     bool handleCapturedKeyEvent(const SDL_Event& e);
@@ -398,6 +404,12 @@ public:
     // File operations
     void openScene(Scene& scene, SculptManager* sculpt = nullptr);
     bool openSceneFromPath(const std::string& path, Scene& scene, SculptManager* sculpt = nullptr, AngleRenderer* renderer = nullptr);
+    bool restoreAutosaveFromPath(const std::string& path,
+                                 Scene& scene,
+                                 SculptManager* sculpt = nullptr,
+                                 AngleRenderer* renderer = nullptr,
+                                 const std::string& originalScenePath = "",
+                                 bool wasUnsaved = true);
     void setRenderer(AngleRenderer* renderer) { m_renderer = renderer; }
     void saveScene(Scene& scene, SculptManager* sculpt = nullptr);
     void saveSceneAs(Scene& scene, SculptManager* sculpt = nullptr);

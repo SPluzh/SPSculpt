@@ -1,4 +1,5 @@
 #include "common/IniFile.h"
+#include "common/FileUtils.h"
 #include "common/StringUtils.h"
 #include <fstream>
 #include <sstream>
@@ -61,16 +62,7 @@ bool IniFile::load(const std::string& filepath) {
 }
 
 bool IniFile::save(const std::string& filepath) const {
-#ifdef _WIN32
-    std::ofstream out(utf8ToWide(filepath).c_str());
-#else
-    std::ofstream out(filepath);
-#endif
-    if (!out.is_open()) {
-        std::cerr << "Failed to open INI file for writing: " << filepath << std::endl;
-        return false;
-    }
-
+    std::ostringstream out;
     for (const auto& sec : m_sectionOrder) {
         auto secIt = m_data.find(sec);
         if (secIt == m_data.end()) continue;
@@ -88,7 +80,7 @@ bool IniFile::save(const std::string& filepath) const {
         out << "\n";
     }
 
-    return true;
+    return FileUtils::writeTextFileAtomic(filepath, out.str());
 }
 
 bool IniFile::hasSection(const std::string& section) const {

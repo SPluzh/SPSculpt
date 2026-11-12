@@ -13,6 +13,7 @@
 #include "files/ImportGoZ.h"
 #include "files/ExportGoZ.h"
 #include "common/FormatConstants.h"
+#include "common/FileUtils.h"
 #include "common/StringUtils.h"
 #include "common/Logger.h"
 
@@ -57,31 +58,11 @@ static std::string readTextFile(const std::string& path) {
 }
 
 static bool writeBinaryFile(const std::string& path, const std::vector<uint8_t>& data) {
-#ifdef _WIN32
-    std::ofstream file(utf8ToWide(path).c_str(), std::ios::binary);
-#else
-    std::ofstream file(path, std::ios::binary);
-#endif
-    if (!file.is_open()) {
-        std::cerr << "Failed to open file for writing: " << path << std::endl;
-        return false;
-    }
-    file.write(reinterpret_cast<const char*>(data.data()), data.size());
-    return true;
+    return FileUtils::writeBinaryFileAtomic(path, data);
 }
 
 static bool writeTextFile(const std::string& path, const std::string& data) {
-#ifdef _WIN32
-    std::ofstream file(utf8ToWide(path).c_str());
-#else
-    std::ofstream file(path);
-#endif
-    if (!file.is_open()) {
-        std::cerr << "Failed to open file for writing: " << path << std::endl;
-        return false;
-    }
-    file << data;
-    return true;
+    return FileUtils::writeTextFileAtomic(path, data);
 }
 
 std::string FileManager::getExtension(const std::string& path) {

@@ -146,6 +146,7 @@ include_directories(
 add_executable(SPSculpt
     # common
     src/common/CrashReporter.cpp
+    src/common/FileUtils.cpp
     src/common/IniFile.cpp
     src/common/RecentFiles.cpp
     src/common/StringUtils.cpp
@@ -179,6 +180,7 @@ add_executable(SPSculpt
     src/render/RenderTarget.cpp
     src/render/RenderSettings.cpp
     # files
+    src/files/AutosaveManager.cpp
     src/files/FileManager.cpp
     src/files/ImportSGL.cpp
     src/files/ExportSGL.cpp

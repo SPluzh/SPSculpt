@@ -25,6 +25,7 @@
 #include "render/AngleRenderer.h"
 #include "render/RenderBenchmark.h"
 #include "common/OptFlags.h"
+#include "common/FileUtils.h"
 #include "mesh/BVH.h"
 #include "mesh/BVHTest.h"
 #include "mesh/SculptBenchmark.h"
@@ -38,6 +39,7 @@
 #include "scene/Camera.h"
 #include "editing/SculptManager.h"
 #include "editing/undo/UndoManager.h"
+#include "files/AutosaveManager.h"
 #include "gui/GuiManager.h"
 
 #include "platform/HotkeyDispatcher.h"
@@ -277,28 +279,20 @@ GLuint generateClayMatcapTexture() {
 
 int main(int argc, char* argv[]) {
 #ifdef _WIN32
-    wchar_t exePathBuf[MAX_PATH];
-    if (GetModuleFileNameW(NULL, exePathBuf, MAX_PATH) > 0) {
-        std::wstring pathStr(exePathBuf);
-        size_t lastSlash = pathStr.find_last_of(L"\\/");
-        if (lastSlash != std::wstring::npos) {
-            SetCurrentDirectoryW(pathStr.substr(0, lastSlash).c_str());
+    {
+        std::string exeDir = FileUtils::getExecutableDir();
+        if (!exeDir.empty()) {
+            SetCurrentDirectoryW(utf8ToWide(exeDir).c_str());
         }
     }
 #else
     // In standard Linux runs, change CWD to executable directory.
     // In AppImage, AppRun manages working directory in ~/.config/spsculpt (writable).
     if (!getenv("APPIMAGE") && !getenv("APPDIR")) {
-        char exePathBuf[1024];
-        ssize_t len = readlink("/proc/self/exe", exePathBuf, sizeof(exePathBuf) - 1);
-        if (len != -1) {
-            exePathBuf[len] = '\0';
-            std::string pathStr(exePathBuf);
-            size_t lastSlash = pathStr.find_last_of('/');
-            if (lastSlash != std::string::npos) {
-                if (chdir(pathStr.substr(0, lastSlash).c_str()) != 0) {
-                    // ignore
-                }
+        std::string exeDir = FileUtils::getExecutableDir();
+        if (!exeDir.empty()) {
+            if (chdir(exeDir.c_str()) != 0) {
+                // ignore
             }
         }
     }
@@ -815,7 +809,9 @@ int main(int argc, char* argv[]) {
     IniFile appSettings;
     appSettings.load("app_settings.cfg");
 
+    AutosaveManager autosaveManager;
     GuiManager gui;
+    gui.setAutosaveManager(&autosaveManager);
     gui.loadSettings(appSettings);
     RecentFiles recentFiles;
     recentFiles.loadFromIni(appSettings);
@@ -1061,6 +1057,7 @@ int main(int argc, char* argv[]) {
             gui.setPreviousCrashInfo(prevCrash);
         }
     }
+    autosaveManager.initOnStartup();
 
     HardwareCursorManager hardwareCursor;
     hardwareCursor.init(gui.getUiScale());
@@ -1930,6 +1927,16 @@ int main(int argc, char* argv[]) {
                        pollEventsMs, sculptMotionEvents, processFrameMs, renderMs, uploadTiming.msVbo, guiMs, swapMs);
         }
 
+        {
+            const bool autosaveBusy = sculpt.isSculpting() ||
+                                      g_undoManager.hasActiveSculptStroke() ||
+                                      gui.isRemeshRunning() ||
+                                      gui.isDecimationRunning();
+            autosaveManager.tick(deltaTime, scene, renderer, sculpt,
+                                 gui.getWorkTimer().getTotalSeconds(),
+                                 gui.getCurrentScenePath(), autosaveBusy);
+        }
+
         // ---- GPU load limiter & Event-Driven Idle Sleep (Stage 1) ----
         {
             auto frameEnd = std::chrono::high_resolution_clock::now();
@@ -1982,6 +1989,12 @@ int main(int argc, char* argv[]) {
                     Uint32 sleepWinFlags = SDL_GetWindowFlags(window);
                     bool sleepHasFocus = (sleepWinFlags & SDL_WINDOW_INPUT_FOCUS) != 0;
                     gui.getWorkTimer().tick(sleepDt, sleepHasFocus, false);
+                    if (autosaveManager.tick(sleepDt, scene, renderer, sculpt,
+                                             gui.getWorkTimer().getTotalSeconds(),
+                                             gui.getCurrentScenePath(), false)) {
+                        wokeForRender = true;
+                        break;
+                    }
 
                     if (gotEvent == 1) {
                         processSdlEvent(waitEvent);
@@ -2079,6 +2092,7 @@ int main(int argc, char* argv[]) {
     hotkeyManager.saveAll();
     recentFiles.saveToIni(saveApp);
     saveApp.save("app_settings.cfg");
+    autosaveManager.shutdown();
 
 #ifdef _WIN32
     g_tablet.wintabClose();
