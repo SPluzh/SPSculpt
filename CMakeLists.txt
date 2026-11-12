@@ -1,5 +1,21 @@
 cmake_minimum_required(VERSION 3.20)
 
+# Ensure CMake reconfigures automatically when version.txt changes
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/version.txt"
+)
+
+# Use ccache automatically if available (must be set before project())
+find_program(CCACHE_PROGRAM ccache)
+if(CCACHE_PROGRAM)
+    if(NOT DEFINED CMAKE_C_COMPILER_LAUNCHER)
+        set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}" CACHE STRING "C compiler launcher")
+    endif()
+    if(NOT DEFINED CMAKE_CXX_COMPILER_LAUNCHER)
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}" CACHE STRING "CXX compiler launcher")
+    endif()
+endif()
+
 # Read version from single source of truth (version.txt)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/version.txt" APP_VERSION_RAW)
 string(STRIP "${APP_VERSION_RAW}" APP_VERSION_RAW)
@@ -40,6 +56,10 @@ target_compile_options(lz4 PRIVATE -O3)
 find_package(glm REQUIRED)
 
 include(FetchContent)
+# Skip git remote update checks on reconfigure once dependencies are populated
+if(NOT DEFINED FETCHCONTENT_UPDATES_DISCONNECTED)
+    set(FETCHCONTENT_UPDATES_DISCONNECTED ON CACHE BOOL "Skip FetchContent update checks")
+endif()
 FetchContent_Declare(imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
     GIT_TAG v1.91.0

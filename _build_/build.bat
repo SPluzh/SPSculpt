@@ -3,8 +3,15 @@ set PATH=C:\msys64\ucrt64\bin;%PATH%
 cd /d "%~dp0"
 if not exist build mkdir build
 cd build
-cmake ../.. -G "Ninja" -DCMAKE_BUILD_TYPE=Release
+if not exist build.ninja (
+    cmake ../.. -G "Ninja" -DCMAKE_BUILD_TYPE=Release
+    if errorlevel 1 exit /b 1
+) else if /i "%~1"=="--reconfigure" (
+    cmake ../.. -G "Ninja" -DCMAKE_BUILD_TYPE=Release
+    if errorlevel 1 exit /b 1
+)
 cmake --build .
+if errorlevel 1 exit /b 1
 cd ..
 if exist build\SPSculpt.exe (
     for /r build\_deps %%f in (*.dll) do copy /Y "%%f" build\ >nul 2>&1

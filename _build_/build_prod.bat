@@ -9,8 +9,13 @@ cd /d "%~dp0"
 if not exist build mkdir build
 cd build
 
-cmake ../.. -G "Ninja" -DCMAKE_BUILD_TYPE=Release
-if errorlevel 1 goto error
+if not exist build.ninja (
+    cmake ../.. -G "Ninja" -DCMAKE_BUILD_TYPE=Release
+    if errorlevel 1 goto error
+) else if /i "%~1"=="--reconfigure" (
+    cmake ../.. -G "Ninja" -DCMAKE_BUILD_TYPE=Release
+    if errorlevel 1 goto error
+)
 
 cmake --build . --config Release
 if errorlevel 1 goto error
