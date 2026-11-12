@@ -91,6 +91,7 @@ void HudLayoutConfig::resetToDefault() {
         "outliner",
         "separator",
         "brush_sliders",
+        "brush_sliders_hover",
         "separator",
         "voxel_remesh",
         "separator",
@@ -130,7 +131,7 @@ void HudLayoutConfig::resetToDefault() {
 
 void HudLayoutConfig::save(IniFile& ini) const {
     const std::string sec = "HudLayout";
-    ini.setInt(sec, "version", 1);
+    ini.setInt(sec, "version", 2);
     for (int i = 0; i < ISLAND_COUNT; ++i) {
         HudIslandId id = static_cast<HudIslandId>(i);
         const auto& vec = m_islands[i];
@@ -149,6 +150,7 @@ void HudLayoutConfig::load(const IniFile& ini, const HudRegistry& registry) {
         resetToDefault();
         return;
     }
+    int version = ini.getInt(sec, "version", 1);
 
     for (int i = 0; i < ISLAND_COUNT; ++i) {
         HudIslandId id = static_cast<HudIslandId>(i);
@@ -169,6 +171,15 @@ void HudLayoutConfig::load(const IniFile& ini, const HudRegistry& registry) {
             }
         }
         m_islands[i] = std::move(parsed);
+    }
+
+    // Upgrade v1 layouts: insert the new hover brush-sliders button directly below brush_sliders
+    if (version < 2 && !containsItem("brush_sliders_hover") && registry.find("brush_sliders_hover") != nullptr) {
+        int slidersIdx = findItemIndex(HudIslandId::LeftVert, "brush_sliders");
+        if (slidersIdx >= 0) {
+            auto& leftVec = m_islands[static_cast<int>(HudIslandId::LeftVert)];
+            leftVec.insert(leftVec.begin() + slidersIdx + 1, "brush_sliders_hover");
+        }
     }
 }
 
@@ -508,6 +519,117 @@ std::string toLowerAscii(const std::string& s) {
     return out;
 }
 
+enum class BrushSliderKind {
+    Radius = 0,
+    Intensity,
+    FocalShift
+};
+
+const char* brushSliderIcon(BrushSliderKind kind) {
+    switch (kind) {
+        case BrushSliderKind::Intensity:  return ICON_LC_ZAP;
+        case BrushSliderKind::Radius:     return ICON_LC_CIRCLE;
+        case BrushSliderKind::FocalShift: return ICON_LC_CIRCLE_DOT;
+        default:                          return ICON_LC_SLIDERS_HORIZONTAL;
+    }
+}
+
+void setBrushSliderTooltip(BrushSliderKind kind, const SculptManager& sculpt) {
+    switch (kind) {
+        case BrushSliderKind::Radius:
+            ImGui::SetTooltip("Size: %.0f px", sculpt.getBrushRadius());
+            break;
+        case BrushSliderKind::Intensity:
+            ImGui::SetTooltip("Intensity: %.0f%% (0%% to 1000%%)", sculpt.getBrushIntensity() * 100.0f);
+            break;
+        case BrushSliderKind::FocalShift:
+            ImGui::SetTooltip("Focal Shift: %.0f%%", sculpt.getFocalShift() * 100.0f);
+            break;
+    }
+}
+
+struct BrushSliderResult {
+    bool hovered = false;
+    bool active  = false;
+    ImVec2 rectMin{0.0f, 0.0f};
+    ImVec2 rectMax{0.0f, 0.0f};
+};
+
+BrushSliderResult drawVerticalBrushSlider(
+    SculptManager& sculpt,
+    BrushSliderKind kind,
+    const char* widgetId,
+    const ImVec2& sliderSize,
+    bool customizeMode)
+{
+    BrushSliderResult res;
+    switch (kind) {
+        case BrushSliderKind::Radius: {
+            float radius = sculpt.getBrushRadius();
+            if (ImGui::VSliderFloat(widgetId, sliderSize, &radius, 1.0f, 1000.0f, "")) {
+                sculpt.setBrushRadius(radius);
+            }
+            res.hovered = ImGui::IsItemHovered();
+            res.active = ImGui::IsItemActive();
+            res.rectMin = ImGui::GetItemRectMin();
+            res.rectMax = ImGui::GetItemRectMax();
+            if (!customizeMode && res.hovered) {
+                setBrushSliderTooltip(kind, sculpt);
+                float wheel = ImGui::GetIO().MouseWheel;
+                if (wheel != 0.0f) {
+                    float step = (radius < 50.0f) ? 2.0f : 10.0f;
+                    sculpt.setBrushRadius(std::clamp(radius + wheel * step, 1.0f, 1000.0f));
+                }
+            }
+            break;
+        }
+        case BrushSliderKind::Intensity: {
+            float intensityPct = sculpt.getBrushIntensity() * 100.0f;
+            float maxHudPct = (intensityPct > 100.0f) ? std::min(1000.0f, std::max(100.0f, intensityPct)) : 100.0f;
+            if (ImGui::VSliderFloat(widgetId, sliderSize, &intensityPct, 0.0f, maxHudPct, "")) {
+                sculpt.setBrushIntensity(std::clamp(intensityPct / 100.0f, 0.0f, 10.0f));
+            }
+            res.hovered = ImGui::IsItemHovered();
+            res.active = ImGui::IsItemActive();
+            res.rectMin = ImGui::GetItemRectMin();
+            res.rectMax = ImGui::GetItemRectMax();
+            if (!customizeMode && res.active && ImGui::GetIO().MouseDelta.y < 0.0f && intensityPct >= maxHudPct - 0.1f) {
+                intensityPct = std::min(1000.0f, intensityPct + 10.0f);
+                sculpt.setBrushIntensity(intensityPct / 100.0f);
+            }
+            if (!customizeMode && res.hovered) {
+                setBrushSliderTooltip(kind, sculpt);
+                float wheel = ImGui::GetIO().MouseWheel;
+                if (wheel != 0.0f) {
+                    float stepPct = (intensityPct < 100.0f) ? 5.0f : 25.0f;
+                    intensityPct = std::clamp(intensityPct + wheel * stepPct, 0.0f, 1000.0f);
+                    sculpt.setBrushIntensity(intensityPct / 100.0f);
+                }
+            }
+            break;
+        }
+        case BrushSliderKind::FocalShift: {
+            float focalShift = sculpt.getFocalShift();
+            if (ImGui::VSliderFloat(widgetId, sliderSize, &focalShift, -1.0f, 1.0f, "")) {
+                sculpt.setFocalShift(focalShift);
+            }
+            res.hovered = ImGui::IsItemHovered();
+            res.active = ImGui::IsItemActive();
+            res.rectMin = ImGui::GetItemRectMin();
+            res.rectMax = ImGui::GetItemRectMax();
+            if (!customizeMode && res.hovered) {
+                setBrushSliderTooltip(kind, sculpt);
+                float wheel = ImGui::GetIO().MouseWheel;
+                if (wheel != 0.0f) {
+                    sculpt.setFocalShift(std::clamp(focalShift + wheel * 0.05f, -1.0f, 1.0f));
+                }
+            }
+            break;
+        }
+    }
+    return res;
+}
+
 } // namespace
 
 // ----------------------------------------------------------------------------
@@ -711,70 +833,42 @@ void GuiManager::initHudRegistry() {
         false, true, false,
         [](GuiManager& gui, SculptManager& sculpt, Scene&, AngleRenderer&, const HudRenderCtx& ctx) {
             float vSliderH = 80.0f * ctx.scale;
+            ImVec2 sSize(ctx.squareSize, vSliderH);
 
-            float radius = sculpt.getBrushRadius();
-            if (ImGui::VSliderFloat("##hudVertRadius", ImVec2(ctx.squareSize, vSliderH), &radius, 1.0f, 1000.0f, "")) {
-                sculpt.setBrushRadius(radius);
-            }
-            bool hoveredRadius = ImGui::IsItemHovered();
-            bool activeRadius = ImGui::IsItemActive();
-            ImVec2 rectRadiusMin = ImGui::GetItemRectMin();
-            ImVec2 rectRadiusMax = ImGui::GetItemRectMax();
-            if (!ctx.customizeMode && hoveredRadius) ImGui::SetTooltip("Size: %.0f px", radius);
-
+            BrushSliderResult rad = drawVerticalBrushSlider(sculpt, BrushSliderKind::Radius, "##hudVertRadius", sSize, ctx.customizeMode);
             ImGui::Spacing();
-
-            float intensityPct = sculpt.getBrushIntensity() * 100.0f;
-            float maxHudPct = (intensityPct > 100.0f) ? std::min(1000.0f, std::max(100.0f, intensityPct)) : 100.0f;
-            if (ImGui::VSliderFloat("##hudVertIntensity", ImVec2(ctx.squareSize, vSliderH), &intensityPct, 0.0f, maxHudPct, "")) {
-                sculpt.setBrushIntensity(std::max(0.0f, std::min(10.0f, intensityPct / 100.0f)));
-            }
-            bool hoveredIntensity = ImGui::IsItemHovered();
-            bool activeIntensity = ImGui::IsItemActive();
-            ImVec2 rectIntensityMin = ImGui::GetItemRectMin();
-            ImVec2 rectIntensityMax = ImGui::GetItemRectMax();
-            if (!ctx.customizeMode && activeIntensity && ImGui::GetIO().MouseDelta.y < 0.0f && intensityPct >= maxHudPct - 0.1f) {
-                intensityPct = std::min(1000.0f, intensityPct + 10.0f);
-                sculpt.setBrushIntensity(intensityPct / 100.0f);
-            }
-            if (!ctx.customizeMode && hoveredIntensity) {
-                ImGui::SetTooltip("Intensity: %.0f%% (0%% to 1000%%)", intensityPct);
-                float wheel = ImGui::GetIO().MouseWheel;
-                if (wheel != 0.0f) {
-                    float stepPct = (intensityPct < 100.0f) ? 5.0f : 25.0f;
-                    intensityPct = std::max(0.0f, std::min(1000.0f, intensityPct + wheel * stepPct));
-                    sculpt.setBrushIntensity(intensityPct / 100.0f);
-                }
-            }
-
+            BrushSliderResult inten = drawVerticalBrushSlider(sculpt, BrushSliderKind::Intensity, "##hudVertIntensity", sSize, ctx.customizeMode);
             ImGui::Spacing();
+            BrushSliderResult focal = drawVerticalBrushSlider(sculpt, BrushSliderKind::FocalShift, "##hudVertFocalShift", sSize, ctx.customizeMode);
 
-            float focalShift = sculpt.getFocalShift();
-            if (ImGui::VSliderFloat("##hudVertFocalShift", ImVec2(ctx.squareSize, vSliderH), &focalShift, -1.0f, 1.0f, "")) {
-                sculpt.setFocalShift(focalShift);
-            }
-            bool hoveredFocalShift = ImGui::IsItemHovered();
-            bool activeFocalShift = ImGui::IsItemActive();
-            ImVec2 rectFocalShiftMin = ImGui::GetItemRectMin();
-            ImVec2 rectFocalShiftMax = ImGui::GetItemRectMax();
-            if (!ctx.customizeMode && hoveredFocalShift) {
-                ImGui::SetTooltip("Focal Shift: %.0f%%", focalShift * 100.0f);
-                float wheel = ImGui::GetIO().MouseWheel;
-                if (wheel != 0.0f) {
-                    focalShift = std::max(-1.0f, std::min(1.0f, focalShift + wheel * 0.05f));
-                    sculpt.setFocalShift(focalShift);
-                }
-            }
-
-            gui.m_sliderRadiusMin = rectRadiusMin;
-            gui.m_sliderRadiusMax = rectRadiusMax;
-            gui.m_sliderIntensityMin = rectIntensityMin;
-            gui.m_sliderIntensityMax = rectIntensityMax;
-            gui.m_sliderFocalShiftMin = rectFocalShiftMin;
-            gui.m_sliderFocalShiftMax = rectFocalShiftMax;
+            gui.m_sliderRadiusMin = rad.rectMin;
+            gui.m_sliderRadiusMax = rad.rectMax;
+            gui.m_sliderIntensityMin = inten.rectMin;
+            gui.m_sliderIntensityMax = inten.rectMax;
+            gui.m_sliderFocalShiftMin = focal.rectMin;
+            gui.m_sliderFocalShiftMax = focal.rectMax;
             gui.m_slidersValid = !ctx.customizeMode;
-            gui.m_isOverBrushSliders = !ctx.customizeMode &&
-                (hoveredRadius || activeRadius || hoveredIntensity || activeIntensity || hoveredFocalShift || activeFocalShift);
+            if (!ctx.customizeMode &&
+                (rad.hovered || rad.active || inten.hovered || inten.active || focal.hovered || focal.active)) {
+                gui.m_isOverBrushSliders = true;
+            }
+        }
+    });
+
+    m_hudRegistry.registerItem({
+        "brush_sliders_hover", "Brush Sliders (Hover Button)", "Tools", ICON_LC_SLIDERS_HORIZONTAL, "",
+        true, true, false,
+        [](GuiManager& gui, SculptManager&, Scene&, AngleRenderer&, const HudRenderCtx& ctx) {
+            bool popOpen = !ctx.customizeMode && gui.m_brushHoverPopoverOpen;
+            drawHudIconButton(0, ICON_LC_SLIDERS_HORIZONTAL "##hudBrushSlidersHoverBtn", "",
+                              ImVec2(ctx.squareSize, ctx.squareSize), ctx.scale, popOpen);
+            if (!ctx.customizeMode) {
+                gui.m_brushHoverBtnDrawnThisFrame = true;
+                gui.m_brushHoverBtnMin = ImGui::GetItemRectMin();
+                gui.m_brushHoverBtnMax = ImGui::GetItemRectMax();
+                gui.m_brushHoverIsland = ctx.islandId;
+                gui.m_brushHoverBtnHovered = ImGui::IsItemHovered();
+            }
         }
     });
 
@@ -2675,18 +2769,193 @@ void GuiManager::drawHudCustomizeCatalog(SculptManager& sculpt, Scene& scene) {
     }
 }
 
+void GuiManager::drawBrushHoverSlidersPopover(SculptManager& sculpt, const HudRenderCtx& baseCtx) {
+    if (!m_brushHoverBtnDrawnThisFrame || m_customizeHudMode || ImGui::GetDragDropPayload() != nullptr) {
+        m_brushHoverPopoverOpen = false;
+        m_brushHoverCloseTimer = 0.0f;
+        m_brushHoverPopoverHovered = false;
+        m_brushHoverSliderActive = false;
+        return;
+    }
+
+    ImVec2 mp = ImGui::GetMousePos();
+    bool hasPrevPopRect = (m_brushHoverPopMax.x > m_brushHoverPopMin.x &&
+                           m_brushHoverPopMax.y > m_brushHoverPopMin.y);
+
+    auto inRect = [](const ImVec2& p, const ImVec2& rMin, const ImVec2& rMax) {
+        return p.x >= rMin.x && p.x <= rMax.x && p.y >= rMin.y && p.y <= rMax.y;
+    };
+
+    // Keep hover alive while moving across the small gap between trigger button and popover
+    bool inBridge = false;
+    if (m_brushHoverPopoverOpen && hasPrevPopRect) {
+        const ImVec2& bMin = m_brushHoverBtnMin;
+        const ImVec2& bMax = m_brushHoverBtnMax;
+        const ImVec2& pMin = m_brushHoverPopMin;
+        const ImVec2& pMax = m_brushHoverPopMax;
+        if (pMin.x >= bMax.x - 2.0f) {
+            inBridge = inRect(mp, ImVec2(bMax.x - 2.0f, std::min(bMin.y, pMin.y)),
+                                  ImVec2(pMin.x + 2.0f, std::max(bMax.y, pMax.y)));
+        } else if (pMax.x <= bMin.x + 2.0f) {
+            inBridge = inRect(mp, ImVec2(pMax.x - 2.0f, std::min(bMin.y, pMin.y)),
+                                  ImVec2(bMin.x + 2.0f, std::max(bMax.y, pMax.y)));
+        } else if (pMin.y >= bMax.y - 2.0f) {
+            inBridge = inRect(mp, ImVec2(std::min(bMin.x, pMin.x), bMax.y - 2.0f),
+                                  ImVec2(std::max(bMax.x, pMax.x), pMin.y + 2.0f));
+        } else if (pMax.y <= bMin.y + 2.0f) {
+            inBridge = inRect(mp, ImVec2(std::min(bMin.x, pMin.x), pMax.y - 2.0f),
+                                  ImVec2(std::max(bMax.x, pMax.x), bMin.y + 2.0f));
+        }
+    }
+
+    if (m_brushHoverBtnHovered) {
+        m_brushHoverPopoverOpen = true;
+        m_brushHoverCloseTimer = 0.18f;
+    } else if (m_brushHoverPopoverOpen) {
+        if (m_brushHoverSliderActive || m_brushHoverPopoverHovered || inBridge) {
+            m_brushHoverCloseTimer = 0.18f;
+        } else {
+            m_brushHoverCloseTimer -= ImGui::GetIO().DeltaTime;
+            if (m_brushHoverCloseTimer <= 0.0f) {
+                m_brushHoverPopoverOpen = false;
+            }
+        }
+    }
+
+    if (!m_brushHoverPopoverOpen) {
+        m_brushHoverPopoverHovered = false;
+        m_brushHoverSliderActive = false;
+        return;
+    }
+
+    float scale = baseCtx.scale;
+    float gap = 4.0f * scale;
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    float colW = std::max(24.0f * scale, (m_brushHoverBtnMax.x - m_brushHoverBtnMin.x));
+    float sliderH = 100.0f * scale;
+    ImVec2 estSize(colW * 3.0f + 28.0f * scale, sliderH + 46.0f * scale);
+    ImVec2 prevSize = hasPrevPopRect
+        ? ImVec2(m_brushHoverPopMax.x - m_brushHoverPopMin.x, m_brushHoverPopMax.y - m_brushHoverPopMin.y)
+        : estSize;
+
+    ImVec2 winPos;
+    if (m_brushHoverIsland == HudIslandId::TopRight) {
+        winPos = ImVec2(m_brushHoverBtnMax.x - prevSize.x, m_brushHoverBtnMax.y + gap);
+    } else if (m_brushHoverIsland == HudIslandId::TopLeft &&
+               (m_brushHoverBtnMax.x + gap + prevSize.x > viewport->WorkPos.x + viewport->WorkSize.x)) {
+        winPos = ImVec2(m_brushHoverBtnMin.x, m_brushHoverBtnMax.y + gap);
+    } else {
+        winPos = ImVec2(m_brushHoverBtnMax.x + gap, m_brushHoverBtnMin.y);
+    }
+
+    float minX = viewport->WorkPos.x + 4.0f;
+    float minY = viewport->WorkPos.y + 4.0f;
+    float maxX = std::max(minX, viewport->WorkPos.x + viewport->WorkSize.x - prevSize.x - 4.0f);
+    float maxY = std::max(minY, viewport->WorkPos.y + viewport->WorkSize.y - prevSize.y - 4.0f);
+    winPos.x = std::clamp(winPos.x, minX, maxX);
+    winPos.y = std::clamp(winPos.y, minY, maxY);
+
+    ImGui::SetNextWindowPos(winPos, ImGuiCond_Always);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.09f, 0.10f, 0.95f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.01f, 0.52f, 0.45f, 0.70f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f * scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.0f * scale, 6.0f * scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.0f * scale, 4.0f * scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f * scale);
+
+    ImGuiWindowFlags popFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse |
+                                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove |
+                                ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing;
+
+    bool popHovered = false;
+    bool anyActive = false;
+    bool anySliderHovered = false;
+
+    if (ImGui::Begin("##hudBrushSlidersHoverWin", nullptr, popFlags)) {
+        ImGui::SetWindowFontScale(baseCtx.fontScale);
+        ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+
+        struct ColSpec {
+            BrushSliderKind kind;
+            const char* widgetId;
+        };
+        static constexpr ColSpec kCols[3] = {
+            { BrushSliderKind::Intensity,  "##hudPopIntensity" },
+            { BrushSliderKind::Radius,     "##hudPopRadius" },
+            { BrushSliderKind::FocalShift, "##hudPopFocalShift" },
+        };
+
+        for (int c = 0; c < 3; ++c) {
+            if (c > 0) ImGui::SameLine();
+            ImGui::BeginGroup();
+
+            const char* icon = brushSliderIcon(kCols[c].kind);
+            float iconW = ImGui::CalcTextSize(icon).x;
+            float colX = ImGui::GetCursorPosX();
+            ImGui::SetCursorPosX(colX + std::max(0.0f, (colW - iconW) * 0.5f));
+            ImGui::TextUnformatted(icon);
+            bool iconHovered = ImGui::IsItemHovered();
+
+            ImGui::SetCursorPosX(colX);
+            BrushSliderResult sr = drawVerticalBrushSlider(
+                sculpt, kCols[c].kind, kCols[c].widgetId, ImVec2(colW, sliderH), false);
+
+            if (iconHovered && !sr.hovered) {
+                setBrushSliderTooltip(kCols[c].kind, sculpt);
+            }
+
+            if (kCols[c].kind == BrushSliderKind::Intensity) {
+                m_sliderIntensityMin = sr.rectMin;
+                m_sliderIntensityMax = sr.rectMax;
+            } else if (kCols[c].kind == BrushSliderKind::Radius) {
+                m_sliderRadiusMin = sr.rectMin;
+                m_sliderRadiusMax = sr.rectMax;
+            } else if (kCols[c].kind == BrushSliderKind::FocalShift) {
+                m_sliderFocalShiftMin = sr.rectMin;
+                m_sliderFocalShiftMax = sr.rectMax;
+            }
+
+            if (sr.active) anyActive = true;
+            if (sr.hovered || iconHovered) anySliderHovered = true;
+
+            ImGui::EndGroup();
+        }
+
+        m_slidersValid = true;
+        if (anyActive || anySliderHovered) {
+            m_isOverBrushSliders = true;
+        }
+
+        m_brushHoverPopMin = ImGui::GetWindowPos();
+        ImVec2 wSz = ImGui::GetWindowSize();
+        m_brushHoverPopMax = ImVec2(m_brushHoverPopMin.x + wSz.x, m_brushHoverPopMin.y + wSz.y);
+        popHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem | ImGuiHoveredFlags_ChildWindows);
+    }
+    ImGui::End();
+
+    ImGui::PopStyleVar(4);   // WindowRounding, WindowPadding, ItemSpacing, FrameRounding
+    ImGui::PopStyleColor(2); // WindowBg, Border
+
+    m_brushHoverPopoverHovered = popHovered;
+    m_brushHoverSliderActive = anyActive;
+}
+
 void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer) {
     initHudRegistry();
 
     if (!m_showFloatingIsland) {
         m_slidersValid = false;
         m_isOverBrushSliders = false;
+        m_brushHoverPopoverOpen = false;
         return;
     }
 
     m_hudDropHandledThisFrame = false;
     m_slidersValid = false;
     m_isOverBrushSliders = false;
+    m_brushHoverBtnDrawnThisFrame = false;
+    m_brushHoverBtnHovered = false;
 
     float scale = getFloatingIslandScale();
     float fontScale = m_floatingIslandScale / std::max(0.01f, m_uiScale);
@@ -2760,6 +3029,9 @@ void GuiManager::drawFloatingIslandHUD(SculptManager& sculpt, Scene& scene, Angl
 
     ImGui::PopStyleVar(3);   // WindowRounding, FrameRounding, FramePadding
     ImGui::PopStyleColor(2); // WindowBg, Border
+
+    // Brush Sliders Hover Popover (if placed on any island and hovered)
+    drawBrushHoverSlidersPopover(sculpt, baseCtx);
 
     // Customize banner + catalog
     if (m_customizeHudMode || m_showHudCatalog) {

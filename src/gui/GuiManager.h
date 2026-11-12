@@ -220,6 +220,7 @@ private:
     void drawHudCustomizeBanner();
     void drawHudCustomizeCatalog(SculptManager& sculpt, Scene& scene);
     void drawHudQuickAddPopup(HudIslandId islandId, float fontScale);
+    void drawBrushHoverSlidersPopover(SculptManager& sculpt, const HudRenderCtx& baseCtx);
     void applyPendingHudOps();
     void enterHudCustomizeMode();
     void exitHudCustomizeMode();
@@ -237,6 +238,18 @@ private:
     bool            m_hudDragCancelledByEsc   = false;
     HudDragPayload  m_hudLastActiveDrag{};
     bool            m_hudHasLastActiveDrag    = false;
+
+    bool            m_brushHoverBtnDrawnThisFrame = false;
+    bool            m_brushHoverBtnHovered        = false;
+    bool            m_brushHoverPopoverOpen       = false;
+    float           m_brushHoverCloseTimer        = 0.0f;
+    bool            m_brushHoverPopoverHovered    = false;
+    bool            m_brushHoverSliderActive      = false;
+    ImVec2          m_brushHoverBtnMin{0.0f, 0.0f};
+    ImVec2          m_brushHoverBtnMax{0.0f, 0.0f};
+    ImVec2          m_brushHoverPopMin{0.0f, 0.0f};
+    ImVec2          m_brushHoverPopMax{0.0f, 0.0f};
+    HudIslandId     m_brushHoverIsland            = HudIslandId::LeftVert;
 
     void drawAppMenuItems(SculptManager& sculpt, Scene& scene, AngleRenderer& renderer);
     void drawModelSnapshotWindow(const Scene& scene, AngleRenderer& renderer);
