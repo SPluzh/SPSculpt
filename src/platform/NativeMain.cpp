@@ -69,6 +69,7 @@
 #include "editing/PrimitiveTool.h"
 #include "mesh/dynamic/DynamicTopologyTest.h"
 #include "common/RadialSymmetryTest.h"
+#include "common/RadialSymmetryBenchmark.h"
 #include "mesh/ClayBuildupBenchmark.h"
 #include "mesh/SnakeHookBenchmark.h"
 #include <cctype>
@@ -316,6 +317,7 @@ int main(int argc, char* argv[]) {
     bool runBVHTest = false;
     bool runDyntopoTest = false;
     bool runRadialSymmetryTest = false;
+    bool runRadialSymmetryBench = false;
     bool runDyntopoBench = false;
     bool runDyntopoBench1000 = false;
     bool runDyntopoTool02Bench = false;
@@ -350,6 +352,9 @@ int main(int argc, char* argv[]) {
                 showConsole = true;
             } else if (arg == "--test-radial-symmetry" || arg == "--test-radial") {
                 runRadialSymmetryTest = true;
+                showConsole = true;
+            } else if (arg == "--bench-radial-symmetry" || arg == "--bench-radial") {
+                runRadialSymmetryBench = true;
                 showConsole = true;
             } else if (arg == "--bench-dyntopo-1000" || arg == "--bench-dyntopo1000" || arg == "--bench-1000") {
                 runDyntopoBench1000 = true;
@@ -456,6 +461,9 @@ int main(int argc, char* argv[]) {
             showConsole = true;
         } else if (arg == "--test-radial-symmetry" || arg == "--test-radial") {
             runRadialSymmetryTest = true;
+            showConsole = true;
+        } else if (arg == "--bench-radial-symmetry" || arg == "--bench-radial") {
+            runRadialSymmetryBench = true;
             showConsole = true;
         } else if (arg == "--bench-dyntopo-1000" || arg == "--bench-dyntopo1000" || arg == "--bench-1000") {
             runDyntopoBench1000 = true;
@@ -579,7 +587,7 @@ int main(int argc, char* argv[]) {
     SetProcessDPIAware();
 #endif
 
-    const bool isHeadlessRun = runDyntopoTest || runRadialSymmetryTest || runDyntopoBench || runDyntopoTool02Bench ||
+    const bool isHeadlessRun = runDyntopoTest || runRadialSymmetryTest || runRadialSymmetryBench || runDyntopoBench || runDyntopoTool02Bench ||
                                runDyntopoBench1000 || runClayBench1000 || runClayDyntopoBench1000 ||
                                runSnakeHookBench ||
                                runBVHTest || runBridgeBench || runGozBench || runVoxelBench ||
@@ -647,6 +655,17 @@ int main(int argc, char* argv[]) {
 
     if (runRadialSymmetryTest) {
         bool success = RadialSymmetryTest::runAllTests();
+        fflush(stdout);
+        fflush(stderr);
+#ifdef _WIN32
+        ExitProcess(success ? 0 : 1);
+#else
+        _exit(success ? 0 : 1);
+#endif
+    }
+
+    if (runRadialSymmetryBench) {
+        bool success = RadialSymmetryBenchmark::run();
         fflush(stdout);
         fflush(stderr);
 #ifdef _WIN32
